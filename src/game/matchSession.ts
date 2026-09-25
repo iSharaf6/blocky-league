@@ -142,7 +142,27 @@ export class MatchSession {
     this.paused = false;
   }
 
+  /** Make a substitution (human manager). Returns false if not allowed. */
+  substitute(side: Side, slot: number, benchIdx: number): boolean {
+    const m = this.match;
+    const ok = m.substitute(side, slot, benchIdx);
+    if (ok) this.view.replacePlayer(m.teamPlayers(side)[slot].idx, m.teamPlayers(side)[slot].def, this.opt.kits[side]);
+    return ok;
+  }
+
+  setMentality(side: Side, v: number): void {
+    this.match.mentality[side] = Math.max(-1, Math.min(1, v));
+  }
+
   continueSecondHalf(): void {
+    // The AI manager freshens up tired legs at the break.
+    const ai = (this.match.cfg.humanSide === 0 ? 1 : 0) as Side;
+    const before = this.match.teamPlayers(ai).map((p) => p.def);
+    this.match.aiSubs(ai, 2);
+    this.match.teamPlayers(ai).forEach((p, i) => {
+      if (p.def !== before[i]) this.view.replacePlayer(p.idx, p.def, this.opt.kits[ai]);
+    });
+    if (this.match.cfg.humanSide < 0) this.match.aiSubs(0, 2);
     this.match.continueSecondHalf();
     this.halftimeFired = false;
     this.hud?.show('SECOND HALF', '', 'small', 1.6);
@@ -429,6 +449,9 @@ export class MatchSession {
         case 'restart':
           if (e.kind !== 'kickoff') this.hud?.toastMsg(RESTART_LABEL[e.kind], 1.2);
           if (e.kind === 'penalty') this.hud?.show('PENALTY!', '', 'small', 1.8);
+          break;
+        case 'sub':
+          this.hud?.toastMsg(`SUB · ${e.on} ON · ${e.off} OFF`, 2);
           break;
         case 'foul':
           if (!e.penalty) this.hud?.toastMsg('FOUL!', 1.2);

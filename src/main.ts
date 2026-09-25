@@ -150,10 +150,17 @@ async function startMatch(req: MatchRequest): Promise<void> {
   session.match.autoSwitch = save.settings.autoSwitch;
   const s = session;
   ads.gameplayStart();
+  const tacticsMenu = (back: () => void) =>
+    menus.tactics(s.match, humanSide, kits, {
+      setMentality: (v) => s.setMentality(humanSide, v),
+      substitute: (slot, benchIdx) => s.substitute(humanSide, slot, benchIdx),
+      back,
+    });
   s.onPause = () => {
     ads.gameplayStop();
-    const pauseMenu = () =>
+    const pauseMenu = (): void =>
       menus.pause({
+        tactics: () => tacticsMenu(pauseMenu),
         resume: () => {
           menus.close();
           s.resume();
@@ -171,11 +178,13 @@ async function startMatch(req: MatchRequest): Promise<void> {
   };
   s.onHalftime = () => {
     ads.gameplayStop();
-    menus.halftime(s.match, kits, () => {
-      menus.close();
-      s.continueSecondHalf();
-      ads.gameplayStart();
-    });
+    const ht = (): void =>
+      menus.halftime(s.match, kits, () => {
+        menus.close();
+        s.continueSecondHalf();
+        ads.gameplayStart();
+      }, () => tacticsMenu(ht));
+    ht();
   };
   s.onFinish = (r) => {
     ads.gameplayStop();

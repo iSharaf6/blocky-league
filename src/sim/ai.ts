@@ -124,10 +124,11 @@ export function shapeTarget(m: Match, p: Player, attacking: boolean, refX: numbe
   const bz = (refZ * ad) / HALF_W;
   let x: number;
   let z: number;
+  const ment = m.mentality[p.side];
   if (attacking) {
-    x = slot.x * 0.74 + bx * 0.5 + 0.3;
+    x = slot.x * 0.74 + bx * 0.5 + 0.3 + ment * (p.role === 'DF' ? 0.05 : 0.08);
     z = slot.z * 1.1 + bz * 0.2;
-    if (p.role === 'DF') x = Math.min(x, 0.32);
+    if (p.role === 'DF') x = Math.min(x, 0.32 + ment * 0.1);
   } else {
     x = slot.x * 0.66 + bx * 0.46 - 0.14;
     z = slot.z * 0.7 + bz * 0.36;
@@ -160,7 +161,7 @@ function defendHome(m: Match, p: Player, brain: TeamBrain, refX: number, refZ: n
     x = Math.min(screen + (slot.x + 0.3) * 0.25, bx - 0.06);
     z = slot.z * 0.68 + bz * 0.36;
   } else {
-    x = Math.max(-0.14, slot.x * 0.5 + bx * 0.45 + 0.04);
+    x = Math.max(-0.14, slot.x * 0.5 + bx * 0.45 + 0.04 + m.mentality[p.side] * 0.06);
     z = slot.z * 0.75 + bz * 0.3;
   }
   x = clamp(x, -0.9, 0.6);
@@ -182,6 +183,9 @@ function assignRoles(m: Match, side: Side, brain: TeamBrain): void {
   // inside it once the ball is right on top of it.
   const bxN = nX(m, side, ball.pos.x);
   brain.line = bxN < -0.6 ? Math.max(-0.88, bxN - 0.1) : clamp(bxN - 0.36, -0.68, -0.1);
+  // Mentality: attacking sides hold a higher line, defensive ones sit deeper.
+  const ment = m.mentality[side];
+  if (ment !== 0 && bxN >= -0.6) brain.line = clamp(brain.line + ment * 0.08, -0.74, 0.02);
   if (owner && ball.held) return;
   const flight = !owner && m.passTarget >= 0 ? m.players[m.passTarget] : null;
 
@@ -388,7 +392,7 @@ function organiseAttack(m: Match, side: Side, c: Player, brain: TeamBrain, dt: n
   // ---- Overlapping full-back on the ball's flank.
   brain.overlapT -= dt;
   if (brain.overlap >= 0 && (brain.overlapT <= 0 || cN < -0.05 || m.players[brain.overlap].state !== 'move')) brain.overlap = -1;
-  if (brain.overlap < 0 && cN > 0.02 && cN < 0.75 && isWide(m, c) && c.role !== 'DF' && m.rng.chance(dt * 0.4)) {
+  if (brain.overlap < 0 && cN > 0.02 && cN < 0.75 && isWide(m, c) && c.role !== 'DF' && m.rng.chance(dt * 0.4 * (1 + m.mentality[c.side] * 0.6))) {
     const sgn = Math.sign(slotOf(m, c).z);
     for (const p of team) {
       if (!free(p) || p.role !== 'DF' || !isWide(m, p) || Math.sign(slotOf(m, p).z) !== sgn) continue;
@@ -462,7 +466,8 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
   const facingFwd = Math.cos(c.facing) * ad > -0.2;
   const line = m.defLine(other(p.side));
   const n = nX(m, p.side, p.pos.x);
-  const chance = p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2;
+  const ment = m.mentality[p.side];
+  const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45);
   if (pr > 2.2 && facingFwd && n > line - 0.32 && line < 0.8 && m.rng.chance(chance)) {
     p.running = true;
     p.runT = 2.1 + m.rng.next() * 0.9;
@@ -485,15 +490,16 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
   const line = m.defLine(other(side)); // their last defender, in our frame
   const wide = Math.abs(slot.z) >= 0.5;
   const ballSide = bz * slot.z > 0;
-  let x = slot.x * 0.68 + bx * 0.52 + 0.24;
+  const ment = m.mentality[side];
+  let x = slot.x * 0.68 + bx * 0.52 + 0.24 + ment * 0.07;
   let z = slot.z * 1.08 + bz * 0.16;
   if (wide) z = Math.sign(slot.z) * (ballSide ? 0.9 : 0.74); // hold the width, touchline side
   if (p.role === 'DF') {
     if (wide) {
-      x = Math.min(x, bx - 0.04, 0.42);
+      x = Math.min(x, bx - 0.04 + ment * 0.08, 0.42 + ment * 0.12);
       z = Math.sign(slot.z) * (ballSide ? 0.8 : 0.66);
     } else {
-      x = Math.min(x, bx - 0.2, 0.12);
+      x = Math.min(x, bx - 0.2 + ment * 0.06, 0.12 + ment * 0.1);
       z = slot.z * 1.2 + bz * 0.12;
     }
   }
@@ -592,7 +598,7 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     const box = inOwnBox(m, p.side, c.pos.x, c.pos.z) ? 0.7 : 1;
     // Don't shadow forever: the longer we've jockeyed, the likelier we go in (~2.5/s after 1.2 s).
     const ramp = clamp((p.jockeyT - 0.5) / 0.7, 0, 1) * 2.2;
-    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered + ramp) * box;
+    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered + ramp) * box * (1 + m.mentality[p.side] * 0.25);
     if (m.rng.chance(rate * dt)) {
       p.commitT = 0.55;
       commit = true;

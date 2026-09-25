@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { lerp, wrapAngle } from '../core/math';
 import { BALL_OFS, FRAME_LEN, PF } from '../game/replay';
 import { BALL_R } from '../sim/constants';
-import type { Kit, TeamDef } from '../sim/types';
+import type { Kit, PlayerDef, TeamDef } from '../sim/types';
 import { Footballer, buildBallGeometry, type PoseInput } from './characters';
 import { BoxBuilder, voxelMaterial } from './voxel';
 
@@ -215,6 +215,19 @@ export class MatchView {
     } else {
       this.targetRing.visible = false;
     }
+  }
+
+  /** Swap the model for a substitute coming on. */
+  replacePlayer(i: number, def: PlayerDef, kit: Kit): void {
+    const old = this.players[i];
+    const f = new Footballer(def, kit, i === 0 || i === 11);
+    f.group.position.copy(old.group.position);
+    f.group.rotation.copy(old.group.rotation);
+    old.group.removeFromParent();
+    this.players[i] = f;
+    this.group.add(f.group);
+    this.names[i] = def.name.split('. ').pop()!.toUpperCase();
+    if (this.nameFor === i) this.nameFor = -1;
   }
 
   /** Show the set-piece aim arrow from (x, z) along `angle` (radians, world facing). */

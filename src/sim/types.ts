@@ -47,6 +47,8 @@ export interface TeamDef {
   formation: FormationId;
   /** Starting XI in formation slot order (slot 0 is the keeper). */
   players: PlayerDef[];
+  /** Substitutes available on the bench. */
+  bench?: PlayerDef[];
 }
 
 export function overall(p: PlayerDef): number {
@@ -84,6 +86,7 @@ export type MatchEvent =
   | { type: 'fulltime' }
   | { type: 'kickoffReady'; side: Side }
   | { type: 'foul'; by: number; on: number; penalty: boolean }
+  | { type: 'sub'; side: Side; slot: number; on: string; off: string }
   | { type: 'restart'; kind: RestartKind; side: Side }
   /** A pass or shot cannoned off a defender. */
   | { type: 'block'; by: number; shot: boolean; x: number; z: number }

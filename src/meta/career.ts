@@ -355,6 +355,7 @@ export function clubTeam(club: ClubState): TeamDef {
     kit: { ...club.kit },
     formation: club.formation,
     players: club.squad.slice(0, 11).map(clonePlayer),
+    bench: club.squad.slice(11, 18).map(clonePlayer),
   };
 }
 

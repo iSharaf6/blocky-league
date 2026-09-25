@@ -132,7 +132,14 @@ export function makeTeam(seed: ClubSeed, id = seed.short): TeamDef {
     used.add(n);
     return makePlayer(rng, slot.role, seed.level, n, `${id}-${i}`);
   });
-  return { id, name: seed.name, short: seed.short, kit: seed.kit, formation: seed.formation, players };
+  const benchRoles: Role[] = ['GK', 'DF', 'MF', 'MF', 'FW'];
+  const bench = benchRoles.map((role, i) => {
+    let n = NUMBERS[role].find((x) => !used.has(x)) ?? 12 + i * 2;
+    while (used.has(n)) n++;
+    used.add(n);
+    return makePlayer(rng, role, seed.level - 3, n, `${id}-b${i}`);
+  });
+  return { id, name: seed.name, short: seed.short, kit: seed.kit, formation: seed.formation, players, bench };
 }
 
 export function randomClubSeed(rng: Rng, level: number): ClubSeed {

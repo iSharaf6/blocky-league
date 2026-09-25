@@ -94,7 +94,7 @@ export class Player {
   /** Wrong-footed by a take-on: slower to react for this long. */
   slowT = 0;
 
-  readonly role: Role;
+  role: Role;
   readonly isKeeper: boolean;
   jog: number;
   top: number;

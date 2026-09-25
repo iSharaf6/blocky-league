@@ -4,13 +4,13 @@ import { onTarget, pickReceiver, resolveKick } from './actions';
 import { intercept, isCrossingRestart, makeBrain, setPieceReady, updateTeamAI, type TeamBrain } from './ai';
 import { Ball, type BallHit } from './ball';
 import {
-  AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP,
-  PEN_SPOT, PLAYER_R, ROLL_A, ROLL_B, SIX_DEPTH, SIX_W,
+  AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
+  PEN_SPOT, PLAYER_R, ROLL_A, ROLL_B, SIX_DEPTH, SIX_W, SPRINT_SPEED,
 } from './constants';
 import { FORMATIONS, kickoffSlot, type Slot } from './formations';
 import { inOwnBox } from './keeper';
 import { Player } from './player';
-import type { KickKind, MatchEvent, RestartKind, Side, TeamDef } from './types';
+import type { KickKind, MatchEvent, PlayerDef, RestartKind, Side, TeamDef } from './types';
 
 export type Phase = 'kickoff' | 'play' | 'out' | 'restart' | 'goal' | 'halftime' | 'fulltime';
 
@@ -80,6 +80,11 @@ export class Match {
   private readonly bySide: [Player[], Player[]] = [[], []];
 
   score: [number, number] = [0, 0];
+  /** -1 defensive · 0 balanced · +1 attacking, per side. */
+  mentality: [number, number] = [0, 0];
+  subsUsed: [number, number] = [0, 0];
+  readonly maxSubs = 3;
+  readonly bench: [PlayerDef[], PlayerDef[]];
   half = 1;
   clock = 0;
   phase: Phase = 'kickoff';
@@ -127,6 +132,7 @@ export class Match {
   constructor(readonly cfg: MatchConfig) {
     this.rng = new Rng(cfg.seed ?? 12345);
     this.teams = [cfg.home, cfg.away];
+    this.bench = [[...(cfg.home.bench ?? [])], [...(cfg.away.bench ?? [])]];
     this.slots = [FORMATIONS[cfg.home.formation], FORMATIONS[cfg.away.formation]];
     for (const side of [0, 1] as Side[]) {
       const team = this.teams[side];
@@ -256,6 +262,47 @@ export class Match {
       }
     }
     return best;
+  }
+
+  /**
+   * Bring on bench player `benchIdx` for the player in `slot`. Fresh legs, same slot and role;
+   * the replaced player takes no further part. Returns false if not allowed.
+   */
+  substitute(side: Side, slot: number, benchIdx: number): boolean {
+    if (this.subsUsed[side] >= this.maxSubs) return false;
+    const bench = this.bench[side];
+    const on = bench[benchIdx];
+    const p = this.bySide[side][slot];
+    if (!on || !p) return false;
+    if ((slot === 0) !== (on.role === 'GK')) return false; // keepers only swap with keepers
+    if (this.ball.owner === p.idx) this.ball.owner = -1;
+    const off = p.def;
+    bench.splice(benchIdx, 1);
+    p.def = on;
+    p.role = this.slots[side][slot].role;
+    const pace = on.stats.pace / 100;
+    const edge = this.cfg.humanSide === side ? 1 : 1 + (this.aiSkill(side) - 2) * 0.015;
+    p.jog = JOG_SPEED * (0.86 + pace * 0.22) * edge;
+    p.top = SPRINT_SPEED * (0.82 + pace * 0.26) * edge;
+    p.stamina = 1;
+    this.subsUsed[side]++;
+    this.teams[side].players[slot] = on;
+    this.events.push({ type: 'sub', side, slot, on: on.name, off: off.name });
+    return true;
+  }
+
+  /** AI managers: freshen up the most tired outfielders (called at half time). */
+  aiSubs(side: Side, count: number): void {
+    const tired = this.bySide[side]
+      .filter((p) => !p.isKeeper && p.stamina < 0.7)
+      .sort((a, b) => a.stamina - b.stamina)
+      .slice(0, count);
+    for (const p of tired) {
+      const bench = this.bench[side];
+      let idx = bench.findIndex((d) => d.role === p.role);
+      if (idx < 0) idx = bench.findIndex((d) => d.role !== 'GK');
+      if (idx >= 0) this.substitute(side, p.slot, idx);
+    }
   }
 
   continueSecondHalf(): void {

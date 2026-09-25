@@ -4,7 +4,7 @@ import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview } from './preview';
 import { cssHex, shade } from '../render/palette';
 import type { Match } from '../sim/match';
-import type { Kit } from '../sim/types';
+import { overall, type Kit, type PlayerDef } from '../sim/types';
 
 export const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD', 'LEGEND'];
 export const DIFF_LEVEL = [0.6, 1.8, 3, 4];
@@ -243,13 +243,14 @@ export class Menus {
     $(d, '[data-a=go]').addEventListener('click', () => onKickOff(home, away));
   }
 
-  pause(h: { resume: () => void; howto: () => void; quit: () => void; settings: () => void }): void {
+  pause(h: { resume: () => void; howto: () => void; quit: () => void; settings: () => void; tactics?: () => void }): void {
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel narrow">
           <h2>PAUSED</h2>
           <div class="menu-col">
             <button class="btn btn-go btn-lg" data-a="resume">RESUME</button>
+            ${h.tactics ? '<button class="btn btn-blue" data-a="tactics">TACTICS &amp; SUBS</button>' : ''}
             <button class="btn btn-white" data-a="howto">CONTROLS</button>
             <button class="btn btn-white" data-a="settings">SOUND</button>
             <button class="btn btn-red" data-a="quit">QUIT MATCH</button>
@@ -257,6 +258,10 @@ export class Menus {
         </div>
       </div>`, 'pause');
     $(d, '[data-a=resume]').addEventListener('click', h.resume);
+    d.querySelector('[data-a=tactics]')?.addEventListener('click', () => {
+      window.removeEventListener('keydown', key);
+      h.tactics?.();
+    });
     $(d, '[data-a=howto]').addEventListener('click', h.howto);
     $(d, '[data-a=settings]').addEventListener('click', h.settings);
     $(d, '[data-a=quit]').addEventListener('click', h.quit);
@@ -300,14 +305,88 @@ export class Menus {
     </div>`;
   }
 
-  halftime(m: Match, kits: [Kit, Kit], onContinue: () => void): void {
+  /** Mentality + substitutions for the human side. */
+  tactics(
+    m: Match, side: 0 | 1, kits: [Kit, Kit],
+    h: { setMentality: (v: number) => void; substitute: (slot: number, benchIdx: number) => boolean; back: () => void },
+  ): void {
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel tactics">
+          <h2>TACTICS</h2>
+          <div class="opt-row"><label>MENTALITY</label><div class="seg" data-o="ment"></div></div>
+          <div class="subs-head"><b>SUBSTITUTIONS</b><span class="subs-left"></span></div>
+          <div class="subs">
+            <div class="sub-col"><h3>ON THE PITCH</h3><ul class="sub-list" data-l="xi"></ul></div>
+            <div class="sub-col"><h3>BENCH</h3><ul class="sub-list" data-l="bench"></ul></div>
+          </div>
+          <p class="fine">Tap a player on the pitch, then a substitute. Subs come on with fresh legs.</p>
+          <div class="btn-row"><button class="btn btn-go btn-lg" data-a="back">DONE</button></div>
+        </div>
+      </div>`, 'tactics-screen');
+    let picked = -1;
+    const ment = $(d, '[data-o=ment]');
+    const drawMent = () => {
+      const labels = ['DEFENSIVE', 'BALANCED', 'ATTACKING'];
+      ment.innerHTML = labels.map((l, i) => `<button class="${m.mentality[side] === i - 1 ? 'on' : ''}" data-i="${i}">${l}</button>`).join('');
+      ment.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          sfx.click();
+          h.setMentality(Number(b.dataset.i) - 1);
+          drawMent();
+        }),
+      );
+    };
+    const row = (p: PlayerDef, extra: string, cls: string, key: string) =>
+      `<li><button class="sub-row ${cls}" data-k="${key}"><i style="background:${cssHex(kits[side].shirt)}">${p.number}</i><span>${p.name}</span><em>${p.role}</em>${extra}</button></li>`;
+    const drawSubs = () => {
+      const left = m.maxSubs - m.subsUsed[side];
+      $(d, '.subs-left').textContent = `${left} LEFT`;
+      const team = m.teamPlayers(side);
+      $(d, '[data-l=xi]').innerHTML = team
+        .map((p, i) => {
+          const st = Math.round(p.stamina * 100);
+          const col = st > 60 ? 'var(--go)' : st > 35 ? 'var(--yellow)' : 'var(--red)';
+          return row(p.def, `<b class="stam"><s style="width:${st}%;background:${col}"></s></b>`, picked === i ? 'sel' : '', `x${i}`);
+        })
+        .join('');
+      const bench = m.bench[side];
+      const pickGK = picked === 0;
+      $(d, '[data-l=bench]').innerHTML = bench.length
+        ? bench.map((p, i) => row(p, `<b class="ovr">${overall(p)}</b>`, left <= 0 || picked < 0 || pickGK !== (p.role === 'GK') ? 'off' : '', `b${i}`)).join('')
+        : '<li class="fine">Nobody left on the bench.</li>';
+      d.querySelectorAll<HTMLButtonElement>('.sub-row').forEach((b) =>
+        b.addEventListener('click', () => {
+          sfx.click();
+          const k = b.dataset.k!;
+          const idx = Number(k.slice(1));
+          if (k[0] === 'x') picked = picked === idx ? -1 : idx;
+          else if (picked >= 0 && !b.classList.contains('off')) {
+            if (h.substitute(picked, idx)) {
+              sfx.coin();
+              picked = -1;
+            }
+          }
+          drawSubs();
+        }),
+      );
+    };
+    drawMent();
+    drawSubs();
+    $(d, '[data-a=back]').addEventListener('click', h.back);
+  }
+
+  halftime(m: Match, kits: [Kit, Kit], onContinue: () => void, onTactics?: () => void): void {
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel">
           <h2>HALF TIME</h2>
           ${this.scoreHeader(m, kits)}
           ${this.statsTable(m, kits)}
-          <div class="btn-row"><button class="btn btn-go btn-lg" data-a="go">SECOND HALF</button></div>
+          <div class="btn-row">
+            ${onTactics ? '<button class="btn btn-blue" data-a="tactics">TACTICS &amp; SUBS</button>' : ''}
+            <button class="btn btn-go btn-lg" data-a="go">SECOND HALF</button>
+          </div>
         </div>
       </div>`, 'ht');
     const go = () => {
@@ -319,6 +398,10 @@ export class Menus {
     };
     window.addEventListener('keydown', key);
     $(d, '[data-a=go]').addEventListener('click', go);
+    d.querySelector('[data-a=tactics]')?.addEventListener('click', () => {
+      window.removeEventListener('keydown', key);
+      onTactics?.();
+    });
   }
 
   fulltime(
