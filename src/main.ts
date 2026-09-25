@@ -110,6 +110,13 @@ function pickTime(): TimeOfDay {
   return r < 0.5 ? 'day' : r < 0.75 ? 'sunset' : 'night';
 }
 
+function pickWeather(): 'clear' | 'rain' | 'snow' {
+  const w = save.settings.weather;
+  if (w !== 'random') return w;
+  const r = Math.random();
+  return r < 0.72 ? 'clear' : r < 0.9 ? 'rain' : 'snow';
+}
+
 function recordResult(r: MatchResult): void {
   const hs: Side = r.humanSide === 1 ? 1 : 0;
   const my = r.score[hs];
@@ -145,6 +152,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     attendance: req.attendance,
     seed: Math.floor(Math.random() * 1e9),
     timeOfDay: req.timeOfDay ?? pickTime(),
+    weather: req.weather ?? pickWeather(),
     tutorial: !save.seenTutorial,
   });
   session.match.autoSwitch = save.settings.autoSwitch;

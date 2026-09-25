@@ -5,6 +5,7 @@ import { CameraRig } from '../render/cameraRig';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
 import { PITCH_Y, Stadium } from '../render/stadium';
+import { Weather, type WeatherKind } from '../render/weather';
 import type { TimeOfDay, World } from '../render/world';
 import { DT, HALF_L } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
@@ -18,6 +19,7 @@ export interface SessionOptions extends MatchConfig {
   attendance: number;
   demo?: boolean;
   timeOfDay?: TimeOfDay;
+  weather?: WeatherKind;
   /** Show first-match control tips. */
   tutorial?: boolean;
 }
@@ -57,6 +59,7 @@ export class MatchSession {
   readonly view: MatchView;
   readonly stadium: Stadium;
   readonly effects = new Effects();
+  readonly weather = new Weather();
   readonly cam: CameraRig;
   readonly hud: Hud | null;
   readonly touch: TouchControls | null;
@@ -101,11 +104,14 @@ export class MatchSession {
     });
     this.view = new MatchView(teams, opt.kits, opt.humanSide);
     const tod = opt.timeOfDay ?? 'day';
-    world.setTimeOfDay(tod);
+    const wx = opt.weather ?? 'clear';
+    world.setTimeOfDay(tod, wx);
     this.stadium.setTimeOfDay(tod);
+    this.weather.set(wx, world.quality);
+    sfx.setRain(wx === 'rain');
     this.view.group.position.y = PITCH_Y;
     this.effects.mesh.position.y = PITCH_Y;
-    world.scene.add(this.stadium.group, this.view.group, this.effects.mesh);
+    world.scene.add(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
     this.cam = new CameraRig(world.camera);
     this.cam.setMode(this.demo ? 'menu' : 'intro');
     if (!this.demo) this.introLeft = 3.4;
@@ -242,6 +248,7 @@ export class MatchSession {
     this.view.updateReferee(this.paused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
     this.effects.update(dt);
+    this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time);
     this.updateAtmosphere(dt);
     this.updateHud(dt);
   }
@@ -583,7 +590,8 @@ export class MatchSession {
   }
 
   dispose(): void {
-    this.world.scene.remove(this.stadium.group, this.view.group, this.effects.mesh);
+    this.world.scene.remove(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
+    sfx.setRain(false);
     this.hud?.dispose();
     this.touch?.root.remove();
     this.input.touch.enabled = false;

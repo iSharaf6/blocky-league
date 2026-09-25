@@ -23,6 +23,8 @@ export interface MatchRequest {
   attendance: number;
   /** Lighting; omitted = the player's setting (random by default). */
   timeOfDay?: TimeOfDay;
+  /** Weather; omitted = the player's setting. */
+  weather?: 'clear' | 'rain' | 'snow';
   /** Compute the coins for this result (called once at full time). */
   reward: (r: MatchResult) => Reward;
   /** Label for the full-time continue button. */

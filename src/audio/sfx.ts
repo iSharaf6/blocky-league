@@ -89,6 +89,30 @@ export class Sfx {
     this.crowdFilter.connect(this.crowdGain).connect(this.crowdBus);
   }
 
+  private rainGain: GainNode | null = null;
+
+  /** Soft rain bed during wet matches. */
+  setRain(on: boolean): void {
+    if (!this.ctx) return;
+    const c = this.ctx;
+    if (!this.rainGain) {
+      const src = c.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const hp = c.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 1800;
+      const lp = c.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 7000;
+      this.rainGain = c.createGain();
+      this.rainGain.gain.value = 0;
+      src.connect(hp).connect(lp).connect(this.rainGain).connect(this.crowdBus);
+      src.start();
+    }
+    this.rainGain.gain.setTargetAtTime(on ? 0.16 : 0, c.currentTime, 0.8);
+  }
+
   /** Portal ads / platform mute: silence everything without losing state. */
   setMuted(m: boolean): void {
     this.muted = m;

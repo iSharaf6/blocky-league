@@ -33,6 +33,12 @@ const LOOKS: Record<TimeOfDay, Look> = {
 };
 
 /** Renderer, scene, sun + sky light. Colours stay flat and saturated (no tone mapping). */
+function mixHex(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  return (Math.round(ar + (br - ar) * t) << 16) | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t);
+}
+
 export class World {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -79,9 +85,24 @@ export class World {
     this.resize();
   }
 
-  setTimeOfDay(t: TimeOfDay): void {
+  setTimeOfDay(t: TimeOfDay, weather: 'clear' | 'rain' | 'snow' = 'clear'): void {
     this.time = t;
-    const L = LOOKS[t];
+    const base = LOOKS[t];
+    // Overcast skies for rain / snow: flatter light, greyer sky, closer fog.
+    const grey = weather === 'rain' ? 0x8e99a6 : 0xdfe6ec;
+    const k = weather === 'clear' ? 0 : weather === 'rain' ? 0.62 : 0.5;
+    const L: Look = {
+      ...base,
+      skyTop: mixHex(base.skyTop, grey, k),
+      skyMid: mixHex(base.skyMid, grey, k),
+      skyBottom: mixHex(base.skyBottom, grey, k),
+      fog: mixHex(base.fog, grey, k),
+      sunI: base.sunI * (1 - k * 0.6),
+      hemi: base.hemi * (1 + k * 0.25),
+    };
+    const fog = this.scene.fog as THREE.Fog;
+    fog.near = weather === 'clear' ? 190 : 110;
+    fog.far = weather === 'clear' ? 520 : 380;
     const g = this.skyCanvas.getContext('2d')!;
     const grad = g.createLinearGradient(0, 0, 0, 256);
     grad.addColorStop(0, cssHex(L.skyTop));

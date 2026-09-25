@@ -9,6 +9,7 @@ export interface Settings {
   halfMinutes: number;
   autoSwitch: boolean;
   timeOfDay: TimeOfDay | 'random';
+  weather: 'clear' | 'rain' | 'snow' | 'random';
 }
 
 export interface Record {
@@ -41,7 +42,7 @@ export function defaultSave(): SaveData {
     coins: 500,
     clubIdx: 5,
     opponentIdx: 6,
-    settings: { sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, autoSwitch: true, timeOfDay: 'random' },
+    settings: { sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, autoSwitch: true, timeOfDay: 'random', weather: 'random' },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
     seenTutorial: false,

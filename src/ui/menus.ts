@@ -176,6 +176,7 @@ export class Menus {
           <div class="opt-row"><label>DIFFICULTY</label><div class="seg" data-o="diff"></div></div>
           <div class="opt-row"><label>HALF LENGTH</label><div class="seg" data-o="len"></div></div>
           <div class="opt-row"><label>KICK-OFF</label><div class="seg" data-o="tod"></div></div>
+          <div class="opt-row"><label>WEATHER</label><div class="seg" data-o="wx"></div></div>
           <div class="btn-row">
             <button class="btn btn-white" data-a="back">BACK</button>
             <button class="btn btn-go btn-lg" data-a="go">KICK OFF</button>
@@ -221,7 +222,7 @@ export class Menus {
     };
     render('home');
     render('away');
-    const seg = (key: 'diff' | 'len' | 'tod', labels: string[], get: () => number, set: (i: number) => void) => {
+    const seg = (key: 'diff' | 'len' | 'tod' | 'wx', labels: string[], get: () => number, set: (i: number) => void) => {
       const el = $(d, `[data-o=${key}]`);
       const draw = () => {
         el.innerHTML = labels.map((l, i) => `<button class="${i === get() ? 'on' : ''}" data-i="${i}">${l}</button>`).join('');
@@ -239,6 +240,8 @@ export class Menus {
     seg('len', HALF_OPTIONS.map((m) => `${m} MIN`), () => Math.max(0, HALF_OPTIONS.indexOf(save.settings.halfMinutes)), (i) => (save.settings.halfMinutes = HALF_OPTIONS[i]));
     const tods = ['day', 'sunset', 'night', 'random'] as const;
     seg('tod', ['DAY', 'SUNSET', 'NIGHT', 'RANDOM'], () => Math.max(0, tods.indexOf(save.settings.timeOfDay)), (i) => (save.settings.timeOfDay = tods[i]));
+    const wxs = ['clear', 'rain', 'snow', 'random'] as const;
+    seg('wx', ['CLEAR', 'RAIN', 'SNOW', 'RANDOM'], () => Math.max(0, wxs.indexOf(save.settings.weather)), (i) => (save.settings.weather = wxs[i]));
     $(d, '[data-a=back]').addEventListener('click', onBack);
     $(d, '[data-a=go]').addEventListener('click', () => onKickOff(home, away));
   }
