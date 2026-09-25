@@ -70,7 +70,8 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
           k.setState('dive');
           k.vel.z = vz;
           k.vel.x = ad * 0.8;
-          k.vy = clamp(yc * 2.4 - 0.4, 1.2, 5.6);
+          // Low shots: a skidding dive; high shots: a proper leap (peak ~0.5-0.9 m).
+          k.vy = yc > 0.6 ? clamp(yc * 2.6 + 0.6, 3.2, 6.2) : clamp(yc * 2.4, 1.4, 3);
           k.y = 0.01;
           // +1 = dive to the keeper's own right (facing +x, right is +z).
           k.diveDir = Math.sign(lateral) * (Math.cos(k.facing) >= 0 ? 1 : -1);

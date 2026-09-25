@@ -147,6 +147,21 @@ function rotate(x: number, z: number, a: number): { x: number; z: number } {
 
 /** Solve the ball's launch for a kick order, from wherever the ball is right now. */
 export function resolveKick(m: Match, p: Player, order: KickOrder): Launch {
+  const L = resolveKickRaw(m, p, order);
+  // Keeper distribution tops out around 30 m/s (no 90-metre punts).
+  if (p.isKeeper && L.kind !== 'shot') {
+    const sp = Math.hypot(L.vx, L.vy, L.vz);
+    if (sp > 30) {
+      const k = 30 / sp;
+      L.vx *= k;
+      L.vz *= k;
+      L.vy *= Math.sqrt(k);
+    }
+  }
+  return L;
+}
+
+function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
   const b = m.ball.pos;
   const dir = dirOf(p, order);
   const ad = m.attackDir(p.side);
