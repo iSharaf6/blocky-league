@@ -3,20 +3,25 @@
 Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Crossy-Road-style toy world, built with **TypeScript + Three.js + Vite** as a fully static build. There's no server and no accounts; progress lives in `localStorage`.
 
 **Gameplay**
-- Quick Match against the AI with 11 hand-made clubs and 4 difficulty levels (Easy → Legend).
-- Match length options of 1.5, 2, 3 or 4 minutes per half.
-- Passing, power shots, through balls, lobs and crosses, first-time finishes, player switching, pressing and slide tackles.
-- Keepers dive, rush out and distribute the ball.
-- Goal celebrations and instant replays.
-- Day, sunset and floodlit night matches, played in front of a voxel crowd.
+- Quick Match against the AI with 11 hand-made clubs and 4 difficulty levels (Easy → Legend), 1.5–4 minute halves.
+- Passing, power shots, through balls, lobs and crosses, headers and first-time finishes, player switching, pressing,
+  standing and slide tackles, and a knock-on skill move (double-tap sprint).
+- Keepers dive, claim crosses, rush out and distribute. Fouls, free kicks with walls, penalties and yellow cards from an on-pitch referee.
+- Corners and wide free kicks with loaded boxes, an aim arrow and a behind-the-ball camera.
+- Half-time tactics: mentality (defensive / balanced / attacking) and up to three substitutions with fresh legs.
+- Goal celebrations, TV-style instant replays, Man of the Match and player ratings.
+- Day, sunset and floodlit night matches, rain and voxel snow, in front of an animated voxel crowd.
+
+**Modes**
+- **Career**: six divisions of eight clubs, promotion and relegation, transfers, training, kit designer and stadium upgrades.
+- **Blocky Cup**: an 8-team knockout with a bracket, prize money, a trophy, and penalty shootouts (aim your kicks, dive with your keeper).
+- **Daily gift** with a seven-day streak.
 
 **Tech**
 - Every sound is synthesised live with WebAudio, so there are no audio files.
-- Keyboard, gamepad and touch controls.
-- Adaptive rendering quality.
-
-**Career and My Club** (in active development)
-- Six divisions of eight clubs, with promotion and relegation, a transfer market, training, kit design and stadium upgrades.
+- Keyboard, gamepad and touch controls; landscape and portrait framing.
+- Adaptive rendering quality (dynamic resolution, crowd density and shadow size follow the device).
+- The whole game zips to about 300 KB.
 
 **Monetisation** comes from an optional portal adapter for **CrazyGames** and **Poki**: midgame ads plus an opt-in rewarded ad that doubles your coins. See [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
 
@@ -32,8 +37,8 @@ npm run dev          # http://localhost:5173 (also exposed on your LAN for phone
 URL parameters:
 
 - `?quick`: skip the menus and start a match straight away. Dev server only.
-- `?portal=crazygames` or `?portal=poki`: load that portal's SDK. On localhost, CrazyGames runs in local mode, where fake ads appear as overlays.
-  - This currently works in every build. `docs/PUBLISHING.md` §10 #1 recommends limiting it to dev and portal builds.
+- `?portal=crazygames` or `?portal=poki`: load that portal's SDK in the dev server (portal builds pick their SDK at build time).
+  On localhost, CrazyGames runs in local mode, where fake ads appear as overlays.
 
 ## Test
 
@@ -62,7 +67,7 @@ npm run typecheck    # tsc --noEmit
   - Zips the build with `index.html` at the root and re-verifies every zip entry.
   - Reports sizes and every external host the code references.
 - **Social cards:** set `SITE_URL=https://your.domain` when building `web` to get absolute og/twitter image URLs.
-- **Output location:** `dist-*/` and `release/` are build outputs; add them to `.gitignore`.
+- **Output location:** `dist-*/` and `release/` are build outputs (git-ignored).
 
 The asset and release scripts have no dependencies beyond Node and Vite:
 
@@ -76,21 +81,22 @@ index.html              page shell (canvas + UI root); <head> holds PWA / social
 public/                 static files copied into the web build (manifest, icons, sw.js, privacy.html, robots.txt)
 scripts/                release tooling: gen-assets.mjs, release.mjs, lib.mjs
 docs/                   PUBLISHING.md (portals, costs, checklists), STORE_LISTING.md (copy, tags, shot list)
-tests/                  vitest suites (ball, match, career, diagnostics)
+tests/                  vitest suites (ball, match metrics, human control, career, cup, shootout, subs, voxel)
 src/
   main.ts               boot, main loop, menu → match flow, rewards, ad hooks
   app.ts                AppContext / MatchRequest types shared by the UI modules
   audio/sfx.ts          WebAudio synth: crowd bed and reactions, whistle, kicks, woodwork, net, UI, chiptune loop
   core/                 input (keyboard/gamepad/touch), math helpers, seeded RNG, save (localStorage, versioned)
   game/                 matchSession (match ↔ renderer ↔ HUD glue: goals, celebrations, replays, half/full time), replay ring buffer
-  meta/                 data (clubs, kits, player generation), career (divisions, fixtures, table, transfers, club state)
+  meta/                 data (clubs, kits, player generation), career (divisions, fixtures, table, transfers, club state),
+                        cup (knockout bracket, AI ties, prizes)
   platform/ads.ts       portal adapter: CrazyGames SDK v3 / Poki SDK v2 / none, fail-soft
-  render/               Three.js world (renderer, sun, sky, quality), voxel mesher with AO, stadium and crowd,
-                        voxel footballers and ball, camera rig, match view, particles, palette
+  render/               Three.js world (renderer, sun, sky, time of day, quality), voxel mesher with AO, stadium and crowd,
+                        voxel footballers and ball, referee, camera rig, match view, particles, weather, palette
   sim/                  deterministic fixed-step football simulation: match rules and restarts, ball physics,
-                        players, team AI, keepers, pass/shot resolution, formations, constants, types
-  ui/                   HUD, menus (title, quick match, settings, pause, half/full time, how to play),
-                        touch controls, career and My Club screens
+                        players, team AI, keepers, pass/shot resolution, shootouts, formations, constants, types
+  ui/                   HUD, menus (title, main, quick match, settings, pause, tactics, half/full time, gift, how to play),
+                        touch controls, 3D kit previews, crests, career, My Club, cup and shootout HUD
   style.css             UI styles
 ```
 
@@ -102,7 +108,7 @@ src/
 | Pass / switch player | Space | A |
 | Shoot (hold to power) / slide tackle | K | B |
 | Through ball (tap) / lob-cross (hold) / press | L | X |
-| Sprint | Shift | RT |
+| Sprint (double-tap to knock it on) | Shift | RT |
 | Pause | Esc / P | |
 
 On touch screens there's a virtual stick on the left and action buttons on the right.
