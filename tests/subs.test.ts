@@ -45,7 +45,7 @@ function playSubs(m: Match): { e: MatchEvent & { type: 'sub' }; minute: number; 
 }
 
 describe('substitutions and mentality', () => {
-  it('brings a bench player on with fresh legs, at most three times', () => {
+  it('brings a bench player on with fresh legs, at most five times', () => {
     const m = match();
     const p = m.teamPlayers(0)[7];
     p.stamina = 0.3;
@@ -58,13 +58,21 @@ describe('substitutions and mentality', () => {
     // Keepers only swap with keepers.
     const gk = m.bench[0].findIndex((d) => d.role === 'GK');
     expect(m.substitute(0, 3, gk)).toBe(false);
+    expect(m.maxSubs).toBe(5);
     expect(m.substitute(0, 2, m.bench[0].findIndex((d) => d.role !== 'GK'))).toBe(true);
     expect(m.substitute(0, 4, m.bench[0].findIndex((d) => d.role !== 'GK'))).toBe(true);
-    expect(m.substitute(0, 5, m.bench[0].findIndex((d) => d.role !== 'GK'))).toBe(false);
+    expect(m.substitute(0, 5, m.bench[0].findIndex((d) => d.role !== 'GK'))).toBe(true);
+    // The fifth: the keeper for the bench keeper.
+    expect(m.substitute(0, 0, m.bench[0].findIndex((d) => d.role === 'GK'))).toBe(true);
+    expect(m.subsUsed[0]).toBe(5);
+    // A sixth isn't allowed, even with someone left on the bench.
+    m.bench[0].push({ ...m.bench[1].find((d) => d.role !== 'GK')!, id: 'extra' });
+    expect(m.substitute(0, 6, m.bench[0].length - 1)).toBe(false);
   });
 
-  it("AI benches make late changes at a dead ball after 60' (under 0.55 fit) / 75' (under 0.45), three subs at most", () => {
+  it("AI benches make late changes at a dead ball after 60' (under 0.55 fit) / 75' (under 0.45), five subs at most", () => {
     let late = 0;
+    let forced = 0;
     for (const seed of [3, 7, 11, 19, 23]) {
       const m = match(seed);
       const subs = playSubs(m);
@@ -73,16 +81,27 @@ describe('substitutions and mentality', () => {
         expect(s.minute).toBeGreaterThanOrEqual(60);
         // Only ever at a stoppage (the ball was out, or it's the kick-off after a goal).
         expect(['out', 'kickoff'].includes(s.phase)).toBe(true);
-        // The 60' look takes off anyone under 0.55; from 75' the bar is 0.45.
-        expect(s.stamina).toBeLessThan(s.minute >= 75 ? 0.45 : 0.55);
+        // The 60' look takes off anyone under 0.55; from 75' the bar is 0.45. Past 70' a side that
+        // hasn't made a change yet makes one whatever the legs look like (its first sub of the match).
+        const first = subs.filter((x) => x.e.side === s.e.side).indexOf(s) === 0;
+        if (s.stamina >= (s.minute >= 75 ? 0.45 : 0.55)) {
+          expect(first).toBe(true);
+          expect(s.minute).toBeGreaterThanOrEqual(70);
+          forced++;
+        }
         const p = m.teamPlayers(s.e.side)[s.e.slot];
         expect(p.isKeeper).toBe(false);
       }
-      expect(m.subsUsed[0]).toBeLessThanOrEqual(3);
-      expect(m.subsUsed[1]).toBeLessThanOrEqual(3);
+      expect(m.subsUsed[0]).toBeLessThanOrEqual(5);
+      expect(m.subsUsed[1]).toBeLessThanOrEqual(5);
+      // Every AI bench gets used.
+      expect(m.subsUsed[0]).toBeGreaterThan(0);
+      expect(m.subsUsed[1]).toBeGreaterThan(0);
       expect(subs.filter((x) => x.e.side === 0).length).toBe(m.subsUsed[0]);
     }
     expect(late).toBeGreaterThan(0);
+    // eslint-disable-next-line no-console
+    console.log(`late AI subs over 5 matches: ${late} (${forced} forced at 70')`);
   }, 60_000);
 
   it("never makes the human manager's changes", () => {
@@ -177,16 +196,24 @@ describe('substitutions and mentality', () => {
     const fresh = m.teamPlayers(1).filter((p) => p.def.id.includes('-b')).map((p) => p.idx);
     expect(fresh.length).toBe(2);
     m.clock = 50;
-    expect(m.aiSubs(1, 3)).toBe(1);
-    expect(m.subsUsed[1]).toBe(3);
+    // Only two outfielders left on the bench (a keeper never replaces an outfielder).
+    expect(m.aiSubs(1, 4)).toBe(2);
+    expect(m.subsUsed[1]).toBe(4);
     const off = m.drainEvents().filter((e) => e.type === 'sub');
-    expect(off.length).toBe(3);
+    expect(off.length).toBe(4);
     for (const e of off.slice(2)) if (e.type === 'sub') expect(fresh).not.toContain(m.teamPlayers(1)[e.slot].idx);
+    // One more on the bench: the fifth and last change, then nothing more however tired they are.
+    m.bench[1].push({ ...m.bench[0].find((d) => d.role === 'MF')!, id: 'extra' });
+    m.clock = 60;
+    expect(m.aiSubs(1, 2, 0.9)).toBe(1);
+    expect(m.subsUsed[1]).toBe(5);
+    m.bench[1].push({ ...m.bench[0].find((d) => d.role === 'FW')!, id: 'extra2' });
+    m.clock = 70;
     expect(m.aiSubs(1, 2, 0.9)).toBe(0);
   });
 
-  it("the 60' look takes off anyone under 0.55; by 75' the bar is 0.45", () => {
-    const at = (minute: number, stamina: number) => {
+  it("the 60' look takes off anyone under 0.55; by 75' the bar is 0.45; by 70' every AI bench has been used", () => {
+    const at = (minute: number, stamina: number, used = 1) => {
       const m = match(12);
       m.phase = 'halftime';
       m.continueSecondHalf();
@@ -195,14 +222,23 @@ describe('substitutions and mentality', () => {
       expect(m.minute()).toBe(minute);
       for (const p of m.teamPlayers(0)) if (!p.isKeeper) p.stamina = 0.9;
       m.teamPlayers(0)[6].stamina = stamina;
+      // (`used`: changes the side has already made, e.g. at half time.)
+      m.subsUsed[0] = used;
       m.drainEvents();
       (m as unknown as { goOut: (k: string, s: number, x: number, z: number) => void }).goOut('throwin', 1, 0, 30);
-      return m.drainEvents().filter((e) => e.type === 'sub' && e.side === 0).length;
+      const subs = m.drainEvents().filter((e) => e.type === 'sub' && e.side === 0);
+      return { n: subs.length, slot: subs[0]?.type === 'sub' ? subs[0].slot : -1 };
     };
-    expect(at(62, 0.5)).toBe(1);
-    expect(at(62, 0.6)).toBe(0);
-    expect(at(77, 0.5)).toBe(0);
-    expect(at(77, 0.4)).toBe(1);
+    expect(at(62, 0.5).n).toBe(1);
+    expect(at(62, 0.6).n).toBe(0);
+    expect(at(77, 0.5).n).toBe(0);
+    expect(at(77, 0.4).n).toBe(1);
+    // No change made yet: from 70' one comes on regardless, for the most tired outfielder.
+    expect(at(66, 0.8, 0).n).toBe(0);
+    const forced = at(72, 0.8, 0);
+    expect(forced.n).toBe(1);
+    expect(forced.slot).toBe(6);
+    expect(at(72, 0.8, 1).n).toBe(0);
   });
 
   it('attacking mentality raises the shape, defensive drops it', () => {

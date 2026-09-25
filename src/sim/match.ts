@@ -1,6 +1,6 @@
 import { angleDiff, clamp, dist2, pointSegDist, turnToward } from '../core/math';
 import { Rng } from '../core/rng';
-import { CURL_SPIN, onTarget, pickReceiver, resolveKick, stickCurl } from './actions';
+import { CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, onTarget, pickReceiver, resolveKick, stickCurl } from './actions';
 import { intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { Ball, type BallHit } from './ball';
 import {
@@ -14,7 +14,7 @@ import {
   HUMAN_WINDOW, INTRO_BEAT, KICK_TIMEOUT, RESULT_BEAT, aiPenaltyAim, divePlan, keeperGuess, lineupSpot, nextTurn, penaltyLaunch,
   predictCrossing, shootoutWinner, takerOrder, type KeeperDive, type KickHow, type PenAim, type ShootoutState,
 } from './shootout';
-import type { FormationId, KickKind, MatchEvent, PlayerDef, RestartKind, Side, TeamDef } from './types';
+import type { FormationId, KickKind, MatchEvent, PlayerDef, RestartKind, ShotStyle, Side, TeamDef } from './types';
 
 export type Phase = 'kickoff' | 'play' | 'out' | 'restart' | 'goal' | 'halftime' | 'fulltime' | 'shootout';
 
@@ -143,11 +143,25 @@ const RUNUP_LENS_CLEAR = 0.8;
 /** AI managers look at their bench at the first dead ball after these minutes (second half)... */
 const AUTO_SUB_MINUTES = [60, 75];
 /**
+ * ... and a side that still hasn't made a change by this minute makes one at the next dead ball
+ * whatever the legs look like (the most tired outfielder comes off): every AI bench gets used.
+ */
+const FORCED_SUB_MINUTE = 70;
+/**
  * A driven corner (SHOOT): whipped at the near-post zone a touch softer than full power, dropping to
  * ~1 m at the runner (so it's met, not flashed across the box and out for a throw on the far side).
  */
 const DRIVEN_POWER = 0.75;
 const DRIVEN_LAND = 1.0;
+/** The human's assisted receive sprints onto a pass whose meeting point is further than this (m). */
+const RECEIVE_SPRINT = 2.5;
+/** Extra hang time (s) on a corner to the far post, so it clears the near-post crowd. */
+const FAR_POST_HANG = 0.22;
+/**
+ * Chance (base) a parry of a ball heading for the edge of the frame is tipped round the post or over
+ * the bar; the rest are pushed back into play (it used to be ~0.75, so most long shots ended as corners).
+ */
+const PARRY_TIP = 0.5;
 /** A shot struck at least this fast (m/s) into the top corner is beyond a diving keeper's full reach. */
 const TOP_CORNER_SPEED = 25.5;
 /** Shots from further out than this (m) are held more often (fully from 8 m further out). */
@@ -248,7 +262,8 @@ export class Match {
   subsUsed: [number, number] = [0, 0];
   /** Players already in the referee's book. */
   readonly booked = new Set<number>();
-  readonly maxSubs = 3;
+  /** Substitutions allowed per side (five, as in DLS). The tactics screen reads this. */
+  readonly maxSubs = 5;
   readonly bench: [PlayerDef[], PlayerDef[]];
   half = 1;
   clock = 0;
@@ -287,6 +302,8 @@ export class Match {
   shotCurl = 0;
   /** How far out (m, to the goal centre) the last shot was struck from. */
   shotDist = 0;
+  /** The last shot was a chip or a finesse one (null for a plain strike or a header). */
+  shotStyle: ShotStyle | null = null;
   /** kickId of the last shot struck straight from a direct free kick. */
   private fkShotKick = -1;
   /** Where the ball was at the start of this step (swept contact checks). */
@@ -322,6 +339,8 @@ export class Match {
   kickKind: KickKind = 'pass';
   /** kickId of the last corner / wide free-kick delivery (its box runners attack their zones). */
   setPieceKick = -1;
+  /** That delivery was driven (whipped in flat and fast) rather than hung up. */
+  setPieceDriven = false;
   /** Whether the defence attacks that delivery (vs. holding and letting the runners come). */
   spContest = false;
   /** kickId of the last direct free kick, and the defenders who were in its wall. */
@@ -593,7 +612,7 @@ export class Match {
 
   /**
    * AI managers: freshen up to `count` of the most tired outfielders (stamina under `below`), within
-   * the three-sub limit (called at half time, and by the automatic 60' / 75' windows). Each goes off
+   * the maxSubs limit (called at half time, and by the automatic 60' / 70' / 75' looks). Each goes off
    * for a bench player of the same role if there is one, otherwise any outfielder; a player who has
    * already come on is never taken off again, and nobody is replaced by a keeper. A second call for
    * the same side at the same stoppage (same half, phase and clock) does nothing, so a caller that
@@ -603,6 +622,11 @@ export class Match {
     const key = `${this.half}|${this.phase}|${this.clock}|${this.kickId}`;
     if (this.aiSubAt[side] === key) return 0;
     this.aiSubAt[side] = key;
+    return this.subTired(side, count, below);
+  }
+
+  /** aiSubs without the once-per-stoppage guard. */
+  private subTired(side: Side, count: number, below: number): number {
     let room = Math.max(0, Math.min(Math.floor(count), this.maxSubs - this.subsUsed[side]));
     if (room <= 0) return 0;
     const tired = this.bySide[side]
@@ -631,7 +655,8 @@ export class Match {
   /**
    * AI managers (both sides in AI-vs-AI, never the human's) look at their bench at the first dead
    * ball after 60' and after 75': outfielders under that window's AUTO_SUB_STAMINA come off, up to two
-   * at a time, within the three-sub limit. Each change is a 'sub' event.
+   * at a time, within maxSubs. A side that has made no change at all by FORCED_SUB_MINUTE brings one
+   * on at the next dead ball regardless (the most tired outfielder). Each change is a 'sub' event.
    */
   private autoSubs(): void {
     if (this.half !== 2 || this.shootout) return;
@@ -639,11 +664,13 @@ export class Match {
     for (const side of [0, 1] as Side[]) {
       if (this.cfg.humanSide === side) continue;
       let w = this.subWindow[side];
-      if (w >= AUTO_SUB_MINUTES.length || min < AUTO_SUB_MINUTES[w]) continue;
-      while (w < AUTO_SUB_MINUTES.length && min >= AUTO_SUB_MINUTES[w]) w++;
-      this.subWindow[side] = w;
-      // (A stoppage that comes late enough to cover both windows uses the later, stricter bar.)
-      this.aiSubs(side, 2, AUTO_SUB_STAMINA[w - 1]);
+      if (w < AUTO_SUB_MINUTES.length && min >= AUTO_SUB_MINUTES[w]) {
+        while (w < AUTO_SUB_MINUTES.length && min >= AUTO_SUB_MINUTES[w]) w++;
+        this.subWindow[side] = w;
+        // (A stoppage that comes late enough to cover both windows uses the later, stricter bar.)
+        this.aiSubs(side, 2, AUTO_SUB_STAMINA[w - 1]);
+      }
+      if (min >= FORCED_SUB_MINUTE && this.subsUsed[side] === 0) this.subTired(side, 1, Infinity);
     }
   }
 
@@ -742,7 +769,7 @@ export class Match {
         p.wantX = p.wantZ = 0;
         p.sprint = false;
       }
-      p.step(dt, this.ball.owner === p.idx);
+      p.step(dt, this.ball.owner === p.idx, this.isHumanControlled(p));
     }
     this.separate();
     this.keepPenaltyArea();
@@ -1110,6 +1137,7 @@ export class Match {
       this.shotSpeed = Math.hypot(L.vx, L.vy, L.vz);
       this.shotDist = dist2(b.pos.x, b.pos.z, this.attackDir(p.side) * HALF_L, 0);
       this.shotCurl = clamp(Math.abs(L.spinY) / CURL_SPIN, 0, 1);
+      this.shotStyle = L.style ?? null;
       const rr = this.restart;
       if (this.phase === 'restart' && rr && rr.taker === p.idx && isDirectFreeKick(this, rr)) this.fkShotKick = this.kickId;
       this.passTarget = -1;
@@ -1130,7 +1158,7 @@ export class Match {
       }
       if (off.length) this.offWatch = { kick: this.kickId, side: p.side, passer: p.idx, players: off };
     }
-    this.events.push({ type: 'kick', power: L.power, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: L.kind });
+    this.events.push({ type: 'kick', power: L.power, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: L.kind, ...(L.style ? { style: L.style } : {}) });
     if (this.cfg.humanSide === p.side && L.target >= 0 && !isShot) {
       const r = this.players[L.target];
       if (r.side === p.side) this.active = r.idx;
@@ -1139,6 +1167,7 @@ export class Match {
     if (this.phase === 'restart' && r && r.taker === p.idx) {
       if (isCrossingRestart(this, r)) {
         this.setPieceKick = this.kickId;
+        this.setPieceDriven = !!o.driven;
         this.spContest = this.rng.chance(0.45);
       }
       if (isDirectFreeKick(this, r)) {
@@ -1266,6 +1295,7 @@ export class Match {
     // Charge is measured while held and read on the release frame.
     const shootPower = clamp(this.shootCharge / 0.85, 0.15, 1);
     const throughHold = this.throughCharge;
+    if (!pad.shoot && !this.prev.shoot) this.chipArmed = false;
     this.shootCharge = pad.shoot ? this.shootCharge + dt : 0;
     this.throughCharge = pad.through ? this.throughCharge + dt : 0;
     if (this.phase === 'shootout') {
@@ -1421,13 +1451,30 @@ export class Match {
       }
     }
 
+    // Chip: THROUGH tapped while SHOOT is charging (or SHOOT let go with THROUGH held).
+    if (throughP && pad.shoot && this.prev.shoot) this.chipArmed = true;
     if (hasBall && b.owner === p.idx) {
       if (passP) this.order(p, 'pass', dirX, dirZ, 0.6, -1, false);
       else if (shootR) {
-        const o = this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0, shootPower, -1, false);
-        if (o && stickLen > 0.25) o.curl = stickCurl(pad.mz);
+        const sx = stickLen > 0.25 ? pad.mx : 0;
+        const sz = stickLen > 0.25 ? pad.mz : 0;
+        const o = this.order(p, 'shot', sx, sz, shootPower, -1, false);
+        if (o) {
+          // Finesse: the stick pushed diagonally at a corner (towards goal and across it, ~25-60 degrees
+          // off straight at goal) on a placed (under FINESSE_MAX_POWER) shot: curled away from the
+          // keeper into that corner.
+          const fwd = (sx * this.attackDir(side)) / Math.max(stickLen, 1e-6);
+          const lat = Math.abs(sz) / Math.max(stickLen, 1e-6);
+          if (this.chipArmed || pad.through) o.style = 'chip';
+          else if (stickLen > 0.5 && fwd > 0.5 && lat > 0.4 && shootPower < FINESSE_MAX_POWER) {
+            o.style = 'finesse';
+            o.curl = Math.sign(sz) * FINESSE_CURL;
+          } else if (stickLen > 0.25) o.curl = stickCurl(pad.mz);
+        }
+        this.chipArmed = false;
       }
-      else if (throughR) {
+      // (A THROUGH tap during a shot's charge is the chip, not a through ball.)
+      else if (throughR && !pad.shoot && !this.chipArmed) {
         if (throughHold < 0.24) this.order(p, 'through', dirX, dirZ, 0.7, -1, false);
         else this.order(p, 'lob', dirX, dirZ, clamp(throughHold / 0.8, 0.3, 1), -1, false);
       }
@@ -1457,7 +1504,8 @@ export class Match {
         p.wantZ = tz / tl;
         p.sprint = tl > 2;
       }
-      // Assisted receive: if a pass is on its way to you and you're not steering, go meet it.
+      // Assisted receive: if a pass is on its way to you and you're not steering, go meet it (at a
+      // sprint when it's a few metres off: an AI man racing for it would).
       if (this.passTarget === p.idx && stickLen < 0.2) {
         const i = intercept(this, p);
         const tx = i.x - p.pos.x;
@@ -1466,6 +1514,7 @@ export class Match {
         if (tl > 0.3) {
           p.wantX = (tx / tl) * Math.min(1, tl / 2);
           p.wantZ = (tz / tl) * Math.min(1, tl / 2);
+          if (tl > RECEIVE_SPRINT) p.sprint = true;
         }
       }
     }
@@ -1642,6 +1691,8 @@ export class Match {
     const a = setPieceAim(this, t, driven);
     const o = this.order(t, 'lob', a.x - t.pos.x, a.z - t.pos.z, power, a.target, false, { x: a.x, z: a.z }, driven ? DRIVEN_LAND : undefined);
     if (o && driven) o.driven = true;
+    // One aimed beyond the near post (a corner to the far post) is hung up over the heads there.
+    else if (o && this.restart?.kind === 'corner' && a.z * Math.sign(t.pos.z || 1) < 1) o.hang = FAR_POST_HANG;
   }
 
   /**
@@ -2590,8 +2641,9 @@ export class Match {
     // nearer the keeper's body is pushed back out into play (not behind for a corner every time).
     const edge = Math.abs(b.pos.z) > hw - 1.3 || b.pos.y > GOAL_H - 0.75;
     // (A long shot he's had time to get across to is palmed down or out rather than tipped behind.)
+    // Most parries stay in play: pushed out to the side or spilled back into the box (a rebound).
     const set = this.shotKick === this.kickId ? clamp((this.shotDist - LONG_CATCH_FROM) / 8, 0, 1) : 0;
-    const pTip = edge ? 0.66 + Math.min(0.14, (Math.abs(b.pos.z) / hw) * 0.14) + (sp > 24 ? 0.08 : 0) - set * 0.25 : 0.1;
+    const pTip = edge ? PARRY_TIP + Math.min(0.12, (Math.abs(b.pos.z) / hw) * 0.12) + (sp > 24 ? 0.06 : 0) - set * 0.15 : 0.08;
     if (onFrame && this.rng.chance(pTip)) {
       // Tip it round the post or over the bar.
       if (Math.abs(b.pos.z) < 1.3 || b.pos.y > 1.7) {
@@ -3048,6 +3100,8 @@ export class Match {
   private cutKick = -1;
   /** The human's last stick input looked like keys / d-pad (see isDigitalStick, Pad.digital). */
   private padDigital = false;
+  /** THROUGH was tapped during the current SHOOT charge: the shot will be a chip. */
+  private chipArmed = false;
   /** A human set-piece delivery pressed while the box was still filling. */
   private queuedKick: (() => void) | null = null;
 
@@ -3277,6 +3331,7 @@ export class Match {
     const need = Math.max(0, Math.abs(lateral) - 0.85) / tLeft;
     const maxDive = 3.4 + keeping * 1.8 + this.keeperBonus(k.side) * 6 + d.boost;
     k.setState('dive');
+    k.diveTravel = Infinity;
     k.vel.z = Math.sign(lateral) * clamp(need * 1.1, 3.2, maxDive);
     k.vel.x = this.attackDir(k.side) * 0.5;
     k.vy = clamp(Math.max(d.y * 2.5 - 0.3, 7.5 * tLeft), 1.5, 5.8);

@@ -72,7 +72,8 @@ export function teamRating(t: TeamDef): number {
 }
 
 export type MatchEvent =
-  | { type: 'kick'; power: number; x: number; y: number; z: number; kind: KickKind }
+  /** A strike of the ball. `style`: a shot played as a chip or a finesse (curled, placed) one. */
+  | { type: 'kick'; power: number; x: number; y: number; z: number; kind: KickKind; style?: ShotStyle }
   | { type: 'goal'; side: Side; scorer: number; own: boolean }
   | { type: 'whistle'; kind: 'short' | 'long' | 'end' }
   | { type: 'post'; x: number; y: number; z: number; speed: number }
@@ -117,4 +118,6 @@ export type MatchEvent =
   | { type: 'advantage'; side: Side };
 
 export type KickKind = 'pass' | 'through' | 'lob' | 'shot' | 'clear' | 'header' | 'throw' | 'keeper';
+/** How a shot is struck, beyond a plain strike: lifted over the keeper, or curled and placed. */
+export type ShotStyle = 'chip' | 'finesse';
 export type RestartKind = 'kickoff' | 'throwin' | 'corner' | 'goalkick' | 'freekick' | 'penalty';

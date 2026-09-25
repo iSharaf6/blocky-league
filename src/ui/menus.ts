@@ -2,7 +2,7 @@ import { sfx } from '../audio/sfx';
 import type { SaveData } from '../core/save';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
-import { KitPreview } from './preview';
+import { KitPreview, faceHtml, hydrateFaces } from './preview';
 import { crestSvg } from './crest';
 import { speechAvailable } from './commentary';
 import { cssHex, shade } from '../render/palette';
@@ -173,6 +173,8 @@ const HOWTO_KEYS = `
       <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
       <p><kbd>SPACE</kbd> pass (aim with the stick)</p>
       <p><kbd>K</kbd> hold &amp; release to shoot</p>
+      <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip the keeper</p>
+      <p>Soft <kbd>K</kbd> with a diagonal stick: finesse curler</p>
       <p><kbd>L</kbd> tap: through ball · hold: lob / cross</p>
       <p><kbd>SHIFT</kbd> sprint · double-tap to knock it past a defender</p>
     </div>
@@ -194,6 +196,8 @@ const HOWTO_PAD = `
       <p><kbd>LEFT STICK</kbd> move</p>
       <p><kbd>A</kbd> pass (aim with the stick)</p>
       <p><kbd>B</kbd> hold &amp; release to shoot</p>
+      <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip the keeper</p>
+      <p>Soft <kbd>B</kbd> with a diagonal stick: finesse curler</p>
       <p><kbd>X</kbd> tap: through ball · hold: lob / cross</p>
       <p><kbd>RT</kbd> sprint · double-tap to knock it past</p>
     </div>
@@ -229,6 +233,7 @@ const HOWTO_TOUCH = `
         <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder</td><td><b>TACKLE</b> slide in</td></tr>
         <tr><td>${dot('through')}</td><td><b>THROUGH</b> tap · hold for a lob or cross</td><td><b>PRESS</b> hold to close down</td></tr>
         <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold · double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
+        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT + tap THROUGH/CROSS · <b>CURL</b> a soft SHOOT with the stick on a diagonal</td></tr>
       </tbody>
     </table>
     <p class="fine">The buttons relabel themselves with the play. Set pieces: <b>PASS</b> short · <b>SHOOT</b> at goal · <b>CROSS</b> hold to whip it in. Tap to skip a replay; <b>II</b> pauses.</p>
@@ -528,7 +533,13 @@ export class Menus {
       const live = (m as Match & { formation?: FormationId[] }).formation?.[side];
       return FORMATION_IDS.find((id) => FORMATIONS[id] === cur) ?? FORMATION_IDS.find((id) => same(FORMATIONS[id], cur)) ?? live ?? chosen ?? m.teams[side].formation;
     };
-    const subsLeft = () => m.maxSubs - m.subsUsed[side];
+    // The sim's limit, read live (it may rise, or differ per match); per-side arrays are fine too.
+    const maxSubs = () => {
+      const v = (m as Match & { maxSubs: number | readonly number[] }).maxSubs;
+      const n = typeof v === 'number' ? v : Array.isArray(v) ? Number(v[side]) : 3;
+      return Number.isFinite(n) ? n : 3;
+    };
+    const subsLeft = () => Math.max(0, maxSubs() - m.subsUsed[side]);
     // A starter and a bench player can swap if subs remain, the starter is still on, and keeper swaps with keeper.
     const canSwap = (slot: number, b: PlayerDef) => {
       const p = m.teamPlayers(side)[slot];
@@ -571,13 +582,14 @@ export class Menus {
               const ok = x >= 0 ? canSwap(x, p) : subsLeft() > 0;
               const sel = picked?.k === 'b' && picked.i === i;
               return `<li><button class="tx-b ${sel ? 'sel' : ''} ${ok ? (x >= 0 ? 'hot' : '') : 'off'}" data-k="b${i}" ${ok ? '' : 'aria-disabled="true"'}>
-                <i style="background:${cssHex(kit.shirt)};color:${light ? 'var(--ink)' : '#fff'}">${p.number}</i><span>${p.name}</span><em>${p.role}</em><b>${overall(p)}</b>
+                ${faceHtml(p, kit, 'sm')}<i style="background:${cssHex(kit.shirt)};color:${light ? 'var(--ink)' : '#fff'}">${p.number}</i><span>${p.name}</span><em>${p.role}</em><b>${overall(p)}</b>
               </button></li>`;
             })
             .join('')
         : '<li class="tx-empty">Nobody left on the bench.</li>';
       const left = subsLeft();
-      $(d, '.tx-left').textContent = left > 0 ? `${left} SUB${left > 1 ? 'S' : ''} LEFT` : 'NO SUBS LEFT';
+      hydrateFaces(bench);
+      $(d, '.tx-left').textContent = left > 0 ? `${left} OF ${maxSubs()} SUBS LEFT` : 'NO SUBS LEFT';
       $(d, '.tx-left').classList.toggle('none', left <= 0);
       const team = m.teamPlayers(side);
       $(d, '.tx-hint').textContent =
@@ -689,11 +701,17 @@ export class Menus {
   ): void {
     const motm = ratings?.[0];
     const mine = ratings?.filter((r) => r.side === humanSide).slice(0, 3) ?? [];
+    // Head shots: the player as he looked on the pitch, in the kit his side wore.
+    const face = (r: { idx: number; side: number }, cls = '') => {
+      const def = m.players[r.idx]?.def;
+      const kit = kits[r.side === 1 ? 1 : 0];
+      return def && kit ? faceHtml(def, kit, cls) : '';
+    };
     const motmHtml = motm
       ? `<div class="motm">
-          <div class="motm-card" style="--k:${cssHex(kits[motm.side].shirt)}"><span>MAN OF THE MATCH</span><b>${motm.name}</b><em>${motm.rating.toFixed(1)}</em>
+          <div class="motm-card" style="--k:${cssHex(kits[motm.side].shirt)}">${face(motm, 'xl')}<span>MAN OF THE MATCH</span><b>${motm.name}</b><em>${motm.rating.toFixed(1)}</em>
           ${motm.goals ? `<small>${motm.goals} goal${motm.goals > 1 ? 's' : ''}${motm.assists ? ` · ${motm.assists} assist${motm.assists > 1 ? 's' : ''}` : ''}</small>` : motm.assists ? `<small>${motm.assists} assist${motm.assists > 1 ? 's' : ''}</small>` : ''}</div>
-          <ul class="ratings">${mine.map((r) => `<li><span>${r.name}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>
+          <ul class="ratings">${mine.map((r) => `<li>${face(r, 'sm')}<span>${r.name}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>
         </div>`
       : '';
     const my = m.score[humanSide];
@@ -734,6 +752,7 @@ export class Menus {
       tick();
       sfx.coin();
     };
+    hydrateFaces(d);
     setTimeout(() => count(reward.coins), 350);
     const dbl = d.querySelector<HTMLButtonElement>('[data-a=double]');
     const nextBtn = $<HTMLButtonElement>(d, '[data-a=next]');

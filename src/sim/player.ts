@@ -1,6 +1,6 @@
 import { angleDiff, clamp, turnToward, wrapAngle } from '../core/math';
 import { ACCEL, CONTROL_R, DECEL, DRIBBLE_MULT, JOG_SPEED, SPRINT_SPEED, STRIDE } from './constants';
-import type { KickKind, PlayerDef, Role, Side } from './types';
+import type { KickKind, PlayerDef, Role, ShotStyle, Side } from './types';
 
 export type PState =
   | 'move' // normal locomotion, can dribble
@@ -41,6 +41,10 @@ export interface KickOrder {
   curl?: number;
   /** Lofted balls only: whipped in flat and fast (a driven cross) instead of hung up. */
   driven?: boolean;
+  /** Shots only: a chip over the keeper, or a finesse (curled, placed) shot. */
+  style?: ShotStyle;
+  /** Lofted balls only: extra seconds of hang time (a far-post corner is hung up over the near post). */
+  hang?: number;
 }
 
 /** Top speed allowed while celebrating (adrenaline: a scorer can outrun his stamina). */
@@ -52,6 +56,17 @@ const JOG_DRAIN = 0.0036;
 const RECOVERY = 0.008;
 /** Half length (s) the stamina rates are tuned for. */
 export const FATIGUE_REF_HALF = 120;
+/**
+ * The human's dribbler cuts rather than brakes: turns sharper than a plant-and-turn (up to
+ * DRIBBLE_CUT_MAX rad off his run) bend the run round at DRIBBLE_TURN rad/s (90 degrees in ~0.27 s),
+ * losing at most DRIBBLE_CUT_LOSS of his pace through a right-angle cut. The body (and the ball on his
+ * foot) turns DRIBBLE_FACE_TURN times faster so it keeps up. (AI carriers steer smoothly and keep the
+ * velocity-blend turn.)
+ */
+export const DRIBBLE_TURN = 5.8;
+const DRIBBLE_CUT_MAX = 2.4;
+const DRIBBLE_CUT_LOSS = 0.16;
+const DRIBBLE_FACE_TURN = 1.8;
 
 export class Player {
   pos = { x: 0, z: 0 };
@@ -75,6 +90,8 @@ export class Player {
   y = 0;
   vy = 0;
   diveDir = 0; // -1 / +1 relative to facing for animation
+  /** Lateral ground (m) the current dive can still cover before the keeper is at full stretch. */
+  diveTravel = Infinity;
   // Animation bookkeeping (recorded for replays).
   runPhase = 0;
   kickT = 0; // 0..1 swing progress, drives the kicking leg
@@ -184,7 +201,11 @@ export class Player {
     return this.state === 'move' && !this.sentOff;
   }
 
-  step(dt: number, dribbling: boolean): void {
+  /**
+   * `agile`: a human-controlled dribbler, who cuts sharply (DRIBBLE_TURN) instead of the AI's rounder
+   * turn through the velocity blend.
+   */
+  step(dt: number, dribbling: boolean, agile = false): void {
     this.stateT += dt;
     this.kickCooldown = Math.max(0, this.kickCooldown - dt);
     this.burstT = Math.max(0, this.burstT - dt);
@@ -193,7 +214,7 @@ export class Player {
 
     switch (this.state) {
       case 'move':
-        this.locomote(dt, dribbling);
+        this.locomote(dt, dribbling, agile);
         break;
       case 'kick':
       case 'throw':
@@ -217,6 +238,11 @@ export class Player {
         if (this.stateT > 0.38) this.setState('move');
         break;
       case 'dive':
+        // At full stretch the body stops going sideways (the arms are the reach from there).
+        if (this.diveTravel < Infinity) {
+          this.diveTravel -= Math.abs(this.vel.z) * dt;
+          if (this.diveTravel <= 0) this.vel.z *= Math.exp(-25 * dt);
+        }
         this.y += this.vy * dt;
         this.vy -= 14 * dt;
         if (this.y <= 0) {
@@ -271,7 +297,7 @@ export class Player {
     return Math.max(this.jogPace() * 1.04, this.top * (0.7 + 0.3 * this.stamina));
   }
 
-  private locomote(dt: number, dribbling: boolean): void {
+  private locomote(dt: number, dribbling: boolean, agile = false): void {
     let max = this.sprint ? this.sprintPace() : this.jogPace();
     if (this.state === 'celebrate' && this.sprint) max = Math.max(max, CELEBRATE_SPRINT);
     if (this.burstT > 0) max = Math.max(max, this.top) * 1.1;
@@ -296,26 +322,38 @@ export class Player {
     const sp = this.speed();
     let accel = tl > 0.05 ? ACCEL : DECEL;
     if (this.slowT > 0) accel *= 0.5;
+    let turn = 0;
     if (sp > 2 && tl > 0.05) {
       const cur = Math.atan2(this.vel.z, this.vel.x);
       const want = Math.atan2(tz, tx);
-      const turn = Math.abs(angleDiff(cur, want));
+      turn = Math.abs(angleDiff(cur, want));
       if (turn > 1.6) accel = DECEL * 1.1;
     }
-    const dx = tx - this.vel.x;
-    const dz = tz - this.vel.z;
-    const dl = Math.sqrt(dx * dx + dz * dz);
-    const step = accel * dt;
-    if (dl <= step) {
-      this.vel.x = tx;
-      this.vel.z = tz;
+    const cut = dribbling && agile;
+    if (cut && sp > 1.5 && tl > 0.05 && turn > 0.05 && turn < DRIBBLE_CUT_MAX) {
+      // A cut with the ball: the run bends round instead of braking through the turn.
+      const cur = Math.atan2(this.vel.z, this.vel.x);
+      const a = turnToward(cur, Math.atan2(tz, tx), DRIBBLE_TURN * (this.slowT > 0 ? 0.5 : 1) * dt);
+      const want = Math.hypot(tx, tz) * (1 - DRIBBLE_CUT_LOSS * Math.min(1, turn / (Math.PI / 2)));
+      const nsp = sp + clamp(want - sp, -ACCEL * dt, ACCEL * dt);
+      this.vel.x = Math.cos(a) * nsp;
+      this.vel.z = Math.sin(a) * nsp;
     } else {
-      this.vel.x += (dx / dl) * step;
-      this.vel.z += (dz / dl) * step;
+      const dx = tx - this.vel.x;
+      const dz = tz - this.vel.z;
+      const dl = Math.sqrt(dx * dx + dz * dz);
+      const step = accel * dt;
+      if (dl <= step) {
+        this.vel.x = tx;
+        this.vel.z = tz;
+      } else {
+        this.vel.x += (dx / dl) * step;
+        this.vel.z += (dz / dl) * step;
+      }
     }
 
     const nsp = this.speed();
-    const turnRate = dribbling ? 9 - nsp * 0.5 : 13 - nsp * 0.7;
+    const turnRate = dribbling ? (9 - nsp * 0.5) * (cut ? DRIBBLE_FACE_TURN : 1) : 13 - nsp * 0.7;
     let face: number | null = this.faceTarget;
     if (face === null && nsp > 0.35) face = Math.atan2(this.vel.z, this.vel.x);
     if (face !== null) this.facing = turnToward(this.facing, face, Math.max(4, turnRate) * dt);

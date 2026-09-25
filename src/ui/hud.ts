@@ -1,15 +1,27 @@
 import { BALL_OFS, PF } from '../game/replay';
-import { BOX_DEPTH, BOX_W, CENTER_R, HALF_L, HALF_W } from '../sim/constants';
+import { BOX_DEPTH, BOX_W, CENTER_R, GOAL_DEPTH, GOAL_H, GOAL_W, HALF_L, HALF_W } from '../sim/constants';
 import type { Match } from '../sim/match';
 import type { Kit, MatchEvent, TeamDef } from '../sim/types';
 import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
-import { Commentator, speak, stopSpeech, surname, type CommentaryLine } from './commentary';
+import { Commentator, pitchNames, speak, stopSpeech, surname, type CommentaryLine } from './commentary';
 
 /** Screen position (CSS px, viewport origin) of a world point, or null when it is behind the camera. */
 export type Projector = (x: number, y: number, z: number) => { x: number; y: number } | null;
 
 type Rect = { l: number; t: number; r: number; b: number };
+
+/** Overlap area of two rects (after growing `b` by `pad` px on every side). */
+function overlapArea(a: Rect, b: Rect, pad = 0): number {
+  const x = Math.min(a.r, b.r + pad) - Math.max(a.l, b.l - pad);
+  const y = Math.min(a.b, b.b + pad) - Math.max(a.t, b.t - pad);
+  return x > 0 && y > 0 ? x * y : 0;
+}
+
+/** Distance from a point to a rect (0 inside). */
+function distTo(p: { x: number; y: number }, r: Rect): number {
+  return Math.hypot(Math.max(r.l - p.x, 0, p.x - r.r), Math.max(r.t - p.y, 0, p.y - r.b));
+}
 
 /** Seconds a commentary line stays up (goals and other big moments a little longer). */
 const LINE_S = 3;
@@ -82,7 +94,16 @@ export class Hud {
   private project: Projector | null = null;
   private lastFrame: Float32Array | null = null;
   private hintLow = false;
+  private hintSlot = '';
   private hintT = 0;
+  /** Seconds left of a hint blackout (card close-ups): set-piece hints stay hidden whatever the session asks. */
+  private hintHold = 0;
+  /** The hint the session last asked for (it comes back when a blackout ends). */
+  private hintWant = '';
+  /** Nowhere clear for the ticker (a set piece where every free band would cover the goal): hidden meanwhile. */
+  private cmBlocked = false;
+  /** The banner up now is a booking (compact plate in the top band / under the score bug). */
+  private bannerCard = false;
   onPause: (() => void) | null = null;
 
   constructor(teams: [HudTeam, HudTeam], humanSide: number) {
@@ -149,12 +170,68 @@ export class Hud {
     this.clock.innerHTML = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}${extra ? `<em>+${extra}</em>` : ''}`;
   }
 
-  /** Big chunky centre text. */
+  /** Big chunky centre text. Bookings (kind "card") are a compact plate up top instead (see placeBanner). */
   show(title: string, sub = '', kind = '', seconds = 2.2): void {
     this.banner.className = `hud-banner on ${kind}`;
     const letters = [...title].map((ch, i) => `<i style="animation-delay:${i * 45}ms">${ch === ' ' ? '&nbsp;' : ch}</i>`).join('');
     this.banner.innerHTML = `<div class="bn-title">${letters}</div>${sub ? `<div class="bn-sub">${sub}</div>` : ''}`;
     this.bannerTimer = seconds;
+    this.bannerCard = /(^|\s)card(\s|$)/.test(kind);
+    const st = this.banner.style;
+    st.left = st.top = st.width = '';
+    if (this.bannerCard) {
+      // The card says it all: the FOUL! flag goes, and no set-piece hint pops up over the close-up.
+      this.toast.classList.remove('on');
+      this.toastTimer = 0;
+      this.suppressHints(seconds);
+      this.placeBanner();
+      if (this.cmLine) this.placeTicker();
+    }
+  }
+
+  /**
+   * Booking plate: in the top band beside the score bug when it fits there (landscape), else right under the
+   * top cluster, centred (portrait). Either way the top ~20% of the screen, never across the players the
+   * card close-up frames in the middle of the lens.
+   */
+  private placeBanner(): void {
+    if (!this.bannerCard) return;
+    const b = this.banner;
+    const st = b.style;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const g = W < 480 ? 8 : 12;
+    const sb = this.rectOf('.scorebug', false);
+    if (!sb) return;
+    const pause = this.rectOf('.hud-pause', false);
+    const bl = sb.r + g;
+    const br = (pause ? pause.l : W) - g;
+    if (br - bl >= 300) {
+      st.left = `${Math.round(bl)}px`;
+      st.width = `${Math.round(br - bl)}px`;
+      st.top = `${Math.round(sb.t)}px`;
+      if (b.offsetHeight <= Math.max(H * 0.2 - sb.t, 64)) return;
+    }
+    let top = sb.b;
+    for (const sel of ['.so-track', '.hud-toast.on']) {
+      const r = this.rectOf(sel, false);
+      if (r && r.t < H * 0.4) top = Math.max(top, r.b);
+    }
+    let right = W - g;
+    // Portrait minimap up in the top-right corner: the plate sits beside it rather than under it.
+    const radar = !this.radarHidden && !this.root.classList.contains('dead') ? this.rectOf('.hud-radar') : null;
+    if (radar && radar.t < H * 0.4) {
+      if (radar.l > W / 2 && radar.l - 8 - g >= 240) right = radar.l - 8;
+      else top = Math.max(top, radar.b);
+    }
+    st.left = `${g}px`;
+    st.width = `${Math.round(right - g)}px`;
+    st.top = `${Math.round(top + 8)}px`;
+  }
+
+  /** The booking plate's box while it is up (the ticker keeps clear of it). */
+  private cardBannerRect(): Rect | null {
+    return this.bannerCard && this.bannerTimer > 0 ? this.rectOf('.hud-banner.card', false) : null;
   }
 
   /**
@@ -187,14 +264,26 @@ export class Hud {
   }
 
   setHint(text: string): void {
-    if (this.hint.textContent !== text) this.hint.textContent = text;
+    this.hintWant = text;
+    if (this.hintHold > 0) text = '';
     const on = text.length > 0;
+    // Off: keep the old words while it fades out (an empty box shrinking looks broken).
+    if (on && this.hint.textContent !== text) this.hint.textContent = text;
     if (on && !this.hint.classList.contains('on')) {
-      // Decide the slot before it fades in, so it never flashes over the taker first.
+      // Decide the slot before it fades in, so it never flashes over the taker or the goal first.
       this.hintT = 0;
       this.placeHint(true);
     }
     this.hint.classList.toggle('on', on);
+  }
+
+  /**
+   * Keep set-piece hints hidden for `seconds` (the render side calls this for the card close-up; every booking
+   * banner does it too), whatever setHint is asked meanwhile. The last asked-for hint returns afterwards.
+   */
+  suppressHints(seconds: number): void {
+    this.hintHold = Math.max(this.hintHold, seconds);
+    this.setHint(this.hintWant);
   }
 
   /** Where the camera puts world points on screen; enables keep-clear placement of the ticker and hints. */
@@ -288,8 +377,66 @@ export class Hud {
   }
 
   /**
+   * Screen boxes of the goal mouths in shot (posts, bar, net and the keeper's patch in front of the line),
+   * clipped to the viewport. A set piece's captions must never sit over the goal being aimed at.
+   */
+  private goalRects(): Rect[] {
+    const P = this.project;
+    if (!P) return [];
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const out: Rect[] = [];
+    const zs = [-(GOAL_W / 2 + 0.6), GOAL_W / 2 + 0.6];
+    for (const g of [-1, 1]) {
+      let l = Infinity;
+      let t = Infinity;
+      let r = -Infinity;
+      let b = -Infinity;
+      let inShot = true;
+      for (const x of [g * (HALF_L + GOAL_DEPTH), g * (HALF_L - 2.4)]) {
+        for (const z of zs) {
+          for (const y of [0, GOAL_H + 0.5]) {
+            let p: { x: number; y: number } | null = null;
+            try {
+              p = P(x, y, z);
+            } catch {
+              p = null;
+            }
+            if (!p) {
+              inShot = false; // part of it is behind the lens: the goal we're looking away from
+              continue;
+            }
+            l = Math.min(l, p.x);
+            r = Math.max(r, p.x);
+            t = Math.min(t, p.y);
+            b = Math.max(b, p.y);
+          }
+        }
+      }
+      if (!inShot) continue;
+      const c = { l: Math.max(0, l), t: Math.max(0, t), r: Math.min(W, r), b: Math.min(H, b) };
+      if (c.r - c.l > 4 && c.b - c.t > 4) out.push(c);
+    }
+    return out;
+  }
+
+  /** A dead-ball moment (ours or theirs): restarts, the shootout, or our set-piece hint is up. */
+  private setPiece(): boolean {
+    const ph = this.m?.phase;
+    return this.hint.classList.contains('on') || ph === 'restart' || ph === 'shootout';
+  }
+
+  private setTickerBlocked(on: boolean): void {
+    if (on === this.cmBlocked) return;
+    this.cmBlocked = on;
+    this.cm.classList.toggle('blocked', on);
+  }
+
+  /**
    * Put the ticker where it covers nothing: the top band beside the score bug (landscape), or under the top
-   * HUD cluster (portrait); the lower third instead whenever the ball is up there.
+   * HUD cluster (portrait); the lower third instead whenever the ball is up there. The goal mouth in shot is
+   * keep-clear too: at a set piece a band that would cover it is never used, and with no clear band left
+   * (portrait phones, the goal just under the top cluster) the ticker hides until there is one.
    */
   private placeTicker(): void {
     const W = window.innerWidth;
@@ -299,20 +446,25 @@ export class Hud {
     const pause = this.rectOf('.hud-pause', false);
     if (!sb) return;
     const h = this.cm.offsetHeight || 34;
+    const card = this.cardBannerRect();
     const bands: { k: string; l: number; r: number; t: number }[] = [];
-    // 1) Top band between the score bug and the pause button.
+    // 1) Top band between the score bug and the pause button (unless the booking plate is up there).
     const bl = sb.r + g;
     const br = (pause ? pause.l : W) - g;
     const topRow = this.rectOf('.scorebug .sb-clock', false) ?? sb;
-    if (br - bl >= 300) bands.push({ k: 'top', l: bl, r: br, t: topRow.t });
-    // 2) Under the top cluster (score bug + chips, shootout tracker, flag, radar in portrait, hint, tip).
+    if (br - bl >= 300 && !(card && card.t < sb.b)) bands.push({ k: 'top', l: bl, r: br, t: topRow.t });
+    // 2) Under the top cluster (score bug + chips, shootout tracker, flag, radar in portrait, hint, tip, plate).
+    const setPiece = this.setPiece();
     let under = sb.b;
     for (const sel of ['.so-track', '.hud-toast.on', '.hud-hint.on:not(.low)', '.hud-tip.on', '.hud-radar', '.hud-banner.on.goal .bn-sub']) {
       // By class, not opacity: a widget fading in counts at once, and the minimap counts even while faded
-      // out (it comes back mid-line). display:none (the shootout's minimap) never does.
+      // out (it comes back mid-line) except at a dead ball, where it stays off until the kick is taken.
+      // display:none (the shootout's minimap) never counts.
+      if (sel === '.hud-radar' && setPiece && this.radarHidden) continue;
       const r = this.rectOf(sel, false);
       if (r && r.t < H * 0.45) under = Math.max(under, r.b);
     }
+    if (card && card.t < H * 0.45) under = Math.max(under, card.b);
     bands.push({ k: 'under', l: g, r: W - g, t: under + 8 });
     // 3) Lower third: above the minimap, clear of the player chip, a low hint and the touch buttons.
     let low = H - Math.max(g, 12);
@@ -331,52 +483,126 @@ export class Hud {
     const btns = this.rectOf('#ui > .touch:not(.hidden) .touch-btns');
     if (btns) lr = Math.min(lr, btns.l - g);
     if (lr - ll >= 220) bands.push({ k: 'low', l: ll, r: lr, t: low - h });
+    else if (stick || btns) {
+      // Portrait phones: no room between the controls, so full width just above all of them.
+      let t = low;
+      if (stick && stick.t > H * 0.4) t = Math.min(t, stick.t - 8);
+      if (btns) t = Math.min(t, btns.t - 8);
+      if (chip && chip.t > H * 0.5) t = Math.min(t, chip.t - 8);
+      bands.push({ k: 'low', l: g, r: W - g, t: t - h });
+    }
+    // Where the line would actually sit in each band: its natural width, centred (up top: after the score
+    // bug), or pushed to either end of the band when that keeps it off the goal and the ball.
+    this.cm.style.maxWidth = `${Math.round(W - g * 2)}px`;
+    const natural = this.cm.offsetWidth;
+    const goals = this.goalRects();
     const ball = this.ballOnScreen();
-    const clear = (b: { l: number; r: number; t: number }) => {
-      if (!ball) return Infinity;
-      const dx = Math.max(b.l - ball.x, 0, ball.x - b.r);
-      const dy = Math.max(b.t - ball.y, 0, ball.y - (b.t + h));
-      return Math.hypot(dx, dy);
+    const hitsGoal = (r: Rect) => goals.some((gr) => overlapArea(r, gr, 6) > 0);
+    const near = (r: Rect) => !!ball && distTo(ball, r) <= 80;
+    const boxes = new Map<string, Rect>();
+    const boxOf = (b: { k: string; l: number; r: number; t: number }): Rect => {
+      const got = boxes.get(b.k);
+      if (got) return got;
+      const w = Math.min(natural, b.r - b.l);
+      const at = (left: number): Rect => ({ l: left, r: left + w, t: b.t, b: b.t + h });
+      const opts = b.k === 'top' ? [at(b.l), at(b.r - w)] : [at(b.l + (b.r - b.l - w) / 2), at(b.l), at(b.r - w)];
+      const box = opts.find((r) => !hitsGoal(r) && !near(r)) ?? opts.find((r) => !hitsGoal(r)) ?? opts[0];
+      boxes.set(b.k, box);
+      return box;
     };
-    // First band that keeps ~80 px clear of the ball (the players around it), else the farthest from it.
-    const pref = bands.filter((b) => b.k !== 'under' || !bands.some((x) => x.k === 'top'));
-    let pick = pref.find((b) => clear(b) > 80);
+    const onGoal = (b: { k: string; l: number; r: number; t: number }) => hitsGoal(boxOf(b));
+    // No projector: in portrait set pieces the goal is somewhere up top, so stay out of the way.
+    if (setPiece && !this.project && H > W) {
+      this.setTickerBlocked(true);
+      return;
+    }
+    const usable = setPiece ? bands.filter((b) => !onGoal(b)) : bands;
+    // Under the cluster only when the top band is out (portrait, or the plate / the goal took it).
+    const pref = usable.filter((b) => b.k !== 'under' || !usable.some((x) => x.k === 'top'));
+    if (!pref.length) {
+      this.setTickerBlocked(true);
+      return;
+    }
+    const clear = (b: { k: string; l: number; r: number; t: number }) => (ball ? distTo(ball, boxOf(b)) : Infinity);
+    // First band that keeps ~80 px clear of the ball (the players around it) and off the goal mouth, else the
+    // first clear of the ball, else the farthest from it.
+    let pick = pref.find((b) => clear(b) > 80 && !onGoal(b)) ?? pref.find((b) => clear(b) > 80);
     if (!pick) pick = [...pref].sort((a, b) => clear(b) - clear(a))[0];
     if (!pick) return;
-    // Stay put unless the ball really is in the way (no jitter between two bands).
+    // A dead ball with the only band left sitting on the taker: better no caption than one over him.
+    if (setPiece && clear(pick) < 50) {
+      this.setTickerBlocked(true);
+      return;
+    }
+    // Stay put unless the ball (or the goal) really is in the way (no jitter between two bands).
     const cur = pref.find((b) => b.k === this.cmSlot);
-    if (cur && cur !== pick && clear(cur) > 40) pick = cur;
+    if (cur && cur !== pick && clear(cur) > 40 && (!onGoal(cur) || onGoal(pick))) pick = cur;
     const width = pick.r - pick.l;
     this.cm.style.maxWidth = `${Math.round(width)}px`;
-    const w = Math.min(this.cm.offsetWidth, width);
-    const left = pick.k === 'top' ? pick.l : pick.l + (width - w) / 2;
-    this.cm.style.left = `${Math.round(left)}px`;
+    const box = boxOf(pick);
+    this.cm.style.left = `${Math.round(box.l)}px`;
     this.cm.style.top = `${Math.round(pick.t)}px`;
     this.cm.dataset.slot = pick.k;
     this.cmSlot = pick.k;
+    this.setTickerBlocked(false);
+  }
+
+  /** Top of the hint's upper slot: under whatever hangs off the top edge across its width. */
+  private hintTopY(l: number, r: number): number {
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    let y = 0;
+    const take = (q: Rect | null) => {
+      if (q && q.t < H * 0.4 && q.r > l && q.l < r) y = Math.max(y, q.b);
+    };
+    for (const sel of ['.scorebug', '.so-track', '.hud-toast.on', '.hud-pause']) take(this.rectOf(sel, false));
+    // The minimap only while it shows (it is off for set pieces).
+    if (!this.radarHidden && !this.root.classList.contains('dead')) take(this.rectOf('.hud-radar'));
+    // Landscape: a little lower than the top row, which belongs to the ticker and the event flag.
+    return Math.round(Math.max(y + 10, W > H ? H * 0.16 : 0));
   }
 
   /**
-   * Set-piece hint: top centre by default; down in the bottom band when the taker (the ball) is in the upper
-   * part of the screen, e.g. a far-side corner, so it never sits over him or his delivery. Down there it keeps
-   * clear of the player chip, the resting thumbstick, the touch buttons and the minimap.
+   * Set-piece hint. Slots, in order of preference: top centre (under the top cluster), the top corners
+   * (narrower, when the screen is wide enough), the bottom band (clear of the player chip, the resting
+   * thumbstick, the touch buttons and the minimap; full width above the controls on portrait phones) and its
+   * two halves. It takes the one that covers least of what matters: the goal mouth being aimed at first, then
+   * the taker (the ball) and, with him up in the far part of the lens (a far-side corner), his delivery.
    */
   private placeHint(force = false): void {
-    const ball = this.ballOnScreen();
     const H = window.innerHeight;
     const W = window.innerWidth;
-    const y = ball ? ball.y / H : 1;
-    const low = !!ball && (force ? y < 0.44 : this.hintLow ? y < 0.5 : y < 0.4);
-    if (low !== this.hintLow) {
-      this.hintLow = low;
-      this.hint.classList.toggle('low', low);
-    }
-    const st = this.hint.style;
-    if (!low) {
-      st.left = st.bottom = st.maxWidth = '';
-      return;
-    }
+    const el = this.hint;
+    const st = el.style;
     const g = 12;
+    // Size at a given width: the text wraps to fit.
+    const size = (maxW: number) => {
+      st.maxWidth = `${Math.round(maxW)}px`;
+      return { w: el.offsetWidth, h: el.offsetHeight };
+    };
+    type Slot = { k: string; low: boolean; r: Rect; maxW: number; bottom: number };
+    const slots: Slot[] = [];
+    const topSlot = (k: string, maxW: number, align: 'c' | 'l' | 'r') => {
+      const a = size(maxW);
+      const l = align === 'c' ? (W - a.w) / 2 : align === 'l' ? g : W - g - a.w;
+      const t = this.hintTopY(l, l + a.w);
+      slots.push({ k, low: false, r: { l, r: l + a.w, t, b: t + a.h }, maxW, bottom: 0 });
+    };
+    const goals = this.goalRects();
+    topSlot('top', W - g * 2, 'c');
+    const half = W / 2 - g * 1.5;
+    if (half >= 280) {
+      topSlot('topL', half, 'l');
+      topSlot('topR', half, 'r');
+    }
+    // Narrower corner slots that fit beside a goal mouth up in the top half of the lens.
+    for (const gr of goals) {
+      if (gr.t > H * 0.5) continue;
+      const left = gr.l - 8 - g * 2;
+      const right = W - gr.r - 8 - g * 2;
+      if (left >= 160 && left < half) topSlot('topLg', left, 'l');
+      if (right >= 160 && right < half) topSlot('topRg', right, 'r');
+    }
     let ll = g;
     let lr = W - g;
     let bottom = 14;
@@ -393,12 +619,68 @@ export class Hud {
       if (stick) bottom = Math.max(bottom, H - stick.t + 8);
       if (btns) bottom = Math.max(bottom, H - btns.t + 8);
     }
-    st.left = `${Math.round(ll)}px`;
-    st.maxWidth = `${Math.round(lr - ll)}px`;
-    const hr = ll + Math.min(this.hint.offsetWidth, lr - ll);
-    const radar = this.rectOf('.hud-radar');
-    if (radar && radar.t > H * 0.5 && radar.l < hr && radar.r > ll) bottom = Math.max(bottom, H - radar.t + 8);
-    st.bottom = `${Math.round(bottom)}px`;
+    // The minimap only while it shows (by class: it may still be fading out as the set piece begins).
+    const radar = this.radarHidden || this.root.classList.contains('dead') ? null : this.rectOf('.hud-radar', false);
+    const lowSlot = (k: string, l: number, maxW: number, right: boolean) => {
+      const a = size(maxW);
+      const x = right ? l + maxW - a.w : l;
+      let bt = bottom;
+      if (radar && radar.t > H * 0.5 && radar.l < x + a.w && radar.r > x) bt = Math.max(bt, H - radar.t + 8);
+      slots.push({ k, low: true, r: { l: x, r: x + a.w, t: H - bt - a.h, b: H - bt }, maxW, bottom: bt });
+    };
+    lowSlot('low', ll, lr - ll, false);
+    const lowHalf = (lr - ll) / 2 - g / 2;
+    if (lowHalf >= 280) {
+      lowSlot('lowL', ll, lowHalf, false);
+      lowSlot('lowR', lr - lowHalf, lowHalf, true);
+    }
+    const ball = this.ballOnScreen();
+    // Controls a tall corner slot could run into (the landscape phone's button column starts high).
+    const solid = [btns, stick, chip].filter((q): q is Rect => !!q);
+    const cost = (s: Slot, i: number) => {
+      let c = i * 60; // a small bias down the preference list
+      for (const gr of goals) c += overlapArea(s.r, gr, 8) * 4;
+      for (const q of solid) c += overlapArea(s.r, q, 6) * 8;
+      if (ball) {
+        const d = distTo(ball, s.r);
+        if (d < 90) c += (90 - d) * 60;
+        // Taker up in the far part of the lens: his delivery comes down through the top band.
+        if (!s.low && ball.y < H * 0.4 && Math.abs(ball.x - (s.r.l + s.r.r) / 2) < W * 0.35) c += 2500;
+      }
+      return c;
+    };
+    let pick: Slot;
+    if (!this.project) {
+      // No projector: portrait set pieces go above the buttons (the goal is up top), else top centre.
+      pick = H > W && this.setPiece() ? slots.find((s) => s.k === 'low')! : slots[0];
+    } else {
+      const costs = slots.map((s, i) => cost(s, i));
+      let best = 0;
+      costs.forEach((c, i) => {
+        if (c < costs[best]) best = i;
+      });
+      pick = slots[best];
+      // Stay put unless another slot is clearly better (no flicker between two).
+      const cur = slots.findIndex((s) => s.k === this.hintSlot);
+      if (!force && cur >= 0 && costs[cur] <= costs[best] + 400) pick = slots[cur];
+    }
+    this.hintSlot = pick.k;
+    if (pick.low !== this.hintLow) {
+      this.hintLow = pick.low;
+      el.classList.toggle('low', pick.low);
+    }
+    st.maxWidth = `${Math.round(pick.maxW)}px`;
+    if (!pick.low) {
+      // Top slots keep the CSS centring transform (the pulse animates it), so `left` is the box centre.
+      st.bottom = '';
+      st.left = this.project ? `${Math.round((pick.r.l + pick.r.r) / 2)}px` : '';
+      st.top = this.project ? `${Math.round(pick.r.t)}px` : '';
+      if (!this.project) st.maxWidth = '';
+      return;
+    }
+    st.top = '';
+    st.left = `${Math.round(pick.r.l)}px`;
+    st.bottom = `${Math.round(pick.bottom)}px`;
   }
 
   /** Hide play-only widgets (radar, player chip, tips) outside live play. */
@@ -470,7 +752,9 @@ export class Hud {
       return n > 3 ? `<i class="sb-chip ${k}"></i><b>${n}</b>` : Array.from({ length: n }, () => `<i class="sb-chip ${k}"></i>`).join('');
     };
     const last = this.lastBooked[side];
-    const lastName = last !== null && (b.yellow.includes(last) || b.red.includes(last)) ? surname(this.playerName(last)).toUpperCase() : '';
+    const lastName = last !== null && (b.yellow.includes(last) || b.red.includes(last))
+      ? surname(this.playerName(last), this.m ? pitchNames(this.m) : undefined).toUpperCase()
+      : '';
     const y = b.yellow.length;
     const r = b.red.length;
     const el = this.cards[side];
@@ -483,8 +767,9 @@ export class Hud {
     el.innerHTML = y || r
       ? `<span class="sb-card" role="img" title="${esc(label)}" aria-label="${esc(label)}">${chips('yellow')}${chips('red')}${lastName ? `<em>${esc(lastName)}</em>` : ''}</span>`
       : '';
-    // The booking row grows the score bug: the event flag under it moves down with it.
+    // The booking row grows the score bug: the event flag and the booking plate under it move down with it.
     if (this.toast.classList.contains('on')) this.placeToast();
+    if (this.bannerCard && this.bannerTimer > 0) this.placeBanner();
     if (fresh) {
       const icons = el.querySelectorAll(`.sb-chip.${fresh}`);
       icons[icons.length - 1]?.classList.add('new');
@@ -550,6 +835,13 @@ export class Hud {
       const next = this.cmPending.line;
       this.cmPending = null;
       this.showLine(next);
+    }
+    if (this.hintHold > 0) {
+      this.hintHold -= dt;
+      if (this.hintHold <= 0) {
+        this.hintHold = 0;
+        this.setHint(this.hintWant);
+      }
     }
     if (this.hint.classList.contains('on')) {
       this.hintT -= dt;

@@ -40,6 +40,23 @@ const LAST = [
   'Pudding', 'Hazel', 'Oakes', 'Rivers', 'Stone', 'Brook', 'Hill', 'Field', 'Carver', 'Duffy', 'Garnet', 'Hollis',
   'Ibarra', 'Jansen', 'Kowal', 'Lindqvist', 'Mbeki', 'Novak', 'Okafor', 'Petrov', 'Quiroga', 'Rossi', 'Santos',
   'Tanaka', 'Ueda', 'Varga', 'Wójcik', 'Yilmaz', 'Zulu', 'Abara', 'Bento', 'Costa', 'Diallo', 'Eriksen', 'Fofana',
+  // (A big pool: the eleven preset clubs share one set of surnames, so no fixture has two of anyone.)
+  'Acorn', 'Badger', 'Biscuit', 'Bobbin', 'Boulder', 'Bumble', 'Cabbage', 'Candle', 'Chisel', 'Cinder', 'Copper',
+  'Crabtree', 'Crocket', 'Dimple', 'Dribbler', 'Drizzle', 'Ember', 'Fennel', 'Fiddle', 'Flint', 'Frost', 'Gable',
+  'Gravel', 'Griddle', 'Hatch', 'Honeycutt', 'Inkwell', 'Jigsaw', 'Kipper', 'Lantern', 'Ledger', 'Lintel', 'Maple',
+  'Mortar', 'Muffin', 'Nettle', 'Nutmeg', 'Oatley', 'Paddock', 'Parsley', 'Pinecone', 'Plank', 'Plover', 'Pothole',
+  'Quill', 'Radish', 'Rafter', 'Ripple', 'Rubble', 'Saddle', 'Shingle', 'Skipper', 'Slate', 'Sorrel', 'Spindle',
+  'Sprocket', 'Tadpole', 'Thimble', 'Timber', 'Toffee', 'Trellis', 'Truffle', 'Tuffet', 'Walnut', 'Whisker',
+  'Widget', 'Willow', 'Wobble', 'Yarrow', 'Ziggy', 'Almeida', 'Andersen', 'Araújo', 'Bakker', 'Balogun', 'Barros',
+  'Becker', 'Berg', 'Bianchi', 'Bondarenko', 'Boateng', 'Castillo', 'Cheng', 'Conti', 'Cruz', 'Dahl', 'De Jong',
+  'Delgado', 'Dembélé', 'Dias', 'Dubois', 'Ekström', 'Esposito', 'Ferreira', 'Fischer', 'Fontaine', 'Gallo',
+  'García', 'Gomes', 'Haaland', 'Hansen', 'Horvat', 'Ibáñez', 'Iwu', 'Jovanović', 'Kamara', 'Keane', 'Kim',
+  'Koch', 'Kovač', 'Kruger', 'Laine', 'Larsen', 'Lemaire', 'Lopes', 'Lund', 'Maier', 'Mendes', 'Moreau', 'Moretti',
+  'Murphy', 'Nakamura', 'Ndiaye', 'Nielsen', 'Nowak', 'Nunes', 'O’Brien', 'Oliveira', 'Olsen', 'Osei', 'Park',
+  'Pereira', 'Pinto', 'Popescu', 'Quaresma', 'Ramos', 'Reyes', 'Ricci', 'Rocha', 'Romero', 'Salah', 'Sato',
+  'Schmidt', 'Silva', 'Sousa', 'Suzuki', 'Sylla', 'Teixeira', 'Torres', 'Traoré', 'Van Dijk', 'Vidal', 'Vogel',
+  'Walsh', 'Weber', 'Yamada', 'Yeboah', 'Zając', 'Zanetti', 'Ziegler', 'Adeyemi', 'Asante', 'Bergström', 'Coulibaly',
+  'Eze', 'Haddad', 'Holm', 'Kaya', 'Lukaku', 'Mensah', 'Mertens', 'Obi', 'Rahman', 'Sesay', 'Šimić', 'Toure',
 ];
 
 const TOWNS = [
@@ -160,12 +177,43 @@ const NUMBERS: Record<Role, number[]> = {
   FW: [9, 10, 11, 7, 19, 20],
 };
 
-export function makeTeam(seed: ClubSeed, id = seed.short): TeamDef {
+/**
+ * A generated club's squad. Surnames are unique across the XI and the bench (no two Novaks in a
+ * squad); the eleven PRESET_CLUBS draw from one shared pool, so no preset fixture has a surname twice
+ * either. Pass `avoid` (surnames) to keep this squad's names clear of another squad's too.
+ */
+export function makeTeam(seed: ClubSeed, id = seed.short, avoid?: Iterable<string>): TeamDef {
+  const pi = presetIndex(seed);
+  const names = pi >= 0 && !avoid ? presetNames()[pi] : undefined;
+  const t = buildTeam(seed, id, new Set(avoid ?? []));
+  if (names) [...t.players, ...(t.bench ?? [])].forEach((p, i) => (p.name = names[i]));
+  return t;
+}
+
+/** Index of `seed` in PRESET_CLUBS (by identity, or the same name, short name and level), else -1. */
+function presetIndex(seed: ClubSeed): number {
+  const i = PRESET_CLUBS.indexOf(seed);
+  if (i >= 0) return i;
+  return PRESET_CLUBS.findIndex((c) => c.name === seed.name && c.short === seed.short && c.level === seed.level);
+}
+
+let presetNameCache: string[][] | null = null;
+
+/** Every preset club's names (XI then bench), drawn in PRESET_CLUBS order from one shared surname set. */
+function presetNames(): string[][] {
+  if (presetNameCache) return presetNameCache;
+  const shared = new Set<string>();
+  presetNameCache = PRESET_CLUBS.map((c) => {
+    const t = buildTeam(c, c.short, shared);
+    return [...t.players, ...(t.bench ?? [])].map((p) => p.name);
+  });
+  return presetNameCache;
+}
+
+function buildTeam(seed: ClubSeed, id: string, names: Set<string>): TeamDef {
   const rng = new Rng(hashString(seed.name));
   const slots = FORMATIONS[seed.formation];
   const used = new Set<number>();
-  // One surname per player across the XI and the bench (no two Novaks in a squad).
-  const names = new Set<string>();
   const players = slots.map((slot, i) => {
     let n = NUMBERS[slot.role].find((x) => !used.has(x)) ?? 20 + i;
     used.add(n);
@@ -197,6 +245,31 @@ export function randomClubSeed(rng: Rng, level: number): ClubSeed {
     formation: rng.pick(formations),
     level,
   };
+}
+
+/**
+ * Rename (in place, deterministically) the players of `change` whose surname also appears in `keep`
+ * or earlier in `change`, so nobody in a fixture shares a surname (commentary and the HUD go by
+ * surname). Returns how many were renamed. Presets never need it (they share one pool); career and
+ * cup fixtures between generated squads can.
+ */
+export function dedupeSurnames(keep: TeamDef, change: TeamDef): number {
+  const used = new Set<string>([...keep.players, ...(keep.bench ?? [])].map((p) => surnameOf(p.name)));
+  const own = [...change.players, ...(change.bench ?? [])];
+  let n = 0;
+  for (const p of own) {
+    const sn = surnameOf(p.name);
+    if (!used.has(sn)) {
+      used.add(sn);
+      continue;
+    }
+    // Seeded by the player (and what's taken), so the same fixture always gets the same new name;
+    // keeps the initial.
+    const pick = uniqueName(used, new Rng(hashString(`${p.id}|${p.name}`)));
+    p.name = `${p.name.trim()[0]}. ${surnameOf(pick)}`;
+    n++;
+  }
+  return n;
 }
 
 /** When both kits clash, the away side wears a change strip. */

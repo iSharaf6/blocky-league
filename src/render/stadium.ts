@@ -79,6 +79,37 @@ const NIGHT = {
   grassSat: 1.1,
 };
 
+/** Muddy Field (level 0): one unmown park green (no stripes), worn mud, and hand-painted lines. */
+const PARK_GRASS = 0x97cb52;
+const PARK_GRASS_OUT = 0x86bb47;
+const MUD = 0x7a5a36;
+const PARK_LINE = [0xf2efe2, 0xe6e2d0, 0xdad5bf];
+
+/**
+ * Mega Dome (level 5) exterior: ribbed concrete facades with bands of glazing, corner towers closing the
+ * bowl, and a stepped canopy ring rising towards the pitch over the three roofed stands and the corners.
+ */
+const DOME_STEPS = 4;
+const DOME_RISE = 0.9;
+const FACADE = 0xcfcbc1;
+const FACADE_RIB = 0xe6e3da;
+const FACADE_PLINTH = 0x8e8a80;
+const CANOPY_TOP = 0xf4f2eb;
+/** The Mega Dome's arch over the near side: crown height (m) and colour. */
+const DOME_ARCH = 50;
+const ARCH = 0xeeeef2;
+/** Every other canopy terrace is glazed: from above the ring reads as panels of a dome, not one white slab. */
+const CANOPY_GLASS = 0xcfe2ee;
+const CANOPY_EDGE = 0xbcd2e0;
+const CANOPY_RIB = 0x98a2b2;
+/** Window glass tint (a white-vertex mesh, so this is the pane colour): dark blue sky reflection by day, lit at night. */
+const GLASS = { day: 0x3f5676, sunset: 0x6c5f7a, night: 0xffd489 };
+
+/** Golden-hour lawn tint (material colour): see Stadium.setTimeOfDay. */
+const SUNSET_GRASS = [1.14, 1.52, 2.1];
+/** ...and paint tint, so the lines stay a warm cream in the orange light instead of going salmon. */
+const SUNSET_LINE = [0.88, 1.18, 1.5];
+
 const LINE_W = 0.18;
 const BOARD_Z = HALF_W + 3.2;
 const BOARD_X = HALF_L + 4.6;
@@ -166,6 +197,8 @@ export class Stadium {
   private readonly lineMat = snowMaterial(this.snowLine, 0xffffff, 'line');
   private readonly groundMat = snowMaterial(this.snowOuter, 0xf2f6fa, 'ground');
   private readonly standMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  /** Facade glazing (Mega Dome): unlit, tinted per time of day (see GLASS). */
+  private readonly glassMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: GLASS.day });
   private readonly outerMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private crowdMats: THREE.MeshLambertMaterial[] = [];
   private bannerMats: THREE.MeshLambertMaterial[] = [];
@@ -222,6 +255,9 @@ export class Stadium {
   // ------------------------------------------------------------------ pitch
 
   private buildPitch(): void {
+    const park = this.level === 0;
+    // Its own seed: the park's mud and paint never shift the crowd / trees drawn from this.rng.
+    const prng = new Rng(((this.opt.seed ?? 42) ^ 0x5eed5) >>> 0);
     // Run-off lawn: a darker, lower band out to the boards.
     const r = new BoxBuilder();
     const ext = { x: HALF_L + 7.5, z: HALF_W + 6.5 };
@@ -229,37 +265,60 @@ export class Stadium {
     for (let x = -ext.x; x < ext.x - 1e-3; x += band) {
       const i = Math.round((x + ext.x) / band);
       const w = Math.min(band, ext.x - x);
-      r.box(x + w / 2, -0.1, 0, w, 0.2, ext.z * 2, i % 2 ? GRASS_OUT_A : GRASS_OUT_B, { skipBottom: true });
+      const col = park ? PARK_GRASS_OUT : i % 2 ? GRASS_OUT_A : GRASS_OUT_B;
+      r.box(x + w / 2, -0.1, 0, w, 0.2, ext.z * 2, col, { skipBottom: true });
     }
     const runoff = new THREE.Mesh(r.build(), this.grassMat);
     runoff.receiveShadow = true;
     this.group.add(runoff);
 
-    // The playing surface: a raised lawn slab with mowing stripes and a darker skirt.
+    // The playing surface: a raised lawn slab with mowing stripes and a darker skirt (the park pitch: one
+    // unmown green, worn through to the mud where the game is played hardest).
     const b = new BoxBuilder();
     const slab = { x: HALF_L + 2, z: HALF_W + 2 };
     const stripe = (HALF_L * 2) / 16;
     const depth = 0.3;
-    for (let x = -slab.x; x < slab.x - 1e-3; ) {
-      const i = Math.floor((x + HALF_L) / stripe + 1e-3);
-      const next = Math.min(slab.x, -HALF_L + (i + 1) * stripe);
-      const w = next - x;
-      const col = ((i % 2) + 2) % 2 === 0 ? GRASS_A : GRASS_B;
-      b.box(x + w / 2, -depth / 2, 0, w, depth, slab.z * 2, shade(col, 0.62), { top: col, skipBottom: true });
-      x = next;
+    if (park) b.box(0, -depth / 2, 0, slab.x * 2, depth, slab.z * 2, shade(PARK_GRASS, 0.62), { top: PARK_GRASS, skipBottom: true });
+    else {
+      for (let x = -slab.x; x < slab.x - 1e-3; ) {
+        const i = Math.floor((x + HALF_L) / stripe + 1e-3);
+        const next = Math.min(slab.x, -HALF_L + (i + 1) * stripe);
+        const w = next - x;
+        const col = ((i % 2) + 2) % 2 === 0 ? GRASS_A : GRASS_B;
+        b.box(x + w / 2, -depth / 2, 0, w, depth, slab.z * 2, shade(col, 0.62), { top: col, skipBottom: true });
+        x = next;
+      }
     }
+    if (park) this.buildMud(b, prng);
     const grass = new THREE.Mesh(b.build(), this.grassMat);
     grass.receiveShadow = true;
     this.pitch.add(grass);
 
-    // Painted lines as very flat boxes.
+    // Painted lines as very flat boxes. The park's are hand-marked: dabs of uneven width and whiteness,
+    // wandering a little off the line, with the odd gap where the paint ran out.
     const L = new BoxBuilder();
     const y = 0.006;
     const h = 0.012;
     const seg = (x1: number, z1: number, x2: number, z2: number) => {
       const len = Math.hypot(x2 - x1, z2 - z1);
       const a = Math.atan2(-(z2 - z1), x2 - x1);
-      L.box((x1 + x2) / 2, y, (z1 + z2) / 2, len + LINE_W, h, LINE_W, LINE, { rotY: a, skipBottom: true });
+      if (!park) {
+        L.box((x1 + x2) / 2, y, (z1 + z2) / 2, len + LINE_W, h, LINE_W, LINE, { rotY: a, skipBottom: true });
+        return;
+      }
+      const n = Math.max(1, Math.round(len / 0.85));
+      const ux = (x2 - x1) / len;
+      const uz = (z2 - z1) / len;
+      for (let k = 0; k < n; k++) {
+        if (n > 2 && prng.chance(0.07)) continue;
+        const t = (k + 0.5) / n;
+        const off = (prng.next() - 0.5) * 0.07;
+        const cx = x1 + (x2 - x1) * t - uz * off;
+        const cz = z1 + (z2 - z1) * t + ux * off;
+        const w = LINE_W * (0.75 + prng.next() * 0.5);
+        const l = (len / n) * (0.8 + prng.next() * 0.35);
+        L.box(cx, y, cz, l, h, w, prng.pick(PARK_LINE), { rotY: a + (prng.next() - 0.5) * 0.05, skipBottom: true });
+      }
     };
     const arc = (cx: number, cz: number, r: number, a0: number, a1: number, n = 48) => {
       for (let i = 0; i < n; i++) {
@@ -302,6 +361,41 @@ export class Stadium {
     lines.receiveShadow = true;
     lines.position.y = 0.004;
     this.pitch.add(lines);
+  }
+
+  /**
+   * Muddy Field: worn patches of bare mud (MUD, cell by cell a little lighter / darker, a ragged fringe of
+   * trodden grass round each) in both goalmouths, on both penalty spots, round the centre spot and in a
+   * couple of midfield scrums: 8 in all, laid on the lawn slab just under the paint.
+   */
+  private buildMud(b: BoxBuilder, rng: Rng): void {
+    const CELL = 0.5;
+    const patch = (cx: number, cz: number, rx: number, rz: number) => {
+      const worn = mix(MUD, PARK_GRASS, 0.5);
+      const phase = rng.next() * 6.28;
+      for (let x = cx - rx - CELL; x <= cx + rx + CELL; x += CELL) {
+        for (let z = cz - rz - CELL; z <= cz + rz + CELL; z += CELL) {
+          const dx = (x - cx) / rx;
+          const dz = (z - cz) / rz;
+          // A lumpy blob: the radius wobbles with the angle, plus per-cell noise.
+          const wob = 1 + Math.sin(Math.atan2(dz, dx) * 3 + phase) * 0.14 + (rng.next() - 0.5) * 0.22;
+          const d = Math.hypot(dx, dz) / wob;
+          if (d > 1.12) continue;
+          const col = d > 0.9 ? (rng.chance(0.55) ? worn : null) : shade(MUD, 0.9 + rng.next() * 0.18);
+          if (col === null) continue;
+          b.box(x, 0.003, z, CELL, 0.006, CELL, col, { skipBottom: true });
+        }
+      }
+    };
+    for (const s of [-1, 1]) {
+      const gx = s * HALF_L;
+      patch(gx - s * 2.6, (rng.next() - 0.5) * 0.8, 2.6, 3.6); // goalmouth
+      patch(gx - s * PEN_SPOT, (rng.next() - 0.5) * 0.4, 1.3, 1.1); // penalty spot
+    }
+    patch(0, 0, 2.4, 2.1); // centre spot
+    patch(-14 + rng.next() * 4, -6 + rng.next() * 4, 2.2, 1.5); // midfield scrums
+    patch(12 + rng.next() * 4, 4 + rng.next() * 5, 1.9, 1.4);
+    patch((rng.next() - 0.5) * 6, HALF_W - 3 - rng.next() * 2, 1.8, 1.1); // the linesman's run
   }
 
   // ------------------------------------------------------------------ goals
@@ -533,7 +627,9 @@ export class Stadium {
 
   private buildStands(): void {
     const b = new BoxBuilder();
+    const glass = new BoxBuilder();
     const { home, away } = this.opt;
+    const dome = this.level >= 5;
     for (const side of this.sides()) {
       const spec = this.layout[side]!;
       const rows = this.profile(side);
@@ -580,11 +676,22 @@ export class Stadium {
       }
       // Back wall and roof on stilts.
       const roofY = last.h + 4;
-      this.standBox(b, side, 0, backD + 0.3, (roofY - 0.2) / 2, span * 2, 0.6, roofY - 0.2, shade(CONCRETE, 0.92));
+      this.standBox(b, side, 0, backD + 0.3, (roofY - 0.2) / 2, span * 2, 0.6, roofY - 0.2, dome ? FACADE : shade(CONCRETE, 0.92));
       const roofDepth = backD + 1.6;
-      this.standBox(b, side, 0, roofDepth / 2 - 0.6, roofY, span * 2 + 1, roofDepth, 0.35, 0xdedad0, 0xf2f0e8);
-      // Fascia in the club colour and ribs under the roof.
-      this.standBox(b, side, 0, -0.9, roofY - 0.5, span * 2 + 1, 0.5, 1.0, shade(seatCol, 0.8));
+      if (dome) {
+        // The Mega Dome: a stepped canopy rising towards the pitch, a deep club-colour fascia under its
+        // leading edge, and a ribbed, glazed facade on the back wall.
+        const front = this.domeCanopy(b, side, span, roofDepth, roofY);
+        this.standBox(b, side, 0, -0.9, (roofY - 1 + front) / 2, span * 2 + 1, 0.5, front - (roofY - 1), shade(seatCol, 0.8));
+        const out = this.place(side, 0, backD + 0.6);
+        if (side === 'far') this.facade(b, glass, 'z', out.z, -1, -span, span, roofY - 0.2, seatCol);
+        else this.facade(b, glass, 'x', out.x, side === 'left' ? -1 : 1, -span, span, roofY - 0.2, seatCol);
+      } else {
+        this.standBox(b, side, 0, roofDepth / 2 - 0.6, roofY, span * 2 + 1, roofDepth, 0.35, 0xdedad0, 0xf2f0e8);
+        // Fascia in the club colour.
+        this.standBox(b, side, 0, -0.9, roofY - 0.5, span * 2 + 1, 0.5, 1.0, shade(seatCol, 0.8));
+      }
+      // Ribs under the roof.
       for (let a = -span; a <= span + 0.01; a += 6) {
         this.standBox(b, side, a, roofDepth / 2 - 0.6, roofY - 0.35, 0.3, roofDepth, 0.35, shade(0xdedad0, 0.8));
       }
@@ -603,6 +710,7 @@ export class Stadium {
         }
       }
     }
+    if (dome) this.buildCornerTowers(b, glass);
     if (!b.empty) {
       const m = new THREE.Mesh(b.build(), this.standMat);
       m.receiveShadow = true;
@@ -610,6 +718,7 @@ export class Stadium {
       m.castShadow = false;
       this.group.add(m);
     }
+    if (!glass.empty) this.group.add(new THREE.Mesh(glass.build(), this.glassMat));
 
     if (!this.layout.far) return;
     // Stadium name on the far roof fascia + an LED ribbon on the upper-tier front.
@@ -634,7 +743,9 @@ export class Stadium {
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(farSpan * 2 + 1, 0.95), new THREE.MeshBasicMaterial({ map: tex }));
     tex.repeat.x = (farSpan * 2 + 1) / (HALF_L * 2 + 11);
     tex.wrapS = THREE.RepeatWrapping;
-    sign.position.set(0, roofY - 0.5, -(STAND_Z - 0.9) + 0.27);
+    // (The Mega Dome's deep fascia carries it higher, clear of the gantry.)
+    const domeFront = roofY + 0.175 + (DOME_STEPS - 1) * DOME_RISE;
+    sign.position.set(0, dome ? roofY + 1.2 : roofY - 0.5, -(STAND_Z - 0.9) + 0.27);
     this.group.add(sign);
     const t2 = farRows.filter((r) => r.tier === 2)[0];
     // Small main stand: no upper tier, no roof gantry (the floodlights come with the big stand).
@@ -651,15 +762,134 @@ export class Stadium {
     const gantry = new BoxBuilder();
     const faces = new BoxBuilder();
     const fz = -(STAND_Z - 0.9);
+    const gy = dome ? domeFront + 0.1 : roofY;
     for (let x = -42; x <= 42.01; x += 12) {
-      gantry.box(x, roofY + 0.55, fz - 0.1, 2.2, 0.9, 0.7, 0x3a3f48);
-      faces.box(x, roofY + 0.5, fz + 0.28, 1.9, 0.6, 0.08, 0xfffbe0);
-      this.lampHeads.push(new THREE.Vector3(x, roofY + 0.5, fz + 0.5));
+      gantry.box(x, gy + 0.55, fz - 0.1, 2.2, 0.9, 0.7, 0x3a3f48);
+      faces.box(x, gy + 0.5, fz + 0.28, 1.9, 0.6, 0.08, 0xfffbe0);
+      this.lampHeads.push(new THREE.Vector3(x, gy + 0.5, fz + 0.5));
       // A faint haze only: a strong one lifts the whole top strip out of the dark.
       this.lampGlow.push({ size: 7, flare: 0.3 });
     }
     this.group.add(new THREE.Mesh(gantry.build(), this.standMat));
     this.group.add(new THREE.Mesh(faces.build(), new THREE.MeshBasicMaterial({ vertexColors: true })));
+  }
+
+  /**
+   * Mega Dome canopy over one stand: DOME_STEPS terraces of membrane from the back wall (at roofY) up
+   * towards the pitch, pale panels on the risers, steel ribs across every terrace and a ring beam along the
+   * leading edge. Returns the height of the leading edge.
+   */
+  private domeCanopy(b: BoxBuilder, side: Side4, span: number, roofDepth: number, roofY: number): number {
+    const w = roofDepth / DOME_STEPS;
+    const dBack = roofDepth - 0.6;
+    let top = roofY;
+    for (let i = 0; i < DOME_STEPS; i++) {
+      top = roofY + 0.175 + i * DOME_RISE;
+      const bottom = roofY - 0.175;
+      const dc = dBack - (i + 0.5) * w;
+      this.standBox(b, side, 0, dc, (bottom + top) / 2, span * 2 + 1, w + 0.02, top - bottom, CANOPY_EDGE, i % 2 ? CANOPY_GLASS : CANOPY_TOP);
+      for (let a = -span; a <= span + 0.01; a += 7) this.standBox(b, side, a, dc, top + 0.15, 0.35, w, 0.3, CANOPY_RIB);
+    }
+    this.standBox(b, side, 0, -0.75, top + 0.3, span * 2 + 1.2, 0.6, 0.6, STEEL);
+    return top;
+  }
+
+  /**
+   * A ribbed, glazed facade on an outside wall: the plane `axis` = `at` (a wall along the other axis from
+   * a0 to a1), facing `out` (+1 / -1), from y0 up to h. Concrete fins every ~4.2 m, bands of glass between
+   * them (every ~4.6 m up; into `g`), a plinth with gates at street level (y0 = 0) and a club-colour band
+   * along the top.
+   */
+  private facade(b: BoxBuilder, g: BoxBuilder, axis: 'x' | 'z', at: number, out: number, a0: number, a1: number, h: number, col: number, y0 = 0): void {
+    const put = (bb: BoxBuilder, a: number, y: number, len: number, hh: number, prot: number, c: number, top?: number) => {
+      const n = at + out * prot / 2;
+      if (axis === 'z') bb.box(a, y, n, len, hh, prot, c, { top, skipBottom: y - hh / 2 <= 0.01 });
+      else bb.box(n, y, a, prot, hh, len, c, { top, skipBottom: y - hh / 2 <= 0.01 });
+    };
+    const L = a1 - a0;
+    const n = Math.max(1, Math.round(L / 4.2));
+    const step = L / n;
+    if (y0 === 0) put(b, (a0 + a1) / 2, 0.65, L, 1.3, 0.3, FACADE_PLINTH, shade(FACADE_PLINTH, 1.12));
+    put(b, (a0 + a1) / 2, h - 1.3, L, 1.2, 0.4, shade(col, 0.85), col);
+    for (let k = 0; k <= n; k++) put(b, a0 + k * step, (y0 + h) / 2, 0.7, h - y0, 0.55, FACADE_RIB, 0xf2f0e8);
+    for (let k = 0; k < n; k++) {
+      const c = a0 + (k + 0.5) * step;
+      const bw = step - 0.9;
+      if (y0 === 0 && k % 4 === 1) put(b, c, 1.25, bw - 0.8, 2.5, 0.36, shade(col, 0.5), shade(col, 0.7));
+      for (let yb = y0 + 3; yb + 1.7 < h - 2.2; yb += 4.6) {
+        put(g, c, yb + 0.85, bw, 1.7, 0.14, 0xffffff);
+        put(b, c, yb - 0.1, bw + 0.2, 0.2, 0.3, 0xf0eee6);
+      }
+    }
+  }
+
+  /**
+   * Mega Dome corners: towers closing the bowl behind the stepped corner seats, as tall as the end stands,
+   * faced like the back walls outside (and glazed hospitality boxes above the seats inside), under a canopy
+   * that joins the end roofs to the main stand's.
+   */
+  private buildCornerTowers(b: BoxBuilder, g: BoxBuilder): void {
+    const endRows = this.profile('left');
+    const farRows = this.profile('far');
+    const endBack = endRows[endRows.length - 1].d + STEP_D * 1.05;
+    const farBack = farRows[farRows.length - 1].d + STEP_D * 1.05;
+    const endRoof = endRows[endRows.length - 1].h + 4;
+    const h = endRoof - 0.2;
+    const xIn = HALF_L + 5;
+    const xSeat = xIn + 7.2;
+    const xOut = STAND_X + endBack + 0.6;
+    const zEnd = END_SPAN;
+    const zSeat = STAND_Z + 9 * STEP_D;
+    const col = this.opt.home;
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const far = sz < 0;
+        const zOut = far ? STAND_Z + farBack + 0.6 : zSeat;
+        const box = (x0: number, x1: number, z0: number, z1: number) =>
+          b.box(sx * (x0 + x1) / 2, h / 2, sz * (z0 + z1) / 2, x1 - x0, h, z1 - z0, FACADE, { skipBottom: true });
+        box(xSeat, xOut, zEnd, zOut);
+        if (far) box(xIn, xSeat, zSeat, zOut);
+        const lo = (a: number, c: number) => Math.min(a, c);
+        const hi = (a: number, c: number) => Math.max(a, c);
+        // Outside: the end wall and the main (or near) side wall carry on round the corner.
+        this.facade(b, g, 'x', sx * xOut, sx, lo(sz * zEnd, sz * zOut), hi(sz * zEnd, sz * zOut), h, col);
+        this.facade(b, g, 'z', sz * zOut, sz, lo(sx * (far ? xIn : xSeat), sx * xOut), hi(sx * (far ? xIn : xSeat), sx * xOut), h, col);
+        // Inside, over the corner seats: hospitality glazing facing the pitch.
+        this.facade(b, g, 'x', sx * xSeat, -sx, lo(sz * zEnd, sz * zSeat), hi(sz * zEnd, sz * zSeat), h, col, 6.2);
+        if (far) this.facade(b, g, 'z', sz * zSeat, -sz, lo(sx * xIn, sx * xSeat), hi(sx * xIn, sx * xSeat), h, col, 6.2);
+        // Corner canopy: joins the end roof to the main stand's, the same stepped membrane.
+        const cx0 = xIn - 0.5;
+        const cz0 = zEnd - 0.5;
+        const cx1 = xOut + 0.5;
+        const cz1 = zOut + 0.5;
+        for (let i = 0; i < 2; i++) {
+          const k = i / 2;
+          const x0 = cx0;
+          const x1 = cx1 - (cx1 - cx0) * k;
+          const z0 = cz0;
+          const z1 = cz1 - (cz1 - cz0) * k;
+          const top = endRoof + 0.175 + i * DOME_RISE * 1.5;
+          const bottom = endRoof - 0.175;
+          b.box(sx * (x0 + x1) / 2, (top + bottom) / 2, sz * (z0 + z1) / 2, x1 - x0, top - bottom, z1 - z0, CANOPY_EDGE, { top: i % 2 ? CANOPY_GLASS : CANOPY_TOP });
+        }
+        for (let a = cx0 + 3; a < cx1; a += 7) b.box(sx * a, endRoof + 0.33, sz * (cz0 + cz1) / 2, 0.35, 0.3, cz1 - cz0, CANOPY_RIB);
+      }
+    }
+    // The ring closed over the low near stand: a chunky stepped arch springing from the near corner towers
+    // (DOME_ARCH m at its crown). It always stays well above the broadcast lens (which flies at ~21-38 m,
+    // highest only where the arch is far off) and so above the top of its frame, which looks down.
+    const az = STAND_Z + 1.5;
+    const ax = xSeat + 0.6;
+    const ay = (x: number) => h + (DOME_ARCH - h) * (1 - (x / ax) ** 2);
+    const seg = 1.6;
+    for (let x = -ax; x < ax - 1e-3; x += seg) {
+      const x1 = Math.min(ax, x + seg);
+      const ya = ay(x);
+      const yb = ay(x1);
+      const lo = Math.min(ya, yb) - 0.55;
+      const hi = Math.max(ya, yb) + 0.55;
+      b.box((x + x1) / 2, (lo + hi) / 2, az, x1 - x + 0.02, hi - lo, 1.3, ARCH, { top: shade(ARCH, 1.06) });
+    }
   }
 
   private buildCrowd(): void {
@@ -976,12 +1206,16 @@ export class Stadium {
     for (const m of this.crowdMats) m.color.setRGB(crowd[0], crowd[1], crowd[2]);
     for (const m of this.bannerMats) m.color.setRGB(crowd[0] * 0.85, crowd[1] * 0.82, crowd[2] * 0.8);
     this.outerMat.color.setRGB(outer[0], outer[1], outer[2]);
+    this.glassMat.color.setHex(night ? GLASS.night : t === 'sunset' ? GLASS.sunset : GLASS.day);
     this.groundMat.color.setRGB(outer[0], outer[1], outer[2]);
     this.grassSat.value = night ? NIGHT.grassSat : 1;
-    // Golden hour: take the last of the orange back out of the lawn so it reads green, not khaki.
-    if (t === 'sunset') this.grassMat.color.setRGB(0.9, 1.04, 1);
+    // Golden hour: the low orange sun and peach sky warm the lawn (R/G ~0.9 at the broadcast camera, from
+    // ~0.73 by day); this tint keeps it bright, living grass (hue ~70 degrees) rather than dark khaki.
+    if (t === 'sunset') this.grassMat.color.setRGB(SUNSET_GRASS[0], SUNSET_GRASS[1], SUNSET_GRASS[2]);
     else if (night) this.grassMat.color.setRGB(NIGHT.grass[0], NIGHT.grass[1], NIGHT.grass[2]);
     else this.grassMat.color.setRGB(1, 1, 1);
+    if (t === 'sunset') this.lineMat.color.setRGB(SUNSET_LINE[0], SUNSET_LINE[1], SUNSET_LINE[2]);
+    else this.lineMat.color.setRGB(1, 1, 1);
     this.night = night;
     for (const f of this.flares) f.visible = false;
     for (const c of this.clouds) {

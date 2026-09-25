@@ -17,7 +17,7 @@ import { STADIUM_LEVELS } from '../render/stadium';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, type FormationId, type Kit, type KitPattern, type PlayerDef, type PlayerStats } from '../sim/types';
 import { pitchLayout, shirtArt } from './menus';
-import { StadiumPreview, stadiumIsoSvg } from './preview';
+import { StadiumPreview, faceHtml, hydrateFaces, stadiumIsoSvg } from './preview';
 
 // ------------------------------------------------------------------ shared screen kit
 
@@ -101,6 +101,18 @@ export function mountMeta(app: AppContext, cls: string): MetaScreen {
     },
     toast(msg, kind = 'info') {
       toastEl.textContent = msg;
+      // Just under the panel's title bar (never over the title, back button or coins), or the panel's top
+      // edge once that bar has scrolled away.
+      // Layout offsets, not client rects: the panel may still be mid entrance animation.
+      const y = (el: HTMLElement) => {
+        let v = 0;
+        for (let n: HTMLElement | null = el; n && n !== root; n = n.offsetParent as HTMLElement | null) v += n.offsetTop;
+        return v;
+      };
+      const pTop = y(panel);
+      const bar = panel.querySelector<HTMLElement>('.mc-top');
+      const barBottom = bar ? y(bar) + bar.offsetHeight - panel.scrollTop : pTop;
+      toastEl.style.top = `${Math.round(Math.max(pTop + 8, barBottom + 14))}px`;
       toastEl.className = `mc-toast on ${kind}`;
       window.clearTimeout(toastTimer);
       toastTimer = window.setTimeout(() => toastEl.classList.remove('on'), 2600);
@@ -336,6 +348,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     const warn = starter && slots[i].role !== p.role;
     return `<button class="mc-pl ${selected ? 'sel' : ''} ${warn ? 'warn' : ''}" data-a="${action}" data-i="${i}">
       <span class="mc-slot">${starter ? slots[i].label : 'SUB'}</span>
+      ${faceHtml(p, club.kit)}
       <span class="mc-num">${p.number}</span>
       ${roleBadge(p.role)}
       <span class="mc-pname"><b>${esc(p.name)}</b><small>${keyStatsText(p)}</small></span>
@@ -402,7 +415,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     return `<div class="mc-tcard">
         <div class="mc-tchead">
           <button class="arrow" data-a="tprev" aria-label="Previous player">◀</button>
-          <div class="mc-tcid">${roleBadge(p.role)}<b>${esc(p.name)}</b><span class="mc-num">#${p.number}</span>${ovrBadge(overall(p))}</div>
+          <div class="mc-tcid">${faceHtml(p, club.kit, 'lg')}${roleBadge(p.role)}<b>${esc(p.name)}</b><span class="mc-num">#${p.number}</span>${ovrBadge(overall(p))}</div>
           <button class="arrow" data-a="tnext" aria-label="Next player">▶</button>
         </div>
         <div class="mc-stats">${stats}</div>
@@ -593,6 +606,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       },
     );
     bindPreview();
+    hydrateFaces(scr.panel);
   };
   draw();
 }

@@ -18,6 +18,7 @@ import {
   type ToastKind,
 } from './club';
 import { DIFFICULTIES, shirtArt } from './menus';
+import { faceHtml, hydrateFaces } from './preview';
 
 type HubTab = 'table' | 'fixtures' | 'market';
 
@@ -179,7 +180,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
             .map((k) => `<div class="mc-bar"><span>${STAT_SHORT[k]}</span><div><i style="width:${p.stats[k]}%"></i></div><b>${p.stats[k]}</b></div>`)
             .join('');
           return `<div class="mc-card">
-            <div class="mc-cardtop">${roleBadge(p.role)}<b>${esc(p.name)}</b>${ovrBadge(overall(p))}</div>
+            <div class="mc-cardtop">${faceHtml(p, club.kit, 'md')}${roleBadge(p.role)}<b>${esc(p.name)}</b>${ovrBadge(overall(p))}</div>
             <div class="mc-bars">${bars}</div>
             <button class="btn ${armed ? 'btn-yellow' : 'btn-go'} ${check.ok ? '' : 'poor'}" data-a="buy" data-i="${i}">${armed ? `CONFIRM · ${fmt(price)}` : `BUY · ${fmt(price)}`}</button>
             ${check.ok ? '' : `<small class="mc-why">${failText(check.reason)}</small>`}
@@ -198,6 +199,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
         const value = sellValue(p);
         return `<div class="mc-pl static">
           <span class="mc-slot">${i < 11 ? 'XI' : 'SUB'}</span>
+          ${faceHtml(p, club.kit)}
           <span class="mc-num">${p.number}</span>
           ${roleBadge(p.role)}
           <span class="mc-pname"><b>${esc(p.name)}</b><small>OVR ${overall(p)} · ${keyStatsText(p)}</small></span>
@@ -327,6 +329,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
         },
       },
     );
+    if (tab === 'market') hydrateFaces(scr.panel);
   };
   draw();
   if (flash) scr.toast(flash.msg, flash.kind);

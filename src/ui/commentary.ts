@@ -6,7 +6,7 @@
 import { GOAL_H, HALF_L } from '../sim/constants';
 import type { Match } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
-import type { MatchEvent, Side, TeamDef } from '../sim/types';
+import type { MatchEvent, ShotStyle, Side, TeamDef } from '../sim/types';
 
 /** 5 = goals, reds, penalties, half / full time · 4 = saves, woodwork, bookings · 3 = chances, flags, subs · 2 = fouls, corners · 1 = colour. */
 export type Priority = 1 | 2 | 3 | 4 | 5;
@@ -143,14 +143,58 @@ const T = {
   punch: ['{k} punches clear.', '{k} comes out and punches it away.'],
   tackle: ['Great tackle from {p}!', '{p} slides in and wins it cleanly.'],
   longShot: ['{p} tries his luck from distance...', '{p} shoots from way out...'],
+  // Chips and finesse finishes (the kick event's style).
+  chipTry: ['{p} tries the chip...', 'Cheeky! {p} goes for the chip...', '{p} dinks it towards goal...'],
+  finesseTry: ['{p} tries to curl one in...', '{p} bends it towards the far corner...', 'Side-foot curler from {p}...'],
+  chipGoal: [
+    'What a chip from {p}! Over {k} and in!',
+    '{p} lifts it over {k}! Sublime!',
+    'The cheekiest of chips from {p}!',
+    '{p} dinks it over the keeper!',
+  ],
+  finesseGoal: [
+    '{p} curls it into the corner!',
+    'Beautifully bent in by {p}!',
+    'Top corner! {p} wraps his foot round it!',
+    '{p} bends it past {k}! Lovely finish.',
+  ],
+  chipSaved: ["{k} backpedals and claws {s}'s chip away!", "{k} reads {s}'s chip and gets up to it!"],
+  chipOver: ["{s}'s chip drifts over the bar.", 'Too much on the chip from {s}.'],
+  finesseWide: ["{s}'s curler bends just the wrong side of the post.", 'Not enough curl from {s}, just wide.'],
 } satisfies Record<string, string[]>;
 
 type Cat = keyof typeof T;
 
-/** Surname of an "I. Chunk" style name. */
-export function surname(name: string): string {
+function lastWord(name: string): string {
   const parts = name.trim().split(/\s+/);
   return parts[parts.length - 1] || name;
+}
+
+/**
+ * What the commentator calls a player: the surname of an "I. Chunk" style name. Pass the names of everyone
+ * on the pitch (`onPitch`): when two of them share that surname it falls back to initial + surname
+ * ("L. Santos") for both, so a line never leaves you guessing which Santos it means.
+ */
+export function surname(name: string, onPitch?: readonly string[]): string {
+  const s = lastWord(name);
+  if (!onPitch || !onPitch.length) return s;
+  let same = 0;
+  let self = false;
+  for (const o of onPitch) {
+    if (lastWord(o) !== s) continue;
+    same++;
+    if (o.trim() === name.trim()) self = true;
+  }
+  if (same < (self ? 2 : 1)) return s;
+  const parts = name.trim().split(/\s+/);
+  if (parts.length < 2) return s;
+  const initial = parts[0].replace(/[^A-Za-zÀ-ɏ]/g, '').charAt(0).toUpperCase();
+  return initial ? `${initial}. ${s}` : s;
+}
+
+/** Names of the 22 in the match (sent-off players included: one player keeps one call all match). */
+export function pitchNames(m: Pick<Match, 'players'>): string[] {
+  return m.players.map((p) => p.def.name);
 }
 
 const SUFFIXES = new Set(['united', 'rovers', 'athletic', 'city', 'wanderers', 'town', 'albion', 'rangers', 'sporting', 'royale', 'county']);
@@ -185,8 +229,24 @@ export class Commentator {
   /** Match second of the last save line (a near miss right after it would contradict it). */
   private saveAt = -99;
   private kicked = [false, false];
+  /** Everyone in the match right now (refreshed per event): shared surnames get an initial. */
+  private pitch: string[] = [];
+  /** The last chip / finesse attempt: who struck it and when (match seconds). */
+  private styled: { style: ShotStyle; by: number; at: number } | null = null;
 
   constructor(private readonly rand: () => number = Math.random) {}
+
+  private sn(name: string): string {
+    return surname(name, this.pitch);
+  }
+
+  /** Chip / finesse of the shot `by` struck in the last few seconds (the kick event's style, or the sim's field). */
+  private styleOf(m: Match, by: number, within = 4): ShotStyle | null {
+    const s = this.styled;
+    if (s && s.by === by && Commentator.at(m) - s.at <= within) return s.style;
+    const live = (m as Match & { shotStyle?: ShotStyle | null }).shotStyle;
+    return m.kickKind === 'shot' && (live === 'chip' || live === 'finesse') && m.ball.lastTouch === by ? live : null;
+  }
 
   private pick(cat: Cat, v: Vars): string {
     const list = T[cat];
@@ -204,16 +264,16 @@ export class Commentator {
 
   private name(m: Match, idx: number): string {
     const p = m.players[idx];
-    return p ? surname(p.def.name) : '';
+    return p ? this.sn(p.def.name) : '';
   }
 
-  /** Two players in one line: full names when they share a surname ("L. Novak on T. Novak"). */
+  /** Two players in one line: initial + surname when they share one ("L. Novak on T. Novak"). */
   private two(m: Match, a: number, b: number): [string, string] {
     const pa = m.players[a]?.def.name ?? '';
     const pb = m.players[b]?.def.name ?? '';
-    const sa = surname(pa);
-    const sb = surname(pb);
-    return sa === sb ? [pa, pb] : [sa, sb];
+    const sa = this.sn(pa);
+    const sb = this.sn(pb);
+    return sa === sb && pa !== pb ? [pa, pb] : [sa, sb];
   }
 
   private base(m: Match): Vars {
@@ -240,6 +300,7 @@ export class Commentator {
     // A penalty that has not produced a goal, save or miss within 15 s of being given has gone.
     if (this.penFor >= 0 && Commentator.at(m) - this.penAt > 15 && m.phase === 'play') this.penFor = -1;
     try {
+      this.pitch = pitchNames(m);
       return this.make(e, m, sameBeat ? prev : '');
     } catch {
       return null;
@@ -275,7 +336,7 @@ export class Commentator {
         if (!scorer) return null;
         const sc = `${m.score[side]}-${m.score[opp]}`;
         const keeper = m.keeperOf(opp);
-        const [pn, kn] = keeper ? this.two(m, scorer.idx, keeper.idx) : [surname(scorer.def.name), 'the keeper'];
+        const [pn, kn] = keeper ? this.two(m, scorer.idx, keeper.idx) : [this.sn(scorer.def.name), 'the keeper'];
         const kv: Vars = { ...v, p: pn, k: kn, t: clubCall(m.teams[side]), sc };
         const minute = m.goals[m.goals.length - 1]?.minute ?? m.goalMinute();
         const late = m.half === 2 && minute >= 85;
@@ -283,6 +344,7 @@ export class Commentator {
         if (e.own) core = 'ownGoal';
         else if (this.penFor === side) core = 'penGoal';
         else if (m.kickKind === 'header') core = 'header';
+        else if (this.styleOf(m, scorer.idx)) core = this.styleOf(m, scorer.idx) === 'chip' ? 'chipGoal' : 'finesseGoal';
         else if (m.kickKind === 'shot') {
           const d = Math.hypot(m.attackDir(side) * HALF_L - m.kickX, m.kickZ);
           if (d >= 23) {
@@ -291,6 +353,7 @@ export class Commentator {
           }
         }
         this.penFor = -1;
+        this.styled = null;
         const diff = m.score[side] - m.score[opp];
         const first = m.score[0] + m.score[1] === 1;
         const tail: Cat =
@@ -304,13 +367,14 @@ export class Commentator {
         if (shootout || m.shotClock >= 2) return null;
         const k = m.players[e.keeper];
         if (!k) return null;
-        const [kn, sn] = m.shooter >= 0 ? this.two(m, k.idx, m.shooter) : [surname(k.def.name), shooter()];
+        const [kn, sn] = m.shooter >= 0 ? this.two(m, k.idx, m.shooter) : [this.sn(k.def.name), shooter()];
         const kv = { ...v, k: kn, s: sn };
         this.saveAt = Commentator.at(m);
         if (this.penFor >= 0 && this.penFor !== k.side) {
           this.penFor = -1;
           return L(this.pick('penSaved', kv), 5, k.side, 'big');
         }
+        if (m.shooter >= 0 && this.styleOf(m, m.shooter, 3) === 'chip') return L(this.pick('chipSaved', kv), 4, k.side, 'big');
         return L(this.pick(e.caught ? 'saveCaught' : 'saveParried', kv), 4, k.side, 'big');
       }
       case 'post': {
@@ -334,13 +398,17 @@ export class Commentator {
           this.penFor = -1;
           return L(this.pick('penMiss', kv), 5, side, 'big');
         }
-        return L(this.pick(m.ball.pos.y > GOAL_H ? 'over' : 'wide', kv), 3, side);
+        const style = m.shooter >= 0 ? this.styleOf(m, m.shooter, 5) : null;
+        const high = m.ball.pos.y > GOAL_H;
+        if (style === 'chip' && high) return L(this.pick('chipOver', kv), 3, side);
+        if (style === 'finesse' && !high) return L(this.pick('finesseWide', kv), 3, side);
+        return L(this.pick(high ? 'over' : 'wide', kv), 3, side);
       }
       case 'block': {
         if (!e.shot) return null;
         const b = m.players[e.by];
         if (!b) return null;
-        const [bn, sn] = m.shooter >= 0 ? this.two(m, b.idx, m.shooter) : [surname(b.def.name), shooter()];
+        const [bn, sn] = m.shooter >= 0 ? this.two(m, b.idx, m.shooter) : [this.sn(b.def.name), shooter()];
         return L(this.pick('block', { ...v, b: bn, s: sn }), 3, b.side);
       }
       case 'foul': {
@@ -360,7 +428,7 @@ export class Commentator {
         const p = m.players[e.player];
         if (!p) return null;
         const left = m.players.filter((q) => q.side === p.side && !q.sentOff && q.idx !== p.idx).length;
-        const kv = { ...v, p: surname(p.def.name), t: clubCall(m.teams[p.side]), n: left };
+        const kv = { ...v, p: this.sn(p.def.name), t: clubCall(m.teams[p.side]), n: left };
         if (e.color === 'red') return L(this.pick(e.second ? 'secondYellow' : 'red', kv), 5, p.side, 'red');
         return L(this.pick('yellow', kv), 4, p.side, 'yellow');
       }
@@ -387,7 +455,7 @@ export class Commentator {
       case 'advantage':
         return L(this.pick('advantage', { ...v, t: clubCall(m.teams[e.side]) }), 3, e.side);
       case 'sub':
-        return L(this.pick('sub', { ...v, t: clubCall(m.teams[e.side]), on: surname(e.on), off: surname(e.off) }), 3, e.side);
+        return L(this.pick('sub', { ...v, t: clubCall(m.teams[e.side]), on: this.sn(e.on), off: this.sn(e.off) }), 3, e.side);
       case 'halftime': {
         const [hs, as] = m.score;
         if (hs === as) return L(this.pick(hs === 0 ? 'htGoalless' : 'htLevel', v), 5, -1, 'info', 'HT');
@@ -411,7 +479,7 @@ export class Commentator {
         const p = m.players[e.taker];
         if (!p) return null;
         const keeper = m.keeperOf(other(e.side));
-        const [pn, kn] = keeper ? this.two(m, p.idx, keeper.idx) : [surname(p.def.name), 'the keeper'];
+        const [pn, kn] = keeper ? this.two(m, p.idx, keeper.idx) : [this.sn(p.def.name), 'the keeper'];
         const kv = { ...v, p: pn, k: kn };
         const how = m.shootout?.last?.how ?? (e.scored ? 'goal' : 'saved');
         const cat: Cat = e.scored ? 'soScored' : how === 'post' ? 'soPost' : how === 'over' ? 'soOver' : how === 'wide' ? 'soWide' : 'soSaved';
@@ -432,23 +500,31 @@ export class Commentator {
       }
       case 'skill': {
         const p = m.players[e.player];
-        return p ? L(this.pick('skill', { ...v, p: surname(p.def.name) }), 1, p.side) : null;
+        return p ? L(this.pick('skill', { ...v, p: this.sn(p.def.name) }), 1, p.side) : null;
       }
       case 'claim': {
         const k = m.players[e.keeper];
-        return k ? L(this.pick(e.caught ? 'claim' : 'punch', { ...v, k: surname(k.def.name) }), 1, k.side) : null;
+        return k ? L(this.pick(e.caught ? 'claim' : 'punch', { ...v, k: this.sn(k.def.name) }), 1, k.side) : null;
       }
       case 'tackle': {
         if (!e.won || !e.slide) return null;
         const p = m.players[e.by];
-        return p ? L(this.pick('tackle', { ...v, p: surname(p.def.name) }), 1, p.side) : null;
+        return p ? L(this.pick('tackle', { ...v, p: this.sn(p.def.name) }), 1, p.side) : null;
       }
       case 'kick': {
+        const style = e.style;
+        if ((style === 'chip' || style === 'finesse') && !shootout && m.ball.lastTouch >= 0 && this.penFor < 0) {
+          const p = m.players[m.ball.lastTouch];
+          if (!p) return null;
+          this.styled = { style, by: p.idx, at: Commentator.at(m) };
+          // A chip is an event (it gets its line); a finesse curler is colour (the outcome line matters more).
+          return L(this.pick(style === 'chip' ? 'chipTry' : 'finesseTry', { ...v, p: this.sn(p.def.name) }), style === 'chip' ? 2 : 1, p.side);
+        }
         if (e.kind !== 'shot' || shootout || e.power < 0.6 || m.ball.lastTouch < 0) return null;
         const p = m.players[m.ball.lastTouch];
         if (!p || this.penFor >= 0) return null;
         const d = Math.hypot(m.attackDir(p.side) * HALF_L - e.x, e.z);
-        return d >= 25 ? L(this.pick('longShot', { ...v, p: surname(p.def.name) }), 1, p.side) : null;
+        return d >= 25 ? L(this.pick('longShot', { ...v, p: this.sn(p.def.name) }), 1, p.side) : null;
       }
       default:
         return null;

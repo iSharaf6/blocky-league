@@ -3,12 +3,15 @@ import { lerp, wrapAngle } from '../core/math';
 import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, PlayerDef, TeamDef } from '../sim/types';
-import { CHAR_H, Footballer, PSTATE, buildBallGeometry, screenCharK, type PoseInput } from './characters';
+import { CHAR_H, Footballer, PSTATE, buildBallGeometry, charMaterial, screenCharK, setCharacterFill, type PoseInput } from './characters';
 import { FLOODLIGHT_TOWERS } from './stadium';
-import { BoxBuilder, voxelMaterial } from './voxel';
+import { BoxBuilder } from './voxel';
 
-/** 'full': ring + bobbing arrow + name tag; 'ring': just the ground ring (low set-piece / shootout cameras). */
-export type MarkerMode = 'full' | 'ring';
+/**
+ * 'full': ring + bobbing arrow + name tag; 'ring': just the ground ring (low set-piece / shootout cameras);
+ * 'off': nothing (the card close-up).
+ */
+export type MarkerMode = 'full' | 'ring' | 'off';
 
 /** Referee signals: arm raised (foul / offside), advantage (both arms forward), a card held high. */
 export type RefSignal = 'arm' | 'advantage' | 'card';
@@ -17,6 +20,9 @@ export const CARD_YELLOW = 0xffd43b;
 export const CARD_RED = 0xe03131;
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/** Night: camera-side fill light on the footballers (light units; see characters.setCharacterFill). */
+const NIGHT_CHAR_FILL = 0.6;
 
 /** Everything that draws a match: 22 voxel footballers, the ball, and the control marker. */
 export class MatchView {
@@ -60,8 +66,15 @@ export class MatchView {
     celebrate: 0, y: 0, keeper: false, hasBall: false, look: 0, turn: 0,
   };
   private lastFacing = new Float32Array(22);
-  /** A player held on his mark for a close-up (the booked player facing the referee), render only. */
-  private pinned: { i: number; x: number; z: number; facing: number } | null = null;
+  /**
+   * Players held on a mark for a close-up (the booked player facing the referee, the man he brought down
+   * standing off to one side), render only.
+   */
+  private pinned: { i: number; x: number; z: number; facing: number }[] = [];
+  /** The ball kept out of a low close-up it would sit right in front of (the card shot). */
+  private ballHidden = false;
+  /** Players faded out of a latched close-up (see fadeNearLens). */
+  private fadeLatch = new Set<number>();
   private turnRate = new Float32Array(22);
   /** Interpolated frame the renderer last drew (read by camera, HUD). */
   readonly frame: Float32Array;
@@ -96,7 +109,8 @@ export class MatchView {
       return m;
     };
     this.cards = { yellow: card(CARD_YELLOW), red: card(CARD_RED) };
-    this.ball = new THREE.Mesh(buildBallGeometry(BALL_R * 1.25), voxelMaterial);
+    // The ball shares the footballers' material: it gets their night fill too.
+    this.ball = new THREE.Mesh(buildBallGeometry(BALL_R * 1.25), charMaterial);
     this.ball.castShadow = true;
     this.group.add(this.ball);
     // A soft blob keeps the ball readable when high in the air.
@@ -213,8 +227,7 @@ export class MatchView {
     }
     for (let k = 0; k < 6; k++) f[BALL_OFS + k] = lerp(a[BALL_OFS + k], b[BALL_OFS + k], alpha);
     for (let k = 6; k < 11; k++) f[BALL_OFS + k] = b[BALL_OFS + k];
-    const pin = this.pinned;
-    if (pin) {
+    for (const pin of this.pinned) {
       // Stood still on his mark, facing the referee (the sim is already walking him to the free kick).
       const o = pin.i * PF;
       f[o] = pin.x;
@@ -248,8 +261,9 @@ export class MatchView {
       pose.hasBall = f[o + 14] > 0.5;
       pose.keeper = i === 0 || i === 11;
       const bearing = Math.atan2(f[BALL_OFS + 2] - f[o + 1], f[BALL_OFS] - f[o]);
-      // Model left is -z; our facing angle grows towards +z, so negate for "left positive".
-      pose.look = -wrapAngle(bearing - f[o + 3]);
+      // Model left is -z; our facing angle grows towards +z, so negate for "left positive". Someone held on a
+      // mark for a close-up looks where he faces (at the referee), not at the ball.
+      pose.look = this.pinned.length && this.pinned.some((p) => p.i === i) ? 0 : -wrapAngle(bearing - f[o + 3]);
       if (dt > 0) {
         const dF = wrapAngle(f[o + 3] - this.lastFacing[i]) / dt;
         this.turnRate[i] += (Math.max(-12, Math.min(12, -dF)) - this.turnRate[i]) * Math.min(1, dt * 8);
@@ -271,12 +285,13 @@ export class MatchView {
       this.ball.quaternion.copy(this.ballQuat);
     }
     void vy;
+    this.ball.visible = !this.ballHidden;
     this.ballShadow.position.set(bx, 0.02, bz);
     // Contact shadow straight under the ball: shrinks and fades with height so you can read it.
     const hs = Math.max(0.4, 1 - by * 0.1);
     this.ballShadow.scale.set(hs, hs, hs);
     (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = 0.3 * Math.max(0.35, 1 - by * 0.08);
-    this.ballShadow.visible = f[BALL_OFS + 6] < 0.5;
+    this.ballShadow.visible = f[BALL_OFS + 6] < 0.5 && !this.ballHidden;
 
     // Marker on the human-controlled player.
     const active = f[BALL_OFS + 8];
@@ -292,6 +307,7 @@ export class MatchView {
     const full = this.markerMode === 'full';
     this.arrow.visible = full && !this.charging;
     this.nameTag.visible = full;
+    this.markerRing.visible = this.markerMode !== 'off';
     if (this.floodShadows?.visible) this.updateFloodShadows();
     const pt = f[BALL_OFS + 10];
     const human = active >= 0 ? (active < 11 ? 0 : 1) : -1;
@@ -391,11 +407,19 @@ export class MatchView {
    */
   pinPlayer(i: number | null, x = 0, z = 0): void {
     if (i === null || i < 0) {
-      this.pinned = null;
+      this.pinned = [];
       return;
     }
     const r = this.ref;
-    this.pinned = { i, x, z, facing: Math.atan2(r.z - z, r.x - x) };
+    this.pinned = this.pinned.filter((p) => p.i !== i);
+    this.pinned.push({ i, x, z, facing: Math.atan2(r.z - z, r.x - x) });
+  }
+
+  /** Keep the ball out of shot (a low close-up it would sit right in front of), or show it again. */
+  setBallHidden(hidden: boolean): void {
+    this.ballHidden = hidden;
+    this.ball.visible = !hidden;
+    if (hidden) this.ballShadow.visible = false;
   }
 
   /** Where the referee stands and whom he faces (card close-ups). */
@@ -405,15 +429,30 @@ export class MatchView {
   }
 
   /**
-   * Low lenses: players within `radius` (ground metres) of the lens at (cx, cz), or standing on the sight
-   * line from it to any of `sight`, fade to `alpha`; `keep` (the taker, the offender) never fade.
+   * Low lenses: players within `radius` (ground metres) of the lens at (cx, cz), or standing within `sightW`
+   * of the sight line from it to any of `sight`, fade to `alpha` (back to solid over the next metre / half
+   * metre); `keep` (the taker, the offender) never fade. `latch` (a short, static close-up): anyone who
+   * starts to fade goes all the way and stays gone until clearFades(), so no ghost lingers at the edge.
+   * Fading right out (`alpha` 0) is all or nothing, eased over ~0.15 s of `dt` (at once when `snap`: the
+   * camera has just cut), so nobody stands about half see-through at the edge of the zone.
    */
-  fadeNearLens(cx: number, cz: number, radius: number, alpha: number, keep: number[], sight: { x: number; z: number }[]): void {
+  fadeNearLens(
+    cx: number, cz: number, radius: number, alpha: number, keep: number[], sight: { x: number; z: number }[], sightW = 0.85, latch = false,
+    dt = 0, snap = true,
+  ): void {
     const f = this.frame;
+    const set = (fb: Footballer, a: number) => {
+      if (alpha > 0 || snap) fb.setOpacity(a);
+      else if (dt > 0) fb.setOpacity(fb.opacity + (a - fb.opacity) * Math.min(1, dt * 7));
+    };
     for (let i = 0; i < 22; i++) {
       const fb = this.players[i];
       if (keep.includes(i)) {
-        fb.setOpacity(1);
+        set(fb, 1);
+        continue;
+      }
+      if (latch && this.fadeLatch.has(i)) {
+        set(fb, alpha);
         continue;
       }
       const x = f[i * PF];
@@ -422,7 +461,8 @@ export class MatchView {
       // Full fade inside the radius, back to solid over the next metre; right at the lens nearly gone.
       let k = dc <= radius ? 0 : Math.min(1, (dc - radius) / 1);
       if (dc < radius * 0.5) {
-        fb.setOpacity(alpha * 0.4);
+        if (latch) this.fadeLatch.add(i);
+        set(fb, alpha * 0.4);
         continue;
       }
       for (const t of sight) {
@@ -432,14 +472,19 @@ export class MatchView {
         const u = ((x - cx) * lx + (z - cz) * lz) / l2;
         if (u < 0.02 || u > 0.97) continue;
         const d = Math.hypot(x - (cx + lx * u), z - (cz + lz * u));
-        k = Math.min(k, clamp01((d - 0.85) / 0.5));
+        k = Math.min(k, clamp01((d - sightW) / 0.5));
       }
-      fb.setOpacity(alpha + (1 - alpha) * k);
+      if (latch && k < 0.999) {
+        this.fadeLatch.add(i);
+        k = 0;
+      }
+      set(fb, alpha > 0 ? alpha + (1 - alpha) * k : k < 0.5 ? 0 : 1);
     }
   }
 
   /** Everyone solid again (the low camera has cut away). */
   clearFades(): void {
+    this.fadeLatch.clear();
     for (const fb of this.players) if (fb.opacity < 1) fb.setOpacity(1);
   }
 
@@ -477,17 +522,26 @@ export class MatchView {
     if (!v) this.targetRing.visible = false;
   }
 
-  /** Low cameras (behind-the-ball set pieces, shootout) keep only the ground ring: no tag or arrow over the goal. */
+  /**
+   * Low cameras (behind-the-ball set pieces, shootout) keep only the ground ring: no tag or arrow over the
+   * goal; the card close-up shows no marker at all.
+   */
   setMarkerMode(mode: MarkerMode): void {
     this.markerMode = mode;
     this.arrow.visible = mode === 'full' && !this.charging;
     this.nameTag.visible = mode === 'full';
+    this.markerRing.visible = mode !== 'off';
   }
 
-  /** Night adds faint floodlight shadows (one per light tower: the corner masts, or a small ground's portable lamps). */
+  /**
+   * Night adds faint floodlight shadows (one per light tower: the corner masts, or a small ground's portable
+   * lamps; all of them together darken the grass under a player by ~25% at most) and a camera-side fill on
+   * the players, so they read as lit figures on the bright floodlit lawn rather than dark silhouettes.
+   */
   setTimeOfDay(t: 'day' | 'sunset' | 'night', towers: readonly { x: number; z: number; h: number }[] = FLOODLIGHT_TOWERS): void {
     const night = t === 'night';
     this.towers = towers;
+    setCharacterFill(night ? NIGHT_CHAR_FILL : 0);
     if (night && !this.floodShadows) {
       const c = document.createElement('canvas');
       c.width = c.height = 64;
@@ -501,7 +555,7 @@ export class MatchView {
       const tex = new THREE.CanvasTexture(c);
       const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
       const mat = new THREE.MeshBasicMaterial({
-        color: 0x0c1428, alphaMap: tex, transparent: true, opacity: 0.14, depthWrite: false,
+        color: 0x0c1428, alphaMap: tex, transparent: true, opacity: 0.25 / Math.max(1, towers.length), depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
       });
       this.floodShadows = new THREE.InstancedMesh(geo, mat, 22 * towers.length);

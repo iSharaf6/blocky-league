@@ -44,6 +44,8 @@ export interface TeamBrain {
   spZones: Map<number, { x: number; z: number }>;
   /** Defending a direct free kick: the players in the wall, near-post end first. */
   spWall: number[];
+  /** Defending a corner: the zonal men and the spot on the 5.5 m line each one holds while it comes in. */
+  spZonal: Map<number, { x: number; z: number }>;
 }
 
 export function makeBrain(): TeamBrain {
@@ -52,7 +54,7 @@ export function makeBrain(): TeamBrain {
     supporter: -1, supportX: 0, supportZ: 0, supportT: 0,
     supporter2: -1, support2X: 0, support2Z: 0,
     marks: new Map(), overlap: -1, overlapT: 0, line: -0.5, boxZones: new Map(),
-    spFor: null, spTaker: -1, spTargets: new Map(), spRunners: [], spZones: new Map(), spWall: [],
+    spFor: null, spTaker: -1, spTargets: new Map(), spRunners: [], spZones: new Map(), spWall: [], spZonal: new Map(),
   };
 }
 
@@ -349,7 +351,7 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
       aerialOrVolley(m, p);
       continue;
     }
-    const run = !owner ? setPieceRun(m, p) : null;
+    const run = !owner ? setPieceRun(m, p) ?? setPieceZonal(m, p) : null;
     if (run) {
       moveTo(p, run.x, run.z, 1, ball.pos);
       aerialOrVolley(m, p);
@@ -768,14 +770,19 @@ function aerialOrVolley(m: Match, p: Player): void {
       m.order(p, 'header', 0, 0, 0.75, -1, true);
     } else if (ownGoalDist < 30 && rival < 5) {
       const gxOwn = -ad * HALF_L;
-      if (ownGoalDist < 22 && rival < 5 && m.rng.chance(rival < 1.6 ? 0.8 : 0.66)) {
+      // (Attacking a corner / wide free kick he's facing, he mostly heads it back out where it came from.)
+      const sp = m.setPieceKick === m.kickId && m.kickSide !== p.side ? SP_GLANCE : 1;
+      if (ownGoalDist < 22 && rival < 5 && m.rng.chance((rival < 1.6 ? 0.8 : 0.66) * sp)) {
         // Under real pressure near goal: glance it behind for a corner rather than risk it.
         const z = Math.sign(p.pos.z || 1) * (6 + m.rng.next() * 8);
         m.order(p, 'header', -ad, 0, 1, -1, true, { x: gxOwn - ad * 3, z });
       } else {
-        // Head it clear, out towards the wing (from out there, into touch).
-        const z = clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 20, -HALF_W - 3, HALF_W + 3);
-        m.order(p, 'header', ad, 0, 1, -1, true, { x: p.pos.x + ad * 20, z });
+        // Head it clear, out towards the wing (from out there, into touch). A corner is headed for
+        // distance instead, out of the box towards the flank but not into the stand.
+        const z = sp < 1
+          ? clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 11, -HALF_W + 4, HALF_W - 4)
+          : clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 20, -HALF_W - 3, HALF_W + 3);
+        m.order(p, 'header', ad, 0, 1, -1, true, { x: p.pos.x + ad * (sp < 1 ? 22 : 20), z });
       }
     } else if (rival < 2.2) {
       // Contested: nod it on to a teammate ahead.
@@ -852,6 +859,15 @@ function shield(m: Match, p: Player, o: Player): void {
 
 type Choice = { s: number; run: () => void };
 
+/** How often an AI shooter chips a keeper who has rushed out at him. */
+const AI_CHIP = 0.35;
+/** What an AI carrier knocks off a shot from beyond 22 m (work it into the box instead)... */
+const AI_LONG_SHOT_COST = 0.016;
+/** ... and what a sight of goal inside the box adds to one... */
+const AI_BOX_SHOT = 0.12;
+/** ... and a clean sight of goal (nobody in the way) from the edge of the box (15-22 m out). */
+const AI_CLEAR_SIGHT = 0.1;
+
 /** Lateral offsets (m) tried for a through ball, around the runner's own line. */
 const THREAD_OFFSETS = [0, -3.5, 3.5, -7, 7];
 
@@ -912,10 +928,21 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     if (k && dist2(k.pos.x, k.pos.z, gx, 0) > 6) q *= 1.3;
     q *= 1 - pressure * 0.15;
     // A clean strike also earns rebounds and corners, and shooters love a sight of goal.
-    const bonus = blockers < 0.5 ? (dg < 28 ? 0.035 : 0.015) : 0;
-    const s = early(q * 2 + bonus + (inBox ? 0.12 : 0) - (dg > 22 ? 0.016 : 0), 0.05);
+    // (A clean sight of goal from the edge of the box, 15-22 m out, is the one to hit.)
+    const bonus = blockers < 0.5 ? (dg < 15 ? 0.035 : dg < 22 ? AI_CLEAR_SIGHT : dg < 28 ? 0.035 : 0.015) : 0;
+    const s = early(q * 2 + bonus + (inBox ? AI_BOX_SHOT : 0) - (dg > 22 ? AI_LONG_SHOT_COST : 0), 0.05);
     const power = clamp(0.55 + dg / 45, 0.6, 0.97);
-    choices.push({ s, run: () => m.order(p, 'shot', 0, 0, power, -1, false) });
+    // A keeper who has come off his line (3.8+ m out, 3-12 m from the shooter): now and then it's
+    // lifted over him.
+    const kd = k ? dist2(k.pos.x, k.pos.z, p.pos.x, p.pos.z) : 0;
+    const rushing = !!k && dist2(k.pos.x, k.pos.z, gx, 0) > 3.8 && kd > 3 && kd < 12 && dg < 26 && k.state === 'move';
+    choices.push({
+      s,
+      run: () => {
+        const o = m.order(p, 'shot', 0, 0, power, -1, false);
+        if (o && rushing && m.rng.chance(AI_CHIP)) o.style = 'chip';
+      },
+    });
   }
 
   // ---- Passes and through balls
@@ -1196,11 +1223,12 @@ export function isCrossingRestart(m: Match, r: { kind: string; side: Side; x: nu
 }
 
 /**
- * Set-piece shapes. Corners: five runners start in a pack between the spot and the six-yard box
- * and attack the near post, far post, spot, back post and front post as the kick is struck; two
- * on the edge, two at the back. Wide free kicks: the runners hold the line. Defenders: a man
- * goal-side of each box attacker, a post guard (or a two-man wall), the edge, two up. Direct free
- * kicks: see `directFreeKickShape`.
+ * Set-piece shapes. Corners: five runners start in and around the six-yard box (CORNER_BOX: near post,
+ * far post, spot, back post, front post) and attack their zones (cornerZones) as the kick is struck;
+ * one comes short, one on the edge, two at the back. Defending a corner: three zonal men on the 5.5 m
+ * line (CORNER_ZONAL, they hold it while the ball comes in), a man goal-side of each box attacker,
+ * one on the edge, one up. Wide free kicks: the runners hold the line; defenders go goal-side of each,
+ * a two-man wall, the edge, two up. Direct free kicks: see `directFreeKickShape`.
  */
 export function setPieceTargets(m: Match, side: Side): Map<number, { x: number; z: number }> {
   const brain = m.brains[side];
@@ -1213,6 +1241,7 @@ export function setPieceTargets(m: Match, side: Side): Map<number, { x: number; 
   brain.spRunners = [];
   brain.spZones = new Map();
   brain.spWall = [];
+  brain.spZonal = new Map();
   if (isDirectFreeKick(m, r)) {
     directFreeKickShape(m, side, r, brain);
     return brain.spTargets;
@@ -1225,7 +1254,7 @@ export function setPieceTargets(m: Match, side: Side): Map<number, { x: number; 
   const corner = r.kind === 'corner';
   // (distance out from the goal line, z) for the attacking side.
   const box: [number, number][] = corner
-    ? [[10.5, 3.2 * s0], [11.5, -2.2 * s0], [13, 0.6 * s0], [12, -6 * s0], [9, 6.5 * s0]]
+    ? CORNER_BOX.map(([d, z]) => [d, z * s0] as [number, number])
     : [[6, 2.8 * s0], [6.5, -3.5 * s0], [9.5, 0.5 * s0], [11, -5.5 * s0], [10.5, 6 * s0]];
   const edge: [number, number][] = [[17, 3 * s0], [17.5, -6 * s0]];
   const P = (d: number, z: number) => ({ x: gx - adA * d, z });
@@ -1248,20 +1277,30 @@ export function setPieceTargets(m: Match, side: Side): Map<number, { x: number; 
     }
     return brain.spTargets;
   }
-  // Defending: goal-side of each box zone, a post guard or short wall, the edge, two up top.
+  // Defending: goal-side of each box zone, zonal men (corners) or a short wall, the edge, up top.
   const defs = m.teamPlayers(side).filter((p) => !p.isKeeper && !p.sentOff);
   const dprio = (p: Player) => (p.role === 'DF' ? 0 : p.role === 'MF' ? 1 : 2);
   defs.sort((a, b) => dprio(a) - dprio(b) || a.slot - b.slot);
   const marks = boxPts.map((pt) => ({ x: pt.x + adA * 0.9, z: pt.z * 0.92 }));
-  let extra: { x: number; z: number }[];
   if (corner) {
-    extra = [P(1.2, 3.1 * s0)];
-  } else {
-    const dg = Math.max(1, dist2(r.x, r.z, gx, 0));
-    const ux = (gx - r.x) / dg;
-    const uz = -r.z / dg;
-    extra = [-0.45, 0.45].map((o) => ({ x: r.x + ux * WALL_DIST - uz * o, z: r.z + uz * WALL_DIST + ux * o }));
+    // Three zonal men across the 5.5 m line (they stay there while it comes in), a marker goal-side of
+    // each runner, one on the edge, one up for the counter.
+    const zonal = CORNER_ZONAL.map((z) => P(CORNER_ZONAL_D, z * s0));
+    assignNearest(defs.slice(0, 3), zonal, brain.spTargets);
+    for (const p of defs.slice(0, 3)) {
+      const pt = brain.spTargets.get(p.idx);
+      if (pt) brain.spZonal.set(p.idx, pt);
+    }
+    assignNearest(defs.slice(3, 8), marks, brain.spTargets);
+    assignNearest(defs.slice(8, 9), [P(16, 2 * s0)], brain.spTargets);
+    assignNearest(defs.slice(9), [{ x: -adA * 1.5, z: -7 * s0 }], brain.spTargets);
+    return brain.spTargets;
   }
+  // A wide free kick: a two-man wall.
+  const dg = Math.max(1, dist2(r.x, r.z, gx, 0));
+  const ux = (gx - r.x) / dg;
+  const uz = -r.z / dg;
+  const extra = [-0.45, 0.45].map((o) => ({ x: r.x + ux * WALL_DIST - uz * o, z: r.z + uz * WALL_DIST + ux * o }));
   const edgeD = [P(16, 2 * s0), P(16.5, -4 * s0)];
   // Two stay up on halfway for the counter.
   const up = [{ x: -adA * 1.5, z: -7 }, { x: -adA * 1.5, z: 7 }];
@@ -1279,10 +1318,53 @@ export function cornerShortSpot(m: Match, r: { side: Side; x: number; z: number 
   return { x: gx - m.attackDir(r.side) * 6, z: s0 * (HALF_W - 6) };
 }
 
-/** Corner delivery zones (distance out, z) in runner order: near post, far post, spot, back post, front. */
+/**
+ * Where the five corner runners start (m out from the goal line, z towards the corner's side), in
+ * runner order: near post, far post, spot, back post, front post. They're in and around the six-yard
+ * box, not in a pack on the penalty spot.
+ */
+export const CORNER_BOX: readonly [number, number][] = [[6.5, 2.5], [7.5, -2], [11, 0.5], [9, -5.5], [5.5, 5.5]];
+/** Corner defence: zonal men on this line (m out) at these z (towards the corner's side). */
+export const CORNER_ZONAL_D = 5.5;
+export const CORNER_ZONAL: readonly number[] = [-3, 0, 3];
+
+/**
+ * Corner delivery zones (distance out, z) in runner order: near post, far post, spot, back post, front.
+ * The near-post runner arrives ~6 m out, where a driven corner is whipped.
+ */
 function cornerZones(s0: number): [number, number][] {
-  return [[5, 2.5 * s0], [5.5, -3.5 * s0], [9.5, -0.4 * s0], [7.5, -6 * s0], [4, 5.5 * s0]];
+  return [[6, 2.2 * s0], [5.5, -3 * s0], [9, 0], [7, -5.5 * s0], [4.5, 4.5 * s0]];
 }
+
+/**
+ * A zonal defender at a corner: while the delivery is coming in (the first ~1.6 s), he holds his spot
+ * on the 5.5 m line, stepping towards the ball's line, rather than following a runner.
+ */
+function setPieceZonal(m: Match, p: Player): { x: number; z: number } | null {
+  if (m.setPieceKick !== m.kickId || m.sinceKick > 1.6 || m.kickSide === p.side) return null;
+  const zone = m.brains[p.side].spZonal.get(p.idx);
+  if (!zone) return null;
+  // A ball coming through his zone at a height he can head: he attacks it (the first point of its
+  // flight he can get to, within ZONAL_REACH of his spot); otherwise he holds the spot, shading a
+  // little towards the ball.
+  let best: { x: number; z: number } | null = null;
+  for (const s of m.ballPath) {
+    if (s.y > 2.6 || s.y < 0.5) continue;
+    if (dist2(s.x, s.z, zone.x, zone.z) > ZONAL_REACH) continue;
+    if (dist2(p.pos.x, p.pos.z, s.x, s.z) / (p.top * 0.9) <= s.t + 0.1) {
+      best = { x: s.x, z: s.z };
+      break;
+    }
+  }
+  if (best) return best;
+  const b = m.ball;
+  return { x: zone.x, z: zone.z + clamp(b.pos.z - zone.z, -1, 1) * 0.6 };
+}
+
+/** How far (m) from his spot a zonal defender goes to attack a corner coming through his zone. */
+const ZONAL_REACH = 1.0;
+/** How much less often a defender glances a set-piece delivery behind (vs heading it away). */
+const SP_GLANCE = 0.6;
 
 const atkPrio = (m: Match, p: Player) => (p.role === 'FW' ? 0 : p.role === 'MF' ? 1 : isWide(m, p) ? 2 : 3);
 
@@ -1334,9 +1416,10 @@ function directFreeKickShape(m: Match, side: Side, r: { kind: string; side: Side
     const dg = Math.max(1, dist2(r.x, r.z, gx, 0));
     const ux = (gx - r.x) / dg;
     const uz = -r.z / dg;
-    // The second man over the ball stands well to the side of it: the set-piece camera looks along the
-    // ball-goal line from ~9.5 m behind the ball, so nobody may stand on that line (see clearOfLens).
-    const decoy = { x: r.x - ux * 0.6 - uz * near * FK_LENS_CLEAR * 1.15, z: r.z - uz * 0.6 + ux * near * FK_LENS_CLEAR * 1.15 };
+    // The second man over the ball stands beside it and a stride ahead of it: the set-piece camera looks
+    // along the ball-goal line from ~7 m behind the ball, so nobody may stand behind the ball near that
+    // line (see clearOfLens); level with the ball or ahead of it he's in shot but not in the way.
+    const decoy = { x: r.x + ux * FK_DECOY_AHEAD - uz * near * FK_DECOY_SIDE, z: r.z + uz * FK_DECOY_AHEAD + ux * near * FK_DECOY_SIDE };
     // Lurking for the rebound either side of the shooting lanes, not in them.
     const line = [P(11, laneZ(11) - 10), P(11.5, laneZ(11.5) - 6.5), P(11.5, laneZ(11.5) + 6.5), P(11, laneZ(11) + 10)];
     const edge = [P(19, -near * 9), P(19, near * 13)].map((pt) => clearOf(pt, 4));
@@ -1348,6 +1431,9 @@ function directFreeKickShape(m: Match, side: Side, r: { kind: string; side: Side
     for (const [idx, pt] of brain.spTargets) brain.spTargets.set(idx, clearOfLens(r, gx, pt, near));
     return;
   }
+  const defLens = (map: Map<number, { x: number; z: number }>) => {
+    for (const [idx, pt] of map) map.set(idx, clearOfLens(r, gx, pt, near));
+  };
   const plan = freeKickWall(m, r);
   const defs = m.teamPlayers(side).filter((p) => !p.isKeeper && !p.sentOff);
   const nonDf = defs.filter((p) => p.role !== 'DF');
@@ -1365,14 +1451,25 @@ function directFreeKickShape(m: Match, side: Side, r: { kind: string; side: Side
   assignNearest(rest.slice(0, 4), line, brain.spTargets);
   assignNearest(rest.slice(4, 5), edge, brain.spTargets);
   assignNearest(rest.slice(5), up, brain.spTargets);
+  // (Nobody from either side stands in the lens: the wall and the line are ahead of the ball anyway.)
+  defLens(brain.spTargets);
 }
 
-/** How far (m) to the side of the free-kick camera's line (behind the ball, along ball-goal) teammates stand. */
-export const FK_LENS_CLEAR = 2.5;
+/**
+ * How far (m) to the side of the free-kick camera's line (behind the ball, along ball-goal) everyone
+ * but the taker stands. The camera sits ~7 m back and ~2.8 m up; this also keeps the ±30° cone behind
+ * the ball clear out to FK_LENS_CONE_DEPTH (6 m x tan 30° = 3.5 m < this).
+ */
+export const FK_LENS_CLEAR = 4.5;
+/** Depth (m) behind the ball of the ±30° cone that is kept clear for the free-kick camera. */
+export const FK_LENS_CONE_DEPTH = 6;
+/** The second man over a direct free kick: this far ahead of the ball and to its side (m). */
+const FK_DECOY_AHEAD = 0.9;
+const FK_DECOY_SIDE = 1.6;
 
 /**
  * A point moved off the camera's line of sight on a direct free kick: anywhere from level with the ball
- * to 12 m behind it (the lens sits ~9.5 m back on the ball-goal line), at least FK_LENS_CLEAR (plus a
+ * to 12 m behind it (the lens sits ~7 m back on the ball-goal line), at least FK_LENS_CLEAR (plus a
  * little) to the side of that line, keeping to the side it was on (`near` when it's right on it).
  */
 export function clearOfLens(r: { x: number; z: number }, gx: number, pt: { x: number; z: number }, near: number): { x: number; z: number } {
@@ -1414,7 +1511,9 @@ export function setPieceAim(m: Match, t: Player, nearPost = false): { x: number;
       aim = { x: zone.x, z: zone.z };
     }
   });
-  return { x: aim.x + m.rng.gauss() * 0.6, z: aim.z + m.rng.gauss() * 0.6, target: best };
+  // (A driven ball, whipped in flat and fast, is harder to put on a sixpence.)
+  const spread = nearPost ? 0.95 : 0.6;
+  return { x: aim.x + m.rng.gauss() * spread, z: aim.z + m.rng.gauss() * spread, target: best };
 }
 
 /** A corner runner, once the ball is struck: time the run, then attack the assigned zone. */

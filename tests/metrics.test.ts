@@ -3,9 +3,10 @@ import { fmt, runMatch, summarise } from './metricsHarness';
 
 const BASE_SEEDS = [11, 23, 37, 41, 53, 67, 79, 97, 109, 127, 131, 149, 163, 179, 191, 211];
 // The feel bands are averages, and a single match swings a lot (a foul or a corner is a handful of
-// events; a goal more or less is ~0.03 on a 40-match average), so they're checked over 40 matches at
-// 2x150 s and 64 at the default 2x120 s. MSEEDS=192 npx vitest run tests/metrics.test.ts -> a larger
-// sample of both while tuning.
+// events; a goal more or less is ~0.03 on a 40-match average, and the 64-match mean of goals still
+// swings by +-0.2 between two versions of the sim that differ in one constant), so they're checked over
+// 128 matches at the default 2x120 s and 64 at 2x150 s. MSEEDS=256 npx vitest run
+// tests/metrics.test.ts -> a larger sample of both while tuning.
 const extra = Number((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.MSEEDS ?? 0);
 const seeds = (n: number) => Array.from({ length: Math.max(n, extra) }, (_, i) => 11 + i * 14);
 
@@ -52,9 +53,10 @@ function checkBands(halfLength: number, n: number): void {
   within(s.offsides, 0.4, 1.5);
   // Parries and deflections off an on-target shot are the shooter's goals, not own goals (was ~14%).
   expect(s.ownGoalPct).toBeLessThan(10);
-  // Late AI changes at 60' / 75' on top of the half-time ones, never more than three.
-  expect(s.maxSubs).toBeLessThanOrEqual(3);
-  expect(s.lateSubs).toBeGreaterThan(0.1);
+  // Late AI changes at 60' / 75' (and a forced one by 70' for a side that hasn't made any) on top of
+  // the half-time ones, never more than five.
+  expect(s.maxSubs).toBeLessThanOrEqual(5);
+  expect(s.lateSubs).toBeGreaterThan(0.3);
   // Possession tempo. The brief asked for 70-130 completed passes per team AND 1.2-2.5 s
   // on the ball; at 2x150 s the ball-in-play time can't hold both (~100 s of pass flight +
   // 1.2 s x ~170 touches > ~255 s of play), so we favour tempo (no more ping-pong) and keep
@@ -66,11 +68,11 @@ function checkBands(halfLength: number, n: number): void {
 
 describe('match feel metrics (AI vs AI, difficulty 2, half-time AI subs)', () => {
   it('stays inside the DLS-style target bands at the default 2x120 s halves', () => {
-    checkBands(120, 64);
-  }, 180_000);
+    checkBands(120, 128);
+  }, 240_000);
 
   it('stays inside the DLS-style target bands at 2x150 s halves', () => {
-    checkBands(150, 40);
+    checkBands(150, 64);
   }, 180_000);
 
   it('is deterministic for a given seed', () => {

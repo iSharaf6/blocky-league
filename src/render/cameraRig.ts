@@ -13,8 +13,14 @@ export interface CamFocus {
   attack: number; // +1 / -1: the human's attacking direction (portrait framing)
   /** Attacking direction of the side in possession (0 = loose). */
   lean?: number;
-  /** Set piece being taken: frame the taker and the target area together. */
-  setPiece?: { x: number; z: number; tx: number; tz: number; behind?: boolean; goal?: boolean; pen?: boolean } | null;
+  /**
+   * Set piece being taken: frame the taker and the target area together. `taker`: his player index (the
+   * over-the-shoulder lens steps to the other side of the aim line from him); `corner`: a corner kick; `ours`:
+   * the human's side is taking it.
+   */
+  setPiece?: {
+    x: number; z: number; tx: number; tz: number; behind?: boolean; goal?: boolean; pen?: boolean; taker?: number; corner?: boolean; ours?: boolean;
+  } | null;
   /** Celebrate: player index of the subject (never counted as blocking the shot). */
   subject?: number;
   /** Celebrate: radius of a group to frame instead of one player (team-mates arriving, shootout pile-up). */
@@ -43,9 +49,21 @@ const NEAR_PITCH_MAX = 40;
 /** Near stand, front-row heads (z, height; with a hop and a flag), the first thing the broadcast frame would clip at the bottom. */
 const NEAR_STAND_Z = HALF_W + 5.9;
 const NEAR_STAND_Y = 2.7;
-/** Card close-up: preferred angle (degrees) of the lens off the referee-offender line, and the side (+1 / -1) of his card hand. */
-const CARD_DEG = 70;
+/**
+ * Card close-up: preferred angle (degrees) of the lens off the referee->offender line (past 90: on the
+ * referee's side, so the offender's face is in shot, not the back of his head), the side (+1 / -1) of the
+ * referee's card hand, and the lens distance (m) from the pair's midpoint and its height.
+ */
+const CARD_DEG = 115;
 const CARD_HAND = 1;
+const CARD_D = 6.4;
+const CARD_Y = 1.5;
+/** Portrait (phones held upright): the end-on lens's distance behind / above its target, and its steepest tilt. */
+const PORTRAIT_BACK = 44;
+const PORTRAIT_UP = 34;
+const PORTRAIT_TILT_MAX = 70;
+/** Corners: how far (m) the set-piece framing is pulled from the taker / box midpoint towards the goal. */
+const CORNER_PULL = 6;
 /**
  * The over-the-shoulder shot stays on a struck free kick / penalty this long, then cuts back to the
  * broadcast shot (a cut, never an ease: easing 40 m back up to the gantry reads as a whip pan).
@@ -104,6 +122,8 @@ export class CameraRig {
   touchLayout = false;
   /** 0..1 progress of the pre-match fly-in. */
   introT = 0;
+  /** The last update() cut to its shot (rather than gliding): whatever depends on the framing can snap too. */
+  private cutNow = true;
 
   constructor(readonly camera: THREE.PerspectiveCamera) {
     this.fov = camera.fov;
@@ -180,12 +200,48 @@ export class CameraRig {
     let tx: number, tz: number, px: number, py: number, pz: number, fov: number;
     if (this.portrait) {
       const ad = f.attack;
-      tx = clamp(f.bx * 0.85 + f.ax * 0.15 + this.lead.x + ad * 5, -HALF_L + 8, HALF_L - 8);
-      tz = clamp(f.bz * 0.8 + this.lead.y, -HALF_W + 9, HALF_W - 9);
+      const piece = f.setPiece;
+      // The ball ~7 m short of the look target sits at ~-25% of the height, above the touch buttons.
+      let fx = f.bx * 0.85 + f.ax * 0.15 + this.lead.x + ad * 5;
+      let fz = f.bz * 0.8 + this.lead.y;
+      let zLim = HALF_W - 9;
+      if (piece?.corner && piece.ours === false) {
+        // Their corner: the narrow frame can't hold the flag and the goal both, so it shows the box we
+        // defend (the delivery flies into shot).
+        fx = piece.tx + ad * 4;
+        fz = piece.z * 0.15;
+      } else if (piece) {
+        // Set pieces: framed on the taker the same way, and never with him out of the narrow frame (a
+        // throw-in or a corner by the touchline included).
+        fx = piece.x + ad * 7;
+        fz = piece.z * 0.9 + piece.tz * 0.1;
+        zLim = HALF_W - 2.5;
+      }
+      tx = clamp(fx, -HALF_L + 8, HALF_L - 8);
+      tz = clamp(fz, -zLim, zLim);
       this.yaw = ad > 0 ? Math.PI / 2 : -Math.PI / 2;
-      px = tx - ad * 44;
+      // End-on, PORTRAIT_BACK m back and PORTRAIT_UP m up. Near our own goal that would put the lens behind
+      // the end stand (a roofed bowl fills the frame with roof), so it never goes back past the end boards:
+      // it waits there and tilts down more steeply (up to PORTRAIT_TILT_MAX, so nothing behind it creeps into
+      // the bottom of the frame), keeping the ball at the same height on screen. Continuous at the switch.
+      const limit = HALF_L + 3;
+      const uT = ad * tx;
+      let G = PORTRAIT_BACK;
+      py = PORTRAIT_UP;
+      if (uT - PORTRAIT_BACK < -limit) {
+        const r0 = PORTRAIT_BACK - 7;
+        const r = Math.max(6, uT - 7 + limit);
+        const k = clamp((r0 - r) / (r0 - 6), 0, 1);
+        const p0 = Math.atan2(PORTRAIT_UP, PORTRAIT_BACK);
+        const pitch = p0 + k * (PORTRAIT_TILT_MAX * DEG - p0);
+        // Where the ball (7 m short of the old target) sat below the centre of the frame.
+        const drop = Math.atan2(PORTRAIT_UP, r0) - p0;
+        py = r * Math.tan(pitch + drop);
+        G = py / Math.tan(pitch);
+        tx = ad * (G - limit);
+      }
+      px = tx - ad * G;
       pz = tz;
-      py = 34;
       fov = 38;
     } else {
       this.yaw = 0;
@@ -199,10 +255,26 @@ export class CameraRig {
       const piece = f.setPiece;
       if (piece) {
         // Taker and target together, but never let the taker leave the frame.
-        fx = clamp((piece.x + piece.tx) / 2, piece.x - 0.3 * W, piece.x + 0.3 * W);
-        fz = clamp((piece.z + piece.tz) / 2, piece.z - 0.22 * W, piece.z + 0.22 * W);
+        let mx = (piece.x + piece.tx) / 2;
+        let mz = (piece.z + piece.tz) / 2;
+        let zHi = piece.z + 0.22 * W;
+        if (piece.corner) {
+          // Corners: pulled ~6 m on towards the goal, so the whole goal (posts, net, keeper) is in shot, not
+          // half off the side. A far-side corner may frame well down the pitch from the taker (he stays in the
+          // upper part of the frame); a near-side one keeps him clear of the bottom.
+          const gx = Math.sign(piece.x || 1) * HALF_L;
+          const dx = gx - mx;
+          const dz = -mz;
+          const dl = Math.hypot(dx, dz) || 1;
+          const k = Math.min(CORNER_PULL, dl);
+          mx += (dx / dl) * k;
+          mz += (dz / dl) * k;
+          if (piece.z < 0) zHi = piece.z + 0.5 * W;
+        }
+        fx = clamp(mx, piece.x - 0.3 * W, piece.x + 0.3 * W);
+        fz = clamp(mz, piece.z - 0.22 * W, zHi);
       }
-      const edge = HALF_L - 0.3 * W;
+      const edge = HALF_L - 0.3 * W + (piece?.corner ? CORNER_PULL : 0);
       tx = clamp(fx, -edge, edge);
       // Touch screens: the buttons own the bottom-right, so a set-piece taker is kept in the left 60% of the
       // frame (even if that shows a little of the end stand beyond the corner flag).
@@ -400,52 +472,21 @@ export class CameraRig {
           glide = true;
           break;
         }
-        // Referee close-up: the lens orbits the midpoint between the referee and the offender he faces, ~70
-        // degrees off the line between them, so both stand side by side in a tight frame: the raised card, his
-        // face and the player it is shown to.
-        let dx = c.fx - c.rx;
-        let dz = c.fz - c.rz;
-        const dl = Math.hypot(dx, dz) || 1;
-        dx /= dl;
-        dz /= dl;
+        // Referee close-up: the lens orbits the midpoint between the referee and the offender he faces,
+        // 110-120 degrees off the referee->offender line, on the referee's side (his card hand towards us):
+        // the offender's face, the referee three-quarters on with the card held up clear of his head, both
+        // full length side by side, filmed from about chest height.
+        const q = this.cardLens(c.rx, c.rz, c.fx, c.fz, [], f.tall ?? 1.9);
         const mx = (c.rx + c.fx) / 2;
         const mz = (c.rz + c.fz) / 2;
-        const D = 6.6;
-        const at = (sg: number) => {
-          const off = Math.abs(sg);
-          const ux = dx * Math.cos(off) - dz * Math.sign(sg) * Math.sin(off);
-          const uz = dz * Math.cos(off) + dx * Math.sign(sg) * Math.sin(off);
-          return { x: mx + ux * D, z: mz + uz * D };
-        };
-        if (this.cardSide === 0) {
-          // 55-90 degrees off the line, either side: clear of the stands and of anyone standing between the
-          // lens and the pair, then the referee's card-hand side, then the side nearer the main stand.
-          let best = CARD_DEG * DEG;
-          let bestScore = Infinity;
-          for (const deg of [CARD_DEG, 62, 80, 55, 90]) {
-            for (const sgn of [1, -1]) {
-              const sg = sgn * deg * DEG;
-              const q = at(sg);
-              let score = (Math.max(0, Math.abs(q.x) - (HALF_L + 3)) + Math.max(0, Math.abs(q.z) - (HALF_W + 2.2))) * 10;
-              score += this.sightBlock(q.x, q.z, mx, mz, -1) * 3;
-              score += Math.abs(deg - CARD_DEG) * 0.02 - q.z * 0.03 + (sgn !== CARD_HAND ? 1.2 : 0);
-              if (score < bestScore) {
-                bestScore = score;
-                best = sg;
-              }
-            }
-          }
-          this.cardSide = best;
-        }
-        const q = at(this.cardSide);
-        px = clamp(q.x, -(HALF_L + 3), HALF_L + 3);
-        pz = clamp(q.z, -(HALF_W + 2.2), HALF_W + 2.2);
+        px = q.x;
+        pz = q.z;
         const tall = f.tall ?? 1.9;
-        py = tall * 1.0;
+        py = CARD_Y * (tall / 1.9);
         // Framed on the midpoint between the referee (raised card) and the offender he faces.
         tx = mx;
         tz = mz;
-        ty = tall * 0.78;
+        ty = tall * 0.66;
         fov = 30;
         rate = 6;
         glide = true;
@@ -498,7 +539,7 @@ export class CameraRig {
       default: {
         const piece = f.setPiece;
         if (piece?.behind && !this.portrait) {
-          const b = this.behindShot(piece);
+          const b = this.behindShot(piece, f.tall ?? 1.9);
           ({ tx, ty, tz, px, py, pz, fov } = b);
           rate = 3;
           behind = true;
@@ -546,8 +587,9 @@ export class CameraRig {
       this.behind = behind;
       this.snap = true;
     }
-    // Low cameras (goal line, celebrations, card close-ups) step around anyone standing where the lens would be.
-    if ((this.mode === 'replay' && this.replayShot === 'goal') || this.mode === 'celebrate' || this.mode === 'card') {
+    // Low cameras (goal line, celebrations) step around anyone standing where the lens would be. (The card
+    // close-up holds its framing: anyone that close to it is faded out of the shot instead.)
+    if ((this.mode === 'replay' && this.replayShot === 'goal') || this.mode === 'celebrate') {
       const o = this.clearOfPlayers(px, pz, f.subject ?? -1);
       px = o.x;
       pz = o.z;
@@ -564,7 +606,8 @@ export class CameraRig {
     this.wantT.set(tx, ty, tz);
     this.wantP.set(px, py, pz);
     this.hasWant = true;
-    if (this.snap || (scripted && rate >= 60)) {
+    this.cutNow = this.snap || (scripted && rate >= 60);
+    if (this.cutNow) {
       this.target.set(tx, ty, tz);
       this.pos.set(px, py, pz);
       this.fov = fov;
@@ -605,28 +648,94 @@ export class CameraRig {
     cam.updateProjectionMatrix();
   }
 
-  /** Over-the-shoulder set-piece camera: metres behind / above the ball and to the side of the taker. */
-  readonly behindRig = { back: 9.5, up: 4.5, side: 0.7, penBack: 6.5, penUp: 4.8, cornerBack: 6.5, cornerUp: 4.8 };
+  /**
+   * Card close-up lens (ground x, z) for a referee at (rx, rz) booking the player at (fx, fz). The side is
+   * picked once per booking (setMode('card') resets it): CARD_DEG off the referee->offender line on his card
+   * hand side, or 110 / 120 degrees, or (only if that side is out of bounds or packed) the other side.
+   */
+  cardLens(rx: number, rz: number, fx: number, fz: number, skip: readonly number[] = [], tall = 1.9): { x: number; z: number } {
+    // Players drawn bigger (phones) are filmed from further back: the same frame.
+    const D = CARD_D * (tall / 1.9);
+    let dx = fx - rx;
+    let dz = fz - rz;
+    const dl = Math.hypot(dx, dz) || 1;
+    dx /= dl;
+    dz /= dl;
+    const mx = (rx + fx) / 2;
+    const mz = (rz + fz) / 2;
+    const at = (sg: number) => {
+      const off = Math.abs(sg);
+      const ux = dx * Math.cos(off) - dz * Math.sign(sg) * Math.sin(off);
+      const uz = dz * Math.cos(off) + dx * Math.sign(sg) * Math.sin(off);
+      return { x: mx + ux * D, z: mz + uz * D };
+    };
+    if (this.cardSide === 0) {
+      let best = CARD_HAND * CARD_DEG * DEG;
+      let bestScore = Infinity;
+      for (const deg of [CARD_DEG, 110, 120]) {
+        for (const sgn of [CARD_HAND, -CARD_HAND]) {
+          const sg = sgn * deg * DEG;
+          const q = at(sg);
+          let score = (Math.max(0, Math.abs(q.x) - (HALF_L + 3)) + Math.max(0, Math.abs(q.z) - (HALF_W + 2.2))) * 10;
+          // (Anyone crowding the lens or on the sight line is faded out of the shot, so a crowd only tips the
+          // balance: the card hand towards the lens matters more, or the card is hidden behind his head.)
+          score += this.sightBlock(q.x, q.z, mx, mz, skip);
+          score += Math.abs(deg - CARD_DEG) * 0.02 + (sgn !== CARD_HAND ? 3 : 0);
+          if (score < bestScore) {
+            bestScore = score;
+            best = sg;
+          }
+        }
+      }
+      this.cardSide = best;
+    }
+    const q = at(this.cardSide);
+    return { x: clamp(q.x, -(HALF_L + 3), HALF_L + 3), z: clamp(q.z, -(HALF_W + 2.2), HALF_W + 2.2) };
+  }
 
   /**
-   * Our dead ball near goal, filmed from behind the taker. Shots at goal: a longish lens from ~9.5 m back and
-   * 4.5 m up, so the ball at his feet, the wall, the keeper and the whole goal mouth (over the wall) share
-   * the frame, crossbar ~26% from the top; that is the biggest the goal can be with the ball still in shot
-   * (~28% of the width from 23 m, capped at 45%). Penalties come in to 6.5 m back / 4.8 m up, inside the
-   * box, so the players cleared to its edge are behind the lens (goal ~40%). Crosses: over the corner
-   * taker's shoulder at the drop zone.
+   * Over-the-shoulder set-piece camera: metres behind / above the ball and to the side of the taker. Free
+   * kicks at goal: `back` / `up` (for a 1.9 m player; scaled with the draw size) with a `fov` lens, tilted
+   * so the crossbar sits at `barNdc` (`barNdcSmall` on small screens, where the set-piece hint along the top
+   * is proportionally bigger): the taker stands full length in the lower half, the wall and goal above him.
    */
-  private behindShot(piece: NonNullable<CamFocus['setPiece']>): { tx: number; ty: number; tz: number; px: number; py: number; pz: number; fov: number } {
+  readonly behindRig = {
+    back: 8, up: 2.8, side: 0.25, fov: 38, look: 9, barNdc: 0.5, barNdcSmall: 0.38,
+    penBack: 6.5, penUp: 4.8, cornerBack: 6.5, cornerUp: 4.8,
+  };
+
+  /**
+   * Our dead ball near goal, filmed from behind the taker. Free kicks at goal: a low lens (`back` 8 m behind
+   * the ball, 2.8 m up, 38 degrees) just off the aim line on the other side of it from the taker (he waits
+   * off to one side for his run-up): the ball in the middle, the taker full length beside it in the lower
+   * half (~40% of the height, clear of the touch controls in the corners), and the wall, keeper and goal
+   * mouth lined up above them, crossbar just under the set-piece hint. Anyone else within 4 m of the
+   * lens is faded out (MatchSession), so only someone further off can block the ball. Penalties: 6.5 m back
+   * / 4.8 m up, inside the box, so the players cleared to its edge are behind the lens (goal ~40% wide).
+   * Crosses: over the corner taker's shoulder at the drop zone.
+   */
+  private behindShot(piece: NonNullable<CamFocus['setPiece']>, tall = 1.9): { tx: number; ty: number; tz: number; px: number; py: number; pz: number; fov: number } {
     const rig = this.behindRig;
-    const back0 = piece.pen ? rig.penBack : piece.goal ? rig.back : rig.cornerBack;
-    const up = piece.pen ? rig.penUp : piece.goal ? rig.up : rig.cornerUp;
+    const fk = !!piece.goal && !piece.pen;
+    // Players drawn bigger (phones) are filmed from proportionally further back and higher: the same frame.
+    const k = fk ? tall / 1.9 : 1;
+    const back0 = (piece.pen ? rig.penBack : piece.goal ? rig.back : rig.cornerBack) * k;
+    const up = (piece.pen ? rig.penUp : piece.goal ? rig.up : rig.cornerUp) * k;
     const dx = piece.tx - piece.x;
     const dz = piece.tz - piece.z;
     const dl = Math.hypot(dx, dz) || 1;
     const ux = dx / dl;
     const uz = dz / dl;
-    // Step to the side nearer the middle of the pitch, so the taker stands just off the aim line.
-    const ss = piece.z * ux - piece.x * uz > 0 ? -1 : 1;
+    // Step to the side nearer the middle of the pitch, so the taker stands just off the aim line; free kicks
+    // step to the other side of the line from the taker (he waits off to one side for his run-up), so he
+    // is never between the lens and the ball.
+    let ss = piece.z * ux - piece.x * uz > 0 ? -1 : 1;
+    const fr = this.players;
+    const taker = piece.taker ?? -1;
+    if (fk && fr && taker >= 0) {
+      const lat = (fr[taker * PF] - piece.x) * -uz + (fr[taker * PF + 1] - piece.z) * ux;
+      if (Math.abs(lat) > 0.2) ss = lat > 0 ? -1 : 1;
+    }
     const side0 = piece.goal ? rig.side : 0;
     // Stay in front of the stands (corners put "behind the ball" over the front rows).
     const place = (b: number, sd: number) => ({
@@ -634,12 +743,16 @@ export class CameraRig {
       z: clamp(piece.z - uz * b + ux * ss * sd, -(HALF_W + 2.8), HALF_W + 2.8),
     });
     // Someone standing between the lens and the ball (a team-mate, a player lingering by the box): step
-    // to one side of him, then come in a little, until the ball and taker are clear.
+    // to one side of him, then (free kicks) back off or (penalties) come in a little, until the ball and
+    // taker are clear. Free kicks ignore anyone close enough to the lens to be faded out.
+    const backs = fk ? [back0, back0 + 1.2, back0 - 0.8] : [back0, back0 - 1.2, back0 - 2.2];
+    const sides = fk ? [side0, side0 + 1.3, side0 + 2.4] : [side0, side0 + 1.8, -side0 - 1.8];
+    const near = fk ? 4 : 0;
     let at = place(back0, side0);
-    search: for (const b of [back0, back0 - 1.2, back0 - 2.2]) {
-      for (const sd of [side0, side0 + 1.8, -side0 - 1.8]) {
+    search: for (const b of backs) {
+      for (const sd of sides) {
         at = place(b, sd);
-        if (!this.blocksBall(at.x, at.z, piece.x, piece.z)) break search;
+        if (!this.blocksBall(at.x, at.z, piece.x, piece.z, taker, near)) break search;
       }
       at = place(back0, side0);
     }
@@ -652,6 +765,13 @@ export class CameraRig {
     if (!piece.goal) {
       // Crosses: look at the drop zone at head height with a medium lens.
       return { tx: piece.tx, ty: 1.2, tz: piece.tz, px, py, pz, fov: 34 };
+    }
+    if (fk) {
+      const small = typeof window !== 'undefined' && window.innerHeight < 560;
+      const tanH = Math.tan((rig.fov / 2) * DEG);
+      const pitch = Math.atan2(py - GOAL_H, D) + Math.atan((small ? rig.barNdcSmall : rig.barNdc) * tanH);
+      const L = rig.look * k;
+      return { tx: px + vx * L, ty: py - L * Math.tan(pitch), tz: pz + vz * L, px, py, pz, fov: rig.fov };
     }
     const aspect = Math.max(0.5, this.camera.aspect);
     // Ball (ndc -0.92) up to the crossbar (ndc +0.48, clear of the set-piece hint along the top) must fit...
@@ -676,7 +796,7 @@ export class CameraRig {
    * the line counts, more the nearer the lens they stand (they would fill the frame), and anyone right
    * by the lens counts too.
    */
-  private sightBlock(cx: number, cz: number, sx: number, sz: number, skip: number): number {
+  private sightBlock(cx: number, cz: number, sx: number, sz: number, skip: readonly number[]): number {
     const fr = this.players;
     if (!fr) return 0;
     const lx = sx - cx;
@@ -684,7 +804,7 @@ export class CameraRig {
     const l2 = lx * lx + lz * lz || 1;
     let score = 0;
     for (let i = 0; i < 22; i++) {
-      if (i === skip) continue;
+      if (skip.includes(i)) continue;
       const qx = fr[i * PF];
       const qz = fr[i * PF + 1];
       const t = clamp(((qx - cx) * lx + (qz - cz) * lz) / l2, 0, 1);
@@ -696,18 +816,22 @@ export class CameraRig {
     return score;
   }
 
-  /** Is a player (other than whoever is over the ball) standing on the sight line from (cx, cz) to the ball? */
-  private blocksBall(cx: number, cz: number, bx: number, bz: number): boolean {
+  /**
+   * Is a player (other than whoever is over the ball, or `skip`) standing on the sight line from (cx, cz) to
+   * the ball? Anyone within `near` m of the lens doesn't count (he is faded out of the shot).
+   */
+  private blocksBall(cx: number, cz: number, bx: number, bz: number, skip = -1, near = 0): boolean {
     const fr = this.players;
     if (!fr) return false;
     const lx = bx - cx;
     const lz = bz - cz;
     const l2 = lx * lx + lz * lz || 1;
     for (let i = 0; i < 22; i++) {
+      if (i === skip) continue;
       const o = i * PF;
       const qx = fr[o];
       const qz = fr[o + 1];
-      if (Math.hypot(qx - bx, qz - bz) < 1.3) continue;
+      if (Math.hypot(qx - bx, qz - bz) < 1.3 || Math.hypot(qx - cx, qz - cz) < near) continue;
       const t = ((qx - cx) * lx + (qz - cz) * lz) / l2;
       if (t < 0.05 || t > 0.95) continue;
       if (Math.hypot(qx - (cx + lx * t), qz - (cz + lz * t)) < 1.25) return true;
@@ -794,6 +918,11 @@ export class CameraRig {
       }
     }
     return { x, z };
+  }
+
+  /** True if the last update() cut rather than glided (a new shot is on air). */
+  get justCut(): boolean {
+    return this.cutNow;
   }
 
   get focusX(): number {

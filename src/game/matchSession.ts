@@ -2,6 +2,7 @@ import { sfx } from '../audio/sfx';
 import type { Input } from '../core/input';
 import { clamp, damp } from '../core/math';
 import { CameraRig } from '../render/cameraRig';
+import { setCharacterFill } from '../render/characters';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
 import { PITCH_Y, Stadium, stadiumFill } from '../render/stadium';
@@ -64,9 +65,27 @@ const REPLAY_AT = 3.6;
 /** Referee close-up when a card is shown at a stoppage. */
 const CARD_CAM_S = 1.8;
 
-/** Players within this distance of a low lens (free kick, card close-up) fade to LENS_FADE opacity. */
+/**
+ * Low lenses see through whoever crowds them: anyone (but the taker / the booked player) within LENS_CLEAR m
+ * of the lens (FK_LENS_CLEAR over the free-kick taker's shoulder) is faded right out, back to solid over the
+ * next metre.
+ */
 const LENS_CLEAR = 3;
-const LENS_FADE = 0.25;
+const FK_LENS_CLEAR = 4;
+/**
+ * The replays' low goal-line angle (30 degree lens, 2 m up): a head 5 m off would fill ~30% of the frame, so
+ * it clears further out; nobody within REPLAY_KEEP m of the ball is ever cleared (that's the finish).
+ */
+const REPLAY_LENS_CLEAR = 4.5;
+const REPLAY_KEEP = 3;
+/**
+ * Card close-up: the man who was fouled is held this far (m) beyond the booked player (away from the
+ * referee) and this much further from the lens: small in the background, well clear of him (~6.5 m).
+ */
+const CARD_VICTIM_GAP = 3.8;
+const CARD_VICTIM_BACK = 4;
+/** The minimap stays off this long (s) after a set piece is taken (the delivery is still coming in). */
+const RADAR_SETPIECE_HOLD = 1.5;
 
 /**
  * On-screen labels of the touch buttons (mirrors ui/touch.ts LABELS): hints name the button the player sees.
@@ -117,7 +136,7 @@ export class MatchSession {
   private introLeft = 0;
   private tally: Tally[] = Array.from({ length: 22 }, () => ({ goals: 0, assists: 0, tackles: 0, saves: 0, passes: 0, shots: 0 }));
   private lastPasser: [number, number] = [-1, -1];
-  private tut = { moved: false, passed: false, shot: false, switched: false, step: 0, t: 0 };
+  private tut = { moved: false, passed: false, shot: false, chip: false, chipT: 0, switched: false, step: 0, t: 0 };
   private readonly demo: boolean;
   /** Penalty tracker, once a knockout tie goes to a shootout. */
   private so: ShootoutHud | null = null;
@@ -131,6 +150,11 @@ export class MatchSession {
   private celebG = 0;
   /** Who is being booked (never faded out of the card close-up). */
   private cardPlayer = -1;
+  /** The man who was brought down (held off to one side of the card close-up), and the last foul's victim. */
+  private cardVictim = -1;
+  private foulOn = -1;
+  /** Seconds the minimap stays hidden after a set piece (see RADAR_SETPIECE_HOLD). */
+  private radarHoldT = 0;
   /**
    * Our set piece filmed over the taker's shoulder: the taker, the spot, and how far the ball has got, so the
    * post-strike hold can end early (a rebound back towards him, a touch by anyone but him or a keeper).
@@ -286,7 +310,9 @@ export class MatchSession {
         if (this.cardT <= 0 || m.phase === 'play' || m.phase === 'goal') {
           this.cardT = 0;
           this.view.pinPlayer(null);
+          this.view.setBallHidden(false);
           this.cardPlayer = -1;
+          this.cardVictim = -1;
           if (this.cam.mode === 'card') this.cam.setMode('broadcast');
         }
       }
@@ -371,10 +397,10 @@ export class MatchSession {
       card: ref ? { rx: ref.x, rz: ref.z, fx: ref.faceX, fz: ref.faceZ } : null,
       tall: this.view.headTop,
     }, this.time);
-    // Low cameras (over the set-piece taker's shoulder, the shootout, the referee close-up) drop the name
-    // tag and arrow, which would otherwise float over the goal mouth.
-    this.view.setMarkerMode(this.cam.behindActive || this.cam.mode === 'penalty' || this.cam.mode === 'card' ? 'ring' : 'full');
-    this.updateFades(ref);
+    // Low cameras (over the set-piece taker's shoulder, the shootout) drop the name tag and arrow, which would
+    // otherwise float over the goal mouth; the referee close-up drops the marker altogether.
+    this.view.setMarkerMode(this.cam.mode === 'card' ? 'off' : this.cam.behindActive || this.cam.mode === 'penalty' ? 'ring' : 'full');
+    this.updateFades(ref, this.paused ? 0 : dt);
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
     this.stadium.updateGlare(this.world.camera);
     if (this.weather.kind === 'rain' && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ, 22, 15, 90, this.world.camera.position);
@@ -478,7 +504,9 @@ export class MatchSession {
   }
 
   /** Frame the taker and where the ball is going for set pieces. */
-  private setPieceFrame(): { x: number; z: number; tx: number; tz: number; behind?: boolean; goal?: boolean; pen?: boolean } | null {
+  private setPieceFrame(): {
+    x: number; z: number; tx: number; tz: number; behind?: boolean; goal?: boolean; pen?: boolean; taker?: number; corner?: boolean; ours?: boolean;
+  } | null {
     const m = this.match;
     const r = m.restart;
     if (!r || (m.phase !== 'restart' && m.phase !== 'out')) return null;
@@ -491,12 +519,15 @@ export class MatchSession {
     switch (r.kind) {
       case 'corner':
         // No room behind a corner flag (boards, stands) for a lens that shows both the taker and the box:
-        // corners keep the wide set-piece shot.
-        return { x: r.x, z: r.z, tx: ad * (HALF_L - 9), tz: 0 };
+        // corners keep the wide set-piece shot (pulled on towards the goal, so all of it is in shot).
+        return { x: r.x, z: r.z, tx: ad * (HALF_L - 9), tz: 0, corner: true, ours: r.side === m.cfg.humanSide };
       case 'freekick':
       case 'penalty': {
         const near = Math.hypot(ad * HALF_L - r.x, r.z) < 35;
-        return { x: bx, z: bz, tx: ad * (HALF_L - (near ? 0 : 9)), tz: 0, behind: ours && near, goal: near, pen: r.kind === 'penalty' };
+        return {
+          x: bx, z: bz, tx: ad * (HALF_L - (near ? 0 : 9)), tz: 0, behind: ours && near, goal: near, pen: r.kind === 'penalty',
+          taker: r.taker,
+        };
       }
       case 'throwin':
         return { x: r.x, z: r.z, tx: r.x + ad * 8, tz: r.z * 0.55 };
@@ -580,6 +611,9 @@ export class MatchSession {
           if (m.ball.lastTouch >= 0 && m.players[m.ball.lastTouch].side === m.cfg.humanSide) {
             if (e.kind === 'shot' || e.kind === 'header') this.tut.shot = true;
             else this.tut.passed = true;
+            // (The sim tags a chip / finesse strike on the kick event; typed loosely for older sims.)
+            const style = (e as { style?: string }).style;
+            if (style === 'chip' || style === 'finesse') this.tut.chip = true;
           }
           if (e.kind === 'shot' && e.power > 0.5) {
             this.effects.grass(e.x, e.z, 10, e.power);
@@ -690,18 +724,13 @@ export class MatchSession {
           }
           const close = !live && !this.demo && !this.replay && this.cam.mode === 'broadcast';
           this.view.showCard(red ? 'red' : 'yellow', x, z, close ? CARD_CAM_S : red ? 2.2 : 1.8, close);
-          if (close) {
-            this.cardT = CARD_CAM_S;
-            this.cardPlayer = p.idx;
-            // He stands on his mark facing the referee for the close-up (render only).
-            this.view.pinPlayer(p.idx, x, z);
-            this.cam.setMode('card');
-          }
+          if (close) this.startCardShot(p.idx, x, z);
           break;
         }
         case 'foul': {
           const on = m.players[e.on];
           const by = m.players[e.by];
+          this.foulOn = e.on;
           this.foulAt = { x: on.pos.x, z: on.pos.z };
           this.foulBy = { x: by.pos.x, z: by.pos.z };
           this.view.refSignal(1.2);
@@ -762,6 +791,41 @@ export class MatchSession {
   }
 
   /**
+   * Referee close-up for a card at a stoppage: the booked player stands on his mark (x, z) facing the
+   * referee, the lens picks its side of the pair (CameraRig.cardLens), and the man he brought down is held
+   * beyond him, further from the lens and off to the side: small in the background, never standing in front
+   * of him (all render only; the camera cuts away before anyone is let go).
+   */
+  private startCardShot(booked: number, x: number, z: number): void {
+    this.cardT = CARD_CAM_S;
+    this.cardPlayer = booked;
+    this.view.clearFades();
+    this.view.pinPlayer(null);
+    this.view.pinPlayer(booked, x, z);
+    this.cam.setMode('card');
+    const ref = this.view.refState;
+    const victim = this.foulOn >= 0 && this.foulOn !== booked && !isSentOff(this.match.players[this.foulOn]) ? this.foulOn : -1;
+    const lens = this.cam.cardLens(ref.x, ref.z, x, z, [booked, victim], this.view.headTop);
+    this.cardVictim = victim;
+    if (victim < 0) return;
+    let ux = x - ref.x;
+    let uz = z - ref.z;
+    const h = Math.hypot(ux, uz) / 2 || 1;
+    ux /= 2 * h;
+    uz /= 2 * h;
+    const mx = (ref.x + x) / 2;
+    const mz = (ref.z + z) / 2;
+    let wx = lens.x - mx;
+    let wz = lens.z - mz;
+    const wl = Math.hypot(wx, wz) || 1;
+    wx /= wl;
+    wz /= wl;
+    const vx = clamp(mx + ux * (h + CARD_VICTIM_GAP) - wx * CARD_VICTIM_BACK, -(HALF_L + 2), HALF_L + 2);
+    const vz = clamp(mz + uz * (h + CARD_VICTIM_GAP) - wz * CARD_VICTIM_BACK, -(HALF_W + 1.5), HALF_W + 1.5);
+    this.view.pinPlayer(victim, vx, vz);
+  }
+
+  /**
    * Post-strike hold on our set piece: it ends early (a cut to the broadcast shot) once the ball comes back
    * towards the taker (off the wall, the woodwork, a parry) or anyone but the taker or a keeper touches it.
    */
@@ -794,13 +858,20 @@ export class MatchSession {
   }
 
   /**
-   * Low lenses see through whoever crowds them: within LENS_CLEAR of the camera a player fades to LENS_FADE
-   * (the free-kick camera's team-mates behind the ball, anyone by the card close-up's lens), and in the card
-   * close-up so does anyone standing on the sight line to the referee or the offender.
+   * Low lenses see through whoever crowds them: within LENS_CLEAR of the camera (FK_LENS_CLEAR over the
+   * free-kick taker's shoulder) a player fades right out (the free-kick camera's team-mates behind the ball,
+   * anyone by a replay's goal-line lens or the card close-up's), and in the card close-up so does anyone
+   * standing on the sight line to the referee or the offender. The card shot also drops the ball if it
+   * sits right in front of the lens.
    */
-  private updateFades(ref: { x: number; z: number; faceX: number; faceZ: number } | null): void {
+  private updateFades(ref: { x: number; z: number; faceX: number; faceZ: number } | null, dt: number): void {
     const cam = this.cam;
-    const low = cam.behindActive || cam.mode === 'penalty' || cam.mode === 'card' || (cam.mode === 'replay' && cam.replayShot === 'goal');
+    const low = cam.behindActive || cam.mode === 'penalty' || cam.mode === 'card' || cam.mode === 'replay';
+    const lens = this.world.camera.position;
+    const f = this.view.frame;
+    // The ball waiting on the free-kick spot is only clutter by the booked player's boots (or right in front
+    // of the lens): the close-up leaves it out.
+    this.view.setBallHidden(cam.mode === 'card');
     if (!low) {
       this.view.clearFades();
       return;
@@ -810,11 +881,33 @@ export class MatchSession {
     const sight: { x: number; z: number }[] = [];
     if (cam.mode === 'card') {
       if (this.cardPlayer >= 0) keep.push(this.cardPlayer);
-      if (ref) sight.push({ x: ref.x, z: ref.z }, { x: ref.faceX, z: ref.faceZ });
+      if (this.cardVictim >= 0) keep.push(this.cardVictim);
+      // Sight lines to the referee, the offender and the gap between them run on past the pair, so nobody
+      // stands in front of, between or right behind them in shot.
+      const lx = this.world.camera.position.x;
+      const lz = this.world.camera.position.z;
+      if (ref) {
+        const mx = (ref.x + ref.faceX) / 2;
+        const mz = (ref.z + ref.faceZ) / 2;
+        for (const [x, z] of [[ref.x, ref.z], [mx, mz], [ref.faceX, ref.faceZ]]) sight.push({ x: lx + (x - lx) * 1.6, z: lz + (z - lz) * 1.6 });
+      }
     } else if (cam.mode === 'penalty' && m.shootout) keep.push(m.shootout.taker);
-    else if (cam.behindActive && m.restart) keep.push(m.restart.taker);
-    const lens = this.world.camera.position;
-    this.view.fadeNearLens(lens.x, lens.z, LENS_CLEAR, LENS_FADE, keep, sight);
+    else if (cam.mode === 'replay') {
+      // Replays keep the action (whoever is at the ball: shooter, keeper, last defender) and, on the low
+      // goal-line angle, clear anyone standing between the lens and the ball.
+      for (let i = 0; i < 22; i++) if (Math.hypot(f[i * PF] - f[BALL_OFS], f[i * PF + 1] - f[BALL_OFS + 2]) < REPLAY_KEEP) keep.push(i);
+      if (cam.replayShot === 'goal') sight.push({ x: f[BALL_OFS], z: f[BALL_OFS + 2] });
+    } else if (cam.behindActive && m.restart && !this.replay) keep.push(m.restart.taker);
+    // The card close-up is a clean two-shot: everyone (but the pair and the man held in the background)
+    // standing no further from the lens than the booked player is cleared out of the frame.
+    const bk = this.cardPlayer;
+    const radius = cam.mode === 'card' && bk >= 0
+      ? Math.max(LENS_CLEAR, Math.hypot(f[bk * PF] - lens.x, f[bk * PF + 1] - lens.z) + 0.5)
+      : cam.mode === 'replay' && cam.replayShot === 'goal' ? REPLAY_LENS_CLEAR
+        : cam.behindActive && !this.replay ? FK_LENS_CLEAR : LENS_CLEAR;
+    // (The card shot latches its fades, with wider sight lines: a clean frame, no ghosts at the edges.)
+    const card = cam.mode === 'card';
+    this.view.fadeNearLens(lens.x, lens.z, radius, 0, keep, sight, card ? 1.3 : 0.85, card, dt, cam.justCut);
   }
 
   private updateAtmosphere(dt: number): void {
@@ -854,9 +947,12 @@ export class MatchSession {
     }
     // The minimap sits bottom-centre: off for set pieces, the low cameras, the shootout, and whenever play
     // is in the near third where it would cover the action.
+    // (Set pieces: from the whistle until the delivery has had a moment to come in.)
+    const setPiece = m.phase === 'restart' || m.phase === 'out';
+    this.radarHoldT = setPiece ? RADAR_SETPIECE_HOLD : Math.max(0, this.radarHoldT - dt);
     hud.setRadarHidden(
-      m.phase === 'restart' || m.phase === 'out' || m.phase === 'shootout' || this.cam.behindActive ||
-      this.cam.mode === 'penalty' || m.ball.pos.z > HALF_W * 0.45,
+      setPiece || this.radarHoldT > 0 || m.phase === 'shootout' || this.cam.behindActive ||
+      this.cam.mode === 'penalty' || this.cam.mode === 'card' || m.ball.pos.z > HALF_W * 0.45,
     );
     hud.update(dt, this.view.frame);
     // The over-the-shoulder set-piece camera needs the whole lower screen for the taker: no radar / chip.
@@ -897,12 +993,14 @@ export class MatchSession {
     } else if (m.ball.held && mine) {
       hint = `${key('pass')} to throw it out · ${key('through')} to kick long`;
     }
-    hud.setHint(this.replay ? '' : hint);
+    // Nothing over the referee close-up (the set-piece hint comes back when the camera cuts back to the game).
+    const cinematic = !!this.replay || this.cam.mode === 'card';
+    hud.setHint(cinematic ? '' : hint);
     // Aim arrow for our set pieces (shootout: at the spot picked across the goal mouth).
     if (so && soAim && so.turn === hs) {
       const t = m.players[so.taker];
       this.view.setAim(true, t.pos.x, t.pos.z, Math.atan2(so.aimZ - t.pos.z, so.goal * HALF_L - t.pos.x), 1.3);
-    } else if (!this.replay && r && r.side === hs && m.phase === 'restart' && r.kind !== 'kickoff') {
+    } else if (!cinematic && r && r.side === hs && m.phase === 'restart' && r.kind !== 'kickoff') {
       const t = m.players[r.taker];
       const long = r.kind === 'corner' || r.kind === 'goalkick' ? 1.6 : r.kind === 'freekick' || r.kind === 'penalty' ? 1.3 : 1;
       this.view.setAim(true, t.pos.x, t.pos.z, t.facing, long);
@@ -916,7 +1014,8 @@ export class MatchSession {
     }
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
-      this.touch.setVisible(!(this.introLeft > 0 || this.replay || m.phase === 'goal' || m.phase === 'halftime' || m.phase === 'fulltime'));
+      // Off for the referee close-up too (the buttons would sit on the booked player).
+      this.touch.setVisible(!(this.introLeft > 0 || this.replay || this.cam.mode === 'card' || m.phase === 'goal' || m.phase === 'halftime' || m.phase === 'fulltime'));
       this.touch.setContext(ctx);
     }
     // Pause via keyboard / gamepad.
@@ -944,17 +1043,25 @@ export class MatchSession {
     if (!t.moved) tip = `Move with <kbd>${move}</kbd> · sprint with <kbd>${sprint}</kbd>`;
     else if (mine && !t.passed) tip = `<kbd>${key('pass')}</kbd> passes where you aim · tap <kbd>${key('through')}</kbd> for a through ball`;
     else if (mine && !t.shot) tip = `Near goal? <b>Hold</b> <kbd>${key('shoot')}</kbd> and release to shoot — longer hold, more power`;
+    else if (mine && !t.chip) {
+      // Once he has had a shot: the finishes (shown for a while on the ball, or until he tries one).
+      tip = `Keeper off his line? <b>Hold</b> <kbd>${key('shoot')}</kbd> and tap <kbd>${key('through')}</kbd> to chip him · a soft shot aimed at a corner curls in`;
+      t.chipT += dt;
+      if (t.chipT > 14) t.chip = true;
+    }
     else if (!mine && m.ball.owner >= 0 && !t.switched) {
       tip = `Defending: <kbd>${key('pass')}</kbd> switches player · <kbd>${key('shoot')}</kbd> slide tackles · run into them to steal`;
       if (t.t > 60) t.switched = true;
     }
-    if (t.moved && t.passed && t.shot && (t.switched || t.t > 90)) this.opt.tutorial = false;
+    if (t.moved && t.passed && t.shot && t.chip && (t.switched || t.t > 90)) this.opt.tutorial = false;
     hud.setTip(tip);
   }
 
   dispose(): void {
     this.world.scene.remove(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
     if (!this.demo) document.body.classList.remove('night');
+    // The night fill is shared by every footballer drawn (menu kit previews too): off until a match sets it.
+    setCharacterFill(0);
     sfx.setRain(false);
     this.hud?.dispose();
     this.touch?.root.remove();

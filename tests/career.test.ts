@@ -4,11 +4,11 @@ import {
   autoPick, buyPlayer, canBuy, canSell, clubTeam, computeTable, createClub, deriveShort, divisionLevel, divisionPlayerOverall,
   finishSeason, forfeitScore,
   leagueTable, lineupIssues, matchAttendance, matchCoins, matchDifficulty, migrateCareer, newSeason, nextMatch, playerPrice,
-  resolveMatchday, sanitizeName, sanitizeShort, seasonOutcome, seasonPrizeLines, sellPlayer, sellValue, setFormation,
+  refreshMarket, resolveMatchday, sanitizeName, sanitizeShort, seasonOutcome, seasonPrizeLines, sellPlayer, sellValue, setFormation,
   stadiumUpgradeCost, startNextSeason, swapPlayers, trainPlayer, trainingCost, upgradeStadium, userFixture,
   type CareerState, type Fixture,
 } from '../src/meta/career';
-import { KIT_COLORS, makePlayer, makeTeam, PRESET_CLUBS, randomClubSeed, surnameOf, uniqueName } from '../src/meta/data';
+import { dedupeSurnames, KIT_COLORS, makePlayer, makeTeam, PRESET_CLUBS, randomClubSeed, surnameOf, uniqueName } from '../src/meta/data';
 import { Rng } from '../src/core/rng';
 import { FORMATIONS } from '../src/sim/formations';
 import { overall, type Kit } from '../src/sim/types';
@@ -57,11 +57,82 @@ describe('squad names', () => {
     const a = new Set(['Stone']);
     const b = new Set(['Stone']);
     expect(uniqueName(a)).toBe(uniqueName(b));
-    // Past the whole list it numbers the repeats rather than repeating.
+    // Past the whole list (240-odd surnames) it numbers the repeats rather than repeating.
     const all = new Set<string>();
-    for (let i = 0; i < 80; i++) uniqueName(all, rng);
-    expect(all.size).toBe(80);
+    for (let i = 0; i < 300; i++) uniqueName(all, rng);
+    expect(all.size).toBe(300);
+    expect([...all].some((n) => / \d+$/.test(n))).toBe(true);
     expect(surnameOf('A. Pebble')).toBe('Pebble');
+  });
+
+  it('no fixture between two preset clubs has a surname twice (they share one pool)', () => {
+    const squads = PRESET_CLUBS.map((c) => {
+      const t = makeTeam(c);
+      return [...t.players, ...(t.bench ?? [])].map((p) => surnameOf(p.name));
+    });
+    const seen = new Map<string, number>();
+    squads.forEach((names, i) => {
+      for (const n of names) {
+        expect(seen.get(n), `${n} in ${PRESET_CLUBS[i].name} and ${PRESET_CLUBS[seen.get(n) ?? 0].name}`).toBeUndefined();
+        seen.set(n, i);
+      }
+    });
+    // (No numbered repeats needed for that, and still deterministic whatever order clubs are built in.)
+    expect([...seen.keys()].every((n) => !/\d/.test(n))).toBe(true);
+    const a = JSON.stringify(makeTeam(PRESET_CLUBS[7]));
+    makeTeam(PRESET_CLUBS[2]);
+    expect(JSON.stringify(makeTeam(PRESET_CLUBS[7]))).toBe(a);
+    // The preset squads' stats are what they always were (only clashing names changed).
+    const plain = makeTeam({ ...PRESET_CLUBS[4] }, PRESET_CLUBS[4].short, []);
+    expect(makeTeam(PRESET_CLUBS[4]).players.map((p) => p.stats)).toEqual(plain.players.map((p) => p.stats));
+  });
+
+  it('a new career club, the transfer market and every career fixture keep surnames unique', () => {
+    for (let seed = 1; seed <= 60; seed++) {
+      const c = createClub({ name: 'Pixel Park FC', short: 'PIX', kit: KIT, formation: '4-3-3' }, seed);
+      const names = c.squad.map((p) => surnameOf(p.name));
+      expect(new Set(names).size).toBe(names.length);
+    }
+    for (const seed of [3, 9, 21, 44]) {
+      const st = freshCareer(seed);
+      const squad = new Set(st.club!.squad.map((p) => surnameOf(p.name)));
+      refreshMarket(st);
+      const market = st.market.map((p) => surnameOf(p.name));
+      expect(new Set(market).size).toBe(market.length);
+      for (const n of market) expect(squad.has(n)).toBe(false);
+      // Every matchday's fixture: nobody on either side shares a surname with anyone on the other.
+      const wallet = { coins: 0 };
+      for (let md = 0; md < MATCHDAYS; md++) {
+        const nm = nextMatch(st);
+        if (!nm) break;
+        const all = [nm.home, nm.away].flatMap((t) => [...t.players, ...(t.bench ?? [])].map((p) => surnameOf(p.name)));
+        expect(new Set(all).size).toBe(all.length);
+        // (The user's own players are never renamed.)
+        const mine = nm.userHome ? nm.home : nm.away;
+        expect(mine.players.map((p) => p.name)).toEqual(st.club!.squad.slice(0, 11).map((p) => p.name));
+        playMine(st, wallet, 1, 1);
+      }
+    }
+  });
+
+  it('dedupeSurnames renames the clashing players of one side, deterministically, keeping their initials', () => {
+    const a = makeTeam(PRESET_CLUBS[3]);
+    const b = makeTeam(randomClubSeed(new Rng(5), 60));
+    // Force clashes: three of b's players take surnames from a.
+    b.players[2].name = `Q. ${surnameOf(a.players[4].name)}`;
+    b.players[5].name = `Z. ${surnameOf(a.players[7].name)}`;
+    b.bench![1].name = `Q. ${surnameOf(a.bench![0].name)}`;
+    const b2 = JSON.parse(JSON.stringify(b));
+    const aNames = [...a.players, ...(a.bench ?? [])].map((p) => p.name);
+    expect(dedupeSurnames(a, b)).toBeGreaterThanOrEqual(3);
+    expect([...a.players, ...(a.bench ?? [])].map((p) => p.name)).toEqual(aNames);
+    const all = [a, b].flatMap((t) => [...t.players, ...(t.bench ?? [])].map((p) => surnameOf(p.name)));
+    expect(new Set(all).size).toBe(all.length);
+    expect(b.players[2].name.startsWith('Q. ')).toBe(true);
+    expect(b.players[5].name.startsWith('Z. ')).toBe(true);
+    dedupeSurnames(a, b2);
+    expect(b2).toEqual(b);
+    expect(dedupeSurnames(a, b)).toBe(0);
   });
 });
 

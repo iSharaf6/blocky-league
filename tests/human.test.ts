@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { interceptRisk } from '../src/sim/actions';
+import { CHIP_VY, FINESSE_CURL, interceptRisk, pickReceiver, CURL_SPIN } from '../src/sim/actions';
 import { solveLob } from '../src/sim/ball';
-import { BOX_DEPTH, BOX_W, DT, HALF_L, HALF_W } from '../src/sim/constants';
+import { crossingZ } from '../src/sim/actions';
+import { BOX_DEPTH, BOX_W, DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
 import type { MatchEvent } from '../src/sim/types';
@@ -324,5 +325,271 @@ describe('human control', () => {
       expect(atk).toBeGreaterThanOrEqual(5);
       expect(def).toBeGreaterThanOrEqual(5);
     }
+  }, 60_000);
+});
+
+/**
+ * Round 6: the human pass assist (pb2.js), the dribbling cut, and the chip / finesse finishes. Seeded,
+ * so the rates are exact for this code; the bands are the design targets with a little room.
+ */
+describe('human assists and skill moves', () => {
+  it('pb2.js: the human\'s forward passes are completed about as often as they should be (was ~33%)', () => {
+    // The AI plays until our side has it in midfield, then the human pushes the stick forward and taps
+    // PASS: completed (a teammate is next on it), intercepted, or out.
+    const res: Record<string, number> = {};
+    for (let seed = 1; seed <= 12; seed++) {
+      const m = new Match({ home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 120, difficulty: 2, humanSide: 0, seed: seed * 101 + 7 });
+      const cfg = m.cfg as { humanSide: number };
+      let k = 0;
+      const over = () => (m.phase as string) === 'fulltime';
+      for (let tries = 0; k < 20 && tries < 120 && !over(); tries++) {
+        cfg.humanSide = -1;
+        let found = false;
+        for (let f = 0; f < 1500 && !found; f++) {
+          if (m.phase === 'halftime') m.continueSecondHalf();
+          if (m.phase === 'goal' && m.phaseT > 3) m.resumeAfterGoal();
+          if (over()) break;
+          m.step(DT, EMPTY_PAD);
+          m.drainEvents();
+          const o = m.ball.owner;
+          found = m.phase === 'play' && o >= 0 && m.players[o].side === 0 && !m.players[o].isKeeper && !m.ball.held && Math.abs(m.ball.pos.x) < 20 && f > 120;
+        }
+        if (!found) continue;
+        const o = m.ball.owner;
+        cfg.humanSide = 0;
+        m.active = o;
+        const fwd = m.attackDir(0);
+        m.step(DT, pad(fwd, 0));
+        m.step(DT, pad(fwd, 0));
+        for (let i = 0; i < 3; i++) m.step(DT, pad(fwd, 0, { pass: true }));
+        let r = 'none';
+        const k0 = m.kickId;
+        for (let i = 0; i < 200; i++) {
+          m.step(DT, EMPTY_PAD);
+          m.drainEvents();
+          if (m.phase !== 'play') {
+            r = 'out';
+            break;
+          }
+          const q = m.ball.owner;
+          if (m.kickId !== k0 && q >= 0 && q !== o) {
+            r = m.players[q].side === 0 ? 'ok' : 'int';
+            break;
+          }
+        }
+        res[r] = (res[r] ?? 0) + 1;
+        k++;
+      }
+    }
+    const n = Object.values(res).reduce((a, b) => a + b, 0);
+    // eslint-disable-next-line no-console
+    console.log(`human forward passes: ${JSON.stringify(res)} of ${n}`);
+    expect(n).toBeGreaterThan(200);
+    expect((res.ok ?? 0) / n).toBeGreaterThanOrEqual(0.72);
+    expect((res.int ?? 0) / n).toBeLessThanOrEqual(0.24);
+  }, 120_000);
+
+  it('the pass assist prefers the open man to one with a defender in the lane or on his back', () => {
+    for (let seed = 1; seed <= 4; seed++) {
+      const m = scenario(seed);
+      const ad = m.attackDir(0);
+      const c = m.players[6];
+      place(c, 0, 0);
+      c.facing = ad > 0 ? 0 : Math.PI;
+      giveBall(m, c);
+      // Straight ahead but covered (a defender in the lane, another tight on him); 35 degrees off, free.
+      const covered = m.players[9];
+      const open = m.players[10];
+      place(covered, ad * 20, 0);
+      place(m.players[14], ad * 10, 0.4);
+      place(m.players[15], ad * 21.2, 0.3);
+      place(open, Math.cos(0.6) * 16 * ad, Math.sin(0.6) * 16);
+      expect(pickReceiver(m, c, ad, 0, 'pass')).toBe(open.idx);
+      // With the lane clear and his marker gone, the man the stick points at is the one.
+      place(m.players[14], ad * 10, 12);
+      place(m.players[15], ad * 21.2, 14);
+      expect(pickReceiver(m, c, ad, 0, 'pass')).toBe(covered.idx);
+      // Nobody ahead at all (everyone behind the ball after a kick-off): the open man out to the side,
+      // not a ball rolled into space for the other side.
+      m.teamPlayers(0).forEach((p, i) => {
+        if (p !== c && !p.isKeeper) place(p, -ad * (6 + i), (i - 5) * 3);
+      });
+      place(m.players[8], -ad * 7, 18);
+      const t = pickReceiver(m, c, ad, 0, 'pass');
+      expect(t).toBeGreaterThanOrEqual(0);
+      expect(m.players[t].side).toBe(0);
+    }
+  });
+
+  it('dribbling: a 90-degree cut takes ~0.25 s and keeps his pace (was 0.37-0.45 s, down to 3.5 m/s)', () => {
+    const cut = (human: boolean) => {
+      const m = scenario(9);
+      if (!human) (m.cfg as { humanSide: number }).humanSide = -1;
+      const p = m.players[6];
+      place(p, -10, 0);
+      p.facing = 0;
+      giveBall(m, p);
+      // The AI would steer him itself: drive his controls directly for the comparison.
+      const drive = (x: number, z: number) => {
+        if (human) m.step(DT, pad(x, z));
+        else {
+          p.wantX = x;
+          p.wantZ = z;
+          p.sprint = false;
+          p.step(DT, true, false);
+        }
+      };
+      for (let i = 0; i < 90; i++) drive(1, 0);
+      let t = -1;
+      let low = Infinity;
+      for (let i = 0; i < 60 && t < 0; i++) {
+        drive(0, 1);
+        low = Math.min(low, p.speed());
+        if (Math.atan2(p.vel.z, p.vel.x) > Math.PI / 2 - 0.17) t = (i + 1) / 60;
+      }
+      return { t, low, kept: m.ball.owner === p.idx };
+    };
+    const h = cut(true);
+    // eslint-disable-next-line no-console
+    console.log(`human 90-degree cut ${h.t.toFixed(2)} s, lowest ${h.low.toFixed(2)} m/s`);
+    expect(h.t).toBeGreaterThan(0);
+    expect(h.t).toBeLessThanOrEqual(0.3);
+    expect(h.low).toBeGreaterThanOrEqual(4);
+    expect(h.kept).toBe(true);
+    // AI carriers keep their rounder turn (they steer smoothly anyway).
+    expect(cut(false).t).toBeGreaterThan(h.t);
+  });
+
+  /** A 1v1: the human striker `dist` m out, the keeper `kOut` m off his line (coming out at `rush` m/s). */
+  const oneOnOne = (seed: number, dist: number, kOut: number, rush: number) => {
+    const m = scenario(seed);
+    const ad = m.attackDir(0);
+    const p = m.players[9];
+    place(p, ad * (HALF_L - dist), 0);
+    p.facing = ad > 0 ? 0 : Math.PI;
+    const k = m.keeperOf(1)!;
+    place(k, ad * (HALF_L - kOut), 0);
+    k.vel.x = -ad * rush;
+    giveBall(m, p);
+    return { m, p, k, ad };
+  };
+  const finish = (m: Match) => {
+    const g0 = m.score[0];
+    const evs: MatchEvent[] = [];
+    for (let i = 0; i < 200; i++) {
+      m.step(DT, EMPTY_PAD);
+      evs.push(...m.drainEvents());
+      if (m.score[0] > g0) return { goal: true, evs };
+      if (m.phase !== 'play') break;
+      if (m.ball.owner >= 0 && m.ball.owner !== m.shooter) break;
+    }
+    return { goal: false, evs };
+  };
+
+  it('chip: SHOOT with THROUGH tapped during the charge (or SHOOT let go with THROUGH held) lifts it over a rushing keeper', () => {
+    const N = 30;
+    const rate = (dist: number, kOut: number, rush: number, how: 'plain' | 'tap' | 'hold') => {
+      let g = 0;
+      for (let s = 0; s < N; s++) {
+        const { m, p } = oneOnOne(1 + s * 11, dist, kOut, rush);
+        const kid = m.kickId;
+        for (let i = 0; i < 14; i++) {
+          const through = how === 'tap' ? i >= 6 && i < 10 : how === 'hold' ? i >= 9 : false;
+          m.step(DT, pad(0, 0, { shoot: true, through }));
+        }
+        const evs: MatchEvent[] = [];
+        for (let i = 0; i < 12 && m.kickId === kid; i++) {
+          m.step(DT, EMPTY_PAD);
+          evs.push(...m.drainEvents());
+        }
+        const kick = evs.find((e) => e.type === 'kick');
+        expect(kick?.type === 'kick' && kick.kind).toBe('shot');
+        if (how !== 'plain') {
+          // The kick event says so (commentary: "a delicate chip"), and it's lofted.
+          expect(kick?.type === 'kick' && kick.style).toBe('chip');
+          expect(m.shotStyle).toBe('chip');
+          expect(m.ball.vel.y).toBeGreaterThan(CHIP_VY - 3);
+          expect(m.ball.hspeed()).toBeLessThan(19);
+          // (The THROUGH tap was the chip, not a through ball.)
+          expect(evs.some((e) => e.type === 'kick' && e.kind === 'through')).toBe(false);
+        } else expect(kick?.type === 'kick' && kick.style).toBeUndefined();
+        expect(m.shooter).toBe(p.idx);
+        if (finish(m).goal) g++;
+      }
+      return g / N;
+    };
+    const plain = rate(15, 7, 4, 'plain');
+    const chip = rate(15, 7, 4, 'tap');
+    const held = rate(14, 5, 4, 'hold');
+    const setKeeper = rate(16, 1, 0, 'tap');
+    // eslint-disable-next-line no-console
+    console.log(`1v1, keeper rushing out: plain ${(plain * 100).toFixed(0)}% | chip ${(chip * 100).toFixed(0)}% (${(held * 100).toFixed(0)}% from 14 m, keeper 5 m out) | chip at a keeper on his line ${(setKeeper * 100).toFixed(0)}%`);
+    expect(chip).toBeGreaterThan(plain + 0.2);
+    expect(chip).toBeLessThanOrEqual(0.92);
+    expect(held).toBeGreaterThanOrEqual(0.2);
+    // Against a keeper set on his line it's a gift for him.
+    expect(setKeeper).toBeLessThanOrEqual(0.15);
+  }, 60_000);
+
+  it('finesse: the stick diagonally at a corner on a placed shot curls it, slower but tidier', () => {
+    let wide = 0;
+    let goals = 0;
+    const N = 30;
+    for (let s = 0; s < N; s++) {
+      for (const style of ['finesse', 'power'] as const) {
+        const { m, ad } = oneOnOne(3 + s * 7, 16, 1.5, 0);
+        const lat = s % 2 ? 1 : -1;
+        const stick = pad(ad * Math.SQRT1_2, lat * Math.SQRT1_2);
+        const kid = m.kickId;
+        // Finesse: under 60% power (25 frames of charge); the same stick at 40 frames is a plain strike.
+        for (let i = 0; i < (style === 'finesse' ? 25 : 40); i++) m.step(DT, { ...stick, shoot: true });
+        const evs: MatchEvent[] = [];
+        for (let i = 0; i < 12 && m.kickId === kid; i++) {
+          m.step(DT, stick);
+          evs.push(...m.drainEvents());
+        }
+        const kick = evs.find((e) => e.type === 'kick');
+        if (style === 'power') {
+          expect(kick?.type === 'kick' && kick.style).toBeUndefined();
+          continue;
+        }
+        expect(kick?.type === 'kick' && kick.style).toBe('finesse');
+        // Bent towards the corner the stick picked, by the finesse amount (less a touch of spin decay).
+        const spin = -m.ball.spin.y * Math.sign(m.ball.vel.x) * lat;
+        expect(spin).toBeGreaterThan(FINESSE_CURL * CURL_SPIN * 0.85);
+        expect(spin).toBeLessThanOrEqual(FINESSE_CURL * CURL_SPIN + 1e-6);
+        expect(m.shotSpeed).toBeLessThan(24);
+        const cross = crossingZ(m.ball.pos.x, m.ball.pos.y, m.ball.pos.z, m.ball.vel.x, m.ball.vel.y, m.ball.vel.z, m.ball.spin.y, ad * HALF_L);
+        if (cross === null || Math.abs(cross) > GOAL_W / 2) wide++;
+        if (finish(m).goal) goals++;
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`16 m finesse: ${goals}/${N} scored, ${wide} wide`);
+    expect(wide / N).toBeLessThanOrEqual(0.15);
+    expect(goals / N).toBeGreaterThanOrEqual(0.3);
+  }, 60_000);
+
+  it('the AI now and then chips a keeper who has rushed out at it', () => {
+    let chips = 0;
+    let shots = 0;
+    for (let s = 0; s < 40; s++) {
+      const { m, p } = oneOnOne(1 + s * 13, 15, 7, 4);
+      (m.cfg as { humanSide: number }).humanSide = -1;
+      p.ballT = 0;
+      p.aiT = 0;
+      for (let i = 0; i < 120 && m.phase === 'play'; i++) {
+        m.step(DT, EMPTY_PAD);
+        for (const e of m.drainEvents()) {
+          if (e.type !== 'kick' || m.ball.lastTouch !== p.idx || m.shotKick !== m.kickId) continue;
+          shots++;
+          if (e.style === 'chip') chips++;
+        }
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`AI 1v1 against a rushing keeper: ${chips} chips in ${shots} shots`);
+    expect(chips).toBeGreaterThanOrEqual(3);
+    expect(chips).toBeLessThan(shots * 0.6);
   }, 60_000);
 });

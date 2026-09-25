@@ -3,7 +3,7 @@ import { clamp, lerp, smoothstep } from '../core/math';
 import { grassLike } from '../meta/data';
 import type { Kit, Look, PlayerDef } from '../sim/types';
 import { HAIR, SKIN, shade } from './palette';
-import { meshVoxels, voxelMaterial, VoxelGrid } from './voxel';
+import { meshVoxels, VoxelGrid } from './voxel';
 
 export const VU = 0.075; // metres per character voxel
 
@@ -48,6 +48,38 @@ const DIGITS: Record<string, string[]> = {
   '8': ['111', '101', '111', '101', '111'],
   '9': ['111', '101', '111', '001', '111'],
 };
+
+/**
+ * Fill light for the footballers (and the ball) only, linear RGB, already divided by pi like a light's
+ * irradiance: a soft "headlight" from the camera (faces turned to the lens get it all, side faces a third),
+ * so at night the players read against the floodlit lawn instead of going muddy. Off (black) by day.
+ */
+const charFill = { value: new THREE.Color(0, 0, 0) };
+
+/** Vertex-coloured Lambert (like voxelMaterial) plus the camera-side character fill. */
+function makeCharMaterial(): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uCharFill = charFill;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uCharFill;')
+      .replace(
+        '#include <emissivemap_fragment>',
+        '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * uCharFill * (0.35 + 0.65 * max(normal.z, 0.0));',
+      );
+  };
+  m.customProgramCacheKey = () => 'char-fill';
+  return m;
+}
+
+/** The footballers' (and referee's, and ball's) shared opaque material. */
+export const charMaterial = makeCharMaterial();
+
+/** Character fill light intensity (light units, e.g. 0.5; 0 = off), slightly cool like the floodlights. */
+export function setCharacterFill(intensity: number): void {
+  const k = Math.max(0, intensity) / Math.PI;
+  charFill.value.setRGB(k * 0.96, k * 0.98, k * 1.06);
+}
 
 const geoCache = new Map<string, THREE.BufferGeometry>();
 
@@ -301,7 +333,7 @@ export class Footballer {
     const headG = cached(`h-${JSON.stringify(def.look)}`, () => buildHead(def.look));
 
     const mk = (g: THREE.BufferGeometry) => {
-      const m = new THREE.Mesh(g, voxelMaterial);
+      const m = new THREE.Mesh(g, charMaterial);
       m.castShadow = true;
       m.receiveShadow = false;
       return m;
@@ -331,19 +363,21 @@ export class Footballer {
 
   /**
    * See-through (low cameras fade whoever stands by the lens): below 1 the body parts swap to this player's
-   * own transparent copy of the voxel material; back at 1 they share the opaque one again.
+   * own transparent copy of the character material; back at 1 they share the opaque one again. Fully faded
+   * (0) he is not drawn at all, so no shadow is left standing on the grass without him.
    */
   setOpacity(a: number): void {
     a = clamp(a, 0, 1);
-    if (Math.abs(a - this.alpha) < 0.004 && (a < 1 || this.alpha === 1)) return;
-    this.alpha = a >= 0.995 ? 1 : a;
+    if (Math.abs(a - this.alpha) < 0.004 && (a < 1 || this.alpha === 1) && (a > 0 || this.alpha === 0)) return;
+    this.alpha = a >= 0.995 ? 1 : a <= 0.01 ? 0 : a;
+    this.group.visible = this.alpha > 0;
     const faded = this.alpha < 1;
     if (faded && !this.fadeMat) {
-      this.fadeMat = voxelMaterial.clone();
+      this.fadeMat = makeCharMaterial();
       this.fadeMat.transparent = true;
     }
     if (this.fadeMat) this.fadeMat.opacity = this.alpha;
-    const mat = faded ? this.fadeMat! : voxelMaterial;
+    const mat = faded ? this.fadeMat! : charMaterial;
     for (const m of [this.torso, this.head, this.armL, this.armR, this.legL, this.legR]) m.material = mat;
   }
 

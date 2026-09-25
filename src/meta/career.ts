@@ -6,7 +6,7 @@ import { Rng, hashString } from '../core/rng';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, teamRating } from '../sim/types';
 import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDef } from '../sim/types';
-import { KIT_COLORS, makeName, makePlayer, makeTeam, randomClubSeed, resolveKitClash } from './data';
+import { KIT_COLORS, dedupeSurnames, makePlayer, makeTeam, randomClubSeed, resolveKitClash, surnameOf } from './data';
 
 export const CAREER_VERSION = 1 as const;
 export const TOP_DIVISION = 1;
@@ -271,14 +271,12 @@ export interface ClubInput {
 export function createClub(input: ClubInput, seed: number, level = START_LEVEL): ClubState {
   const rng = new Rng(hashString(`club|${seed}`));
   const squad: PlayerDef[] = [];
+  // One surname per player in the squad (no H. Costa and W. Costa).
   const names = new Set<string>();
   let nextId = 1;
   for (const [role, count] of START_SQUAD) {
     for (let i = 0; i < count; i++) {
-      const p = makePlayer(rng, role, level + rng.int(5) - 2, freeNumber(squad, role), `c${nextId++}`);
-      for (let t = 0; t < 12 && names.has(p.name); t++) p.name = makeName(rng);
-      names.add(p.name);
-      squad.push(p);
+      squad.push(makePlayer(rng, role, level + rng.int(5) - 2, freeNumber(squad, role), `c${nextId++}`, names));
     }
   }
   const name = sanitizeName(input.name) || 'Blocky FC';
@@ -629,6 +627,8 @@ export function nextMatch(state: CareerState): NextMatch | null {
   if (!rival) return null;
   const you = clubTeam(club);
   const them = rivalTeam(rival);
+  // No surname twice in the fixture: the rival's clashing players get another (deterministic) name.
+  dedupeSurnames(you, them);
   const home = userHome ? you : them;
   const away = userHome ? them : you;
   return { md: season.matchday, fixture, userHome, rival, home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)] };
@@ -721,9 +721,11 @@ export function refreshMarket(state: CareerState): void {
   const rng = new Rng(hashString(`${state.seed}|market|${key}`));
   const lvl = divisionLevel(s.division);
   const roles: Role[] = [rng.chance(0.5) ? 'GK' : 'DF', 'DF', 'MF', 'MF', 'FW', rng.pick<Role>(['DF', 'MF', 'FW'])];
+  // Nobody on the market shares a surname with the squad (or with another market player).
+  const names = new Set<string>((state.club?.squad ?? []).map((p) => surnameOf(p.name)));
   state.market = shuffle(rng, roles).slice(0, MARKET_SIZE).map((role, i) => {
     const target = clamp(divisionPlayerOverall(s.division, role) + rng.int(11) - 5, 20, 95);
-    const p = makePlayer(rng, role, lvl + rng.int(11) - 5, 0, `m${s.number}-${s.matchday}-${i}`);
+    const p = makePlayer(rng, role, lvl + rng.int(11) - 5, 0, `m${s.number}-${s.matchday}-${i}`, names);
     tuneToOverall(p, target);
     return p;
   });

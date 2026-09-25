@@ -10,10 +10,30 @@ type RestartLike = { kind: string; side: Side; x: number; z: number };
 const DIVE_PACE = 0.72;
 /** How far (m) towards his near post a keeper shades when the ball is out at a tight angle. */
 const NEAR_POST_SHADE = 0.8;
+/** A chip: how long (s) the keeper takes to read it, and how near (m) his line he must be to claim it. */
+const CHIP_REACT = 0.28;
+const CHIP_HOME = 2.2;
+/** ... and how much of his jog he gets back at while he's off it (turning to back-pedal costs pace). */
+const CHIP_BACKPEDAL = 0.6;
+/** Ball out wide by the byline (a corner): the keeper stands this far off his line and to the near side (m). */
+const CROSS_STANCE_OUT = 0.9;
+const CROSS_STANCE_Z = 0.7;
 /** Direct free kick: how far across towards the open side the keeper stands (1 = the middle of the gap). */
 const FK_KEEPER_SHADE = 0.2;
+/** A keeper's reaction time to a shot (s) is this less 0.2 x his keeping (so ~0.19 s for a good one). */
+const KEEPER_REACT = 0.33;
 /** Extra reaction time (s) to a free kick struck over the wall. */
 const FK_UNSIGHTED = 0.05;
+/**
+ * How far (m) a diving keeper's body travels sideways at most (plus a little for a great keeper); his
+ * reach does the rest. So a shot placed right inside the post from the edge of the box is beyond him
+ * even when it isn't struck hard: the corner is beaten by placement, not only by pace. A ball that
+ * takes longer than DIVE_SET_T (s, after he has reacted) to reach him gives him time to get across on
+ * his feet first: DIVE_SHUFFLE m more per second (so from range he still gets to the corners).
+ */
+export const DIVE_TRAVEL = 1.6;
+const DIVE_SET_T = 0.45;
+const DIVE_SHUFFLE = 8;
 
 /**
  * Where a player may stand while a penalty is taken: outside the penalty area and at least ten
@@ -176,8 +196,41 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   }
   k.aiT = 0.35 + m.rng.next() * 0.4;
 
-  // ---- Shot reading --------------------------------------------------------
+  // ---- A chip: back-pedal under it and go up for it (a dive would have him on the floor when it drops).
   const toward = b.vel.x * -ad; // positive when heading to our goal
+  if (b.owner < 0 && !b.held && m.shotStyle === 'chip' && m.shotKick === m.kickId && m.shotSide !== k.side && m.shotClock < 2.5 && toward > 2) {
+    let drop: { x: number; z: number; y: number; t: number } | null = null;
+    for (const s of m.ballPath) {
+      if ((s.x - gx) * ad <= 0.4) {
+        drop = s;
+        break;
+      }
+    }
+    if (drop && m.shotClock >= CHIP_REACT) {
+      const home = Math.abs(k.pos.x - gx) < CHIP_HOME;
+      moveTo(k, gx + ad * 0.4, clamp(drop.z, -GOAL_W / 2 + 0.3, GOAL_W / 2 - 0.3), home);
+      k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
+      // Caught off his line he can only scramble back, facing the ball; back on it under the ball, he
+      // goes up with his hands (a chip against a keeper on his line is his).
+      if (!home) {
+        k.wantX *= CHIP_BACKPEDAL;
+        k.wantZ *= CHIP_BACKPEDAL;
+        k.sprint = false;
+      }
+      k.claiming = home;
+      if (home && k.y === 0 && b.pos.y > 1.7 && dist2(k.pos.x, k.pos.z, b.pos.x, b.pos.z) < 1.8) {
+        k.vy = 4;
+        k.y = 0.01;
+      }
+      return;
+    }
+    if (drop) {
+      k.wantX = k.wantZ = 0;
+      return;
+    }
+  }
+
+  // ---- Shot reading --------------------------------------------------------
   if (b.owner < 0 && !b.held && toward > 7 && m.shotClock < 1.6) {
     const t = (k.pos.x - b.pos.x) / b.vel.x;
     if (t > 0 && t < 1.6) {
@@ -187,7 +240,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
       if (onFrame) {
         // A free kick struck over the wall is seen late (the wall is in the way).
-        const reaction = clamp(0.33 - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) + (m.freeKickShot() ? FK_UNSIGHTED : 0);
+        const reaction = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) + (m.freeKickShot() ? FK_UNSIGHTED : 0);
         const lateral = zc - k.pos.z;
         if (Math.abs(lateral) < 0.55 && yc < 1.9) {
           // Straight at them: shuffle and let the catch check do the work.
@@ -204,6 +257,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
           k.setState('dive');
           k.vel.z = vz;
           k.vel.x = ad * 0.8;
+          k.diveTravel = DIVE_TRAVEL + keeping * 0.3 + m.keeperBonus(k.side) * 10 + Math.max(0, t - DIVE_SET_T) * DIVE_SHUFFLE;
           // Low shots: a skidding dive; high shots: a proper leap (peak ~0.5-0.9 m).
           k.vy = yc > 0.6 ? clamp(yc * 2.6 + 0.6, 3.2, 6.2) : clamp(yc * 2.4, 1.4, 3);
           k.y = 0.01;
@@ -299,6 +353,14 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   // Keep the near post covered: from a tight angle he hugs it (and leaves the far post to his dive).
   const tight = clamp((Math.atan2(Math.abs(dz), Math.abs(dx)) - 0.45) / 0.6, 0, 1);
   tz = clamp(tz + bz * 0.04 + Math.sign(bz) * tight * NEAR_POST_SHADE, -GOAL_W / 2 + 0.45, GOAL_W / 2 - 0.45);
+  // A corner (the ball dead out wide by the byline): he takes the middle of his goal a step off the
+  // line, shaded a touch to the near side, rather than hugging the near post (in open play, with a
+  // cut-back or a shot on, the near post is still his).
+  const wide = m.phase === 'play' ? 0 : clamp((Math.abs(bz) - (BOX_W / 2 + 1)) / 5, 0, 1) * clamp(1 - (Math.abs(dx) - 10) / 8, 0, 1);
+  if (wide > 0) {
+    tx = tx + (gx + ad * CROSS_STANCE_OUT - tx) * wide;
+    tz = tz + (Math.sign(bz) * CROSS_STANCE_Z - tz) * wide;
+  }
   if (Math.abs(tx - gx) < 0.5) tx = gx + ad * 0.5;
   moveTo(k, tx, tz, false);
   k.faceTarget = Math.atan2(bz - k.pos.z, bx - k.pos.x);

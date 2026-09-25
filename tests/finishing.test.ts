@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { clearOfLens, FK_LENS_CLEAR } from '../src/sim/ai';
+import { clearOfLens, CORNER_BOX, CORNER_ZONAL, CORNER_ZONAL_D, FK_LENS_CLEAR, FK_LENS_CONE_DEPTH } from '../src/sim/ai';
+import { Ball, type BallHit } from '../src/sim/ball';
 import { DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
 import { AIM_TURN, EMPTY_PAD, isDigitalStick, Match, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
@@ -192,13 +193,134 @@ describe('finishing (human 1v1 against the keeper)', () => {
     expect(long.goal).toBeGreaterThanOrEqual(0.05);
     expect(long.goal).toBeLessThanOrEqual(0.16);
     expect(angled.goal).toBeGreaterThanOrEqual(0.12);
-    expect(angled.goal).toBeLessThanOrEqual(0.34);
+    // (Round 6 made aiming with the stick reliable: a corner picked from an angle is found more often.)
+    expect(angled.goal).toBeLessThanOrEqual(0.45);
     expect(close.goal).toBeGreaterThan(angled.goal);
     expect(close.goal).toBeLessThanOrEqual(0.72);
     expect(mid.goal).toBeGreaterThan(long.goal);
     // Keepers hold or push out more of the long ones (it was 30-60% parried behind for corners).
     expect(long.parriedToCorner).toBeLessThanOrEqual(0.2);
     expect(mid.parriedToCorner).toBeLessThanOrEqual(0.25);
+  }, 120_000);
+});
+
+/**
+ * shd.js: the human striker `dist` m out in the middle, only the keeper (1.5 m off his line) near him
+ * (everyone within 9 m moved 12 m aside); SHOOT held `hold` frames with the stick across at `lat`.
+ * Where the struck ball was going at the line (no players), what came of it, and what came of a save.
+ */
+function shdTrial(seed: number, dist: number, hold: number, lat = 0): { goal: boolean; wide: boolean; save: boolean; saveTo: string } {
+  const m = newMatch(seed);
+  m.phase = 'play';
+  m.restart = null;
+  m.clock = 20;
+  const ad = m.attackDir(0);
+  const p = m.players[9];
+  place(p, ad * (HALF_L - dist), 0);
+  p.facing = ad > 0 ? 0 : Math.PI;
+  for (const q of m.teamPlayers(1)) {
+    if (!q.isKeeper && Math.hypot(q.pos.x - p.pos.x, q.pos.z - p.pos.z) < 9) q.pos.z += q.pos.z > p.pos.z ? 12 : -12;
+  }
+  place(m.keeperOf(1)!, ad * (HALF_L - 1.5), 0);
+  const b = m.ball;
+  b.reset(p.pos.x + ad * 0.5, 0);
+  b.owner = p.idx;
+  m.active = p.idx;
+  for (let i = 0; i < 4; i++) m.step(DT, EMPTY_PAD);
+  m.drainEvents();
+  for (let i = 0; i < hold; i++) m.step(DT, pad(0, lat, { shoot: true }));
+  let line: { z: number; y: number } | null | undefined;
+  const g0 = m.score[0];
+  let save = false;
+  let saveTo = '';
+  for (let i = 0; i < 266; i++) {
+    m.step(DT, i < 6 ? pad(0, lat) : EMPTY_PAD);
+    const ev = m.drainEvents();
+    if (line === undefined && ev.some((e) => e.type === 'kick')) line = lineCrossing(b, ad);
+    if (ev.some((e) => e.type === 'save')) save = true;
+    if (m.score[0] > g0) break;
+    if (phase(m) !== 'play') {
+      saveTo = (m.restart as { kind: string } | null)?.kind ?? phase(m);
+      break;
+    }
+    if (m.ball.owner >= 0 && m.players[m.ball.owner].side === 1) {
+      saveTo = 'held';
+      break;
+    }
+    if (save && m.ball.owner >= 0) {
+      saveTo = 'rebound';
+      break;
+    }
+  }
+  const wide = !!line && Math.abs(line.z) >= GOAL_W / 2;
+  return { goal: m.score[0] > g0, wide: wide || line === null, save, saveTo: save ? saveTo || 'loose' : '' };
+}
+
+/** Where a ball as struck crosses the goal line at the end `ad` attacks (no players; posts and bar as they are). */
+function lineCrossing(src: Ball, ad: number): { z: number; y: number } | null {
+  const s = new Ball();
+  s.reset(src.pos.x, src.pos.z);
+  s.pos.y = src.pos.y;
+  Object.assign(s.vel, src.vel);
+  Object.assign(s.spin, src.spin);
+  const hits: BallHit[] = [];
+  for (let i = 0; i < 300; i++) {
+    const px = s.pos.x;
+    const pz = s.pos.z;
+    const py = s.pos.y;
+    s.step(DT, hits);
+    if (s.pos.x * ad >= HALF_L) {
+      const f = (HALF_L * ad - px) / (s.pos.x - px || 1e-6);
+      return { z: pz + (s.pos.z - pz) * f, y: py + (s.pos.y - py) * f };
+    }
+    if (s.hspeed() < 0.5) return null;
+  }
+  return null;
+}
+
+describe('edge-of-the-box finishing (shd.js)', () => {
+  it('a placed tap from 16 m sometimes beats the keeper, a full strike more often, stick-aimed ones find the frame', () => {
+    const rate = (dist: number, hold: number, lat = 0, n = 40) => {
+      let goals = 0;
+      let wide = 0;
+      let saves = 0;
+      let corners = 0;
+      for (let k = 0; k < n; k++) {
+        const r = shdTrial(1000 + k * 17 + dist * 3 + hold, dist, hold, lat === 2 ? (k % 2 ? 1 : -1) : lat);
+        if (r.goal) goals++;
+        if (r.wide) wide++;
+        if (r.save) saves++;
+        if (r.saveTo === 'corner') corners++;
+      }
+      return { goal: goals / n, wide: wide / n, saves, corners };
+    };
+    const tap16 = rate(16, 20);
+    const full16 = rate(16, 51);
+    const stick16 = rate(16, 51, 2);
+    const tap12 = rate(12, 20);
+    const full12 = rate(12, 51);
+    const long25 = rate(25, 51);
+    // eslint-disable-next-line no-console
+    console.log(`16 m: 0.33 s tap ${(tap16.goal * 100).toFixed(0)}% | full ${(full16.goal * 100).toFixed(0)}% | stick-aimed ${(stick16.goal * 100).toFixed(0)}% (${(stick16.wide * 100).toFixed(0)}% wide) | 12 m tap ${(tap12.goal * 100).toFixed(0)}%, full ${(full12.goal * 100).toFixed(0)}% | 25 m ${(long25.goal * 100).toFixed(0)}%`);
+    // It used to be 0/15 for the tap and 5/15 at full power; about half the stick-aimed ones went wide.
+    expect(tap16.goal).toBeGreaterThanOrEqual(0.12);
+    expect(tap16.goal).toBeLessThanOrEqual(0.4);
+    expect(full16.goal).toBeGreaterThanOrEqual(0.25);
+    expect(stick16.goal).toBeGreaterThanOrEqual(0.25);
+    expect(stick16.wide).toBeLessThanOrEqual(0.25);
+    // Close in stays the better chance, without being a formality.
+    for (const r of [tap12, full12]) {
+      expect(r.goal).toBeGreaterThanOrEqual(0.4);
+      expect(r.goal).toBeLessThanOrEqual(0.75);
+    }
+    expect(long25.goal).toBeLessThan(tap16.goal);
+    // Parries go back into play (or into the box) far more often than behind for corners.
+    const saves = [tap16, full16, stick16, tap12, full12, long25].reduce((a, r) => a + r.saves, 0);
+    const corners = [tap16, full16, stick16, tap12, full12, long25].reduce((a, r) => a + r.corners, 0);
+    // eslint-disable-next-line no-console
+    console.log(`saves ending in a corner: ${corners}/${saves}`);
+    expect(saves).toBeGreaterThan(60);
+    expect(corners / saves).toBeLessThanOrEqual(0.3);
   }, 120_000);
 });
 
@@ -234,6 +356,66 @@ describe('set-piece balance', () => {
     expect(goals / n).toBeLessThanOrEqual(0.1);
     expect(thrown / 60).toBeLessThanOrEqual(0.05);
   }, 120_000);
+
+  it('corners: runners start in and around the six-yard box, three zonal men hold the 5.5 m line, and a driven one is met', () => {
+    // The shape, as the restart snaps everyone into it.
+    for (const seed of [1, 2, 3, 4]) {
+      const m = newMatch(seed);
+      m.clock = 20;
+      m.phase = 'play';
+      m.ball.owner = -1;
+      const ad = m.attackDir(0);
+      const s0 = seed % 2 ? 1 : -1;
+      goOut(m, 'corner', 0, ad * (HALF_L - 0.35), s0 * (HALF_W - 0.35));
+      for (let i = 0; phase(m) !== 'restart' && i < 400; i++) m.step(DT, EMPTY_PAD);
+      const gx = ad * HALF_L;
+      const out = (p: Player) => (gx - p.pos.x) * ad;
+      const atk = m.teamPlayers(0).filter((p) => !p.isKeeper && p.idx !== m.restart!.taker);
+      for (const [d, z] of CORNER_BOX) {
+        // Someone is standing on each runner's mark (m out, across the goal towards the corner's side).
+        expect(Math.min(...atk.map((p) => Math.hypot(out(p) - d, p.pos.z - z * s0)))).toBeLessThan(0.8);
+      }
+      expect(atk.filter((p) => out(p) < 12 && Math.abs(p.pos.z) < 8).length).toBeGreaterThanOrEqual(5);
+      const defs = m.teamPlayers(1).filter((p) => !p.isKeeper);
+      for (const z of CORNER_ZONAL) {
+        expect(Math.min(...defs.map((p) => Math.hypot(out(p) - CORNER_ZONAL_D, p.pos.z - z * s0)))).toBeLessThan(0.8);
+      }
+      // Not just the keeper and one defender in and around the six-yard box any more.
+      const six = (p: Player) => out(p) < 6.5 && Math.abs(p.pos.z) < 9;
+      expect(defs.filter(six).length).toBeGreaterThanOrEqual(3);
+    }
+    // cob.js, driven (SHOOT 20 frames): met by someone, hardly ever straight out for a throw.
+    let touched = 0;
+    let intoTouch = 0;
+    const n = 60;
+    for (let k = 0; k < n; k++) {
+      const m = newMatch(5000 + k * 31);
+      m.clock = 20;
+      m.phase = 'play';
+      m.ball.owner = -1;
+      const ad = m.attackDir(0);
+      goOut(m, 'corner', 0, ad * (HALF_L - 0.35), (k % 2 ? 1 : -1) * (HALF_W - 0.35));
+      for (let i = 0; phase(m) !== 'restart' && i < 400; i++) m.step(DT, EMPTY_PAD);
+      for (let j = 0; j < 30; j++) m.step(DT, EMPTY_PAD);
+      const taker = m.restart!.taker;
+      for (let j = 0; j < 20; j++) m.step(DT, pad(0, 0, { shoot: true }));
+      for (let w = 0; phase(m) === 'restart' && w < 300; w++) m.step(DT, EMPTY_PAD);
+      let tch = false;
+      for (let j = 0; j < 300; j++) {
+        m.step(DT, EMPTY_PAD);
+        if (m.ball.lastTouch !== taker) tch = true;
+        if (phase(m) === 'out' || phase(m) === 'goal' || (m.ball.owner >= 0 && j > 10)) {
+          if (!tch && phase(m) === 'out' && m.restart?.kind === 'throwin') intoTouch++;
+          break;
+        }
+      }
+      if (tch) touched++;
+    }
+    // eslint-disable-next-line no-console
+    console.log(`driven corners: ${touched}/${n} met, ${intoTouch} straight into touch`);
+    expect(touched / n).toBeGreaterThanOrEqual(0.8);
+    expect(intoTouch / n).toBeLessThanOrEqual(0.1);
+  }, 120_000);
 });
 
 describe('free-kick camera line', () => {
@@ -267,10 +449,12 @@ describe('free-kick camera line', () => {
           expect(Math.sign(f.lat)).toBe(side);
           expect(Math.abs(f.lat)).toBeGreaterThan(aim === 0 ? 0.7 : 0.05);
         }
-        for (const p of m.teamPlayers(0)) {
+        for (const p of m.players) {
           if (p === t || p.isKeeper || p.sentOff) continue;
           const f = frame(p.pos);
           if (f.along < 0.5 && f.along > -12) expect(Math.abs(f.lat)).toBeGreaterThanOrEqual(FK_LENS_CLEAR - 0.1);
+          // Nobody in the +-30 degree cone behind the ball the camera (~7 m back) looks through.
+          if (f.along < 0 && f.along > -FK_LENS_CONE_DEPTH) expect(Math.abs(Math.atan2(f.lat, -f.along))).toBeGreaterThan(Math.PI / 6);
         }
       }
     }

@@ -8,7 +8,26 @@ interface Stage {
   canvas: HTMLCanvasElement;
   scene: THREE.Scene;
   player: Footballer;
+  /** Seconds into the turntable cycle when shown (side-by-side previews never turn in lockstep). */
   spin: number;
+  /** Preview clock (s) when this player was put up: every new player starts facing the camera. */
+  born: number;
+}
+
+/** Base camera spot for the kit previews (scaled back for tall canvases). */
+const PV_CAM = { x: 2.6, y: 1.9, z: 3.4 };
+/** Body yaw that points the face (model +x) straight at the preview camera. */
+const FACE_CAMERA = Math.atan2(-PV_CAM.z, PV_CAM.x);
+/** Turntable: sway gently facing the camera, then one smooth full turn, every TURN_CYCLE seconds. */
+const TURN_CYCLE = 9;
+const TURN_HOLD = 5;
+
+/** Yaw offset from facing the camera at `u` seconds into the cycle (0 at the start: face first). */
+export function turntableYaw(u: number): number {
+  const t = ((u % TURN_CYCLE) + TURN_CYCLE) % TURN_CYCLE;
+  if (t < TURN_HOLD) return 0.32 * Math.sin((t / TURN_HOLD) * Math.PI * 2);
+  const k = (t - TURN_HOLD) / (TURN_CYCLE - TURN_HOLD);
+  return Math.PI * 2 * k * k * (3 - 2 * k);
 }
 
 /**
@@ -31,7 +50,7 @@ export class KitPreview {
     } catch {
       this.renderer = null; // No second context available: the pixel shirt stays.
     }
-    this.camera.position.set(2.6, 1.9, 3.4);
+    this.camera.position.set(PV_CAM.x, PV_CAM.y, PV_CAM.z);
     this.camera.lookAt(0, 0.95, 0);
   }
 
@@ -59,7 +78,8 @@ export class KitPreview {
     scene.add(block);
     const player = new Footballer(def, kit, false);
     scene.add(player.group);
-    this.stages[i] = { canvas, scene, player, spin: old?.spin ?? i * 1.3 };
+    const born = (performance.now() - this.t0) / 1000;
+    this.stages[i] = { canvas, scene, player, spin: old?.spin ?? i * 2.2, born };
     if (!this.raf) this.loop();
   }
 
@@ -84,11 +104,11 @@ export class KitPreview {
       // higher aim keep the head clear of the YOU / RIVAL tag even at the top of the celebration hop
       // (~2.35 m: the head peaks around 70% up the frame).
       const back = 1.32 / Math.min(1, this.camera.aspect);
-      this.camera.position.set(2.6 * back, 1.9 + (back - 1) * 0.6, 3.4 * back);
+      this.camera.position.set(PV_CAM.x * back, PV_CAM.y + (back - 1) * 0.6, PV_CAM.z * back);
       this.camera.lookAt(0, 1.3, 0);
       this.camera.updateProjectionMatrix();
-      s.spin += 0.012;
-      s.player.group.rotation.y = s.spin;
+      // Face the camera first (a character-select card, not the back of a shirt), then show off the kit.
+      s.player.group.rotation.y = FACE_CAMERA + turntableYaw(time - s.born + s.spin);
       // A little celebratory hop every few seconds, otherwise idle breathing.
       const cycle = (time + s.spin) % 4;
       const pose: PoseInput = {
@@ -308,4 +328,170 @@ export function stadiumIsoSvg(level: number): string {
     out += poly([P(x + w, y, h), P(x + w, y + d, h), P(x + w, y + d, 0), P(x + w, y, 0)], c[2]);
   }
   return `<svg class="mc-stadiso" viewBox="-52 -38 104 66" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${out}</svg>`;
+}
+
+// ------------------------------------------------------------------ player faces
+
+/**
+ * Voxel head shots for the squad lists, transfers and Man of the Match: the real match model (same head,
+ * hair, beard and skin as on the pitch) in a head-and-collar close-up, rendered once per player + look + kit
+ * into a small PNG data URL and cached. Rendering is lazy (only faces some screen asks for, a few per frame)
+ * on one tiny renderer that frees its WebGL context once the queue has been idle for a couple of seconds.
+ */
+const FACE_PX = 96;
+const FACE_CACHE_MAX = 500;
+const faceCache = new Map<string, string>();
+const faceWant = new Map<string, { def: PlayerDef; kit: Kit }>();
+let faceQueue: string[] = [];
+let faceRaf = 0;
+let faceIdle = 0;
+let faceFailed = false;
+let faceRig: { renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera } | null = null;
+
+const IDLE_POSE: PoseInput = {
+  state: PSTATE.move, stateT: 0, speed: 0, runPhase: 0, kickT: 0, kickLeg: 1, lean: 0, diveDir: 0, headerT: 0,
+  celebrate: 0, y: 0, keeper: false, hasBall: false, look: 0, turn: 0,
+};
+
+/** Cache key: the player, his look and the shirt he wears (the collar shows under the chin). */
+export function faceKey(def: PlayerDef, kit: Kit): string {
+  const l = def.look;
+  const shirt = def.role === 'GK' ? kit.gk : kit.shirt;
+  return `${def.id}|${l.skin}.${l.hair}.${l.hairColor}.${l.beard}|${shirt}.${kit.shirt2}.${kit.pattern}`;
+}
+
+const attr = (s: string) => s.replace(/[&"<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' })[c]!);
+
+/**
+ * A face tile (`<i class="face">`): the cached head shot, or an empty tile that hydrateFaces() fills in.
+ * `cls` adds size variants (e.g. "lg").
+ */
+export function faceHtml(def: PlayerDef, kit: Kit, cls = ''): string {
+  const key = faceKey(def, kit);
+  const url = faceCache.get(key);
+  if (!url) faceWant.set(key, { def, kit });
+  return `<i class="face ${cls}" data-face="${attr(key)}" aria-hidden="true">${url ? `<img src="${url}" alt="" draggable="false">` : ''}</i>`;
+}
+
+/** Fill every empty face tile under `root` (cached ones at once, the rest over the next few frames). */
+export function hydrateFaces(root: ParentNode = document): void {
+  root.querySelectorAll<HTMLElement>('i.face[data-face]').forEach((el) => {
+    if (el.firstElementChild) return;
+    const key = el.dataset.face ?? '';
+    const url = faceCache.get(key);
+    if (url) el.innerHTML = `<img src="${url}" alt="" draggable="false">`;
+    else if (faceWant.has(key) && !faceQueue.includes(key)) faceQueue.push(key);
+  });
+  if (faceQueue.length && !faceRaf && !faceFailed) faceRaf = requestAnimationFrame(faceTick);
+}
+
+function faceTick(): void {
+  faceRaf = 0;
+  const t0 = performance.now();
+  // ~6 ms a frame: a 20-man squad fills in within a handful of frames without a hitch.
+  while (faceQueue.length && performance.now() - t0 < 6) {
+    const key = faceQueue.shift()!;
+    const want = faceWant.get(key);
+    if (!want || faceCache.has(key)) continue;
+    const url = shootFace(want.def, want.kit);
+    if (!url) {
+      faceQueue = []; // no WebGL here: the plain tiles stay
+      break;
+    }
+    faceWant.delete(key);
+    faceCache.set(key, url);
+    if (faceCache.size > FACE_CACHE_MAX) faceCache.delete(faceCache.keys().next().value!);
+    const sel = `i.face[data-face="${typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(key) : key}"]`;
+    document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+      if (!el.firstElementChild) el.innerHTML = `<img src="${url}" alt="" draggable="false">`;
+    });
+  }
+  if (faceQueue.length) faceRaf = requestAnimationFrame(faceTick);
+  else {
+    // Let the context go once nothing has been asked for in a while.
+    window.clearTimeout(faceIdle);
+    faceIdle = window.setTimeout(disposeFaces, 2500);
+  }
+}
+
+function faceRenderer(): typeof faceRig {
+  if (faceRig || faceFailed) return faceRig;
+  try {
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setPixelRatio(1);
+    renderer.setSize(FACE_PX, FACE_PX, false);
+    renderer.setClearColor(0x000000, 0);
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xe4f0ff, 0x8aa66a, 1.55));
+    // Key light from the front, high and a little to his left: the face reads, the voxel sides shade.
+    const key = new THREE.DirectionalLight(0xfff4e2, 2.2);
+    key.position.set(4, 5, -1.6);
+    scene.add(key);
+    faceRig = { renderer, scene, camera: new THREE.PerspectiveCamera(24, 1, 0.1, 30) };
+  } catch {
+    faceFailed = true;
+  }
+  return faceRig;
+}
+
+const box = new THREE.Box3();
+const hb = new THREE.Box3();
+const v3 = new THREE.Vector3();
+const sz3 = new THREE.Vector3();
+
+function shootFace(def: PlayerDef, kit: Kit): string | null {
+  const rig = faceRenderer();
+  if (!rig) return null;
+  const p = new Footballer(def, kit, def.role === 'GK');
+  p.pose(IDLE_POSE, 0);
+  rig.scene.add(p.group);
+  p.group.updateMatrixWorld(true);
+  // The head is the part whose bottom sits highest (arms hang from the shoulders, the torso from the hips).
+  let found = false;
+  p.group.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    box.copy(mesh.geometry.boundingBox!).applyMatrix4(mesh.matrixWorld);
+    if (!found || box.min.y > hb.min.y) {
+      hb.copy(box);
+      found = true;
+    }
+  });
+  let url: string | null = null;
+  if (found) {
+    hb.getCenter(v3);
+    hb.getSize(sz3);
+    // Head plus a sliver of collar: aim a touch below the head's centre, fit ~1.3 heads of height.
+    const cam = rig.camera;
+    const span = Math.max(sz3.y, sz3.z) * 1.34;
+    const dist = span / 2 / Math.tan(((cam.fov / 2) * Math.PI) / 180) + sz3.x / 2;
+    const ty = v3.y - sz3.y * 0.1;
+    const az = 0.42; // three-quarter view (the face is on the model's +x)
+    const el = 0.14;
+    cam.position.set(v3.x + Math.cos(el) * Math.cos(az) * dist, ty + Math.sin(el) * dist, v3.z + Math.cos(el) * Math.sin(az) * dist);
+    cam.lookAt(v3.x, ty, v3.z);
+    cam.updateProjectionMatrix();
+    try {
+      rig.renderer.render(rig.scene, cam);
+      url = rig.renderer.domElement.toDataURL('image/png');
+    } catch {
+      url = null;
+    }
+  }
+  rig.scene.remove(p.group);
+  return url;
+}
+
+/** Free the face renderer's WebGL context (the cache of finished shots stays). */
+export function disposeFaces(): void {
+  window.clearTimeout(faceIdle);
+  if (faceRaf) cancelAnimationFrame(faceRaf);
+  faceRaf = 0;
+  faceQueue = [];
+  if (!faceRig) return;
+  faceRig.renderer.dispose();
+  faceRig.renderer.forceContextLoss();
+  faceRig = null;
 }
