@@ -33,6 +33,8 @@ export interface SaveData {
   /** Opaque Blocky Cup blob owned by meta/cup.ts (null = no cup in progress). */
   cup: unknown;
   seenTutorial: boolean;
+  /** Daily gift: last claim date (YYYY-MM-DD, local) and consecutive-day streak. */
+  gift?: { last: string; streak: number };
   updatedAt: string;
 }
 

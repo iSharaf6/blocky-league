@@ -79,6 +79,10 @@ export class KitPreview {
       }
       r.setSize(w, h, false);
       this.camera.aspect = w / h;
+      // Tall canvases: step back so the grass block isn't cropped at the sides.
+      const back = 1 / Math.min(1, this.camera.aspect);
+      this.camera.position.set(2.6 * back, 1.9 + (back - 1) * 0.6, 3.4 * back);
+      this.camera.lookAt(0, 0.8, 0);
       this.camera.updateProjectionMatrix();
       s.spin += 0.012;
       s.player.group.rotation.y = s.spin;

@@ -258,7 +258,7 @@ export class MatchSession {
     this.view.updateReferee(this.paused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
     this.effects.update(dt);
-    this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time);
+    this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time, this.world.camera.position);
     this.updateAtmosphere(dt);
     this.updateHud(dt);
   }

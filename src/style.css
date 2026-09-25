@@ -1320,6 +1320,143 @@ kbd {
   .sub-row { grid-template-columns: 30px 1fr auto 52px; }
 }
 
+@media (max-height: 470px) and (orientation: landscape) {
+  .panel.qm {
+    width: min(900px, 97vw);
+    grid-template-columns: 1.05fr 1fr;
+    grid-auto-flow: row dense;
+    column-gap: 16px;
+    row-gap: 8px;
+    padding: 10px 14px;
+    max-height: calc(100vh - 16px);
+  }
+  .panel.qm h2 { grid-column: 1 / -1; font-size: 22px; }
+  .panel.qm .vs-row { grid-column: 1; grid-row: 2 / span 5; align-self: start; }
+  .panel.qm .opt-row { grid-column: 2; grid-template-columns: 1fr; gap: 4px; }
+  .panel.qm .opt-row label { font-size: 13px; }
+  .panel.qm .seg button { padding: 7px 2px 6px; font-size: 13px; }
+  .panel.qm .btn-row {
+    grid-column: 2;
+    position: sticky;
+    bottom: 0;
+    background: var(--cream);
+    padding-top: 6px;
+  }
+  .qm .tp-3d { width: 96px; }
+  .qm .tp-name { font-size: 15px; }
+}
+
+.main-wrap.with-captain {
+  display: flex;
+  align-items: center;
+  gap: clamp(18px, 4vw, 56px);
+}
+
+.main-col {
+  display: grid;
+  justify-items: center;
+  gap: 22px;
+}
+
+.captain {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  animation: drop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1) 0.2s both;
+}
+
+.captain-3d {
+  width: clamp(170px, 20vw, 280px);
+  aspect-ratio: 0.85;
+  filter: drop-shadow(0 12px 0 rgba(38, 38, 46, 0.25));
+}
+
+.captain-tag {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  background: var(--ink);
+  color: var(--cream);
+  padding: 8px 14px 9px;
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.3);
+  max-width: 260px;
+  text-align: center;
+}
+
+.captain-tag b {
+  font: 400 18px / 1.1 var(--round);
+}
+
+.captain-tag span {
+  font: 700 16px var(--px);
+  color: var(--yellow);
+}
+
+.tile small {
+  display: block;
+  font: 400 14px / 1.1 var(--round);
+  letter-spacing: 0.3px;
+  opacity: 0.88;
+  text-transform: uppercase;
+  margin-top: -6px;
+}
+
+.btn-white.tile small,
+.btn-yellow.tile small {
+  color: var(--ink-2);
+}
+
+.topbar .gift {
+  min-height: 42px;
+  padding: 10px 14px 9px;
+  font: 400 17px / 1 var(--round);
+}
+
+.topbar .gift b {
+  color: var(--red-d);
+  margin-left: 4px;
+}
+
+.gift-days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+
+.gift-days li {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  background: #fff;
+  border: 3px solid var(--cream-2);
+  padding: 6px 2px;
+  font: 400 12px var(--round);
+  color: var(--ink-2);
+}
+
+.gift-days li b {
+  font: 400 16px var(--round);
+  color: var(--ink);
+}
+
+.gift-days li.got {
+  background: var(--cream-2);
+  opacity: 0.7;
+}
+
+.gift-days li.today {
+  border-color: var(--ink);
+  background: var(--yellow);
+  transform: translateY(-4px);
+}
+
+@media (max-height: 560px), (max-width: 720px) {
+  .main-wrap.with-captain .captain { display: none; }
+}
+
 /* ===== career + club (meta) ===== */
 
 .meta .mc-wrap {

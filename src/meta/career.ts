@@ -676,8 +676,9 @@ export function matchReward(division: number, stadium: number, my: number, their
 
 // ------------------------------------------------------------------ transfers
 
+/** About three or four wins' pay for a squad-level signing (a 50-rated player costs ~630). */
 export function playerPrice(p: PlayerDef): number {
-  return round10(overall(p) ** 2 * 0.9);
+  return round10(overall(p) ** 2 * 0.25);
 }
 
 export function sellValue(p: PlayerDef): number {

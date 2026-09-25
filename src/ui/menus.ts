@@ -12,6 +12,16 @@ export const HALF_OPTIONS = [1.5, 2, 3, 4];
 
 const $ = <T extends HTMLElement>(root: ParentNode, sel: string) => root.querySelector(sel) as T;
 
+/** Live info for the main menu tiles. */
+export interface MainInfo {
+  captain?: { def: PlayerDef; kit: Kit; club: string; ovr: number };
+  quick?: string;
+  career?: string;
+  club?: string;
+  cup?: string;
+  gift?: { amount: number; streak: number };
+}
+
 /** Pixel-art shirt drawn as a CSS grid, so kit previews match the voxel look. */
 export function shirtArt(kit: Kit, size = 8): string {
   const W = 12;
@@ -137,24 +147,41 @@ export class Menus {
     $(d, '[data-a=start]').addEventListener('click', go);
   }
 
-  main(save: SaveData, h: { quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void }): void {
+  main(
+    save: SaveData,
+    h: { quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void; gift?: () => void },
+    info?: MainInfo,
+  ): void {
     const r = save.record;
     const d = this.mount(`
-      <div class="topbar"><div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div></div>
-      <div class="main-wrap">
+      <div class="topbar">
+        ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">🎁 DAILY GIFT <b>+${info.gift.amount}</b></button>` : ''}
+        <div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>
+      </div>
+      <div class="main-wrap ${info?.captain ? 'with-captain' : ''}">
+        ${info?.captain ? `<div class="captain"><canvas class="captain-3d"></canvas><div class="captain-tag"><b>${info.captain.club}</b><span>OVR ${info.captain.ovr}</span></div></div>` : ''}
+        <div class="main-col">
         <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
         <div class="tiles">
-          <button class="btn btn-go tile" data-a="quick">${pixelIcon('ball', '#fff', 6)}<span>QUICK MATCH</span></button>
-          <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span></button>
-          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span></button>
+          <button class="btn btn-go tile" data-a="quick">${pixelIcon('ball', '#fff', 6)}<span>QUICK MATCH</span>${info?.quick ? `<small>${info.quick}</small>` : ''}</button>
+          <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${info?.career ? `<small>${info.career}</small>` : ''}</button>
+          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${info?.club ? `<small>${info.club}</small>` : ''}</button>
           <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
-          <button class="btn btn-red tile tile-wide" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span></button>
+          <button class="btn btn-red tile tile-wide" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${info?.cup ? `<small>${info.cup}</small>` : ''}</button>
         </div>
         <div class="main-foot">
           <button class="btn btn-ghost" data-a="howto">HOW TO PLAY</button>
           <span class="record-chip">W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span>
         </div>
+        </div>
       </div>`, 'main');
+    const cap = d.querySelector<HTMLCanvasElement>('.captain-3d');
+    if (cap && info?.captain) {
+      this.preview = new KitPreview();
+      if (this.preview.ok) this.preview.set(0, cap, info.captain.def, info.captain.kit);
+      else cap.remove();
+    }
+    d.querySelector('[data-a=gift]')?.addEventListener('click', () => h.gift?.());
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
     $(d, '[data-a=career]').addEventListener('click', h.career);
     $(d, '[data-a=cup]').addEventListener('click', h.cup);
@@ -546,6 +573,35 @@ export class Menus {
         </div>
       </div>`, 'howto-screen');
     $(d, '[data-a=back]').addEventListener('click', onBack);
+  }
+
+  gift(amount: number, streak: number, canDouble: boolean, h: { claim: (double: boolean) => Promise<boolean>; back: () => void }): void {
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const n = 100 + 50 * i;
+      const state = i < streak - 1 ? 'got' : i === streak - 1 ? 'today' : '';
+      return `<li class="${state}"><span>DAY ${i + 1}</span><b>${n}</b></li>`;
+    }).join('');
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel narrow gift-panel">
+          <h2>DAILY GIFT</h2>
+          <ul class="gift-days">${days}</ul>
+          <div class="reward"><i></i><span>+${amount}</span><em>DAY ${streak} STREAK</em></div>
+          <p class="fine">Come back tomorrow to keep the streak going.</p>
+          <div class="btn-row">
+            ${canDouble ? '<button class="btn btn-white" data-a="double">🎬 2× GIFT</button>' : ''}
+            <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>
+          </div>
+        </div>
+      </div>`, 'gift-screen');
+    const go = async (double: boolean) => {
+      d.querySelectorAll('button').forEach((b) => ((b as HTMLButtonElement).disabled = true));
+      await h.claim(double);
+      sfx.coin();
+      h.back();
+    };
+    $(d, '[data-a=claim]').addEventListener('click', () => void go(false));
+    d.querySelector('[data-a=double]')?.addEventListener('click', () => void go(true));
   }
 
   comingSoon(title: string, text: string, onBack: () => void): void {

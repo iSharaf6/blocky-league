@@ -11,7 +11,10 @@ import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
 import { World, type TimeOfDay } from './render/world';
 import type { Side } from './sim/types';
-import { DIFF_LEVEL, Menus } from './ui/menus';
+import { DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
+import { DIVISION_NAMES, clubRating, migrateCareer, nextMatch } from './meta/career';
+import { ROUND_NAMES, migrateCup } from './meta/cup';
+import { overall } from './sim/types';
 import { openCareer } from './ui/career';
 import { openCup } from './ui/cup';
 import { openClub } from './ui/club';
@@ -60,17 +63,80 @@ const app: AppContext = {
   mainMenu: () => mainMenu(),
 };
 
+function localDay(offset = 0): string {
+  const d = new Date(Date.now() + offset * 86_400_000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Today's gift if not yet claimed: 100 coins on day 1, +50 per consecutive day up to day 7. */
+function giftToday(): { amount: number; streak: number } | null {
+  const g = save.gift;
+  const today = localDay();
+  if (g?.last === today) return null;
+  const streak = g && g.last === localDay(-1) ? (g.streak % 7) + 1 : 1;
+  return { amount: 100 + 50 * (streak - 1), streak };
+}
+
+function mainInfo(): MainInfo {
+  const info: MainInfo = {};
+  const q = PRESET_CLUBS[save.clubIdx];
+  const o = PRESET_CLUBS[save.opponentIdx];
+  if (q && o) info.quick = `${q.short} v ${o.short}`;
+  try {
+    const career = save.career ? migrateCareer(save.career, 1) : null;
+    const club = career?.club ?? null;
+    if (club && career) {
+      const nm = nextMatch(career);
+      const div = career.season ? DIVISION_NAMES[career.season.division] ?? '' : '';
+      info.career = nm ? `${div} · v ${nm.rival.short}` : div || 'SEASON DONE';
+      info.club = `OVR ${clubRating(club)}`;
+      const star = [...club.squad.slice(0, 11)].sort((a, b) => overall(b) - overall(a))[0];
+      if (star) info.captain = { def: star, kit: club.kit, club: club.name.toUpperCase(), ovr: clubRating(club) };
+    } else {
+      info.career = 'START YOUR CLUB';
+      info.club = 'KIT · SQUAD';
+    }
+    const cup = migrateCup(save.cup);
+    info.cup = cup && cup.status === 'active' ? `NEXT: ${ROUND_NAMES[Math.min(cup.round, 2)]}` : 'WIN THE TROPHY';
+  } catch {
+    // A damaged career blob must never break the menu.
+  }
+  if (!info.captain && q) {
+    const team = makeTeam(q);
+    info.captain = { def: team.players[9], kit: q.kit, club: q.name.toUpperCase(), ovr: q.level };
+  }
+  const gift = giftToday();
+  if (gift) info.gift = gift;
+  return info;
+}
+
 function mainMenu(): void {
   if (!demo) startDemo();
   if (save.settings.music) sfx.startMusic();
+  const info = mainInfo();
   menus.main(save, {
+    gift: () => {
+      const g = giftToday();
+      if (!g) return mainMenu();
+      menus.gift(g.amount, g.streak, ads.rewardedAvailable, {
+        claim: async (double) => {
+          let amount = g.amount;
+          if (double && (await ads.rewarded())) amount *= 2;
+          save.coins += amount;
+          save.gift = { last: localDay(), streak: g.streak };
+          persist();
+          return true;
+        },
+        back: mainMenu,
+      });
+    },
     quick: quickMatch,
     career: () => openCareer(app),
     cup: () => openCup(app),
     club: () => openClub(app),
     settings: () => menus.settings(save, applySettings, mainMenu),
     howto: () => menus.howTo(mainMenu),
-  });
+  }, info);
 }
 
 /** Standard coin payout, scaled by difficulty. */

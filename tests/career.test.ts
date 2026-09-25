@@ -253,7 +253,7 @@ describe('transfers', () => {
         expect(st.market).toHaveLength(MARKET_SIZE);
         for (const p of st.market) {
           expect(Math.abs(overall(p) - divisionPlayerOverall(div, p.role))).toBeLessThanOrEqual(6);
-          expect(playerPrice(p)).toBe(Math.round((overall(p) ** 2 * 0.9) / 10) * 10);
+          expect(playerPrice(p)).toBe(Math.round((overall(p) ** 2 * 0.25) / 10) * 10);
         }
         playMine(st, { coins: 0 }, 1, 1);
       }

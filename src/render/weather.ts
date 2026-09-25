@@ -53,7 +53,7 @@ export class Weather {
     }
   }
 
-  update(dt: number, fx: number, fz: number, time: number): void {
+  update(dt: number, fx: number, fz: number, time: number, cam?: THREE.Vector3): void {
     if (this.kind === 'clear') return;
     const n = this.vel.length;
     const p = this.pos;
@@ -78,6 +78,11 @@ export class Weather {
       else if (p[o] > fx + hw) p[o] -= this.W;
       if (p[o + 2] < fz - hd) p[o + 2] += this.D;
       else if (p[o + 2] > fz + hd) p[o + 2] -= this.D;
+      // Keep flakes out of the lens: low cameras (penalties, replays) would see giant cubes.
+      if (cam) {
+        const dx = p[o] - cam.x, dy = p[o + 1] - cam.y, dz = p[o + 2] - cam.z;
+        if (dx * dx + dy * dy + dz * dz < 36) p[o + 1] = this.H - Math.random() * 2;
+      }
     }
     if (this.rain) {
       const a = this.rain.geometry.getAttribute('position') as THREE.BufferAttribute;
