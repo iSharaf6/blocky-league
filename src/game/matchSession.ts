@@ -286,7 +286,7 @@ export class MatchSession {
       else this.onHalftime?.();
     }
     if (m.phase === 'shootout' && !this.so && this.hud) this.startShootoutView();
-    if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > 2.4) {
+    if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > (m.shootout ? 4.2 : 2.4)) {
       this.finishFired = true;
       if (this.demo) return;
       this.onFinish?.({

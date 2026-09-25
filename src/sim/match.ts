@@ -339,6 +339,10 @@ export class Match {
 
   step(dt: number, pad: Pad): void {
     this.phaseT += dt;
+    if (this.phase === 'fulltime' && this.shootout && this.shootout.winner >= 0 && this.phaseT < 8) {
+      this.shootoutParty(dt);
+      return;
+    }
     if (this.phase === 'halftime' || this.phase === 'fulltime') return;
     if (this.phase === 'shootout') {
       this.stepShootout(dt, pad);
@@ -2102,6 +2106,41 @@ export class Match {
       p.wantX = p.wantZ = 0;
     }
     this.events.push({ type: 'whistle', kind: 'end' }, { type: 'fulltime' }, { type: 'shootoutEnd', winner: s.winner as Side });
+    for (const p of this.players) {
+      if (p.side === s.winner) {
+        p.setState('celebrate');
+        p.celebrate = 4 + this.rng.int(2);
+      } else {
+        p.setState('dejected');
+      }
+    }
+  }
+
+  /** After the winning penalty: the winners pile towards the camera, the losers trudge. */
+  private shootoutParty(dt: number): void {
+    const s = this.shootout!;
+    const hub = { x: 0, z: HALF_W * 0.3 };
+    let i = 0;
+    for (const p of this.players) {
+      p.faceTarget = null;
+      if (p.side === s.winner && p.state === 'celebrate') {
+        const a = (i++ / 11) * Math.PI * 2;
+        const tx = hub.x + Math.cos(a) * 2.2;
+        const tz = hub.z + Math.sin(a) * 1.6;
+        const dx = tx - p.pos.x;
+        const dz = tz - p.pos.z;
+        const d = Math.hypot(dx, dz);
+        p.wantX = d > 0.6 ? dx / d : 0;
+        p.wantZ = d > 0.6 ? dz / d : 0;
+        p.sprint = d > 4;
+        if (d <= 0.6) p.faceTarget = Math.PI / 2;
+      } else {
+        p.wantX = p.wantZ = 0;
+        p.sprint = false;
+      }
+      p.step(dt, false);
+    }
+    this.separate();
   }
 
   drainEvents(): MatchEvent[] {
