@@ -63,7 +63,10 @@ export class CameraRig {
   /** Metres of pitch the broadcast shot shows across the screen. */
   private broadcastWidth(): number {
     const a = this.camera.aspect;
-    return a >= 1.6 ? 46 : a >= 1.25 ? 40 + (a - 1.25) * 17 : 38;
+    const w = a >= 1.6 ? 46 : a >= 1.25 ? 40 + (a - 1.25) * 17 : 38;
+    // Small phone screens get a tighter shot so the players stay readable.
+    const h = typeof window !== 'undefined' ? window.innerHeight : 720;
+    return w * (h < 420 ? 0.78 : h < 560 ? 0.88 : 1);
   }
 
   update(dt: number, f: CamFocus, time: number): void {

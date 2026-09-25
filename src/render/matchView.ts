@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { lerp, wrapAngle } from '../core/math';
-import { BALL_OFS, PF } from '../game/replay';
+import { BALL_OFS, FRAME_LEN, PF } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, TeamDef } from '../sim/types';
 import { Footballer, buildBallGeometry, type PoseInput } from './characters';
@@ -16,6 +16,12 @@ export class MatchView {
   private markerRing: THREE.Mesh;
   private arrow: THREE.Mesh;
   private powerBar: THREE.Group;
+  private nameTag: THREE.Sprite;
+  private nameCanvas: HTMLCanvasElement;
+  private nameTex: THREE.CanvasTexture;
+  private nameFor = -1;
+  private targetRing: THREE.Mesh;
+  private names: string[] = [];
   private powerFill: THREE.Mesh;
   private ballQuat = new THREE.Quaternion();
   private tmpQ = new THREE.Quaternion();
@@ -37,7 +43,7 @@ export class MatchView {
         this.group.add(f.group);
       });
     }
-    this.frame = new Float32Array(BALL_OFS + 10);
+    this.frame = new Float32Array(FRAME_LEN);
     this.ball = new THREE.Mesh(buildBallGeometry(BALL_R * 1.25), voxelMaterial);
     this.ball.castShadow = true;
     this.group.add(this.ball);
@@ -69,8 +75,31 @@ export class MatchView {
     ab.box(0, 0.12, 0, 0.16, 0.12, 0.16, markColor);
     this.arrow = new THREE.Mesh(ab.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
     this.marker.add(this.arrow);
+    // Surname tag floating over the controlled player, broadcast style.
+    this.nameCanvas = document.createElement('canvas');
+    this.nameCanvas.width = 256;
+    this.nameCanvas.height = 48;
+    this.nameTex = new THREE.CanvasTexture(this.nameCanvas);
+    this.nameTex.colorSpace = THREE.SRGBColorSpace;
+    this.nameTag = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.nameTex, depthTest: false, transparent: true }));
+    this.nameTag.scale.set(2.4, 0.45, 1);
+    this.nameTag.renderOrder = 10;
+    this.marker.add(this.nameTag);
+    for (let s = 0; s < 2; s++) for (const p of teams[s].players) this.names.push(p.name.split('. ').pop()!.toUpperCase());
     this.group.add(this.marker);
     this.marker.visible = humanSide >= 0;
+
+    // Ring on the intended receiver of a pass.
+    const tb = new BoxBuilder();
+    const tr = 0.55, tt = 0.08;
+    tb.box(0, 0, -tr, tr * 2 + tt, 0.02, tt, 0xffffff);
+    tb.box(0, 0, tr, tr * 2 + tt, 0.02, tt, 0xffffff);
+    tb.box(-tr, 0, 0, tt, 0.02, tr * 2, 0xffffff);
+    tb.box(tr, 0, 0, tt, 0.02, tr * 2, 0xffffff);
+    this.targetRing = new THREE.Mesh(tb.build(), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 }));
+    this.targetRing.position.y = 0.05;
+    this.targetRing.visible = false;
+    this.group.add(this.targetRing);
 
     this.powerBar = new THREE.Group();
     const bg = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 0.16), new THREE.MeshBasicMaterial({ color: 0x26262e }));
@@ -103,7 +132,7 @@ export class MatchView {
       f[o + 12] = lerp(a[o + 12], b[o + 12], alpha);
     }
     for (let k = 0; k < 6; k++) f[BALL_OFS + k] = lerp(a[BALL_OFS + k], b[BALL_OFS + k], alpha);
-    for (let k = 6; k < 10; k++) f[BALL_OFS + k] = b[BALL_OFS + k];
+    for (let k = 6; k < 11; k++) f[BALL_OFS + k] = b[BALL_OFS + k];
 
     const pose = this.pose;
     for (let i = 0; i < 22; i++) {
@@ -159,13 +188,46 @@ export class MatchView {
       const o = active * PF;
       this.marker.position.set(f[o], 0, f[o + 1]);
       this.markerRing.rotation.y = -f[o + 3];
-      this.arrow.position.y = 2.25 + f[o + 2] + Math.abs(Math.sin(time * 5)) * 0.18;
-      this.marker.userData.active = active;
+      this.arrow.position.y = 2.45 + f[o + 2] + Math.abs(Math.sin(time * 5)) * 0.18;
+      this.nameTag.position.y = 3.25 + f[o + 2];
+      if (active !== this.nameFor) this.drawName(active);
+    }
+    const pt = f[BALL_OFS + 10];
+    const human = active >= 0 ? (active < 11 ? 0 : 1) : -1;
+    if (this.marker.visible && pt >= 0 && pt !== active && (pt < 11 ? 0 : 1) === human) {
+      this.targetRing.visible = true;
+      this.targetRing.position.x = f[pt * PF];
+      this.targetRing.position.z = f[pt * PF + 1];
+      const pulse = 1 + Math.sin(time * 10) * 0.08;
+      this.targetRing.scale.set(pulse, 1, pulse);
+    } else {
+      this.targetRing.visible = false;
     }
   }
 
   setMarkerVisible(v: boolean): void {
     this.marker.visible = v;
+    if (!v) this.targetRing.visible = false;
+  }
+
+  private drawName(idx: number): void {
+    this.nameFor = idx;
+    const c = this.nameCanvas;
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, c.width, c.height);
+    const name = this.names[idx] ?? '';
+    g.font = '700 26px "Silkscreen", "Courier New", monospace';
+    const w = Math.min(c.width - 8, g.measureText(name).width + 22);
+    const x = (c.width - w) / 2;
+    g.fillStyle = 'rgba(38,38,46,0.82)';
+    g.fillRect(x, 6, w, 36);
+    g.fillStyle = '#ffd23a';
+    g.fillRect(x, 38, w, 4);
+    g.fillStyle = '#fbfbf4';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(name, c.width / 2, 25);
+    this.nameTex.needsUpdate = true;
   }
 
   setPower(p: number | null, x: number, z: number): void {

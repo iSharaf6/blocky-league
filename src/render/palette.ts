@@ -5,9 +5,9 @@ export const SKIN = [0xf8dcc0, 0xf0c49c, 0xdca577, 0xb97b4c, 0x8c5634, 0x5c3721]
 export const HAIR = [0x2a1d16, 0x4a2e1c, 0x7a4a26, 0xe8c25a, 0xc8602a, 0xe6e2da, 0x1c1c22, 0x3a72ff];
 
 export const GRASS_A = 0xa2d65c;
-export const GRASS_B = 0x94cc4f;
-export const GRASS_OUT_A = 0x8fc84c;
-export const GRASS_OUT_B = 0x86bf45;
+export const GRASS_B = 0x88c247;
+export const GRASS_OUT_A = 0x7fb843;
+export const GRASS_OUT_B = 0x76ae3c;
 export const LINE = 0xfbfbf4;
 export const CONCRETE = 0xd9d6cc;
 export const CONCRETE_DARK = 0xb9b5aa;

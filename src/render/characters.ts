@@ -397,15 +397,19 @@ export class Footballer {
       }
       case PSTATE.dive: {
         const t = clamp(p.stateT / 0.22, 0, 1);
-        const land = clamp((p.stateT - 0.55) / 0.3, 0, 1);
-        body.rotation.x = p.diveDir * 1.35 * t;
-        body.position.y = HIP_Y - 0.1 * t - land * 0.25;
-        aL.rotation.z = 2.9 * t;
-        aR.rotation.z = 2.9 * t;
+        // Land, then roll back up to a crouch before the stand-up state takes over.
+        const up = clamp((p.stateT - 0.85) / 0.35, 0, 1);
+        const lay = t * (1 - up * up * (3 - 2 * up));
+        body.rotation.x = p.diveDir * 1.35 * lay;
+        body.position.y = HIP_Y - 0.1 * t - lay * 0.2 - up * 0.18;
+        aL.rotation.z = 2.9 * lay + up * 0.9;
+        aR.rotation.z = 2.9 * lay + up * 0.9;
         aL.rotation.x = -0.25;
         aR.rotation.x = 0.25;
-        lL.rotation.x = -0.2 * p.diveDir;
-        lR.rotation.x = 0.2 * p.diveDir;
+        lL.rotation.x = -0.2 * p.diveDir * lay;
+        lR.rotation.x = 0.2 * p.diveDir * lay;
+        lL.rotation.z = up * 0.9;
+        lR.rotation.z = -up * 0.3;
         break;
       }
       case PSTATE.hold: {
@@ -456,10 +460,11 @@ export class Footballer {
       }
       case PSTATE.dejected: {
         locomotion();
-        head.rotation.z = -0.4;
-        torso.rotation.z = -0.15;
-        aL.rotation.set(-0.05, 0, 0.05);
-        aR.rotation.set(0.05, 0, 0.05);
+        // Hands on head.
+        head.rotation.z = -0.25;
+        torso.rotation.z = -0.08;
+        aL.rotation.set(-0.95, 0, 2.55);
+        aR.rotation.set(0.95, 0, 2.55);
         break;
       }
     }

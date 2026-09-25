@@ -4,7 +4,7 @@ import { clamp } from '../core/math';
 import { CameraRig } from '../render/cameraRig';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
-import { Stadium } from '../render/stadium';
+import { PITCH_Y, Stadium } from '../render/stadium';
 import type { TimeOfDay, World } from '../render/world';
 import { DT, HALF_L } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
@@ -22,10 +22,30 @@ export interface SessionOptions extends MatchConfig {
   tutorial?: boolean;
 }
 
+export interface PlayerRating {
+  idx: number;
+  name: string;
+  side: Side;
+  rating: number;
+  goals: number;
+  assists: number;
+}
+
 export interface MatchResult {
   score: [number, number];
   humanSide: Side | -1;
   match: Match;
+  /** Per-player 1–10 ratings, best first. */
+  ratings?: PlayerRating[];
+}
+
+interface Tally {
+  goals: number;
+  assists: number;
+  tackles: number;
+  saves: number;
+  passes: number;
+  shots: number;
 }
 
 const RESTART_LABEL: Record<RestartKind, string> = {
@@ -62,6 +82,8 @@ export class MatchSession {
   private goalHypeT = 0;
   private prevButtons = false;
   private introLeft = 0;
+  private tally: Tally[] = Array.from({ length: 22 }, () => ({ goals: 0, assists: 0, tackles: 0, saves: 0, passes: 0, shots: 0 }));
+  private lastPasser: [number, number] = [-1, -1];
   private tut = { moved: false, passed: false, shot: false, switched: false, step: 0, t: 0 };
   private readonly demo: boolean;
 
@@ -81,6 +103,8 @@ export class MatchSession {
     const tod = opt.timeOfDay ?? 'day';
     world.setTimeOfDay(tod);
     this.stadium.setTimeOfDay(tod);
+    this.view.group.position.y = PITCH_Y;
+    this.effects.mesh.position.y = PITCH_Y;
     world.scene.add(this.stadium.group, this.view.group, this.effects.mesh);
     this.cam = new CameraRig(world.camera);
     this.cam.setMode(this.demo ? 'menu' : 'intro');
@@ -225,8 +249,28 @@ export class MatchSession {
     if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > 2.4) {
       this.finishFired = true;
       if (this.demo) return;
-      this.onFinish?.({ score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m });
+      this.onFinish?.({ score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings() });
     }
+  }
+
+  /** DLS-style 1–10 match ratings from what each player actually did. */
+  ratings(): PlayerRating[] {
+    const m = this.match;
+    const out: PlayerRating[] = m.players.map((p) => {
+      const t = this.tally[p.idx];
+      const my = m.score[p.side];
+      const their = m.score[p.side === 0 ? 1 : 0];
+      let r = 6.1 + t.goals * 1.15 + t.assists * 0.6 + t.tackles * 0.14 + t.saves * 0.4 + Math.min(t.passes, 40) * 0.025 + t.shots * 0.05;
+      r += my > their ? 0.4 : my < their ? -0.35 : 0;
+      if (p.isKeeper || p.role === 'DF') r -= their * (p.isKeeper ? 0.35 : 0.15);
+      if (p.isKeeper && their === 0) r += 0.6;
+      return {
+        idx: p.idx, name: p.def.name, side: p.side,
+        rating: Math.round(Math.max(3.5, Math.min(10, r)) * 10) / 10,
+        goals: t.goals, assists: t.assists,
+      };
+    });
+    return out.sort((a, b) => b.rating - a.rating || b.goals - a.goals);
   }
 
   /** Frame the taker and where the ball is going for set pieces. */
@@ -301,6 +345,14 @@ export class MatchSession {
       switch (e.type) {
         case 'kick': {
           sfx.kick(e.power, e.kind === 'header');
+          if (m.ball.lastTouch >= 0) {
+            const kp = m.players[m.ball.lastTouch];
+            if (e.kind === 'shot' || (e.kind === 'header' && m.shotClock < 0.05)) this.tally[kp.idx].shots++;
+            else if (e.kind !== 'clear') {
+              this.tally[kp.idx].passes++;
+              this.lastPasser[kp.side] = kp.idx;
+            }
+          }
           if (m.ball.lastTouch >= 0 && m.players[m.ball.lastTouch].side === m.cfg.humanSide) {
             if (e.kind === 'shot' || e.kind === 'header') this.tut.shot = true;
             else this.tut.passed = true;
@@ -313,6 +365,12 @@ export class MatchSession {
         }
         case 'goal': {
           this.goalFrame = this.recorded;
+          if (!e.own) {
+            this.tally[e.scorer].goals++;
+            const a = this.lastPasser[e.side];
+            if (a >= 0 && a !== e.scorer) this.tally[a].assists++;
+          }
+          this.lastPasser = [-1, -1];
           this.replayDone = false;
           sfx.goal();
           const side = e.side;
@@ -343,6 +401,7 @@ export class MatchSession {
           this.cam.kick(0.08);
           break;
         case 'save':
+          this.tally[e.keeper].saves++;
           sfx.save();
           if (m.shotClock < 2) {
             this.hud?.toastMsg(e.caught ? 'GREAT SAVE!' : 'PARRIED!');
@@ -351,6 +410,7 @@ export class MatchSession {
           break;
         case 'tackle':
           if (e.won) {
+            this.tally[e.by].tackles++;
             const p = m.players[e.by];
             this.effects.grass(p.pos.x, p.pos.z, e.slide ? 12 : 4, e.slide ? 0.8 : 0.3);
             if (e.slide) sfx.kick(0.3);
@@ -408,12 +468,17 @@ export class MatchSession {
     const hud = this.hud;
     if (!hud) return;
     const m = this.match;
-    const minute = m.minute();
-    if (minute !== this.lastMinute) {
-      this.lastMinute = minute;
-      const stoppage = m.clock > m.cfg.halfLength;
-      hud.setClock(Math.min(minute, m.half * 45), stoppage);
-      this.stadium.setScore(m.score[0], m.score[1], `${minute}'`);
+    // Broadcast clock: game time mm:ss, frozen at 45:00 / 90:00 with "+N" added time.
+    const halfGame = 45 * 60;
+    const played = Math.min(m.clock / m.cfg.halfLength, 1) * halfGame;
+    const gameSec = Math.floor((m.half - 1) * halfGame + played);
+    const extra = m.clock > m.cfg.halfLength ? Math.max(1, Math.ceil(((m.clock - m.cfg.halfLength) / m.cfg.halfLength) * 45)) : 0;
+    const key10 = gameSec * 10 + extra;
+    if (key10 !== this.lastMinute) {
+      this.lastMinute = key10;
+      hud.setClock(gameSec, extra);
+      const minute = Math.floor(gameSec / 60);
+      this.stadium.setScore(m.score[0], m.score[1], extra ? `${minute}+${extra}'` : `${minute}'`);
     }
     hud.update(dt, this.view.frame);
     const hs = m.cfg.humanSide;

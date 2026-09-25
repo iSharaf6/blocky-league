@@ -1,32 +1,35 @@
 import { it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { DT, HALF_L } from '../src/sim/constants';
+import { DT } from '../src/sim/constants';
 import { EMPTY_PAD, Match } from '../src/sim/match';
-import { aiDebug } from '../src/sim/ai';
 
-it('diag zones', () => {
-  const m = new Match({ home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 150, difficulty: 2, humanSide: -1, seed: 11 });
-  aiDebug.on = true;
-  const zt = [0, 0, 0, 0, 0, 0];
-  const ballZ = [0, 0, 0, 0, 0, 0];
-  const ph: Record<string, number> = {};
-  for (let i = 0; i < 60 * 150; i++) {
-    m.step(DT, EMPTY_PAD);
-    ph[m.phase] = (ph[m.phase] ?? 0) + DT;
-    const b = m.ball;
-    if (m.phase === 'play') {
-      const bi = Math.min(5, Math.max(0, Math.floor(((b.pos.x / HALF_L) + 1) * 3)));
-      ballZ[bi] += DT;
-      if (b.owner >= 0 && !b.held) {
-        const o = m.players[b.owner];
-        const n = (b.pos.x * m.attackDir(o.side)) / HALF_L;
-        const zi = Math.min(5, Math.max(0, Math.floor((n + 1) * 3)));
-        zt[zi] += DT;
+it('diag time budget', () => {
+  const t: Record<string, number> = {};
+  const blocks: Record<string, number> = {};
+  for (const seed of [11, 23, 37, 41]) {
+    const m = new Match({ home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 150, difficulty: 2, humanSide: -1, seed });
+    let steps = 0;
+    let lastKind = '';
+    while (m.phase !== 'fulltime' && steps < 60 * 60 * 12) {
+      m.step(DT, EMPTY_PAD);
+      steps++;
+      for (const e of m.drainEvents()) {
+        if (e.type === 'kick') lastKind = e.kind;
+        if (e.type === 'block') blocks[(e.shot ? 'shot' : lastKind) + (Math.hypot(e.x - m.kickX, e.z - m.kickZ) < 2 ? '<2m' : '>2m')] = (blocks[(e.shot ? 'shot' : lastKind) + (Math.hypot(e.x - m.kickX, e.z - m.kickZ) < 2 ? '<2m' : '>2m')] ?? 0) + 1;
       }
+      const b = m.ball;
+      let k: string = m.phase;
+      if (m.phase === 'play') {
+        if (b.held) k = 'held';
+        else if (b.owner >= 0) k = m.players[b.owner].state === 'kick' ? 'windup' : 'carrier';
+        else if (m.passTarget >= 0) k = 'passFlight';
+        else k = 'loose:' + lastKind;
+      }
+      t[k] = (t[k] ?? 0) + DT / 4;
+      if (m.phase === 'halftime') m.continueSecondHalf();
+      if (m.phase === 'goal' && m.phaseT > 3) m.resumeAfterGoal();
     }
-    if (m.phase === 'goal' && m.phaseT > 3) m.resumeAfterGoal();
   }
-  console.log('carrier time by own-frame sixth (own goal -> opp goal)', zt.map((v) => v.toFixed(1)).join(' '));
-  console.log('ball time by world sixth', ballZ.map((v) => v.toFixed(1)).join(' '));
-  console.log('phases', JSON.stringify(ph), 'decisions', aiDebug.log.length);
+  console.log(Object.entries(t).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}=${v.toFixed(1)}`).join('  '));
+  console.log('blocks/4', JSON.stringify(blocks));
 });

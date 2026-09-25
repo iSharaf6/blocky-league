@@ -36,17 +36,17 @@ export class Hud {
     const [h, a] = teams;
     this.root.innerHTML = `
       <div class="scorebug">
-        <div class="sb-team"><i style="background:${cssHex(h.color)};box-shadow:inset -6px 0 0 ${cssHex(h.color2)}"></i><b>${h.short}</b></div>
+        <div class="sb-team"><i class="crest" style="--a:${cssHex(h.color)};--b:${cssHex(h.color2)}"></i><b>${h.short}</b></div>
         <div class="sb-score">0<span>-</span>0</div>
-        <div class="sb-team"><b>${a.short}</b><i style="background:${cssHex(a.color)};box-shadow:inset -6px 0 0 ${cssHex(a.color2)}"></i></div>
-        <div class="sb-clock">0'</div>
+        <div class="sb-team"><b>${a.short}</b><i class="crest" style="--a:${cssHex(a.color)};--b:${cssHex(a.color2)}"></i></div>
+        <div class="sb-clock">00:00</div>
       </div>
       <button class="hud-pause" aria-label="Pause">II</button>
       <div class="hud-banner"></div>
       <div class="hud-toast"></div>
       <div class="hud-hint"></div>
       <div class="hud-tip"></div>
-      <div class="hud-chip"><span class="chip-num">9</span><span class="chip-name">PLAYER</span><div class="chip-stam"><div></div></div></div>
+      <div class="hud-chip"><span class="chip-num"></span><span class="chip-name"></span><div class="chip-stam"><div></div></div></div>
       <div class="hud-replay"><b>REPLAY</b><span>press any button to skip</span></div>
       <canvas class="hud-radar" width="240" height="150"></canvas>`;
     this.score = this.root.querySelector('.sb-score')!;
@@ -72,8 +72,11 @@ export class Hud {
     this.score.classList.add('pop');
   }
 
-  setClock(min: number, stoppage: boolean): void {
-    this.clock.textContent = stoppage ? `${min}'+` : `${min}'`;
+  /** Game clock in seconds, plus added-time minutes (0 = none). */
+  setClock(seconds: number, extra: number): void {
+    const mm = Math.floor(seconds / 60);
+    const ss = seconds % 60;
+    this.clock.innerHTML = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}${extra ? `<em>+${extra}</em>` : ''}`;
   }
 
   /** Big chunky centre text. */
@@ -109,9 +112,10 @@ export class Hud {
   }
 
   setPlayer(num: number, name: string, stamina: number): void {
-    if (this.chipNum.textContent !== String(num)) {
+    const up = name.toUpperCase();
+    if (this.chipNum.textContent !== String(num) || this.chipName.textContent !== up) {
       this.chipNum.textContent = String(num);
-      this.chipName.textContent = name.toUpperCase();
+      this.chipName.textContent = up;
     }
     this.stamina.style.width = `${Math.round(stamina * 100)}%`;
     this.stamina.style.background = stamina > 0.5 ? '#3aff9e' : stamina > 0.3 ? '#ffd23a' : '#ff4a3a';

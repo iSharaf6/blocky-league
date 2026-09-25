@@ -38,6 +38,52 @@ export function laneRisk(m: Match, side: number, ax: number, az: number, bx: num
   return risk;
 }
 
+/** Launch speed of a ground pass to feet over `d` metres (firmer the longer it is). */
+export function passSpeed(d: number): number {
+  return Math.min(groundPassSpeed(d, clamp(7 + d * 0.2, 8, 13)), 28);
+}
+
+/** Launch speed of a through ball rolling `d` metres into space. */
+export function throughSpeed(d: number): number {
+  return Math.min(groundPassSpeed(d, 4.5), 28);
+}
+
+/**
+ * Chance an opponent cuts out a ground ball struck at `v0` from A to B: for each opponent,
+ * compare when the ball passes their closest point on the line with how long they need to
+ * get there. Opponents near B are racing the receiver for it.
+ */
+export function interceptRisk(m: Match, side: number, ax: number, az: number, bx: number, bz: number, v0: number): number {
+  const len = dist2(ax, az, bx, bz);
+  if (len < 0.5) return 0;
+  const ux = (bx - ax) / len;
+  const uz = (bz - az) / len;
+  let risk = 0;
+  for (const o of m.players) {
+    if (o.side === side) continue;
+    const rx = o.pos.x - ax;
+    const rz = o.pos.z - az;
+    const along = rx * ux + rz * uz;
+    if (along < 0.5) continue;
+    const s = Math.min(along, len);
+    const lat = along > len ? dist2(o.pos.x, o.pos.z, bx, bz) : Math.abs(rx * uz - rz * ux);
+    const reach = o.isKeeper ? 1.1 : 0.95;
+    let r: number;
+    if (lat < reach) {
+      // Standing in the lane: close up it's a block (about a coin flip), further out it's cut out.
+      r = along < 3.8 ? 0.55 : 0.9;
+    } else {
+      // Only one defender reacts to a pass, and not instantly (calibrated against match outcomes).
+      const tb = Math.min(rollTime(v0, s), 4);
+      const to = (lat - reach) / (o.top * 0.85) + 0.32;
+      r = clamp(0.4 + (tb - to) * 1.6, 0, 1);
+    }
+    if (along > len * 0.92) r *= 0.75; // at the end it's a duel with the receiver
+    if (r > risk) risk = r;
+  }
+  return risk;
+}
+
 /** Pick the teammate the passer is aiming at. Returns -1 when nobody is in the cone. */
 export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 'pass' | 'through' | 'lob'): number {
   let best = -1;
@@ -90,7 +136,7 @@ function pressureErr(m: Match, p: Player): number {
 
 function passError(p: Player, m: Match, scale: number): number {
   const acc = p.stat.passing / 100;
-  return m.rng.gauss() * (1.08 - acc) * 0.085 * scale * skillErr(m, p) * pressureErr(m, p);
+  return m.rng.gauss() * (1.1 - acc) * 0.1 * scale * skillErr(m, p) * pressureErr(m, p);
 }
 
 function rotate(x: number, z: number, a: number): { x: number; z: number } {
@@ -121,8 +167,7 @@ export function resolveKick(m: Match, p: Player, order: KickOrder): Launch {
       let v0 = 12;
       for (let i = 0; i < 2; i++) {
         const d = Math.max(1, dist2(b.x, b.z, tx, tz));
-        const arrive = clamp(3.8 + d * 0.11, 4, 9);
-        v0 = Math.min(groundPassSpeed(d, arrive), 30);
+        v0 = passSpeed(d);
         const t = Math.min(rollTime(v0, d), 3);
         tx = r.pos.x + r.vel.x * t * 0.85;
         tz = r.pos.z + r.vel.z * t * 0.85;
@@ -173,7 +218,7 @@ export function resolveKick(m: Match, p: Player, order: KickOrder): Launch {
     tx = clamp(tx, -HALF_L + 2, HALF_L - 2);
     tz = clamp(tz, -HALF_W + 1.5, HALF_W - 1.5);
     const d = Math.max(2, dist2(b.x, b.z, tx, tz));
-    const v0 = Math.min(groundPassSpeed(d, 3.6), 30);
+    const v0 = throughSpeed(d);
     const u = rotate((tx - b.x) / d, (tz - b.z) / d, passError(p, m, 1.3));
     return launch(u.x * v0, 0, u.z * v0, 0, 0, 0, tgt, kind, clamp(v0 / 28, 0, 1));
   }
@@ -202,7 +247,7 @@ export function resolveKick(m: Match, p: Player, order: KickOrder): Launch {
     tz = clamp(tz, -HALF_W + 1, HALF_W - 1);
     const d = Math.max(3, dist2(b.x, b.z, tx, tz));
     const flight = kind === 'header' ? clamp(0.5 + d / 30, 0.5, 1.2) : clamp(0.75 + d / 34, 0.9, 2.3);
-    const land = kind === 'clear' ? BALL_R : 1.3;
+    const land = order.land ?? (kind === 'clear' ? BALL_R : 1.3);
     const s = solveLob(d, flight, land);
     const err = passError(p, m, kind === 'clear' ? 2.2 : 1.4);
     const u = rotate((tx - b.x) / d, (tz - b.z) / d, err);

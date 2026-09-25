@@ -29,6 +29,8 @@ export interface KickOrder {
   /** Optional explicit landing / aim point (AI through balls, clearances). */
   aimX?: number;
   aimZ?: number;
+  /** Optional landing height for lofted balls (default: head height for lobs, grass for clears). */
+  land?: number;
   /** Seconds this order stays valid while waiting for a loose ball to arrive. */
   expires: number;
   firstTime: boolean;

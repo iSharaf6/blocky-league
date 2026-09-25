@@ -314,7 +314,10 @@ function fmt(s: Summary): string {
     .join('\n');
 }
 
-const SEEDS = [11, 23, 37, 41, 53, 67, 79, 97];
+const BASE_SEEDS = [11, 23, 37, 41, 53, 67, 79, 97];
+// MSEEDS=24 npx vitest run tests/metrics.test.ts  -> a larger sample while tuning.
+const extra = Number((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.MSEEDS ?? 0);
+const SEEDS = extra > BASE_SEEDS.length ? Array.from({ length: extra }, (_, i) => 11 + i * 14) : BASE_SEEDS;
 
 describe('match feel metrics (AI vs AI, 2x150s, difficulty 2)', () => {
   it('stays inside the DLS-style target bands', () => {

@@ -205,7 +205,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
         endMatch();
         req.onDone(r, earned);
       },
-    });
+    }, r.ratings);
   };
   window.addEventListener('keydown', pauseKey);
 }

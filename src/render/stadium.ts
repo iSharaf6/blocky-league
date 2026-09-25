@@ -20,7 +20,7 @@ export interface StadiumOptions {
   seed?: number;
 }
 
-const LINE_W = 0.14;
+const LINE_W = 0.18;
 const BOARD_Z = HALF_W + 3.2;
 const BOARD_X = HALF_L + 4.6;
 const STAND_Z = HALF_W + 5.6;
@@ -29,9 +29,13 @@ const STEP_D = 0.86;
 const STEP_H = 0.56;
 const BANNER_X = [-30, -4, 22, 42];
 type Side4 = 'far' | 'near' | 'left' | 'right';
+/** The playing surface is a raised lawn; players, ball and goals sit on top of it. */
+export const PITCH_Y = 0.12;
 
 export class Stadium {
   readonly group = new THREE.Group();
+  /** Pitch-level objects (lawn, lines, goals, flags), lifted by PITCH_Y. */
+  readonly pitch = new THREE.Group();
   readonly crowdUniforms = { uTime: { value: 0 }, uHypeHome: { value: 0.1 }, uHypeAway: { value: 0.1 } };
   private nets: GoalNet[] = [];
   private flags: THREE.Object3D[] = [];
@@ -54,6 +58,8 @@ export class Stadium {
 
   constructor(readonly opt: StadiumOptions) {
     this.rng = new Rng(opt.seed ?? 42);
+    this.pitch.position.y = PITCH_Y;
+    this.group.add(this.pitch);
     this.buildPitch();
     this.buildGoals();
     this.buildBoards();
@@ -78,26 +84,35 @@ export class Stadium {
   // ------------------------------------------------------------------ pitch
 
   private buildPitch(): void {
+    // Run-off lawn: a darker, lower band out to the boards.
+    const r = new BoxBuilder();
+    const ext = { x: HALF_L + 7.5, z: HALF_W + 6.5 };
+    const band = 3;
+    for (let x = -ext.x; x < ext.x - 1e-3; x += band) {
+      const i = Math.round((x + ext.x) / band);
+      const w = Math.min(band, ext.x - x);
+      r.box(x + w / 2, -0.1, 0, w, 0.2, ext.z * 2, i % 2 ? GRASS_OUT_A : GRASS_OUT_B, { skipBottom: true });
+    }
+    const runoff = new THREE.Mesh(r.build(), voxelMaterial);
+    runoff.receiveShadow = true;
+    this.group.add(runoff);
+
+    // The playing surface: a raised lawn slab with mowing stripes and a darker skirt.
     const b = new BoxBuilder();
-    const ext = { x: HALF_L + 7, z: HALF_W + 6 };
-    // Mowing stripes: 16 across the pitch, continuing into the run-off.
+    const slab = { x: HALF_L + 2, z: HALF_W + 2 };
     const stripe = (HALF_L * 2) / 16;
-    for (let x = -ext.x; x < ext.x; x += stripe) {
+    const depth = 0.3;
+    for (let x = -slab.x; x < slab.x - 1e-3; ) {
       const i = Math.floor((x + HALF_L) / stripe + 1e-3);
-      const inPitch = x >= -HALF_L - 1e-3 && x < HALF_L;
-      const w = Math.min(stripe, ext.x - x);
-      const colIn = i % 2 === 0 ? GRASS_A : GRASS_B;
-      const colOut = i % 2 === 0 ? GRASS_OUT_A : GRASS_OUT_B;
-      // Pitch body
-      if (inPitch) b.box(x + w / 2, -0.05, 0, w, 0.1, HALF_W * 2, colIn);
-      else b.box(x + w / 2, -0.05, 0, w, 0.1, HALF_W * 2, colOut);
-      // Run-off strips along the touchlines
-      b.box(x + w / 2, -0.05, -(HALF_W + (ext.z - HALF_W) / 2), w, 0.1, ext.z - HALF_W, colOut);
-      b.box(x + w / 2, -0.05, HALF_W + (ext.z - HALF_W) / 2, w, 0.1, ext.z - HALF_W, colOut);
+      const next = Math.min(slab.x, -HALF_L + (i + 1) * stripe);
+      const w = next - x;
+      const col = ((i % 2) + 2) % 2 === 0 ? GRASS_A : GRASS_B;
+      b.box(x + w / 2, -depth / 2, 0, w, depth, slab.z * 2, shade(col, 0.62), { top: col, skipBottom: true });
+      x = next;
     }
     const grass = new THREE.Mesh(b.build(), voxelMaterial);
     grass.receiveShadow = true;
-    this.group.add(grass);
+    this.pitch.add(grass);
 
     // Painted lines as very flat boxes.
     const L = new BoxBuilder();
@@ -148,7 +163,7 @@ export class Stadium {
     const lines = new THREE.Mesh(L.build(), voxelMaterial);
     lines.receiveShadow = true;
     lines.position.y = 0.004;
-    this.group.add(lines);
+    this.pitch.add(lines);
   }
 
   // ------------------------------------------------------------------ goals
@@ -157,7 +172,7 @@ export class Stadium {
     for (const s of [-1, 1]) {
       const b = new BoxBuilder();
       const gx = s * HALF_L;
-      const t = 0.16;
+      const t = 0.2;
       const white = 0xfbfbf6;
       b.box(gx + s * t * 0.5, GOAL_H / 2, -GOAL_W / 2 - t / 2, t, GOAL_H + t, t, white);
       b.box(gx + s * t * 0.5, GOAL_H / 2, GOAL_W / 2 + t / 2, t, GOAL_H + t, t, white);
@@ -177,10 +192,10 @@ export class Stadium {
       const frame = new THREE.Mesh(b.build(), voxelMaterial);
       frame.castShadow = true;
       frame.receiveShadow = true;
-      this.group.add(frame);
+      this.pitch.add(frame);
       const net = new GoalNet(s);
       this.nets.push(net);
-      this.group.add(net.lines);
+      this.pitch.add(net.mesh);
     }
   }
 
@@ -350,7 +365,8 @@ export class Stadium {
     }
     const m = new THREE.Mesh(b.build(), voxelMaterial);
     m.receiveShadow = true;
-    m.castShadow = true;
+    // Stands don't cast: their shadow would be clipped by the moving shadow frustum into wedges on the pitch.
+    m.castShadow = false;
     this.group.add(m);
 
     // Stadium name on the far roof fascia + an LED ribbon on the upper-tier front.
@@ -532,16 +548,16 @@ export class Stadium {
       if (parts) {
         sh.vertexShader = sh.vertexShader.replace(
           '#include <color_vertex>',
-          `vColor = vec3(1.0);
+          `vColor = vec4(1.0);
           #ifdef USE_COLOR
-            vColor *= color;
+            vColor.rgb *= color.rgb;
           #endif
           #ifdef USE_INSTANCING_COLOR
-            vec3 shirtC = instanceColor.xyz;
+            vec3 shirtC = instanceColor.rgb;
           #else
             vec3 shirtC = vec3(1.0);
           #endif
-          vColor *= aPart < 0.5 ? shirtC : (aPart < 1.5 ? aSkin : aHairC);`,
+          vColor.rgb *= aPart < 0.5 ? shirtC : (aPart < 1.5 ? aSkin : aHairC);`,
         );
       }
     };
@@ -576,7 +592,7 @@ export class Stadium {
       }
     }
     const m = new THREE.Mesh(b.build(), voxelMaterial);
-    m.castShadow = true;
+    m.castShadow = false;
     this.group.add(m);
     const l = new THREE.Mesh(lamps.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
     this.group.add(l);
@@ -639,7 +655,7 @@ export class Stadium {
       g.box(0, -0.35, z + 3, R * 2, 0.5, 6, lane % 2 ? GRASS_OUT_A : shade(GRASS_OUT_B, 0.98));
     }
     // Roads encircling the ground.
-    const roadZ = [-(STAND_Z + 26), STAND_Z + 22];
+    const roadZ = [-(STAND_Z + 33), STAND_Z + 19];
     for (const rz of roadZ) {
       g.box(0, -0.08, rz, R * 2, 0.06, 7, ROAD);
       for (let x = -R; x < R; x += 4) g.box(x, -0.04, rz, 1.8, 0.02, 0.22, 0xf6f4ec);
@@ -647,13 +663,13 @@ export class Stadium {
       g.box(0, -0.06, rz + 3.9, R * 2, 0.1, 0.8, shade(CONCRETE, 1.05));
     }
     // A river beyond the far road with sandy banks.
-    const riverZ = -(STAND_Z + 44);
+    const riverZ = -(STAND_Z + 52);
     g.box(0, -0.2, riverZ, R * 2, 0.2, 10, WATER);
     g.box(0, -0.12, riverZ - 5.6, R * 2, 0.12, 1.4, SAND);
     g.box(0, -0.12, riverZ + 5.6, R * 2, 0.12, 1.4, SAND);
     // Car park strip behind the end stands.
     for (const sx of [-1, 1]) {
-      const px = sx * (STAND_X + 18);
+      const px = sx * (STAND_X + 24);
       g.box(px, -0.07, 0, 12, 0.06, 70, shade(ROAD, 1.15));
       for (let z = -32; z <= 32; z += 3.2) g.box(px, -0.03, z, 11, 0.02, 0.14, 0xf6f4ec);
     }
@@ -678,10 +694,10 @@ export class Stadium {
       }
     };
     const avoid = (x: number, z: number) =>
-      (Math.abs(x) < STAND_X + 30 && Math.abs(z) < STAND_Z + 20) ||
+      (Math.abs(x) < STAND_X + 34 && Math.abs(z) < STAND_Z + 26) ||
       roadZ.some((rz) => Math.abs(z - rz) < 5) ||
       Math.abs(z - riverZ) < 7.5 ||
-      (Math.abs(Math.abs(x) - (STAND_X + 18)) < 8 && Math.abs(z) < 38);
+      (Math.abs(Math.abs(x) - (STAND_X + 24)) < 8 && Math.abs(z) < 38);
     for (let i = 0; i < 520; i++) {
       const x = (rng.next() - 0.5) * R * 2;
       const z = (rng.next() - 0.5) * R * 2;
@@ -690,8 +706,8 @@ export class Stadium {
     }
     // Dense tree line hugging the stadium so the stands sit in a park.
     for (let x = -STAND_X - 26; x <= STAND_X + 26; x += 3.2 + rng.next() * 2) {
-      if (rng.chance(0.8)) tree(x, -(STAND_Z + 19 + rng.next() * 2));
-      if (rng.chance(0.8)) tree(x, STAND_Z + 15 + rng.next() * 2);
+      if (rng.chance(0.8)) tree(x, -(STAND_Z + 26 + rng.next() * 1.5));
+      if (rng.chance(0.8)) tree(x, STAND_Z + 13.5 + rng.next() * 1.5);
     }
     const trees = new THREE.Mesh(t.build(), voxelMaterial);
     trees.castShadow = true;
@@ -756,7 +772,7 @@ export class Stadium {
         flag.position.set(0, 1.42, 0);
         pm.add(flag);
         this.flags.push(flag);
-        this.group.add(pm);
+        this.pitch.add(pm);
       }
     }
   }
@@ -911,8 +927,9 @@ export class Stadium {
 
   private buildScoreboard(): void {
     const b = new BoxBuilder();
-    const x = STAND_X + 11 * STEP_D + 2;
-    const y = 0.9 + 11 * STEP_H + 4.5;
+    const right = this.profile('right');
+    const x = STAND_X + 8;
+    const y = right[right.length - 1].h + 4 + 3.6;
     b.box(x, y, 0, 1.2, 6.4, 16.6, 0x2a2a30);
     b.box(x, y / 2 - 1, -6, 0.8, y, 0.8, STEEL);
     b.box(x, y / 2 - 1, 6, 0.8, y, 0.8, STEEL);
@@ -981,9 +998,30 @@ export class Stadium {
   }
 }
 
-/** Box-shaped net drawn as a line lattice that bulges when the ball hits it. */
+let netTexture: THREE.CanvasTexture | null = null;
+
+/** Chunky net strands in a tiling alpha-tested texture. */
+function getNetTexture(): THREE.CanvasTexture {
+  if (netTexture) return netTexture;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  g.clearRect(0, 0, 64, 64);
+  g.fillStyle = '#ffffff';
+  for (let i = 0; i < 64; i += 16) {
+    g.fillRect(i, 0, 3, 64);
+    g.fillRect(0, i, 64, 3);
+  }
+  netTexture = new THREE.CanvasTexture(c);
+  netTexture.wrapS = netTexture.wrapT = THREE.RepeatWrapping;
+  netTexture.magFilter = THREE.NearestFilter;
+  netTexture.anisotropy = 4;
+  return netTexture;
+}
+
+/** Box-shaped net: textured panels whose vertices bulge when the ball hits them. */
 class GoalNet {
-  readonly lines: THREE.LineSegments;
+  readonly mesh: THREE.Mesh;
   private base: Float32Array;
   private normal: Float32Array;
   private pos: THREE.BufferAttribute;
@@ -992,48 +1030,49 @@ class GoalNet {
   constructor(readonly sign: number) {
     const verts: number[] = [];
     const norms: number[] = [];
+    const uvs: number[] = [];
     const idx: number[] = [];
     const gx = sign * HALF_L;
     const bx = gx + sign * GOAL_DEPTH;
-    const step = 0.26;
-    const grid = (
-      w: number, h: number,
+    const cell = 1 / 3; // metres per texture tile of 4 strands
+    const panel = (
+      w: number, h: number, nu: number, nv: number,
       at: (u: number, v: number) => [number, number, number],
       n: [number, number, number],
     ) => {
-      const nu = Math.round(w / step);
-      const nv = Math.round(h / step);
       const start = verts.length / 3;
       for (let j = 0; j <= nv; j++) {
         for (let i = 0; i <= nu; i++) {
           const p = at(i / nu, j / nv);
           verts.push(p[0], p[1], p[2]);
           norms.push(n[0], n[1], n[2]);
+          uvs.push(((i / nu) * w) / (cell * 4), ((j / nv) * h) / (cell * 4));
         }
       }
-      for (let j = 0; j <= nv; j++) {
-        for (let i = 0; i <= nu; i++) {
+      for (let j = 0; j < nv; j++) {
+        for (let i = 0; i < nu; i++) {
           const a = start + j * (nu + 1) + i;
-          if (i < nu) idx.push(a, a + 1);
-          if (j < nv) idx.push(a, a + nu + 1);
+          idx.push(a, a + 1, a + nu + 2, a, a + nu + 2, a + nu + 1);
         }
       }
     };
-    // back
-    grid(GOAL_W, GOAL_H, (u, v) => [bx, v * GOAL_H, -GOAL_W / 2 + u * GOAL_W], [sign, 0, 0]);
-    // roof
-    grid(GOAL_DEPTH, GOAL_W, (u, v) => [gx + sign * u * GOAL_DEPTH, GOAL_H, -GOAL_W / 2 + v * GOAL_W], [0, 1, 0]);
-    // sides
+    panel(GOAL_W, GOAL_H, 16, 8, (u, v) => [bx, v * GOAL_H, -GOAL_W / 2 + u * GOAL_W], [sign, 0, 0]);
+    panel(GOAL_DEPTH, GOAL_W, 6, 16, (u, v) => [gx + sign * u * GOAL_DEPTH, GOAL_H, -GOAL_W / 2 + v * GOAL_W], [0, 1, 0]);
     for (const zs of [-1, 1]) {
-      grid(GOAL_DEPTH, GOAL_H, (u, v) => [gx + sign * u * GOAL_DEPTH, v * GOAL_H, (zs * GOAL_W) / 2], [0, 0, zs]);
+      panel(GOAL_DEPTH, GOAL_H, 6, 8, (u, v) => [gx + sign * u * GOAL_DEPTH, v * GOAL_H, (zs * GOAL_W) / 2], [0, 0, zs]);
     }
     const geo = new THREE.BufferGeometry();
     this.base = new Float32Array(verts);
     this.normal = new Float32Array(norms);
     this.pos = new THREE.BufferAttribute(new Float32Array(verts), 3);
     geo.setAttribute('position', this.pos);
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(idx);
-    this.lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xf2f2ea, transparent: true, opacity: 0.75 }));
+    const mat = new THREE.MeshLambertMaterial({
+      color: 0xf4f4ec, map: getNetTexture(), alphaTest: 0.5, side: THREE.DoubleSide,
+    });
+    this.mesh = new THREE.Mesh(geo, mat);
   }
 
   punch(y: number, z: number, amp: number): void {

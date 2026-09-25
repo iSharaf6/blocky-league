@@ -4,7 +4,7 @@ import type { PState } from '../sim/player';
 /** Floats per player in a frame. */
 export const PF = 16;
 export const BALL_OFS = 22 * PF;
-export const FRAME_LEN = BALL_OFS + 10;
+export const FRAME_LEN = BALL_OFS + 11;
 
 export const STATE_CODE: Record<PState, number> = {
   move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9,
@@ -42,6 +42,7 @@ export function writeFrame(m: Match, out: Float32Array, time: number): void {
   out[BALL_OFS + 7] = b.owner;
   out[BALL_OFS + 8] = m.active;
   out[BALL_OFS + 9] = time;
+  out[BALL_OFS + 10] = m.passTarget;
 }
 
 /** Ring buffer of recent frames for instant replays. */

@@ -1,5 +1,5 @@
 import { clamp, dist2 } from '../core/math';
-import { laneRisk, shotBlockers, shotQuality } from './actions';
+import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, throughSpeed } from './actions';
 import { BOX_DEPTH, BOX_W, HALF_L, HALF_W } from './constants';
 import { inOwnBox, updateKeeper } from './keeper';
 import type { Match } from './match';
@@ -93,7 +93,7 @@ function moveTo(p: Player, x: number, z: number, urgency: number, faceBall?: { x
 export function threat(m: Match, side: Side, x: number, z: number): number {
   const ad = m.attackDir(side);
   const u = clamp(((x * ad) / HALF_L + 1) / 2, 0, 1);
-  return 0.012 + 0.13 * u * u * u + 0.5 * shotQuality(x, z, ad);
+  return 0.01 + 0.2 * Math.pow(u, 2.5) + 0.5 * shotQuality(x, z, ad);
 }
 
 function nearestOpp(m: Match, side: Side, x: number, z: number): { d: number; o: Player | null } {
@@ -155,7 +155,7 @@ function defendHome(m: Match, p: Player, brain: TeamBrain, refX: number, refZ: n
     z = slot.z * 0.64 + bz * 0.3;
   } else if (p.role === 'MF') {
     // A screen between the back line and the ball, leaving room in front of it.
-    const screen = brain.line + Math.max(0.12, (bx - brain.line) * 0.45);
+    const screen = brain.line + Math.max(0.14, (bx - brain.line) * 0.5);
     x = Math.min(screen + (slot.x + 0.3) * 0.25, bx - 0.06);
     z = slot.z * 0.68 + bz * 0.36;
   } else {
@@ -177,8 +177,10 @@ function assignRoles(m: Match, side: Side, brain: TeamBrain): void {
   brain.presser = -1;
   brain.cover = -1;
   brain.marks.clear();
-  // The line steps up with the ball and drops towards the box when it gets close.
-  brain.line = clamp(nX(m, side, ball.pos.x) - 0.3, -0.82, -0.1);
+  // The line steps up with the ball, holds around the edge of the box, and only drops
+  // inside it once the ball is right on top of it.
+  const bxN = nX(m, side, ball.pos.x);
+  brain.line = bxN < -0.58 ? Math.max(-0.88, bxN - 0.12) : clamp(bxN - 0.36, -0.72, -0.1);
   if (owner && ball.held) return;
   const flight = !owner && m.passTarget >= 0 ? m.players[m.passTarget] : null;
 
@@ -636,9 +638,16 @@ function aerialOrVolley(m: Match, p: Player): void {
     if (q > 0.12) {
       m.order(p, 'header', 0, 0, 0.75, -1, true);
     } else if (ownGoalDist < 30 && rival < 5) {
-      // Head it clear, out towards the wing.
-      const z = clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 14, -HALF_W + 3, HALF_W - 3);
-      m.order(p, 'header', ad, 0, 1, -1, true, { x: p.pos.x + ad * 20, z });
+      const gxOwn = -ad * HALF_L;
+      if (ownGoalDist < 14 && rival < 2.2 && m.rng.chance(0.3)) {
+        // Under real pressure near goal: glance it behind for a corner rather than risk it.
+        const z = Math.sign(p.pos.z || 1) * (6 + m.rng.next() * 8);
+        m.order(p, 'header', -ad, 0, 1, -1, true, { x: gxOwn - ad * 3, z });
+      } else {
+        // Head it clear, out towards the wing.
+        const z = clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 14, -HALF_W + 3, HALF_W - 3);
+        m.order(p, 'header', ad, 0, 1, -1, true, { x: p.pos.x + ad * 20, z });
+      }
     } else if (rival < 2.2) {
       // Contested: nod it on to a teammate ahead.
       const x = clamp(p.pos.x + ad * 12, -HALF_L + 4, HALF_L - 4);
@@ -714,7 +723,7 @@ function shield(m: Match, p: Player, o: Player): void {
 
 type Choice = { s: number; run: () => void; tag?: string };
 /** TEMP debug */
-export const aiDebug: { on: boolean; log: string[] } = { on: false, log: [] };
+export const aiDebug: { on: boolean; log: string[]; pc: Map<number, number> } = { on: false, log: [], pc: new Map() };
 
 function carrierAI(m: Match, p: Player, dt: number): void {
   const side = p.side;
@@ -735,12 +744,13 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     return;
   }
   p.aiT = firstTouch ? 0.32 + m.rng.next() * 0.3 - skill * 0.03 : 0.24 + m.rng.next() * 0.2 - skill * 0.015;
-  if (firstTouch) p.holdT = 0.7 + m.rng.next() * 1.2;
+  if (firstTouch) p.holdT = 1 + m.rng.next() * 1.4;
 
   const team = m.teamPlayers(side);
   const choices: Choice[] = [];
   const here = threat(m, side, p.pos.x, p.pos.z);
-  const lose = (x: number, z: number) => threat(m, opp, x, z) + 0.012;
+  // Not every turnover gets punished, so a loss costs a share of their threat from there.
+  const lose = (x: number, z: number) => threat(m, opp, x, z) * 0.65 + 0.01;
   const loseHere = lose(p.pos.x, p.pos.z);
   // Tempo: take a touch and look up before moving it on, unless there's no time to. Early
   // releases are marked down in proportion to their value, so only a clearly better option
@@ -754,11 +764,14 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   // ---- Shoot
   if (dg < 34) {
     let q = shotQuality(p.pos.x, p.pos.z, ad);
-    q *= Math.pow(0.55, shotBlockers(m, p));
+    const blockers = shotBlockers(m, p);
+    q *= Math.pow(0.55, blockers);
     const k = m.keeperOf(opp);
     if (k && dist2(k.pos.x, k.pos.z, gx, 0) > 6) q *= 1.3;
     q *= 1 - pressure * 0.15;
-    const s = early(q * 1.2 + (inBox ? 0.015 : 0) - (dg > 23 ? 0.02 : 0), 0.12);
+    // A clean strike also earns rebounds and corners, and shooters love a sight of goal.
+    const bonus = blockers < 0.5 ? (dg < 28 ? 0.035 : 0.015) : 0;
+    const s = early(q * 1.25 + bonus + (inBox ? 0.015 : 0) - (dg > 23 ? 0.015 : 0), 0.05);
     const power = clamp(0.55 + dg / 45, 0.6, 0.97);
     choices.push({ s, run: () => m.order(p, 'shot', 0, 0, power, -1, false), tag: 'shot' });
   }
@@ -771,17 +784,17 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     const lz = clamp(t.pos.z + t.vel.z * lead, -HALF_W + 1, HALF_W - 1);
     const d = dist2(p.pos.x, p.pos.z, lx, lz);
     if (d >= 5 && d <= 38 && (!t.isKeeper || (pressure > 0.6 && pN < -0.35))) {
-      const risk = laneRisk(m, side, p.pos.x, p.pos.z, lx, lz);
+      const risk = interceptRisk(m, side, p.pos.x, p.pos.z, lx, lz, passSpeed(d));
       // Room the receiver will have once the ball arrives (defenders close while it travels).
-      const open = nearestOpp(m, side, lx, lz).d - d * 0.25;
+      const open = nearestOpp(m, side, lx, lz).d - d * 0.2;
       const room = clamp(open / 4, 0, 1);
-      let pc = Math.pow(1 - risk, 1.5) * (0.62 + 0.38 * room);
+      let pc = (1 - risk) * (0.7 + 0.3 * room);
       if (d > 24) pc *= 1 - (d - 24) / 32;
-      pc = clamp(pc * (0.86 + p.stat.passing / 700), 0.02, 0.95);
+      pc = clamp(pc * (0.86 + p.stat.passing / 700), 0.02, 0.96);
       const gain = threat(m, side, lx, lz) * (t.isKeeper ? 0.3 : 1) * (0.72 + 0.28 * room);
       const s = early(pc * gain - (1 - pc) * lose((p.pos.x + lx) / 2, (p.pos.z + lz) / 2), 0.6) -
         (d < 9 && pressure < 0.3 ? 0.004 : 0);
-      choices.push({ s, run: () => m.order(p, 'pass', lx - p.pos.x, lz - p.pos.z, 0.6, t.idx, false), tag: `pass${t.slot} pc${pc.toFixed(2)} g${gain.toFixed(3)}` });
+      choices.push({ s, run: () => { aiDebug.pc.set(p.idx, pc); m.order(p, 'pass', lx - p.pos.x, lz - p.pos.z, 0.6, t.idx, false); }, tag: `pass${t.slot} pc${pc.toFixed(2)} g${gain.toFixed(3)}` });
     }
 
     const tsp = Math.hypot(t.vel.x, t.vel.z);
@@ -801,9 +814,20 @@ function carrierAI(m: Match, p: Player, dt: number): void {
           tDef = Math.min(tDef, Math.max(0, dist2(o.pos.x, o.pos.z, ax, az) - 1) / o.top + (o.isKeeper ? 0.3 : 0.12));
         }
         const pWin = clamp(0.42 + (tDef - tRun) * 0.7, 0.02, 0.88);
-        const pc = pWin * Math.pow(1 - laneRisk(m, side, p.pos.x, p.pos.z, ax, az), 1.3);
-        const s = early(pc * (threat(m, side, ax, az) + 0.02) - (1 - pc) * lose(ax, az) * 0.6, 0.35);
+        const dT = dist2(p.pos.x, p.pos.z, ax, az);
+        const gain = threat(m, side, ax, az) + 0.02;
+        const ir = interceptRisk(m, side, p.pos.x, p.pos.z, ax, az, throughSpeed(dT));
+        const pc = pWin * (1 - ir);
+        const s = early(pc * gain - (1 - pc) * lose(ax, az) * 0.6, 0.35);
         choices.push({ s, run: () => m.order(p, 'through', 0, 0, 0.7, t.idx, false, { x: ax, z: az }), tag: 'thru' });
+        // Over the top when the ground lane is shut and the runner is on the shoulder of the
+        // last man: only the race to the landing spot matters, but it's much harder to weight.
+        const onShoulder = nX(m, side, t.pos.x) > m.defLine(opp) - 0.06;
+        if (dT > 16 && dT < 42 && ir > 0.45 && onShoulder) {
+          const pl = pWin * 0.5 * (0.8 + p.stat.passing / 700);
+          const sl = early(pl * gain - (1 - pl) * lose(ax, az) * 0.6, 0.5);
+          choices.push({ s: sl, run: () => m.order(p, 'lob', ax - p.pos.x, az - p.pos.z, 0.7, t.idx, false, { x: ax, z: az }, 0.5), tag: 'lobThru' });
+        }
       }
     }
   }
@@ -835,8 +859,9 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       const flight = 0.75 + dist2(p.pos.x, p.pos.z, zn.x, zn.z) / 34;
       const pWin = clamp(0.35 + (tDef - tAtt) * 0.5 + (tAtt < flight ? 0.12 : -0.2), 0.05, 0.7);
       const hq = shotQuality(zn.x, zn.z, ad) * 0.75;
-      const s = early(pWin * (0.04 + hq * 0.9) - (1 - pWin) * 0.02, 0.3);
-      choices.push({ s, run: () => m.order(p, 'lob', zn.x - p.pos.x, zn.z - p.pos.z, 0.75, who, false, { x: zn.x, z: zn.z }) });
+      // A won header is far from a sure goal: credit roughly its real conversion.
+      const s = early(pWin * (0.03 + hq * 0.42) - (1 - pWin) * 0.02, 0.3);
+      choices.push({ s, tag: 'cross', run: () => m.order(p, 'lob', zn.x - p.pos.x, zn.z - p.pos.z, 0.75, who, false, { x: zn.x, z: zn.z }) });
     }
   }
 
@@ -847,11 +872,11 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     choices.push({ s: -0.004 + (pN < -0.6 ? 0.006 : 0), run: () => m.order(p, 'clear', ad, 0, 1, -1, false, { x: tx, z: tz }) });
   }
 
-  // ---- Shield it under pressure.
-  if (near.o && near.d < 3) {
+  // ---- Shield it under tight pressure (buys a second, not a lifetime).
+  if (near.o && near.d < 2.2) {
     const o = near.o;
-    const hold = clamp(1 - p.ballT / 4, 0.25, 1);
-    const pRet = clamp(0.6 + (p.stat.dribbling / 100) * 0.3 - (near.d < 1 ? 0.1 : 0), 0.4, 0.93) * (0.75 + 0.25 * hold);
+    const hold = clamp(1 - p.ballT / 2.5, 0, 1);
+    const pRet = clamp(0.5 + (p.stat.dribbling / 100) * 0.3 - (near.d < 1 ? 0.1 : 0), 0.35, 0.85) * (0.55 + 0.45 * hold);
     const s = pRet * here - (1 - pRet) * loseHere;
     choices.push({
       s,
@@ -872,7 +897,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     const tgz = -p.pos.z * 0.5;
     const tgl = Math.hypot(tgx, tgz) || 1;
     if ((ox * tgx + oz * tgz) / (ol * tgl) > 0.35) {
-      const pWin = clamp(0.3 + (p.stat.dribbling - o.stat.defending) / 100 * 0.9 + (p.top - o.top) * 0.08 + (skill - 2) * 0.03, 0.12, 0.66);
+      const pWin = clamp(0.36 + (p.stat.dribbling - o.stat.defending) / 100 * 0.9 + (p.top - o.top) * 0.08 + (skill - 2) * 0.03, 0.15, 0.7);
       for (const sgn of [-1, 1]) {
         const a = Math.atan2(oz, ox) + sgn * 0.8;
         const dx = Math.cos(a);
@@ -890,7 +915,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         const lx = clamp(p.pos.x + dx * L, -HALF_L + 1, HALF_L - 1);
         const lz = clamp(p.pos.z + dz * L, -HALF_W + 1.5, HALF_W - 1.5);
         if (Math.abs(p.pos.z + dz * 3) > HALF_W - 1) continue;
-        const s = pWin * threat(m, side, lx, lz) - (1 - pWin) * loseHere;
+        // A failed take-on usually just means he steps across; it's lost maybe 40% of the time.
+        const s = pWin * threat(m, side, lx, lz) + (1 - pWin) * (0.6 * here - 0.4 * loseHere);
         choices.push({
           s,
           tag: 'takeon',
@@ -932,10 +958,10 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         if (Math.hypot(ox, oz) < 2) free = Math.min(free, 2.5);
         continue;
       }
-      free = Math.min(free, Math.max(0, (Math.max(along, 0) + lat) * 0.55 - 1));
+      free = Math.min(free, Math.max(0, (Math.max(along, 0) + lat) * 0.65 - 0.7));
     }
     // Keep it on the pitch.
-    const L0 = clamp(free, 1.5, 14);
+    const L0 = clamp(free, 2, 14);
     let L = L0;
     if (Math.abs(dz) > 0.05) L = Math.min(L, Math.max(1.5, (HALF_W - 1.5 - Math.sign(dz) * p.pos.z) / Math.abs(dz)));
     if (Math.abs(dx) > 0.05) L = Math.min(L, Math.max(1.5, (HALF_L - 1 - Math.sign(dx) * p.pos.x) / Math.abs(dx)));
@@ -967,7 +993,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       best = c;
     }
   }
-  if (aiDebug.on && aiDebug.log.length < 400 && pN > 0.45) {
+  if (aiDebug.on && aiDebug.log.length < 400 && pN > 0.45 && Math.abs(p.pos.z) < HALF_W * 0.45) {
     const sorted = [...choices].sort((a, b) => b.s - a.s).slice(0, 6);
     aiDebug.log.push(`side${side} slot${p.slot} nx${pN.toFixed(2)} first${firstTouch} bt${p.ballT.toFixed(2)} pr${pressure.toFixed(2)} here${here.toFixed(3)} -> ${best?.tag}\n   ` + sorted.map((c) => `${c.tag ?? '?'}=${c.s.toFixed(4)}`).join(' | '));
   }

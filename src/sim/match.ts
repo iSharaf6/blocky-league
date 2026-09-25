@@ -412,12 +412,12 @@ export class Match {
 
   order(
     p: Player, kind: KickKind, dirX: number, dirZ: number, power: number, target: number,
-    firstTime: boolean, aim?: { x: number; z: number },
+    firstTime: boolean, aim?: { x: number; z: number }, land?: number,
   ): void {
     if (p.state !== 'move' && p.state !== 'hold') return;
     p.order = {
       kind, dirX, dirZ, power, target, firstTime,
-      aimX: aim?.x, aimZ: aim?.z,
+      aimX: aim?.x, aimZ: aim?.z, land,
       expires: firstTime ? 0.6 : 0.6,
     };
     if (!firstTime) {
@@ -918,7 +918,7 @@ export class Match {
     this.phaseT = 0;
     this.ball.owner = -1;
     this.passTarget = -1;
-    this.pendingRestart = { kind, side, x, z, taker: -1, wait: 1.1 + this.rng.next() * 0.6 };
+    this.pendingRestart = { kind, side, x, z, taker: -1, wait: 0.95 + this.rng.next() * 0.55 };
     this.restart = this.pendingRestart;
     for (const p of this.players) p.order = null;
     this.events.push({ type: 'whistle', kind: 'short' }, { type: 'restart', kind, side });
@@ -1268,7 +1268,7 @@ export class Match {
     }
     if (!best) return;
     const rel = Math.hypot(b.vel.x - best.vel.x, b.vel.z - best.vel.z, b.vel.y);
-    const trap = 14 + best.stat.dribbling * 0.09;
+    const trap = 16 + best.stat.dribbling * 0.1;
     // A ball struck past an opponent at close range (or any shot) is a block attempt, not a
     // clean take: either it cannons off them or it's gone past before they can react.
     if (fresh && best.side !== this.kickSide && hs > 7 && (rel > 9 || this.shotClock < 1.2)) {
@@ -1364,7 +1364,8 @@ export class Match {
           continue;
         }
         const catchLimit = 11 + keeping * 13 + this.keeperBonus(s) * 20;
-        const pCatch = speed < catchLimit ? 0.55 + keeping * 0.4 : 0;
+        // Diving saves are mostly parries; balls straight at the keeper get held.
+        const pCatch = speed < catchLimit ? (0.55 + keeping * 0.4) * (diving ? 0.45 : 1) : 0;
         if (this.rng.chance(pCatch)) {
           this.catchBall(k, onFrame);
         } else {
@@ -1416,7 +1417,7 @@ export class Match {
     const vy0 = b.vel.y;
     const vz0 = b.vel.z;
     let tipped = false;
-    if (onFrame && this.rng.chance(0.3 + Math.min(0.2, (Math.abs(b.pos.z) / hw) * 0.2) + (sp > 24 ? 0.1 : 0))) {
+    if (onFrame && this.rng.chance(0.38 + Math.min(0.2, (Math.abs(b.pos.z) / hw) * 0.2) + (sp > 24 ? 0.1 : 0))) {
       // Tip it round the post or over the bar.
       if (Math.abs(b.pos.z) < 1.3 || b.pos.y > 1.7) {
         b.vel.x = -ad * (2.5 + this.rng.next() * 2);
@@ -1553,8 +1554,8 @@ export class Match {
     // Coming from behind: the carrier is facing away from the tackler.
     const behind = clamp(-(Math.cos(c.facing) * tx + Math.sin(c.facing) * tz) / tl, 0, 1);
     const skill = this.isHumanControlled(p) ? 2.6 : this.aiSkill(p.side);
-    let chance = clamp(0.34 + (def - drib) * 0.6 + (c.sprint ? 0.06 : 0), 0.1, 0.72) * (0.55 + 0.45 * facing) * aggression;
-    chance *= (1 - shielded * 0.5) * (0.84 + skill * 0.06);
+    let chance = clamp(0.42 + (def - drib) * 0.6 + (c.sprint ? 0.06 : 0), 0.12, 0.75) * (0.6 + 0.4 * facing) * aggression;
+    chance *= (1 - shielded * 0.4) * (0.84 + skill * 0.06);
     if (this.isHumanControlled(p)) chance *= 1.2;
     if (this.isHumanControlled(c)) chance *= 0.85;
     if (this.rng.chance(chance)) {
@@ -1587,7 +1588,7 @@ export class Match {
       this.events.push({ type: 'tackle', by: p.idx, won: false, slide: false });
       // Mistimed: clipping the carrier from behind or through their back is a foul.
       const inBox = inOwnBox(this, p.side, c.pos.x, c.pos.z);
-      const pFoul = (0.03 + behind * 0.15 + shielded * 0.07 + (c.speed() > 5 ? 0.03 : 0)) * (inBox ? 0.5 : 1);
+      const pFoul = (0.018 + behind * 0.08 + shielded * 0.04 + (c.speed() > 5 ? 0.02 : 0)) * (inBox ? 0.5 : 1);
       if (this.rng.chance(pFoul)) {
         c.setState('fallen');
         this.foul(p, c);

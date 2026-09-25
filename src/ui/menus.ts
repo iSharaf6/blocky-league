@@ -50,6 +50,37 @@ export function shirtArt(kit: Kit, size = 8): string {
   return `<div class="shirt" style="--px:${size}px;grid-template-columns:repeat(${W},var(--px))">${cells}</div>`;
 }
 
+const ICONS: Record<string, string[]> = {
+  ball: [
+    '..XXXXXX..', '.XX.XX.XX.', 'XX..XX..XX', 'X.XX..XX.X', 'XXX.XX.XXX',
+    'XXX.XX.XXX', 'X.XX..XX.X', 'XX..XX..XX', '.XX.XX.XX.', '..XXXXXX..',
+  ],
+  trophy: [
+    'XXXXXXXXXX', 'X.XXXXXX.X', 'X.XXXXXX.X', '.XXXXXXXX.', '..XXXXXX..',
+    '...XXXX...', '....XX....', '....XX....', '..XXXXXX..', '..XXXXXX..',
+  ],
+  shirt: [
+    '..XX..XX..', 'XXXX..XXXX', 'XXXXXXXXXX', 'XXXXXXXXXX', '.XXXXXXXX.',
+    '..XXXXXX..', '..XXXXXX..', '..XXXXXX..', '..XXXXXX..', '..XXXXXX..',
+  ],
+  gear: [
+    '....XX....', '.X.XXXX.X.', '..XXXXXX..', '.XXX..XXX.', 'XXX....XXX',
+    'XXX....XXX', '.XXX..XXX.', '..XXXXXX..', '.X.XXXX.X.', '....XX....',
+  ],
+};
+
+/** Crisp pixel icon as inline SVG. */
+export function pixelIcon(name: string, color = '#fbfbf4', px = 5): string {
+  const rows = ICONS[name];
+  if (!rows) return '';
+  let rects = '';
+  rows.forEach((r, y) => [...r].forEach((c, x) => {
+    if (c === 'X') rects += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
+  }));
+  const n = rows.length;
+  return `<svg class="picon" width="${n * px}" height="${n * px}" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" fill="${color}" aria-hidden="true">${rects}</svg>`;
+}
+
 function stars(level: number): string {
   const n = Math.max(1, Math.min(5, Math.round((level - 35) / 12)));
   return '★'.repeat(n) + '<s>' + '★'.repeat(5 - n) + '</s>';
@@ -108,16 +139,16 @@ export class Menus {
       <div class="topbar"><div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div></div>
       <div class="main-wrap">
         <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
-        <div class="menu-col">
-          <button class="btn btn-go btn-xl" data-a="quick">QUICK MATCH</button>
-          <button class="btn btn-blue btn-lg" data-a="career">CAREER</button>
-          <div class="row">
-            <button class="btn btn-yellow" data-a="club">MY CLUB</button>
-            <button class="btn btn-white" data-a="settings">SETTINGS</button>
-          </div>
-          <button class="btn btn-ghost" data-a="howto">HOW TO PLAY</button>
+        <div class="tiles">
+          <button class="btn btn-go tile" data-a="quick">${pixelIcon('ball', '#fff', 6)}<span>QUICK MATCH</span></button>
+          <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span></button>
+          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span></button>
+          <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
         </div>
-        <p class="record">W ${r.won} · D ${r.drawn} · L ${r.lost} &nbsp;|&nbsp; GOALS ${r.goalsFor}</p>
+        <div class="main-foot">
+          <button class="btn btn-ghost" data-a="howto">HOW TO PLAY</button>
+          <span class="record-chip">W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span>
+        </div>
       </div>`, 'main');
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
     $(d, '[data-a=career]').addEventListener('click', h.career);
@@ -227,14 +258,16 @@ export class Menus {
     window.addEventListener('keydown', key);
   }
 
-  statsTable(m: Match): string {
+  statsTable(m: Match, kits?: [Kit, Kit]): string {
     const s = m.stats;
     const total = s.possession[0] + s.possession[1] || 1;
     const poss = [Math.round((s.possession[0] / total) * 100), 0];
     poss[1] = 100 - poss[0];
     const row = (label: string, a: number, b: number, pct = false) => {
       const t = a + b || 1;
-      return `<div class="st-row"><b>${a}${pct ? '%' : ''}</b><div class="st-bar"><i style="width:${(a / t) * 100}%"></i></div><span>${label}</span><div class="st-bar r"><i style="width:${(b / t) * 100}%"></i></div><b>${b}${pct ? '%' : ''}</b></div>`;
+      const ca = kits ? `;background:${cssHex(kits[0].shirt)}` : '';
+      const cb = kits ? `;background:${cssHex(kits[1].shirt)}` : '';
+      return `<div class="st-row"><b>${a}${pct ? '%' : ''}</b><div class="st-bar"><i style="width:${(a / t) * 100}%${ca}"></i></div><span>${label}</span><div class="st-bar r"><i style="width:${(b / t) * 100}%${cb}"></i></div><b>${b}${pct ? '%' : ''}</b></div>`;
     };
     return `<div class="stats">
       ${row('POSSESSION', poss[0], poss[1], true)}
@@ -262,7 +295,7 @@ export class Menus {
         <div class="panel">
           <h2>HALF TIME</h2>
           ${this.scoreHeader(m, kits)}
-          ${this.statsTable(m)}
+          ${this.statsTable(m, kits)}
           <div class="btn-row"><button class="btn btn-go btn-lg" data-a="go">SECOND HALF</button></div>
         </div>
       </div>`, 'ht');
@@ -280,7 +313,17 @@ export class Menus {
   fulltime(
     m: Match, kits: [Kit, Kit], humanSide: number, reward: { coins: number; label: string }, canDouble: boolean,
     h: { double: () => Promise<boolean>; next: () => void; nextLabel?: string },
+    ratings?: { idx: number; name: string; side: number; rating: number; goals: number; assists: number }[],
   ): void {
+    const motm = ratings?.[0];
+    const mine = ratings?.filter((r) => r.side === humanSide).slice(0, 3) ?? [];
+    const motmHtml = motm
+      ? `<div class="motm">
+          <div class="motm-card" style="--k:${cssHex(kits[motm.side].shirt)}"><span>MAN OF THE MATCH</span><b>${motm.name}</b><em>${motm.rating.toFixed(1)}</em>
+          ${motm.goals ? `<small>${motm.goals} goal${motm.goals > 1 ? 's' : ''}${motm.assists ? ` · ${motm.assists} assist${motm.assists > 1 ? 's' : ''}` : ''}</small>` : motm.assists ? `<small>${motm.assists} assist${motm.assists > 1 ? 's' : ''}</small>` : ''}</div>
+          <ul class="ratings">${mine.map((r) => `<li><span>${r.name}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>
+        </div>`
+      : '';
     const my = m.score[humanSide];
     const their = m.score[humanSide === 0 ? 1 : 0];
     const verdict = my > their ? 'YOU WIN!' : my === their ? 'DRAW' : 'YOU LOSE';
@@ -290,7 +333,8 @@ export class Menus {
         <div class="panel">
           <h2 class="verdict ${cls}">${verdict}</h2>
           ${this.scoreHeader(m, kits)}
-          ${this.statsTable(m)}
+          ${motmHtml}
+          ${this.statsTable(m, kits)}
           <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
           <div class="btn-row">
             ${canDouble ? '<button class="btn btn-yellow" data-a="double">🎬 2× COINS</button>' : ''}

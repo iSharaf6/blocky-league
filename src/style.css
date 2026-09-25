@@ -272,6 +272,63 @@ body {
   gap: 14px;
 }
 
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  width: min(380px, 88vw);
+}
+
+.tile {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 12px;
+  aspect-ratio: 1.15;
+  padding: 16px 10px 12px;
+  font-size: clamp(13px, 1.5vw, 16px);
+  white-space: normal;
+  line-height: 1.15;
+}
+
+.tile .picon {
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.22));
+}
+
+.btn-go.tile .picon {
+  animation: spin-hop 2.4s ease-in-out infinite;
+}
+
+@keyframes spin-hop {
+  0%, 70%, 100% { transform: translateY(0) rotate(0); }
+  80% { transform: translateY(-8px) rotate(-12deg); }
+  90% { transform: translateY(0) rotate(0); }
+}
+
+.main-foot {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.record-chip {
+  font: 700 13px var(--px);
+  letter-spacing: 1px;
+  color: var(--cream);
+  background: rgba(38, 38, 46, 0.78);
+  padding: 9px 12px 8px;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+}
+
+@media (max-height: 520px) {
+  .main-wrap { gap: 12px; }
+  .logo.small span { font-size: 34px; }
+  .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); width: min(640px, 94vw); gap: 10px; }
+  .tile { aspect-ratio: 1; gap: 8px; font-size: 11px; }
+}
+
 .record {
   margin: 0;
   font: 700 13px var(--px);
@@ -680,9 +737,19 @@ kbd {
 }
 
 .sb-team i {
-  width: 16px;
-  height: 22px;
+  width: 18px;
+  height: 20px;
   display: block;
+}
+
+/* Pixel crest: a shield of the two club colours. */
+.sb-team i.crest {
+  background:
+    linear-gradient(var(--b), var(--b)) 0 0 / 50% 50% no-repeat,
+    linear-gradient(var(--b), var(--b)) 100% 100% / 50% 50% no-repeat,
+    var(--a);
+  clip-path: polygon(0 0, 100% 0, 100% 70%, 50% 100%, 0 70%);
+  box-shadow: none;
 }
 
 .sb-score {
@@ -710,8 +777,15 @@ kbd {
   color: var(--ink);
   padding: 7px 10px 6px;
   margin-left: 6px;
-  min-width: 58px;
+  min-width: 82px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-clock em {
+  font-style: normal;
+  color: var(--red-d);
+  margin-left: 4px;
 }
 
 .hud-pause {
@@ -991,45 +1065,62 @@ kbd {
 }
 
 .tb {
+  --c: var(--go);
   position: absolute;
   pointer-events: auto;
   appearance: none;
-  border: 0;
-  width: 86px;
-  height: 86px;
-  font: 700 12px var(--px);
+  border-radius: 50%;
+  width: 84px;
+  height: 84px;
+  font: 700 11px var(--px);
+  letter-spacing: 0.5px;
   color: #fff;
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
   touch-action: none;
-  box-shadow: 0 6px 0 var(--d);
-  opacity: 0.9;
+  /* Translucent so the play underneath stays visible; a coloured ring keeps each button's identity. */
+  background: rgba(255, 255, 255, 0.14);
+  border: 3px solid rgba(255, 255, 255, 0.7);
+  box-shadow: inset 0 0 0 5px color-mix(in srgb, var(--c) 75%, transparent), 0 4px 0 rgba(0, 0, 0, 0.25);
+  opacity: 0.62;
+  transition: transform 0.05s, opacity 0.08s, background 0.08s;
 }
 
 .tb.down {
-  transform: translateY(5px);
-  box-shadow: 0 1px 0 var(--d);
-  filter: brightness(1.15);
+  transform: scale(0.93);
+  opacity: 0.95;
+  background: color-mix(in srgb, var(--c) 70%, transparent);
 }
 
-.tb-pass { --d: var(--go-d); background: var(--go); right: 0; bottom: 0; width: 100px; height: 100px; font-size: 14px; }
-.tb-shoot { --d: var(--red-d); background: var(--red); right: 112px; bottom: 6px; }
-.tb-through { --d: var(--blue-d); background: var(--blue); right: 8px; bottom: 116px; }
-.tb-sprint { --d: #b9b5aa; background: var(--cream); color: var(--ink); text-shadow: none; right: 118px; bottom: 116px; width: 74px; height: 74px; font-size: 11px; }
+.tb-pass { --c: var(--go); right: 0; bottom: 0; width: 98px; height: 98px; font-size: 13px; }
+.tb-shoot { --c: var(--red); right: 108px; bottom: 4px; }
+.tb-through { --c: var(--blue); right: 6px; bottom: 108px; }
+.tb-sprint { --c: #d9d6cc; right: 104px; bottom: 104px; width: 70px; height: 70px; font-size: 10px; }
 
-.touch[data-ctx='defend'] .tb-pass { background: var(--yellow); --d: var(--yellow-d); color: var(--ink); text-shadow: none; }
+.touch[data-ctx='defend'] .tb-pass { --c: var(--yellow); }
 
 @media (max-width: 720px), (max-height: 480px) {
   .opt-row { grid-template-columns: 1fr; gap: 6px; }
   .st-row { grid-template-columns: 34px 1fr 86px 1fr 34px; }
   .howto { grid-template-columns: 1fr; }
-  .hud-radar { display: none; }
+  /* Phones keep the radar (DLS players live by it), just smaller; the chip goes. */
+  .hud-radar { width: 150px; }
   .hud-chip { display: none; }
-  .tb { width: 72px; height: 72px; }
-  .tb-pass { width: 84px; height: 84px; }
-  .tb-shoot { right: 94px; }
-  .tb-through { bottom: 96px; }
-  .tb-sprint { right: 98px; bottom: 96px; width: 62px; height: 62px; }
-  .touch-btns { width: 210px; height: 190px; }
+  .scorebug { font-size: 12px; }
+  .sb-team, .sb-score, .sb-clock { padding: 4px 7px 3px; }
+  .sb-clock { min-width: 64px; }
+  .sb-team i { width: 12px; height: 14px; }
+  .hud-pause { width: 38px; height: 38px; font-size: 14px; }
+  .hud-tip { font-size: 13px; top: 48px; }
+  .tb { width: 66px; height: 66px; font-size: 10px; }
+  .tb-pass { width: 78px; height: 78px; font-size: 11px; }
+  .tb-shoot { right: 86px; }
+  .tb-through { bottom: 86px; }
+  .tb-sprint { right: 84px; bottom: 84px; width: 56px; height: 56px; font-size: 9px; }
+  .touch-btns { width: 200px; height: 180px; }
+}
+
+@media (max-height: 480px) and (orientation: landscape) {
+  .hud-radar { left: auto; right: 50%; transform: translateX(50%); bottom: 6px; width: 132px; opacity: 0.85; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1037,6 +1128,77 @@ kbd {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+.motm {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+}
+
+.motm-card {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 10px 16px 12px;
+  background: var(--ink);
+  color: var(--cream);
+  border-bottom: 6px solid var(--k);
+  min-width: 190px;
+}
+
+.motm-card span {
+  font: 700 10px var(--px);
+  letter-spacing: 1px;
+  color: var(--yellow);
+}
+
+.motm-card b {
+  font: 400 20px var(--round);
+}
+
+.motm-card em {
+  font: 700 30px var(--px);
+  font-style: normal;
+  color: var(--yellow);
+}
+
+.motm-card small {
+  font: 700 11px var(--px);
+  color: #cfd3d8;
+}
+
+.ratings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ratings li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  padding: 6px 10px 5px;
+  font: 400 16px var(--round);
+}
+
+.ratings b {
+  font: 700 15px var(--px);
+  background: var(--cream-2);
+  padding: 3px 7px 2px;
+}
+
+.ratings b.hi { background: var(--go); color: #fff; }
+.ratings b.lo { background: var(--red); color: #fff; }
+
+@media (max-width: 560px) {
+  .motm { grid-template-columns: 1fr; }
 }
 
 /* ===== career + club (meta) ===== */

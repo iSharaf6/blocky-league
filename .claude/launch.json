@@ -4,8 +4,25 @@
     {
       "name": "blocky-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "blocky-snap",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        "/private/tmp/claude-501/-Users-IslamSharaf-1-iCloud-Drive--Archive----1-Desktop-stickmanFootball/4521b77d-7cd9-4740-9066-eab719d1b492/scratchpad/snap",
+        "--port",
+        "4180",
+        "--strictPort"
+      ],
+      "port": 4180
     }
   ]
 }
