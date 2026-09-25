@@ -1,6 +1,7 @@
 import { BALL_OFS, PF } from '../game/replay';
 import { HALF_L, HALF_W } from '../sim/constants';
-import type { TeamDef } from '../sim/types';
+import type { Kit, TeamDef } from '../sim/types';
+import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
 
 export interface HudTeam {
@@ -8,6 +9,7 @@ export interface HudTeam {
   name: string;
   color: number;
   color2: number;
+  kit?: Kit;
 }
 
 /** In-match overlay: score bug, radar, banners, player chip, hints. */
@@ -36,9 +38,9 @@ export class Hud {
     const [h, a] = teams;
     this.root.innerHTML = `
       <div class="scorebug">
-        <div class="sb-team"><i class="crest" style="--a:${cssHex(h.color)};--b:${cssHex(h.color2)}"></i><b>${h.short}</b></div>
+        <div class="sb-team">${h.kit ? crestSvg(h.name, h.short, h.kit, 2) : `<i class="crest" style="--a:${cssHex(h.color)};--b:${cssHex(h.color2)}"></i>`}<b>${h.short}</b></div>
         <div class="sb-score">0<span>-</span>0</div>
-        <div class="sb-team"><b>${a.short}</b><i class="crest" style="--a:${cssHex(a.color)};--b:${cssHex(a.color2)}"></i></div>
+        <div class="sb-team"><b>${a.short}</b>${a.kit ? crestSvg(a.name, a.short, a.kit, 2) : `<i class="crest" style="--a:${cssHex(a.color)};--b:${cssHex(a.color2)}"></i>`}</div>
         <div class="sb-clock">00:00</div>
       </div>
       <button class="hud-pause" aria-label="Pause">II</button>
@@ -195,5 +197,5 @@ export class Hud {
 }
 
 export function hudTeam(t: TeamDef, kitShirt: number, kitShirt2: number): HudTeam {
-  return { short: t.short, name: t.name, color: kitShirt, color2: kitShirt2 };
+  return { short: t.short, name: t.name, color: kitShirt, color2: kitShirt2, kit: t.kit };
 }

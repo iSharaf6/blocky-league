@@ -2,6 +2,7 @@ import { sfx } from '../audio/sfx';
 import type { SaveData } from '../core/save';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview } from './preview';
+import { crestSvg } from './crest';
 import { cssHex, shade } from '../render/palette';
 import type { Match } from '../sim/match';
 import { overall, type Kit, type PlayerDef } from '../sim/types';
@@ -225,7 +226,7 @@ export class Menus {
           <div class="tp-kit">${preview.ok ? '<canvas class="tp-3d"></canvas>' : shirtArt(c.kit, 9)}</div>
           <button class="arrow" data-d="1">▶</button>
         </div>
-        <b class="tp-name">${c.name}</b>
+        <b class="tp-name">${crestSvg(c.name, c.short, c.kit, 2)}${c.name}</b>
         <span class="tp-stars">${stars(c.level)}</span>
         <span class="tp-meta">OVR ${c.level} · ${c.formation}</span>`;
       const cv = el.querySelector<HTMLCanvasElement>('.tp-3d');
@@ -331,9 +332,9 @@ export class Menus {
     const scorers = (side: 0 | 1) =>
       m.goals.filter((g) => g.side === side).map((g) => `<li>${g.name}${g.own ? ' (OG)' : ''} ${g.minute}'</li>`).join('');
     return `<div class="final">
-      <div class="f-team">${shirtArt(kits[0], 7)}<b>${m.teams[0].short}</b><ul>${scorers(0)}</ul></div>
+      <div class="f-team">${crestSvg(m.teams[0].name, m.teams[0].short, m.teams[0].kit, 4)}<b style="border-bottom:5px solid ${cssHex(kits[0].shirt)}">${m.teams[0].short}</b><ul>${scorers(0)}</ul></div>
       <div class="f-score">${m.score[0]}<span>-</span>${m.score[1]}</div>
-      <div class="f-team">${shirtArt(kits[1], 7)}<b>${m.teams[1].short}</b><ul>${scorers(1)}</ul></div>
+      <div class="f-team">${crestSvg(m.teams[1].name, m.teams[1].short, m.teams[1].kit, 4)}<b style="border-bottom:5px solid ${cssHex(kits[1].shirt)}">${m.teams[1].short}</b><ul>${scorers(1)}</ul></div>
     </div>`;
   }
 

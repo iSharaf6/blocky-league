@@ -109,7 +109,8 @@ export class MatchSession {
       away: opt.kits[1].shirt,
       homeName: teams[0].name,
       awayName: teams[1].name,
-      attendance: opt.attendance,
+      // Fewer fans on lower graphics settings: the crowd is the biggest vertex cost.
+      attendance: opt.attendance * (world.quality === 'low' ? 0.45 : world.quality === 'medium' ? 0.75 : 1),
       seed: this.match.rng.int(1e9),
     });
     this.view = new MatchView(teams, opt.kits, opt.humanSide);

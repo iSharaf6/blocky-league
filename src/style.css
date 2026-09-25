@@ -499,6 +499,17 @@ body {
   .qm .seg button { padding: 8px 4px 7px; }
 }
 
+.crest-svg {
+  display: inline-block;
+  vertical-align: middle;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.25));
+}
+
+.tp-name .crest-svg {
+  margin-right: 6px;
+  margin-top: -3px;
+}
+
 .tp-name {
   font: 400 clamp(17px, 2vw, 22px) var(--round);
 }
