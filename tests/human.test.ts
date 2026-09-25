@@ -194,6 +194,7 @@ describe('human control', () => {
       for (let i = 0; i < 60 * 3; i++) m.step(DT, EMPTY_PAD);
       const inBox = (p: Player) => Math.abs(p.pos.x - gx) < BOX_DEPTH && Math.abs(p.pos.z) < BOX_W / 2;
       const atk = m.teamPlayers(0).filter((p) => !p.isKeeper && inBox(p)).length;
+
       const def = m.teamPlayers(1).filter((p) => !p.isKeeper && inBox(p)).length;
       expect(atk).toBeGreaterThanOrEqual(5);
       expect(def).toBeGreaterThanOrEqual(5);

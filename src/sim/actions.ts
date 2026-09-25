@@ -302,7 +302,7 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   }
   const d = Math.max(2, dist2(b.x, b.z, gx, aimZ));
   const composure = header ? 0.4 : 1;
-  const errZ = (m.rng.gauss() * (0.78 + d * 0.062) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press) / composure;
+  const errZ = (m.rng.gauss() * (0.82 + d * 0.066) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press) / composure;
   const tz = aimZ + errZ;
   // Height at the line: placed shots stay low, blasted ones climb (and can fly over).
   const skew = Math.abs(m.rng.gauss()) * (1.15 - acc) * (0.35 + power) * 2.1 * sk * press;

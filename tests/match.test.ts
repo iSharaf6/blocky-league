@@ -41,12 +41,17 @@ describe('match simulation', () => {
     // eslint-disable-next-line no-console
     console.log('score', m.score, 'stats', JSON.stringify(m.stats), 'events', JSON.stringify(kinds), 'stall', maxStall);
     expect(m.phase).toBe('fulltime');
-    expect(m.stats.shots[0] + m.stats.shots[1]).toBeGreaterThan(3);
-    expect(m.stats.passes[0] + m.stats.passes[1]).toBeGreaterThan(40);
-    expect(kinds.tackle ?? 0).toBeGreaterThan(3);
-    // The ball never freezes in open play for more than a few seconds.
-    expect(maxStall).toBeLessThan(60 * 6);
-  });
+    expect(m.stats.shots[0] + m.stats.shots[1]).toBeGreaterThanOrEqual(6);
+    // Purposeful passing, not midfield ping-pong (the old sim made ~340 a match).
+    const passes = m.stats.passes[0] + m.stats.passes[1];
+    expect(passes).toBeGreaterThan(60);
+    expect(passes).toBeLessThan(300);
+    // Pressing that challenges without suffocating (the old sim made ~150 attempts).
+    expect(kinds.tackle ?? 0).toBeGreaterThan(10);
+    expect(kinds.tackle ?? 0).toBeLessThan(120);
+    // The ball never freezes in open play for 5 seconds.
+    expect(maxStall).toBeLessThan(60 * 5);
+  }, 30_000);
 
   it('keeps players and ball within the stadium', () => {
     const { m } = playFull(21);
@@ -54,7 +59,7 @@ describe('match simulation', () => {
       expect(Math.abs(p.pos.x)).toBeLessThan(HALF_L + 6);
       expect(Math.abs(p.pos.z)).toBeLessThan(HALF_W + 5);
     }
-  });
+  }, 30_000);
 
   it('produces goals over several matches', () => {
     let goals = 0;
@@ -68,6 +73,9 @@ describe('match simulation', () => {
     }
     // eslint-disable-next-line no-console
     console.log('goals over 6 matches', goals, JSON.stringify(agg));
-    expect(goals).toBeGreaterThan(2);
-  });
+    // ~2.5-4.5 a match is the target band (see tests/metrics.test.ts for the full picture).
+    expect(goals).toBeGreaterThanOrEqual(10);
+    expect(agg.shots).toBeGreaterThanOrEqual(60);
+    expect(agg.passes).toBeLessThan(1500);
+  }, 60_000);
 });

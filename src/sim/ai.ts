@@ -181,7 +181,7 @@ function assignRoles(m: Match, side: Side, brain: TeamBrain): void {
   // The line steps up with the ball, holds around the edge of the box, and only drops
   // inside it once the ball is right on top of it.
   const bxN = nX(m, side, ball.pos.x);
-  brain.line = bxN < -0.58 ? Math.max(-0.88, bxN - 0.12) : clamp(bxN - 0.36, -0.72, -0.1);
+  brain.line = bxN < -0.6 ? Math.max(-0.88, bxN - 0.1) : clamp(bxN - 0.36, -0.68, -0.1);
   if (owner && ball.held) return;
   const flight = !owner && m.passTarget >= 0 ? m.players[m.passTarget] : null;
 
@@ -487,7 +487,7 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
   const ballSide = bz * slot.z > 0;
   let x = slot.x * 0.68 + bx * 0.52 + 0.24;
   let z = slot.z * 1.08 + bz * 0.16;
-  if (wide) z = Math.sign(slot.z) * (ballSide ? 0.86 : 0.72); // hold the width
+  if (wide) z = Math.sign(slot.z) * (ballSide ? 0.9 : 0.74); // hold the width, touchline side
   if (p.role === 'DF') {
     if (wide) {
       x = Math.min(x, bx - 0.04, 0.42);
@@ -542,16 +542,22 @@ function defend(m: Match, p: Player, brain: TeamBrain, c: Player, dt: number): v
     return;
   }
   const o = m.players[mark];
+  // Defenders watch the ball, so they pick up a run a beat late (where he was, not where he is).
+  const lag = o.running ? 0.45 : 0.15;
+  const ox = o.pos.x - o.vel.x * lag;
+  const oz = o.pos.z - o.vel.z * lag;
   // Goal-side of the man, shaded towards the ball.
-  const ux = gx - o.pos.x;
-  const uz = -o.pos.z * 0.6;
+  const ux = gx - ox;
+  const uz = -oz * 0.6;
   const ul = Math.hypot(ux, uz) || 1;
-  const bxv = ball.x - o.pos.x;
-  const bzv = ball.z - o.pos.z;
+  const bxv = ball.x - ox;
+  const bzv = ball.z - oz;
   const bl = Math.hypot(bxv, bzv) || 1;
-  const tight = p.role === 'DF' ? 1.4 : 1.9;
-  const mx = o.pos.x + (ux / ul) * tight + (bxv / bl) * 0.6;
-  const mz = o.pos.z + (uz / ul) * tight + (bzv / bl) * 0.6;
+  // Tight when the ball is near, a yard off (and ready to intercept) when it's far away.
+  const far = clamp((dist2(ox, oz, ball.x, ball.z) - 12) / 20, 0, 1);
+  const tight = (p.role === 'DF' ? 1.4 : 1.9) + far * 1.2;
+  const mx = ox + (ux / ul) * tight + (bxv / bl) * 0.6;
+  const mz = oz + (uz / ul) * tight + (bzv / bl) * 0.6;
   const k = p.role === 'DF' ? 0.8 : 0.6;
   let tx = home.x + (mx - home.x) * k;
   const tz = home.z + (mz - home.z) * k;
@@ -636,7 +642,23 @@ function aerialOrVolley(m: Match, p: Player): void {
     if (o.side !== p.side) rival = Math.min(rival, dist2(o.pos.x, o.pos.z, b.pos.x, b.pos.z));
   }
   if (b.pos.y > 1.15 && b.pos.y < 3) {
-    if (q > 0.12) {
+    // From a tight angle, nod it down to a better-placed teammate instead of forcing it.
+    let lay: Player | null = null;
+    if (q < 0.22 && ownGoalDist > 40) {
+      let bestQ = q + 0.12;
+      for (const t of m.teamPlayers(p.side)) {
+        if (t === p || t.isKeeper) continue;
+        const dt = dist2(t.pos.x, t.pos.z, p.pos.x, p.pos.z);
+        const tq = shotQuality(t.pos.x, t.pos.z, ad);
+        if (dt > 3 && dt < 11 && tq > bestQ && nearestOpp(m, p.side, t.pos.x, t.pos.z).d > 1.8) {
+          bestQ = tq;
+          lay = t;
+        }
+      }
+    }
+    if (lay) {
+      m.order(p, 'header', lay.pos.x - p.pos.x, lay.pos.z - p.pos.z, 0.5, lay.idx, true, { x: lay.pos.x, z: lay.pos.z });
+    } else if (q > 0.12) {
       m.order(p, 'header', 0, 0, 0.75, -1, true);
     } else if (ownGoalDist < 30 && rival < 5) {
       const gxOwn = -ad * HALF_L;
@@ -646,7 +668,7 @@ function aerialOrVolley(m: Match, p: Player): void {
         m.order(p, 'header', -ad, 0, 1, -1, true, { x: gxOwn - ad * 3, z });
       } else {
         // Head it clear, out towards the wing.
-        const z = clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 14, -HALF_W + 3, HALF_W - 3);
+        const z = clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 18, -HALF_W + 1, HALF_W - 1);
         m.order(p, 'header', ad, 0, 1, -1, true, { x: p.pos.x + ad * 20, z });
       }
     } else if (rival < 2.2) {
@@ -664,7 +686,7 @@ function aerialOrVolley(m: Match, p: Player): void {
   } else if (ownGoalDist < 22 && rival < 2 && b.hspeed() > 4) {
     // Under pressure in our box: hack it away first time.
     p.volleyKick = m.kickId;
-    const z = Math.sign(p.pos.z || 1) * (HALF_W - 4);
+    const z = Math.sign(p.pos.z || 1) * (HALF_W - 1.5);
     m.order(p, 'clear', ad, 0, 1, -1, true, { x: p.pos.x + ad * 35, z });
   }
 }
@@ -722,9 +744,7 @@ function shield(m: Match, p: Player, o: Player): void {
   p.faceTarget = Math.atan2(az, ax);
 }
 
-type Choice = { s: number; run: () => void; tag?: string };
-/** TEMP debug */
-export const aiDebug: { on: boolean; log: string[]; pc: Map<number, number> } = { on: false, log: [], pc: new Map() };
+type Choice = { s: number; run: () => void };
 
 function carrierAI(m: Match, p: Player, dt: number): void {
   const side = p.side;
@@ -774,7 +794,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     const bonus = blockers < 0.5 ? (dg < 28 ? 0.035 : 0.015) : 0;
     const s = early(q * 1.25 + bonus + (inBox ? 0.015 : 0) - (dg > 23 ? 0.015 : 0), 0.05);
     const power = clamp(0.55 + dg / 45, 0.6, 0.97);
-    choices.push({ s, run: () => m.order(p, 'shot', 0, 0, power, -1, false), tag: 'shot' });
+    choices.push({ s, run: () => m.order(p, 'shot', 0, 0, power, -1, false) });
   }
 
   // ---- Passes and through balls
@@ -795,7 +815,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       const gain = threat(m, side, lx, lz) * (t.isKeeper ? 0.3 : 1) * (0.72 + 0.28 * room);
       const s = early(pc * gain - (1 - pc) * lose((p.pos.x + lx) / 2, (p.pos.z + lz) / 2), 0.6) -
         (d < 9 && pressure < 0.3 ? 0.004 : 0);
-      choices.push({ s, run: () => { aiDebug.pc.set(p.idx, pc); m.order(p, 'pass', lx - p.pos.x, lz - p.pos.z, 0.6, t.idx, false); }, tag: `pass${t.slot} pc${pc.toFixed(2)} g${gain.toFixed(3)}` });
+      choices.push({ s, run: () => m.order(p, 'pass', lx - p.pos.x, lz - p.pos.z, 0.6, t.idx, false) });
     }
 
     const tsp = Math.hypot(t.vel.x, t.vel.z);
@@ -820,14 +840,14 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         const ir = interceptRisk(m, side, p.pos.x, p.pos.z, ax, az, throughSpeed(dT));
         const pc = pWin * (1 - ir);
         const s = early(pc * gain - (1 - pc) * lose(ax, az) * 0.6, 0.35);
-        choices.push({ s, run: () => m.order(p, 'through', 0, 0, 0.7, t.idx, false, { x: ax, z: az }), tag: 'thru' });
+        choices.push({ s, run: () => m.order(p, 'through', 0, 0, 0.7, t.idx, false, { x: ax, z: az }) });
         // Over the top when the ground lane is shut and the runner is on the shoulder of the
         // last man: only the race to the landing spot matters, but it's much harder to weight.
         const onShoulder = nX(m, side, t.pos.x) > m.defLine(opp) - 0.06;
         if (dT > 16 && dT < 42 && ir > 0.45 && onShoulder) {
           const pl = pWin * 0.5 * (0.8 + p.stat.passing / 700);
           const sl = early(pl * gain - (1 - pl) * lose(ax, az) * 0.6, 0.5);
-          choices.push({ s: sl, run: () => m.order(p, 'lob', ax - p.pos.x, az - p.pos.z, 0.7, t.idx, false, { x: ax, z: az }, 0.5), tag: 'lobThru' });
+          choices.push({ s: sl, run: () => m.order(p, 'lob', ax - p.pos.x, az - p.pos.z, 0.7, t.idx, false, { x: ax, z: az }, 0.5) });
         }
       }
     }
@@ -862,15 +882,24 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       const hq = shotQuality(zn.x, zn.z, ad) * 0.75;
       // A won header is far from a sure goal: credit roughly its real conversion.
       const s = early(pWin * (0.03 + hq * 0.42) - (1 - pWin) * 0.02, 0.3);
-      choices.push({ s, tag: 'cross', run: () => m.order(p, 'lob', zn.x - p.pos.x, zn.z - p.pos.z, 0.75, who, false, { x: zn.x, z: zn.z }) });
+      choices.push({ s, run: () => m.order(p, 'lob', zn.x - p.pos.x, zn.z - p.pos.z, 0.75, who, false, { x: zn.x, z: zn.z }) });
     }
   }
 
   // ---- Clear it when trapped deep in our own third.
   if (pN < -0.35 && pressure > 0.5) {
-    const tz = Math.sign(p.pos.z || 1) * (HALF_W - 5);
+    const tz = Math.sign(p.pos.z || 1) * (HALF_W - 1.5);
     const tx = p.pos.x + ad * 38;
     choices.push({ s: -0.004 + (pN < -0.6 ? 0.006 : 0), run: () => m.order(p, 'clear', ad, 0, 1, -1, false, { x: tx, z: tz }) });
+  }
+
+  // ---- Trapped by the touchline in our half: put it out for a throw rather than lose it.
+  if (pN < 0.1 && pressure > 0.55 && Math.abs(p.pos.z) > HALF_W - 7) {
+    const zs = Math.sign(p.pos.z);
+    choices.push({
+      s: -0.35 * threat(m, opp, p.pos.x, p.pos.z) - 0.004,
+      run: () => m.order(p, 'clear', ad, zs, 0.6, -1, false, { x: p.pos.x + ad * 10, z: zs * (HALF_W + 6) }, 0.3),
+    });
   }
 
   // ---- Shield it under tight pressure (buys a second, not a lifetime).
@@ -898,7 +927,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     const tgz = -p.pos.z * 0.5;
     const tgl = Math.hypot(tgx, tgz) || 1;
     if ((ox * tgx + oz * tgz) / (ol * tgl) > 0.35) {
-      const pWin = clamp(0.36 + (p.stat.dribbling - o.stat.defending) / 100 * 0.9 + (p.top - o.top) * 0.08 + (skill - 2) * 0.03, 0.15, 0.7);
+      const pWin = clamp(0.33 + (p.stat.dribbling - o.stat.defending) / 100 * 0.9 + (p.top - o.top) * 0.08 + (skill - 2) * 0.03, 0.15, 0.68);
       for (const sgn of [-1, 1]) {
         const a = Math.atan2(oz, ox) + sgn * 0.8;
         const dx = Math.cos(a);
@@ -920,13 +949,13 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         const s = pWin * threat(m, side, lx, lz) + (1 - pWin) * (0.6 * here - 0.4 * loseHere);
         choices.push({
           s,
-          tag: 'takeon',
           run: () => {
             p.aiMode = 'dribble';
             p.aiDirX = dx;
             p.aiDirZ = dz;
             p.aiT = 0.55;
-            if (m.rng.chance(pWin)) {
+            // A human defender can read it a little better than the AI.
+            if (m.rng.chance(pWin * (m.isHumanControlled(o) ? 0.75 : 1))) {
               m.beatDefender(p, o);
             } else {
               o.commitT = 0.5; // he reads it and steps in
@@ -974,7 +1003,6 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     if (p.aiMode === 'dribble' && dx * p.aiDirX + dz * p.aiDirZ > 0.85) s += 0.003;
     choices.push({
       s,
-      tag: `drib L${L.toFixed(1)} r${pRet.toFixed(2)}`,
       run: () => {
         p.aiMode = 'dribble';
         p.aiDirX = dx;
@@ -993,10 +1021,6 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       bestS = s;
       best = c;
     }
-  }
-  if (aiDebug.on && aiDebug.log.length < 400 && pN > 0.45 && Math.abs(p.pos.z) < HALF_W * 0.45) {
-    const sorted = [...choices].sort((a, b) => b.s - a.s).slice(0, 6);
-    aiDebug.log.push(`side${side} slot${p.slot} nx${pN.toFixed(2)} first${firstTouch} bt${p.ballT.toFixed(2)} pr${pressure.toFixed(2)} here${here.toFixed(3)} -> ${best?.tag}\n   ` + sorted.map((c) => `${c.tag ?? '?'}=${c.s.toFixed(4)}`).join(' | '));
   }
   best?.run();
 }
@@ -1100,7 +1124,9 @@ function restartPosition(m: Match, p: Player, side: Side): void {
   }
   if (!r) return;
   if (r.taker === p.idx) {
-    p.wantX = p.wantZ = 0;
+    // Walk over to the ball while it's dead; the match stands them over it for the kick.
+    if (m.phase === 'out') moveTo(p, r.x, r.z, 0.6);
+    else p.wantX = p.wantZ = 0;
     return;
   }
   const attacking = r.side === side;
