@@ -176,7 +176,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
       const yc = Math.max(BALL_R, b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t);
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
       if (onFrame) {
-        const reaction = clamp(0.3 - keeping * 0.2 - m.keeperBonus(k.side), 0.07, 0.34);
+        const reaction = clamp(0.33 - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37);
         const lateral = zc - k.pos.z;
         if (Math.abs(lateral) < 0.55 && yc < 1.9) {
           // Straight at them: shuffle and let the catch check do the work.
@@ -186,7 +186,8 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
           return;
         }
         if (m.shotClock >= reaction) {
-          const maxDive = 4.6 + keeping * 3 + m.keeperBonus(k.side) * 8;
+          // Lateral dive speed (m/s): enough for the corners from range, not from close in.
+          const maxDive = (4.6 + keeping * 3 + m.keeperBonus(k.side) * 8) * 0.72;
           const need = Math.abs(lateral) / Math.max(t, 0.12);
           const vz = Math.sign(lateral) * Math.min(need * 1.05, maxDive);
           k.setState('dive');

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { crossingZ, stickCurl } from '../src/sim/actions';
+import { crossingZ, stickCurl, THROW_RANGE } from '../src/sim/actions';
 import { Ball, type BallHit } from '../src/sim/ball';
 import { BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_W, HALF_L, HALF_W, PEN_SPOT, SEP_MATE, SEP_OPP, WALL_DIST } from '../src/sim/constants';
-import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
+import { EMPTY_PAD, Match, OFFSIDE_TOL, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
 import type { MatchEvent, Side } from '../src/sim/types';
 
@@ -68,12 +68,18 @@ function slideFoul(m: Match, att: Player, def: Player, x: number, z: number): Ma
     m.step(DT, EMPTY_PAD);
     seen.push(...m.drainEvents());
   }
+  // In the attacking half the referee may wait on an advantage before the free kick (or play on);
+  // either way any card comes when he's decided.
+  for (let i = 0; i < 60 * 2 && seen.some((e) => e.type === 'foul') && !seen.some((e) => e.type === 'restart' || e.type === 'advantage'); i++) {
+    m.step(DT, EMPTY_PAD);
+    seen.push(...m.drainEvents());
+  }
   return seen;
 }
 
-/** Step until the pending restart is live (the ball set on its spot). */
+/** Step until the pending restart is live (the ball set on its spot; a foul in the attacking half waits on the advantage first). */
 function toRestart(m: Match, pads: Pad = EMPTY_PAD): void {
-  for (let i = 0; i < 60 * 3 && m.phase !== 'restart'; i++) {
+  for (let i = 0; i < 60 * 6 && m.phase !== 'restart'; i++) {
     m.step(DT, pads);
     m.drainEvents();
   }
@@ -103,6 +109,25 @@ describe('discipline', () => {
     expect(def.sentOff).toBe(true);
     expect(m.onPitch(1).length).toBe(10);
     expect(m.onPitch(0).length).toBe(11);
+    // He walks off (no teleport: the referee's close-up still has him), head down, to the dugout.
+    const start = { x: def.pos.x, z: def.pos.z };
+    expect(def.pos.z).toBeLessThan(HALF_W);
+    let walked = 0;
+    let lastX = def.pos.x;
+    let lastZ = def.pos.z;
+    for (let i = 0; i < 60 * 10 && def.pos.z < HALF_W + 1.9; i++) {
+      m.step(DT, EMPTY_PAD);
+      m.drainEvents();
+      const stepD = Math.hypot(def.pos.x - lastX, def.pos.z - lastZ);
+      if (i < 60 * 8) expect(stepD).toBeLessThan(0.2); // walking, not jumping
+      walked += stepD;
+      lastX = def.pos.x;
+      lastZ = def.pos.z;
+      expect(def.state).toBe('dejected');
+      expect(m.ball.owner).not.toBe(def.idx);
+      if (m.phase === 'goal' && m.phaseT > 3) m.resumeAfterGoal();
+    }
+    expect(walked).toBeGreaterThan(Math.min(8, Math.hypot(start.x, start.z - HALF_W) * 0.5));
     // Off by the dugout, and he can't be replaced.
     expect(def.pos.z).toBeGreaterThan(HALF_W + 1);
     expect(m.substitute(1, def.slot, m.bench[1].findIndex((d) => d.role !== 'GK'))).toBe(false);
@@ -126,7 +151,9 @@ describe('discipline', () => {
     expect(m.phase).toBe('fulltime');
     expect(touched).toBe(0);
     expect(involved).toBe(0);
-    expect(m.onPitch(1).length).toBe(10);
+    // (Another red later in the game is possible; he never comes back either way.)
+    expect(m.onPitch(1).length).toBeLessThanOrEqual(10);
+    expect(def.sentOff).toBe(true);
   }, 60_000);
 
   it('a first yellow is only a booking', () => {
@@ -223,14 +250,18 @@ describe('set pieces', () => {
     for (let seed = 1; seed <= 6; seed++) {
       for (const human of [-1, 0] as const) {
         const m = scenario(seed, human);
-        // Midfield foul: the fouler slides on through the spot while the kick is set up.
-        slideFoul(m, m.players[9], m.players[11 + 6], 0, 6);
+        // Foul in the fouled side's own half (no advantage there): the fouler slides on through the
+        // spot while the kick is set up.
+        slideFoul(m, m.players[9], m.players[11 + 6], -m.attackDir(0) * 8, 6);
         toRestart(m);
         const r = m.restart!;
         const t = m.players[r.taker];
         while (m.phase === 'restart') {
           expect(Math.hypot(m.ball.pos.x - r.x, m.ball.pos.z - r.z)).toBeLessThan(1e-6);
-          expect(Math.hypot(t.pos.x - r.x, t.pos.z - r.z)).toBeLessThan(0.7);
+          // At his run-up spot (or stepping in from it), never on top of the ball.
+          const td = Math.hypot(t.pos.x - r.x, t.pos.z - r.z);
+          expect(td).toBeLessThan(1.9);
+          expect(td).toBeGreaterThan(0.5);
           m.step(DT, human === 0 && m.phaseT > 0.5 && m.phaseT < 0.6 ? pad(0.3, 0.9) : EMPTY_PAD);
           m.drainEvents();
         }
@@ -304,14 +335,19 @@ describe('set pieces', () => {
         const t = m.players[r.taker];
         const want = Math.atan2(-r.z, ad * (HALF_L - 7) - r.x);
         expect(Math.abs(Math.atan2(Math.sin(t.facing - want), Math.cos(t.facing - want)))).toBeLessThan(0.05);
-        // Human: no stick, hold and release shoot. AI: it takes it itself.
+        // Human: no stick, hold and release THROUGH (the cross). AI: it takes it itself (now and
+        // then short, which isn't a delivery into the box).
         let kicked = false;
+        let short = false;
         for (let i = 0; i < 60 * 8 && !kicked; i++) {
           const hold = human === 0 && m.phaseT > 0.4 && m.phaseT < 0.8;
-          m.step(DT, hold ? pad(0, 0, { shoot: true }) : EMPTY_PAD);
-          kicked = m.drainEvents().some((e) => e.type === 'kick');
+          m.step(DT, hold ? pad(0, 0, { through: true }) : EMPTY_PAD);
+          const ks = m.drainEvents().filter((e) => e.type === 'kick');
+          kicked = ks.length > 0;
+          short = ks.some((e) => e.type === 'kick' && e.kind === 'pass');
         }
         expect(kicked).toBe(true);
+        if (short) continue;
         const kid = m.kickId;
         let land: { d: number; z: number } | null = null;
         for (let i = 0; i < 60 * 3 && !land; i++) {
@@ -503,5 +539,338 @@ describe('contact', () => {
     }
     expect(t).toBeGreaterThan(0.2);
     expect(t).toBeLessThan(0.3);
+  });
+});
+
+describe('offside', () => {
+  /**
+   * A pass from 30 m out to a striker; the two nearest defenders hold a line 16 m out (well wide of
+   * the lane), the keeper on his line. `beyond` > 0 puts the striker that far past the line.
+   */
+  function passTo(seed: number, beyond: number, offside = true) {
+    const m = scenario(seed);
+    m.offside = offside;
+    const ad = m.attackDir(0);
+    const gx = ad * HALF_L;
+    const passer = m.players[6];
+    const fw = m.players[9];
+    place(passer, gx - ad * 30, 0);
+    passer.facing = ad > 0 ? 0 : Math.PI;
+    // The rest of their outfield well behind the ball, so these two are the line.
+    m.teamPlayers(1).forEach((p, i) => {
+      if (!p.isKeeper) place(p, -ad * 10, -HALF_W + 2 + i * 1.5);
+    });
+    place(m.players[11 + 2], gx - ad * 16, -14);
+    place(m.players[11 + 3], gx - ad * 16, 14);
+    place(m.keeperOf(1)!, gx - ad * 0.8, 0);
+    place(fw, gx - ad * (16 - beyond), 0.5);
+    giveBall(m, passer);
+    m.order(passer, 'pass', fw.pos.x - passer.pos.x, fw.pos.z - passer.pos.z, 0.6, fw.idx, false);
+    const seen: MatchEvent[] = [];
+    let got = false;
+    for (let i = 0; i < 60 * 4 && m.phase === 'play' && !got; i++) {
+      m.step(DT, EMPTY_PAD);
+      seen.push(...m.drainEvents());
+      got = m.ball.owner === fw.idx;
+    }
+    return { m, fw, seen, got };
+  }
+
+  it('first to a pass he was offside for: flag, indirect free kick to the defence where he was', () => {
+    let flagged = 0;
+    for (let seed = 1; seed <= 4; seed++) {
+      const { m, fw, seen, got } = passTo(seed, 4);
+      const off = seen.find((e) => e.type === 'offside');
+      if (!off) continue;
+      flagged++;
+      expect(got).toBe(false);
+      expect(off).toEqual({ type: 'offside', side: 0, player: fw.idx });
+      expect(m.stats.offsides).toEqual([1, 0]);
+      expect(m.phase).toBe('out');
+      const r = m.restart!;
+      expect(r.kind).toBe('freekick');
+      expect(r.side).toBe(1);
+      expect(r.indirect).toBe(true);
+      expect(Math.hypot(r.x - fw.pos.x, r.z - fw.pos.z)).toBeLessThan(2);
+      expect(seen.some((e) => e.type === 'restart' && e.kind === 'freekick' && e.side === 1)).toBe(true);
+    }
+    expect(flagged).toBeGreaterThanOrEqual(3);
+  });
+
+  it('onside (behind the line, or level within the benefit of the doubt) plays on; so does everything with the law off', () => {
+    let played = 0;
+    for (let seed = 1; seed <= 4; seed++) {
+      for (const [beyond, law] of [[-2.5, true], [OFFSIDE_TOL - 0.4, true], [4, false]] as const) {
+        const { seen, got } = passTo(seed, beyond, law);
+        expect(seen.some((e) => e.type === 'offside')).toBe(false);
+        if (got) played++;
+      }
+    }
+    expect(played).toBeGreaterThanOrEqual(9);
+  });
+
+  it('never from a throw-in, and the AI holds its runs on the line (rare flags over a match)', () => {
+    const m = scenario(6);
+    const ad = m.attackDir(0);
+    const fw = m.players[9];
+    // Striker miles offside, ball out for a throw-in to his side right next to him.
+    place(fw, ad * (HALF_L - 8), HALF_W - 5);
+    place(m.keeperOf(1)!, ad * (HALF_L - 1), 0);
+    m.players.forEach((p) => {
+      if (p.side === 0 && p !== fw) place(p, -ad * 30, -20 + p.slot * 2);
+    });
+    m.ball.reset(ad * (HALF_L - 10), HALF_W + 0.4);
+    m.ball.lastTouch = m.players[14].idx;
+    m.ball.lastTouchSide = 1;
+    let off = 0;
+    let thrown = false;
+    for (let i = 0; i < 60 * 8; i++) {
+      m.step(DT, EMPTY_PAD);
+      for (const e of m.drainEvents()) {
+        if (e.type === 'offside') off++;
+        if (e.type === 'kick' && e.kind === 'throw') thrown = true;
+      }
+      if (thrown && m.ball.owner >= 0) break;
+    }
+    expect(thrown).toBe(true);
+    expect(off).toBe(0);
+  });
+});
+
+describe('advantage', () => {
+  it('fouled in their half with a teammate there to carry on: play on, and no free kick', () => {
+    let played = 0;
+    for (let seed = 1; seed <= 8; seed++) {
+      const m = scenario(seed);
+      const ad = m.attackDir(0);
+      const x = ad * (HALF_L - 28);
+      place(m.players[10], x + ad * 2.6, 0.6);
+      const ev = slideFoul(m, m.players[9], m.players[11 + 6], x, 0);
+      if (!ev.some((e) => e.type === 'foul')) continue;
+      const adv = ev.find((e) => e.type === 'advantage');
+      if (!adv) continue;
+      played++;
+      expect(adv).toEqual({ type: 'advantage', side: 0 });
+      expect(ev.some((e) => e.type === 'restart')).toBe(false);
+      expect(m.phase).toBe('play');
+      expect(m.stats.fouls[1]).toBe(1);
+      // Any booking is shown at once (after the foul and the advantage), not saved up.
+      const card = ev.findIndex((e) => e.type === 'card');
+      if (card >= 0) expect(card).toBeGreaterThan(ev.findIndex((e) => e.type === 'advantage'));
+      expect(m.ball.owner === m.players[10].idx || m.ball.lastTouchSide === 0).toBe(true);
+    }
+    expect(played).toBeGreaterThanOrEqual(5);
+  });
+
+  it('in their own half, or when the other side comes away with it, the free kick is given where the foul was', () => {
+    let own = 0;
+    let back = 0;
+    for (let seed = 1; seed <= 8; seed++) {
+      // Own half: straight away.
+      const a = scenario(seed);
+      const adA = a.attackDir(0);
+      const evA = slideFoul(a, a.players[9], a.players[11 + 6], -adA * 12, 3);
+      if (evA.some((e) => e.type === 'foul')) {
+        expect(evA.some((e) => e.type === 'advantage')).toBe(false);
+        const r = evA.find((e) => e.type === 'restart');
+        expect(r).toEqual({ type: 'restart', kind: 'freekick', side: 0 });
+        own++;
+      }
+      // Their half, but it runs to a defender: brought back.
+      const b = scenario(seed);
+      const adB = b.attackDir(0);
+      const x = adB * (HALF_L - 28);
+      place(b.players[11 + 5], x + adB * 2.4, 0.5);
+      const evB = slideFoul(b, b.players[9], b.players[11 + 6], x, 0);
+      if (evB.some((e) => e.type === 'foul') && !evB.some((e) => e.type === 'advantage')) {
+        expect(evB.some((e) => e.type === 'restart' && e.kind === 'freekick' && e.side === 0)).toBe(true);
+        const r = b.restart!;
+        expect(Math.abs(r.x - x)).toBeLessThan(3);
+        back++;
+      }
+    }
+    expect(own).toBeGreaterThanOrEqual(6);
+    expect(back).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('goal credit', () => {
+  /** A shot from 12 m with the keeper out of it; returns once it's struck. */
+  function strike(seed: number) {
+    const m = scenario(seed);
+    const ad = m.attackDir(0);
+    const gx = ad * HALF_L;
+    const s = m.players[9];
+    place(s, gx - ad * 12, 1);
+    s.facing = ad > 0 ? 0 : Math.PI;
+    giveBall(m, s);
+    place(m.keeperOf(1)!, gx + ad * 3, 20);
+    m.order(s, 'shot', 0, 0, 0.55, -1, false);
+    for (let i = 0; i < 30 && m.shotClock > 0.3; i++) {
+      m.step(DT, EMPTY_PAD);
+      m.drainEvents();
+    }
+    return { m, s };
+  }
+  const toGoal = (m: Match) => {
+    for (let i = 0; i < 120; i++) {
+      m.step(DT, EMPTY_PAD);
+      const g = m.drainEvents().find((e) => e.type === 'goal');
+      if (g) return g;
+    }
+    return undefined;
+  };
+
+  it("an on-target shot that goes in off a defender's (or keeper's) touch is the shooter's goal", () => {
+    let n = 0;
+    for (const seed of [2, 5, 9, 14, 21, 33]) {
+      const { m, s } = strike(seed);
+      if (!m.shotWasOnTarget) continue;
+      expect(m.shooter).toBe(s.idx);
+      // The faintest of touches on the way in, as a block or a parry leaves it.
+      m.ball.lastTouch = m.players[11 + 3].idx;
+      m.ball.lastTouchSide = 1;
+      const g = toGoal(m);
+      if (!g) continue;
+      n++;
+      expect(g).toEqual({ type: 'goal', side: 0, scorer: s.idx, own: false });
+      expect(m.goals[0]).toMatchObject({ side: 0, scorer: s.idx, own: false });
+    }
+    expect(n).toBeGreaterThanOrEqual(2);
+  });
+
+  it('a shot going wide that is turned in, or a ball the defence strikes into its own net, is an own goal', () => {
+    let n = 0;
+    for (const seed of [2, 5, 9, 14, 21, 33]) {
+      const { m } = strike(seed);
+      if (!m.shotWasOnTarget) continue;
+      const d = m.players[11 + 3];
+      // Treat it as if it was going wide when struck.
+      m.shotWasOnTarget = false;
+      m.ball.lastTouch = d.idx;
+      m.ball.lastTouchSide = 1;
+      const g = toGoal(m);
+      if (!g) continue;
+      n++;
+      expect(g).toEqual({ type: 'goal', side: 0, scorer: d.idx, own: true });
+    }
+    expect(n).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('set-piece run-up and throw range', () => {
+  it('the free-kick taker waits off the ball (1.5 m back, 0.9 m aside) and steps in to strike it', () => {
+    for (const [seed, dist, z] of [[4, 21, 3], [8, 26, -5], [15, 19, 0.5]] as const) {
+      const m = scenario(seed);
+      const ad = m.attackDir(0);
+      const gx = ad * HALF_L;
+      slideFoul(m, m.players[9], m.players[11 + 6], gx - ad * dist, z);
+      toRestart(m);
+      const r = m.restart!;
+      expect(r.kind).toBe('freekick');
+      m.step(DT, EMPTY_PAD);
+      m.drainEvents();
+      const t = m.players[r.taker];
+      const fx = Math.cos(t.facing);
+      const fz = Math.sin(t.facing);
+      const bx = r.x - t.pos.x;
+      const bz = r.z - t.pos.z;
+      expect(bx * fx + bz * fz).toBeCloseTo(1.5, 1);
+      expect(Math.abs(-fz * bx + fx * bz)).toBeCloseTo(0.9, 1);
+      // The ball is on his kicking-foot side.
+      expect(Math.sign(-fz * bx + fx * bz)).toBe(m.runUpFoot);
+      let struck = false;
+      for (let i = 0; i < 60 * 8 && !struck; i++) {
+        m.step(DT, EMPTY_PAD);
+        struck = m.drainEvents().some((e) => e.type === 'kick');
+      }
+      expect(struck).toBe(true);
+      expect(Math.hypot(t.pos.x - r.x, t.pos.z - r.z)).toBeLessThan(0.9);
+    }
+  });
+
+  it('a throw-in never goes further than a throw can (it used to go to the keeper at 120 m/s)', () => {
+    for (const seed of [1, 4, 9]) {
+      const m = scenario(seed);
+      // Everyone is parked along the far touchline: nobody in range of a throw on this side.
+      m.ball.reset(6, HALF_W + 0.4);
+      m.ball.lastTouch = m.players[14].idx;
+      m.ball.lastTouchSide = 1;
+      let from: { x: number; z: number } | null = null;
+      let speed = 0;
+      let target = -1;
+      for (let i = 0; i < 60 * 12 && !from; i++) {
+        m.step(DT, EMPTY_PAD);
+        for (const e of m.drainEvents()) {
+          if (e.type === 'kick' && e.kind === 'throw') {
+            from = { x: e.x, z: e.z };
+            speed = m.ball.speed();
+            target = m.passTarget;
+          }
+        }
+      }
+      expect(from).not.toBeNull();
+      expect(speed).toBeLessThan(22);
+      if (target >= 0) expect(m.players[target].isKeeper).toBe(false);
+      let land: { x: number; z: number } | null = null;
+      for (let i = 0; i < 60 * 3 && !land; i++) {
+        m.step(DT, EMPTY_PAD);
+        m.drainEvents();
+        if (m.ball.owner >= 0 || (m.ball.pos.y < 0.4 && m.ball.vel.y <= 0)) land = { x: m.ball.pos.x, z: m.ball.pos.z };
+      }
+      expect(land).not.toBeNull();
+      expect(Math.hypot(land!.x - from!.x, land!.z - from!.z)).toBeLessThan(THROW_RANGE + 3);
+    }
+  });
+});
+
+describe('goal celebration', () => {
+  it('the mob reaches the scorer within ~2.5 s on his way to the corner flag; the conceding side walks off; only resumeAfterGoal ends it', () => {
+    for (const seed of [3, 7, 12]) {
+      const m = scenario(seed);
+      const ad = m.attackDir(0);
+      const gx = ad * HALF_L;
+      const scorer = m.players[9];
+      place(scorer, gx - ad * 9, -2);
+      [10, 8, 7, 6].forEach((i, k) => place(m.players[i], gx - ad * (12 + k * 3), -8 + k * 5));
+      for (let i = 12; i < 22; i++) place(m.players[i], gx - ad * (6 + (i % 4) * 3), -9 + (i % 5) * 4);
+      const b = m.ball;
+      b.reset(gx + ad * 0.6, 0);
+      b.pos.y = 0.8;
+      b.vel.x = ad * 8;
+      b.lastTouch = scorer.idx;
+      b.lastTouchSide = 0;
+      m.step(DT, EMPTY_PAD);
+      expect(m.phase).toBe('goal');
+      expect(m.drainEvents().find((e) => e.type === 'goal')).toEqual({ type: 'goal', side: 0, scorer: scorer.idx, own: false });
+      expect(m.celebHero).toBe(scorer.idx);
+      const spot = m.celebSpot;
+      expect(spot.z).toBeGreaterThan(HALF_W - 6);
+      expect(Math.sign(spot.x)).toBe(Math.sign(gx));
+      const d0 = Math.hypot(scorer.pos.x - spot.x, scorer.pos.z - spot.z);
+      const conceding = m.teamPlayers(1).filter((p) => !p.isKeeper).map((p) => ({ p, x: p.pos.x, z: p.pos.z }));
+      let reached = -1;
+      let top = 0;
+      for (let i = 0; i < 60 * 4; i++) {
+        m.step(DT, EMPTY_PAD);
+        m.drainEvents();
+        top = Math.max(top, scorer.speed());
+        const mob = m.teamPlayers(0).filter((p) => p !== scorer && !p.isKeeper && Math.hypot(p.pos.x - scorer.pos.x, p.pos.z - scorer.pos.z) < 2.5);
+        if (reached < 0 && mob.length >= 3) reached = m.phaseT;
+      }
+      expect(reached).toBeGreaterThan(0);
+      expect(reached).toBeLessThan(2.6);
+      expect(top).toBeGreaterThan(8.3); // the celebration sprint (up to 9 m/s)
+      expect(Math.hypot(scorer.pos.x - spot.x, scorer.pos.z - spot.z)).toBeLessThan(d0 - 6);
+      // The conceding side has walked off (~12 m towards its kick-off spots), away from the party.
+      const moved = conceding.map(({ p, x, z }) => Math.hypot(p.pos.x - x, p.pos.z - z));
+      expect(moved.reduce((a, v) => a + v, 0) / moved.length).toBeGreaterThan(6);
+      for (const { p } of conceding) expect(Math.hypot(p.pos.x - scorer.pos.x, p.pos.z - scorer.pos.z)).toBeGreaterThan(2.5);
+      // Nothing in the sim ends the goal phase on its own.
+      for (let i = 0; i < 60 * 8; i++) m.step(DT, EMPTY_PAD);
+      expect(m.phase).toBe('goal');
+      m.resumeAfterGoal();
+      expect(m.phase).toBe('kickoff');
+    }
   });
 });

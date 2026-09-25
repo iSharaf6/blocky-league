@@ -650,9 +650,24 @@ body {
   gap: 7px;
 }
 
+/* Wide panels: two columns of five (play stats | set pieces and discipline). */
+@media (min-width: 700px) {
+  .stats {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: repeat(5, auto);
+    grid-auto-flow: column;
+    column-gap: 14px;
+  }
+  /* A rule between the two columns, so the numbers either side of it never read as one. */
+  .stats .st-row:nth-child(n + 6) {
+    border-left: 3px solid var(--cream-2);
+    padding-left: 14px;
+  }
+}
+
 .st-row {
   display: grid;
-  grid-template-columns: 44px 1fr 110px 1fr 44px;
+  grid-template-columns: 40px minmax(0, 1fr) 112px minmax(0, 1fr) 40px;
   align-items: center;
   gap: 8px;
   font: 400 15px var(--round);
@@ -660,9 +675,23 @@ body {
 
 .st-row span {
   text-align: center;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--ink-2);
+  white-space: nowrap;
 }
+
+.st-card {
+  display: inline-block;
+  width: 9px;
+  height: 12px;
+  margin: 0 5px 0 1px;
+  vertical-align: -1px;
+  background: var(--yellow);
+  box-shadow: 0 0 0 1.5px var(--ink);
+  transform: rotate(-6deg);
+}
+
+.st-card.red { background: var(--red); }
 
 .st-row b:last-child {
   text-align: right;
@@ -754,7 +783,7 @@ body {
 
 kbd {
   display: inline-block;
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   background: var(--ink);
   color: var(--cream);
   padding: 3px 6px 2px;
@@ -850,6 +879,7 @@ kbd {
 .sb-cards {
   grid-row: 2;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding-top: 5px;
 }
@@ -861,24 +891,27 @@ kbd {
 .sb-card {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   background: var(--ink);
-  padding: 4px 7px 4px 6px;
+  padding: 4px 6px;
   font: 400 15px / 1 var(--round);
   color: var(--cream);
 }
 
-.sb-card i {
+/* One 14 x 18 card per booked player (red replaces a second-yellow player's yellow). */
+.sb-chip {
   display: block;
-  width: 12px;
-  height: 16px;
+  flex: none;
+  width: 14px;
+  height: 18px;
   background: var(--yellow);
   box-shadow: inset -2px -3px 0 rgba(0, 0, 0, 0.22), 0 0 0 2px var(--cream);
-  transform: rotate(-8deg);
+  transform: rotate(-6deg);
 }
 
-.sb-card.red i { background: var(--red); }
-.sb-card.new { animation: card-pop 0.5s cubic-bezier(0.2, 1.8, 0.4, 1); }
+.sb-chip.red { background: var(--red); }
+.sb-chip.new { animation: card-pop 0.5s cubic-bezier(0.2, 1.8, 0.4, 1); }
+.sb-card b { font-weight: 400; margin-left: 1px; }
 
 @keyframes card-pop {
   from { transform: translateY(-10px) scale(0.5); opacity: 0; }
@@ -1039,7 +1072,9 @@ kbd {
   color: var(--red);
 }
 
-.hud.replaying .hud-tip {
+.hud.replaying .hud-tip,
+.hud:has(.hud-banner.on.goal:not(.small)) .hud-tip,
+.hud:has(.hud-banner.on.intro) .hud-tip {
   opacity: 0;
 }
 
@@ -1128,7 +1163,7 @@ kbd {
 }
 
 .hud-replay span {
-  font: 400 13px var(--round);
+  font: 400 15px var(--round);
   color: var(--cream);
   text-shadow: 0 2px 0 var(--ink);
 }
@@ -1209,6 +1244,7 @@ kbd {
 
 .tb {
   --c: var(--go);
+  --cd: var(--go-d);
   position: absolute;
   pointer-events: auto;
   appearance: none;
@@ -1216,31 +1252,88 @@ kbd {
   width: 84px;
   height: 84px;
   padding: 0;
-  font: 400 13px var(--round);
-  letter-spacing: 0.5px;
+  font: 400 17px / 1 var(--round);
+  letter-spacing: 0;
   color: #fff;
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
   touch-action: none;
-  /* Translucent so the play underneath stays visible; a coloured ring keeps each button's identity. */
-  background: rgba(255, 255, 255, 0.14);
-  border: 3px solid rgba(255, 255, 255, 0.7);
-  box-shadow: inset 0 0 0 5px color-mix(in srgb, var(--c) 75%, transparent), 0 4px 0 rgba(0, 0, 0, 0.25);
-  opacity: 0.62;
-  transition: transform 0.05s, opacity 0.08s, background 0.08s;
+  /* Solid-ish chunky buttons (a little of the pitch shows through), white rim, darker "3D" base. */
+  background: color-mix(in srgb, var(--c) 86%, transparent);
+  border: 3px solid #fff;
+  box-shadow: 0 5px 0 color-mix(in srgb, var(--cd) 90%, transparent), 0 8px 0 rgba(0, 0, 0, 0.16);
+  transition: transform 0.05s, box-shadow 0.05s, background 0.08s;
+}
+
+.tb span {
+  display: block;
+  margin-top: -2px;
 }
 
 .tb.down {
-  transform: scale(0.93);
-  opacity: 0.95;
-  background: color-mix(in srgb, var(--c) 70%, transparent);
+  transform: translateY(4px) scale(0.96);
+  background: var(--c);
+  box-shadow: 0 1px 0 var(--cd), 0 3px 0 rgba(0, 0, 0, 0.16);
 }
 
-.tb-pass { --c: var(--go); right: 0; bottom: 0; width: 98px; height: 98px; font-size: 16px; }
-.tb-shoot { --c: var(--red); right: 108px; bottom: 4px; }
-.tb-through { --c: var(--blue); right: 6px; bottom: 108px; }
-.tb-sprint { --c: #d9d6cc; right: 104px; bottom: 104px; width: 70px; height: 70px; font-size: 13px; }
+.tb-pass { --c: var(--go); --cd: var(--go-d); right: 0; bottom: 0; width: 98px; height: 98px; font-size: 19px; }
+.tb-shoot { --c: var(--red); --cd: var(--red-d); right: 108px; bottom: 4px; }
+.tb-through { --c: var(--blue); --cd: var(--blue-d); right: 4px; bottom: 106px; width: 90px; height: 90px; }
+.tb-sprint { --c: var(--ink-2); --cd: var(--ink); right: 106px; bottom: 104px; width: 72px; height: 72px; font-size: 16px; }
 
-.touch[data-ctx='defend'] .tb-pass { --c: var(--yellow); }
+/* Defending: PASS becomes SWITCH (yellow, dark label for contrast). */
+.touch[data-ctx='defend'] .tb-pass { --c: var(--yellow); --cd: var(--yellow-d); color: var(--ink); text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4); }
+
+/* Dead-ball moments (goal celebration, replay, half / full time, any menu) hide the controls; the HUD is
+   "dead" then too, except for our own behind-the-ball set pieces, which always carry a hint. */
+.touch .touch-btns,
+.touch .touch-base,
+.touch .touch-stick-zone {
+  transition: opacity 0.2s, visibility 0s linear 0s;
+}
+
+.touch.off .touch-btns,
+.touch.off .touch-base,
+.touch.off .touch-stick-zone,
+#ui:has(> .screen) .touch .touch-btns,
+#ui:has(> .screen) .touch .touch-base,
+#ui:has(> .screen) .touch .touch-stick-zone,
+#ui:has(.hud.replaying) .touch .touch-btns,
+#ui:has(.hud.replaying) .touch .touch-base,
+#ui:has(.hud.replaying) .touch .touch-stick-zone,
+#ui:has(.hud.dead):not(:has(.hud-hint.on)) .touch .touch-btns,
+#ui:has(.hud.dead):not(:has(.hud-hint.on)) .touch .touch-base,
+#ui:has(.hud.dead):not(:has(.hud-hint.on)) .touch .touch-stick-zone,
+#ui:has(.hud-banner.on.goal:not(.small)) .touch .touch-btns,
+#ui:has(.hud-banner.on.goal:not(.small)) .touch .touch-base,
+#ui:has(.hud-banner.on.goal:not(.small)) .touch .touch-stick-zone {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0s linear 0.2s;
+}
+
+/* Replays: tap anywhere (below the score bug) to skip. */
+.touch-skip {
+  position: absolute;
+  inset: 15% 0 0 0;
+  display: none;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+#ui:has(.hud.replaying) .touch-skip {
+  display: block;
+}
+
+.hud-replay .rp-tap { display: none; }
+#ui:has(> .touch:not(.hidden)) .hud-replay .rp-key { display: none; }
+#ui:has(> .touch:not(.hidden)) .hud-replay .rp-tap { display: block; }
+
+/* The HUD and touch layers cover the screen but only their own widgets take input (the pause button
+   under the touch layer must stay tappable). */
+#ui > .hud,
+#ui > .touch {
+  pointer-events: none;
+}
 
 @media (max-width: 720px) {
   .howto { grid-template-columns: 1fr; }
@@ -1248,7 +1341,7 @@ kbd {
 
 @media (max-width: 720px), (max-height: 480px) {
   .opt-row { grid-template-columns: 1fr; gap: 6px; }
-  .st-row { grid-template-columns: 34px 1fr 86px 1fr 34px; }
+  .st-row { grid-template-columns: 30px minmax(0, 1fr) 108px minmax(0, 1fr) 30px; gap: 6px; }
   /* Phones keep the radar (DLS players live by it), just smaller; the chip goes. */
   .hud-chip { display: none; }
   .scorebug { font-size: 16px; }
@@ -1258,16 +1351,16 @@ kbd {
   .sb-clock { min-width: 0; margin-left: 4px; }
   .sb-team i { width: 12px; height: 14px; }
   .sb-cards { padding-top: 4px; }
-  .sb-card { padding: 3px 6px 3px 5px; font-size: 14px; }
-  .sb-card i { width: 9px; height: 12px; }
+  .sb-card { padding: 3px 5px; }
   .hud-pause { width: 38px; height: 38px; font-size: 16px; }
-  .hud-tip { font-size: 13px; top: 48px; }
-  .tb { width: 66px; height: 66px; font-size: 13px; }
-  .tb-pass { width: 78px; height: 78px; font-size: 14px; }
-  .tb-shoot { right: 86px; }
-  .tb-through { bottom: 86px; }
-  .tb-sprint { right: 84px; bottom: 84px; width: 56px; height: 56px; font-size: 12px; }
-  .touch-btns { width: 200px; height: 180px; }
+  .hud-tip { font-size: 14px; top: 48px; }
+  .tb { width: 72px; height: 72px; font-size: 16px; }
+  .tb-pass { width: 84px; height: 84px; font-size: 17px; }
+  .tb-shoot { right: 94px; bottom: 4px; }
+  /* THROUGH is the longest label: a slightly bigger button so it clears the rim. */
+  .tb-through { right: 2px; bottom: 94px; width: 80px; height: 80px; }
+  .tb-sprint { right: 90px; bottom: 92px; width: 66px; height: 66px; font-size: 16px; }
+  .touch-btns { width: 170px; height: 180px; }
 }
 
 @media (max-height: 480px) and (orientation: landscape) {
@@ -1300,7 +1393,7 @@ kbd {
 }
 
 .motm-card span {
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1px;
   color: var(--yellow);
 }
@@ -1316,7 +1409,7 @@ kbd {
 }
 
 .motm-card small {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   color: #cfd3d8;
 }
 
@@ -1350,104 +1443,6 @@ kbd {
 
 @media (max-width: 560px) {
   .motm { grid-template-columns: 1fr; }
-}
-
-.panel.tactics {
-  width: min(820px, 96vw);
-}
-
-.subs-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font: 400 16px var(--round);
-}
-
-.subs-left {
-  background: var(--ink);
-  color: var(--yellow);
-  padding: 4px 8px 3px;
-}
-
-.subs {
-  display: grid;
-  grid-template-columns: 1.3fr 1fr;
-  gap: 14px;
-}
-
-.sub-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
-  max-height: 42vh;
-  overflow-y: auto;
-}
-
-.sub-row {
-  appearance: none;
-  width: 100%;
-  display: grid;
-  grid-template-columns: 30px 1fr auto 70px;
-  align-items: center;
-  gap: 8px;
-  background: #fff;
-  border: 3px solid var(--ink);
-  padding: 4px 8px 3px 4px;
-  cursor: pointer;
-  font: 400 15px var(--round);
-  color: var(--ink);
-  text-align: left;
-  min-height: 40px;
-}
-
-.sub-row i {
-  font: 400 14px var(--round);
-  font-style: normal;
-  color: #fff;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
-  display: grid;
-  place-items: center;
-  height: 26px;
-}
-
-.sub-row em {
-  font: 400 13px var(--round);
-  font-style: normal;
-  color: var(--ink-2);
-}
-
-.sub-row .stam {
-  height: 8px;
-  background: var(--cream-2);
-  display: block;
-}
-
-.sub-row .stam s {
-  display: block;
-  height: 100%;
-  text-decoration: none;
-}
-
-.sub-row .ovr {
-  font: 400 15px var(--round);
-  text-align: right;
-}
-
-.sub-row.sel {
-  background: var(--yellow);
-  transform: translateX(6px);
-}
-
-.sub-row.off {
-  opacity: 0.45;
-  cursor: default;
-}
-
-@media (max-width: 640px) {
-  .subs { grid-template-columns: 1fr; }
-  .sub-row { grid-template-columns: 30px 1fr auto 52px; }
 }
 
 .main-wrap.with-captain {
@@ -1545,7 +1540,7 @@ kbd {
   background: #fff;
   border: 3px solid var(--cream-2);
   padding: 6px 2px;
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   color: var(--ink-2);
 }
 
@@ -1619,7 +1614,7 @@ kbd {
 }
 
 .mc-title span {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1px;
   color: var(--ink-2);
   max-width: 100%;
@@ -1673,7 +1668,7 @@ kbd {
 }
 
 .mc-tabs button {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .btn.poor {
@@ -1696,7 +1691,7 @@ kbd {
 
 .mc-role {
   display: inline-block;
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   padding: 4px 4px 3px;
   min-width: 30px;
   text-align: center;
@@ -1718,7 +1713,7 @@ kbd {
 }
 
 .mc-chip {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1px;
   background: var(--ink);
   color: var(--cream);
@@ -1823,7 +1818,7 @@ kbd {
 }
 
 .mc-side em {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   font-style: normal;
   background: var(--cream-2);
   padding: 4px 6px 3px;
@@ -1873,7 +1868,7 @@ kbd {
 }
 
 .mc-table th {
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1px;
   color: var(--ink-2);
   padding: 0 4px;
@@ -1923,7 +1918,7 @@ kbd {
   justify-content: center;
   align-items: center;
   gap: 8px;
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1px;
   color: var(--ink-2);
 }
@@ -1971,7 +1966,7 @@ kbd {
 }
 
 .mc-pager small {
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   color: var(--ink-2);
   letter-spacing: 1px;
 }
@@ -2017,7 +2012,7 @@ kbd {
 }
 
 .sc small {
-  font-size: 11px;
+  font-size: 14px;
   color: var(--yellow);
   margin-left: 4px;
 }
@@ -2042,7 +2037,7 @@ kbd {
 .mc-ys.next { background: #fff5c4; }
 
 .mc-ysmd {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   color: var(--ink-2);
 }
 
@@ -2123,7 +2118,7 @@ kbd {
   grid-template-columns: 34px 1fr 26px;
   align-items: center;
   gap: 8px;
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
 }
 
 .mc-bar b { text-align: right; }
@@ -2147,7 +2142,7 @@ kbd {
 
 .mc-why {
   margin-top: -4px;
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 0.5px;
   text-align: center;
   color: var(--red-d);
@@ -2193,7 +2188,7 @@ button.mc-pl:active {
 }
 
 .mc-slot {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   background: var(--cream-2);
   padding: 5px 0 4px;
   text-align: center;
@@ -2223,7 +2218,7 @@ button.mc-pl:active {
 }
 
 .mc-pname small {
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   color: var(--ink-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2265,7 +2260,7 @@ button.mc-pl:active {
 }
 
 .mc-clubtxt span {
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1px;
   color: var(--yellow);
   overflow: hidden;
@@ -2281,7 +2276,7 @@ button.mc-pl:active {
   padding: 5px 10px 4px;
 }
 
-.mc-ovrbox small { font: 400 11px var(--round); }
+.mc-ovrbox small { font: 400 14px var(--round); }
 .mc-ovrbox b { font: 700 22px var(--px); line-height: 1; }
 
 .mc-squadtop {
@@ -2359,7 +2354,7 @@ button.mc-pl:active {
   left: 50%;
   margin-top: 5px;
   transform: translateX(-50%);
-  font: 400 11px var(--round);
+  font: 400 14px var(--round);
   font-style: normal;
   color: #fff;
   background: rgba(38, 38, 46, 0.82);
@@ -2530,7 +2525,7 @@ button.mc-pl:active {
 }
 
 .mc-field span {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1px;
 }
 
@@ -2607,7 +2602,7 @@ button.mc-pl:active {
 }
 
 .mc-pat span {
-  font: 400 12px var(--round);
+  font: 400 14px var(--round);
   color: var(--ink);
 }
 
@@ -2662,7 +2657,7 @@ button.mc-pl:active {
 }
 
 .mc-stadlvl {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1px;
   color: var(--ink-2);
   margin-bottom: 6px;
@@ -2760,7 +2755,7 @@ button.mc-pl:active {
 }
 
 .mc-hist {
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   padding: 6px 8px 4px;
   background: var(--cream-2);
 }
@@ -2782,10 +2777,10 @@ button.mc-pl:active {
   .mc-swatches { grid-template-columns: repeat(6, 1fr); }
   .mc-pats { grid-template-columns: repeat(3, 1fr); }
   .mc-pitch { aspect-ratio: 1 / 1; }
-  .mc-dot { width: 36px; height: 36px; font-size: 13px; }
+  .mc-dot { width: 36px; height: 36px; font-size: 14px; }
   .mc-forms { grid-template-columns: repeat(3, 1fr); }
-  .mc-count { white-space: nowrap; font-size: 12px; }
-  .mc-tabs button { font-size: 13px; padding-left: 2px; padding-right: 2px; }
+  .mc-count { white-space: nowrap; font-size: 14px; }
+  .mc-tabs button { font-size: 14px; padding-left: 2px; padding-right: 2px; }
   .mc-quick { gap: 8px; }
   .mc-quick .btn { font-size: 14px; letter-spacing: 0.3px; padding: 12px 4px 10px; white-space: normal; }
   .mc-st { grid-template-columns: 38px minmax(0, 1fr) 26px auto; gap: 8px; }
@@ -2809,7 +2804,7 @@ button.mc-pl:active {
   .mc-fx .nm-short,
   .mc-ys .nm-short { display: inline; }
   .mc-table .xs { display: none; }
-  .mc-table { font-size: 12px; }
+  .mc-table { font-size: 14px; }
   .mc-table td { padding: 9px 3px 8px; }
   .mc-table td.club { font: 400 15px var(--round); }
 }
@@ -2869,7 +2864,7 @@ button.mc-pl:active {
 }
 
 .so-head {
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 2px;
   color: var(--yellow);
 }
@@ -2938,7 +2933,7 @@ button.mc-pl:active {
 }
 
 @media (max-width: 720px), (max-height: 480px) {
-  .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 34px); font-size: 13px; padding: 5px 7px 6px; gap: 3px; }
+  .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 34px); font-size: 14px; padding: 5px 7px 6px; gap: 3px; }
   .so-dot { width: 11px; height: 11px; }
   .so-dots { gap: 3px; }
 }
@@ -2948,7 +2943,18 @@ button.mc-pl:active {
 .hud:has(.sb-cards:not(:empty)) .hud-replay { top: max(96px, calc(env(safe-area-inset-top) + 86px)); }
 
 @media (max-width: 720px), (max-height: 480px) {
-  .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 56px); }
+  .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 70px); }
+}
+
+/* Widgets that hang under the score bug (tutorial tip, hints, toasts) clear it and its booking row. */
+.hud:has(.sb-cards:not(:empty)) .hud-tip { top: calc(max(12px, env(safe-area-inset-top)) + 84px); }
+
+@media (max-width: 720px), (max-height: 480px) {
+  .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 42px); }
+  .hud-tip { top: calc(max(12px, env(safe-area-inset-top)) + 46px); }
+  .hud:has(.sb-cards:not(:empty)) .hud-tip,
+  .hud:has(.sb-cards:not(:empty)) .hud-hint,
+  .hud:has(.sb-cards:not(:empty)) .hud-toast { top: calc(max(12px, env(safe-area-inset-top)) + 72px); }
 }
 
 /* The radar only shows the line-up during penalties, and it covers the taker's feet. */
@@ -3025,7 +3031,7 @@ button.mc-pl:active {
 .panel.mc .cup-rh {
   margin: 0;
   text-align: center;
-  font: 400 13px var(--round);
+  font: 400 14px var(--round);
   letter-spacing: 1.5px;
   color: var(--cream);
   background: var(--blue-d);
@@ -3083,7 +3089,7 @@ button.mc-pl:active {
 
 .ct-row b small {
   margin-left: 3px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--ink-2);
 }
 
@@ -3302,7 +3308,7 @@ button.mc-pl:active {
   .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; gap: 10px; }
   .tile { aspect-ratio: auto; gap: 6px; padding: 10px 8px 9px; min-height: 0; font: 400 16px / 1.05 var(--round); letter-spacing: 0.5px; }
   .tile .picon { width: 30px; height: 30px; }
-  .tile small { font-size: 13px; margin-top: -2px; }
+  .tile small { font-size: 14px; margin-top: -2px; }
   /* Row two: the wide cup tile and a slim settings tile, both laid out sideways. */
   .tile.tile-wide { grid-column: 1 / span 2; grid-row: 2; min-height: 48px; padding: 7px 12px 6px; column-gap: 10px; row-gap: 1px; }
   .tile.tile-wide .picon { width: 26px; height: 26px; }
@@ -3324,19 +3330,19 @@ button.mc-pl:active {
   .panel.qm h2 { grid-column: 1; grid-row: 1; font-size: 20px; align-self: center; }
   .panel.qm .vs-row { grid-column: 1; grid-row: 2 / span 4; align-self: start; gap: 6px; }
   .panel.qm .opt-row { grid-column: 2; grid-template-columns: 1fr; gap: 3px; }
-  .panel.qm .opt-row label { font-size: 13px; }
+  .panel.qm .opt-row label { font-size: 14px; }
   .panel.qm .seg { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
-  .panel.qm .seg button { padding: 7px 2px 6px; font-size: 13px; white-space: nowrap; box-shadow: 0 2px 0 var(--cream-2); }
+  .panel.qm .seg button { padding: 7px 2px 6px; font-size: 14px; white-space: nowrap; box-shadow: 0 2px 0 var(--cream-2); }
   .panel.qm > .btn-row { grid-column: 1 / -1; }
   .qm .team-pick { gap: 3px; padding: 6px 4px 8px; }
-  .qm .tp-label { font-size: 13px; padding: 3px 7px 2px; }
+  .qm .tp-label { font-size: 14px; padding: 3px 7px 2px; }
   .qm .tp-body { display: flex; gap: 4px; }
   .qm .arrow { width: 30px; height: 40px; font-size: 14px; }
   .qm .tp-3d { width: 76px; }
   .qm .tp-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .qm .tp-name .crest-svg { width: 16px; height: auto; margin-right: 4px; }
   .qm .tp-stars { font-size: 14px; letter-spacing: 1px; }
-  .qm .tp-meta { font-size: 13px; }
+  .qm .tp-meta { font-size: 14px; }
   .qm .vs { font-size: 20px; }
 
   /* Pause: RESUME across the top, the rest two by two. */
@@ -3362,15 +3368,6 @@ button.mc-pl:active {
   .motm-card em { font-size: 24px; }
   .reward { font-size: 24px; }
 
-  /* Tactics: title and mentality share a row, the lists scroll with the panel (DONE stays pinned). */
-  .panel.tactics { width: min(820px, 100%); grid-template-columns: auto minmax(0, 1fr); column-gap: 18px; }
-  .panel.tactics > * { grid-column: 1 / -1; }
-  .panel.tactics > h2 { grid-column: 1; font-size: 20px; align-self: center; }
-  .panel.tactics > .opt-row { grid-column: 2; grid-template-columns: auto minmax(0, 1fr); gap: 10px; }
-  .panel.tactics > .fine { display: none; }
-  .panel.tactics .seg button { padding: 8px 4px 7px; }
-  .sub-list { max-height: none; overflow: visible; }
-  .sub-row { min-height: 38px; }
 
   /* Gift. */
   .gift-days li { padding: 4px 2px; }
@@ -3395,4 +3392,409 @@ button.mc-pl:active {
   .cup-hero { padding: 8px 14px; }
   .cup-hero-icon .picon { width: 48px; height: 48px; }
   .cup-hero p { font-size: 15px; }
+}
+
+/* ===== portrait phones: score bug reflow (clock under the score) and a stacked top-right column ===== */
+
+@media (orientation: portrait) and (max-width: 720px) {
+  /* Crest+name | score | name+crest, with the clock tucked under the score (fixed width, so "+1" never
+     shifts anything) and the bookings under each team. Leaves the top-right corner to the pause button. */
+  .scorebug { grid-template-columns: auto minmax(100px, auto) auto; }
+  .sb-score { justify-content: center; }
+  .sb-clock { grid-row: 2; grid-column: 2; margin: 0; padding: 4px 4px 3px; min-width: 0; font-size: 16px; }
+  .sb-cards { grid-row: 2; padding-top: 3px; }
+  .sb-cards.h { padding-right: 4px; }
+  .sb-cards.a { padding-left: 4px; }
+
+  /* Minimap under the pause button, below the two-row score bug; banners / hints / tips below that. */
+  .hud-radar { top: calc(max(12px, env(safe-area-inset-top)) + 76px); }
+  .hud-tip,
+  .hud-hint,
+  .hud-toast,
+  .hud:has(.sb-cards:not(:empty)) .hud-tip,
+  .hud:has(.sb-cards:not(:empty)) .hud-hint,
+  .hud:has(.sb-cards:not(:empty)) .hud-toast { top: calc(max(12px, env(safe-area-inset-top)) + 150px); }
+  .hud-tip { max-width: calc(100vw - 24px); }
+  .hud-replay,
+  .hud:has(.sb-cards:not(:empty)) .hud-replay { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
+  .so-track,
+  .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
+}
+
+/* ===== in-match tactics: team-sheet pitch (XI in formation slots) + formation / mentality / bench ===== */
+
+.panel.tx {
+  --tw: 46px;
+  width: min(1000px, 100%);
+  gap: 12px;
+}
+
+.tx-pitch {
+  position: relative;
+  aspect-ratio: 4 / 5;
+  border: 3px solid var(--ink);
+  box-shadow: 0 5px 0 var(--cream-2);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.75)) 0 22% / 100% 3px no-repeat,
+    repeating-linear-gradient(180deg, #a2d65c 0 12.5%, #94cc4f 12.5% 25%);
+  overflow: hidden;
+}
+
+/* Own penalty box at the bottom (we attack up the screen), centre circle cut by the halfway line. */
+.tx-pitch::before {
+  content: '';
+  position: absolute;
+  left: 26%;
+  right: 26%;
+  bottom: 0;
+  height: 13%;
+  border: 3px solid rgba(255, 255, 255, 0.75);
+  border-bottom: 0;
+}
+
+.tx-pitch::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  width: 26%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border: 3px solid rgba(255, 255, 255, 0.75);
+  border-radius: 50%;
+}
+
+.tx-p {
+  appearance: none;
+  position: absolute;
+  z-index: 1;
+  /* At least the token's own width; wider where the line leaves room (a lone keeper, a front two). */
+  width: max(var(--tw), var(--room, 0%));
+  padding: 0;
+  border: 0;
+  background: none;
+  transform: translate(-50%, -16px);
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.tx-shirt {
+  position: relative;
+  display: grid;
+  /* Number on the left, rating badge over the top-right corner. */
+  place-items: center start;
+  padding-left: 5px;
+  width: calc(var(--tw) - 12px);
+  height: 34px;
+  background: var(--shirt);
+  border: 3px solid var(--ink);
+  /* Collar in the kit's trim colour. */
+  box-shadow: inset 0 3px 0 var(--trim), 0 4px 0 rgba(0, 0, 0, 0.3);
+}
+
+.tx-p.gk .tx-shirt {
+  background: var(--gk);
+  box-shadow: inset 0 3px 0 rgba(0, 0, 0, 0.18), 0 4px 0 rgba(0, 0, 0, 0.3);
+}
+
+.tx-shirt b {
+  font: 400 16px / 1 var(--round);
+  color: var(--dot-t);
+  margin-top: -6px;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+.tx-p.gk .tx-shirt b { color: var(--ink); text-shadow: none; }
+
+/* Rating badge, top-right corner of the shirt. */
+.tx-ovr {
+  position: absolute;
+  top: -6px;
+  right: -12px;
+  min-width: 24px;
+  padding: 2px 3px 1px;
+  background: var(--ink);
+  color: var(--yellow);
+  font: 400 14px / 1 var(--round);
+  font-style: normal;
+  text-align: center;
+}
+
+/* Stamina: a bar across the shirt's hem. */
+.tx-st {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  border-top: 2px solid var(--ink);
+  background: var(--ink-2);
+  text-decoration: none;
+}
+
+.tx-st u {
+  display: block;
+  height: 100%;
+  text-decoration: none;
+}
+
+.tx-nm {
+  max-width: calc(100% + 4px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 14px / 1 var(--round);
+  font-style: normal;
+  color: #fff;
+  background: rgba(38, 38, 46, 0.86);
+  padding: 1px 4px;
+}
+
+.tx-p.sel { z-index: 3; }
+.tx-p.sel .tx-shirt { outline: 4px solid var(--yellow); outline-offset: 2px; }
+.tx-p.sel .tx-nm { background: var(--yellow); color: var(--ink); }
+.tx-p.hot .tx-shirt { outline: 3px dashed var(--yellow); outline-offset: 2px; }
+.tx-p.dim { opacity: 0.55; }
+.tx-p.out { opacity: 0.5; cursor: default; filter: grayscale(0.8); }
+.tx-p.out .tx-shirt::after {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: -8px;
+  width: 11px;
+  height: 14px;
+  background: var(--red);
+  box-shadow: 0 0 0 2px var(--cream);
+  transform: rotate(-8deg);
+}
+.tx-p.warn .tx-nm { background: var(--red-d); }
+.tx-p.fresh .tx-shirt { animation: pop 0.4s cubic-bezier(0.2, 1.6, 0.4, 1); }
+
+.tx-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tx-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.panel .tx-head h2 { text-align: left; }
+
+.tx-left {
+  font: 400 16px / 1 var(--round);
+  background: var(--ink);
+  color: var(--yellow);
+  padding: 7px 10px 6px;
+  white-space: nowrap;
+}
+
+.tx-left.none { background: var(--cream-2); color: var(--ink-2); }
+
+.tx-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.tx-row label {
+  font: 400 15px var(--round);
+  letter-spacing: 1px;
+}
+
+.tx .seg button {
+  padding: 9px 2px 8px;
+  white-space: nowrap;
+  min-height: 42px;
+}
+
+.tx .seg button:disabled { cursor: default; opacity: 0.55; }
+
+.tx-benchbox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.tx-bh {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.panel .tx-bh h3 { margin: 0; }
+
+.tx-hint {
+  margin: 0;
+  font: 400 14px / 1.2 var(--round);
+  color: var(--ink-2);
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-bench {
+  list-style: none;
+  margin: 0;
+  padding: 0 2px 4px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  align-content: start;
+  gap: 6px;
+}
+
+.tx-b {
+  appearance: none;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto 28px;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 4px 8px 3px 4px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--cream-2);
+  font: 400 15px var(--round);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tx-b i {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  font: 400 15px var(--round);
+  font-style: normal;
+}
+
+.tx-b span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-b em { font: 400 14px var(--round); font-style: normal; color: var(--ink-2); }
+.tx-b b { font-weight: 400; text-align: right; }
+.tx-b.sel { background: var(--yellow); }
+.tx-b.hot { border-color: var(--go-d); box-shadow: 0 3px 0 var(--go); }
+.tx-b.off { opacity: 0.45; cursor: default; }
+
+.tx-empty { font: 400 15px var(--round); color: var(--ink-2); }
+
+/* Landscape: pitch on the left at full panel height; the side column fits beside it and only the bench
+   list scrolls, so DONE is always on screen. */
+@media (orientation: landscape) and (min-width: 600px) {
+  .panel.tx {
+    --txh: min(480px, calc(100vh - 40px - 2 * var(--pp)));
+    --txh: min(480px, calc(100dvh - 40px - 2 * var(--pp)));
+    height: calc(var(--txh) + 2 * var(--pp) + 8px);
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: 'pitch side' 'pitch foot';
+    column-gap: clamp(14px, 2vw, 24px);
+    row-gap: 10px;
+    overflow: hidden;
+  }
+  .tx .tx-pitch { grid-area: pitch; height: var(--txh); }
+  .tx-side { grid-area: side; }
+  .tx-benchbox { flex: 1 1 0; }
+  .tx-bench { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .panel.tx > .btn-row:last-child:not(.no-stick) {
+    grid-area: foot;
+    position: static;
+    margin: 0;
+    padding: 0;
+    background: none;
+  }
+  .panel.tx > .btn-row:last-child:not(.no-stick)::before { display: none; }
+}
+
+@media (orientation: landscape) and (min-width: 600px) and (min-height: 600px) {
+  .panel.tx { --tw: 60px; }
+  .tx-shirt { height: 40px; }
+  .tx-shirt b { font-size: 19px; margin-top: -6px; }
+  .tx-ovr { font-size: 15px; top: -8px; right: -14px; min-width: 28px; padding: 3px 4px 2px; }
+  .tx-nm { font-size: 15px; }
+  .tx-row { grid-template-columns: 116px minmax(0, 1fr); }
+  .tx-row label { font-size: 16px; }
+  .tx-b { min-height: 46px; font-size: 16px; }
+}
+
+@media (orientation: landscape) and (min-width: 600px) and (max-height: 450px) {
+  .panel.tx {
+    --txh: calc(100vh - 24px - 2 * var(--pp));
+    --txh: calc(100dvh - 24px - 2 * var(--pp));
+    --tw: 54px;
+    row-gap: 8px;
+  }
+  /* Squarer pitch on short screens: wider lines, so names fit beside each other. */
+  .tx .tx-pitch { aspect-ratio: 1 / 1; }
+  .tx-shirt { height: 30px; }
+  .tx-shirt b { margin-top: -5px; }
+  .tx-side { gap: 7px; }
+  .panel.tx .tx-head h2 { font-size: 20px; }
+  .tx-left { font-size: 15px; padding: 5px 8px 4px; }
+  .tx-row { grid-template-columns: 84px minmax(0, 1fr); gap: 8px; }
+  .tx-row label { font-size: 14px; letter-spacing: 0.5px; }
+  .tx .seg { gap: 5px; }
+  .tx .seg button { min-height: 34px; padding: 6px 2px 5px; font-size: 14px; box-shadow: 0 2px 0 var(--cream-2); }
+  .tx-benchbox { gap: 4px; }
+  .tx-bench { gap: 5px; padding-bottom: 0; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+  .tx-b { min-height: 34px; padding: 2px 6px 1px 3px; gap: 6px; grid-template-columns: 26px minmax(0, 1fr) auto 24px; box-shadow: none; }
+  .tx-b i { height: 24px; }
+  .panel.tx > .btn-row .btn-lg { padding: 11px 26px 9px; }
+}
+
+/* Portrait: one column. Title + formation, then the pitch, mentality and bench; DONE stays pinned. */
+@media (orientation: portrait), (max-width: 599.98px) {
+  .panel.tx { gap: 10px; --tw: 54px; }
+  .tx-side { display: contents; }
+  .tx-head { order: 1; }
+  .tx-forms-row { order: 2; }
+  /* Full panel width; an explicit height (not aspect-ratio), because the panel's max-height would
+     otherwise let the grid squeeze this row below the pitch's real height. */
+  .tx .tx-pitch { order: 3; justify-self: stretch; aspect-ratio: auto; height: calc((100vw - 40px - 2 * var(--pp)) * 1.08); }
+  .tx-ment-row { order: 4; }
+  .tx-benchbox { order: 5; }
+  .panel.tx > .btn-row { order: 6; }
+  .tx-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .tx .seg { gap: 5px; }
+  .tx .seg button { font-size: 14px; min-height: 40px; }
+  .tx-bench { grid-template-columns: minmax(0, 1fr); }
+  .panel.tx .tx-head h2 { font-size: 22px; }
+}
+
+@media (orientation: portrait) and (min-width: 600px) {
+  .tx .tx-pitch { justify-self: center; width: 440px; height: 475px; }
+}
+
+/* My Club squad screen uses the same team-sheet pitch (no stamina there). */
+.mc-teampitch { --tw: 56px; }
+.mc-teampitch .tx-p { cursor: pointer; }
+
+@media (max-width: 640px) {
+  .mc-teampitch { aspect-ratio: 1 / 1.05; }
+}
+
+/* Very narrow portrait phones (< 360 px): the crests go so the score bug still clears the pause button. */
+@media (orientation: portrait) and (max-width: 359.98px) {
+  .sb-team .crest-svg,
+  .sb-team i.crest { display: none; }
+}
+
+/* Daily gift on narrow phones: two rows of days, so "DAY 1" (14 px) stays on one line. */
+@media (max-width: 480px) {
+  .gift-days { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 8px; }
+  .gift-days li { white-space: nowrap; }
 }

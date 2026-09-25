@@ -10,7 +10,8 @@ import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
 import { World, type TimeOfDay } from './render/world';
-import type { Side } from './sim/types';
+import type { Match } from './sim/match';
+import type { FormationId, Side } from './sim/types';
 import { DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
 import { DIVISION_NAMES, clubRating, migrateCareer, nextMatch } from './meta/career';
 import { ROUND_NAMES, clubRating as presetRating, migrateCup } from './meta/cup';
@@ -232,6 +233,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     menus.tactics(s.match, humanSide, kits, {
       setMentality: (v) => s.setMentality(humanSide, v),
       substitute: (slot, benchIdx) => s.substitute(humanSide, slot, benchIdx),
+      // Match.setFormation is new in the sim; the optional call keeps older builds working (picker is a no-op).
+      setFormation: (id) => (s.match as Match & { setFormation?: (side: Side, f: FormationId) => unknown }).setFormation?.(humanSide, id),
       back,
     });
   s.onPause = () => {

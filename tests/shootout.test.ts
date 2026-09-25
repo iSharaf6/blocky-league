@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { DT } from '../src/sim/constants';
+import { angleDiff } from '../src/core/math';
+import { DT, HALF_W } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad, type Phase } from '../src/sim/match';
 import { goalsOf, nextTurn, shootoutWinner } from '../src/sim/shootout';
 import type { MatchEvent } from '../src/sim/types';
@@ -184,6 +185,32 @@ describe('penalty shootout in the match', () => {
     expect(x.stats).toEqual(y.stats);
   });
 
+  it('at the end the winners pile up on the hub facing the camera, the losers trudge off to the far side, backs turned', () => {
+    for (const seed of [3, 11, 29]) {
+      const m = lateLevel(seed, true);
+      run(m);
+      const w = m.shootout!.winner as 0 | 1;
+      // Watch the scene the full-time screen comes up over.
+      for (let i = 0; i < 60 * 6; i++) m.step(DT, EMPTY_PAD);
+      const hub = { x: 0, z: HALF_W * 0.3 };
+      const winners = m.teamPlayers(w).filter((p) => !p.sentOff);
+      const losers = m.teamPlayers(w === 0 ? 1 : 0).filter((p) => !p.sentOff);
+      for (const p of winners) {
+        expect(p.state).toBe('celebrate');
+        expect(Math.hypot(p.pos.x - hub.x, p.pos.z - hub.z)).toBeLessThan(3.6);
+      }
+      for (const p of losers) {
+        expect(p.state).toBe('dejected');
+        expect(p.pos.z).toBeLessThan(-7);
+        expect(Math.abs(p.pos.x)).toBeLessThanOrEqual(11);
+        expect(Math.abs(angleDiff(p.facing, -Math.PI / 2))).toBeLessThan(0.6);
+      }
+      let gap = Infinity;
+      for (const a of winners) for (const b of losers) gap = Math.min(gap, Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z));
+      expect(gap).toBeGreaterThan(8);
+    }
+  });
+
   it('the human aims with the stick and shoots on release', () => {
     const m = lateLevel(12, true, 0);
     for (let i = 0; i < 20 && m.phase !== 'shootout'; i++) m.step(DT, EMPTY_PAD);
@@ -198,7 +225,8 @@ describe('penalty shootout in the match', () => {
     for (let i = 0; i < 40; i++) m.step(DT, { ...EMPTY_PAD, mz: 1, shoot: true });
     expect(so.stage).toBe('aim');
     m.step(DT, { ...EMPTY_PAD, mz: 1 });
-    for (let i = 0; i < 12 && so.stage === 'aim'; i++) m.step(DT, EMPTY_PAD);
+    // He steps in from his run-up (~0.2 s) and strikes it.
+    for (let i = 0; i < 40 && so.stage === 'aim'; i++) m.step(DT, EMPTY_PAD);
     expect(so.stage === 'flight' || so.stage === 'result').toBe(true);
     expect(so.pen!.z).toBeGreaterThan(2.5);
     expect(m.ball.vel.z).toBeGreaterThan(0);

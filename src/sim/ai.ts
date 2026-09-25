@@ -1,6 +1,6 @@
 import { clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, throughSpeed } from './actions';
-import { BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, WALL_DIST } from './constants';
+import { ACCEL, BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, WALL_DIST } from './constants';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import type { Match } from './match';
 import type { Player } from './player';
@@ -120,6 +120,18 @@ const isWide = (m: Match, p: Player) => Math.abs(slotOf(m, p).z) >= 0.5;
 /** Normalised own-frame x: -1 our goal line, +1 theirs. */
 const nX = (m: Match, side: Side, x: number) => (x * m.attackDir(side)) / HALF_L;
 
+/**
+ * Does the AI on the ball read teammate `t` as offside? It judges the line by eye: clear cases are
+ * never wrong, marginal ones sometimes are (less often for better sides).
+ */
+export function looksOffside(m: Match, t: Player): boolean {
+  if (!m.offside) return false;
+  if (!m.inOffsidePosition(t, -1.2)) return false;
+  if (m.inOffsidePosition(t, 1.6)) return true;
+  const err = m.rng.gauss() * clamp(1 - m.aiSkill(t.side) * 0.1, 0.4, 1);
+  return m.inOffsidePosition(t, err - 0.15);
+}
+
 /** Formation position given the reference ball point, in world space (used for set pieces). */
 export function shapeTarget(m: Match, p: Player, attacking: boolean, refX: number, refZ: number): { x: number; z: number } {
   const ad = m.attackDir(p.side);
@@ -183,13 +195,14 @@ function assignRoles(m: Match, side: Side, brain: TeamBrain): void {
   brain.presser = -1;
   brain.cover = -1;
   brain.marks.clear();
-  // The line steps up with the ball, holds around the edge of the box, and only drops
-  // inside it once the ball is right on top of it.
+  // The line steps up with the ball but sits off it, drops to around the penalty spot as the
+  // ball comes towards the box, and tracks it inside once it's right on top of it. (Deeper than a
+  // no-offside line: with the law on, the space in behind is what attackers have to earn.)
   const bxN = nX(m, side, ball.pos.x);
-  brain.line = bxN < -0.6 ? Math.max(-0.88, bxN - 0.1) : clamp(bxN - 0.36, -0.68, -0.1);
+  brain.line = bxN < -0.72 ? Math.max(-0.88, bxN - 0.1) : clamp(bxN - 0.5, -0.82, -0.12);
   // Mentality: attacking sides hold a higher line, defensive ones sit deeper.
   const ment = m.mentality[side];
-  if (ment !== 0 && bxN >= -0.6) brain.line = clamp(brain.line + ment * 0.08, -0.74, 0.02);
+  if (ment !== 0 && bxN >= -0.7) brain.line = clamp(brain.line + ment * 0.08, -0.86, 0.02);
   if (owner && ball.held) return;
   const flight = !owner && m.passTarget >= 0 ? m.players[m.passTarget] : null;
 
@@ -471,6 +484,18 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
     if (p.runT <= 0 || nX(m, p.side, p.pos.x) > 0.88) {
       p.running = false;
       p.runT = 1.4 + m.rng.next() * 2.4;
+    } else if (m.offside && c && c !== p && c.side === p.side && m.inOffsidePosition(p, 0.8)) {
+      // The pass didn't come in time: check back onside and go again from the line.
+      p.running = false;
+      p.runT = 0.5 + m.rng.next() * 0.9;
+    } else if (m.offside && !p.runCued && c && c !== p && c.side === p.side && !m.isHumanControlled(c)) {
+      // Arriving on the last man at full tilt: that's the moment to play it (the carrier looks up).
+      const ad = m.attackDir(p.side);
+      const gap = (Math.max(m.offsideLine(p.side), nX(m, p.side, m.ball.pos.x)) - nX(m, p.side, p.pos.x)) * HALF_L;
+      if (gap < 4 && gap > -0.2 && p.vel.x * ad > 5) {
+        p.runCued = true;
+        c.aiT = Math.min(c.aiT, 0.02);
+      }
     }
     return;
   }
@@ -484,6 +509,7 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
   const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45);
   if (pr > 2.2 && facingFwd && n > line - 0.32 && line < 0.8 && m.rng.chance(chance)) {
     p.running = true;
+    p.runCued = false;
     p.runT = 2.1 + m.rng.next() * 0.9;
   } else {
     p.runT = 0.7 + m.rng.next() * 1.8;
@@ -493,15 +519,34 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
 function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: number; z: number; u: number } {
   const side = p.side;
   const ad = m.attackDir(side);
-  const zone = brain.boxZones.get(p.idx);
-  if (zone) return { x: zone.x, z: zone.z, u: 0.85 };
-  if (brain.supporter === p.idx) return { x: brain.supportX, z: brain.supportZ, u: 0.6 };
-  if (brain.supporter2 === p.idx) return { x: brain.support2X, z: brain.support2Z, u: 0.6 };
-  const slot = slotOf(m, p);
   const b = m.ball.pos;
   const bx = nX(m, side, b.x);
+  // With the law on, the line that matters is the offside line (second-last defender, or the ball
+  // if it's further up, never inside our half); otherwise their last outfield defender.
+  const line = m.offside ? Math.max(m.offsideLine(side), bx) : m.defLine(other(side));
+  const owner = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
+  const onBall = !!owner && owner.side === side;
+  // Caught beyond the line while a teammate has it: get back onside, quickly.
+  const stranded = m.offside && onBall && !p.running && m.inOffsidePosition(p, -0.2);
+  const zone = brain.boxZones.get(p.idx);
+  if (zone) {
+    // Hold the run on the last man until the cross is struck, then attack the zone.
+    let zx = zone.x;
+    if (m.offside && onBall) {
+      const lim = (line * HALF_L - 0.2) * ad;
+      if ((zx - lim) * ad > 0) zx = lim;
+    }
+    return { x: zx, z: zone.z, u: stranded ? 0.95 : 0.85 };
+  }
+  if (brain.supporter === p.idx || brain.supporter2 === p.idx) {
+    const one = brain.supporter === p.idx;
+    let sx = one ? brain.supportX : brain.support2X;
+    const sz = one ? brain.supportZ : brain.support2Z;
+    if (m.offside && onBall && p.role !== 'DF' && nX(m, side, sx) > line - 0.012) sx = (line - 0.012) * HALF_L * ad;
+    return { x: sx, z: sz, u: stranded ? 0.95 : 0.6 };
+  }
+  const slot = slotOf(m, p);
   const bz = (b.z * ad) / HALF_W;
-  const line = m.defLine(other(side)); // their last defender, in our frame
   const wide = Math.abs(slot.z) >= 0.5;
   const ballSide = bz * slot.z > 0;
   const ment = m.mentality[side];
@@ -527,6 +572,13 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
       x = Math.min(line + 0.22, 0.9);
       z *= 0.55; // attack the channel between centre-back and full-back
       u = 0.95;
+    } else if (m.offside) {
+      // Stay on the last man (level is onside), ready to spin in behind; if stranded, drop back.
+      x = Math.min(x, line - 0.01);
+      if (stranded) {
+        x = Math.min(x, nX(m, side, p.pos.x) - 0.08);
+        u = 0.95;
+      }
     } else {
       x = Math.min(x, line - 0.015);
     }
@@ -660,7 +712,7 @@ function chaseSlide(m: Match, p: Player, c: Player, dt: number): void {
   const ad = m.attackDir(p.side);
   const beaten = (c.pos.x - p.pos.x) * ad < 0.3; // he's level with us or past us, towards our goal
   let rate = SLIDE_RATE * (0.7 + m.aiSkill(p.side) * 0.15) * (beaten ? 1.2 : 0.85) * (1 + m.mentality[p.side] * 0.2);
-  if (inOwnBox(m, p.side, c.pos.x, c.pos.z)) rate *= 0.4;
+  if (inOwnBox(m, p.side, c.pos.x, c.pos.z)) rate *= 0.6;
   // Only a reckless defender slides when the carrier's body is between him and the ball.
   const bx = b.pos.x + c.vel.x * 0.18;
   const bz = b.pos.z + c.vel.z * 0.18;
@@ -700,7 +752,7 @@ function aerialOrVolley(m: Match, p: Player): void {
         if (t === p || t.isKeeper || t.sentOff) continue;
         const dt = dist2(t.pos.x, t.pos.z, p.pos.x, p.pos.z);
         const tq = shotQuality(t.pos.x, t.pos.z, ad);
-        if (dt > 3 && dt < 11 && tq > bestQ && nearestOpp(m, p.side, t.pos.x, t.pos.z).d > 1.8) {
+        if (dt > 3 && dt < 11 && tq > bestQ && nearestOpp(m, p.side, t.pos.x, t.pos.z).d > 1.8 && !m.inOffsidePosition(t)) {
           bestQ = tq;
           lay = t;
         }
@@ -796,6 +848,21 @@ function shield(m: Match, p: Player, o: Player): void {
 
 type Choice = { s: number; run: () => void };
 
+/** Lateral offsets (m) tried for a through ball, around the runner's own line. */
+const THREAD_OFFSETS = [0, -3.5, 3.5, -7, 7];
+
+/**
+ * Time (s) `p` loses getting up to full speed towards (x, z), compared with already being flat out
+ * that way: top / (2 ACCEL) from a standstill (or from running the other way), nothing at full tilt.
+ */
+function spinUp(p: Player, x: number, z: number): number {
+  const dx = x - p.pos.x;
+  const dz = z - p.pos.z;
+  const d = Math.hypot(dx, dz) || 1;
+  const along = clamp((p.vel.x * dx + p.vel.z * dz) / d / p.top, 0, 1);
+  return (1 - along) * (p.top / (2 * ACCEL));
+}
+
 function carrierAI(m: Match, p: Player, dt: number): void {
   const side = p.side;
   const opp = other(side);
@@ -833,7 +900,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   const inBox = Math.abs(p.pos.x - gx) < BOX_DEPTH && Math.abs(p.pos.z) < BOX_W / 2;
 
   // ---- Shoot
-  if (dg < 34) {
+  if (dg < 36) {
     let q = shotQuality(p.pos.x, p.pos.z, ad);
     const blockers = shotBlockers(m, p);
     q *= Math.pow(0.55, blockers);
@@ -842,7 +909,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     q *= 1 - pressure * 0.15;
     // A clean strike also earns rebounds and corners, and shooters love a sight of goal.
     const bonus = blockers < 0.5 ? (dg < 28 ? 0.035 : 0.015) : 0;
-    const s = early(q * 1.45 + bonus + (inBox ? 0.02 : 0) - (dg > 23 ? 0.015 : 0), 0.05);
+    const s = early(q * 2 + bonus + (inBox ? 0.05 : 0) - (dg > 23 ? 0.011 : 0), 0.05);
     const power = clamp(0.55 + dg / 45, 0.6, 0.97);
     choices.push({ s, run: () => m.order(p, 'shot', 0, 0, power, -1, false) });
   }
@@ -850,6 +917,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   // ---- Passes and through balls
   for (const t of team) {
     if (t === p || t.sentOff || (t.state !== 'move' && t.state !== 'stand')) continue;
+    // Never knowingly played to a man in an offside position.
+    if (looksOffside(m, t)) continue;
     const lead = t.running || brain.overlap === t.idx ? 0.5 : 0.3;
     const lx = clamp(t.pos.x + t.vel.x * lead, -HALF_L + 1, HALF_L - 1);
     const lz = clamp(t.pos.z + t.vel.z * lead, -HALF_W + 1, HALF_W - 1);
@@ -876,31 +945,46 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       const rz0 = (t.vel.z / tsp) * 0.6;
       const rl = Math.hypot(rx0, rz0) || 1;
       const leadD = 5 + tsp * 0.75;
-      const ax = clamp(t.pos.x + (rx0 / rl) * leadD, -HALF_L + 3, HALF_L - 3);
-      const az = clamp(t.pos.z + (rz0 / rl) * leadD, -HALF_W + 2, HALF_W - 2);
-      if ((ax - p.pos.x) * ad > 5 && nearestOpp(m, side, ax, az).d > 2.5) {
-        const tRun = dist2(t.pos.x, t.pos.z, ax, az) / t.top + 0.1;
+      const lx0 = t.pos.x + (rx0 / rl) * leadD;
+      const lz0 = t.pos.z + (rz0 / rl) * leadD;
+      // Thread it: try the runner's line and a few points either side of it, through the gaps in
+      // the back line, and keep the best ground ball and the best ball over the top.
+      let bestG: Choice | null = null;
+      let bestL: Choice | null = null;
+      const onShoulder = nX(m, side, t.pos.x) > m.defLine(opp) - 0.06;
+      for (const off of THREAD_OFFSETS) {
+        const ax = clamp(lx0, -HALF_L + 3, HALF_L - 3);
+        const az = clamp(lz0 + off, -HALF_W + 2, HALF_W - 2);
+        if ((ax - p.pos.x) * ad <= 5 || nearestOpp(m, side, ax, az).d <= 2.5) continue;
+        // A race to the ball in behind: whoever is already running that way has the head start (a
+        // defender stepping up or holding the line has to turn and get up to speed first).
+        const tRun = dist2(t.pos.x, t.pos.z, ax, az) / t.top + 0.1 + spinUp(t, ax, az);
         let tDef = Infinity;
         for (const o of m.teamPlayers(opp)) {
           if (o.sentOff) continue;
-          tDef = Math.min(tDef, Math.max(0, dist2(o.pos.x, o.pos.z, ax, az) - 1) / o.top + (o.isKeeper ? 0.3 : 0.12));
+          tDef = Math.min(tDef, Math.max(0, dist2(o.pos.x, o.pos.z, ax, az) - 1) / o.top + (o.isKeeper ? 0.3 : 0.12) + spinUp(o, ax, az));
         }
         const pWin = clamp(0.42 + (tDef - tRun) * 0.7, 0.02, 0.88);
         const dT = dist2(p.pos.x, p.pos.z, ax, az);
         const gain = threat(m, side, ax, az) + 0.02;
         const ir = interceptRisk(m, side, p.pos.x, p.pos.z, ax, az, throughSpeed(dT));
         const pc = pWin * (1 - ir);
-        const s = early(pc * gain - (1 - pc) * lose(ax, az) * 0.6, 0.35);
-        choices.push({ s, run: () => m.order(p, 'through', 0, 0, 0.7, t.idx, false, { x: ax, z: az }) });
+        const sg = early(pc * gain - (1 - pc) * lose(ax, az) * 0.6, 0.35);
+        if (!bestG || sg > bestG.s) {
+          bestG = { s: sg, run: () => m.order(p, 'through', 0, 0, 0.7, t.idx, false, { x: ax, z: az }) };
+        }
         // Over the top when the ground lane is shut and the runner is on the shoulder of the
-        // last man: only the race to the landing spot matters, but it's much harder to weight.
-        const onShoulder = nX(m, side, t.pos.x) > m.defLine(opp) - 0.06;
-        if (dT > 16 && dT < 42 && ir > 0.45 && onShoulder) {
-          const pl = pWin * 0.5 * (0.8 + p.stat.passing / 700);
+        // last man: only the race to the landing spot matters, but it's harder to weight.
+        if (dT > 16 && dT < 42 && ir > 0.4 && onShoulder) {
+          const pl = pWin * 0.62 * (0.8 + p.stat.passing / 700);
           const sl = early(pl * gain - (1 - pl) * lose(ax, az) * 0.6, 0.5);
-          choices.push({ s: sl, run: () => m.order(p, 'lob', ax - p.pos.x, az - p.pos.z, 0.7, t.idx, false, { x: ax, z: az }, 0.5) });
+          if (!bestL || sl > bestL.s) {
+            bestL = { s: sl, run: () => m.order(p, 'lob', ax - p.pos.x, az - p.pos.z, 0.7, t.idx, false, { x: ax, z: az }, 0.5) };
+          }
         }
       }
+      if (bestG) choices.push(bestG);
+      if (bestL) choices.push(bestL);
     }
   }
 
@@ -923,14 +1007,18 @@ function carrierAI(m: Match, p: Player, dt: number): void {
           who = t.idx;
         }
       }
-      if (who < 0) continue;
+      if (who < 0 || looksOffside(m, m.players[who])) continue;
       let tDef = Infinity;
       for (const o of m.teamPlayers(opp)) {
         if (o.sentOff) continue;
         tDef = Math.min(tDef, (dist2(o.pos.x, o.pos.z, zn.x, zn.z) / o.top + 0.1) * (o.isKeeper ? 1.25 : 1));
       }
       const flight = 0.75 + dist2(p.pos.x, p.pos.z, zn.x, zn.z) / 34;
-      const pWin = clamp(0.35 + (tDef - tAtt) * 0.5 + (tAtt < flight ? 0.12 : -0.2), 0.05, 0.7);
+      // Whoever is there when it drops contests it; a runner arriving at pace wins more than his
+      // share of those duels, so being a step behind the marker matters less than getting there.
+      const pWin = tAtt < flight + 0.05
+        ? tDef < flight ? clamp(0.45 + (tDef - tAtt) * 0.3, 0.25, 0.6) : 0.7
+        : 0.1;
       const hq = shotQuality(zn.x, zn.z, ad) * 0.75;
       // A won header is far from a sure goal: credit roughly its real conversion.
       const s = early(pWin * (0.03 + hq * 0.42) - (1 - pWin) * 0.02, 0.3);
@@ -968,7 +1056,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   // ---- Shield it under tight pressure (buys a second, not a lifetime).
   if (near.o && near.d < 2.2) {
     const o = near.o;
-    const hold = clamp(1 - p.ballT / 2.5, 0, 1);
+    const hold = clamp(1 - p.ballT / 2, 0, 1);
     const pRet = clamp(0.5 + (p.stat.dribbling / 100) * 0.3 - (near.d < 1 ? 0.1 : 0), 0.35, 0.85) * (0.55 + 0.45 * hold);
     const s = pRet * here - (1 - pRet) * loseHere;
     choices.push({
@@ -1140,7 +1228,13 @@ export function setPieceTargets(m: Match, side: Side): Map<number, { x: number; 
   const boxPts = box.map(([d, z]) => P(d, z));
   if (side === atk) {
     assignNearest(attackers.slice(0, 5), boxPts, brain.spTargets, brain.spRunners);
-    assignNearest(attackers.slice(5, 7), edge.map(([d, z]) => P(d, z)), brain.spTargets);
+    if (corner) {
+      // One of the edge men comes short for it, ~8 m from the flag, in case it's played short.
+      assignNearest(attackers.slice(5, 6), [cornerShortSpot(m, r)], brain.spTargets);
+      assignNearest(attackers.slice(6, 7), edge.slice(0, 1).map(([d, z]) => P(d, z)), brain.spTargets);
+    } else {
+      assignNearest(attackers.slice(5, 7), edge.map(([d, z]) => P(d, z)), brain.spTargets);
+    }
     assignNearest(attackers.slice(7), [{ x: adA * 2, z: -8 }, { x: adA * 2, z: 8 }], brain.spTargets);
     if (corner) {
       const zones = cornerZones(s0).map(([d, z]) => P(d, z));
@@ -1170,6 +1264,13 @@ export function setPieceTargets(m: Match, side: Side): Map<number, { x: number; 
   assignNearest(defs.slice(5 + extra.length, 7 + extra.length), edgeD, brain.spTargets);
   assignNearest(defs.slice(7 + extra.length), up, brain.spTargets);
   return brain.spTargets;
+}
+
+/** Where the man who comes short for a corner stands: ~6 m in from the byline and the touchline. */
+export function cornerShortSpot(m: Match, r: { side: Side; x: number; z: number }): { x: number; z: number } {
+  const gx = m.attackDir(r.side) * HALF_L;
+  const s0 = Math.sign(r.z) || 1;
+  return { x: gx - m.attackDir(r.side) * 6, z: s0 * (HALF_W - 6) };
 }
 
 /** Corner delivery zones (distance out, z) in runner order: near post, far post, spot, back post, front. */

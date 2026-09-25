@@ -3,12 +3,18 @@ import { lerp, wrapAngle } from '../core/math';
 import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, PlayerDef, TeamDef } from '../sim/types';
-import { Footballer, PSTATE, buildBallGeometry, type PoseInput } from './characters';
+import { CHAR_H, Footballer, PSTATE, buildBallGeometry, screenCharK, type PoseInput } from './characters';
 import { FLOODLIGHT_TOWERS } from './stadium';
 import { BoxBuilder, voxelMaterial } from './voxel';
 
 /** 'full': ring + bobbing arrow + name tag; 'ring': just the ground ring (low set-piece / shootout cameras). */
 export type MarkerMode = 'full' | 'ring';
+
+/** Referee signals: arm raised (foul / offside), advantage (both arms forward), a card held high. */
+export type RefSignal = 'arm' | 'advantage' | 'card';
+
+export const CARD_YELLOW = 0xffd43b;
+export const CARD_RED = 0xe03131;
 
 /** Everything that draws a match: 22 voxel footballers, the ball, and the control marker. */
 export class MatchView {
@@ -28,7 +34,11 @@ export class MatchView {
   private aim: THREE.Mesh;
   private names: string[] = [];
   private referee: Footballer;
-  private ref = { x: -8, z: -10, vx: 0, vz: 0, facing: 0, phase: 0, signal: 0 };
+  private ref = { x: -8, z: -10, vx: 0, vz: 0, facing: 0, phase: 0, signal: 0, kind: 'arm' as RefSignal, hold: 0, faceX: 0, faceZ: 0 };
+  /** The card in the referee's raised hand (yellow / red), shown only while he books someone. */
+  private cards: { yellow: THREE.Mesh; red: THREE.Mesh };
+  /** Draw scale on top of CHAR_SCALE (bigger on phones); refreshed every frame. */
+  private charK = 1;
   private powerFill: THREE.Mesh;
   private markerMode: MarkerMode = 'full';
   private charging = false;
@@ -68,6 +78,18 @@ export class MatchView {
     };
     this.referee = new Footballer(refDef, refKit, false);
     this.group.add(this.referee.group);
+    const card = (color: number) => {
+      const b = new BoxBuilder();
+      // A chunky card held up past the fingertips (the arms are short), face on to the offender (model +x),
+      // thick enough to read from the side too.
+      b.box(0.02, -0.3, 0, 0.1, 0.6, 0.4, color);
+      const m = new THREE.Mesh(b.build(), voxelMaterial);
+      m.castShadow = true;
+      m.visible = false;
+      this.referee.holdInHand(m, true);
+      return m;
+    };
+    this.cards = { yellow: card(CARD_YELLOW), red: card(CARD_RED) };
     this.ball = new THREE.Mesh(buildBallGeometry(BALL_R * 1.25), voxelMaterial);
     this.ball.castShadow = true;
     this.group.add(this.ball);
@@ -187,9 +209,11 @@ export class MatchView {
     for (let k = 6; k < 11; k++) f[BALL_OFS + k] = b[BALL_OFS + k];
 
     const pose = this.pose;
+    this.charK = screenCharK();
     for (let i = 0; i < 22; i++) {
       const o = i * PF;
       const fb = this.players[i];
+      fb.scaleK = this.charK;
       fb.group.position.set(f[o], 0, f[o + 1]);
       fb.group.rotation.y = -f[o + 3];
       pose.y = f[o + 2];
@@ -243,8 +267,9 @@ export class MatchView {
       const o = active * PF;
       this.marker.position.set(f[o], 0, f[o + 1]);
       this.markerRing.rotation.y = -f[o + 3];
-      this.arrow.position.y = 2.45 + f[o + 2] + Math.abs(Math.sin(time * 5)) * 0.18;
-      this.nameTag.position.y = 3.25 + f[o + 2];
+      const top = this.headTop;
+      this.arrow.position.y = top + 0.5 + f[o + 2] + Math.abs(Math.sin(time * 5)) * 0.18;
+      this.nameTag.position.y = top + 1.3 + f[o + 2];
       if (active !== this.nameFor) this.drawName(active);
     }
     const full = this.markerMode === 'full';
@@ -273,41 +298,91 @@ export class MatchView {
     const bx = f[BALL_OFS];
     const bz = f[BALL_OFS + 2];
     const r = this.ref;
+    r.hold = Math.max(0, r.hold - dt);
     const tx = Math.max(-44, Math.min(44, bx - 7));
     const tz = Math.max(-26, Math.min(26, bz > 0 ? bz - 11 : bz + 11));
     const dx = tx - r.x;
     const dz = tz - r.z;
     const d = Math.hypot(dx, dz);
-    const want = d < 1.2 ? 0 : Math.min(7, d * 1.2);
+    // Booking someone: he stands his ground, facing the offender, until the card goes away.
+    const want = r.hold > 0 || d < 1.2 ? 0 : Math.min(7, d * 1.2);
     const k = Math.min(1, dt * 3);
     r.vx += ((d > 0 ? (dx / d) * want : 0) - r.vx) * k;
     r.vz += ((d > 0 ? (dz / d) * want : 0) - r.vz) * k;
     r.x += r.vx * dt;
     r.z += r.vz * dt;
     const sp = Math.hypot(r.vx, r.vz);
-    const faceTo = sp > 1.2 ? Math.atan2(r.vz, r.vx) : Math.atan2(bz - r.z, bx - r.x);
+    const faceTo = r.hold > 0 ? Math.atan2(r.faceZ - r.z, r.faceX - r.x) : sp > 1.2 ? Math.atan2(r.vz, r.vx) : Math.atan2(bz - r.z, bx - r.x);
     r.facing += wrapAngle(faceTo - r.facing) * Math.min(1, dt * 6);
     r.phase = (r.phase + (sp * dt) / 2.1) % 1;
     r.signal = Math.max(0, r.signal - dt);
     g.position.set(r.x, 0, r.z);
     g.rotation.y = -r.facing;
+    this.referee.scaleK = this.charK;
+    const booking = r.signal > 0 && r.kind === 'card';
+    this.cards.yellow.visible = booking && this.cardColor === 'yellow';
+    this.cards.red.visible = booking && this.cardColor === 'red';
     const pose = this.pose;
     pose.state = 0; pose.stateT = 0; pose.speed = sp; pose.runPhase = r.phase; pose.kickT = 0; pose.kickLeg = 1;
     pose.lean = Math.min(0.3, sp * 0.03); pose.diveDir = 0; pose.headerT = 0; pose.celebrate = 0; pose.y = 0;
     pose.keeper = false; pose.hasBall = false; pose.turn = 0;
     pose.look = -wrapAngle(Math.atan2(bz - r.z, bx - r.x) - r.facing);
     pose.signal = r.signal > 0;
+    pose.signalKind = r.kind === 'advantage' ? 1 : r.kind === 'card' ? 2 : 0;
     this.referee.pose(pose, time);
     pose.signal = false;
+    pose.signalKind = 0;
   }
 
-  refSignal(seconds: number): void {
+  private cardColor: 'yellow' | 'red' = 'yellow';
+
+  /** Arm signal for a foul / offside (or advantage: both arms forward) for `seconds`. */
+  refSignal(seconds: number, kind: RefSignal = 'arm'): void {
+    // A card being shown outranks a quick arm signal.
+    if (this.ref.kind === 'card' && this.ref.signal > 0 && kind !== 'card') return;
     this.ref.signal = seconds;
+    this.ref.kind = kind;
   }
 
-  /** Swap the model for a substitute coming on. */
+  /**
+   * Book a player: the referee stands ~2.4 m from the offence (x, z), faces it and holds the card up for
+   * `seconds`. He is moved there directly: this is only called as the camera cuts to the close-up.
+   */
+  showCard(color: 'yellow' | 'red', x: number, z: number, seconds: number, jump = true): void {
+    const r = this.ref;
+    this.cardColor = color;
+    this.refSignal(seconds, 'card');
+    r.hold = seconds;
+    r.faceX = x;
+    r.faceZ = z;
+    if (jump) {
+      let dx = r.x - x;
+      let dz = r.z - z;
+      const d = Math.hypot(dx, dz) || 1;
+      dx /= d;
+      dz /= d;
+      r.x = Math.max(-51, Math.min(51, x + dx * 2.4));
+      r.z = Math.max(-33, Math.min(33, z + dz * 2.4));
+      r.vx = r.vz = 0;
+      r.facing = Math.atan2(z - r.z, x - r.x);
+    }
+  }
+
+  /** Where the referee stands and whom he faces (card close-ups). */
+  get refState(): { x: number; z: number; faceX: number; faceZ: number; booking: boolean } {
+    const r = this.ref;
+    return { x: r.x, z: r.z, faceX: r.faceX, faceZ: r.faceZ, booking: r.kind === 'card' && r.signal > 0 };
+  }
+
+  /** Top of a standing player's head (m) at the current draw scale. */
+  get headTop(): number {
+    return CHAR_H * this.charK;
+  }
+
+  /** Swap the model for a substitute coming on (a no-op if that player is already drawn). */
   replacePlayer(i: number, def: PlayerDef, kit: Kit): void {
     const old = this.players[i];
+    if (!old || old.def === def) return;
     const f = new Footballer(def, kit, i === 0 || i === 11);
     f.group.position.copy(old.group.position);
     f.group.rotation.copy(old.group.rotation);
@@ -426,7 +501,7 @@ export class MatchView {
     this.charging = true;
     this.powerBar.visible = true;
     // Just over the shooter's head, where the (hidden) arrow bobs.
-    this.powerBar.position.set(x, 2.45 + y, z);
+    this.powerBar.position.set(x, this.headTop + 0.5 + y, z);
     this.powerFill.scale.x = Math.max(0.02, p);
     const m = this.powerFill.material as THREE.MeshBasicMaterial;
     m.color.setHex(p < 0.6 ? 0x3aff9e : p < 0.85 ? 0xffd23a : 0xff4a3a);

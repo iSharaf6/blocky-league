@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp, lerp } from '../core/math';
+import { clamp, lerp, smoothstep } from '../core/math';
 import { grassLike } from '../meta/data';
 import type { Kit, Look, PlayerDef } from '../sim/types';
 import { HAIR, SKIN, shade } from './palette';
@@ -8,14 +8,32 @@ import { meshVoxels, voxelMaterial, VoxelGrid } from './voxel';
 export const VU = 0.075; // metres per character voxel
 
 // Model space: forward = +x, up = +y, right = +z.
-const LEG_H = 7;
-const TORSO_H = 8;
+// Crossy Road proportions: a big cube head on a short, chunky body (legs 5 / torso 7 / head 9 voxels,
+// so the head is ~43% of the height, ~45% with hair).
+const LEG_H = 5;
+const TORSO_H = 7;
 const TORSO_W = 8;
 const TORSO_D = 5;
-const HEAD = 7;
+const HEAD = 9;
+const ARM_L = 5;
+/** Shorts rows at the bottom of the torso (the top of each leg is shorts too). */
+const SHORTS = 2;
 const HIP_Y = LEG_H * VU;
 /** Characters are drawn a little larger than their physics footprint so they read at broadcast distance. */
 export const CHAR_SCALE = 1.15;
+/** Standing height (boots to the top of the hair) at CHAR_SCALE, metres. */
+export const CHAR_H = (LEG_H + TORSO_H + HEAD + 1) * VU * CHAR_SCALE;
+/** Hand position in an arm's local space (the arm hangs down -y from the shoulder). */
+export const HAND_Y = -ARM_L * VU;
+
+/**
+ * Extra scale for small (phone landscape) screens: the broadcast camera keeps a wide shot there, so the
+ * players are drawn bigger instead (1.3 below 450 px tall, 1.22 below 560, desktop unchanged).
+ */
+export function screenCharK(): number {
+  const h = typeof window !== 'undefined' ? window.innerHeight : 720;
+  return h < 450 ? 1.3 / CHAR_SCALE : h < 560 ? 1.22 / CHAR_SCALE : 1;
+}
 
 // 3x5 pixel digits for shirt numbers, rows top to bottom.
 const DIGITS: Record<string, string[]> = {
@@ -79,7 +97,6 @@ function outfitFor(kit: Kit, keeper: boolean): Outfit {
 
 function buildTorso(o: Outfit, number: number): THREE.BufferGeometry {
   const g = new VoxelGrid(TORSO_D, TORSO_H, TORSO_W);
-  const SHORTS = 3;
   for (let y = 0; y < TORSO_H; y++) {
     for (let z = 0; z < TORSO_W; z++) {
       for (let x = 0; x < TORSO_D; x++) {
@@ -113,42 +130,42 @@ function buildTorso(o: Outfit, number: number): THREE.BufferGeometry {
   }
   // Front: club badge on the left chest and a sponsor block across the middle.
   const front = TORSO_D - 1;
-  g.set(front, 6, 2, 0xffd23a);
-  g.set(front, 6, 1, shade(o.shirt2, 1));
+  g.set(front, TORSO_H - 2, 2, 0xffd23a);
+  g.set(front, TORSO_H - 2, 1, shade(o.shirt2, 1));
   if (o.pattern === 'plain' || o.pattern === 'sleeves') {
-    for (let z = 2; z <= 5; z++) g.set(front, 4, z, ink);
+    for (let z = 2; z <= 5; z++) g.set(front, SHORTS + 1, z, ink);
   }
   // Number on the shorts.
-  g.set(front, 1, 6, ink);
+  g.set(front, 0, 6, ink);
   return meshVoxels(g, { scale: VU, pivot: [TORSO_D / 2, 0, TORSO_W / 2] });
 }
 
 function buildArm(o: Outfit, skin: number): THREE.BufferGeometry {
-  // 3 deep x 6 tall x 2 wide; three-row sleeves.
-  const g = new VoxelGrid(3, 6, 2);
+  // 3 deep x 5 long x 2 wide: two-row sleeve + cuff, two-row hand.
+  const g = new VoxelGrid(3, ARM_L, 2);
   const sleeve = o.pattern === 'sleeves' ? o.shirt2 : o.shirt;
-  for (let y = 0; y < 6; y++) {
-    let c = y >= 3 ? sleeve : skin;
+  for (let y = 0; y < ARM_L; y++) {
+    let c = y >= 2 ? sleeve : skin;
     if (o.gloves !== null) c = y <= 1 ? o.gloves : o.shirt;
     g.box(0, y, 0, 3, 1, 2, c);
   }
-  if (o.gloves === null) g.box(0, 3, 0, 3, 1, 2, shade(sleeve, 0.86)); // cuff
-  return meshVoxels(g, { scale: VU, pivot: [1.5, 6, 1] });
+  if (o.gloves === null) g.box(0, 2, 0, 3, 1, 2, shade(sleeve, 0.86)); // cuff
+  return meshVoxels(g, { scale: VU, pivot: [1.5, ARM_L, 1] });
 }
 
 function buildLeg(o: Outfit, skin: number, boots: number): THREE.BufferGeometry {
-  // 2 deep (+1 toe) x 7 tall x 3 wide.
+  // 2 deep (+1 toe) x 5 tall x 3 wide: boot, sock (+ turn-over), knee, shorts.
   const g = new VoxelGrid(3, LEG_H, 3);
   for (let y = 0; y < LEG_H; y++) {
     let c: number;
     if (y === 0) c = boots;
-    else if (y <= 3) c = o.socks;
-    else if (y === 4) c = skin;
+    else if (y <= 2) c = o.socks;
+    else if (y === 3) c = skin;
     else c = o.shorts;
     g.box(0, y, 0, 2, 1, 3, c);
   }
   g.box(2, 0, 0, 1, 1, 3, boots); // toe cap
-  g.box(0, 3, 0, 2, 1, 3, shade(o.socks, 0.84)); // sock turn-over
+  g.box(0, 2, 0, 2, 1, 3, shade(o.socks, 0.84)); // sock turn-over
   return meshVoxels(g, { scale: VU, pivot: [1, LEG_H, 1.5] });
 }
 
@@ -164,18 +181,22 @@ function buildHead(look: Look): THREE.BufferGeometry {
   };
   const H = HEAD;
   const F = H - 1; // front face x
+  const M = (H - 1) / 2; // middle column (z = 4)
   B(0, 0, 0, H, H, H, skin);
-  // Face on +x: 2x2 eyes with a glint, a nose, ears.
+  // Face on +x, Crossy style: two wide-set 2x2 eyes with a glint, a nub nose, a small mouth, ears.
   const eye = 0x16161c;
-  for (const ez of [1, 4]) {
-    S(F, 3, ez, eye); S(F, 3, ez + 1, eye); S(F, 4, ez, 0xffffff); S(F, 4, ez + 1, eye);
+  for (const ez of [M - 2, M + 1]) {
+    S(F, 4, ez, eye); S(F, 4, ez + 1, eye); S(F, 5, ez, 0xffffff); S(F, 5, ez + 1, eye);
   }
-  S(H, 2, 3, shade(skin, 0.88)); // nose
-  S(F, 1, 3, shade(skin, 0.66)); // mouth
-  S(3, 2, -1, shade(skin, 0.9)); S(3, 3, -1, shade(skin, 0.9)); // ears
-  S(3, 2, H, shade(skin, 0.9)); S(3, 3, H, shade(skin, 0.9));
+  S(H, 3, M, shade(skin, 0.88)); // nose
+  S(F, 2, M, shade(skin, 0.66)); // mouth
+  S(F, 2, M + 1, shade(skin, 0.74));
+  for (const ez of [-1, H]) {
+    S(4, 3, ez, shade(skin, 0.9)); S(4, 4, ez, shade(skin, 0.9)); // ears
+  }
 
   const cap = () => B(0, H, 0, H, 1, H, hair);
+  const fringe = (rows = 1) => B(F, H - rows, 0, 1, rows, H, hair);
   const back = (y0: number) => B(0, y0, 0, 1, H - y0, H, hair);
   const sides = (y0: number, depth: number) => {
     B(0, y0, 0, depth, H - y0, 1, hair);
@@ -183,40 +204,41 @@ function buildHead(look: Look): THREE.BufferGeometry {
   };
   switch (look.hair % 9) {
     case 0: // short
-      cap(); back(3); sides(5, 4);
+      cap(); fringe(); back(3); sides(6, 5);
       break;
     case 1: // buzz: paint over the skin
-      B(0, H - 1, 0, H, 1, H, hair); B(0, 4, 0, 1, 3, H, hair); sides(5, 3);
+      B(0, H - 1, 0, H, 1, H, hair); B(0, 5, 0, 1, 4, H, hair); sides(6, 4);
       break;
     case 2: // mohawk
-      B(0, H - 1, 0, H, 1, H, shade(hair, 1.1)); B(-1, H, 2, H + 1, 1, 3, hair); B(0, H + 1, 3, H - 2, 1, 1, hair);
+      B(0, H - 1, 0, H, 1, H, shade(hair, 1.1)); B(-1, H, M - 1, H + 1, 1, 3, hair); B(0, H + 1, M, H - 2, 1, 1, hair);
       break;
     case 3: // afro
-      B(-1, 4, -1, H, 4, H + 2, hair); B(0, H + 1, 0, H - 1, 1, H, hair); sides(4, 5);
+      B(-1, 6, -1, H, 4, H + 2, hair); B(0, H + 1, 0, H - 1, 1, H, hair); sides(5, 5); fringe();
       break;
     case 4: // long
-      cap(); back(0); B(-1, 0, 0, 1, H, H, hair); sides(1, 3);
+      cap(); fringe(); back(0); B(-1, 0, 0, 1, H, H, hair); sides(1, 4);
       break;
     case 5: // bald
       break;
     case 6: // spiky
-      cap(); back(3); sides(5, 3);
+      cap(); fringe(); back(3); sides(6, 4);
       for (let x = 0; x < H; x += 2) for (let z = x % 4 === 0 ? 0 : 1; z < H; z += 2) S(x, H + 1, z, hair);
       break;
     case 7: // bun
-      cap(); back(2); sides(5, 3); B(-2, H - 1, 2, 2, 2, 3, hair);
+      cap(); back(2); sides(6, 4); B(-2, H - 1, M - 1, 2, 2, 3, hair);
       break;
     case 8: // headband
-      cap(); back(3); sides(5, 4);
-      for (let x = 0; x < H; x++) { S(x, 5, 0, 0xfbfbf4); S(x, 5, H - 1, 0xfbfbf4); }
-      for (let z = 0; z < H; z++) { S(0, 5, z, 0xfbfbf4); S(F, 5, z, 0xe8443a); }
+      cap(); back(3); sides(6, 5);
+      for (let x = 0; x < H; x++) { S(x, 7, 0, 0xfbfbf4); S(x, 7, H - 1, 0xfbfbf4); }
+      for (let z = 0; z < H; z++) { S(0, 7, z, 0xfbfbf4); S(F, 7, z, 0xe8443a); }
+      fringe();
       break;
   }
   if (look.beard === 1) {
     for (let z = 1; z < H - 1; z++) S(F, 0, z, shade(hair, 0.95));
+    for (const z of [0, H - 1]) { S(F, 0, z, shade(hair, 0.95)); S(F - 1, 0, z, shade(hair, 0.95)); }
   } else if (look.beard === 2) {
-    B(F, 0, 0, 1, 2, H, hair); B(3, 0, 0, 3, 2, 1, hair); B(3, 0, H - 1, 3, 2, 1, hair);
-    S(F, 1, 3, shade(skin, 0.66));
+    B(F, 0, 0, 1, 2, H, hair); B(4, 0, 0, 4, 3, 1, hair); B(4, 0, H - 1, 4, 3, 1, hair);
   }
   return meshVoxels(g, { scale: VU, pivot: [H / 2 + OX, 0, H / 2 + OZ] });
 }
@@ -227,6 +249,7 @@ export interface PoseInput {
   speed: number;
   runPhase: number;
   kickT: number;
+  /** +1 right / -1 left foot; +-2 = the same foot in a quick tackle poke (see replay.ts writeFrame). */
   kickLeg: number;
   lean: number;
   diveDir: number;
@@ -241,11 +264,17 @@ export interface PoseInput {
   turn: number;
   /** Referee signal: right arm raised. */
   signal?: boolean;
+  /** Which signal: 0 arm raised (free kick / offside), 1 advantage (both arms forward), 2 card held high. */
+  signalKind?: number;
 }
 
 export const PSTATE = {
   move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9,
 } as const;
+
+/** Poke tackle: a short lunge at the ball (no wind-up), this long, inside the 0.34 s 'kick' state. */
+const POKE_S = 0.18;
+const KICK_S = 0.34;
 
 export class Footballer {
   readonly group = new THREE.Group();
@@ -256,8 +285,10 @@ export class Footballer {
   private readonly armR: THREE.Mesh;
   private readonly legL: THREE.Mesh;
   private readonly legR: THREE.Mesh;
+  /** Extra draw scale on top of CHAR_SCALE (phones: see screenCharK). */
+  scaleK = 1;
 
-  constructor(def: PlayerDef, kit: Kit, keeper: boolean) {
+  constructor(readonly def: PlayerDef, kit: Kit, keeper: boolean) {
     const o = outfitFor(kit, keeper);
     const skin = SKIN[def.look.skin % SKIN.length];
     const kitKey = `${o.shirt}-${o.shirt2}-${o.pattern}-${o.shorts}-${o.socks}-${o.gloves}`;
@@ -291,6 +322,12 @@ export class Footballer {
     this.legR.position.set(0, 0, 2 * VU);
   }
 
+  /** Hang a prop (the referee's card) in a hand: `obj` is placed in that arm's space at the hand. */
+  holdInHand(obj: THREE.Object3D, right = true): void {
+    obj.position.y += HAND_Y;
+    (right ? this.armR : this.armL).add(obj);
+  }
+
   /** Procedural pose from the recorded sim state — identical live and in replays. */
   pose(p: PoseInput, time: number): void {
     const body = this.body;
@@ -298,6 +335,7 @@ export class Footballer {
     const head = this.head;
     const aL = this.armL, aR = this.armR, lL = this.legL, lR = this.legR;
     // Reset.
+    this.group.scale.setScalar(CHAR_SCALE * this.scaleK);
     body.position.set(0, HIP_Y, 0);
     body.rotation.set(0, 0, 0);
     torso.rotation.set(0, 0, 0);
@@ -323,7 +361,7 @@ export class Footballer {
         aL.rotation.x = -0.12;
         aR.rotation.x = 0.12;
         // Toy hop on every step.
-        body.position.y = HIP_Y + Math.abs(Math.cos(ph)) * 0.075 * (0.4 + run);
+        body.position.y = HIP_Y + Math.abs(Math.cos(ph)) * 0.06 * (0.4 + run);
         torso.rotation.z = -p.lean - run * 0.1;
         head.rotation.z = run * 0.08;
       } else {
@@ -333,7 +371,7 @@ export class Footballer {
         aR.rotation.x = 0.08 + br * 0.02;
         if (p.keeper) {
           // Set position: knees bent, gloves ready.
-          body.position.y = HIP_Y - 0.06;
+          body.position.y = HIP_Y - 0.045;
           torso.rotation.z = -0.18;
           aL.rotation.set(-0.5, 0, 0.9);
           aR.rotation.set(0.5, 0, 0.9);
@@ -350,7 +388,7 @@ export class Footballer {
         if (p.state === PSTATE.stand) {
           const k = 1 - clamp(p.stateT / 0.38, 0, 1);
           body.rotation.z = k * 0.9;
-          body.position.y = HIP_Y - k * 0.3;
+          body.position.y = HIP_Y - k * (HIP_Y - 0.12);
         }
         if (p.headerT > 0) {
           const h = Math.sin((1 - p.headerT) * Math.PI);
@@ -363,17 +401,37 @@ export class Footballer {
       }
       case PSTATE.kick: {
         const t = p.kickT;
+        const right = p.kickLeg > 0;
+        const kickLeg = right ? lR : lL;
+        const plant = right ? lL : lR;
+        if (Math.abs(p.kickLeg) > 1.5 && p.headerT <= 0) {
+          // Poke tackle: straight out of the stride, a quick lunge with the leg stretched at the ball
+          // (no back-swing), then back to the run.
+          locomotion();
+          const tl = clamp((t * KICK_S) / POKE_S, 0, 1);
+          const e = tl < 0.35 ? smoothstep(0, 0.35, tl) : 1 - smoothstep(0.35, 1, tl);
+          kickLeg.rotation.z = lerp(kickLeg.rotation.z, 0.9, e);
+          plant.rotation.z = lerp(plant.rotation.z, -0.3, e);
+          torso.rotation.z = lerp(torso.rotation.z, -0.35, e);
+          torso.rotation.y = -Math.sign(p.kickLeg) * 0.18 * e;
+          head.rotation.z = 0.2 * e;
+          (right ? aL : aR).rotation.z = lerp((right ? aL : aR).rotation.z, 0.7, e);
+          (right ? aR : aL).rotation.z = lerp((right ? aR : aL).rotation.z, -0.5, e);
+          aL.rotation.x = lerp(aL.rotation.x, -0.55, e);
+          aR.rotation.x = lerp(aR.rotation.x, 0.55, e);
+          body.position.x = 0.1 * e;
+          body.position.y = lerp(body.position.y, HIP_Y - 0.06, e);
+          break;
+        }
         const kick = t < 0.22 ? lerp(0, -1.05, t / 0.22) : t < 0.45 ? lerp(-1.05, 1.45, (t - 0.22) / 0.23) : lerp(1.45, 0, (t - 0.45) / 0.55);
-        const kickLeg = p.kickLeg > 0 ? lR : lL;
-        const plant = p.kickLeg > 0 ? lL : lR;
         kickLeg.rotation.z = kick;
         plant.rotation.z = -0.15;
         const open = Math.sin(clamp(t, 0, 1) * Math.PI);
         aL.rotation.x = -0.4 - open * 0.9;
         aR.rotation.x = 0.4 + open * 0.9;
         torso.rotation.z = 0.12 * open;
-        torso.rotation.y = -p.kickLeg * 0.25 * (kick / 1.45);
-        body.position.y = HIP_Y - open * 0.04;
+        torso.rotation.y = -Math.sign(p.kickLeg) * 0.25 * (kick / 1.45);
+        body.position.y = HIP_Y - open * 0.03;
         if (p.headerT > 0) {
           const h = Math.sin((1 - p.headerT) * Math.PI);
           head.rotation.z = -h * 0.5;
@@ -395,7 +453,7 @@ export class Footballer {
       case PSTATE.slide: {
         const t = clamp(p.stateT / 0.2, 0, 1);
         body.rotation.z = 1.05 * t;
-        body.position.y = HIP_Y - 0.36 * t;
+        body.position.y = HIP_Y - (HIP_Y - 0.165) * t;
         lR.rotation.z = 0.35;
         lL.rotation.z = -0.75;
         aL.rotation.x = -1.2;
@@ -405,7 +463,7 @@ export class Footballer {
       case PSTATE.fallen: {
         const t = clamp(p.stateT / 0.25, 0, 1);
         body.rotation.z = 1.5 * t;
-        body.position.y = HIP_Y - 0.44 * t;
+        body.position.y = HIP_Y - (HIP_Y - 0.1) * t;
         lL.rotation.z = 0.5 + Math.sin(time * 9) * 0.1 * (1 - t);
         lR.rotation.z = 0.2;
         aL.rotation.x = -1.4;
@@ -418,7 +476,7 @@ export class Footballer {
         const up = clamp((p.stateT - 0.85) / 0.35, 0, 1);
         const lay = t * (1 - up * up * (3 - 2 * up));
         body.rotation.x = p.diveDir * 1.35 * lay;
-        body.position.y = HIP_Y - 0.1 * t - lay * 0.2 - up * 0.18;
+        body.position.y = HIP_Y - 0.05 * t - lay * 0.1 - up * 0.09;
         aL.rotation.z = 2.9 * lay + up * 0.9;
         aR.rotation.z = 2.9 * lay + up * 0.9;
         aL.rotation.x = -0.25;
@@ -454,7 +512,7 @@ export class Footballer {
             aR.rotation.x = 1.55;
             body.rotation.x = Math.sin(time * 3) * 0.3;
           } else if (style === 2) {
-            body.position.y = HIP_Y - 0.3;
+            body.position.y = HIP_Y - 0.15;
             lL.rotation.z = -1.5;
             lR.rotation.z = -1.5;
             torso.rotation.z = 0.35;
@@ -486,8 +544,22 @@ export class Footballer {
       }
     }
     if (p.signal) {
-      aR.rotation.set(0.2, 0, 3.0);
-      head.rotation.z = 0.1;
+      const kind = p.signalKind ?? 0;
+      if (kind === 1) {
+        // Advantage: both arms swept forward, palms up.
+        aL.rotation.set(-0.3, 0, 1.45);
+        aR.rotation.set(0.3, 0, 1.45);
+        head.rotation.z = 0.05;
+      } else if (kind === 2) {
+        // Card: held straight up and a little out (clear of the big head), the other arm pointing at him.
+        aR.rotation.set(0.32, 0, 3.0);
+        aL.rotation.set(-0.15, 0, 1.2);
+        torso.rotation.z = 0.06;
+        head.rotation.z = 0.12;
+      } else {
+        aR.rotation.set(0.2, 0, 3.0);
+        head.rotation.z = 0.1;
+      }
     }
     // Heads follow the ball; bodies bank into turns.
     if (p.state === PSTATE.move || p.state === PSTATE.hold || p.state === PSTATE.stand) {

@@ -81,15 +81,19 @@ export class Stadium {
   private lampHeads: THREE.Vector3[] = [];
   /** Per lamp: halo sprite size (m) and how strongly its glare bleeds into the frame from above. */
   private lampGlow: { size: number; flare: number }[] = [];
-  /** Snow cover on the lawn (0..0.6) and on the ground outside (0..0.75), grown while it snows. */
+  /**
+   * Snow cover on the lawn (0..0.45), the painted lines (0..0.15: kept white and legible) and the ground
+   * outside (0..0.75), grown while it snows.
+   */
   private readonly snowPitch = { value: 0 };
+  private readonly snowLine = { value: 0 };
   private readonly snowOuter = { value: 0 };
   private snowing = false;
   private snowT = 0;
   // Own materials (not the shared voxelMaterial) so night can dim the stands but keep the lawn floodlit,
   // and snow can settle on the grass without whitening the players.
   private readonly grassMat = snowMaterial(this.snowPitch, 0xeef4f8, 'grass');
-  private readonly lineMat = snowMaterial(this.snowPitch, 0xb9d2e8, 'line');
+  private readonly lineMat = snowMaterial(this.snowLine, 0xffffff, 'line');
   private readonly groundMat = snowMaterial(this.snowOuter, 0xf2f6fa, 'ground');
   private readonly standMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private readonly outerMat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -711,6 +715,9 @@ export class Stadium {
     for (const m of this.bannerMats) m.color.setRGB(stand[0] * 1.2, stand[1] * 1.2, stand[2] * 1.1);
     this.outerMat.color.setRGB(outer[0], outer[1], outer[2]);
     this.groundMat.color.setRGB(outer[0], outer[1], outer[2]);
+    // Golden hour: take the last of the orange back out of the lawn so it reads green, not khaki.
+    if (t === 'sunset') this.grassMat.color.setRGB(0.9, 1.04, 1);
+    else this.grassMat.color.setRGB(1, 1, 1);
     this.night = night;
     for (const f of this.flares) f.visible = false;
     for (const c of this.clouds) {
@@ -1051,6 +1058,7 @@ export class Stadium {
     if (!this.snowing) {
       this.snowT = 0;
       this.snowPitch.value = 0;
+      this.snowLine.value = 0;
       this.snowOuter.value = 0;
     }
   }
@@ -1116,7 +1124,9 @@ export class Stadium {
     if (this.snowing && this.snowT < 40) {
       this.snowT += dt;
       const k = smoothstep(0, 30, this.snowT);
-      this.snowPitch.value = 0.6 * k;
+      // The lawn whitens but stays green-grey under the lines, which the groundsmen keep clear and white.
+      this.snowPitch.value = 0.45 * k;
+      this.snowLine.value = 0.15 * k;
       this.snowOuter.value = 0.75 * k;
     }
     this.updateFlashes(dt);

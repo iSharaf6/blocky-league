@@ -15,7 +15,7 @@ import { KIT_COLORS } from '../meta/data';
 import { cssHex } from '../render/palette';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, type FormationId, type Kit, type KitPattern, type PlayerDef, type PlayerStats } from '../sim/types';
-import { shirtArt } from './menus';
+import { pitchLayout, shirtArt } from './menus';
 
 // ------------------------------------------------------------------ shared screen kit
 
@@ -303,7 +303,7 @@ const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['train', 'TRAIN'], ['kit
 
 function lastName(name: string): string {
   const parts = name.split(' ');
-  return (parts[parts.length - 1] ?? name).slice(0, 8).toUpperCase();
+  return parts[parts.length - 1] ?? name;
 }
 
 function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTab, back: () => void, backLabel: string): void {
@@ -329,13 +329,15 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
   const pitchHtml = () => {
     const issues = new Set(lineupIssues(club));
     const light = lum(club.kit.shirt) > 0.62;
-    return `<div class="mc-pitch" style="--shirt:${cssHex(club.kit.shirt)};--trim:${cssHex(club.kit.shirt2)};--gk:${cssHex(club.kit.gk)};--dot-t:${light ? 'var(--ink)' : '#fff'}">
-      ${FORMATIONS[club.formation]
+    // Same team-sheet pitch as the in-match tactics screen (menus.ts pitchLayout + .tx-p tokens).
+    const slots = FORMATIONS[club.formation];
+    const pos = pitchLayout(slots);
+    return `<div class="tx-pitch mc-teampitch" style="--shirt:${cssHex(club.kit.shirt)};--trim:${cssHex(club.kit.shirt2)};--gk:${cssHex(club.kit.gk)};--dot-t:${light ? 'var(--ink)' : '#fff'}">
+      ${slots
         .map((s, i) => {
           const p = club.squad[i];
-          const top = 87 - ((s.x + 1) / 1.25) * 74;
-          const left = 50 + s.z * 43;
-          return `<button class="mc-dot ${i === 0 ? 'gk' : ''} ${sel === i ? 'sel' : ''} ${issues.has(i) ? 'warn' : ''}" data-a="pick" data-i="${i}" style="left:${left}%;top:${top}%" aria-label="${s.label} ${esc(p.name)}"><b>${p.number}</b><em>${esc(lastName(p.name))}</em></button>`;
+          const [left, top, room] = pos[i];
+          return `<button class="tx-p ${i === 0 ? 'gk' : ''} ${sel === i ? 'sel' : ''} ${issues.has(i) ? 'warn' : ''}" data-a="pick" data-i="${i}" style="left:${left}%;top:${top}%;--room:${room}%" aria-label="${s.label} ${esc(p.name)}, overall ${overall(p)}"><span class="tx-shirt"><b>${p.number}</b><i class="tx-ovr">${overall(p)}</i></span><em class="tx-nm">${esc(lastName(p.name))}</em></button>`;
         })
         .join('')}
     </div>`;

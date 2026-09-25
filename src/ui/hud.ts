@@ -36,10 +36,14 @@ export class Hud {
   /** Radar dot colours per side; dark kits get a light rim so they read on the dark-green minimap. */
   private dotFill: [string, string];
   private dotEdge: [string, string];
-  private cardCount: [{ yellow: number; red: number }, { yellow: number; red: number }] = [
-    { yellow: 0, red: 0 },
-    { yellow: 0, red: 0 },
+  /** Bookings per side: one key per player currently on a yellow, and per player sent off. */
+  private booked: [{ yellow: (number | string)[]; red: (number | string)[] }, { yellow: (number | string)[]; red: (number | string)[] }] = [
+    { yellow: [], red: [] },
+    { yellow: [], red: [] },
   ];
+  /** Legacy card(side, 'yellow') immediately followed by card(side, 'red') = one second-yellow booking. */
+  private justYellow: [string | null, string | null] = [null, null];
+  private anon = 0;
   private toast: HTMLDivElement;
   private toastTimer = 0;
   onPause: (() => void) | null = null;
@@ -63,7 +67,7 @@ export class Hud {
       <div class="hud-hint"></div>
       <div class="hud-tip"></div>
       <div class="hud-chip"><span class="chip-num"></span><span class="chip-name"></span><div class="chip-stam"><div></div></div></div>
-      <div class="hud-replay"><b>REPLAY</b><span>press any button to skip</span></div>
+      <div class="hud-replay"><b>REPLAY</b><span class="rp-key">press any button to skip</span><span class="rp-tap">tap to skip</span></div>
       <canvas class="hud-radar" width="240" height="150" aria-hidden="true"></canvas>`;
     this.score = this.root.querySelector('.sb-score')!;
     this.clock = this.root.querySelector('.sb-clock')!;
@@ -134,15 +138,63 @@ export class Hud {
     this.root.classList.toggle('radar-off', hidden);
   }
 
-  /** Booking shown under that side of the score bug (a yellow and a red icon per team, with counts). */
-  card(side: 0 | 1, color: 'yellow' | 'red'): void {
-    const c = this.cardCount[side];
-    c[color]++;
-    const icon = (k: 'yellow' | 'red') =>
-      c[k] ? `<span class="sb-card ${k}" aria-label="${c[k]} ${k} card${c[k] > 1 ? 's' : ''}"><i></i>${c[k] > 1 ? `<b>${c[k]}</b>` : ''}</span>` : '';
+  /**
+   * Booking under that side of the score bug: a yellow chip per player on a yellow, a red chip per player sent
+   * off. A red for a player already on a yellow (second yellow) replaces that yellow. Pass the player index
+   * so the right yellow is swapped; without it, a yellow immediately followed by a red for the same side (the
+   * old "second yellow = both cards" call pattern) still counts as one player's second yellow.
+   */
+  card(side: 0 | 1, color: 'yellow' | 'red', player?: number): void {
+    const b = this.booked[side];
+    if (color === 'yellow') {
+      const key = player ?? `a${this.anon++}`;
+      if (!b.yellow.includes(key) && !b.red.includes(key)) b.yellow.push(key);
+      if (player === undefined) {
+        this.justYellow[side] = key as string;
+        queueMicrotask(() => {
+          if (this.justYellow[side] === key) this.justYellow[side] = null;
+        });
+      }
+    } else {
+      let key: number | string | undefined = player;
+      const pair = this.justYellow[side];
+      if (key === undefined && pair) {
+        // Legacy second yellow: the pair's yellow is this red, and the player's first yellow goes too.
+        key = pair;
+        const first = b.yellow.findIndex((k) => k !== pair && typeof k === 'string');
+        if (first >= 0) b.yellow.splice(first, 1);
+      }
+      this.justYellow[side] = null;
+      key ??= `a${this.anon++}`;
+      const y = b.yellow.indexOf(key);
+      if (y >= 0) b.yellow.splice(y, 1);
+      if (!b.red.includes(key)) b.red.push(key);
+    }
+    this.drawCards(side, color);
+  }
+
+  private drawCards(side: 0 | 1, fresh?: 'yellow' | 'red'): void {
+    const b = this.booked[side];
+    // One plate per side: a chip per booking, up to three per colour (more collapse into chip + count).
+    const chips = (k: 'yellow' | 'red') => {
+      const n = b[k].length;
+      if (!n) return '';
+      return n > 3 ? `<i class="sb-chip ${k}"></i><b>${n}</b>` : Array.from({ length: n }, () => `<i class="sb-chip ${k}"></i>`).join('');
+    };
+    const y = b.yellow.length;
+    const r = b.red.length;
     const el = this.cards[side];
-    el.innerHTML = icon('yellow') + icon('red');
-    el.querySelector(`.sb-card.${color}`)?.classList.add('new');
+    const label = [y ? `${y} yellow card${y > 1 ? 's' : ''}` : '', r ? `${r} red card${r > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ');
+    el.innerHTML = y || r ? `<span class="sb-card" role="img" aria-label="${label}">${chips('yellow')}${chips('red')}</span>` : '';
+    if (fresh) {
+      const icons = el.querySelectorAll(`.sb-chip.${fresh}`);
+      icons[icons.length - 1]?.classList.add('new');
+    }
+  }
+
+  /** Booking counts shown on the score bug (for tests / debugging). */
+  cardCounts(side: 0 | 1): { yellow: number; red: number } {
+    return { yellow: this.booked[side].yellow.length, red: this.booked[side].red.length };
   }
 
   /** Tutorial tip (top centre). Empty string hides it. */
@@ -169,6 +221,7 @@ export class Hud {
   }
 
   update(dt: number, frame: Float32Array): void {
+    this.justYellow[0] = this.justYellow[1] = null;
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.banner.classList.remove('on');

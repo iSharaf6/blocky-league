@@ -4,7 +4,7 @@ import { onTarget, pickReceiver, resolveKick, stickCurl } from './actions';
 import { intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { Ball, type BallHit } from './ball';
 import {
-  AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
+  AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
   PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SIX_DEPTH, SIX_W, SPRINT_SPEED,
 } from './constants';
 import { FORMATIONS, kickoffSlot, type Slot } from './formations';
@@ -14,7 +14,7 @@ import {
   HUMAN_WINDOW, INTRO_BEAT, KICK_TIMEOUT, RESULT_BEAT, aiPenaltyAim, divePlan, keeperGuess, lineupSpot, nextTurn, penaltyLaunch,
   predictCrossing, shootoutWinner, takerOrder, type KeeperDive, type KickHow, type PenAim, type ShootoutState,
 } from './shootout';
-import type { KickKind, MatchEvent, PlayerDef, RestartKind, Side, TeamDef } from './types';
+import type { FormationId, KickKind, MatchEvent, PlayerDef, RestartKind, Side, TeamDef } from './types';
 
 export type Phase = 'kickoff' | 'play' | 'out' | 'restart' | 'goal' | 'halftime' | 'fulltime' | 'shootout';
 
@@ -34,6 +34,8 @@ export interface MatchConfig {
   sideDifficulty?: [number, number];
   /** Cup tie: level at full time goes straight to a penalty shootout (no extra time). */
   knockout?: boolean;
+  /** The offside law is enforced (default true). See Match.offside. */
+  offside?: boolean;
 }
 
 /** Held button state from the input layer, move vector already in world space. */
@@ -53,6 +55,8 @@ export interface Restart {
   z: number;
   taker: number;
   wait: number;
+  /** An indirect free kick (given for offside): it can't go straight in. */
+  indirect?: boolean;
 }
 
 export interface Stats {
@@ -64,6 +68,8 @@ export interface Stats {
   corners: [number, number];
   fouls: [number, number];
   saves: [number, number];
+  /** Times each side was caught offside. */
+  offsides: [number, number];
 }
 
 export interface GoalRecord {
@@ -77,9 +83,46 @@ export interface GoalRecord {
 export const EMPTY_PAD: Pad = { mx: 0, mz: 0, sprint: false, pass: false, shoot: false, through: false };
 
 /** Chance a contested header ends in a foul by the player who lost it. */
-const AERIAL_FOUL = 0.18;
+const AERIAL_FOUL = 0.21;
 /** A shot passing this close (m) to an outfield body is usually blocked. */
 const BODY_BLOCK = 0.5;
+/** Header leap: ~0.49 m apex ~0.23 s after take-off (players fall at 18 m/s²). */
+const HEADER_VY = 4.2;
+/** Take off when the ball is this far (s) from the head, so contact comes around the apex. */
+const HEADER_LEAD = 0.28;
+/** A ball above this height (m) at the head needs a leap; lower ones are headed standing. */
+const HEADER_JUMP_Y = 1.75;
+/** A goal off a defender or keeper within this long (s) of an on-target shot is the shooter's. */
+const SHOT_CREDIT = 1.3;
+/**
+ * Benefit of the doubt (m), body centre to body centre: level, or within about half a (chunky, ~1 m
+ * wide) body of level, is onside.
+ */
+export const OFFSIDE_TOL = 0.8;
+/** Athletic edge per AI difficulty level above/below 2 (the human side is never scaled). */
+const AI_PACE_EDGE = 0.02;
+/** Standing tackles are won a little less often than they used to be (more attacks reach the box). */
+const TACKLE_WIN = 0.85;
+/** Seconds the referee waits to see whether the fouled side keeps the ball (advantage). */
+const ADVANTAGE_WINDOW = 1.5;
+/** Free kick / penalty run-up: the taker waits this far behind the ball and off to one side (m). */
+const RUNUP_BACK = 1.5;
+const RUNUP_SIDE = 0.9;
+/** ... and steps in to strike it at this pace (m/s). */
+const RUNUP_SPEED = 5.5;
+/** AI managers look at their bench at the first dead ball after these minutes (second half). */
+const AUTO_SUB_MINUTES = [60, 75];
+/** ... and take off outfielders who are this tired. */
+const AUTO_SUB_STAMINA = 0.45;
+
+const otherSide = (s: Side): Side => (s === 0 ? 1 : 0);
+/** The scorer's sprint away (s) before he slows so the mob can reach him. */
+const HERO_BURST = 0.7;
+/** A sent-off player's walk to the dugout: pace (m/s), and the longest it takes before he's there. */
+const WALK_OFF_SPEED = 3.2;
+const WALK_OFF_MAX = 9;
+/** Where a shootout's winners pile up: on halfway, on the camera side. */
+const SO_HUB = { x: 0, z: HALF_W * 0.3 };
 
 export class Match {
   readonly rng: Rng;
@@ -107,14 +150,29 @@ export class Match {
   goals: GoalRecord[] = [];
   stats: Stats = {
     shots: [0, 0], onTarget: [0, 0], possession: [0, 0], passes: [0, 0],
-    tackles: [0, 0], corners: [0, 0], fouls: [0, 0], saves: [0, 0],
+    tackles: [0, 0], corners: [0, 0], fouls: [0, 0], saves: [0, 0], offsides: [0, 0],
   };
+  /** Offside law on (MatchConfig.offside, default true). Can be flipped mid-match. */
+  offside: boolean;
+  /** Formation each side is playing right now (see setFormation). */
+  readonly formation: [FormationId, FormationId];
+  /**
+   * Who leads the goal celebration: the scorer, or for an own goal the scoring side's player
+   * nearest the ball. -1 outside a goal. (The camera can follow this instead of lastGoalScorer.)
+   */
+  celebHero = -1;
+  /** Where the celebration heads: the corner flag on the camera side at the end the goal went in. */
+  celebSpot = { x: 0, z: 0 };
 
   passTarget = -1;
   passT = 0;
   shotClock = 99;
   shotOnTarget = false;
   shotSide: Side = 0;
+  /** Who struck the last shot, the kick id it was, and whether it was on target when struck. */
+  shooter = -1;
+  shotKick = -1;
+  shotWasOnTarget = false;
   ballPath: { t: number; x: number; y: number; z: number }[] = [];
   keeperHoldTime = 1.4;
   /** Human-controlled player index, -1 when nobody. */
@@ -156,16 +214,46 @@ export class Match {
   shootout: ShootoutState | null = null;
   /** Match stats frozen at the final whistle (shootout kicks aren't match stats). */
   private soStats: Stats | null = null;
+  /**
+   * A pass just released: the passer's teammates who were offside when it was played. If one of
+   * them is the next to touch the ball, the flag goes up.
+   */
+  private offWatch: { kick: number; side: Side; passer: number; players: number[] } | null = null;
+  /** A foul the referee is waiting on (advantage), resolved within ADVANTAGE_WINDOW. */
+  private adv: { by: number; on: number; side: Side; t: number; x: number; z: number; reckless: boolean; kick: number } | null = null;
+  /** Next automatic substitution window (index into AUTO_SUB_MINUTES), per side. */
+  private subWindow: [number, number] = [0, 0];
+  /** Conceding players' walk-away points during a goal celebration. */
+  private concedeWalk = new Map<number, { x: number; z: number }>();
+  /** The AI corner whose short-or-cross choice has been made. */
+  private shortRolled: Restart | null = null;
+  /**
+   * Free kicks and penalties (shootout kicks too): the taker waits at a run-up spot beside and behind
+   * the ball (so the over-the-shoulder camera sees the ball) and, once the kick is ordered, steps in
+   * to it (`stepIn` = his index) before the strike starts. `runUpFoot`: 1 right foot, -1 left.
+   */
+  stepIn = -1;
+  runUpFoot = 1;
+  private stepInT = 0;
+
+  /**
+   * Foul probabilities scale with the half length (like fatigue), so a match of any length has a
+   * match's worth of fouls (~4): 1.2 at the default 2-minute halves.
+   */
+  private readonly foulScale: number;
 
   constructor(readonly cfg: MatchConfig) {
     this.rng = new Rng(cfg.seed ?? 12345);
+    this.foulScale = 1.2 * clamp(Math.pow(FATIGUE_REF_HALF / Math.max(30, cfg.halfLength), 1.3), 0.4, 1.8);
     this.teams = [cfg.home, cfg.away];
+    this.offside = cfg.offside ?? true;
+    this.formation = [cfg.home.formation, cfg.away.formation];
     this.bench = [[...(cfg.home.bench ?? [])], [...(cfg.away.bench ?? [])]];
     this.slots = [FORMATIONS[cfg.home.formation], FORMATIONS[cfg.away.formation]];
     for (const side of [0, 1] as Side[]) {
       const team = this.teams[side];
       // Harder AI sides get a small athletic edge (the human side is never scaled).
-      const pace = cfg.humanSide === side ? 1 : 1 + (this.aiSkill(side) - 2) * 0.015;
+      const pace = cfg.humanSide === side ? 1 : 1 + (this.aiSkill(side) - 2) * AI_PACE_EDGE;
       for (let s = 0; s < 11; s++) {
         const p = new Player(this.players.length, side, s, team.players[s]);
         p.runT = this.rng.next() * 4;
@@ -230,6 +318,37 @@ export class Match {
     return line;
   }
 
+  /**
+   * The offside line for attackers of `side`, in their normalised frame (+1 = the goal they
+   * attack): the second-last opponent (the keeper counts), never nearer than halfway (0).
+   */
+  offsideLine(side: Side): number {
+    const ad = this.attackDir(side);
+    let last = -Infinity;
+    let second = -Infinity;
+    for (const p of this.bySide[otherSide(side)]) {
+      if (p.sentOff) continue;
+      const x = (p.pos.x * ad) / HALF_L;
+      if (x > last) {
+        second = last;
+        last = x;
+      } else if (x > second) second = x;
+    }
+    return Math.max(0, second);
+  }
+
+  /**
+   * Is `p` standing in an offside position: in the opponents' half, ahead of the ball and beyond the
+   * second-last opponent (by more than OFFSIDE_TOL + `margin` metres)?
+   */
+  inOffsidePosition(p: Player, margin = 0): boolean {
+    if (p.isKeeper || p.sentOff) return false;
+    const ad = this.attackDir(p.side);
+    const x = p.pos.x * ad;
+    const line = Math.max(this.offsideLine(p.side) * HALF_L, this.ball.pos.x * ad);
+    return x > line + OFFSIDE_TOL + margin;
+  }
+
   minute(): number {
     const m = Math.floor((this.clock / this.cfg.halfLength) * 45);
     return (this.half - 1) * 45 + Math.min(m, 45 + 4);
@@ -258,6 +377,10 @@ export class Match {
     this.ball.reset(0, 0);
     this.passTarget = -1;
     this.shotClock = 99;
+    this.offWatch = null;
+    this.adv = null;
+    this.celebHero = -1;
+    this.concedeWalk.clear();
     for (const p of this.players) {
       if (p.sentOff) continue;
       const ad = this.attackDir(p.side);
@@ -330,10 +453,12 @@ export class Match {
     p.def = on;
     p.role = this.slots[side][slot].role;
     const pace = on.stats.pace / 100;
-    const edge = this.cfg.humanSide === side ? 1 : 1 + (this.aiSkill(side) - 2) * 0.015;
+    const edge = this.cfg.humanSide === side ? 1 : 1 + (this.aiSkill(side) - 2) * AI_PACE_EDGE;
     p.jog = JOG_SPEED * (0.86 + pace * 0.22) * edge;
     p.top = SPRINT_SPEED * (0.82 + pace * 0.26) * edge;
     p.stamina = 1;
+    // The yellow card belonged to the man going off, not to the slot.
+    this.booked.delete(p.idx);
     this.subsUsed[side]++;
     this.teams[side].players[slot] = on;
     this.events.push({ type: 'sub', side, slot, on: on.name, off: off.name });
@@ -341,17 +466,61 @@ export class Match {
   }
 
   /** AI managers: freshen up the most tired outfielders (called at half time). */
-  aiSubs(side: Side, count: number): void {
+  aiSubs(side: Side, count: number, below = 0.7): void {
     const tired = this.bySide[side]
-      .filter((p) => !p.isKeeper && !p.sentOff && p.stamina < 0.7)
+      .filter((p) => !p.isKeeper && !p.sentOff && p.stamina < below)
       .sort((a, b) => a.stamina - b.stamina)
-      .slice(0, count);
+      .slice(0, Math.max(0, Math.min(count, this.maxSubs - this.subsUsed[side])));
     for (const p of tired) {
       const bench = this.bench[side];
       let idx = bench.findIndex((d) => d.role === p.role);
       if (idx < 0) idx = bench.findIndex((d) => d.role !== 'GK');
       if (idx >= 0) this.substitute(side, p.slot, idx);
     }
+  }
+
+  /**
+   * AI managers (both sides in AI-vs-AI, never the human's) look at their bench at the first dead
+   * ball after 60' and after 75': outfielders under AUTO_SUB_STAMINA come off, up to two at a time,
+   * within the three-sub limit. Each change is a 'sub' event.
+   */
+  private autoSubs(): void {
+    if (this.half !== 2 || this.shootout) return;
+    const min = this.minute();
+    for (const side of [0, 1] as Side[]) {
+      if (this.cfg.humanSide === side) continue;
+      let w = this.subWindow[side];
+      if (w >= AUTO_SUB_MINUTES.length || min < AUTO_SUB_MINUTES[w]) continue;
+      while (w < AUTO_SUB_MINUTES.length && min >= AUTO_SUB_MINUTES[w]) w++;
+      this.subWindow[side] = w;
+      this.aiSubs(side, 2, AUTO_SUB_STAMINA);
+    }
+  }
+
+  /**
+   * Change a side's formation mid-match (the tactics screen): every player on the pitch takes the
+   * slot of the same index in the new shape, with its role; the bench is untouched. Returns false
+   * for an unknown formation.
+   */
+  setFormation(side: Side, id: FormationId): boolean {
+    const slots = FORMATIONS[id];
+    if (!slots) return false;
+    this.slots[side] = slots;
+    this.formation[side] = id;
+    for (const p of this.bySide[side]) {
+      if (!p.isKeeper) p.role = slots[p.slot].role;
+    }
+    for (const s of [0, 1] as Side[]) {
+      const br = this.brains[s];
+      br.spFor = null; // set-piece shapes are drawn from the slots
+      br.think = 0;
+      if (s === side) {
+        br.overlap = -1;
+        br.boxZones.clear();
+        br.supportT = 0;
+      }
+    }
+    return true;
   }
 
   continueSecondHalf(): void {
@@ -363,6 +532,7 @@ export class Match {
 
   resumeAfterGoal(): void {
     if (this.phase !== 'goal') return;
+    this.autoSubs();
     this.setupKickoff(this.goalSide === 0 ? 1 : 0);
   }
 
@@ -435,6 +605,7 @@ export class Match {
       this.autoTackle();
       this.humanCuts();
       this.checkBounds();
+      if (this.phase === 'play') this.updateAdvantage(dt);
       this.autoSwitchUpdate(dt);
     } else if (this.phase === 'out') {
       // Corners and wide free kicks get a beat longer so the box can fill.
@@ -450,7 +621,8 @@ export class Match {
         const b = this.ball.pos;
         const danger = Math.abs(b.x) > HALF_L - BOX_DEPTH - 6 && Math.abs(b.z) < BOX_W / 2 + 4;
         // Never blow while the ball is in the air, a shot is live or a set piece has just been taken.
-        const live = b.y > 1 || this.shotClock < 1.5 || this.phaseT < 2.5;
+        // (Nor while the referee is waiting to see whether an advantage comes off.)
+        const live = b.y > 1 || this.shotClock < 1.5 || this.phaseT < 2.5 || this.adv !== null;
         if ((!danger && !live) || this.clock > this.cfg.halfLength + 8) this.endHalf();
       }
     }
@@ -464,6 +636,8 @@ export class Match {
 
   private endHalf(): void {
     this.ball.owner = -1;
+    this.offWatch = null;
+    this.adv = null;
     for (const p of this.players) {
       p.order = null;
       p.wantX = p.wantZ = 0;
@@ -538,12 +712,20 @@ export class Match {
     firstTime: boolean, aim?: { x: number; z: number }, land?: number,
   ): KickOrder | null {
     if (p.sentOff) return null;
+    if (this.stepIn === p.idx && p.order) return null; // already on his way in to strike it
     if (p.state !== 'move' && p.state !== 'hold' && !(p.state === 'kick' && p.poke)) return null;
     p.order = {
       kind, dirX, dirZ, power, target, firstTime,
       aimX: aim?.x, aimZ: aim?.z, land,
       expires: firstTime ? 0.6 : 0.6,
     };
+    if (!firstTime && this.usesRunUp(p) && p.state === 'move') {
+      // Step in from the run-up first (holdDeadBall walks him in, then starts the kick).
+      this.stepIn = p.idx;
+      this.stepInT = 0;
+      p.kickLeg = this.runUpFoot;
+      return p.order;
+    }
     if (!firstTime) {
       p.setState(kind === 'throw' || (kind === 'keeper' && p.isKeeper) ? 'throw' : 'kick');
       p.kickT = 0;
@@ -561,8 +743,48 @@ export class Match {
     const df = dist2(p.footX(), p.footZ(), b.x, b.z);
     if (df < 1.0 && b.y < 1.05) return 'foot';
     const dh = dist2(p.pos.x, p.pos.z, b.x, b.z);
-    if (dh < 0.95 && b.y >= 1.05 && b.y < 2.55) return 'head';
+    // A leaping player reaches higher.
+    if (dh < 0.95 && b.y >= 1.05 && b.y < 2.55 + p.y) return 'head';
     return null;
+  }
+
+  /**
+   * A player waiting on a first-time ball that will arrive above head height takes off early: when
+   * the ball is HEADER_LEAD from his head he leaps, so he meets it near the top of the jump rather
+   * than flat-footed. The flight is projected with the same air model as the ball (and the player
+   * carried on at his current velocity).
+   */
+  private headerJump(p: Player): void {
+    const b = this.ball;
+    if (p.y > 0 || p.state !== 'move' || b.owner >= 0 || b.held) return;
+    if (b.pos.y < 0.9 && b.vel.y < 2) return;
+    let x = b.pos.x;
+    let y = b.pos.y;
+    let z = b.pos.z;
+    let vx = b.vel.x;
+    let vy = b.vel.y;
+    let vz = b.vel.z;
+    const dt = 1 / 60;
+    for (let i = 1; i <= 27; i++) {
+      vy -= GRAVITY * dt;
+      const k = AIR_DRAG * Math.hypot(vx, vy, vz) * dt;
+      vx -= vx * k;
+      vy -= vy * k;
+      vz -= vz * k;
+      x += vx * dt;
+      y += vy * dt;
+      z += vz * dt;
+      if (y < BALL_R + 0.05) return; // lands first: it's a volley or a bouncing ball
+      const t = i * dt;
+      const d = dist2(p.pos.x + p.vel.x * t, p.pos.z + p.vel.z * t, x, z);
+      if (d < 0.95 && y < 2.55 + 0.49) {
+        if (y >= HEADER_JUMP_Y && t <= HEADER_LEAD) {
+          p.vy = HEADER_VY;
+          p.y = 0.01;
+        }
+        return;
+      }
+    }
   }
 
   private resolveOrders(dt: number): void {
@@ -579,11 +801,13 @@ export class Match {
         }
         if (this.ball.held) continue;
         if (this.ball.owner >= 0 && this.ball.owner !== p.idx) continue;
+        this.headerJump(p);
         const reach = this.ballReach(p);
         if (reach) contact.push({ p, reach });
         continue;
       }
       const windup = p.state === 'throw' ? 0.26 : KICK_WINDUP;
+      if (this.stepIn === p.idx && p.state === 'move') continue;
       if (p.state !== 'kick' && p.state !== 'throw') {
         p.order = null;
         continue;
@@ -604,8 +828,10 @@ export class Match {
       let tot = 0;
       const w = contact.map((c) => {
         let s = c.reach === 'head' ? 0.6 + (c.p.stat.defending + c.p.stat.shooting) / 400 : 1;
-        // Attacking the ball at pace (a runner onto a cross) beats standing and waiting for it.
+        // Attacking the ball at pace (a runner onto a cross) beats standing and waiting for it,
+        // and so does getting up early for it.
         if (c.p.speed() > 4.5) s *= 1.3;
+        if (c.reach === 'head' && c.p.y > 0.25) s *= 1.15;
         tot += s;
         return s;
       });
@@ -621,7 +847,7 @@ export class Match {
     // Aerial duel: the loser sometimes goes through the back of the winner (or pushes him).
     if (duel && win.reach === 'head' && this.phase === 'play') {
       const loser = contact.find((c) => c.p.side !== win.p.side && dist2(c.p.pos.x, c.p.pos.z, win.p.pos.x, win.p.pos.z) < 1.6);
-      if (loser && !loser.p.isKeeper && this.rng.chance(AERIAL_FOUL)) {
+      if (loser && !loser.p.isKeeper && this.rng.chance(AERIAL_FOUL * this.foulScale)) {
         win.p.order = null;
         loser.p.order = null;
         this.foul(loser.p, win.p);
@@ -647,8 +873,12 @@ export class Match {
         }
       }
       p.headerT = 1;
-      p.vy = 3.2;
-      p.y = 0.01;
+      // Normally already in the air (headerJump); a ball that got there too quickly for that is
+      // still met with a spring off the ground if it's high.
+      if (p.y === 0 && this.ball.pos.y > HEADER_JUMP_Y + 0.15) {
+        p.vy = HEADER_VY * 0.8;
+        p.y = 0.01;
+      }
     } else if (o.kind === 'header') {
       // Ball dropped below head height: volley a header shot, otherwise knock the aimed ball on.
       o.kind = o.aimX === undefined && o.target < 0 ? 'shot' : 'lob';
@@ -661,6 +891,11 @@ export class Match {
   private execute(p: Player): void {
     const o = p.order;
     if (!o) return;
+    // First to a pass he was offside for: the flag is up before he can do anything with it.
+    if (this.offsideTouch(p)) {
+      p.order = null;
+      return;
+    }
     const b = this.ball;
     if (b.held && b.owner === p.idx) {
       b.held = false;
@@ -702,11 +937,26 @@ export class Match {
       this.stats.shots[p.side]++;
       this.shotOnTarget = onTarget(this, p.side);
       if (this.shotOnTarget) this.stats.onTarget[p.side]++;
+      this.shooter = p.idx;
+      this.shotKick = this.kickId;
+      this.shotWasOnTarget = this.shotOnTarget;
       this.passTarget = -1;
     } else {
       this.passTarget = L.target;
       this.passT = 0;
       if (L.target >= 0) this.stats.passes[p.side]++;
+    }
+    // Offside is judged the moment a pass is played (never from a throw-in, corner or goal kick).
+    this.offWatch = null;
+    const rs = this.restart;
+    const noOffside = this.phase === 'restart' && rs && rs.taker === p.idx &&
+      (rs.kind === 'throwin' || rs.kind === 'corner' || rs.kind === 'goalkick');
+    if (this.offside && !isShot && L.kind !== 'clear' && L.kind !== 'throw' && !noOffside && this.phase !== 'shootout') {
+      const off: number[] = [];
+      for (const q of this.bySide[p.side]) {
+        if (q !== p && this.inOffsidePosition(q)) off.push(q.idx);
+      }
+      if (off.length) this.offWatch = { kick: this.kickId, side: p.side, passer: p.idx, players: off };
     }
     this.events.push({ type: 'kick', power: L.power, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: L.kind });
     if (this.cfg.humanSide === p.side && L.target >= 0 && !isShot) {
@@ -768,7 +1018,7 @@ export class Match {
       let fw = -1;
       let fd = -Infinity;
       for (const t of this.bySide[k.side]) {
-        if (t.sentOff || t.isKeeper) continue;
+        if (t.sentOff || t.isKeeper || (this.offside && this.inOffsidePosition(t))) continue;
         const s = t.pos.x * ad + this.rng.next() * 12 - (t.role === 'DF' ? 30 : 0);
         if (s > fd) {
           fd = s;
@@ -856,7 +1106,7 @@ export class Match {
       const t = this.players[this.restart.taker];
       this.active = t.idx;
       t.wantX = t.wantZ = 0;
-      if (stickLen > 0.3 && this.restart.kind !== 'kickoff') {
+      if (stickLen > 0.3 && this.restart.kind !== 'kickoff' && this.stepIn !== t.idx) {
         t.facing = Math.atan2(pad.mz, pad.mx);
       }
       if (this.phase === 'restart' && this.phaseT < 0.35) return;
@@ -870,6 +1120,12 @@ export class Match {
         // No stick: whip it into the zone a runner is attacking (near / far post on a corner).
         const aimed = stickLen > 0.3;
         const curl = stickCurl(pad.mz);
+        if (passP && !aimed && kind === 'corner') {
+          // Played short to the man who came across for it: no need to wait for the box.
+          this.queuedKick = null;
+          this.shortCorner(t);
+          return;
+        }
         if (passP) want = aimed ? () => this.order(t, 'pass', dx, dz, 0.6, -1, false) : () => this.deliverSetPiece(t, 0.7);
         else if (throughR) {
           const pw = clamp(throughHold / 0.8, 0.3, 1);
@@ -880,7 +1136,15 @@ export class Match {
             const o = this.order(t, 'shot', dx, dz, pw, -1, false);
             if (o) o.curl = curl;
           };
-        } else if (shootR) want = aimed ? () => this.order(t, 'lob', dx, dz, 1, -1, false) : () => this.deliverSetPiece(t, 1);
+        } else if (shootR) {
+          // SHOOT on a corner: a driven cross, flat and fast.
+          want = aimed
+            ? () => {
+              const o = this.order(t, 'lob', dx, dz, 1, -1, false);
+              if (o) o.driven = true;
+            }
+            : () => this.deliverSetPiece(t, 1, true);
+        }
         if (want) this.queuedKick = want;
         if (setPieceReady(this, side) < 4 && this.phaseT < 1.6) return;
         const q = this.queuedKick;
@@ -1104,14 +1368,26 @@ export class Match {
         break;
       }
       case 'throwin': {
+        // To a teammate 4-18 m away; with nobody in range, the nearest outfielder (never the keeper,
+        // which used to be the fallback and threw it the length of the pitch).
         const m = pick((p) => {
+          if (p.isKeeper) return -1e4;
           const d = dist2(p.pos.x, p.pos.z, t.pos.x, t.pos.z);
-          return d > 18 || d < 4 ? -99 : openness(p) - d * 0.2 + ((p.pos.x - t.pos.x) * ad) * 0.08;
+          if (d > 18 || d < 4) return -99 - Math.abs(d - 11);
+          return openness(p) - d * 0.2 + ((p.pos.x - t.pos.x) * ad) * 0.08;
         });
         this.order(t, 'throw', m.pos.x - t.pos.x, m.pos.z - t.pos.z, 0.5, m.idx, false);
         break;
       }
       case 'corner': {
+        // Now and then it's played short to the man who came for it.
+        if (this.cfg.humanSide !== r.side && this.shortRolled !== r) {
+          this.shortRolled = r;
+          if (this.rng.chance(0.1)) {
+            this.shortCorner(t);
+            break;
+          }
+        }
         // Give the runners a moment to load the box.
         if (this.cfg.humanSide !== r.side && setPieceReady(this, r.side) < 4 && this.phaseT < r.wait + 3) return;
         this.deliverSetPiece(t);
@@ -1145,7 +1421,8 @@ export class Match {
           if (this.cfg.humanSide !== r.side && setPieceReady(this, r.side) < 4 && this.phaseT < r.wait + 3) return;
           this.deliverSetPiece(t);
         } else {
-          const m = pick((p) => openness(p) + ((p.pos.x - t.pos.x) * ad) * 0.15 - dist2(p.pos.x, p.pos.z, t.pos.x, t.pos.z) * 0.1);
+          const m = pick((p) => openness(p) + ((p.pos.x - t.pos.x) * ad) * 0.15 - dist2(p.pos.x, p.pos.z, t.pos.x, t.pos.z) * 0.1 -
+            (this.offside && this.inOffsidePosition(p) ? 99 : 0));
           this.order(t, dg < 40 ? 'lob' : 'pass', m.pos.x - t.pos.x, m.pos.z - t.pos.z, 0.7, m.idx, false);
         }
         break;
@@ -1157,23 +1434,51 @@ export class Match {
    * Corner / wide free kick: whip it into the zone one of the box runners is attacking (near or far
    * post on a corner). Used by the AI and by a human who takes it without aiming the stick.
    */
-  private deliverSetPiece(t: Player, power = 0.8): void {
+  private deliverSetPiece(t: Player, power = 0.8, driven = false): void {
     const a = setPieceAim(this, t);
-    this.order(t, 'lob', a.x - t.pos.x, a.z - t.pos.z, power, a.target, false, { x: a.x, z: a.z });
+    const o = this.order(t, 'lob', a.x - t.pos.x, a.z - t.pos.z, power, a.target, false, { x: a.x, z: a.z });
+    if (o && driven) o.driven = true;
   }
 
-  private goOut(kind: RestartKind, side: Side, x: number, z: number): void {
+  /**
+   * Short corner: a pass to feet for the nearest teammate within ~12 m (the one who came short
+   * for it); with nobody that close, the nearest within 20 m; failing that, a cross.
+   */
+  private shortCorner(t: Player): void {
+    let best: Player | null = null;
+    let bd = Infinity;
+    for (const q of this.bySide[t.side]) {
+      if (q === t || q.sentOff || q.isKeeper) continue;
+      const d = dist2(q.pos.x, q.pos.z, t.pos.x, t.pos.z);
+      if (d < bd) {
+        bd = d;
+        best = q;
+      }
+    }
+    if (!best || bd > 20) {
+      this.deliverSetPiece(t, 0.7);
+      return;
+    }
+    this.order(t, 'pass', best.pos.x - t.pos.x, best.pos.z - t.pos.z, 0.5, best.idx, false);
+  }
+
+  private goOut(kind: RestartKind, side: Side, x: number, z: number, indirect = false): void {
     this.phase = 'out';
     this.phaseT = 0;
     this.ball.owner = -1;
     this.passTarget = -1;
+    this.offWatch = null;
+    this.adv = null;
     this.pendingRestart = { kind, side, x, z, taker: -1, wait: 0.95 + this.rng.next() * 0.55 };
+    if (indirect) this.pendingRestart.indirect = true;
     // Choose the taker now so everyone can take up set-piece positions while the ball is dead.
     this.pendingRestart.taker = this.pickTaker(this.pendingRestart).idx;
     this.restart = this.pendingRestart;
     for (const p of this.players) p.order = null;
     this.events.push({ type: 'whistle', kind: 'short' }, { type: 'restart', kind, side });
     if (kind === 'corner') this.stats.corners[side]++;
+    // A stoppage: the AI benches can make their late changes (not while a penalty is given).
+    if (kind !== 'penalty') this.autoSubs();
   }
 
   private pickTaker(r: Restart): Player {
@@ -1281,6 +1586,11 @@ export class Match {
     }
     this.phase = 'restart';
     this.phaseT = 0;
+    this.stepIn = -1;
+    if (r.kind === 'freekick' || r.kind === 'penalty') {
+      this.runUpFoot = this.rng.chance(0.8) ? 1 : -1;
+      this.holdDeadBall();
+    }
     if (this.cfg.humanSide === r.side) this.active = taker.idx;
     else if (this.cfg.humanSide >= 0) this.active = this.nearestTo(this.cfg.humanSide as Side, r.x, r.z, true);
   }
@@ -1291,6 +1601,19 @@ export class Match {
     if (b.held) return;
     const lastSide = (b.lastTouchSide < 0 ? 0 : b.lastTouchSide) as Side;
     const other = (lastSide === 0 ? 1 : 0) as Side;
+    const out = Math.abs(p.z) > HALF_W + BALL_R * 0.5 || Math.abs(p.x) > HALF_L + BALL_R;
+    if (out && this.adv) {
+      // Waiting on an advantage: a goal for the fouled side stands; anything else goes back for
+      // the free kick.
+      const gs = Math.sign(p.x);
+      const scoring = (this.attackDir(0) === gs ? 0 : 1) as Side;
+      const goal = Math.abs(p.x) > HALF_L + BALL_R && Math.abs(p.z) < GOAL_W / 2 && p.y < GOAL_H;
+      if (goal && scoring === this.adv.side) this.grantAdvantage();
+      else {
+        this.whistleBack();
+        return;
+      }
+    }
     if (Math.abs(p.z) > HALF_W + BALL_R * 0.5) {
       this.goOut('throwin', other, clamp(p.x, -HALF_L + 1, HALF_L - 1), Math.sign(p.z) * HALF_W);
       return;
@@ -1314,7 +1637,14 @@ export class Match {
 
   private goal(side: Side): void {
     this.score[side]++;
-    const scorer = this.ball.lastTouch >= 0 ? this.players[this.ball.lastTouch] : this.bySide[side][10];
+    let scorer = this.ball.lastTouch >= 0 ? this.players[this.ball.lastTouch] : this.bySide[side][10];
+    // An on-target shot that goes in off a save, a block or a deflection is the shooter's goal, not
+    // an own goal (as long as nobody has struck the ball since).
+    const shooter = this.shooter >= 0 ? this.players[this.shooter] : null;
+    if (scorer.side !== side && shooter && shooter.side === side && !shooter.sentOff && this.shotSide === side &&
+      this.shotWasOnTarget && this.shotKick === this.kickId && this.shotClock < SHOT_CREDIT) {
+      scorer = shooter;
+    }
     const own = scorer.side !== side;
     // Football minutes count up from 1' (0:30 is the 1st minute); stoppage time stays on 45'/90'.
     const minute = this.goalMinute();
@@ -1324,11 +1654,29 @@ export class Match {
     this.phase = 'goal';
     this.phaseT = 0;
     this.passTarget = -1;
+    this.offWatch = null;
+    this.adv = null;
     this.ball.owner = -1;
     this.ball.held = false;
     this.events.push({ type: 'goal', side, scorer: scorer.idx, own });
-    // The 3-4 nearest teammates mob the scorer; the rest jog over; the keeper stays home.
-    const hero = own ? null : scorer;
+    // The scorer (for an own goal, the attacker nearest the ball) wheels away to the corner flag on
+    // the camera side at this end; the 3-4 nearest teammates chase him there, the rest jog over and
+    // the keeper stays home. The conceding side trudges off towards its own half.
+    let hero: Player | null = own ? null : scorer;
+    if (!hero) {
+      const b = this.ball.pos;
+      let bd = Infinity;
+      for (const p of this.bySide[side]) {
+        if (p.isKeeper || p.sentOff) continue;
+        const d = dist2(p.pos.x, p.pos.z, b.x, b.z);
+        if (d < bd) {
+          bd = d;
+          hero = p;
+        }
+      }
+    }
+    this.celebHero = hero ? hero.idx : -1;
+    this.celebSpot = { x: this.attackDir(side) * (HALF_L - 6), z: HALF_W - 4 };
     this.celebrants = hero
       ? this.bySide[side]
         .filter((p) => p !== hero && !p.isKeeper && !p.sentOff)
@@ -1336,6 +1684,9 @@ export class Match {
         .slice(0, 3 + this.rng.int(2))
         .map((p) => p.idx)
       : [];
+    this.concedeWalk.clear();
+    const conc = otherSide(side);
+    const adc = this.attackDir(conc);
     for (const p of this.players) {
       p.order = null;
       p.claiming = false;
@@ -1347,17 +1698,36 @@ export class Match {
         // Conceding keeper included (unless mid-dive; he gets up first).
         p.setState('dejected');
       }
+      if (p.side === conc && !p.isKeeper) {
+        // ~12 m towards where he'll line up for the kick-off.
+        const k = kickoffSlot(this.slots[conc][p.slot], true);
+        const dx = k.x * HALF_L * adc - p.pos.x;
+        const dz = k.z * HALF_W * adc - p.pos.z;
+        const d = Math.hypot(dx, dz);
+        const s = d > 0.5 ? Math.min(12, d) / d : 0;
+        this.concedeWalk.set(p.idx, { x: p.pos.x + dx * s, z: p.pos.z + dz * s });
+      }
     }
   }
 
   private celebrants: number[] = [];
 
+  /**
+   * Goal choreography, stepped for as long as the goal phase lasts (only resumeAfterGoal ends it):
+   * the scorer sprints (up to CELEBRATE_SPRINT) to the corner flag and turns to the camera; the mob
+   * sprints there too and closes round him; the rest of the team jogs up to a few metres off; the
+   * conceding side walks ~12 m away towards its own half, its keeper fetches the ball.
+   */
   private celebrate(): void {
-    const scorer = this.lastGoalScorer >= 0 ? this.players[this.lastGoalScorer] : null;
-    const hero = scorer && scorer.side === this.goalSide ? scorer : null;
-    const cx = hero ? Math.sign(hero.pos.x || 1) * (HALF_L - 6) : 0;
-    const cz = HALF_W - 5;
+    const hero = this.celebHero >= 0 ? this.players[this.celebHero] : null;
+    const spot = this.celebSpot;
     const t = this.phaseT;
+    // Once the scorer is at the flag the others close round him; until then they head for the flag.
+    const there = !!hero && dist2(hero.pos.x, hero.pos.z, spot.x, spot.z) < 3;
+    const hubX = there && hero ? hero.pos.x : spot.x;
+    const hubZ = there && hero ? hero.pos.z : spot.z;
+    // The mob fans out on the pitch side of the flag (never behind the byline or the touchline).
+    const a0 = Math.atan2(-1, -Math.sign(spot.x) || -1);
     for (const p of this.players) {
       if (p.sentOff) continue;
       p.faceTarget = null;
@@ -1367,6 +1737,7 @@ export class Match {
         let tz: number;
         let fast = true;
         let stopR = 0.8;
+        let face: number | null = null;
         const mob = this.celebrants.indexOf(p.idx);
         if (p.isKeeper) {
           // Punches the air near his own goal.
@@ -1375,20 +1746,24 @@ export class Match {
           tz = clamp(p.pos.z, -6, 6);
           fast = false;
         } else if (p === hero) {
-          // Wheel away towards the corner, then slow so the mob can catch him.
-          tx = cx;
-          tz = cz;
-          fast = t < 1.1;
-          if (t > 1.6) {
-            tx = p.pos.x;
-            tz = p.pos.z;
-          }
+          // A burst away, then a strut to the flag with the arms out so the mob can catch him.
+          tx = spot.x;
+          tz = spot.z;
+          stopR = 0.6;
+          fast = t < HERO_BURST;
+          face = Math.PI / 2; // to the camera
         } else if (hero && mob >= 0) {
-          const a = (mob / Math.max(1, this.celebrants.length)) * Math.PI * 2 + t * 1.3;
-          const near = dist2(p.pos.x, p.pos.z, hero.pos.x, hero.pos.z) < 2.2;
-          tx = hero.pos.x + Math.cos(a) * (near ? 1.1 : 0.6);
-          tz = hero.pos.z + Math.sin(a) * (near ? 1.1 : 0.6);
-          stopR = 0.25;
+          // Straight after him from the whistle, then round him (and with him) once they're there.
+          const n = Math.max(1, this.celebrants.length);
+          const a = a0 + ((mob + 0.5) / n - 0.5) * 2.4 + Math.sin(t * 1.3 + mob) * 0.15;
+          const near = dist2(p.pos.x, p.pos.z, hero.pos.x, hero.pos.z) < 2.4;
+          const cx = there ? hubX : hero.pos.x + hero.vel.x * 0.35;
+          const cz = there ? hubZ : hero.pos.z + hero.vel.z * 0.35;
+          tx = cx + Math.cos(a) * 1.35;
+          tz = cz + Math.sin(a) * 1.35;
+          stopR = 0.3;
+          fast = !near || !there;
+          face = Math.atan2(hero.pos.z - p.pos.z, hero.pos.x - p.pos.x);
           // Hop around the scorer once they get there.
           if (near && p.y === 0 && this.rng.chance(0.05)) {
             p.vy = 3;
@@ -1396,12 +1771,13 @@ export class Match {
           }
         } else if (hero) {
           // Everyone else jogs over but gives the scorer room.
-          const dx = p.pos.x - hero.pos.x;
-          const dz = p.pos.z - hero.pos.z;
+          const dx = p.pos.x - hubX;
+          const dz = p.pos.z - hubZ;
           const d = Math.hypot(dx, dz) || 1;
-          tx = hero.pos.x + (dx / d) * 5;
-          tz = hero.pos.z + (dz / d) * 5;
+          tx = hubX + (dx / d) * 5;
+          tz = hubZ + (dz / d) * 5;
           fast = false;
+          face = Math.atan2(hubZ - p.pos.z, hubX - p.pos.x);
         } else {
           tx = p.pos.x;
           tz = p.pos.z;
@@ -1410,14 +1786,14 @@ export class Match {
         const dz = tz - p.pos.z;
         const d = Math.hypot(dx, dz);
         if (d > stopR) {
-          const f = fast ? 1 : Math.min(1, d / 3) * 0.6;
+          const f = fast ? 1 : p === hero ? 0.85 : Math.min(1, d / 3) * 0.6;
           p.wantX = (dx / d) * f;
           p.wantZ = (dz / d) * f;
           p.sprint = fast;
         } else {
           p.wantX = p.wantZ = 0;
           p.sprint = false;
-          p.faceTarget = hero && p !== hero ? Math.atan2(hero.pos.z - p.pos.z, hero.pos.x - p.pos.x) : Math.PI / 2;
+          p.faceTarget = face ?? Math.PI / 2;
         }
       } else if (p.state === 'dejected') {
         let tx: number;
@@ -1428,16 +1804,17 @@ export class Match {
           tx = clamp(b.x, -HALF_L - 1.2, HALF_L + 1.2);
           tz = clamp(b.z, -GOAL_W / 2 + 0.5, GOAL_W / 2 - 0.5);
         } else {
-          const ad = this.attackDir(p.side);
-          tx = this.slots[p.side][p.slot].x * HALF_L * 0.5 * ad;
-          tz = p.pos.z;
+          const w = this.concedeWalk.get(p.idx);
+          tx = w ? w.x : p.pos.x;
+          tz = w ? w.z : p.pos.z;
         }
         const dx = tx - p.pos.x;
         const dz = tz - p.pos.z;
         const d = Math.hypot(dx, dz);
-        if (d > (p.isKeeper ? 0.7 : 1)) {
-          p.wantX = (dx / d) * 0.35;
-          p.wantZ = (dz / d) * 0.35;
+        if (d > (p.isKeeper ? 0.7 : 0.6)) {
+          const f = p.isKeeper ? 0.35 : 0.5;
+          p.wantX = (dx / d) * f;
+          p.wantZ = (dz / d) * f;
         } else {
           p.wantX = p.wantZ = 0;
           if (p.isKeeper) p.faceTarget = Math.atan2(this.ball.pos.z - p.pos.z, this.ball.pos.x - p.pos.x);
@@ -1506,15 +1883,29 @@ export class Match {
     }
   }
 
+  /** Is `p` the taker of a free kick or penalty (or shootout kick) still waiting to strike it? */
+  usesRunUp(p: Player): boolean {
+    const r = this.restart;
+    if (!r || r.taker !== p.idx || this.ball.held) return false;
+    if (this.phase === 'shootout') {
+      const s = this.shootout;
+      return !!s && s.taker === p.idx && (s.stage === 'aim' || s.stage === 'intro');
+    }
+    return this.phase === 'restart' && (r.kind === 'freekick' || r.kind === 'penalty');
+  }
+
   /**
    * Kick-offs and restarts: the ball sits dead still on its spot and the taker stands over it (a
    * human taker can turn round it with the stick) until it's struck. Nothing else can nudge it.
    */
   private holdDeadBall(): void {
-    if (this.phase !== 'restart' && this.phase !== 'kickoff') return;
+    if (this.phase !== 'restart' && this.phase !== 'kickoff' && this.phase !== 'shootout') return;
     const r = this.restart;
     const b = this.ball;
-    if (!r || r.taker < 0 || b.owner !== r.taker) return;
+    if (!r || r.taker < 0 || b.owner !== r.taker) {
+      this.stepIn = -1;
+      return;
+    }
     const t = this.players[r.taker];
     if (r.kind === 'throwin') {
       t.pos.x = r.x;
@@ -1523,9 +1914,41 @@ export class Match {
       return;
     }
     if (b.held) return; // a keeper's restart from the hands
-    if (t.state === 'move' || t.state === 'kick') {
-      t.pos.x = r.x - Math.cos(t.facing) * 0.62;
-      t.pos.z = r.z - Math.sin(t.facing) * 0.62;
+    const fx = Math.cos(t.facing);
+    const fz = Math.sin(t.facing);
+    // The side of the ball his kicking foot is on (world right of his facing is (-fz, fx)).
+    const rx = -fz * this.runUpFoot;
+    const rz = fx * this.runUpFoot;
+    const strikeX = r.x - fx * 0.62 - rx * 0.12;
+    const strikeZ = r.z - fz * 0.62 - rz * 0.12;
+    if (this.usesRunUp(t) && t.state === 'move') {
+      const upX = r.x - fx * RUNUP_BACK - rx * RUNUP_SIDE;
+      const upZ = r.z - fz * RUNUP_BACK - rz * RUNUP_SIDE;
+      if (this.stepIn === t.idx) {
+        // Stepping in: a couple of strides onto the ball, then the strike.
+        this.stepInT += DT;
+        const len = Math.hypot(strikeX - upX, strikeZ - upZ);
+        const k = Math.min(1, (this.stepInT * RUNUP_SPEED) / Math.max(0.01, len));
+        t.pos.x = upX + (strikeX - upX) * k;
+        t.pos.z = upZ + (strikeZ - upZ) * k;
+        // (Velocity for the run cycle only; the position is set here.)
+        t.vel.x = ((strikeX - upX) / Math.max(0.01, len)) * RUNUP_SPEED;
+        t.vel.z = ((strikeZ - upZ) / Math.max(0.01, len)) * RUNUP_SPEED;
+        if (k >= 1) {
+          t.vel.x = t.vel.z = 0;
+          this.stepIn = -1;
+          t.setState('kick');
+          t.kickT = 0;
+          t.kickLeg = this.runUpFoot;
+        }
+      } else {
+        t.pos.x = upX;
+        t.pos.z = upZ;
+        t.vel.x = t.vel.z = 0;
+      }
+    } else if (t.state === 'move' || t.state === 'kick') {
+      t.pos.x = this.usesRunUp(t) ? strikeX : r.x - fx * 0.62;
+      t.pos.z = this.usesRunUp(t) ? strikeZ : r.z - fz * 0.62;
       if (t.state === 'move') t.vel.x = t.vel.z = 0;
     }
     b.pos.x = r.x;
@@ -1569,7 +1992,7 @@ export class Match {
     const b = this.ball;
     if (b.owner < 0 || b.held) return;
     // A dead ball on its spot is held there (holdDeadBall), not dribbled.
-    if ((this.phase === 'restart' || this.phase === 'kickoff') && this.restart?.taker === b.owner) return;
+    if ((this.phase === 'restart' || this.phase === 'kickoff' || this.phase === 'shootout') && this.restart?.taker === b.owner) return;
     const p = this.players[b.owner];
     if (p.state !== 'move' && p.state !== 'kick' && p.state !== 'celebrate') {
       b.owner = -1;
@@ -1640,6 +2063,7 @@ export class Match {
       }
     }
     if (rel > trap) {
+      if (this.offsideTouch(best)) return;
       // Heavy touch: it squirts off the player.
       b.vel.x = b.vel.x * 0.3 + best.vel.x * 0.4 + this.rng.gauss() * 2;
       b.vel.z = b.vel.z * 0.3 + best.vel.z * 0.4 + this.rng.gauss() * 2;
@@ -1655,6 +2079,7 @@ export class Match {
 
   /** `p` now has the ball at their feet. */
   private takePossession(p: Player): void {
+    if (this.offsideTouch(p)) return;
     const b = this.ball;
     b.owner = p.idx;
     b.lastTouch = p.idx;
@@ -1705,6 +2130,7 @@ export class Match {
    * slower, and he touched it last (so it's a corner if it goes out).
    */
   private nick(p: Player): void {
+    this.offsideTouch(p);
     const b = this.ball;
     const out = Math.sign(b.pos.z) || (this.rng.chance(0.5) ? 1 : -1);
     const hs = b.hspeed();
@@ -1725,6 +2151,7 @@ export class Match {
 
   /** The ball cannons off `p`: a blocked pass or shot, sometimes behind for a corner. */
   private deflect(p: Player, shot: boolean): void {
+    this.offsideTouch(p);
     const b = this.ball;
     const sp = b.hspeed();
     const gxOwn = -this.attackDir(p.side) * HALF_L;
@@ -1732,7 +2159,7 @@ export class Match {
     const nearLine = dLine < 22;
     const inBox = inOwnBox(this, p.side, b.pos.x, b.pos.z);
     const cross = Math.abs(this.kickZ) > HALF_W * 0.35 && this.kickKind !== 'shot';
-    const pBehind = inBox ? (cross ? 0.55 : 0.42) : nearLine ? (shot ? 0.4 : cross ? 0.5 : 0.25) : 0;
+    const pBehind = inBox ? (cross ? 0.58 : 0.47) : nearLine ? (shot ? 0.45 : cross ? 0.52 : 0.28) : 0;
     if (pBehind > 0 && this.rng.chance(pBehind)) {
       // Blocked cross or shot near our goal: it loops up and off behind the byline, wide of the posts.
       const ns = clamp(5 + dLine * 0.6, 7, 18) + this.rng.next() * 4;
@@ -1815,7 +2242,7 @@ export class Match {
       const dh = dist2(hx, hz, b.pos.x, b.pos.z);
       const dy = Math.abs(b.pos.y - hy);
       const keeping = k.stat.keeping / 100;
-      const reachH = (diving ? 0.85 : claiming ? 0.92 : 0.74) + keeping * 0.2 + this.keeperBonus(s);
+      const reachH = (diving ? 0.72 : claiming ? 0.84 : 0.62) + keeping * 0.2 + this.keeperBonus(s);
       const reachV = diving ? 1.1 : claiming ? 1.4 : 1.45;
       if (dh < reachH && dy < reachV && b.pos.y < GOAL_H + (claiming ? 0.7 : 0.3)) {
         const speed = b.speed();
@@ -1827,7 +2254,8 @@ export class Match {
         }
         const catchLimit = 11 + keeping * 13 + this.keeperBonus(s) * 20;
         // Diving saves are mostly parries; balls straight at the keeper get held.
-        const pCatch = speed < catchLimit ? (0.5 + keeping * 0.4) * (diving ? 0.42 : 1) : 0;
+        // Most get parried (back into play or round the post); straight at him he may hold it.
+        const pCatch = speed < catchLimit ? (0.3 + keeping * 0.24) * (diving ? 0.42 : 1) : 0;
         if (this.rng.chance(pCatch)) {
           this.catchBall(k, onFrame);
         } else {
@@ -1839,6 +2267,7 @@ export class Match {
 
   /** Keeper meets a cross: catch it cleanly, or punch when an attacker is challenging. */
   private claimCross(k: Player): void {
+    this.offsideTouch(k);
     const b = this.ball;
     k.claiming = false;
     let rival = Infinity;
@@ -1870,6 +2299,7 @@ export class Match {
 
   /** Keeper gets a hand to it without holding on: back into play, or tipped behind. */
   private parry(k: Player, onFrame: boolean): void {
+    this.offsideTouch(k);
     const b = this.ball;
     const s = k.side;
     const ad = this.attackDir(s);
@@ -1879,7 +2309,7 @@ export class Match {
     const vy0 = b.vel.y;
     const vz0 = b.vel.z;
     let tipped = false;
-    if (onFrame && this.rng.chance(0.7 + Math.min(0.2, (Math.abs(b.pos.z) / hw) * 0.2) + (sp > 24 ? 0.1 : 0))) {
+    if (onFrame && this.rng.chance(0.76 + Math.min(0.16, (Math.abs(b.pos.z) / hw) * 0.16) + (sp > 24 ? 0.08 : 0))) {
       // Tip it round the post or over the bar.
       if (Math.abs(b.pos.z) < 1.3 || b.pos.y > 1.7) {
         b.vel.x = -ad * (2.5 + this.rng.next() * 2);
@@ -1916,6 +2346,7 @@ export class Match {
   }
 
   private catchBall(k: Player, save: boolean, emit = true): void {
+    this.offsideTouch(k);
     const b = this.ball;
     k.claiming = false;
     b.owner = k.idx;
@@ -1951,7 +2382,7 @@ export class Match {
     p.vel.x = Math.cos(p.facing) * sp;
     p.vel.z = Math.sin(p.facing) * sp;
     p.slideHit = false;
-    p.slideFoul = this.rng.chance(pFoul);
+    p.slideFoul = this.rng.chance(pFoul * this.foulScale);
     p.tackleCooldown = 1.2;
     p.order = null;
     this.events.push({ type: 'tackle', by: p.idx, won: false, slide: true });
@@ -1964,6 +2395,7 @@ export class Match {
       const tipX = p.pos.x + Math.cos(p.facing) * 0.75;
       const tipZ = p.pos.z + Math.sin(p.facing) * 0.75;
       if (!p.slideHit && !b.held && b.pos.y < 0.7 && b.owner !== p.idx && dist2(tipX, tipZ, b.pos.x, b.pos.z) < 0.85) {
+        if (b.owner < 0 && this.offsideTouch(p)) return;
         const prev = b.owner;
         const c = prev >= 0 ? this.players[prev] : null;
         // (A carrier winding up a shot or pass counts: scything him down mid-strike is a foul too.)
@@ -2022,24 +2454,88 @@ export class Match {
     this.stats.fouls[by.side]++;
     const inBox = inOwnBox(this, by.side, on.pos.x, on.pos.z);
     this.events.push({ type: 'foul', by: by.idx, on: on.idx, penalty: inBox });
-    // Reckless slides get booked more often than clumsy standing fouls. Keepers are never carded
-    // (so nobody ever has to go in goal); a second yellow for anyone else is a red.
     const reckless = by.state === 'slide';
-    if (!by.isKeeper && this.rng.chance(reckless ? 0.5 : inBox ? 0.35 : 0.12)) {
-      if (this.booked.has(by.idx)) {
-        this.events.push({ type: 'card', player: by.idx, color: 'red', second: true });
-        this.sendOff(by);
-      } else {
-        this.booked.add(by.idx);
-        this.events.push({ type: 'card', player: by.idx, color: 'yellow' });
-      }
+    // In their attacking half (outside the box) the referee waits a moment: if the fouled side
+    // keeps the ball, he plays advantage (see updateAdvantage).
+    if (!inBox && this.phase === 'play' && !this.adv && on.pos.x * this.attackDir(on.side) > 0) {
+      this.adv = { by: by.idx, on: on.idx, side: on.side, t: 0, x: on.pos.x, z: on.pos.z, reckless, kick: this.kickId };
+      return;
     }
+    this.book(by, reckless, inBox);
     if (inBox) {
       const ad = this.attackDir(on.side);
       this.goOut('penalty', on.side, ad * (HALF_L - PEN_SPOT), 0);
     } else {
       this.goOut('freekick', on.side, clamp(on.pos.x, -HALF_L + 1, HALF_L - 1), clamp(on.pos.z, -HALF_W + 1, HALF_W - 1));
     }
+  }
+
+  /**
+   * The card (if any) for a foul. Reckless slides get booked more often than clumsy standing fouls.
+   * Keepers are never carded (so nobody ever has to go in goal); a second yellow is a red.
+   */
+  private book(by: Player, reckless: boolean, inBox: boolean): void {
+    if (by.isKeeper || by.sentOff || !this.rng.chance(reckless ? 0.5 : inBox ? 0.35 : 0.12)) return;
+    if (this.booked.has(by.idx)) {
+      this.events.push({ type: 'card', player: by.idx, color: 'red', second: true });
+      this.sendOff(by);
+    } else {
+      this.booked.add(by.idx);
+      this.events.push({ type: 'card', player: by.idx, color: 'yellow' });
+    }
+  }
+
+  /**
+   * A foul the referee is holding: the fouled side having the ball (at feet, or playing it on) is
+   * advantage; the other side getting it, or ADVANTAGE_WINDOW passing without it, brings it back.
+   */
+  private updateAdvantage(dt: number): void {
+    const a = this.adv;
+    if (!a) return;
+    a.t += dt;
+    const b = this.ball;
+    // (The man who was brought down getting up and carrying on himself isn't an advantage: that's
+    // the free kick he was fouled for.)
+    const holder = b.owner >= 0 && b.owner !== a.on ? this.players[b.owner].side : -1;
+    const struck = this.kickId !== a.kick && this.ball.lastTouch !== a.on ? this.kickSide : -1;
+    if (holder === a.side || struck === a.side) this.grantAdvantage();
+    else if (holder >= 0 || struck >= 0 || a.t > ADVANTAGE_WINDOW) this.whistleBack();
+  }
+
+  /** Play on: the booking (if any) is shown straight away. */
+  private grantAdvantage(): void {
+    const a = this.adv;
+    if (!a) return;
+    this.adv = null;
+    this.events.push({ type: 'advantage', side: a.side });
+    this.book(this.players[a.by], a.reckless, false);
+  }
+
+  /** No advantage after all: back for the free kick where the foul was. */
+  private whistleBack(): void {
+    const a = this.adv;
+    if (!a) return;
+    this.adv = null;
+    this.book(this.players[a.by], a.reckless, false);
+    this.goOut('freekick', a.side, clamp(a.x, -HALF_L + 1, HALF_L - 1), clamp(a.z, -HALF_W + 1, HALF_W - 1));
+  }
+
+  /**
+   * `p` is touching the ball. If a pass is being watched for offside, this was the first touch
+   * since it was played: a teammate who was offside when it was played means the flag goes up
+   * (returns true; the ball is dead); anyone else just clears the watch.
+   */
+  private offsideTouch(p: Player): boolean {
+    const w = this.offWatch;
+    if (!w || this.phase !== 'play') return false;
+    this.offWatch = null;
+    if (!this.offside || p.side !== w.side || !w.players.includes(p.idx)) return false;
+    this.stats.offsides[p.side]++;
+    this.events.push({ type: 'offside', side: p.side, player: p.idx });
+    p.order = null;
+    // Indirect free kick to the defenders where he was.
+    this.goOut('freekick', otherSide(p.side), clamp(p.pos.x, -HALF_L + 1, HALF_L - 1), clamp(p.pos.z, -HALF_W + 1, HALF_W - 1), true);
+    return true;
   }
 
   /** Red card: off the pitch by the dugout for the rest of the match; the team plays on a man down. */
@@ -2056,16 +2552,15 @@ export class Match {
       this.ball.held = false;
     }
     if (this.passTarget === p.idx) this.passTarget = -1;
-    // Stand beside our dugout (home at -x, away at +x), a yard apart if there's already someone there.
+    // He walks off to stand beside our dugout (home at -x, away at +x), a yard apart if there's
+    // already someone there; nobody plays through him on the way (all loops skip the sent off).
     const n = this.bySide[p.side].filter((q) => q.sentOff).length;
     const sx = p.side === 0 ? -1 : 1;
-    p.pos.x = sx * (13.4 + (n - 1) * 1.2);
-    p.pos.z = HALF_W + 2;
+    this.walkOff.set(p.idx, { x: sx * (13.4 + (n - 1) * 1.2), z: HALF_W + 2, t: 0 });
     p.vel.x = p.vel.z = 0;
     p.y = p.vy = 0;
     p.headerT = 0;
     p.kickT = 0;
-    p.facing = -Math.PI / 2;
     p.setState('dejected');
     for (const s of [0, 1] as Side[]) {
       const br = this.brains[s];
@@ -2080,14 +2575,42 @@ export class Match {
     }
   }
 
-  /** A sent-off player just stands by the dugout, watching (still stepped so animation time runs). */
+  /** Sent-off players still walking to the dugout: where to, and for how long they've walked. */
+  private walkOff = new Map<number, { x: number; z: number; t: number }>();
+
+  /**
+   * A sent-off player trudges to the dugout (head down, not controllable), then stands there
+   * watching. Still stepped so animation time runs.
+   */
   private parkSentOff(p: Player, dt: number): void {
     p.order = null;
-    p.wantX = p.wantZ = 0;
     p.sprint = false;
     p.running = false;
-    p.faceTarget = -Math.PI / 2;
     if (p.state !== 'dejected') p.setState('dejected');
+    const w = this.walkOff.get(p.idx);
+    if (w) {
+      w.t += dt;
+      const dx = w.x - p.pos.x;
+      const dz = w.z - p.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d < 0.3 || w.t > WALK_OFF_MAX) {
+        // There (or, on a long walk, out of shot by now): stand by the dugout.
+        p.pos.x = w.x;
+        p.pos.z = w.z;
+        p.vel.x = p.vel.z = 0;
+        p.facing = -Math.PI / 2;
+        this.walkOff.delete(p.idx);
+      } else {
+        const f = WALK_OFF_SPEED / p.jogPace();
+        p.wantX = (dx / d) * f;
+        p.wantZ = (dz / d) * f;
+        p.faceTarget = null;
+        p.step(dt, false);
+        return;
+      }
+    }
+    p.wantX = p.wantZ = 0;
+    p.faceTarget = -Math.PI / 2;
     p.step(dt, false);
   }
 
@@ -2116,6 +2639,7 @@ export class Match {
     chance *= (1 - shielded * 0.4) * (0.84 + skill * 0.06);
     if (this.isHumanControlled(p)) chance *= 1.2;
     if (this.isHumanControlled(c)) chance *= 0.85;
+    chance *= TACKLE_WIN;
     if (this.rng.chance(chance)) {
       this.stats.tackles[p.side]++;
       this.events.push({ type: 'tackle', by: p.idx, won: true, slide: false });
@@ -2153,7 +2677,7 @@ export class Match {
       this.events.push({ type: 'tackle', by: p.idx, won: false, slide: false });
       // Mistimed: clipping the carrier from behind or through their back is a foul.
       const inBox = inOwnBox(this, p.side, c.pos.x, c.pos.z);
-      const pFoul = (0.038 + behind * 0.16 + shielded * 0.09 + (c.speed() > 5 ? 0.035 : 0)) * (inBox ? 0.65 : 1);
+      const pFoul = (0.042 + behind * 0.18 + shielded * 0.1 + (c.speed() > 5 ? 0.04 : 0)) * (inBox ? 0.9 : 1) * this.foulScale;
       if (this.rng.chance(pFoul)) {
         c.setState('fallen');
         this.foul(p, c);
@@ -2306,6 +2830,9 @@ export class Match {
     this.passTarget = -1;
     this.shotClock = 99;
     this.restart = { kind: 'penalty', side, x: spotX, z: 0, taker: taker.idx, wait: 1.1 + this.rng.next() * 0.7 };
+    this.stepIn = -1;
+    this.runUpFoot = this.rng.chance(0.8) ? 1 : -1;
+    this.holdDeadBall();
     const hs = this.cfg.humanSide;
     if (hs === side) this.active = taker.idx;
     else if (hs === def) this.active = k.idx;
@@ -2343,6 +2870,7 @@ export class Match {
     this.resolveOrders(dt);
     taker.step(dt, this.ball.owner === taker.idx);
     k.step(dt, false);
+    this.holdDeadBall();
     this.keepHeldBall();
     this.dribbleControl();
     this.hits.length = 0;
@@ -2491,22 +3019,46 @@ export class Match {
       p.wantX = p.wantZ = 0;
     }
     this.events.push({ type: 'whistle', kind: 'end' }, { type: 'fulltime' }, { type: 'shootoutEnd', winner: s.winner as Side });
-    for (const p of this.players) {
-      if (p.sentOff) continue;
-      if (p.side === s.winner) {
-        p.setState('celebrate');
-        p.celebrate = 4 + this.rng.int(2);
-      } else {
-        p.setState('dejected');
-      }
-    }
+    // The camera cuts on shootoutEnd, so the two groups are set apart here: the winners spread
+    // round the hub on the camera side of halfway (they close in on it in shootoutParty), the losers
+    // on a line across the far side, facing away (they trudge a few metres further).
+    const winners = this.bySide[s.winner as Side].filter((p) => !p.sentOff);
+    const losers = this.bySide[s.winner === 0 ? 1 : 0].filter((p) => !p.sentOff);
+    this.partySpots.clear();
+    winners.forEach((p, i) => {
+      const a = (i / Math.max(1, winners.length)) * Math.PI * 2;
+      this.placeFor(p, SO_HUB.x + Math.cos(a) * 6.5, SO_HUB.z + Math.sin(a) * 3.2, Math.atan2(-Math.sin(a), -Math.cos(a)));
+      p.setState('celebrate');
+      p.celebrate = 4 + this.rng.int(2);
+    });
+    losers.forEach((p, i) => {
+      const x = losers.length > 1 ? -10 + (20 * i) / (losers.length - 1) : 0;
+      const z = -10 + (this.rng.next() - 0.5) * 1.6;
+      this.partySpots.set(p.idx, { x, z });
+      this.placeFor(p, x * 0.9, z + 3, -Math.PI / 2);
+      p.setState('dejected');
+    });
   }
 
-  /** After the winning penalty: the winners pile towards the camera, the losers trudge. */
+  /** Stand `p` at (x, z) facing `facing`, at rest. */
+  private placeFor(p: Player, x: number, z: number, facing: number): void {
+    p.pos.x = x;
+    p.pos.z = z;
+    p.vel.x = p.vel.z = 0;
+    p.facing = facing;
+    p.y = p.vy = 0;
+    p.kickT = 0;
+    p.headerT = 0;
+  }
+
+  /** Losing players' spots for the end of a shootout (far side of halfway, spread out). */
+  private partySpots = new Map<number, { x: number; z: number }>();
+
+  /** After the winning penalty: the winners pile up at the hub facing the camera, the losers trudge away. */
   private shootoutParty(dt: number): void {
     const s = this.shootout!;
-    const hub = { x: 0, z: HALF_W * 0.3 };
     let i = 0;
+    const n = this.bySide[s.winner as Side].filter((p) => !p.sentOff).length;
     for (const p of this.players) {
       if (p.sentOff) {
         this.parkSentOff(p, dt);
@@ -2514,9 +3066,9 @@ export class Match {
       }
       p.faceTarget = null;
       if (p.side === s.winner && p.state === 'celebrate') {
-        const a = (i++ / 11) * Math.PI * 2;
-        const tx = hub.x + Math.cos(a) * 2.2;
-        const tz = hub.z + Math.sin(a) * 1.6;
+        const a = (i++ / Math.max(1, n)) * Math.PI * 2;
+        const tx = SO_HUB.x + Math.cos(a) * 2.2;
+        const tz = SO_HUB.z + Math.sin(a) * 1.6;
         const dx = tx - p.pos.x;
         const dz = tz - p.pos.z;
         const d = Math.hypot(dx, dz);
@@ -2524,6 +3076,16 @@ export class Match {
         p.wantZ = d > 0.6 ? dz / d : 0;
         p.sprint = d > 4;
         if (d <= 0.6) p.faceTarget = Math.PI / 2;
+      } else if (p.side !== s.winner) {
+        const w = this.partySpots.get(p.idx);
+        const dx = w ? w.x - p.pos.x : 0;
+        const dz = w ? w.z - p.pos.z : 0;
+        const d = Math.hypot(dx, dz);
+        p.wantX = d > 0.5 ? (dx / d) * 0.35 : 0;
+        p.wantZ = d > 0.5 ? (dz / d) * 0.35 : 0;
+        p.sprint = false;
+        // Heads down, backs to the winners.
+        p.faceTarget = -Math.PI / 2;
       } else {
         p.wantX = p.wantZ = 0;
         p.sprint = false;

@@ -24,9 +24,11 @@ const LOOKS: Record<TimeOfDay, Look> = {
     skyTop: SKY_TOP, skyMid: SKY_BOTTOM, skyBottom: SKY_BOTTOM, hemiSky: 0xd6e8ff, hemiGround: 0x7a9a5c, hemi: 1.3,
     sun: 0xfff6e6, sunI: 2.8, offset: [-44, 48, 30], fog: SKY_BOTTOM,
   },
+  // Golden hour: a warm key (faces, shirts and the stands glow) balanced by a cool sky fill, so the lawn stays
+  // green (hue ~85 degrees, not khaki); Stadium.setTimeOfDay nudges the lawn itself the last few degrees.
   sunset: {
-    skyTop: 0x5b6fd6, skyMid: 0xff9a6b, skyBottom: 0xffd08a, hemiSky: 0xfff0e0, hemiGround: 0x7a9a5c, hemi: 1.45,
-    sun: 0xffd2a0, sunI: 2.5, offset: [-56, 40, 26], fog: 0xffc08a,
+    skyTop: 0x5b6fd6, skyMid: 0xff9a6b, skyBottom: 0xffd08a, hemiSky: 0xc8d4ff, hemiGround: 0x5a7a2a, hemi: 1.8,
+    sun: 0xffd2a0, sunI: 2.8, offset: [-56, 40, 26], fog: 0xffc08a,
   },
   // Floodlit: a cool, steep key from the camera side (the masts behind the gantry) and very little sky, so the
   // lawn stays bright while the stands and the world outside drop into the dark (see Stadium.setTimeOfDay).

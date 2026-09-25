@@ -1,6 +1,6 @@
 import { sfx } from '../audio/sfx';
 import type { Input } from '../core/input';
-import { clamp } from '../core/math';
+import { clamp, damp } from '../core/math';
 import { CameraRig } from '../render/cameraRig';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
@@ -15,7 +15,7 @@ import { Hud, hudTeam } from '../ui/hud';
 import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
-import { BALL_OFS, FRAME_LEN, PF, ReplayBuffer, writeFrame } from './replay';
+import { BALL_OFS, FRAME_LEN, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
 
 export interface SessionOptions extends MatchConfig {
   kits: [Kit, Kit];
@@ -54,6 +54,13 @@ interface Tally {
   passes: number;
   shots: number;
 }
+
+/** Seconds on the wide shot after a goal (the ball in the net) before cutting to the scorer. */
+const GOAL_WIDE_S = 0.9;
+/** The replay rolls once the celebration has had its moment (players have reached the corner flag). */
+const REPLAY_AT = 3.6;
+/** Referee close-up when a card is shown at a stoppage. */
+const CARD_CAM_S = 1.8;
 
 const RESTART_LABEL: Record<RestartKind, string> = {
   kickoff: 'KICK OFF', throwin: 'THROW-IN', corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!',
@@ -96,6 +103,12 @@ export class MatchSession {
   private readonly demo: boolean;
   /** Penalty tracker, once a knockout tie goes to a shootout. */
   private so: ShootoutHud | null = null;
+  /** Seconds left on the referee close-up for a card. */
+  private cardT = 0;
+  /** Where the last foul happened (a sent-off player is already by his dugout when the card is shown). */
+  private foulAt = { x: 0, z: 0 };
+  /** Smoothed radius of the celebrating group the camera frames. */
+  private celebG = 0;
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
     this.demo = !!opt.demo;
@@ -184,6 +197,7 @@ export class MatchSession {
     });
     if (this.match.cfg.humanSide < 0) this.match.aiSubs(0, 2);
     this.match.continueSecondHalf();
+    this.resetView();
     this.halftimeFired = false;
     this.hud?.show('SECOND HALF', '', 'small', 1.6);
   }
@@ -200,7 +214,9 @@ export class MatchSession {
     this.time += dt;
     const m = this.match;
 
-    if (this.introLeft > 0) {
+    if (this.paused) {
+      // Frozen: live play, a replay or the pre-match fly-in all wait for the pause menu.
+    } else if (this.introLeft > 0) {
       this.introLeft -= dt;
       this.cam.introT = Math.min(1, 1 - this.introLeft / 3.4);
       const c = this.input.read();
@@ -211,7 +227,7 @@ export class MatchSession {
       this.view.apply(this.prev, this.cur, 1, this.time, dt);
     } else if (this.replay) {
       this.stepReplay(dt);
-    } else if (!this.paused) {
+    } else {
       this.acc += dt;
       let steps = 0;
       while (this.acc >= DT && steps < 6) {
@@ -228,6 +244,14 @@ export class MatchSession {
       if (steps === 6) this.acc = 0;
       this.view.apply(this.prev, this.cur, this.acc / DT, this.time, dt);
       this.flow();
+      if (this.cardT > 0) {
+        this.cardT -= dt;
+        // Back to the game when the close-up is done, or at once if play restarts under it.
+        if (this.cardT <= 0 || m.phase === 'play' || m.phase === 'goal') {
+          this.cardT = 0;
+          if (this.cam.mode === 'card') this.cam.setMode('broadcast');
+        }
+      }
     }
 
     // Camera.
@@ -259,28 +283,58 @@ export class MatchSession {
       group = 3;
       // The sim turns the pile-up to face the main stand (+z).
       groupFacing = Math.PI / 2;
-    } else if (this.cam.mode === 'celebrate' && m.lastGoalScorer >= 0) {
-      const sc = m.players[m.lastGoalScorer];
-      ax = f[m.lastGoalScorer * PF];
-      az = f[m.lastGoalScorer * PF + 1];
-      avx = sc.vel.x;
-      avz = sc.vel.z;
-      subject = m.lastGoalScorer;
+    } else if (this.cam.mode === 'celebrate' && (m.celebHero >= 0 || m.lastGoalScorer >= 0)) {
+      // The scorer, and the team-mates arriving to mob him: frame the bunch (weighted to the scorer).
+      // On an own goal the sim picks the nearest attacker as the celebrating "hero".
+      const si = m.celebHero >= 0 ? m.celebHero : m.lastGoalScorer;
+      const sc = m.players[si];
+      const sx = f[si * PF];
+      const sz = f[si * PF + 1];
+      let cx = sx * 2;
+      let cz = sz * 2;
+      let n = 2;
+      const near: number[] = [];
+      for (const p of m.teamPlayers(sc.side)) {
+        const o = p.idx * PF;
+        if (p.idx === si || f[o + 4] !== STATE_CODE.celebrate) continue;
+        if (Math.hypot(f[o] - sx, f[o + 1] - sz) > 6.5) continue;
+        cx += f[o];
+        cz += f[o + 1];
+        n++;
+        near.push(o);
+      }
+      cx /= n;
+      cz /= n;
+      let g = Math.hypot(sx - cx, sz - cz);
+      for (const o of near) g = Math.max(g, Math.hypot(f[o] - cx, f[o + 1] - cz));
+      this.celebG = damp(this.celebG, Math.min(3.5, g), 2.5, this.paused ? 0 : dt);
+      ax = cx;
+      az = cz;
+      avx = (sc.vel.x * 2) / n;
+      avz = (sc.vel.z * 2) / n;
+      subject = si;
+      group = this.celebG;
     } else if (act >= 0) {
       ax = f[act * PF];
       az = f[act * PF + 1];
     }
     const owner = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
     const lean = owner ? m.attackDir(owner.side) : 0;
-    this.cam.update(dt, {
+    const ref = this.cam.mode === 'card' ? this.view.refState : null;
+    this.cam.update(this.paused ? 0 : dt, {
       bx: f[BALL_OFS], by: f[BALL_OFS + 1], bz: f[BALL_OFS + 2],
       bvx: f[BALL_OFS + 3], bvz: f[BALL_OFS + 5],
       ax, az, avx, avz, attack, lean, subject, group, groupFacing,
       setPiece: this.replay ? null : this.setPieceFrame(),
+      // After our set piece the over-the-shoulder shot may stay on the ball while it is live, in the net, or
+      // just gone out (the one cut is then to the next set-piece framing, not to the wide shot first).
+      hold: !this.replay && (m.phase === 'play' || m.phase === 'goal' || m.phase === 'out'),
+      card: ref ? { rx: ref.x, rz: ref.z, fx: ref.faceX, fz: ref.faceZ } : null,
+      tall: this.view.headTop,
     }, this.time);
-    // Low cameras (over the set-piece taker's shoulder, the shootout) drop the name tag and arrow,
-    // which would otherwise float over the goal mouth.
-    this.view.setMarkerMode(this.cam.behindActive || this.cam.mode === 'penalty' ? 'ring' : 'full');
+    // Low cameras (over the set-piece taker's shoulder, the shootout, the referee close-up) drop the name
+    // tag and arrow, which would otherwise float over the goal mouth.
+    this.view.setMarkerMode(this.cam.behindActive || this.cam.mode === 'penalty' || this.cam.mode === 'card' ? 'ring' : 'full');
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
     this.stadium.updateGlare(this.world.camera);
     if (this.weather.kind === 'rain' && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ);
@@ -301,12 +355,16 @@ export class MatchSession {
         if (m.phaseT > 3.2) m.resumeAfterGoal();
         return;
       }
-      if (m.phaseT > 2.6 && !this.replayDone) this.startReplay();
+      // A beat on the wide shot (the ball in the net), then cut to the scorer and his team-mates.
+      if (!this.replay && !this.replayDone && this.cam.mode !== 'celebrate' && m.phaseT > GOAL_WIDE_S) this.cam.setMode('celebrate');
+      if (m.phaseT > REPLAY_AT && !this.replayDone) this.startReplay();
       else if (this.replayDone) {
         this.replayDone = false;
         m.resumeAfterGoal();
         this.cam.setMode('broadcast');
         this.view.setMarkerVisible(m.cfg.humanSide >= 0);
+        // Straight to the kick-off framing: never a glide from the replayed goal to the centre spot.
+        this.resetView();
       }
     }
     if (m.phase === 'halftime' && !this.halftimeFired && m.phaseT > 1.6) {
@@ -322,6 +380,15 @@ export class MatchSession {
         score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings(), winner: this.winner(),
       });
     }
+  }
+
+  /** Players were just reset (kick-off): show the new positions this frame and cut the camera to them. */
+  private resetView(): void {
+    writeFrame(this.match, this.cur, this.time);
+    this.prev.set(this.cur);
+    this.acc = 0;
+    this.view.apply(this.prev, this.cur, 1, this.time, 0);
+    this.cam.cut();
   }
 
   /** Who won: by the score, or by the shootout in a level knockout tie. */
@@ -419,6 +486,8 @@ export class MatchSession {
     this.cam.replaySide = Math.abs(zg) > 0.6 ? -Math.sign(zg) : early[BALL_OFS + 2] > 0 ? -1 : 1;
     this.cam.replayShot = this.replay.length - this.replayGoalIdx > 0 && this.replayGoalIdx > 100 ? 'build' : 'goal';
     this.cam.setMode('replay');
+    // The camera cuts on this frame: show the first replay frame now, so it cuts to where the replay starts.
+    this.view.apply(this.replay[0], this.replay[Math.min(1, this.replay.length - 1)], 0, this.time, 0);
     this.hud?.setReplay(true);
     this.view.setMarkerVisible(false);
     this.prevButtons = true;
@@ -500,7 +569,7 @@ export class MatchSession {
           this.effects.confetti(gx * 0.7, 0, cols, 260, 60);
           this.cam.kick(0.25);
           this.view.setMarkerVisible(false);
-          if (!this.demo) this.cam.setMode('celebrate');
+          this.celebG = 0;
           void s;
           break;
         }
@@ -543,11 +612,16 @@ export class MatchSession {
           if (e.kind === 'penalty') this.hud?.show('PENALTY!', '', 'small', 1.8);
           break;
         case 'setpiece':
-          this.cam.cut();
+          // A new set-piece framing: cut if it is far from where we are, otherwise glide there.
+          this.cam.softCut();
           break;
-        case 'sub':
+        case 'sub': {
           this.hud?.toastMsg(`SUB · ${e.on} ON · ${e.off} OFF`, 2);
+          // Manager and AI subs alike: draw whoever the sim now has in that slot (no-op if already swapped).
+          const on = m.teamPlayers(e.side)[e.slot];
+          if (on) this.view.replacePlayer(on.idx, on.def, this.opt.kits[e.side]);
           break;
+        }
         case 'card': {
           const p = m.players[e.player];
           // Compare as a string: stays valid whichever colours the sim's event type lists.
@@ -555,16 +629,29 @@ export class MatchSession {
           const red = color === 'red';
           const second = 'second' in e && !!e.second;
           this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', second ? `${p.def.name} · 2nd yellow` : p.def.name, red ? 'small card red' : 'small card', red ? 2.2 : 1.8);
-          // A second yellow is both cards on the score bug.
-          if (second) this.hud?.card(p.side, 'yellow');
-          this.hud?.card(p.side, red ? 'red' : 'yellow');
-          this.view.refSignal(red ? 2.2 : 1.8);
+          // One call per card: the HUD swaps that player's yellow for the red on a second booking.
+          this.hud?.card(p.side, red ? 'red' : 'yellow', p.idx);
+          // The referee holds the card up at the offender; at a stoppage we cut to a close-up of it (in
+          // live play he just shows it: the game never waits for the camera).
+          const live = m.phase === 'play';
+          const gone = isSentOff(p);
+          const x = gone ? this.foulAt.x : p.pos.x;
+          const z = gone ? this.foulAt.z : p.pos.z;
+          const close = !live && !this.demo && !this.replay && this.cam.mode === 'broadcast';
+          this.view.showCard(red ? 'red' : 'yellow', x, z, close ? CARD_CAM_S : red ? 2.2 : 1.8, close);
+          if (close) {
+            this.cardT = CARD_CAM_S;
+            this.cam.setMode('card');
+          }
           break;
         }
-        case 'foul':
+        case 'foul': {
+          const on = m.players[e.on];
+          this.foulAt = { x: on.pos.x, z: on.pos.z };
           this.view.refSignal(1.2);
           if (!e.penalty) this.hud?.toastMsg('FOUL!', 1.2);
           break;
+        }
         case 'halftime':
           this.hud?.show('HALF TIME', `${m.score[0]} - ${m.score[1]}`, 'small', 3);
           break;
@@ -602,8 +689,18 @@ export class MatchSession {
           }
           break;
         }
-        default:
+        default: {
+          // Newer sim events (typed loosely so this compiles whichever sim version it meets).
+          const t = (e as { type: string }).type;
+          if (t === 'offside') {
+            this.hud?.toastMsg('OFFSIDE', 1.4);
+            this.view.refSignal(1.4, 'arm');
+          } else if (t === 'advantage') {
+            this.hud?.toastMsg('ADVANTAGE', 1.4);
+            this.view.refSignal(1.6, 'advantage');
+          }
           break;
+        }
       }
     }
   }
@@ -697,6 +794,8 @@ export class MatchSession {
       this.view.setPower(charging ? Math.min(1, m.shootCharge / 0.85) : null, p.pos.x, p.pos.z, p.y);
     }
     if (this.touch) {
+      // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
+      this.touch.setVisible(!(this.introLeft > 0 || this.replay || m.phase === 'goal' || m.phase === 'halftime' || m.phase === 'fulltime'));
       const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
       this.touch.setContext(
         so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine ? 'attack' : 'defend',

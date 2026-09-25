@@ -1,7 +1,11 @@
 import type { Match } from '../sim/match';
 import type { PState } from '../sim/player';
 
-/** Floats per player in a frame. */
+/**
+ * Floats per player in a frame: 0 x, 1 z, 2 y, 3 facing, 4 state code, 5 stateT, 6 runPhase, 7 speed,
+ * 8 kickT, 9 kick foot (+-1; +-2 = the same foot in a poke tackle), 10 lean, 11 diveDir, 12 headerT,
+ * 13 celebration style, 14 has the ball, 15 stamina.
+ */
 export const PF = 16;
 export const BALL_OFS = 22 * PF;
 export const FRAME_LEN = BALL_OFS + 11;
@@ -30,7 +34,8 @@ export function writeFrame(m: Match, out: Float32Array, time: number): void {
     out[o + 6] = p.runPhase;
     out[o + 7] = p.speed();
     out[o + 8] = p.kickT;
-    out[o + 9] = p.kickLeg;
+    // A poke tackle is a 'kick' state too: flag it in the foot channel (the renderer draws a lunge).
+    out[o + 9] = p.state === 'kick' && p.poke ? p.kickLeg * 2 : p.kickLeg;
     out[o + 10] = p.lean;
     out[o + 11] = p.diveDir;
     out[o + 12] = p.headerT;

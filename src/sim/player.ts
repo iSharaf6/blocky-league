@@ -39,7 +39,12 @@ export interface KickOrder {
    * bend brings it back onto the target: it starts outside the aim point and swings in.
    */
   curl?: number;
+  /** Lofted balls only: whipped in flat and fast (a driven cross) instead of hung up. */
+  driven?: boolean;
 }
+
+/** Top speed allowed while celebrating (adrenaline: a scorer can outrun his stamina). */
+export const CELEBRATE_SPRINT = 9;
 
 /** Stamina per second at the reference half length (2 minutes); see Player.fatigue. */
 const SPRINT_DRAIN = 0.017;
@@ -96,6 +101,8 @@ export class Player {
   aiDirZ = 0;
   runT = 0;
   running = false;
+  /** This run has already prompted the carrier to look up (see ai.updateRun). */
+  runCued = false;
   /** Seconds this player has had the ball at their feet (reset on every new control). */
   ballT = 0;
   /** What the AI carrier is currently doing between decisions. */
@@ -259,6 +266,7 @@ export class Player {
 
   private locomote(dt: number, dribbling: boolean): void {
     let max = this.sprint ? this.sprintPace() : this.jogPace();
+    if (this.state === 'celebrate' && this.sprint) max = Math.max(max, CELEBRATE_SPRINT);
     if (this.burstT > 0) max = Math.max(max, this.top) * 1.1;
     if (dribbling) max *= DRIBBLE_MULT * (0.9 + (this.stat.dribbling / 100) * 0.12);
     let tx = this.wantX;

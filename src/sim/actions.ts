@@ -40,6 +40,14 @@ export function laneRisk(m: Match, side: number, ax: number, az: number, bx: num
   return risk;
 }
 
+/** Lateral error scale on every shot (tuned with the keepers so ~55-60% of shots are on target). */
+const FINISH_ERR = 0.93;
+/** How much steadier a header is than it used to be (1 = as precise as a shot with the foot). */
+const HEADER_COMPOSURE = 0.66;
+
+/** Longest a throw-in (or a keeper's throw / roll) can go, m. */
+export const THROW_RANGE = 26;
+
 /** Launch speed of a ground pass to feet over `d` metres (firmer the longer it is). */
 export function passSpeed(d: number): number {
   return Math.min(groundPassSpeed(d, clamp(7 + d * 0.2, 8, 13)), 28);
@@ -191,7 +199,13 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
       }
       tx = clamp(tx, -HALF_L + 1, HALF_L - 1);
       tz = clamp(tz, -HALF_W + 0.8, HALF_W - 0.8);
-      const d = dist2(b.x, b.z, tx, tz);
+      let d = dist2(b.x, b.z, tx, tz);
+      if (throwIn && d > THROW_RANGE) {
+        // Nobody can throw (or roll) it further than this: it drops short, towards the target.
+        tx = b.x + ((tx - b.x) / d) * THROW_RANGE;
+        tz = b.z + ((tz - b.z) / d) * THROW_RANGE;
+        d = THROW_RANGE;
+      }
       if (throwIn) {
         // Thrown balls travel at catchable speeds: longer throws hang in the air longer.
         const flight = clamp(0.4 + d / 22, 0.55, 1.6);
@@ -264,12 +278,14 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
     tx = clamp(tx, -HALF_L + 1, HALF_L - 1);
     tz = clamp(tz, -HALF_W + 1, HALF_W - 1);
     const d = Math.max(3, dist2(b.x, b.z, tx, tz));
-    const flight = kind === 'header' ? clamp(0.5 + d / 30, 0.5, 1.2) : clamp(0.75 + d / 34, 0.9, 2.3);
-    const land = order.land ?? (kind === 'clear' ? BALL_R : 1.3);
+    const flight = kind === 'header'
+      ? clamp(0.5 + d / 30, 0.5, 1.2)
+      : order.driven ? clamp(0.42 + d / 42, 0.6, 1.3) : clamp(0.75 + d / 34, 0.9, 2.3);
+    const land = order.land ?? (kind === 'clear' ? BALL_R : order.driven ? 1.1 : 1.3);
     const s = solveLob(d, flight, land);
     let err = passError(p, m, kind === 'clear' ? 2.2 : 1.4);
     // A scrambled clearance from inside our own box sometimes slices off behind for a corner.
-    if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.3 * pressureErr(m, p))) {
+    if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.36 * pressureErr(m, p))) {
       const toLine = -ad; // towards our own goal line
       const zs = Math.sign(b.z || 1);
       // Rotate so the ball heads for the byline on the near side, well wide of the goal.
@@ -318,8 +334,9 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
     if (header) aimZ *= 0.75;
   }
   const d = Math.max(2, dist2(b.x, b.z, gx, aimZ));
-  const composure = header ? 0.4 : 1;
-  const errZ = (m.rng.gauss() * (0.82 + d * 0.066) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press) / composure;
+  // Headers are less precise than a strike with the foot (but a free header is still a chance).
+  const composure = header ? HEADER_COMPOSURE : 1;
+  const errZ = (m.rng.gauss() * (0.82 + d * 0.066) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press * FINISH_ERR) / composure;
   const tz = aimZ + errZ;
   // Height at the line: placed shots stay low, blasted ones climb (and can fly over).
   const skew = Math.abs(m.rng.gauss()) * (1.15 - acc) * (0.35 + power) * 2.1 * sk * press;

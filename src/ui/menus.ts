@@ -5,8 +5,9 @@ import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview } from './preview';
 import { crestSvg } from './crest';
 import { cssHex, shade } from '../render/palette';
+import { FORMATIONS, FORMATION_IDS, type Slot } from '../sim/formations';
 import type { Match } from '../sim/match';
-import { overall, type Kit, type PlayerDef } from '../sim/types';
+import { overall, type FormationId, type Kit, type PlayerDef } from '../sim/types';
 
 export const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD', 'LEGEND'];
 export const DIFF_LEVEL = [0.6, 1.8, 3, 4];
@@ -102,6 +103,57 @@ export function starCount(ovr: number): number {
 export function stars(ovr: number): string {
   const n = starCount(ovr);
   return `<span class="stars" aria-label="${n} of 5 stars">${'★'.repeat(n)}<s>${'★'.repeat(5 - n)}</s></span>`;
+}
+
+function lum(hex: number): number {
+  return (0.299 * ((hex >> 16) & 255) + 0.587 * ((hex >> 8) & 255) + 0.114 * (hex & 255)) / 255;
+}
+
+function lastName(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return parts[parts.length - 1] ?? name;
+}
+
+/**
+ * Where each formation slot sits on the vertical team-sheet pitch (own goal at the bottom), as
+ * [left %, top %, room %]: room is the horizontal space the token may use (its name tag) without meeting a neighbour.
+ * Slots are grouped into lines (same role, split where a role spans two bands, e.g. 4-2-3-1's DMs and AMs);
+ * lines are evenly spaced top to bottom and each line is spread wide enough that tokens never overlap, while
+ * keeping a hint of the real shape (a deeper DM, wing-backs pushed on).
+ */
+export function pitchLayout(slots: Slot[]): [number, number, number][] {
+  const out: [number, number, number][] = slots.map(() => [50, 50, 30]);
+  const order = slots.map((s, i) => ({ s, i })).sort((a, b) => a.s.x - b.s.x);
+  const lines: { s: Slot; i: number }[][] = [];
+  for (const o of order) {
+    const line = lines[lines.length - 1];
+    const prev = line?.[line.length - 1];
+    if (line && prev && prev.s.role === o.s.role && o.s.x - prev.s.x <= 0.2) line.push(o);
+    else lines.push([o]);
+  }
+  const n = lines.length;
+  const bottom = 87;
+  const top = 8;
+  lines.forEach((line, li) => {
+    const y = n > 1 ? bottom - (li / (n - 1)) * (bottom - top) : 50;
+    const mx = line.reduce((a, o) => a + o.s.x, 0) / line.length;
+    const byZ = [...line].sort((a, b) => a.s.z - b.s.z);
+    const zs = byZ.map((o) => o.s.z);
+    const k = byZ.length;
+    const centre = k > 1 ? (zs[0] + zs[k - 1]) / 2 : zs[0];
+    // At least half a unit between neighbours, but a line never spills past ±0.92 (a back five is 0.46 apart).
+    const gap = k > 1 ? Math.min(Math.max((zs[k - 1] - zs[0]) / (k - 1), 0.5), 1.84 / (k - 1)) : 0;
+    const half = (gap * (k - 1)) / 2;
+    const c = Math.max(-0.92 + half, Math.min(0.92 - half, centre));
+    const room = k > 1 ? Math.round(gap * 43 - 1) : 40;
+    byZ.forEach((o, j) => {
+      const z = k > 1 ? c - half + j * gap : c;
+      const nudge = Math.max(-4, Math.min(4, (o.s.x - mx) * 60));
+      const t = Math.max(top, Math.min(bottom, y - nudge));
+      out[o.i] = [Math.round((50 + z * 43) * 10) / 10, Math.round(t * 10) / 10, room];
+    });
+  });
+  return out;
 }
 
 export class Menus {
@@ -325,6 +377,14 @@ export class Menus {
       const cb = kits ? `;background:${cssHex(kits[1].shirt)}` : '';
       return `<div class="st-row"><b>${a}${pct ? '%' : ''}</b><div class="st-bar"><i style="width:${(a / t) * 100}%${ca}"></i></div><span>${label}</span><div class="st-bar r"><i style="width:${(b / t) * 100}%${cb}"></i></div><b>${b}${pct ? '%' : ''}</b></div>`;
     };
+    // Bookings: players in the referee's book (a second yellow stays counted) and players sent off.
+    const yellows: [number, number] = [0, 0];
+    const reds: [number, number] = [0, 0];
+    for (const i of m.booked) {
+      const p = m.players[i];
+      if (p) yellows[p.side]++;
+    }
+    for (const p of m.players) if (p.sentOff) reds[p.side]++;
     return `<div class="stats">
       ${row('POSSESSION', poss[0], poss[1], true)}
       ${row('SHOTS', s.shots[0], s.shots[1])}
@@ -332,6 +392,10 @@ export class Menus {
       ${row('PASSES', s.passes[0], s.passes[1])}
       ${row('TACKLES', s.tackles[0], s.tackles[1])}
       ${row('SAVES', s.saves[0], s.saves[1])}
+      ${row('CORNERS', s.corners?.[0] ?? 0, s.corners?.[1] ?? 0)}
+      ${row('FOULS', s.fouls?.[0] ?? 0, s.fouls?.[1] ?? 0)}
+      ${row('<i class="st-card"></i>YELLOW CARDS', yellows[0], yellows[1])}
+      ${row('<i class="st-card red"></i>RED CARDS', reds[0], reds[1])}
     </div>`;
   }
 
@@ -345,74 +409,170 @@ export class Menus {
     </div>`;
   }
 
-  /** Mentality + substitutions for the human side. */
+  /**
+   * In-match tactics for the human side: formation, the XI on a pitch in formation slots (OVR + stamina on
+   * every starter), bench, mentality. Tap a starter then a substitute (or the other way round) to make a sub.
+   */
   tactics(
     m: Match, side: 0 | 1, kits: [Kit, Kit],
-    h: { setMentality: (v: number) => void; substitute: (slot: number, benchIdx: number) => boolean; back: () => void },
+    h: {
+      setMentality: (v: number) => void;
+      substitute: (slot: number, benchIdx: number) => boolean;
+      setFormation?: (id: FormationId) => void;
+      back: () => void;
+    },
   ): void {
+    const kit = kits[side];
+    const light = lum(kit.shirt) > 0.62;
     const d = this.mount(`
       <div class="panel-wrap dim">
-        <div class="panel tactics">
-          <h2>TACTICS</h2>
-          <div class="opt-row"><label>MENTALITY</label><div class="seg" data-o="ment"></div></div>
-          <div class="subs-head"><b>SUBSTITUTIONS</b><span class="subs-left"></span></div>
-          <div class="subs">
-            <div class="sub-col"><h3>ON THE PITCH</h3><ul class="sub-list" data-l="xi"></ul></div>
-            <div class="sub-col"><h3>BENCH</h3><ul class="sub-list" data-l="bench"></ul></div>
+        <div class="panel tactics tx">
+          <div class="tx-pitch" style="--shirt:${cssHex(kit.shirt)};--trim:${cssHex(kit.shirt2)};--gk:${cssHex(kit.gk)};--dot-t:${light ? 'var(--ink)' : '#fff'}"></div>
+          <div class="tx-side">
+            <div class="tx-head"><h2>TACTICS</h2><span class="tx-left"></span></div>
+            <div class="tx-row tx-forms-row"><label>FORMATION</label><div class="seg tx-forms"></div></div>
+            <div class="tx-row tx-ment-row"><label>MENTALITY</label><div class="seg tx-ment"></div></div>
+            <div class="tx-benchbox"><div class="tx-bh"><h3>BENCH</h3><p class="tx-hint"></p></div><ul class="tx-bench"></ul></div>
           </div>
-          <p class="fine">Tap a player on the pitch, then a substitute. Subs come on with fresh legs.</p>
           <div class="btn-row"><button class="btn btn-go btn-lg" data-a="back">DONE</button></div>
         </div>
       </div>`, 'tactics-screen');
-    let picked = -1;
-    const ment = $(d, '[data-o=ment]');
-    const drawMent = () => {
-      const labels = ['DEFENSIVE', 'BALANCED', 'ATTACKING'];
-      ment.innerHTML = labels.map((l, i) => `<button class="${m.mentality[side] === i - 1 ? 'on' : ''}" data-i="${i}">${l}</button>`).join('');
-      ment.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
-        b.addEventListener('click', () => {
-          sfx.click();
-          h.setMentality(Number(b.dataset.i) - 1);
-          drawMent();
-        }),
-      );
+    /** Current pick: a starter (slot) or a bench player waiting for the other half of the swap. */
+    let picked: { k: 'x' | 'b'; i: number } | null = null;
+    let chosen: FormationId | null = null;
+    let fresh = -1;
+    const pitch = $(d, '.tx-pitch');
+    const bench = $(d, '.tx-bench');
+
+    const formation = (): FormationId => {
+      const cur = m.slots[side];
+      const same = (a: Slot[], b: Slot[]) => a.length === b.length && a.every((s, i) => s.x === b[i].x && s.z === b[i].z && s.role === b[i].role);
+      const live = (m as Match & { formation?: FormationId[] }).formation?.[side];
+      return FORMATION_IDS.find((id) => FORMATIONS[id] === cur) ?? FORMATION_IDS.find((id) => same(FORMATIONS[id], cur)) ?? live ?? chosen ?? m.teams[side].formation;
     };
-    const row = (p: PlayerDef, extra: string, cls: string, key: string) =>
-      `<li><button class="sub-row ${cls}" data-k="${key}"><i style="background:${cssHex(kits[side].shirt)}">${p.number}</i><span>${p.name}</span><em>${p.role}</em>${extra}</button></li>`;
-    const drawSubs = () => {
-      const left = m.maxSubs - m.subsUsed[side];
-      $(d, '.subs-left').textContent = `${left} LEFT`;
+    const subsLeft = () => m.maxSubs - m.subsUsed[side];
+    // A starter and a bench player can swap if subs remain, the starter is still on, and keeper swaps with keeper.
+    const canSwap = (slot: number, b: PlayerDef) => {
+      const p = m.teamPlayers(side)[slot];
+      return subsLeft() > 0 && !!p && !p.sentOff && (slot === 0) === (b.role === 'GK');
+    };
+
+    const drawPitch = () => {
       const team = m.teamPlayers(side);
-      $(d, '[data-l=xi]').innerHTML = team
+      const pos = pitchLayout(m.slots[side]);
+      const benchPick = picked?.k === 'b' ? m.bench[side][picked.i] : null;
+      pitch.innerHTML = team
         .map((p, i) => {
           const st = Math.round(p.stamina * 100);
           const col = st > 60 ? 'var(--go)' : st > 35 ? 'var(--yellow)' : 'var(--red)';
-          return row(p.def, `<b class="stam"><s style="width:${st}%;background:${col}"></s></b>`, picked === i ? 'sel' : '', `x${i}`);
+          const slot = m.slots[side][i];
+          const cls = [
+            i === 0 ? 'gk' : '',
+            picked?.k === 'x' && picked.i === i ? 'sel' : '',
+            p.sentOff ? 'out' : '',
+            benchPick && canSwap(i, benchPick) ? 'hot' : benchPick ? 'dim' : '',
+            i === fresh ? 'fresh' : '',
+            !p.sentOff && slot && p.def.role !== slot.role ? 'warn' : '',
+          ].filter(Boolean).join(' ');
+          const [l, t, room] = pos[i];
+          return `<button class="tx-p ${cls}" data-k="x${i}" style="left:${l}%;top:${t}%;--room:${room}%" ${p.sentOff ? 'disabled' : ''}
+            aria-label="${slot?.label ?? ''} ${p.def.name}, overall ${overall(p.def)}, stamina ${st}%${p.sentOff ? ', sent off' : ''}">
+            <span class="tx-shirt"><b>${p.def.number}</b><i class="tx-ovr">${overall(p.def)}</i><s class="tx-st"><u style="width:${st}%;background:${col}"></u></s></span>
+            <em class="tx-nm">${lastName(p.def.name)}</em>
+          </button>`;
         })
         .join('');
-      const bench = m.bench[side];
-      const pickGK = picked === 0;
-      $(d, '[data-l=bench]').innerHTML = bench.length
-        ? bench.map((p, i) => row(p, `<b class="ovr">${overall(p)}</b>`, left <= 0 || picked < 0 || pickGK !== (p.role === 'GK') ? 'off' : '', `b${i}`)).join('')
-        : '<li class="fine">Nobody left on the bench.</li>';
-      d.querySelectorAll<HTMLButtonElement>('.sub-row').forEach((b) =>
-        b.addEventListener('click', () => {
-          sfx.click();
-          const k = b.dataset.k!;
-          const idx = Number(k.slice(1));
-          if (k[0] === 'x') picked = picked === idx ? -1 : idx;
-          else if (picked >= 0 && !b.classList.contains('off')) {
-            if (h.substitute(picked, idx)) {
-              sfx.coin();
-              picked = -1;
-            }
-          }
-          drawSubs();
-        }),
-      );
     };
+
+    const drawBench = () => {
+      const list = m.bench[side];
+      const x = picked?.k === 'x' ? picked.i : -1;
+      bench.innerHTML = list.length
+        ? list
+            .map((p, i) => {
+              const ok = x >= 0 ? canSwap(x, p) : subsLeft() > 0;
+              const sel = picked?.k === 'b' && picked.i === i;
+              return `<li><button class="tx-b ${sel ? 'sel' : ''} ${ok ? (x >= 0 ? 'hot' : '') : 'off'}" data-k="b${i}" ${ok ? '' : 'aria-disabled="true"'}>
+                <i style="background:${cssHex(kit.shirt)};color:${light ? 'var(--ink)' : '#fff'}">${p.number}</i><span>${p.name}</span><em>${p.role}</em><b>${overall(p)}</b>
+              </button></li>`;
+            })
+            .join('')
+        : '<li class="tx-empty">Nobody left on the bench.</li>';
+      const left = subsLeft();
+      $(d, '.tx-left').textContent = left > 0 ? `${left} SUB${left > 1 ? 'S' : ''} LEFT` : 'NO SUBS LEFT';
+      $(d, '.tx-left').classList.toggle('none', left <= 0);
+      const team = m.teamPlayers(side);
+      $(d, '.tx-hint').textContent =
+        left <= 0 ? 'All substitutions made.'
+          : picked?.k === 'x' ? `${team[picked.i].def.name} off: pick a sub.`
+            : picked?.k === 'b' ? `${list[picked.i]?.name ?? ''} on: pick who comes off.`
+              : 'Tap a player, then a sub.';
+    };
+
+    const drawForms = () => {
+      const cur = formation();
+      const el = $(d, '.tx-forms');
+      el.innerHTML = FORMATION_IDS.map((f) => `<button class="${f === cur ? 'on' : ''}" data-f="${f}" ${h.setFormation ? '' : 'disabled'}>${f}</button>`).join('');
+    };
+    const drawMent = () => {
+      const labels = ['DEFENSIVE', 'BALANCED', 'ATTACKING'];
+      $(d, '.tx-ment').innerHTML = labels.map((l, i) => `<button class="${m.mentality[side] === i - 1 ? 'on' : ''}" data-i="${i}">${l}</button>`).join('');
+    };
+    const draw = () => {
+      drawPitch();
+      drawBench();
+      fresh = -1;
+    };
+
+    const tryPair = (slot: number, benchIdx: number) => {
+      const p = m.bench[side][benchIdx];
+      if (!p || !canSwap(slot, p)) return false;
+      if (!h.substitute(slot, benchIdx)) return false;
+      sfx.coin();
+      fresh = slot;
+      return true;
+    };
+
+    d.addEventListener('click', (e) => {
+      const t = e.target as Element;
+      const f = t.closest<HTMLButtonElement>('.tx-forms button');
+      if (f && !f.disabled) {
+        sfx.click();
+        const id = f.dataset.f as FormationId;
+        chosen = id;
+        h.setFormation?.(id);
+        drawForms();
+        draw();
+        return;
+      }
+      const mb = t.closest<HTMLButtonElement>('.tx-ment button');
+      if (mb) {
+        sfx.click();
+        h.setMentality(Number(mb.dataset.i) - 1);
+        drawMent();
+        return;
+      }
+      const btn = t.closest<HTMLButtonElement>('.tx-p, .tx-b');
+      if (!btn || btn.disabled) return;
+      sfx.click();
+      const k = btn.dataset.k!;
+      const idx = Number(k.slice(1));
+      if (k[0] === 'x') {
+        if (picked?.k === 'b') {
+          if (tryPair(idx, picked.i)) picked = null;
+          else picked = { k: 'x', i: idx };
+        } else picked = picked?.k === 'x' && picked.i === idx ? null : { k: 'x', i: idx };
+      } else {
+        if (btn.classList.contains('off')) return;
+        if (picked?.k === 'x') {
+          if (tryPair(picked.i, idx)) picked = null;
+        } else picked = picked?.k === 'b' && picked.i === idx ? null : { k: 'b', i: idx };
+      }
+      draw();
+    });
+    drawForms();
     drawMent();
-    drawSubs();
+    draw();
     $(d, '[data-a=back]').addEventListener('click', h.back);
   }
 

@@ -104,7 +104,17 @@ export type MatchEvent =
   /** One penalty of a shootout has been settled. */
   | { type: 'shootoutKick'; side: Side; taker: number; scored: boolean }
   /** The shootout (and the tie) is over. */
-  | { type: 'shootoutEnd'; winner: Side };
+  | { type: 'shootoutEnd'; winner: Side }
+  /**
+   * Flag up: `player` (of the attacking `side`) was offside when the ball was played to him and
+   * was first to it. An indirect free kick to the other side follows (a 'restart' freekick).
+   */
+  | { type: 'offside'; side: Side; player: number }
+  /**
+   * The referee plays advantage after a foul on `side` (the fouled team kept or won the ball back
+   * in their attacking half): no free kick; any card for the foul is shown straight away.
+   */
+  | { type: 'advantage'; side: Side };
 
 export type KickKind = 'pass' | 'through' | 'lob' | 'shot' | 'clear' | 'header' | 'throw' | 'keeper';
 export type RestartKind = 'kickoff' | 'throwin' | 'corner' | 'goalkick' | 'freekick' | 'penalty';

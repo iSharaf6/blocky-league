@@ -8,7 +8,15 @@ const LABELS: Record<TouchContext, [string, string, string]> = {
   setpiece: ['PASS', 'SHOOT', 'CROSS'],
 };
 
-/** Floating thumbstick on the left half, chunky action buttons on the right. */
+type BtnKey = 'pass' | 'shoot' | 'through' | 'sprint';
+
+/**
+ * Floating thumbstick on the left half, chunky action buttons on the right.
+ *
+ * The whole overlay also hides itself (CSS, see style.css "touch") while the HUD is dead-ball only — goal
+ * celebrations, replays, half / full time and open menus — so it works even when nobody calls setVisible().
+ * During a replay a full-screen tap skips it (the buttons that normally do that are hidden).
+ */
 export class TouchControls {
   readonly root: HTMLDivElement;
   private knob: HTMLDivElement;
@@ -17,6 +25,8 @@ export class TouchControls {
   private origin = { x: 0, y: 0 };
   private btns: HTMLButtonElement[] = [];
   private ctx: TouchContext = 'attack';
+  private visible = true;
+  private skipTimer = 0;
 
   constructor(private input: Input) {
     this.root = document.createElement('div');
@@ -29,7 +39,8 @@ export class TouchControls {
         <button class="tb tb-shoot" data-k="shoot"><span>SHOOT</span></button>
         <button class="tb tb-pass" data-k="pass"><span>PASS</span></button>
         <button class="tb tb-sprint" data-k="sprint"><span>SPRINT</span></button>
-      </div>`;
+      </div>
+      <div class="touch-skip" aria-hidden="true"></div>`;
     this.base = this.root.querySelector('.touch-base')!;
     this.knob = this.root.querySelector('.touch-knob')!;
     const zone = this.root.querySelector<HTMLDivElement>('.touch-stick-zone')!;
@@ -71,17 +82,16 @@ export class TouchControls {
     };
     const up = (e: PointerEvent) => {
       if (e.pointerId !== this.stickId) return;
-      this.stickId = null;
-      t.sx = t.sy = 0;
-      this.base.classList.remove('on');
+      this.releaseStick();
     };
     zone.addEventListener('pointermove', move);
     zone.addEventListener('pointerup', up);
     zone.addEventListener('pointercancel', up);
+    zone.addEventListener('lostpointercapture', up);
 
     this.root.querySelectorAll<HTMLButtonElement>('.tb').forEach((b) => {
       this.btns.push(b);
-      const k = b.dataset.k as 'pass' | 'shoot' | 'through' | 'sprint';
+      const k = b.dataset.k as BtnKey;
       const set = (v: boolean) => {
         t[k] = v;
         b.classList.toggle('down', v);
@@ -95,13 +105,56 @@ export class TouchControls {
       });
       b.addEventListener('pointerup', () => set(false));
       b.addEventListener('pointercancel', () => set(false));
+      b.addEventListener('lostpointercapture', () => set(false));
       b.addEventListener('contextmenu', (e) => e.preventDefault());
     });
+
+    // Replays: a tap anywhere is a short PASS press, which the session reads as "skip".
+    const skip = this.root.querySelector<HTMLDivElement>('.touch-skip')!;
+    skip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      input.lastDevice = 'touch';
+      t.pass = true;
+      window.clearTimeout(this.skipTimer);
+      this.skipTimer = window.setTimeout(() => {
+        if (!this.btns.some((b) => b.dataset.k === 'pass' && b.classList.contains('down'))) t.pass = false;
+      }, 120);
+    });
+  }
+
+  private releaseStick(): void {
+    this.stickId = null;
+    this.input.touch.sx = this.input.touch.sy = 0;
+    this.base.classList.remove('on');
+  }
+
+  /** Drop every held button and the stick (the overlay is going away mid-press). */
+  private releaseAll(): void {
+    const t = this.input.touch;
+    t.pass = t.shoot = t.through = t.sprint = false;
+    this.btns.forEach((b) => b.classList.remove('down'));
+    if (this.stickId !== null) this.releaseStick();
   }
 
   setEnabled(v: boolean): void {
     this.input.touch.enabled = v;
     this.root.classList.toggle('hidden', !v);
+    if (!v) this.releaseAll();
+  }
+
+  /**
+   * Show or hide the controls without disabling touch input — e.g. off for goal celebrations, replays and
+   * half / full time, back on for play. (The replay tap-to-skip layer keeps working while hidden.)
+   */
+  setVisible(v: boolean): void {
+    if (v === this.visible) return;
+    this.visible = v;
+    this.root.classList.toggle('off', !v);
+    if (!v) this.releaseAll();
+  }
+
+  get isVisible(): boolean {
+    return this.visible;
   }
 
   setContext(c: TouchContext): void {
