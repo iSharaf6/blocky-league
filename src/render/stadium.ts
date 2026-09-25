@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { clamp, smoothstep } from '../core/math';
 import { Rng } from '../core/rng';
 import {
   BOX_DEPTH, BOX_W, CENTER_R, GOAL_DEPTH, GOAL_H, GOAL_W, HALF_L, HALF_W, PEN_SPOT, SIX_DEPTH, SIX_W,
@@ -32,6 +33,29 @@ type Side4 = 'far' | 'near' | 'left' | 'right';
 /** The playing surface is a raised lawn; players, ball and goals sit on top of it. */
 export const PITCH_Y = 0.12;
 
+/** Floodlight masts at the four corners: ground position and lamp-head height (also used for night shadows). */
+export const FLOODLIGHT_TOWERS: readonly { x: number; z: number; h: number }[] = [-1, 1].flatMap((sx) =>
+  [-1, 1].map((sz) => ({ x: sx * (HALF_L + 13), z: sz * (HALF_W + 16), h: 27.6 })),
+);
+
+/**
+ * Vertex-coloured Lambert (like voxelMaterial) with a snow blend: `uSnow` 0..1 mixes every face toward
+ * `snowCol`. The material colour multiplies the lot, which doubles as the night dimmer.
+ */
+function snowMaterial(snow: { value: number }, snowCol: number, key: string): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const col = { value: new THREE.Color(snowCol) };
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uSnow = snow;
+    sh.uniforms.uSnowCol = col;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uSnow;\nuniform vec3 uSnowCol;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, uSnowCol * diffuse, uSnow);');
+  };
+  m.customProgramCacheKey = () => `snow-${key}`;
+  return m;
+}
+
 export class Stadium {
   readonly group = new THREE.Group();
   /** Pitch-level objects (lawn, lines, goals, flags), lifted by PITCH_Y. */
@@ -55,6 +79,26 @@ export class Stadium {
   private glows: THREE.Sprite[] = [];
   private stars: THREE.Points | null = null;
   private lampHeads: THREE.Vector3[] = [];
+  /** Per lamp: halo sprite size (m) and how strongly its glare bleeds into the frame from above. */
+  private lampGlow: { size: number; flare: number }[] = [];
+  /** Snow cover on the lawn (0..0.6) and on the ground outside (0..0.75), grown while it snows. */
+  private readonly snowPitch = { value: 0 };
+  private readonly snowOuter = { value: 0 };
+  private snowing = false;
+  private snowT = 0;
+  // Own materials (not the shared voxelMaterial) so night can dim the stands but keep the lawn floodlit,
+  // and snow can settle on the grass without whitening the players.
+  private readonly grassMat = snowMaterial(this.snowPitch, 0xeef4f8, 'grass');
+  private readonly lineMat = snowMaterial(this.snowPitch, 0xb9d2e8, 'line');
+  private readonly groundMat = snowMaterial(this.snowOuter, 0xf2f6fa, 'ground');
+  private readonly standMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  private readonly outerMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  private crowdMats: THREE.MeshLambertMaterial[] = [];
+  private bannerMats: THREE.MeshLambertMaterial[] = [];
+  private flares: THREE.Sprite[] = [];
+  private flareV = new THREE.Vector3();
+  private flareW = new THREE.Vector3();
+  private night = false;
 
   constructor(readonly opt: StadiumOptions) {
     this.rng = new Rng(opt.seed ?? 42);
@@ -93,7 +137,7 @@ export class Stadium {
       const w = Math.min(band, ext.x - x);
       r.box(x + w / 2, -0.1, 0, w, 0.2, ext.z * 2, i % 2 ? GRASS_OUT_A : GRASS_OUT_B, { skipBottom: true });
     }
-    const runoff = new THREE.Mesh(r.build(), voxelMaterial);
+    const runoff = new THREE.Mesh(r.build(), this.grassMat);
     runoff.receiveShadow = true;
     this.group.add(runoff);
 
@@ -110,7 +154,7 @@ export class Stadium {
       b.box(x + w / 2, -depth / 2, 0, w, depth, slab.z * 2, shade(col, 0.62), { top: col, skipBottom: true });
       x = next;
     }
-    const grass = new THREE.Mesh(b.build(), voxelMaterial);
+    const grass = new THREE.Mesh(b.build(), this.grassMat);
     grass.receiveShadow = true;
     this.pitch.add(grass);
 
@@ -160,7 +204,7 @@ export class Stadium {
         arc(gx, zs * HALF_W, 1, a0, a0 + Math.PI / 2, 8);
       }
     }
-    const lines = new THREE.Mesh(L.build(), voxelMaterial);
+    const lines = new THREE.Mesh(L.build(), this.lineMat);
     lines.receiveShadow = true;
     lines.position.y = 0.004;
     this.pitch.add(lines);
@@ -368,7 +412,7 @@ export class Stadium {
         }
       }
     }
-    const m = new THREE.Mesh(b.build(), voxelMaterial);
+    const m = new THREE.Mesh(b.build(), this.standMat);
     m.receiveShadow = true;
     // Stands don't cast: their shadow would be clipped by the moving shadow frustum into wedges on the pitch.
     m.castShadow = false;
@@ -403,6 +447,19 @@ export class Stadium {
     const cd = farRows.filter((r) => r.tier === 1).length * STEP_D;
     rib.position.set(0, t2.h - 0.9, -(STAND_Z + cd + 1.55) + 0.17);
     this.group.add(rib);
+
+    // A floodlight gantry along the far roof edge (the lamps whose glare tops the broadcast frame at night).
+    const gantry = new BoxBuilder();
+    const faces = new BoxBuilder();
+    const fz = -(STAND_Z - 0.9);
+    for (let x = -42; x <= 42.01; x += 12) {
+      gantry.box(x, roofY + 0.55, fz - 0.1, 2.2, 0.9, 0.7, 0x3a3f48);
+      faces.box(x, roofY + 0.5, fz + 0.28, 1.9, 0.6, 0.08, 0xfffbe0);
+      this.lampHeads.push(new THREE.Vector3(x, roofY + 0.5, fz + 0.5));
+      this.lampGlow.push({ size: 7, flare: 0.8 });
+    }
+    this.group.add(new THREE.Mesh(gantry.build(), this.standMat));
+    this.group.add(new THREE.Mesh(faces.build(), new THREE.MeshBasicMaterial({ vertexColors: true })));
   }
 
   private buildCrowd(): void {
@@ -523,6 +580,7 @@ export class Stadium {
 
   private crowdMaterial(sway = false, parts = false): THREE.Material {
     const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: parts });
+    this.crowdMats.push(mat);
     const u = this.crowdUniforms;
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = u.uTime;
@@ -575,16 +633,18 @@ export class Stadium {
   private buildFloodlights(): void {
     const b = new BoxBuilder();
     const lamps = new BoxBuilder();
-    for (const sx of [-1, 1]) {
-      for (const sz of [-1, 1]) {
-        const x = sx * (HALF_L + 13);
-        const z = sz * (HALF_W + 16);
-        const h = 26;
+    for (const t of FLOODLIGHT_TOWERS) {
+      {
+        // (one mast per corner)
+        const x = t.x;
+        const z = t.z;
+        const h = t.h - 1.6;
         b.box(x, h / 2, z, 0.9, h, 0.9, STEEL);
         b.box(x, h / 2, z, 1.4, 0.4, 1.4, shade(STEEL, 1.2));
         const rot = Math.atan2(-x, -z) + Math.PI;
         b.box(x, h + 1.6, z, 6, 3.4, 0.6, 0x3a3f48, { rotY: rot });
         this.lampHeads.push(new THREE.Vector3(x - Math.sign(x) * 0.8, h + 1.6, z - Math.sign(z) * 0.8));
+        this.lampGlow.push({ size: 18, flare: 0.8 });
         for (let i = 0; i < 4; i++) {
           for (let j = 0; j < 2; j++) {
             const ox = (i - 1.5) * 1.35;
@@ -596,7 +656,7 @@ export class Stadium {
         }
       }
     }
-    const m = new THREE.Mesh(b.build(), voxelMaterial);
+    const m = new THREE.Mesh(b.build(), this.standMat);
     m.castShadow = false;
     this.group.add(m);
     const l = new THREE.Mesh(lamps.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
@@ -618,10 +678,11 @@ export class Stadium {
       g.fillRect(0, 0, 64, 64);
       const tex = new THREE.CanvasTexture(c);
       const mat = new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false });
-      for (const p of this.lampHeads) {
+      for (let i = 0; i < this.lampHeads.length; i++) {
         const sp = new THREE.Sprite(mat);
-        sp.position.copy(p);
-        sp.scale.set(18, 18, 1);
+        sp.position.copy(this.lampHeads[i]);
+        const size = this.lampGlow[i].size;
+        sp.scale.set(size, size, 1);
         this.group.add(sp);
         this.glows.push(sp);
       }
@@ -642,6 +703,16 @@ export class Stadium {
     }
     for (const g of this.glows) g.visible = night;
     if (this.stars) this.stars.visible = night;
+    // Floodlit night: the lawn keeps its light, everything the lamps aren't aimed at falls away.
+    const stand = night ? [0.4, 0.42, 0.52] : [1, 1, 1];
+    const outer = night ? [0.2, 0.22, 0.3] : [1, 1, 1];
+    this.standMat.color.setRGB(stand[0], stand[1], stand[2]);
+    for (const m of this.crowdMats) m.color.setRGB(stand[0] * 1.1, stand[1] * 1.1, stand[2] * 1.05);
+    for (const m of this.bannerMats) m.color.setRGB(stand[0] * 1.2, stand[1] * 1.2, stand[2] * 1.1);
+    this.outerMat.color.setRGB(outer[0], outer[1], outer[2]);
+    this.groundMat.color.setRGB(outer[0], outer[1], outer[2]);
+    this.night = night;
+    for (const f of this.flares) f.visible = false;
     for (const c of this.clouds) {
       const m = (c as THREE.Mesh).material as THREE.MeshBasicMaterial;
       m.color.setHex(night ? 0x3a4a78 : t === 'sunset' ? 0xffd2b0 : 0xffffff);
@@ -678,7 +749,7 @@ export class Stadium {
       g.box(px, -0.07, 0, 12, 0.06, 70, shade(ROAD, 1.15));
       for (let z = -32; z <= 32; z += 3.2) g.box(px, -0.03, z, 11, 0.02, 0.14, 0xf6f4ec);
     }
-    const ground = new THREE.Mesh(g.build(), voxelMaterial);
+    const ground = new THREE.Mesh(g.build(), this.groundMat);
     ground.receiveShadow = true;
     this.group.add(ground);
 
@@ -714,7 +785,7 @@ export class Stadium {
       if (rng.chance(0.8)) tree(x, -(STAND_Z + 26 + rng.next() * 1.5));
       if (rng.chance(0.8)) tree(x, STAND_Z + 13.5 + rng.next() * 1.5);
     }
-    const trees = new THREE.Mesh(t.build(), voxelMaterial);
+    const trees = new THREE.Mesh(t.build(), this.outerMat);
     trees.castShadow = true;
     trees.receiveShadow = true;
     this.group.add(trees);
@@ -730,7 +801,7 @@ export class Stadium {
         cb.box(0, 0.55, 0, len, 0.8, 1.7, c, { top: shade(c, 1.1) });
         cb.box(truck ? len / 2 - 0.9 : -0.2, 1.25, 0, truck ? 1.6 : 1.8, 0.7, 1.55, truck ? c : 0xcfeaf7, { top: truck ? shade(c, 1.1) : 0xf6f4ec });
         for (const wx of [-len / 2 + 0.7, len / 2 - 0.7]) for (const wz of [-0.85, 0.85]) cb.box(wx, 0.28, wz, 0.6, 0.56, 0.24, 0x2a2a30);
-        const car = new THREE.Mesh(cb.build(), voxelMaterial);
+        const car = new THREE.Mesh(cb.build(), this.outerMat);
         car.castShadow = true;
         const dir = ri === 0 ? (i % 2 ? 1 : -1) : i % 2 ? -1 : 1;
         car.position.set((rng.next() - 0.5) * R * 1.6, 0, rz + dir * 1.6);
@@ -744,7 +815,7 @@ export class Stadium {
       const lb = new BoxBuilder();
       const len = 3 + rng.next() * 3;
       lb.box(0, 0, 0, len, 0.5, 1.1, TRUNK, { top: shade(TRUNK, 1.15) });
-      const log = new THREE.Mesh(lb.build(), voxelMaterial);
+      const log = new THREE.Mesh(lb.build(), this.outerMat);
       log.position.set((rng.next() - 0.5) * R * 1.6, -0.05, riverZ + (i % 2 ? 2.2 : -2.2));
       this.group.add(log);
       this.logs.push({ mesh: log, speed: (i % 2 ? 1 : -1) * (1.4 + rng.next()) });
@@ -876,7 +947,9 @@ export class Stadium {
       g.fillText(text, 256, 50);
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(10, 1.9), new THREE.MeshLambertMaterial({ map: tex }));
+      const bm = new THREE.MeshLambertMaterial({ map: tex });
+      this.bannerMats.push(bm);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(10, 1.9), bm);
       // Draped over the front of the far stand, a couple of rows up.
       mesh.position.set(x, 0.9 + 2 * STEP_H + 0.5, -(STAND_Z + 1.9 * STEP_D) + 0.02);
       mesh.rotation.x = -0.52;
@@ -938,7 +1011,7 @@ export class Stadium {
     b.box(x, y, 0, 1.2, 6.4, 16.6, 0x2a2a30);
     b.box(x, y / 2 - 1, -6, 0.8, y, 0.8, STEEL);
     b.box(x, y / 2 - 1, 6, 0.8, y, 0.8, STEEL);
-    const m = new THREE.Mesh(b.build(), voxelMaterial);
+    const m = new THREE.Mesh(b.build(), this.standMat);
     m.castShadow = true;
     this.group.add(m);
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(15.6, 5.4), new THREE.MeshBasicMaterial({ map: this.scoreTex }));
@@ -972,8 +1045,80 @@ export class Stadium {
     this.scoreTex.needsUpdate = true;
   }
 
+  /** Snow settles on the lawn over ~30 s (and stays); rain / clear leave it green. */
+  setWeather(kind: 'clear' | 'rain' | 'snow'): void {
+    this.snowing = kind === 'snow';
+    if (!this.snowing) {
+      this.snowT = 0;
+      this.snowPitch.value = 0;
+      this.snowOuter.value = 0;
+    }
+  }
+
+  /**
+   * Night: the lamps sit above the broadcast frame, so their glare bleeds down from the top edge (a soft
+   * glow hanging under each lamp), fading as the lens swings away. Lamps actually in shot use their halo.
+   */
+  updateGlare(cam: THREE.PerspectiveCamera): void {
+    if (!this.night) return;
+    if (this.flares.length === 0) this.buildFlares();
+    cam.updateMatrixWorld();
+    const v = this.flareV;
+    const halfH = Math.tan(((cam.fov / 2) * Math.PI) / 180);
+    const halfW = halfH * cam.aspect;
+    const D = 12;
+    for (let i = 0; i < this.lampHeads.length; i++) {
+      const sp = this.flares[i];
+      v.copy(this.lampHeads[i]).project(cam);
+      const w = this.flareW.copy(this.lampHeads[i]).applyMatrix4(cam.matrixWorldInverse).z;
+      const k = w > 0 || v.y < 0.95 ? 0 : (1 - smoothstep(0.95, 1.5, Math.abs(v.x))) * (1 - smoothstep(1.1, 4.5, v.y));
+      if (k <= 0.01) {
+        sp.visible = false;
+        continue;
+      }
+      sp.visible = true;
+      // Hang it from the top edge, 12 m in front of the lens: 18% of the width, 20% of the height.
+      v.set(clamp(v.x, -1, 1), 0.8, 0.5).unproject(cam);
+      sp.position.copy(cam.position).addScaledVector(v.sub(cam.position).normalize(), D);
+      sp.scale.set(D * halfW * 2 * 0.18, D * halfH * 2 * 0.2, 1);
+      (sp.material as THREE.SpriteMaterial).opacity = this.lampGlow[i].flare * k;
+    }
+  }
+
+  private buildFlares(): void {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 64;
+    const g = c.getContext('2d')!;
+    const grad = g.createRadialGradient(64, 0, 0, 64, 0, 64);
+    grad.addColorStop(0, 'rgba(255,252,235,1)');
+    grad.addColorStop(0.22, 'rgba(255,248,215,0.55)');
+    grad.addColorStop(0.55, 'rgba(255,244,205,0.14)');
+    grad.addColorStop(1, 'rgba(255,244,205,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    for (let i = 0; i < this.lampHeads.length; i++) {
+      const mat = new THREE.SpriteMaterial({
+        map: tex, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, transparent: true, fog: false,
+      });
+      const sp = new THREE.Sprite(mat);
+      sp.renderOrder = 5;
+      sp.visible = false;
+      this.group.add(sp);
+      this.flares.push(sp);
+    }
+  }
+
   update(dt: number, time: number): void {
     this.crowdUniforms.uTime.value = time;
+    if (this.snowing && this.snowT < 40) {
+      this.snowT += dt;
+      const k = smoothstep(0, 30, this.snowT);
+      this.snowPitch.value = 0.6 * k;
+      this.snowOuter.value = 0.75 * k;
+    }
     this.updateFlashes(dt);
     for (const n of this.nets) n.update(dt);
     for (const f of this.flags) f.rotation.y = Math.sin(time * 3 + f.id) * 0.35;
@@ -993,6 +1138,25 @@ export class Stadium {
       c.position.x += dt * 1.2;
       if (c.position.x > 260) c.position.x = -260;
     }
+  }
+
+  /** Free the GPU side of everything this stadium owns (not the shared voxel material or net texture). */
+  dispose(): void {
+    const seen = new Set<THREE.Material | THREE.Texture>();
+    this.group.traverse((o) => {
+      const mats = (o as THREE.Mesh).material;
+      if (!mats) return;
+      for (const m of Array.isArray(mats) ? mats : [mats]) {
+        if (m === voxelMaterial || seen.has(m)) continue;
+        seen.add(m);
+        const map = (m as THREE.MeshBasicMaterial).map;
+        if (map && map !== netTexture && !seen.has(map)) {
+          seen.add(map);
+          map.dispose();
+        }
+        m.dispose();
+      }
+    });
   }
 
   setHype(home: number, away: number, dt: number): void {

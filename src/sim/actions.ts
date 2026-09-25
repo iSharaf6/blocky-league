@@ -1,6 +1,8 @@
-import { clamp, dist2, pointSegDist } from '../core/math';
+import { angleDiff, clamp, dist2, pointSegDist } from '../core/math';
 import { Ball, groundPassSpeed, rollTime, solveLob, type BallHit } from './ball';
-import { BALL_R, GOAL_W, GRAVITY, HALF_L, HALF_W } from './constants';
+import {
+  AIR_DRAG, BALL_R, BOUNCE, GOAL_W, GRAVITY, HALF_L, HALF_W, MAGNUS, ROLL_A, ROLL_B, SPIN_DECAY,
+} from './constants';
 import type { Match } from './match';
 import type { KickOrder, Player } from './player';
 import type { KickKind } from './types';
@@ -27,7 +29,7 @@ function dirOf(p: Player, order: KickOrder): { x: number; z: number } {
 export function laneRisk(m: Match, side: number, ax: number, az: number, bx: number, bz: number): number {
   let risk = 0;
   for (const o of m.players) {
-    if (o.side === side) continue;
+    if (o.side === side || o.sentOff) continue;
     const { d, t } = pointSegDist(o.pos.x, o.pos.z, ax, az, bx, bz);
     if (t < 0.04) continue;
     // Opponents further along the lane get more time to close it down.
@@ -60,7 +62,7 @@ export function interceptRisk(m: Match, side: number, ax: number, az: number, bx
   const uz = (bz - az) / len;
   let risk = 0;
   for (const o of m.players) {
-    if (o.side === side) continue;
+    if (o.side === side || o.sentOff) continue;
     const rx = o.pos.x - ax;
     const rz = o.pos.z - az;
     const along = rx * ux + rz * uz;
@@ -92,7 +94,7 @@ export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 
   const maxD = mode === 'pass' ? 40 : 58;
   const ad = m.attackDir(p.side);
   for (const t of m.players) {
-    if (t.side !== p.side || t === p) continue;
+    if (t.side !== p.side || t === p || t.sentOff) continue;
     const vx = t.pos.x - p.pos.x;
     const vz = t.pos.z - p.pos.z;
     const d = Math.hypot(vx, vz);
@@ -116,7 +118,7 @@ export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 
 export function nearestOppDist(m: Match, p: Player): number {
   let d = Infinity;
   for (const o of m.players) {
-    if (o.side === p.side) continue;
+    if (o.side === p.side || o.sentOff) continue;
     const e = dist2(o.pos.x, o.pos.z, p.pos.x, p.pos.z);
     if (e < d) d = e;
   }
@@ -267,7 +269,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
     const s = solveLob(d, flight, land);
     let err = passError(p, m, kind === 'clear' ? 2.2 : 1.4);
     // A scrambled clearance from inside our own box sometimes slices off behind for a corner.
-    if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.14 * pressureErr(m, p))) {
+    if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.3 * pressureErr(m, p))) {
       const toLine = -ad; // towards our own goal line
       const zs = Math.sign(b.z || 1);
       // Rotate so the ball heads for the byline on the near side, well wide of the goal.
@@ -336,9 +338,100 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   vy = clamp(vy, header ? -6 : -2, 13);
   const ux = dx / dl;
   const uz = dz / dl;
-  // A little natural curl so shots don't look like laser beams.
-  const curl = m.rng.gauss() * 1.2;
-  return launch(ux * speed, vy, uz * speed, 0, curl, 0, -1, header ? 'header' : 'shot', power);
+  const L = launch(ux * speed, vy, uz * speed, 0, 0, 0, -1, header ? 'header' : 'shot', power);
+  const curl = header ? 0 : clamp(order.curl ?? 0, -1, 1);
+  if (Math.abs(curl) > 0.02) {
+    // A bent strike: a touch less precise than a clean one, and it starts outside the target.
+    bendShot(m, L, gx, tz + m.rng.gauss() * Math.abs(curl) * 0.25, curl);
+  } else {
+    // A little natural curl so shots don't look like laser beams.
+    L.spinY = m.rng.gauss() * 1.2;
+  }
+  return L;
+}
+
+/** Sidespin (rad/s) of a full-curl strike: bends a 25 m free kick ~2 m. */
+export const CURL_SPIN = 10;
+
+/**
+ * Put sidespin on a shot so it bends towards +z (curl > 0) or -z, and re-aim the launch so the
+ * bend carries it back onto `tz` at the goal line.
+ */
+export function bendShot(m: Match, L: Launch, gx: number, tz: number, curl: number): void {
+  const b = m.ball.pos;
+  L.spinY = -clamp(curl, -1, 1) * CURL_SPIN * (Math.sign(L.vx) || 1);
+  const want = Math.atan2(tz - b.z, gx - b.x);
+  for (let i = 0; i < 3; i++) {
+    const z = crossingZ(b.x, b.y, b.z, L.vx, L.vy, L.vz, L.spinY, gx);
+    if (z === null) break;
+    const err = angleDiff(Math.atan2(z - b.z, gx - b.x), want);
+    if (Math.abs(err) < 1e-4) break;
+    const c = Math.cos(err);
+    const sn = Math.sin(err);
+    const vx = L.vx * c - L.vz * sn;
+    L.vz = L.vx * sn + L.vz * c;
+    L.vx = vx;
+  }
+}
+
+/**
+ * Where a ball launched from (x, y, z) with sidespin `sy` crosses the line x = gx, using the same
+ * air / bounce / roll model as Ball.step (no posts or players). Null if it never gets there.
+ */
+export function crossingZ(
+  x: number, y: number, z: number, vx: number, vy: number, vz: number, sy: number, gx: number,
+): number | null {
+  const dt = 1 / 60;
+  const dir = Math.sign(gx - x) || 1;
+  for (let i = 0; i < 240; i++) {
+    const grounded = y <= BALL_R + 0.005 && Math.abs(vy) < 0.9;
+    if (grounded) {
+      y = BALL_R;
+      vy = 0;
+      const sh = Math.hypot(vx, vz);
+      if (sh < 0.3) return null;
+      const k = Math.max(0, sh - (ROLL_A + ROLL_B * sh) * dt) / sh;
+      vx *= k;
+      vz *= k;
+      sy *= Math.exp(-SPIN_DECAY * 4 * dt);
+    } else {
+      vy -= GRAVITY * dt;
+      const drag = AIR_DRAG * Math.sqrt(vx * vx + vy * vy + vz * vz) * dt;
+      vx -= vx * drag;
+      vy -= vy * drag;
+      vz -= vz * drag;
+      vx += MAGNUS * sy * vz * dt;
+      vz -= MAGNUS * sy * vx * dt;
+      sy *= Math.exp(-SPIN_DECAY * dt);
+    }
+    const px = x;
+    const pz = z;
+    x += vx * dt;
+    y += vy * dt;
+    z += vz * dt;
+    if (y < BALL_R) {
+      y = BALL_R;
+      if (vy < -1.1) {
+        vy = -vy * BOUNCE;
+        vx *= 0.86;
+        vz *= 0.86;
+      } else vy = 0;
+    }
+    if ((x - gx) * dir >= 0) {
+      const f = Math.abs(x - px) > 1e-6 ? (gx - px) / (x - px) : 1;
+      return pz + (z - pz) * f;
+    }
+  }
+  return null;
+}
+
+/**
+ * Curl from a human's stick at the moment of the strike: its sideways (world z) share bends the
+ * shot that way; a gentle push is a gentle bend. Small deflections of the stick do nothing.
+ */
+export function stickCurl(mz: number): number {
+  const a = Math.abs(mz);
+  return Math.sign(mz) * clamp((a - 0.25) / 0.55, 0, 1);
 }
 
 /** Opponents (outfield) standing in the shooting lane from `p` to the middle of the goal. */
@@ -347,7 +440,7 @@ export function shotBlockers(m: Match, p: Player): number {
   const gx = ad * HALF_L;
   let n = 0;
   for (const o of m.players) {
-    if (o.side === p.side || o.isKeeper) continue;
+    if (o.side === p.side || o.isKeeper || o.sentOff) continue;
     const { d, t } = pointSegDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, gx, clamp(p.pos.z * 0.2, -1.5, 1.5));
     if (t > 0.02 && t < 0.97 && d < 0.6 + t * 1.1) n += d < 0.5 ? 1 : 0.5;
   }

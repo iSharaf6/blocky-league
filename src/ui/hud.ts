@@ -1,5 +1,5 @@
 import { BALL_OFS, PF } from '../game/replay';
-import { HALF_L, HALF_W } from '../sim/constants';
+import { BOX_DEPTH, BOX_W, CENTER_R, HALF_L, HALF_W } from '../sim/constants';
 import type { Kit, TeamDef } from '../sim/types';
 import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
@@ -28,11 +28,23 @@ export class Hud {
   private replay: HTMLDivElement;
   private radar: HTMLCanvasElement;
   private radarT = 0;
+  private radarHidden = false;
+  /** Canvas backing size is re-derived from its CSS box (x devicePixelRatio) whenever that changes. */
+  private radarDirty = true;
+  private radarObs: ResizeObserver | null = null;
+  private cards: [HTMLDivElement, HTMLDivElement];
+  /** Radar dot colours per side; dark kits get a light rim so they read on the dark-green minimap. */
+  private dotFill: [string, string];
+  private dotEdge: [string, string];
+  private cardCount: [{ yellow: number; red: number }, { yellow: number; red: number }] = [
+    { yellow: 0, red: 0 },
+    { yellow: 0, red: 0 },
+  ];
   private toast: HTMLDivElement;
   private toastTimer = 0;
   onPause: (() => void) | null = null;
 
-  constructor(private teams: [HudTeam, HudTeam], humanSide: number) {
+  constructor(teams: [HudTeam, HudTeam], humanSide: number) {
     this.root = document.createElement('div');
     this.root.className = 'hud';
     const [h, a] = teams;
@@ -42,6 +54,8 @@ export class Hud {
         <div class="sb-score">0<span>-</span>0</div>
         <div class="sb-team"><b>${a.short}</b>${a.kit ? crestSvg(a.name, a.short, a.kit, 2) : `<i class="crest" style="--a:${cssHex(a.color)};--b:${cssHex(a.color2)}"></i>`}</div>
         <div class="sb-clock">00:00</div>
+        <div class="sb-cards h"></div>
+        <div class="sb-cards a"></div>
       </div>
       <button class="hud-pause" aria-label="Pause">II</button>
       <div class="hud-banner"></div>
@@ -50,7 +64,7 @@ export class Hud {
       <div class="hud-tip"></div>
       <div class="hud-chip"><span class="chip-num"></span><span class="chip-name"></span><div class="chip-stam"><div></div></div></div>
       <div class="hud-replay"><b>REPLAY</b><span>press any button to skip</span></div>
-      <canvas class="hud-radar" width="240" height="150"></canvas>`;
+      <canvas class="hud-radar" width="240" height="150" aria-hidden="true"></canvas>`;
     this.score = this.root.querySelector('.sb-score')!;
     this.clock = this.root.querySelector('.sb-clock')!;
     this.banner = this.root.querySelector('.hud-banner')!;
@@ -63,6 +77,14 @@ export class Hud {
     this.replay = this.root.querySelector('.hud-replay')!;
     this.radar = this.root.querySelector('.hud-radar')!;
     this.toast = this.root.querySelector('.hud-toast')!;
+    this.cards = [this.root.querySelector('.sb-cards.h')!, this.root.querySelector('.sb-cards.a')!];
+    const lum = (c: number) => (0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)) / 255;
+    this.dotFill = [cssHex(h.color), cssHex(a.color)];
+    this.dotEdge = [h.color, a.color].map((c) => (lum(c) < 0.35 ? 'rgba(251,251,244,0.95)' : 'rgba(20,20,26,0.9)')) as [string, string];
+    if (typeof ResizeObserver !== 'undefined') {
+      this.radarObs = new ResizeObserver(() => (this.radarDirty = true));
+      this.radarObs.observe(this.radar);
+    }
     this.root.querySelector('.hud-pause')!.addEventListener('click', () => this.onPause?.());
     if (humanSide < 0) this.chip.style.display = 'none';
   }
@@ -105,6 +127,24 @@ export class Hud {
     this.root.classList.toggle('dead', !on);
   }
 
+  /** Hide the minimap (set pieces, play near the bottom touchline) without touching the rest of the HUD. */
+  setRadarHidden(hidden: boolean): void {
+    if (hidden === this.radarHidden) return;
+    this.radarHidden = hidden;
+    this.root.classList.toggle('radar-off', hidden);
+  }
+
+  /** Booking shown under that side of the score bug (a yellow and a red icon per team, with counts). */
+  card(side: 0 | 1, color: 'yellow' | 'red'): void {
+    const c = this.cardCount[side];
+    c[color]++;
+    const icon = (k: 'yellow' | 'red') =>
+      c[k] ? `<span class="sb-card ${k}" aria-label="${c[k]} ${k} card${c[k] > 1 ? 's' : ''}"><i></i>${c[k] > 1 ? `<b>${c[k]}</b>` : ''}</span>` : '';
+    const el = this.cards[side];
+    el.innerHTML = icon('yellow') + icon('red');
+    el.querySelector(`.sb-card.${color}`)?.classList.add('new');
+  }
+
   /** Tutorial tip (top centre). Empty string hides it. */
   setTip(html: string): void {
     if (this.tip.dataset.t === html) return;
@@ -138,60 +178,93 @@ export class Hud {
       if (this.toastTimer <= 0) this.toast.classList.remove('on');
     }
     this.radarT -= dt;
-    if (this.radarT <= 0) {
+    const hidden = this.radarHidden || this.root.classList.contains('dead') || this.root.classList.contains('replaying');
+    if (this.radarT <= 0 && !hidden) {
       this.radarT = 1 / 20;
       this.drawRadar(frame);
     }
   }
 
+  /** Match the canvas backing store to its CSS size at devicePixelRatio, so the minimap stays crisp. */
+  private fitRadar(): void {
+    const c = this.radar;
+    const cssW = c.clientWidth;
+    if (!cssW) return; // display:none (penalty shootout): keep the old backing store until it shows again
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    // The CSS box is locked to the pitch's 8:5 aspect, so the height follows the width.
+    const w = Math.max(1, Math.round(cssW * dpr));
+    const h = Math.max(1, Math.round(w * 0.625));
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+    }
+    this.radarDirty = false;
+  }
+
   private drawRadar(f: Float32Array): void {
     const c = this.radar;
+    if (this.radarDirty) this.fitRadar();
     const g = c.getContext('2d')!;
-    const w = c.width;
-    const h = c.height;
+    const dpr = c.width / (c.clientWidth || c.width);
+    // Work in CSS pixels; line and marker sizes scale gently with the widget's size.
+    const w = c.width / dpr;
+    const h = c.height / dpr;
+    const u = Math.max(0.75, Math.min(1.2, w / 170));
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
-    g.fillStyle = 'rgba(38, 70, 30, 0.55)';
+    g.fillStyle = 'rgba(38, 70, 30, 0.6)';
     g.fillRect(0, 0, w, h);
-    g.strokeStyle = 'rgba(255,255,255,0.55)';
-    g.lineWidth = 2;
-    g.strokeRect(4, 4, w - 8, h - 8);
+    const m = Math.round(3 * u);
+    g.strokeStyle = 'rgba(255,255,255,0.6)';
+    g.lineWidth = Math.max(1, 1.5 * u);
+    g.strokeRect(m, m, w - m * 2, h - m * 2);
     g.beginPath();
-    g.moveTo(w / 2, 4);
-    g.lineTo(w / 2, h - 4);
+    g.moveTo(w / 2, m);
+    g.lineTo(w / 2, h - m);
     g.stroke();
+    const sx = (x: number) => m + ((x + HALF_L) / (HALF_L * 2)) * (w - m * 2);
+    const sz = (z: number) => m + ((z + HALF_W) / (HALF_W * 2)) * (h - m * 2);
     g.beginPath();
-    g.arc(w / 2, h / 2, 16, 0, Math.PI * 2);
+    g.arc(w / 2, h / 2, sz(CENTER_R) - sz(0), 0, Math.PI * 2);
     g.stroke();
-    const sx = (x: number) => 4 + ((x + HALF_L) / (HALF_L * 2)) * (w - 8);
-    const sz = (z: number) => 4 + ((z + HALF_W) / (HALF_W * 2)) * (h - 8);
-    g.strokeRect(4, sz(-18), 30, sz(18) - sz(-18));
-    g.strokeRect(w - 34, sz(-18), 30, sz(18) - sz(-18));
+    const boxD = sx(-HALF_L + BOX_DEPTH) - sx(-HALF_L);
+    const bz0 = sz(-BOX_W / 2);
+    const bz1 = sz(BOX_W / 2);
+    g.strokeRect(m, bz0, boxD, bz1 - bz0);
+    g.strokeRect(w - m - boxD, bz0, boxD, bz1 - bz0);
     const active = f[BALL_OFS + 8];
+    const s0 = Math.max(4, Math.round(5.5 * u));
+    const s1 = s0 + 2;
+    g.lineWidth = Math.max(1, 1.25 * u);
     for (let i = 0; i < 22; i++) {
       const o = i * PF;
+      if (f[o + 4] === 10) continue; // sent off
       const side = i < 11 ? 0 : 1;
       const x = sx(f[o]);
       const y = sz(f[o + 1]);
-      g.fillStyle = cssHex(this.teams[side].color);
-      g.strokeStyle = 'rgba(20,20,26,0.9)';
-      g.lineWidth = 2;
-      const s = i === active ? 11 : 8;
+      const s = i === active ? s1 : s0;
+      g.fillStyle = this.dotFill[side];
+      g.strokeStyle = this.dotEdge[side];
       g.fillRect(x - s / 2, y - s / 2, s, s);
       g.strokeRect(x - s / 2, y - s / 2, s, s);
       if (i === active) {
         g.strokeStyle = '#ffd23a';
-        g.strokeRect(x - s / 2 - 3, y - s / 2 - 3, s + 6, s + 6);
+        g.lineWidth = Math.max(1.5, 2 * u);
+        g.strokeRect(x - s / 2 - 2.5 * u, y - s / 2 - 2.5 * u, s + 5 * u, s + 5 * u);
+        g.lineWidth = Math.max(1, 1.25 * u);
       }
     }
+    const bs = Math.max(4, Math.round(5 * u));
     g.fillStyle = '#ffffff';
     g.strokeStyle = '#1d1d24';
     const bx = sx(f[BALL_OFS]);
     const by = sz(f[BALL_OFS + 2]);
-    g.fillRect(bx - 4, by - 4, 8, 8);
-    g.strokeRect(bx - 4, by - 4, 8, 8);
+    g.fillRect(bx - bs / 2, by - bs / 2, bs, bs);
+    g.strokeRect(bx - bs / 2, by - bs / 2, bs, bs);
   }
 
   dispose(): void {
+    this.radarObs?.disconnect();
     this.root.remove();
   }
 }

@@ -15,6 +15,8 @@ interface Look {
   sunI: number;
   offset: [number, number, number];
   fog: number;
+  /** Shadowless fill from the opposite masts (night only), so faces turned from the key aren't black. */
+  fillI?: number;
 }
 
 const LOOKS: Record<TimeOfDay, Look> = {
@@ -26,9 +28,11 @@ const LOOKS: Record<TimeOfDay, Look> = {
     skyTop: 0x5b6fd6, skyMid: 0xff9a6b, skyBottom: 0xffd08a, hemiSky: 0xfff0e0, hemiGround: 0x7a9a5c, hemi: 1.45,
     sun: 0xffd2a0, sunI: 2.5, offset: [-56, 40, 26], fog: 0xffc08a,
   },
+  // Floodlit: a cool, steep key from the camera side (the masts behind the gantry) and very little sky, so the
+  // lawn stays bright while the stands and the world outside drop into the dark (see Stadium.setTimeOfDay).
   night: {
-    skyTop: 0x0b1030, skyMid: 0x1c2a5c, skyBottom: 0x2f4478, hemiSky: 0x8fa6d8, hemiGround: 0x1e2e24, hemi: 0.72,
-    sun: 0xe6eeff, sunI: 3.1, offset: [-14, 70, 22], fog: 0x1c2a5c,
+    skyTop: 0x0b1030, skyMid: 0x1c2a5c, skyBottom: 0x2f4478, hemiSky: 0x5a6fae, hemiGround: 0x1e2e24, hemi: 0.45,
+    sun: 0xeef2ff, sunI: 2.0, offset: [-18, 62, 34], fog: 0x1c2a5c, fillI: 0.8,
   },
 };
 
@@ -45,6 +49,7 @@ export class World {
   readonly camera = new THREE.PerspectiveCamera(28, 1, 0.5, 900);
   readonly sun: THREE.DirectionalLight;
   readonly hemi: THREE.HemisphereLight;
+  readonly fill: THREE.DirectionalLight;
   private shadowSize = 36;
   quality: Quality = 'high';
   private sunOffset = new THREE.Vector3(-38, 62, 44);
@@ -81,6 +86,9 @@ export class World {
     this.sun.shadow.radius = 1;
     this.setShadowSize(this.shadowSize);
     this.scene.add(this.sun, this.sun.target);
+    this.fill = new THREE.DirectionalLight(0xdfe8ff, 0);
+    this.fill.target = this.sun.target;
+    this.scene.add(this.fill);
     this.setTimeOfDay('day');
     this.resize();
   }
@@ -117,6 +125,8 @@ export class World {
     this.sun.color.setHex(L.sun);
     this.sun.intensity = L.sunI;
     this.sunOffset.set(...L.offset);
+    // Always in the scene (0 by day) so switching time of day never changes the light count / recompiles.
+    this.fill.intensity = (L.fillI ?? 0) * (1 - k * 0.5);
     (this.scene.fog as THREE.Fog).color.setHex(L.fog);
   }
 
@@ -158,6 +168,8 @@ export class World {
     const sz = Math.round(z / step) * step;
     this.sun.target.position.set(sx, 0, sz);
     this.sun.position.set(sx + this.sunOffset.x, this.sunOffset.y, sz + this.sunOffset.z);
+    // Low from the far corner masts, opposite the key.
+    this.fill.position.set(sx + 20, 22, sz - 34);
   }
 
   resize(): void {

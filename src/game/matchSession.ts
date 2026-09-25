@@ -7,7 +7,7 @@ import { MatchView } from '../render/matchView';
 import { PITCH_Y, Stadium } from '../render/stadium';
 import { Weather, type WeatherKind } from '../render/weather';
 import type { TimeOfDay, World } from '../render/world';
-import { DT, HALF_L } from '../sim/constants';
+import { DT, HALF_L, HALF_W } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, RestartKind, Side } from '../sim/types';
@@ -118,12 +118,15 @@ export class MatchSession {
     const wx = opt.weather ?? 'clear';
     world.setTimeOfDay(tod, wx);
     this.stadium.setTimeOfDay(tod);
+    this.stadium.setWeather(wx);
+    this.view.setTimeOfDay(tod);
     this.weather.set(wx, world.quality);
     sfx.setRain(wx === 'rain');
     this.view.group.position.y = PITCH_Y;
     this.effects.mesh.position.y = PITCH_Y;
     world.scene.add(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
     this.cam = new CameraRig(world.camera);
+    this.cam.players = this.view.frame;
     this.cam.setMode(this.demo ? 'menu' : 'intro');
     if (!this.demo) this.introLeft = 3.4;
     if (!this.demo) {
@@ -235,13 +238,34 @@ export class MatchSession {
     let az = f[BALL_OFS + 2];
     let avx = 0;
     let avz = 0;
+    let subject = -1;
+    let group = 0;
+    let groupFacing: number | undefined;
     const act = f[BALL_OFS + 8];
-    if (this.cam.mode === 'celebrate' && m.lastGoalScorer >= 0) {
+    const soWinner = m.shootout && m.phase === 'fulltime' ? m.shootout.winner : -1;
+    if (this.cam.mode === 'celebrate' && soWinner >= 0) {
+      // Shootout won: the winners' pile-up (the sim gathers them round a hub on the halfway line).
+      let n = 0;
+      let sx = 0;
+      let sz = 0;
+      for (const p of m.teamPlayers(soWinner as Side)) {
+        if (p.state !== 'celebrate') continue;
+        sx += f[p.idx * PF];
+        sz += f[p.idx * PF + 1];
+        n++;
+      }
+      ax = n ? sx / n : 0;
+      az = n ? sz / n : HALF_W * 0.3;
+      group = 3;
+      // The sim turns the pile-up to face the main stand (+z).
+      groupFacing = Math.PI / 2;
+    } else if (this.cam.mode === 'celebrate' && m.lastGoalScorer >= 0) {
       const sc = m.players[m.lastGoalScorer];
       ax = f[m.lastGoalScorer * PF];
       az = f[m.lastGoalScorer * PF + 1];
       avx = sc.vel.x;
       avz = sc.vel.z;
+      subject = m.lastGoalScorer;
     } else if (act >= 0) {
       ax = f[act * PF];
       az = f[act * PF + 1];
@@ -251,10 +275,15 @@ export class MatchSession {
     this.cam.update(dt, {
       bx: f[BALL_OFS], by: f[BALL_OFS + 1], bz: f[BALL_OFS + 2],
       bvx: f[BALL_OFS + 3], bvz: f[BALL_OFS + 5],
-      ax, az, avx, avz, attack, lean,
+      ax, az, avx, avz, attack, lean, subject, group, groupFacing,
       setPiece: this.replay ? null : this.setPieceFrame(),
     }, this.time);
+    // Low cameras (over the set-piece taker's shoulder, the shootout) drop the name tag and arrow,
+    // which would otherwise float over the goal mouth.
+    this.view.setMarkerMode(this.cam.behindActive || this.cam.mode === 'penalty' ? 'ring' : 'full');
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
+    this.stadium.updateGlare(this.world.camera);
+    if (this.weather.kind === 'rain' && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ);
     this.view.faceCamera(this.world.camera);
     this.view.updateReferee(this.paused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
@@ -342,20 +371,25 @@ export class MatchSession {
   }
 
   /** Frame the taker and where the ball is going for set pieces. */
-  private setPieceFrame(): { x: number; z: number; tx: number; tz: number; behind?: boolean } | null {
+  private setPieceFrame(): { x: number; z: number; tx: number; tz: number; behind?: boolean; goal?: boolean; pen?: boolean } | null {
     const m = this.match;
     const r = m.restart;
     if (!r || (m.phase !== 'restart' && m.phase !== 'out')) return null;
     if (m.phase === 'out' && m.phaseT < 0.5) return null;
     const ad = m.attackDir(r.side);
     const ours = r.side === m.cfg.humanSide && m.phase === 'restart';
+    // Once the ball is spotted, frame where it actually is.
+    const bx = m.phase === 'restart' ? m.ball.pos.x : r.x;
+    const bz = m.phase === 'restart' ? m.ball.pos.z : r.z;
     switch (r.kind) {
       case 'corner':
-        return { x: r.x, z: r.z, tx: ad * (HALF_L - 9), tz: 0, behind: ours };
+        // No room behind a corner flag (boards, stands) for a lens that shows both the taker and the box:
+        // corners keep the wide set-piece shot.
+        return { x: r.x, z: r.z, tx: ad * (HALF_L - 9), tz: 0 };
       case 'freekick':
       case 'penalty': {
         const near = Math.hypot(ad * HALF_L - r.x, r.z) < 35;
-        return { x: r.x, z: r.z, tx: ad * (HALF_L - (near ? 0 : 9)), tz: 0, behind: ours && near };
+        return { x: bx, z: bz, tx: ad * (HALF_L - (near ? 0 : 9)), tz: 0, behind: ours && near, goal: near, pen: r.kind === 'penalty' };
       }
       case 'throwin':
         return { x: r.x, z: r.z, tx: r.x + ad * 8, tz: r.z * 0.55 };
@@ -378,6 +412,11 @@ export class MatchSession {
     this.effects.clear();
     this.cam.replayAngle = Math.floor(Math.random() * 2);
     this.cam.replayGoalSign = this.match.attackDir(this.match.goalSide);
+    // Goal-line camera goes across the mouth from where the ball crossed (or from the shooter if dead centre).
+    const atGoal = this.replay[Math.min(this.replay.length - 1, this.replayGoalIdx)];
+    const early = this.replay[Math.max(0, this.replayGoalIdx - 60)];
+    const zg = atGoal[BALL_OFS + 2];
+    this.cam.replaySide = Math.abs(zg) > 0.6 ? -Math.sign(zg) : early[BALL_OFS + 2] > 0 ? -1 : 1;
     this.cam.replayShot = this.replay.length - this.replayGoalIdx > 0 && this.replayGoalIdx > 100 ? 'build' : 'goal';
     this.cam.setMode('replay');
     this.hud?.setReplay(true);
@@ -511,8 +550,15 @@ export class MatchSession {
           break;
         case 'card': {
           const p = m.players[e.player];
-          this.hud?.show('YELLOW CARD', p.def.name, 'small card', 1.8);
-          this.view.refSignal(1.8);
+          // Compare as a string: stays valid whichever colours the sim's event type lists.
+          const color: string = e.color ?? 'yellow';
+          const red = color === 'red';
+          const second = 'second' in e && !!e.second;
+          this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', second ? `${p.def.name} · 2nd yellow` : p.def.name, red ? 'small card red' : 'small card', red ? 2.2 : 1.8);
+          // A second yellow is both cards on the score bug.
+          if (second) this.hud?.card(p.side, 'yellow');
+          this.hud?.card(p.side, red ? 'red' : 'yellow');
+          this.view.refSignal(red ? 2.2 : 1.8);
           break;
         }
         case 'foul':
@@ -545,6 +591,10 @@ export class MatchSession {
           const pens = so ? `${goalsOf(so.kicks[e.winner])} - ${goalsOf(so.kicks[e.winner === 0 ? 1 : 0])}` : '';
           const ours = m.cfg.humanSide < 0 || e.winner === m.cfg.humanSide;
           this.hud?.show(`${m.teams[e.winner].short} WIN!`, `ON PENALTIES ${pens}`, ours ? 'goal' : 'small goal against', 3.2);
+          // Off the penalty camera and onto the winners' pile-up until the full-time screen.
+          this.cam.setMode('celebrate');
+          this.cam.cut();
+          this.view.setMarkerVisible(false);
           if (ours) {
             sfx.goal();
             const k = this.opt.kits[e.winner];
@@ -593,8 +643,18 @@ export class MatchSession {
       const minute = Math.floor(gameSec / 60);
       this.stadium.setScore(m.score[0], m.score[1], extra ? `${minute}+${extra}'` : `${minute}'`);
     }
+    // The minimap sits bottom-centre: off for set pieces, the low cameras, the shootout, and whenever play
+    // is in the near third where it would cover the action.
+    hud.setRadarHidden(
+      m.phase === 'restart' || m.phase === 'out' || m.phase === 'shootout' || this.cam.behindActive ||
+      this.cam.mode === 'penalty' || m.ball.pos.z > HALF_W * 0.45,
+    );
     hud.update(dt, this.view.frame);
-    hud.setLive(!this.replay && this.cam.mode !== 'celebrate' && m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0);
+    // The over-the-shoulder set-piece camera needs the whole lower screen for the taker: no radar / chip.
+    hud.setLive(
+      !this.replay && this.cam.mode !== 'celebrate' && !this.cam.behindActive &&
+      m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0,
+    );
     if (this.so && m.shootout) this.so.update(m.shootout);
     const hs = m.cfg.humanSide;
     if (hs < 0) return;
@@ -634,7 +694,7 @@ export class MatchSession {
       const p = m.players[m.active];
       hud.setPlayer(p.def.number, p.def.name, p.stamina);
       const charging = m.ball.owner === p.idx && m.shootCharge > 0.04;
-      this.view.setPower(charging ? Math.min(1, m.shootCharge / 0.85) : null, p.pos.x, p.pos.z);
+      this.view.setPower(charging ? Math.min(1, m.shootCharge / 0.85) : null, p.pos.x, p.pos.z, p.y);
     }
     if (this.touch) {
       const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
@@ -685,6 +745,7 @@ export class MatchSession {
       const mesh = o as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
     });
+    this.stadium.dispose();
   }
 }
 

@@ -1,7 +1,112 @@
 import { clamp, dist2 } from '../core/math';
-import { BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, SIX_W } from './constants';
+import { BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, SIX_W, WALL_DIST } from './constants';
 import type { Match } from './match';
 import type { Player } from './player';
+import type { Side } from './types';
+
+type RestartLike = { kind: string; side: Side; x: number; z: number };
+
+/**
+ * Where a player may stand while a penalty is taken: outside the penalty area and at least ten
+ * yards from the spot (the arc). Returns (x, z) moved to the nearest legal point.
+ */
+export function clearOfPenalty(m: Match, r: RestartLike, x: number, z: number, margin = 0.6): { x: number; z: number } {
+  const ad = m.attackDir(r.side);
+  const gx = ad * HALF_L;
+  let px = x;
+  let pz = z;
+  const front = BOX_DEPTH + margin - Math.abs(px - gx);
+  const side = BOX_W / 2 + margin - Math.abs(pz);
+  if (front > 0 && side > 0) {
+    if (front <= side) px = gx - ad * (BOX_DEPTH + margin);
+    else pz = (Math.sign(pz) || 1) * (BOX_W / 2 + margin);
+  }
+  const min = WALL_DIST + 0.4;
+  const d = dist2(px, pz, r.x, r.z);
+  if (d < min) {
+    if (d < 0.05) {
+      px = r.x - ad * min;
+      pz = r.z;
+    } else {
+      px = r.x + ((px - r.x) / d) * min;
+      pz = r.z + ((pz - r.z) / d) * min;
+    }
+  }
+  return { x: px, z: pz };
+}
+
+/** A free kick close and central enough to shoot from: the defence puts up a wall. */
+export function isDirectFreeKick(m: Match, r: RestartLike): boolean {
+  if (r.kind !== 'freekick') return false;
+  const gx = m.attackDir(r.side) * HALF_L;
+  return dist2(r.x, r.z, gx, 0) < 30 && Math.abs(r.z) < 14;
+}
+
+export interface WallPlan {
+  /** Wall spots, shoulder to shoulder from the near-post end inwards. */
+  spots: { x: number; z: number }[];
+  /** Where the keeper stands: covering the part of the goal the wall doesn't hide. */
+  keeper: { x: number; z: number };
+}
+
+/** Spacing between wall players (the models are ~1 m wide, so they stand shoulder to shoulder). */
+export const WALL_GAP = 0.9;
+
+/**
+ * The wall for a direct free kick: 9.15 m from the ball, square to the ball-goal line, 4 men when
+ * it's close (3 further out). The end man lines up just outside the near post; the keeper takes
+ * the rest of the goal, from the wall's inside edge to the far post.
+ */
+export function freeKickWall(m: Match, r: RestartLike): WallPlan {
+  const gx = m.attackDir(r.side) * HALF_L;
+  const hw = GOAL_W / 2;
+  const bx = r.x;
+  const bz = r.z;
+  const dg = Math.max(1, dist2(bx, bz, gx, 0));
+  const ux = (gx - bx) / dg;
+  const uz = -bz / dg;
+  const wx = -uz;
+  const wz = ux;
+  const n = dg < 24 ? 4 : 3;
+  const near = Math.sign(bz) || 1;
+  // Lateral offset, at wall distance, of the line from the ball to (gx, z).
+  const latAt = (z: number) => {
+    const vx = gx - bx;
+    const vz = z - bz;
+    return ((vx * wx + vz * wz) * WALL_DIST) / Math.max(0.1, vx * ux + vz * uz);
+  };
+  const sNear = latAt(near * hw);
+  const sFar = latAt(-near * hw);
+  const out = Math.sign(sNear - sFar) || 1;
+  const s0 = sNear + out * 0.35;
+  const cx = bx + ux * WALL_DIST;
+  const cz = bz + uz * WALL_DIST;
+  const spots: { x: number; z: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const sl = s0 - out * i * WALL_GAP;
+    spots.push({ x: cx + wx * sl, z: cz + wz * sl });
+  }
+  // Where the line past the wall's inside shoulder meets the goal line.
+  const sIn = s0 - out * ((n - 1) * WALL_GAP + 0.45);
+  const ex = cx + wx * sIn;
+  const ez = cz + wz * sIn;
+  const zIn = bz + (ez - bz) * ((gx - bx) / (Math.abs(ex - bx) > 1e-3 ? ex - bx : 1e-3));
+  const zFar = -near * hw;
+  // The wall hides the whole goal from here: stand just off-centre towards the far post.
+  const kz = (zIn - zFar) * near <= 0.6 ? zFar * 0.3 : (zIn + zFar) / 2;
+  return { spots, keeper: { x: gx - Math.sign(gx) * 0.9, z: clamp(kz, -hw + 0.6, hw - 0.6) } };
+}
+
+/**
+ * Sideways drift still to come from the ball's sidespin (Magnus), over `t` seconds: a keeper reads
+ * part of a curler's bend as it comes.
+ */
+export function curlDrift(m: Match, t: number): number {
+  const b = m.ball;
+  const az = MAGNUS * (b.spin.x * b.vel.y - b.spin.y * b.vel.x);
+  // Spin fades as it flies (SPIN_DECAY ~0.7/s): ~0.8 of the undecayed drift over a typical shot.
+  return 0.5 * az * t * t * Math.exp(-0.25 * t);
+}
 
 /** Is the point inside the penalty area that `side` defends? */
 export function inOwnBox(m: Match, side: 0 | 1, x: number, z: number): boolean {
@@ -33,6 +138,22 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   }
   if (k.state !== 'move') return;
 
+  // ---- Penalty against us: on the line, in the middle of the goal.
+  const r = m.restart;
+  if ((m.phase === 'restart' || m.phase === 'out') && r && r.kind === 'penalty' && r.side !== k.side) {
+    moveTo(k, gx + ad * 0.3, 0, false);
+    k.faceTarget = Math.atan2(r.z - k.pos.z, r.x - k.pos.x);
+    return;
+  }
+
+  // ---- Free kick against us: take the side of the goal the wall doesn't cover.
+  if ((m.phase === 'restart' || m.phase === 'out') && r && r.side !== k.side && isDirectFreeKick(m, r)) {
+    const w = freeKickWall(m, r);
+    moveTo(k, w.keeper.x, w.keeper.z, false);
+    k.faceTarget = Math.atan2(r.z - k.pos.z, r.x - k.pos.x);
+    return;
+  }
+
   // ---- Ball at our feet (back-pass): move it on quickly.
   if (b.owner === k.idx && !b.held) {
     k.wantX = k.wantZ = 0;
@@ -50,7 +171,8 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   if (b.owner < 0 && !b.held && toward > 7 && m.shotClock < 1.6) {
     const t = (k.pos.x - b.pos.x) / b.vel.x;
     if (t > 0 && t < 1.6) {
-      const zc = b.pos.z + b.vel.z * t;
+      // A curler's bend is only half read.
+      const zc = b.pos.z + b.vel.z * t + curlDrift(m, t) * 0.5;
       const yc = Math.max(BALL_R, b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t);
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
       if (onFrame) {
@@ -91,7 +213,16 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
       if (k.claimKick !== m.kickId) {
         k.claimKick = m.kickId;
         const tK = dist2(k.pos.x, k.pos.z, c.x, c.z) / (k.top * 0.95) + 0.12;
-        k.claiming = tK < c.t + 0.08 && m.rng.chance(0.5 + keeping * 0.35 + m.keeperBonus(k.side) * 2);
+        // Traffic around where it drops (a packed six-yard box at a corner, runners on their way in)
+        // makes keepers stay on their line.
+        let crowd = 0;
+        for (const o of m.players) {
+          if (!o.isKeeper && !o.sentOff && dist2(o.pos.x, o.pos.z, c.x, c.z) < 5) crowd++;
+        }
+        const traffic = clamp(1.1 - crowd * 0.12, 0.3, 1);
+        // A set-piece delivery into a loaded box is mostly left to the defenders.
+        const sp = m.setPieceKick === m.kickId ? 0.4 : 1;
+        k.claiming = tK < c.t + 0.08 && m.rng.chance((0.5 + keeping * 0.35 + m.keeperBonus(k.side) * 2) * traffic * sp);
       }
       if (k.claiming) {
         moveTo(k, c.x, c.z, true);
@@ -119,7 +250,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
       if (inOwnBox(m, k.side, i.x, i.z)) {
         let rivalT = Infinity;
         for (const o of m.players) {
-          if (o.side === k.side) continue;
+          if (o.side === k.side || o.sentOff) continue;
           rivalT = Math.min(rivalT, reach(m, o).t);
         }
         const kd = dist2(k.pos.x, k.pos.z, b.pos.x, b.pos.z);
@@ -191,7 +322,7 @@ function reach(m: Match, p: Player): { x: number; z: number; t: number } {
 
 function nobodyCovering(m: Match, k: Player, c: Player): boolean {
   for (const o of m.players) {
-    if (o.side !== k.side || o === k) continue;
+    if (o.side !== k.side || o === k || o.sentOff) continue;
     if (dist2(o.pos.x, o.pos.z, c.pos.x, c.pos.z) < 2.2) return false;
   }
   return true;

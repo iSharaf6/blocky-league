@@ -34,7 +34,19 @@ export interface KickOrder {
   /** Seconds this order stays valid while waiting for a loose ball to arrive. */
   expires: number;
   firstTime: boolean;
+  /**
+   * Shots only: sidespin, -1..1 (world z sign = the way it bends). The launch is re-aimed so the
+   * bend brings it back onto the target: it starts outside the aim point and swings in.
+   */
+  curl?: number;
 }
+
+/** Stamina per second at the reference half length (2 minutes); see Player.fatigue. */
+const SPRINT_DRAIN = 0.017;
+const JOG_DRAIN = 0.0036;
+const RECOVERY = 0.008;
+/** Half length (s) the stamina rates are tuned for. */
+export const FATIGUE_REF_HALF = 120;
 
 export class Player {
   pos = { x: 0, z: 0 };
@@ -67,6 +79,14 @@ export class Player {
   lean = 0;
 
   slideHit = false;
+  /** This slide is mistimed: if it reaches the ball it takes the man too (a foul). */
+  slideFoul = false;
+  /** The current 'kick' state is a quick tackle poke, not a strike (lighter braking, can chain a kick). */
+  poke = false;
+  /** Red-carded: off the pitch for the rest of the match, takes no further part. */
+  sentOff = false;
+  /** Stamina drain multiplier, set by the match so fatigue builds over a match of any length. */
+  fatigue = 1;
   /** Seconds of extra pace after a knock-on. */
   burstT = 0;
 
@@ -143,10 +163,11 @@ export class Player {
   setState(s: PState): void {
     this.state = s;
     this.stateT = 0;
+    this.poke = false;
   }
 
   canAct(): boolean {
-    return this.state === 'move';
+    return this.state === 'move' && !this.sentOff;
   }
 
   step(dt: number, dribbling: boolean): void {
@@ -162,7 +183,7 @@ export class Player {
         break;
       case 'kick':
       case 'throw':
-        this.brake(dt, 10);
+        this.brake(dt, this.poke ? 3 : 10);
         this.kickT = Math.min(1, this.kickT + dt / 0.34);
         if (this.stateT > 0.34) {
           this.setState('move');
@@ -214,15 +235,30 @@ export class Player {
     const sp = this.speed();
     this.runPhase = (this.runPhase + (sp * dt) / (STRIDE * 2)) % 1;
 
-    // Stamina: sprinting drains, everything else recovers.
+    // Stamina: sprinting drains hard, running about drains a little, only standing / walking
+    // recovers. `fatigue` compresses a full match's worth of it into however long the halves are.
     const sprinting = this.sprint && sp > this.jog * 0.95;
-    const drain = 0.055 * (1.3 - this.stat.stamina / 100);
-    this.stamina = clamp(this.stamina + (sprinting ? -drain : 0.03) * dt, 0.15, 1);
+    const fit = this.stat.stamina / 100;
+    let rate: number;
+    if (sprinting) rate = -SPRINT_DRAIN * (1.35 - fit);
+    else if (sp > this.jog * 0.5) rate = -JOG_DRAIN * (1.3 - fit * 0.6);
+    else rate = RECOVERY;
+    this.stamina = clamp(this.stamina + rate * this.fatigue * dt, 0.15, 1);
     if (this.headerT > 0) this.headerT = Math.max(0, this.headerT - dt / 0.45);
   }
 
+  /** Jogging pace, a touch slower when spent. */
+  jogPace(): number {
+    return this.jog * (0.93 + 0.07 * this.stamina);
+  }
+
+  /** Flat-out pace: tired legs lose a lot of it (never below a jog). */
+  sprintPace(): number {
+    return Math.max(this.jogPace() * 1.04, this.top * (0.7 + 0.3 * this.stamina));
+  }
+
   private locomote(dt: number, dribbling: boolean): void {
-    let max = this.sprint ? this.top * (0.72 + 0.28 * this.stamina) : this.jog;
+    let max = this.sprint ? this.sprintPace() : this.jogPace();
     if (this.burstT > 0) max = Math.max(max, this.top) * 1.1;
     if (dribbling) max *= DRIBBLE_MULT * (0.9 + (this.stat.dribbling / 100) * 0.12);
     let tx = this.wantX;

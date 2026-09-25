@@ -87,7 +87,11 @@ export type MatchEvent =
   | { type: 'kickoffReady'; side: Side }
   | { type: 'foul'; by: number; on: number; penalty: boolean }
   | { type: 'sub'; side: Side; slot: number; on: string; off: string }
-  | { type: 'card'; player: number; color: 'yellow' }
+  /**
+   * A booking. `red` sends the player off for the rest of the match (Player.sentOff); `second` marks a
+   * red that came from a second yellow (show both cards).
+   */
+  | { type: 'card'; player: number; color: 'yellow' | 'red'; second?: boolean }
   | { type: 'skill'; player: number }
   | { type: 'setpiece'; kind: RestartKind; side: Side }
   | { type: 'restart'; kind: RestartKind; side: Side }

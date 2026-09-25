@@ -75,6 +75,27 @@ export class Effects {
     }
   }
 
+  private splashAcc = 0;
+
+  /**
+   * Rain hitting the lawn: tiny pale droplets kicked up around the camera focus (~90 a second over a
+   * 44 x 30 m patch), each a two-bit crown that lives a quarter of a second.
+   */
+  rain(dt: number, cx: number, cz: number, rx = 22, rz = 15, rate = 90): void {
+    this.splashAcc += dt * rate;
+    while (this.splashAcc >= 1) {
+      this.splashAcc -= 1;
+      const x = cx + (Math.random() * 2 - 1) * rx;
+      const z = cz + (Math.random() * 2 - 1) * rz;
+      for (let k = 0; k < 2; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 0.7 + Math.random() * 0.9;
+        this.spawn(x, 0.04, z, Math.cos(a) * sp, 1.4 + Math.random() * 1.2, Math.sin(a) * sp,
+          k ? 0xcfe3f2 : 0xeaf4fb, 0.09 + Math.random() * 0.05, 0.22 + Math.random() * 0.12, 12, 0);
+      }
+    }
+  }
+
   trail(x: number, y: number, z: number): void {
     this.spawn(x, y, z, 0, 0.2, 0, 0xffffff, 0.14, 0.28, 0, 0);
   }

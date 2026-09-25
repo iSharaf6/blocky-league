@@ -31,6 +31,11 @@ export const SPIN_DECAY = 0.7;
 
 // Players
 export const PLAYER_R = 0.42;
+/** Body separation between opponents (the voxel models are ~1 m across) and between teammates. */
+export const SEP_OPP = 1.05;
+export const SEP_MATE = 0.9;
+/** Wall distance for free kicks (ten yards). */
+export const WALL_DIST = 9.15;
 export const JOG_SPEED = 5.6;
 export const SPRINT_SPEED = 8.0;
 export const ACCEL = 17;

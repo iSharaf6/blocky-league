@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { lerp, wrapAngle } from '../core/math';
-import { BALL_OFS, FRAME_LEN, PF } from '../game/replay';
+import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, PlayerDef, TeamDef } from '../sim/types';
-import { Footballer, buildBallGeometry, type PoseInput } from './characters';
+import { Footballer, PSTATE, buildBallGeometry, type PoseInput } from './characters';
+import { FLOODLIGHT_TOWERS } from './stadium';
 import { BoxBuilder, voxelMaterial } from './voxel';
+
+/** 'full': ring + bobbing arrow + name tag; 'ring': just the ground ring (low set-piece / shootout cameras). */
+export type MarkerMode = 'full' | 'ring';
 
 /** Everything that draws a match: 22 voxel footballers, the ball, and the control marker. */
 export class MatchView {
@@ -26,6 +30,15 @@ export class MatchView {
   private referee: Footballer;
   private ref = { x: -8, z: -10, vx: 0, vz: 0, facing: 0, phase: 0, signal: 0 };
   private powerFill: THREE.Mesh;
+  private markerMode: MarkerMode = 'full';
+  private charging = false;
+  /** Night: four faint floodlight shadows per player, one away from each tower. */
+  private floodShadows: THREE.InstancedMesh | null = null;
+  private m4 = new THREE.Matrix4();
+  private q = new THREE.Quaternion();
+  private v3 = new THREE.Vector3();
+  private s3 = new THREE.Vector3();
+  private up = new THREE.Vector3(0, 1, 0);
   private ballQuat = new THREE.Quaternion();
   private tmpQ = new THREE.Quaternion();
   private axis = new THREE.Vector3();
@@ -123,12 +136,29 @@ export class MatchView {
     this.aim.visible = false;
     this.group.add(this.aim);
 
+    // Shot power: a chunky billboard bar over the shooter (outline, track, fill, 60% / 85% ticks).
     this.powerBar = new THREE.Group();
-    const bg = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 0.16), new THREE.MeshBasicMaterial({ color: 0x26262e }));
-    this.powerFill = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.1, 0.18), new THREE.MeshBasicMaterial({ color: 0x3aff9e }));
-    this.powerFill.geometry.translate(0.55, 0, 0);
-    this.powerFill.position.x = -0.55;
-    this.powerBar.add(bg, this.powerFill);
+    const flat = (w: number, h: number, color: number, order: number) => {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false, fog: false }),
+      );
+      m.renderOrder = order;
+      return m;
+    };
+    const BAR_W = 2.2;
+    const BAR_H = 0.28;
+    const edge = flat(BAR_W + 0.1, BAR_H + 0.1, 0xfbfbf4, 11);
+    const track = flat(BAR_W, BAR_H, 0x26262e, 12);
+    this.powerFill = flat(BAR_W - 0.08, BAR_H - 0.08, 0x3aff9e, 13);
+    this.powerFill.geometry.translate((BAR_W - 0.08) / 2, 0, 0);
+    this.powerFill.position.x = -(BAR_W - 0.08) / 2;
+    this.powerBar.add(edge, track, this.powerFill);
+    for (const k of [0.6, 0.85]) {
+      const tick = flat(0.04, BAR_H - 0.02, 0xfbfbf4, 14);
+      tick.position.x = -(BAR_W - 0.08) / 2 + (BAR_W - 0.08) * k;
+      this.powerBar.add(tick);
+    }
     this.powerBar.visible = false;
     this.group.add(this.powerBar);
   }
@@ -163,7 +193,8 @@ export class MatchView {
       fb.group.position.set(f[o], 0, f[o + 1]);
       fb.group.rotation.y = -f[o + 3];
       pose.y = f[o + 2];
-      pose.state = f[o + 4];
+      // Sent off: the sim parks him beside his dugout; he just stands there, hands on head.
+      pose.state = f[o + 4] === SENT_OFF_CODE ? PSTATE.dejected : f[o + 4];
       pose.stateT = f[o + 5];
       pose.runPhase = f[o + 6];
       pose.speed = f[o + 7];
@@ -216,6 +247,10 @@ export class MatchView {
       this.nameTag.position.y = 3.25 + f[o + 2];
       if (active !== this.nameFor) this.drawName(active);
     }
+    const full = this.markerMode === 'full';
+    this.arrow.visible = full && !this.charging;
+    this.nameTag.visible = full;
+    if (this.floodShadows?.visible) this.updateFloodShadows();
     const pt = f[BALL_OFS + 10];
     const human = active >= 0 ? (active < 11 ? 0 : 1) : -1;
     if (this.marker.visible && pt >= 0 && pt !== active && (pt < 11 ? 0 : 1) === human) {
@@ -298,6 +333,70 @@ export class MatchView {
     if (!v) this.targetRing.visible = false;
   }
 
+  /** Low cameras (behind-the-ball set pieces, shootout) keep only the ground ring: no tag or arrow over the goal. */
+  setMarkerMode(mode: MarkerMode): void {
+    this.markerMode = mode;
+    this.arrow.visible = mode === 'full' && !this.charging;
+    this.nameTag.visible = mode === 'full';
+  }
+
+  /** Night adds faint floodlight shadows (one per tower) under every player. */
+  setTimeOfDay(t: 'day' | 'sunset' | 'night'): void {
+    const night = t === 'night';
+    if (night && !this.floodShadows) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grad.addColorStop(0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.55, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+      const tex = new THREE.CanvasTexture(c);
+      const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x0c1428, alphaMap: tex, transparent: true, opacity: 0.14, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      });
+      this.floodShadows = new THREE.InstancedMesh(geo, mat, 22 * FLOODLIGHT_TOWERS.length);
+      this.floodShadows.frustumCulled = false;
+      this.floodShadows.renderOrder = 1;
+      this.group.add(this.floodShadows);
+    }
+    if (this.floodShadows) this.floodShadows.visible = night;
+  }
+
+  private updateFloodShadows(): void {
+    const im = this.floodShadows!;
+    const f = this.frame;
+    let n = 0;
+    for (let i = 0; i < 22; i++) {
+      const o = i * PF;
+      const x = f[o];
+      const z = f[o + 1];
+      const lift = Math.max(0, 1 - f[o + 2] * 0.6);
+      for (const t of FLOODLIGHT_TOWERS) {
+        const dx = x - t.x;
+        const dz = z - t.z;
+        const d = Math.hypot(dx, dz) || 1;
+        // A 2 m player under a ~28 m mast: long, soft, faint shadows pointing away from each tower.
+        const len = Math.min(2.8, Math.max(1.2, (1.6 * d) / t.h));
+        const ux = dx / d;
+        const uz = dz / d;
+        this.q.setFromAxisAngle(this.up, Math.atan2(-uz, ux));
+        const s = lift;
+        this.m4.compose(
+          this.v3.set(x + ux * len * 0.45, 0.03, z + uz * len * 0.45),
+          this.q,
+          this.s3.set(len * s, 1, 0.62 * s),
+        );
+        im.setMatrixAt(n++, this.m4);
+      }
+    }
+    im.instanceMatrix.needsUpdate = true;
+  }
+
   private drawName(idx: number): void {
     this.nameFor = idx;
     const c = this.nameCanvas;
@@ -318,13 +417,16 @@ export class MatchView {
     this.nameTex.needsUpdate = true;
   }
 
-  setPower(p: number | null, x: number, z: number): void {
+  setPower(p: number | null, x: number, z: number, y = 0): void {
     if (p === null || p <= 0) {
       this.powerBar.visible = false;
+      this.charging = false;
       return;
     }
+    this.charging = true;
     this.powerBar.visible = true;
-    this.powerBar.position.set(x, 2.75, z);
+    // Just over the shooter's head, where the (hidden) arrow bobs.
+    this.powerBar.position.set(x, 2.45 + y, z);
     this.powerFill.scale.x = Math.max(0.02, p);
     const m = this.powerFill.material as THREE.MeshBasicMaterial;
     m.color.setHex(p < 0.6 ? 0x3aff9e : p < 0.85 ? 0xffd23a : 0xff4a3a);

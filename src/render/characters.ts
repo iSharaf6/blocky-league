@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clamp, lerp } from '../core/math';
+import { grassLike } from '../meta/data';
 import type { Kit, Look, PlayerDef } from '../sim/types';
 import { HAIR, SKIN, shade } from './palette';
 import { meshVoxels, voxelMaterial, VoxelGrid } from './voxel';
@@ -55,9 +56,23 @@ interface Outfit {
   gloves: number | null;
 }
 
+function hexDist(a: number, b: number): number {
+  return Math.hypot(((a >> 16) & 255) - ((b >> 16) & 255), ((a >> 8) & 255) - ((b >> 8) & 255), (a & 255) - (b & 255));
+}
+
+/** Keeper colour that reads on grass: a green keeper kit becomes orange (or pink / yellow if the team plays in it). */
+function grassSafeKeeper(kit: Kit): number {
+  if (!grassLike(kit.gk)) return kit.gk;
+  for (const c of [0xff8a2b, 0xff79b0, 0xffd23a, 0x2a2a30]) {
+    if (hexDist(c, kit.shirt) > 90 && hexDist(c, kit.shirt2) > 60) return c;
+  }
+  return 0xff8a2b;
+}
+
 function outfitFor(kit: Kit, keeper: boolean): Outfit {
   if (keeper) {
-    return { shirt: kit.gk, shirt2: shade(kit.gk, 0.8), pattern: 'plain', shorts: shade(kit.gk, 0.55), socks: kit.gk, gloves: 0xf6f4ec };
+    const gk = grassSafeKeeper(kit);
+    return { shirt: gk, shirt2: shade(gk, 0.8), pattern: 'plain', shorts: shade(gk, 0.55), socks: gk, gloves: 0xf6f4ec };
   }
   return { shirt: kit.shirt, shirt2: kit.shirt2, pattern: kit.pattern, shorts: kit.shorts, socks: kit.socks, gloves: null };
 }

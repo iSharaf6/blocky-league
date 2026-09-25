@@ -13,7 +13,7 @@ import { World, type TimeOfDay } from './render/world';
 import type { Side } from './sim/types';
 import { DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
 import { DIVISION_NAMES, clubRating, migrateCareer, nextMatch } from './meta/career';
-import { ROUND_NAMES, migrateCup } from './meta/cup';
+import { ROUND_NAMES, clubRating as presetRating, migrateCup } from './meta/cup';
 import { overall } from './sim/types';
 import { openCareer } from './ui/career';
 import { openCup } from './ui/cup';
@@ -88,7 +88,8 @@ function mainInfo(): MainInfo {
     if (club && career) {
       const nm = nextMatch(career);
       const div = career.season ? DIVISION_NAMES[career.season.division] ?? '' : '';
-      info.career = nm ? `${div} · v ${nm.rival.short}` : div || 'SEASON DONE';
+      // Opponent first: on small tiles the subtitle is cut with an ellipsis, and the next match matters most.
+      info.career = nm ? `v ${nm.rival.short} · ${div}` : div || 'SEASON DONE';
       info.club = `OVR ${clubRating(club)}`;
       const star = [...club.squad.slice(0, 11)].sort((a, b) => overall(b) - overall(a))[0];
       if (star) info.captain = { def: star, kit: club.kit, club: club.name.toUpperCase(), ovr: clubRating(club) };
@@ -103,7 +104,7 @@ function mainInfo(): MainInfo {
   }
   if (!info.captain && q) {
     const team = makeTeam(q);
-    info.captain = { def: team.players[9], kit: q.kit, club: q.name.toUpperCase(), ovr: q.level };
+    info.captain = { def: team.players[9], kit: q.kit, club: q.name.toUpperCase(), ovr: presetRating(save.clubIdx) };
   }
   const gift = giftToday();
   if (gift) info.gift = gift;

@@ -382,20 +382,50 @@ body {
 }
 
 .panel {
+  --pp: clamp(18px, 3vw, 30px);
   background: var(--cream);
   border: 4px solid var(--ink);
   box-shadow: 0 10px 0 var(--ink), 0 22px 40px rgba(0, 0, 0, 0.25);
-  padding: clamp(18px, 3vw, 30px);
+  padding: var(--pp);
   width: min(760px, 94vw);
   display: grid;
   gap: 18px;
   animation: pop 0.28s cubic-bezier(0.2, 1.5, 0.4, 1);
   max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .panel.narrow {
   width: min(420px, 92vw);
+  overflow-x: hidden;
+}
+
+.panel .menu-col {
+  width: 100%;
+}
+
+/* The closing button row of a panel stays pinned to its bottom edge while the rest scrolls,
+   so the primary action is on screen at every size. */
+.panel > .btn-row:last-child:not(.no-stick) {
+  position: sticky;
+  bottom: calc(-1 * var(--pp));
+  z-index: 3;
+  margin: 0 calc(-1 * var(--pp)) calc(-1 * var(--pp));
+  padding: 12px var(--pp) calc(var(--pp) + 4px);
+  background: var(--cream);
+}
+
+.panel > .btn-row:last-child:not(.no-stick)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 16px;
+  background: linear-gradient(rgba(251, 251, 244, 0), var(--cream));
+  pointer-events: none;
 }
 
 @keyframes pop {
@@ -428,7 +458,7 @@ body {
 
 .vs-row {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
 }
@@ -630,7 +660,7 @@ body {
 
 .st-row span {
   text-align: center;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-2);
 }
 
@@ -747,7 +777,9 @@ kbd {
 .scorebug {
   top: max(12px, env(safe-area-inset-top));
   left: max(12px, env(safe-area-inset-left));
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  justify-content: start;
   align-items: stretch;
   font: 700 clamp(16px, 1.8vw, 22px) var(--px);
   color: var(--cream);
@@ -814,6 +846,44 @@ kbd {
   margin-left: 4px;
 }
 
+/* Bookings: a chip under each side of the score bug. */
+.sb-cards {
+  grid-row: 2;
+  display: flex;
+  gap: 4px;
+  padding-top: 5px;
+}
+
+.sb-cards.h { grid-column: 1; justify-content: flex-start; }
+.sb-cards.a { grid-column: 3; justify-content: flex-end; }
+.sb-cards:empty { display: none; }
+
+.sb-card {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--ink);
+  padding: 4px 7px 4px 6px;
+  font: 400 15px / 1 var(--round);
+  color: var(--cream);
+}
+
+.sb-card i {
+  display: block;
+  width: 12px;
+  height: 16px;
+  background: var(--yellow);
+  box-shadow: inset -2px -3px 0 rgba(0, 0, 0, 0.22), 0 0 0 2px var(--cream);
+  transform: rotate(-8deg);
+}
+
+.sb-card.red i { background: var(--red); }
+.sb-card.new { animation: card-pop 0.5s cubic-bezier(0.2, 1.8, 0.4, 1); }
+
+@keyframes card-pop {
+  from { transform: translateY(-10px) scale(0.5); opacity: 0; }
+}
+
 .hud-pause {
   top: max(12px, env(safe-area-inset-top));
   right: max(12px, env(safe-area-inset-right));
@@ -866,6 +936,19 @@ kbd {
 .hud-banner.on.against .bn-title i { color: #ffb4ae; }
 .hud-banner.small .bn-title { font-size: clamp(38px, 7vw, 90px); }
 .hud-banner.card .bn-title i { color: var(--yellow); }
+.hud-banner.card.red .bn-title i { color: var(--red); }
+/* Goals: up top and a size smaller, so the celebrating scorer (centre of the lens) stays in view. */
+.hud-banner.goal {
+  top: max(12%, calc(max(12px, env(safe-area-inset-top)) + 46px));
+  bottom: auto;
+  align-content: start;
+}
+.hud-banner.goal:not(.small) .bn-title { font-size: clamp(42px, 9vw, 120px); }
+
+@media (max-height: 480px) {
+  .hud-banner.goal:not(.small) .bn-title { font-size: 48px; }
+  .hud-banner .bn-sub { font-size: 16px; padding: 6px 12px 5px; }
+}
 
 @keyframes letter {
   from { transform: translateY(-120px) scale(0.4); opacity: 0; }
@@ -885,7 +968,7 @@ kbd {
 }
 
 .hud-toast {
-  top: 18%;
+  top: max(16%, calc(max(12px, env(safe-area-inset-top)) + 58px));
   left: 50%;
   transform: translate(-50%, -20px) scale(0.9);
   font: 700 clamp(16px, 2vw, 24px) var(--px);
@@ -904,16 +987,26 @@ kbd {
 }
 
 .hud-hint {
-  bottom: 22%;
+  /* Up top (clear of the score bug and its booking chips): at set pieces the taker stands mid / low in the lens. */
+  top: max(16%, calc(max(12px, env(safe-area-inset-top)) + 58px));
   left: 50%;
   transform: translateX(-50%);
-  font: 700 clamp(16px, 1.5vw, 17px) var(--px);
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  font: 700 clamp(16px, 1.5vw, 17px) / 1.25 var(--px);
   color: var(--cream);
   background: rgba(38, 38, 46, 0.78);
   padding: 9px 14px 7px;
   opacity: 0;
   transition: opacity 0.2s;
-  white-space: nowrap;
+  text-align: center;
+}
+
+/* Hint and toast share the slot; the short toast ("CORNER") goes first, and the tutorial tip gives way to both. */
+.hud:has(.hud-toast.on) .hud-hint,
+.hud:has(.hud-toast.on) .hud-tip,
+.hud:has(.hud-hint.on) .hud-tip {
+  opacity: 0;
 }
 
 .hud-hint.on {
@@ -988,10 +1081,28 @@ kbd {
   bottom: max(12px, env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
-  width: clamp(150px, 17vw, 240px);
+  width: clamp(110px, 12vw, 180px);
   height: auto;
-  image-rendering: pixelated;
-  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.3);
+  aspect-ratio: 8 / 5;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+}
+
+@media (max-height: 419.98px) {
+  .hud-radar { width: 104px; }
+}
+
+/* Portrait phones: the touch buttons own the bottom edge, so the minimap hangs under the pause button. */
+@media (orientation: portrait) and (max-width: 720px) {
+  .hud-radar {
+    top: calc(max(12px, env(safe-area-inset-top)) + 50px);
+    bottom: auto;
+    left: auto;
+    right: max(12px, env(safe-area-inset-right));
+    transform: none;
+    width: 104px;
+  }
 }
 
 .hud-replay {
@@ -1028,10 +1139,10 @@ kbd {
 
 .hud.replaying .hud-radar,
 .hud.replaying .hud-chip,
+.hud.radar-off .hud-radar,
 .hud.dead .hud-radar,
 .hud.dead .hud-chip,
-.hud.dead .hud-tip,
-.hud.dead .hud-hint {
+.hud.dead .hud-tip {
   opacity: 0 !important;
   transition: opacity 0.2s;
 }
@@ -1104,6 +1215,7 @@ kbd {
   border-radius: 50%;
   width: 84px;
   height: 84px;
+  padding: 0;
   font: 400 13px var(--round);
   letter-spacing: 0.5px;
   color: #fff;
@@ -1130,18 +1242,25 @@ kbd {
 
 .touch[data-ctx='defend'] .tb-pass { --c: var(--yellow); }
 
+@media (max-width: 720px) {
+  .howto { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 720px), (max-height: 480px) {
   .opt-row { grid-template-columns: 1fr; gap: 6px; }
   .st-row { grid-template-columns: 34px 1fr 86px 1fr 34px; }
-  .howto { grid-template-columns: 1fr; }
   /* Phones keep the radar (DLS players live by it), just smaller; the chip goes. */
-  .hud-radar { width: 150px; }
   .hud-chip { display: none; }
-  .scorebug { font-size: 12px; }
-  .sb-team, .sb-score, .sb-clock { padding: 4px 7px 3px; }
-  .sb-clock { min-width: 64px; }
+  .scorebug { font-size: 16px; }
+  .sb-team, .sb-score, .sb-clock { padding: 4px 6px 3px; }
+  .sb-team { gap: 5px; }
+  .sb-score { gap: 3px; }
+  .sb-clock { min-width: 0; margin-left: 4px; }
   .sb-team i { width: 12px; height: 14px; }
-  .hud-pause { width: 38px; height: 38px; font-size: 14px; }
+  .sb-cards { padding-top: 4px; }
+  .sb-card { padding: 3px 6px 3px 5px; font-size: 14px; }
+  .sb-card i { width: 9px; height: 12px; }
+  .hud-pause { width: 38px; height: 38px; font-size: 16px; }
   .hud-tip { font-size: 13px; top: 48px; }
   .tb { width: 66px; height: 66px; font-size: 13px; }
   .tb-pass { width: 78px; height: 78px; font-size: 14px; }
@@ -1152,7 +1271,7 @@ kbd {
 }
 
 @media (max-height: 480px) and (orientation: landscape) {
-  .hud-radar { left: auto; right: 50%; transform: translateX(50%); bottom: 6px; width: 132px; opacity: 0.85; }
+  .hud-radar { bottom: max(6px, env(safe-area-inset-bottom)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1331,32 +1450,6 @@ kbd {
   .sub-row { grid-template-columns: 30px 1fr auto 52px; }
 }
 
-@media (max-height: 470px) and (orientation: landscape) {
-  .panel.qm {
-    width: min(900px, 97vw);
-    grid-template-columns: 1.05fr 1fr;
-    grid-auto-flow: row dense;
-    column-gap: 16px;
-    row-gap: 8px;
-    padding: 10px 14px;
-    max-height: calc(100vh - 16px);
-  }
-  .panel.qm h2 { grid-column: 1 / -1; font-size: 22px; }
-  .panel.qm .vs-row { grid-column: 1; grid-row: 2 / span 5; align-self: start; }
-  .panel.qm .opt-row { grid-column: 2; grid-template-columns: 1fr; gap: 4px; }
-  .panel.qm .opt-row label { font-size: 13px; }
-  .panel.qm .seg button { padding: 7px 2px 6px; font-size: 13px; }
-  .panel.qm .btn-row {
-    grid-column: 2;
-    position: sticky;
-    bottom: 0;
-    background: var(--cream);
-    padding-top: 6px;
-  }
-  .qm .tp-3d { width: 96px; }
-  .qm .tp-name { font-size: 15px; }
-}
-
 .main-wrap.with-captain {
   display: flex;
   align-items: center;
@@ -1405,11 +1498,19 @@ kbd {
 
 .tile small {
   display: block;
-  font: 400 14px / 1.1 var(--round);
+  max-width: 100%;
+  font: 400 14px / 1.15 var(--round);
   letter-spacing: 0.3px;
   opacity: 0.88;
   text-transform: uppercase;
   margin-top: -6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile > span {
+  max-width: 100%;
 }
 
 .btn-white.tile small,
@@ -1480,7 +1581,8 @@ kbd {
   max-height: calc(100dvh - 20px);
   gap: 14px;
   align-content: start;
-  padding: clamp(12px, 2.2vw, 24px);
+  --pp: clamp(12px, 2.2vw, 24px);
+  padding: var(--pp);
   touch-action: pan-y;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -1495,7 +1597,7 @@ kbd {
 
 .mc-top .mc-back {
   padding: 12px 14px 10px;
-  font-size: 14px;
+  font-size: 16px;
   min-width: 48px;
 }
 
@@ -1527,7 +1629,7 @@ kbd {
 }
 
 .coins.mc-coins {
-  font-size: 15px;
+  font-size: 16px;
   padding: 8px 10px 7px 8px;
   gap: 8px;
 }
@@ -1579,14 +1681,14 @@ kbd {
   opacity: 0.72;
 }
 
-/* White buttons sit on a cream panel here, so give them an ink outline to read as blocks. */
-.panel.mc .btn-white {
+/* White buttons sit on a cream panel, so give them an ink outline to read as blocks. */
+.panel .btn-white {
   --c: #fff;
   --d: var(--ink-2);
   box-shadow: inset 0 0 0 3px var(--ink), 0 6px 0 var(--ink-2), 0 10px 0 rgba(38, 38, 46, 0.25);
 }
 
-.panel.mc .btn-white:active {
+.panel .btn-white:active {
   box-shadow: inset 0 0 0 3px var(--ink), 0 1px 0 var(--ink-2), 0 3px 0 rgba(38, 38, 46, 0.25);
 }
 
@@ -1740,7 +1842,7 @@ kbd {
 .mc-pay {
   margin: 0;
   text-align: center;
-  font: 700 11px/1.5 var(--px);
+  font: 400 14px/1.35 var(--round);
   letter-spacing: 0.5px;
   color: var(--ink-2);
 }
@@ -1915,7 +2017,7 @@ kbd {
 }
 
 .sc small {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--yellow);
   margin-left: 4px;
 }
@@ -1945,7 +2047,7 @@ kbd {
 }
 
 .mc-wdl {
-  font: 700 13px/28px var(--px);
+  font: 700 16px/28px var(--px);
   font-style: normal;
   text-align: center;
   height: 28px;
@@ -2132,7 +2234,8 @@ button.mc-pl:active {
   min-height: 48px;
   min-width: 132px;
   padding: 10px 10px 8px;
-  font-size: 12px;
+  font: 400 15px / 1 var(--round);
+  letter-spacing: 0.5px;
 }
 
 /* club hub */
@@ -2280,7 +2383,7 @@ button.mc-pl:active {
   height: 18px;
   background: var(--red);
   color: #fff;
-  font: 700 11px/18px var(--px);
+  font: 400 14px/18px var(--round);
   text-align: center;
 }
 
@@ -2366,7 +2469,8 @@ button.mc-pl:active {
   min-height: 48px;
   min-width: 118px;
   padding: 10px 12px 8px;
-  font-size: 13px;
+  font: 400 15px / 1 var(--round);
+  letter-spacing: 0.5px;
 }
 
 /* kit designer */
@@ -2503,7 +2607,7 @@ button.mc-pl:active {
 }
 
 .mc-pat span {
-  font: 400 11px var(--round);
+  font: 400 12px var(--round);
   color: var(--ink);
 }
 
@@ -2669,7 +2773,7 @@ button.mc-pl:active {
 @media (max-width: 640px) {
   .mc-back span { display: none; }
   .mc-title span { white-space: normal; line-height: 1.35; }
-  .coins.mc-coins { font-size: 13px; padding: 7px 8px 6px 7px; }
+  .coins.mc-coins { font-size: 16px; padding: 7px 8px 6px 7px; gap: 6px; }
   .mc-lv { display: none; }
   .mc-create,
   .mc-squadtop { grid-template-columns: 1fr; }
@@ -2681,20 +2785,20 @@ button.mc-pl:active {
   .mc-dot { width: 36px; height: 36px; font-size: 13px; }
   .mc-forms { grid-template-columns: repeat(3, 1fr); }
   .mc-count { white-space: nowrap; font-size: 12px; }
-  .mc-tabs button { font-size: 11px; padding-left: 2px; padding-right: 2px; }
+  .mc-tabs button { font-size: 13px; padding-left: 2px; padding-right: 2px; }
   .mc-quick { gap: 8px; }
-  .mc-quick .btn { font-size: 11px; letter-spacing: 0.5px; padding: 12px 4px 10px; white-space: normal; }
+  .mc-quick .btn { font-size: 14px; letter-spacing: 0.3px; padding: 12px 4px 10px; white-space: normal; }
   .mc-st { grid-template-columns: 38px minmax(0, 1fr) 26px auto; gap: 8px; }
   .mc-tcid { flex-wrap: wrap; row-gap: 6px; }
   .mc-tcid b { order: 3; flex-basis: 100%; text-align: center; }
   .mc-st .nm-full { display: none; }
   .mc-st .nm-short { display: inline; }
-  .mc-trainbtn.btn { min-width: 104px; font-size: 12px; padding: 10px 8px 8px; }
+  .mc-trainbtn.btn { min-width: 100px; font-size: 14px; padding: 10px 8px 8px; }
   .mc-stadium { grid-template-columns: 1fr; justify-items: stretch; }
   .mc-cards { grid-template-columns: 1fr; }
   .mc-fx { gap: 6px; padding: 6px 8px; font-size: 15px; }
   .mc-pl { grid-template-columns: 34px 24px auto minmax(0, 1fr) auto; gap: 6px; padding: 6px; }
-  .mc-sellbtn.btn { font-size: 11px; padding: 10px 6px 8px; }
+  .mc-sellbtn.btn { min-width: 112px; font-size: 14px; padding: 10px 6px 8px; }
 }
 
 @media (max-width: 560px) {
@@ -2712,16 +2816,28 @@ button.mc-pl:active {
 
 /* ===== cup + shootout ===== */
 
-/* Main menu: the cup gets a wide tile under the 2x2 grid. */
+/* Main menu: the cup gets a wide tile under the 2x2 grid (icon left, title over subtitle). */
 .tile.tile-wide {
   grid-column: 1 / -1;
   aspect-ratio: auto;
-  grid-auto-flow: column;
+  grid-template-columns: auto minmax(0, auto);
   justify-content: center;
   align-items: center;
-  gap: 12px;
-  min-height: 58px;
+  column-gap: 14px;
+  row-gap: 4px;
+  min-height: 64px;
   padding: 12px 16px 10px;
+}
+
+.tile.tile-wide .picon { grid-row: 1 / span 2; }
+.tile.tile-wide > span,
+.tile.tile-wide small { justify-self: start; margin: 0; }
+
+/* Short desktop windows: keep the logo clear of the gift / coins bar. */
+@media (max-height: 820px) and (min-height: 451px) {
+  .screen.main { padding-top: max(60px, env(safe-area-inset-top)); }
+  .logo.small span { font-size: clamp(38px, 5vw, 64px); }
+  .main-col { gap: 16px; }
 }
 
 .tile.tile-wide .picon {
@@ -2753,7 +2869,7 @@ button.mc-pl:active {
 }
 
 .so-head {
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 2px;
   color: var(--yellow);
 }
@@ -2822,9 +2938,17 @@ button.mc-pl:active {
 }
 
 @media (max-width: 720px), (max-height: 480px) {
-  .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 32px); font-size: 11px; padding: 5px 7px 6px; gap: 3px; }
+  .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 34px); font-size: 13px; padding: 5px 7px 6px; gap: 3px; }
   .so-dot { width: 11px; height: 11px; }
   .so-dots { gap: 3px; }
+}
+
+/* Bookings under the score bug push the widgets that hang below it down a row. */
+.hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 78px); }
+.hud:has(.sb-cards:not(:empty)) .hud-replay { top: max(96px, calc(env(safe-area-inset-top) + 86px)); }
+
+@media (max-width: 720px), (max-height: 480px) {
+  .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 56px); }
 }
 
 /* The radar only shows the line-up during penalties, and it covers the taker's feet. */
@@ -2959,7 +3083,7 @@ button.mc-pl:active {
 
 .ct-row b small {
   margin-left: 3px;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ink-2);
 }
 
@@ -3091,4 +3215,184 @@ button.mc-pl:active {
 
 @keyframes cup-fall {
   to { transform: translate(var(--dx), 110vh) rotate(var(--r)); }
+}
+
+/* ===== small screens: landscape phones (<= 450 px tall, e.g. 740x360 .. 932x430) and narrow portrait phones ===== */
+
+.qm .tp-name {
+  max-width: 100%;
+}
+
+/* Grid children never grow the panel past the screen; long unbreakable labels wrap instead (below). */
+.panel.mc > * {
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .btn-lg { padding-left: 16px; padding-right: 16px; letter-spacing: 1px; }
+  .mc-play { white-space: normal; line-height: 1.15; }
+
+  .panel.mc .mc-title h2 { font-size: 18px; letter-spacing: 1px; }
+
+  /* Main menu tiles: rounded labels so QUICK MATCH fits one line, subtitles stay on theirs. */
+  .tile { aspect-ratio: auto; min-height: 128px; gap: 8px; padding: 14px 8px 12px; font: 400 19px / 1.05 var(--round); letter-spacing: 0.5px; }
+  .tile .picon { width: 48px; height: 48px; }
+  .tile small { margin-top: -3px; }
+  .tile.tile-wide { row-gap: 2px; }
+  .tile.tile-wide .picon { width: 40px; height: 40px; }
+
+  /* Portrait: the kit preview sits on top, the pickers underneath. */
+  .tp-body {
+    display: grid;
+    grid-template-columns: auto auto;
+    justify-content: center;
+    gap: 6px 12px;
+  }
+  .tp-body .tp-kit { grid-column: 1 / -1; grid-row: 1; justify-self: center; }
+  .tp-body .arrow { width: 44px; height: 38px; font-size: 16px; }
+  .tp-3d { width: clamp(84px, 26vw, 120px); }
+  .team-pick { padding: 10px 6px 12px; }
+  .vs-row { align-items: stretch; }
+  .vs-row .vs { align-self: center; }
+  .team-pick { align-content: start; }
+  .tp-name { display: grid; justify-items: center; gap: 4px; font-size: 16px; line-height: 1.15; }
+  .tp-name .crest-svg { margin: 0; }
+  .tp-stars { font-size: 15px; letter-spacing: 1px; }
+  .vs-row { gap: 6px; }
+  .vs { font-size: 20px; }
+  .seg { gap: 5px; }
+  .seg button { font-size: 14px; padding-left: 2px; padding-right: 2px; }
+}
+
+@media (max-height: 450px) {
+  .screen { padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .panel-wrap { padding: 8px; }
+  .panel { --pp: 14px; gap: 10px; max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); }
+  .panel h2 { font-size: 22px; }
+  .panel > .btn-row:last-child:not(.no-stick) { padding-top: 8px; }
+  .btn-lg { padding: 15px 24px 13px; }
+
+  /* Title. */
+  .title-wrap { gap: 14px; margin-top: 0; }
+  .title-wrap .logo span { font-size: 64px; }
+  .tagline { font-size: 18px; }
+  .btn-xl { font-size: 20px; padding: 18px 30px 16px; }
+
+  /* Main menu: captain on the left, compact tiles on the right, logo tucked top-left of them. */
+  .topbar { top: max(8px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); gap: 8px; }
+  .topbar .gift { min-height: 38px; padding: 9px 12px 8px; font-size: 15px; }
+  .coins { font-size: 16px; padding: 7px 11px 7px 8px; gap: 8px; }
+  .coins i { width: 16px; height: 16px; box-shadow: inset -3px -3px 0 var(--yellow-d), inset 3px 3px 0 #fff3b0; }
+  .main-wrap,
+  .main-wrap.with-captain { width: min(860px, 100%); gap: 14px; }
+  .main-wrap.with-captain { display: flex; justify-content: center; align-items: center; }
+  .main-wrap.with-captain .captain { display: grid; flex: 0 0 22vw; width: 22vw; gap: 6px; }
+  .captain-3d { width: 22vw; max-height: calc(100dvh - 96px); }
+  .captain-tag { max-width: 100%; padding: 6px 10px 7px; }
+  .captain-tag b { font-size: 14px; }
+  .main-col { flex: 1 1 0; min-width: 0; max-width: 560px; gap: 10px; justify-items: stretch; }
+  .logo.small { justify-items: start; filter: drop-shadow(0 6px 0 rgba(38, 38, 46, 0.3)); }
+  .logo.small span {
+    font-size: 27px;
+    text-shadow:
+      0 4px 0 var(--ink), 3px 4px 0 var(--ink), -3px 4px 0 var(--ink),
+      0 -3px 0 var(--ink), 3px 0 0 var(--ink), -3px 0 0 var(--ink), 3px -3px 0 var(--ink), -3px -3px 0 var(--ink),
+      0 7px 0 var(--ink);
+  }
+  .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; gap: 10px; }
+  .tile { aspect-ratio: auto; gap: 6px; padding: 10px 8px 9px; min-height: 0; font: 400 16px / 1.05 var(--round); letter-spacing: 0.5px; }
+  .tile .picon { width: 30px; height: 30px; }
+  .tile small { font-size: 13px; margin-top: -2px; }
+  /* Row two: the wide cup tile and a slim settings tile, both laid out sideways. */
+  .tile.tile-wide { grid-column: 1 / span 2; grid-row: 2; min-height: 48px; padding: 7px 12px 6px; column-gap: 10px; row-gap: 1px; }
+  .tile.tile-wide .picon { width: 26px; height: 26px; }
+  .tile[data-a='settings'] { grid-column: 3; grid-row: 2; grid-auto-flow: column; justify-content: center; align-items: center; gap: 8px; min-height: 48px; padding: 8px 8px 7px; }
+  .tile[data-a='settings'] .picon { width: 22px; height: 22px; }
+  .main-foot { justify-content: flex-start; gap: 10px; }
+  .main-foot .btn-ghost { min-height: 38px; padding: 10px 14px 9px; font-size: 15px; }
+  .record-chip { font-size: 14px; padding: 8px 10px 7px; }
+
+  /* Quick match: teams left, options right, KICK OFF pinned to the bottom. */
+  .panel.qm {
+    width: min(860px, 100%);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 16px;
+    row-gap: 8px;
+    padding-top: 10px;
+    align-content: start;
+  }
+  .panel.qm h2 { grid-column: 1; grid-row: 1; font-size: 20px; align-self: center; }
+  .panel.qm .vs-row { grid-column: 1; grid-row: 2 / span 4; align-self: start; gap: 6px; }
+  .panel.qm .opt-row { grid-column: 2; grid-template-columns: 1fr; gap: 3px; }
+  .panel.qm .opt-row label { font-size: 13px; }
+  .panel.qm .seg { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+  .panel.qm .seg button { padding: 7px 2px 6px; font-size: 13px; white-space: nowrap; box-shadow: 0 2px 0 var(--cream-2); }
+  .panel.qm > .btn-row { grid-column: 1 / -1; }
+  .qm .team-pick { gap: 3px; padding: 6px 4px 8px; }
+  .qm .tp-label { font-size: 13px; padding: 3px 7px 2px; }
+  .qm .tp-body { display: flex; gap: 4px; }
+  .qm .arrow { width: 30px; height: 40px; font-size: 14px; }
+  .qm .tp-3d { width: 76px; }
+  .qm .tp-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qm .tp-name .crest-svg { width: 16px; height: auto; margin-right: 4px; }
+  .qm .tp-stars { font-size: 14px; letter-spacing: 1px; }
+  .qm .tp-meta { font-size: 13px; }
+  .qm .vs { font-size: 20px; }
+
+  /* Pause: RESUME across the top, the rest two by two. */
+  .pause .panel.narrow { width: min(560px, 94vw); }
+  .pause .menu-col { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .pause .menu-col .btn-lg { grid-column: 1 / -1; }
+
+  /* Settings: toggles two by two. */
+  .settings .panel.narrow { width: min(560px, 94vw); }
+  .toggles { grid-template-columns: 1fr 1fr; }
+  .toggles button { padding: 10px 12px 8px; }
+
+  /* Half / full time: tighter score + stats. */
+  .final { gap: 8px; }
+  .f-team { gap: 3px; }
+  .f-team .crest-svg { width: 28px; height: auto; }
+  .f-team b { font-size: 18px; }
+  .f-score { font-size: 44px; padding-top: 6px; }
+  .stats { gap: 4px; }
+  .st-row { font-size: 14px; }
+  .st-bar { height: 10px; }
+  .motm-card { padding: 8px 14px 9px; }
+  .motm-card em { font-size: 24px; }
+  .reward { font-size: 24px; }
+
+  /* Tactics: title and mentality share a row, the lists scroll with the panel (DONE stays pinned). */
+  .panel.tactics { width: min(820px, 100%); grid-template-columns: auto minmax(0, 1fr); column-gap: 18px; }
+  .panel.tactics > * { grid-column: 1 / -1; }
+  .panel.tactics > h2 { grid-column: 1; font-size: 20px; align-self: center; }
+  .panel.tactics > .opt-row { grid-column: 2; grid-template-columns: auto minmax(0, 1fr); gap: 10px; }
+  .panel.tactics > .fine { display: none; }
+  .panel.tactics .seg button { padding: 8px 4px 7px; }
+  .sub-list { max-height: none; overflow: visible; }
+  .sub-row { min-height: 38px; }
+
+  /* Gift. */
+  .gift-days li { padding: 4px 2px; }
+
+  /* Career / club / cup. */
+  .meta .mc-wrap { padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
+  .meta .panel.mc { --pp: 12px; gap: 10px; max-height: calc(100vh - 12px); max-height: calc(100dvh - 12px); }
+  .mc-top .mc-back { padding: 10px 12px 8px; min-height: 42px; }
+  .panel.mc .mc-title h2 { font-size: 20px; }
+  .mc-next { gap: 8px; padding: 8px 10px; }
+  .mc-side { gap: 3px; }
+  .mc-side .shirt { --px: 4px !important; }
+  .mc-side b { font-size: 18px; }
+  .mc-side small { font-size: 14px; }
+  .mc-quick .btn { min-height: 44px; padding-top: 12px; padding-bottom: 10px; }
+  .mc-clubbar { padding: 6px 10px; gap: 10px; }
+  .mc-clubbar .shirt { --px: 3px !important; }
+  .mc-clubtxt b { font-size: 17px; }
+  .mc-ovrbox { padding: 3px 8px 3px; }
+  .mc-ovrbox b { font-size: 18px; }
+  .mc-tabs button { min-height: 42px; }
+  .cup-hero { padding: 8px 14px; }
+  .cup-hero-icon .picon { width: 48px; height: 48px; }
+  .cup-hero p { font-size: 15px; }
 }

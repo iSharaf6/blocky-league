@@ -13,7 +13,7 @@ import { PRESET_CLUBS, makeTeam, resolveKitClash } from '../meta/data';
 import { cssHex } from '../render/palette';
 import { goalsOf } from '../sim/shootout';
 import { closeMeta, esc, fmt, mountMeta, topBar, type ToastKind } from './club';
-import { DIFFICULTIES, pixelIcon, shirtArt } from './menus';
+import { DIFFICULTIES, pixelIcon, shirtArt, stars } from './menus';
 
 interface Flash {
   msg: string;
@@ -82,6 +82,7 @@ function cupEntry(app: AppContext): void {
           <button class="arrow" data-a="next" aria-label="Next club">▶</button>
         </div>
         <b class="tp-name">${esc(c.name)}</b>
+        <span class="tp-stars">${stars(clubRating(club))}</span>
         <span class="tp-meta">OVR ${clubRating(club)} · ${c.formation}</span>
       </div>
       <div class="opt-row"><label>DIFFICULTY</label><div class="seg">${DIFFICULTIES.map(
@@ -92,7 +93,7 @@ function cupEntry(app: AppContext): void {
         <div><span>LIFT THE TROPHY</span><b><i></i>+${fmt(TROPHY_PRIZE * mult)}</b></div>
         <div class="total"><span>UP FOR GRABS</span><b><i></i>${fmt(total)}</b></div>
       </div>
-      <button class="btn btn-go btn-lg cup-go" data-a="start">ENTER THE CUP</button>`,
+      <div class="btn-row"><button class="btn btn-go btn-lg cup-go" data-a="start">ENTER THE CUP</button></div>`,
       {
         back: () => toMenu(app),
         prev: () => {
@@ -191,7 +192,7 @@ function cupHub(app: AppContext, st: CupState, flash?: Flash): void {
       <h3 class="mc-h">THE DRAW</h3>
       ${bracketHtml(st)}
       <p class="mc-hint">${st.earned > 0 ? `+${fmt(st.earned)} coins won in this cup so far.` : 'Every round you win pays out. Lift the trophy for the big one.'}</p>
-      <div class="btn-row">${foot}</div>`,
+      <div class="btn-row${st.status === 'active' ? ' no-stick' : ''}">${foot}</div>`,
       {
         back: () => toMenu(app),
         play: () => playTie(app, st),

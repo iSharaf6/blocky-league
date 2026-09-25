@@ -6,9 +6,16 @@ export const PF = 16;
 export const BALL_OFS = 22 * PF;
 export const FRAME_LEN = BALL_OFS + 11;
 
-export const STATE_CODE: Record<PState, number> = {
-  move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9,
+/** Frame code per player state; 10 = sent off (parked by his dugout, drawn hands-on-head). */
+export const STATE_CODE: Record<PState, number> & Record<string, number | undefined> = {
+  move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9, sentoff: 10,
 };
+export const SENT_OFF_CODE = 10;
+
+/** Red-carded: the sim either flags the player or gives him a 'sentoff' state (whichever it ships). */
+export function isSentOff(p: Match['players'][number]): boolean {
+  return (p.state as string) === 'sentoff' || ('sentOff' in p && !!(p as { sentOff?: boolean }).sentOff);
+}
 
 /** Snapshot the sim into a flat float array (what the renderer and replays consume). */
 export function writeFrame(m: Match, out: Float32Array, time: number): void {
@@ -18,7 +25,7 @@ export function writeFrame(m: Match, out: Float32Array, time: number): void {
     out[o + 1] = p.pos.z;
     out[o + 2] = p.y;
     out[o + 3] = p.facing;
-    out[o + 4] = STATE_CODE[p.state];
+    out[o + 4] = isSentOff(p) ? SENT_OFF_CODE : STATE_CODE[p.state] ?? 0;
     out[o + 5] = p.stateT;
     out[o + 6] = p.runPhase;
     out[o + 7] = p.speed();

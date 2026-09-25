@@ -1,5 +1,6 @@
 import { sfx } from '../audio/sfx';
 import type { SaveData } from '../core/save';
+import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview } from './preview';
 import { crestSvg } from './crest';
@@ -93,9 +94,14 @@ export function pixelIcon(name: string, color = '#fbfbf4', px = 5): string {
   return `<svg class="picon" width="${n * px}" height="${n * px}" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" fill="${color}" aria-hidden="true">${rects}</svg>`;
 }
 
-function stars(level: number): string {
-  const n = Math.max(1, Math.min(5, Math.round((level - 35) / 12)));
-  return '★'.repeat(n) + '<s>' + '★'.repeat(5 - n) + '</s>';
+/** 1-5 stars from a squad OVR (the same teamRating number shown everywhere else). */
+export function starCount(ovr: number): number {
+  return Math.max(1, Math.min(5, Math.round((ovr - 40) / 10)));
+}
+
+export function stars(ovr: number): string {
+  const n = starCount(ovr);
+  return `<span class="stars" aria-label="${n} of 5 stars">${'★'.repeat(n)}<s>${'★'.repeat(5 - n)}</s></span>`;
 }
 
 export class Menus {
@@ -164,11 +170,11 @@ export class Menus {
         <div class="main-col">
         <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
         <div class="tiles">
-          <button class="btn btn-go tile" data-a="quick">${pixelIcon('ball', '#fff', 6)}<span>QUICK MATCH</span>${info?.quick ? `<small>${info.quick}</small>` : ''}</button>
-          <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${info?.career ? `<small>${info.career}</small>` : ''}</button>
-          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${info?.club ? `<small>${info.club}</small>` : ''}</button>
+          <button class="btn btn-go tile" data-a="quick">${pixelIcon('ball', '#fff', 6)}<span>QUICK MATCH</span>${info?.quick ? `<small title="${info.quick}">${info.quick}</small>` : ''}</button>
+          <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${info?.career ? `<small title="${info.career}">${info.career}</small>` : ''}</button>
+          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${info?.club ? `<small title="${info.club}">${info.club}</small>` : ''}</button>
           <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
-          <button class="btn btn-red tile tile-wide" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${info?.cup ? `<small>${info.cup}</small>` : ''}</button>
+          <button class="btn btn-red tile tile-wide" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${info?.cup ? `<small title="${info.cup}">${info.cup}</small>` : ''}</button>
         </div>
         <div class="main-foot">
           <button class="btn btn-ghost" data-a="howto">HOW TO PLAY</button>
@@ -218,6 +224,7 @@ export class Menus {
     const render = (side: 'home' | 'away') => {
       const idx = side === 'home' ? home : away;
       const c: ClubSeed = PRESET_CLUBS[idx];
+      const ovr = presetRating(idx);
       const el = $(d, `[data-side=${side}]`);
       el.innerHTML = `
         <span class="tp-label">${side === 'home' ? 'YOU' : 'RIVAL'}</span>
@@ -227,8 +234,8 @@ export class Menus {
           <button class="arrow" data-d="1">▶</button>
         </div>
         <b class="tp-name">${crestSvg(c.name, c.short, c.kit, 2)}${c.name}</b>
-        <span class="tp-stars">${stars(c.level)}</span>
-        <span class="tp-meta">OVR ${c.level} · ${c.formation}</span>`;
+        <span class="tp-stars">${stars(ovr)}</span>
+        <span class="tp-meta">OVR ${ovr} · ${c.formation}</span>`;
       const cv = el.querySelector<HTMLCanvasElement>('.tp-3d');
       if (cv) {
         const team = makeTeam(c);

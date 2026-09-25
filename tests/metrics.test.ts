@@ -29,6 +29,8 @@ export interface MatchMetrics {
   freekicks: number;
   penalties: number;
   fouls: number;
+  yellows: number;
+  reds: number;
   saves: number;
   maxStall: number;
   finalThird: [number, number];
@@ -59,7 +61,7 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     goals: 0, score: [0, 0], shots: 0, onTarget: 0, boxShots: 0, longShots: 0, headerShots: 0,
     passAtt: [0, 0], passCmp: [0, 0], carrierStretches: 0, carrierTime: 0,
     tackleAttempts: 0, tacklesWon: 0, slides: 0, corners: 0, throwins: 0, goalkicks: 0, freekicks: 0,
-    penalties: 0, fouls: 0, saves: 0, maxStall: 0, finalThird: [0, 0], crosses: 0, headers: 0, blocks: 0,
+    penalties: 0, fouls: 0, yellows: 0, reds: 0, saves: 0, maxStall: 0, finalThird: [0, 0], crosses: 0, headers: 0, blocks: 0,
     rawPasses: 0, shotOut: {}, byKind: {}, runs: 0, overlaps: 0, beats: 0, claims: 0,
   };
   const wasRunning = new Set<number>();
@@ -146,6 +148,10 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
         case 'block':
           r.blocks++;
           break;
+        case 'card':
+          if (e.color === 'red') r.reds++;
+          else r.yellows++;
+          break;
         case 'beat':
           r.beats++;
           break;
@@ -228,7 +234,12 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
       stallT = 0;
     }
 
-    if (m.phase === 'halftime') m.continueSecondHalf();
+    if (m.phase === 'halftime') {
+      // What the match session does at the break: each AI manager freshens up two tired players.
+      m.aiSubs(0, 2);
+      m.aiSubs(1, 2);
+      m.continueSecondHalf();
+    }
     if (m.phase === 'goal' && m.phaseT > 3) m.resumeAfterGoal();
   }
   if (curOwner >= 0) {
@@ -268,6 +279,8 @@ export interface Summary {
   freekicks: number;
   penalties: number;
   fouls: number;
+  yellows: number;
+  reds: number;
   savePct: number;
   maxStall: number;
   finalThirdPerTeam: number;
@@ -311,6 +324,8 @@ export function summarise(list: MatchMetrics[]): Summary {
     freekicks: avg((r) => r.freekicks),
     penalties: avg((r) => r.penalties),
     fouls: avg((r) => r.fouls),
+    yellows: avg((r) => r.yellows),
+    reds: avg((r) => r.reds),
     savePct: (saves / Math.max(1, saves + goals)) * 100,
     maxStall: Math.max(...list.map((r) => r.maxStall)),
     finalThirdPerTeam: avg((r) => (r.finalThird[0] + r.finalThird[1]) / 2),
@@ -349,16 +364,18 @@ function fmt(s: Summary): string {
 }
 
 const BASE_SEEDS = [11, 23, 37, 41, 53, 67, 79, 97];
-// MSEEDS=24 npx vitest run tests/metrics.test.ts  -> a larger sample while tuning.
+// The feel bands are averages, and a single match swings a lot (a foul or a corner is a handful of
+// events), so they're checked over 24 matches. MSEEDS=64 npx vitest run tests/metrics.test.ts
+// -> a larger sample while tuning.
 const extra = Number((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.MSEEDS ?? 0);
-const SEEDS = extra > BASE_SEEDS.length ? Array.from({ length: extra }, (_, i) => 11 + i * 14) : BASE_SEEDS;
+const SEEDS = Array.from({ length: Math.max(24, extra) }, (_, i) => 11 + i * 14);
 
 const within = (v: number, lo: number, hi: number) => {
   expect(v).toBeGreaterThanOrEqual(lo);
   expect(v).toBeLessThanOrEqual(hi);
 };
 
-describe('match feel metrics (AI vs AI, 2x150s, difficulty 2)', () => {
+describe('match feel metrics (AI vs AI, 2x150s, difficulty 2, half-time AI subs)', () => {
   it('stays inside the DLS-style target bands', () => {
     const list = SEEDS.map((seed) => runMatch({ seed }));
     const s = summarise(list);
@@ -369,10 +386,14 @@ describe('match feel metrics (AI vs AI, 2x150s, difficulty 2)', () => {
     within(s.onTargetPct, 40, 60);
     expect(s.longShots).toBeLessThan(s.boxShots);
     within(s.tacklesWon, 8, 20);
-    // 8 seeds is a small sample for corners (24 seeds: ~2.7).
-    within(s.corners, 1.5, 8);
+    // Set pieces and discipline: deflections and glanced clearances put it behind, defenders slide
+    // in on escaping carriers (~30% of slides are mistimed into fouls), a card or two a match.
+    within(s.corners, 3, 6);
     within(s.throwins, 3, 10);
-    within(s.fouls, 1, 4);
+    within(s.fouls, 3, 5);
+    within(s.slides, 2, 6);
+    within(s.yellows, 0, 2);
+    expect(s.reds).toBeLessThan(0.5);
     // Saves only count for shots that were on target (24 seeds: ~54%).
     within(s.savePct, 50, 75);
     expect(s.maxStall).toBeLessThan(5);
