@@ -1,5 +1,5 @@
 import { clamp, dist2 } from '../core/math';
-import { BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L } from './constants';
+import { BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, SIX_W } from './constants';
 import type { Match } from './match';
 import type { Player } from './player';
 
@@ -64,7 +64,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
           return;
         }
         if (m.shotClock >= reaction) {
-          const maxDive = 3.6 + keeping * 2.6 + m.keeperBonus(k.side) * 6;
+          const maxDive = 4.6 + keeping * 3 + m.keeperBonus(k.side) * 8;
           const need = Math.abs(lateral) / Math.max(t, 0.12);
           const vz = Math.sign(lateral) * Math.min(need * 1.05, maxDive);
           k.setState('dive');
@@ -83,18 +83,50 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
     }
   }
 
-  // ---- Claim loose balls in the box --------------------------------------------
-  const ballInBox = inOwnBox(m, k.side, b.pos.x, b.pos.z);
-  if (b.owner < 0 && ballInBox && b.hspeed() < 12) {
-    const kd = dist2(k.pos.x, k.pos.z, b.pos.x, b.pos.z);
-    let rival = Infinity;
-    for (const o of m.players) {
-      if (o.side === k.side) continue;
-      rival = Math.min(rival, dist2(o.pos.x, o.pos.z, b.pos.x, b.pos.z));
+  // ---- Crosses: come and claim high balls dropping into the goal area --------------
+  if (b.owner < 0 && !b.held && m.shotClock > 0.6 && m.kickSide !== k.side && m.sinceKick < 3.5) {
+    const c = crossDrop(m, k);
+    if (c) {
+      if (k.claimKick !== m.kickId) {
+        k.claimKick = m.kickId;
+        const tK = dist2(k.pos.x, k.pos.z, c.x, c.z) / (k.top * 0.95) + 0.12;
+        k.claiming = tK < c.t + 0.08 && m.rng.chance(0.5 + keeping * 0.35 + m.keeperBonus(k.side) * 2);
+      }
+      if (k.claiming) {
+        moveTo(k, c.x, c.z, true);
+        k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
+        // Leap for it as it arrives.
+        if (k.y === 0 && b.pos.y > 1.9 && dist2(k.pos.x, k.pos.z, b.pos.x, b.pos.z) < 2) {
+          k.vy = 4;
+          k.y = 0.01;
+        }
+        return;
+      }
+    } else {
+      k.claiming = false;
     }
-    if (kd < rival * 0.9 || kd < 3) {
-      moveTo(k, b.pos.x + b.vel.x * 0.25, b.pos.z + b.vel.z * 0.25, true);
-      return;
+  } else {
+    k.claiming = false;
+  }
+
+  // ---- Sweep up loose balls we reach first ------------------------------------------
+  if (b.owner < 0 && !b.held && m.shotClock > 0.5) {
+    const toward = b.vel.x * -ad;
+    const near = dist2(b.pos.x, b.pos.z, gx, 0) < BOX_DEPTH + 14;
+    if (near && (toward > 1 || inOwnBox(m, k.side, b.pos.x, b.pos.z)) && b.hspeed() < 18) {
+      const i = reach(m, k);
+      if (inOwnBox(m, k.side, i.x, i.z)) {
+        let rivalT = Infinity;
+        for (const o of m.players) {
+          if (o.side === k.side) continue;
+          rivalT = Math.min(rivalT, reach(m, o).t);
+        }
+        const kd = dist2(k.pos.x, k.pos.z, b.pos.x, b.pos.z);
+        if (i.t < rivalT - 0.12 || kd < 2.5) {
+          moveTo(k, i.x, i.z, true);
+          return;
+        }
+      }
     }
   }
 
@@ -125,6 +157,35 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   if (Math.abs(tx - gx) < 0.5) tx = gx + ad * 0.5;
   moveTo(k, tx, tz, false);
   k.faceTarget = Math.atan2(bz - k.pos.z, bx - k.pos.x);
+}
+
+/** Where a lofted ball first drops to catchable height inside the keeper's claiming area. */
+function crossDrop(m: Match, k: Player): { x: number; z: number; t: number } | null {
+  const b = m.ball;
+  if (b.pos.y < 1 && b.vel.y < 1.5) return null;
+  const gx = -m.attackDir(k.side) * HALF_L;
+  let i = 0;
+  for (const s of m.ballPath) {
+    i++;
+    if (s.y <= 2.8 && Math.abs(s.x - gx) < 6.5 && Math.abs(s.z) < SIX_W / 2 + 1.5) {
+      return s.y >= 0.9 ? { x: s.x, z: s.z, t: s.t } : null;
+    }
+    if (s.y < 0.4 && i > 4) return null; // lands before it reaches us
+  }
+  return null;
+}
+
+/** Earliest point on the predicted ball path that `p` can get to (ground/low balls). */
+function reach(m: Match, p: Player): { x: number; z: number; t: number } {
+  const path = m.ballPath;
+  const top = p.top * 0.92;
+  for (const s of path) {
+    if (s.y > (p.isKeeper ? 2.6 : 2.1)) continue;
+    const d = Math.max(0, dist2(p.pos.x, p.pos.z, s.x, s.z) - 0.55);
+    if (d / top + 0.12 <= s.t) return s;
+  }
+  const last = path[path.length - 1];
+  return { x: last.x, z: last.z, t: Math.max(last.t, dist2(p.pos.x, p.pos.z, last.x, last.z) / top) };
 }
 
 function nobodyCovering(m: Match, k: Player, c: Player): boolean {

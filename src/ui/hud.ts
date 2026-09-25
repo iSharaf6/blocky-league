@@ -18,6 +18,7 @@ export class Hud {
   private banner: HTMLDivElement;
   private bannerTimer = 0;
   private hint: HTMLDivElement;
+  private tip: HTMLDivElement;
   private chip: HTMLDivElement;
   private chipName: HTMLSpanElement;
   private chipNum: HTMLSpanElement;
@@ -44,6 +45,7 @@ export class Hud {
       <div class="hud-banner"></div>
       <div class="hud-toast"></div>
       <div class="hud-hint"></div>
+      <div class="hud-tip"></div>
       <div class="hud-chip"><span class="chip-num">9</span><span class="chip-name">PLAYER</span><div class="chip-stam"><div></div></div></div>
       <div class="hud-replay"><b>REPLAY</b><span>press any button to skip</span></div>
       <canvas class="hud-radar" width="240" height="150"></canvas>`;
@@ -51,6 +53,7 @@ export class Hud {
     this.clock = this.root.querySelector('.sb-clock')!;
     this.banner = this.root.querySelector('.hud-banner')!;
     this.hint = this.root.querySelector('.hud-hint')!;
+    this.tip = this.root.querySelector('.hud-tip')!;
     this.chip = this.root.querySelector('.hud-chip')!;
     this.chipName = this.root.querySelector('.chip-name')!;
     this.chipNum = this.root.querySelector('.chip-num')!;
@@ -90,6 +93,14 @@ export class Hud {
   setHint(text: string): void {
     this.hint.textContent = text;
     this.hint.classList.toggle('on', text.length > 0);
+  }
+
+  /** Tutorial tip (top centre). Empty string hides it. */
+  setTip(html: string): void {
+    if (this.tip.dataset.t === html) return;
+    this.tip.dataset.t = html;
+    this.tip.innerHTML = html;
+    this.tip.classList.toggle('on', html.length > 0);
   }
 
   setReplay(on: boolean): void {

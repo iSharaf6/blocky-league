@@ -8,7 +8,13 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "assets": "node scripts/gen-assets.mjs",
+    "build:web": "tsc --noEmit && node scripts/release.mjs web",
+    "build:crazygames": "tsc --noEmit && node scripts/release.mjs crazygames",
+    "build:poki": "tsc --noEmit && node scripts/release.mjs poki",
+    "build:itch": "tsc --noEmit && node scripts/release.mjs itch",
+    "build:all": "tsc --noEmit && node scripts/release.mjs web crazygames poki itch"
   },
   "dependencies": {
     "@fontsource/lilita-one": "^5.3.0",

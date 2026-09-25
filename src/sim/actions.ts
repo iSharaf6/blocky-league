@@ -1,6 +1,6 @@
 import { clamp, dist2, pointSegDist } from '../core/math';
-import { groundPassSpeed, rollTime, solveLob } from './ball';
-import { BALL_R, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W } from './constants';
+import { Ball, groundPassSpeed, rollTime, solveLob, type BallHit } from './ball';
+import { BALL_R, GOAL_W, GRAVITY, HALF_L, HALF_W } from './constants';
 import type { Match } from './match';
 import type { KickOrder, Player } from './player';
 import type { KickKind } from './types';
@@ -66,9 +66,31 @@ export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 
   return best;
 }
 
+/** Distance from `p` to the nearest opponent. */
+export function nearestOppDist(m: Match, p: Player): number {
+  let d = Infinity;
+  for (const o of m.players) {
+    if (o.side === p.side) continue;
+    const e = dist2(o.pos.x, o.pos.z, p.pos.x, p.pos.z);
+    if (e < d) d = e;
+  }
+  return d;
+}
+
+/** Error multiplier from difficulty / human control: ~1.3 at skill 0, ~0.8 at skill 4. */
+export function skillErr(m: Match, p: Player): number {
+  return 1.3 - m.kickSkill(p) * 0.125;
+}
+
+/** Being closed down makes every kick a little less clean. */
+function pressureErr(m: Match, p: Player): number {
+  const d = nearestOppDist(m, p);
+  return 1 + clamp((2.8 - d) / 1.8, 0, 1) * 0.8;
+}
+
 function passError(p: Player, m: Match, scale: number): number {
   const acc = p.stat.passing / 100;
-  return m.rng.gauss() * (1.05 - acc) * 0.075 * scale;
+  return m.rng.gauss() * (1.08 - acc) * 0.085 * scale * skillErr(m, p) * pressureErr(m, p);
 }
 
 function rotate(x: number, z: number, a: number): { x: number; z: number } {
@@ -151,7 +173,7 @@ export function resolveKick(m: Match, p: Player, order: KickOrder): Launch {
     tx = clamp(tx, -HALF_L + 2, HALF_L - 2);
     tz = clamp(tz, -HALF_W + 1.5, HALF_W - 1.5);
     const d = Math.max(2, dist2(b.x, b.z, tx, tz));
-    const v0 = Math.min(groundPassSpeed(d, 2.6), 30);
+    const v0 = Math.min(groundPassSpeed(d, 3.6), 30);
     const u = rotate((tx - b.x) / d, (tz - b.z) / d, passError(p, m, 1.3));
     return launch(u.x * v0, 0, u.z * v0, 0, 0, 0, tgt, kind, clamp(v0 / 28, 0, 1));
   }
@@ -199,26 +221,42 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   const acc = p.stat.shooting / 100;
   const power = clamp(order.power, 0, 1);
   const hw = GOAL_W / 2;
+  const sk = skillErr(m, p);
+  const press = pressureErr(m, p);
 
-  // Aim: stick across the goal picks a corner; otherwise go away from the keeper.
+  // Aim: stick across the goal picks a corner; otherwise the side the keeper leaves open.
   const keeper = m.keeperOf(p.side === 0 ? 1 : 0);
-  const lateral = clamp(order.dirZ * ad * ad, -1, 1); // world z is lateral for both ends
+  const lateral = clamp(order.dirZ, -1, 1); // world z is lateral for both ends
   let aimZ: number;
   if (Math.abs(lateral) > 0.3) {
-    aimZ = Math.sign(lateral) * (hw - 0.55);
+    aimZ = Math.sign(lateral) * (hw - 0.5);
   } else {
-    const kz = keeper ? keeper.pos.z : 0;
-    const away = kz > b.z * 0.15 ? -1 : 1;
-    aimZ = away * (hw - 0.8);
+    // Where the keeper blocks the goal line, seen from the ball.
+    let kLine = 0;
+    if (keeper) {
+      const kdx = keeper.pos.x - b.x;
+      const t = Math.abs(kdx) > 0.3 ? clamp((gx - b.x) / kdx, 1, 5) : 1;
+      kLine = clamp(b.z + (keeper.pos.z - b.z) * t, -hw, hw);
+    }
+    const gapR = hw - kLine;
+    const gapL = kLine + hw;
+    let dir = gapR >= gapL ? 1 : -1;
+    // Similar gaps: mix it up (near post / far post) so keepers can't cheat.
+    if (Math.abs(gapR - gapL) < 0.9 && m.rng.chance(0.4)) dir = -dir;
+    aimZ = dir * (hw - 0.35 - m.rng.next() * 0.55);
+    if (header) aimZ *= 0.75;
   }
   const d = Math.max(2, dist2(b.x, b.z, gx, aimZ));
-  const composure = header ? 0.75 : 1;
-  const errZ = m.rng.gauss() * (0.25 + d * 0.035) * (1.15 - acc) * (0.55 + power * 0.7) / composure;
+  const composure = header ? 0.4 : 1;
+  const errZ = (m.rng.gauss() * (0.7 + d * 0.058) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press) / composure;
   const tz = aimZ + errZ;
   // Height at the line: placed shots stay low, blasted ones climb (and can fly over).
-  const skew = Math.abs(m.rng.gauss()) * (1.1 - acc) * power * 1.6;
-  let h = header ? 0.35 + power * 0.9 + skew * 0.5 : 0.3 + power * power * 1.55 + skew;
+  const skew = Math.abs(m.rng.gauss()) * (1.15 - acc) * (0.35 + power) * 2.1 * sk * press;
+  let h = header
+    ? 0.3 + power * 0.8 + skew * 0.9 + m.rng.gauss() * 0.55
+    : 0.25 + power * power * 1.25 + skew + m.rng.gauss() * 0.25;
   if (!header && b.y > 0.7) h += b.y * 0.35; // volleys fly
+  h = Math.max(0.15, h);
   let speed = header ? 11 + power * 8 + acc * 3 : 15 + power * 16 * (0.78 + acc * 0.3);
   speed = Math.min(speed, 35);
   const dx = gx - b.x;
@@ -230,8 +268,21 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   const ux = dx / dl;
   const uz = dz / dl;
   // A little natural curl so shots don't look like laser beams.
-  const curl = m.rng.gauss() * 1.2 + (order.dirX !== 0 || order.dirZ !== 0 ? 0 : 0);
+  const curl = m.rng.gauss() * 1.2;
   return launch(ux * speed, vy, uz * speed, 0, curl, 0, -1, header ? 'header' : 'shot', power);
+}
+
+/** Opponents (outfield) standing in the shooting lane from `p` to the middle of the goal. */
+export function shotBlockers(m: Match, p: Player): number {
+  const ad = m.attackDir(p.side);
+  const gx = ad * HALF_L;
+  let n = 0;
+  for (const o of m.players) {
+    if (o.side === p.side || o.isKeeper) continue;
+    const { d, t } = pointSegDist(o.pos.x, o.pos.z, p.pos.x, p.pos.z, gx, clamp(p.pos.z * 0.2, -1.5, 1.5));
+    if (t > 0.02 && t < 0.97 && d < 0.6 + t * 1.1) n += d < 0.5 ? 1 : 0.5;
+  }
+  return n;
 }
 
 function launch(
@@ -242,17 +293,32 @@ function launch(
   return { vx, vy, vz, spinX, spinY, spinZ, target, kind, power };
 }
 
-/** Is the shot's current trajectory going to end up between the posts? */
+const scratch = new Ball();
+const scratchHits: BallHit[] = [];
+
+/**
+ * Is the ball's current flight going to end up in the net if nobody touches it? Runs the real
+ * ball physics (drag, curl, posts) on a scratch ball, so shots off the woodwork don't count.
+ */
 export function onTarget(m: Match, side: number): boolean {
   const b = m.ball;
   const ad = m.attackDir(side as 0 | 1);
-  const gx = ad * HALF_L;
   if (b.vel.x * ad <= 0.5) return false;
-  const t = (gx - b.pos.x) / b.vel.x;
-  if (t < 0 || t > 3) return false;
-  const z = b.pos.z + b.vel.z * t;
-  const y = b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t;
-  return Math.abs(z) < GOAL_W / 2 + 0.1 && y < GOAL_H + 0.1;
+  scratch.reset(b.pos.x, b.pos.z);
+  scratch.pos.y = b.pos.y;
+  scratch.vel.x = b.vel.x;
+  scratch.vel.y = b.vel.y;
+  scratch.vel.z = b.vel.z;
+  scratch.spin.x = b.spin.x;
+  scratch.spin.y = b.spin.y;
+  scratch.spin.z = b.spin.z;
+  for (let i = 0; i < 240; i++) {
+    scratchHits.length = 0;
+    scratch.step(1 / 60, scratchHits);
+    if (scratch.inGoal !== 0) return scratch.inGoal === ad;
+    if (Math.abs(scratch.pos.x) > HALF_L + 0.5 || scratch.hspeed() < 0.5) return false;
+  }
+  return false;
 }
 
 /** Approximate chance a shot from here goes in, used by the AI to decide when to shoot. */

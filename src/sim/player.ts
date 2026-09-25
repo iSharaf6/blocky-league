@@ -72,6 +72,25 @@ export class Player {
   aiDirZ = 0;
   runT = 0;
   running = false;
+  /** Seconds this player has had the ball at their feet (reset on every new control). */
+  ballT = 0;
+  /** What the AI carrier is currently doing between decisions. */
+  aiMode: 'dribble' | 'shield' = 'dribble';
+  /** Kick id of the last ball this player already tried (and failed) to block. */
+  blockKick = -1;
+  /** Keeper: kick id of the cross last judged, and whether they decided to come for it. */
+  claimKick = -1;
+  claiming = false;
+  /** Kick id of the last ball this player already decided whether to hit first time. */
+  volleyKick = -1;
+  /** Seconds left on a committed tackle attempt (pressing AI). */
+  commitT = 0;
+  /** How long the AI carrier means to keep the ball before moving it on (set on each control). */
+  holdT = 1;
+  /** Seconds spent jockeying the current carrier (presser escalates to a tackle over time). */
+  jockeyT = 0;
+  /** Wrong-footed by a take-on: slower to react for this long. */
+  slowT = 0;
 
   readonly role: Role;
   readonly isKeeper: boolean;
@@ -130,6 +149,7 @@ export class Player {
     this.stateT += dt;
     this.kickCooldown = Math.max(0, this.kickCooldown - dt);
     this.tackleCooldown = Math.max(0, this.tackleCooldown - dt);
+    this.slowT = Math.max(0, this.slowT - dt);
 
     switch (this.state) {
       case 'move':
@@ -206,12 +226,19 @@ export class Player {
       tx /= tl;
       tz /= tl;
     }
+    // Backpedalling while facing a target (jockeying) is slower than running forwards.
+    if (this.faceTarget !== null && tl > 0.05) {
+      const back = -(Math.cos(this.facing) * tx + Math.sin(this.facing) * tz) / Math.min(tl, 1);
+      if (back > 0.3) max *= 1 - 0.2 * Math.min(1, (back - 0.3) / 0.5);
+    }
+    if (this.slowT > 0) max *= 0.55;
     tx *= max;
     tz *= max;
 
     // Sharp turns at speed bleed momentum like a real plant-and-turn.
     const sp = this.speed();
     let accel = tl > 0.05 ? ACCEL : DECEL;
+    if (this.slowT > 0) accel *= 0.5;
     if (sp > 2 && tl > 0.05) {
       const cur = Math.atan2(this.vel.z, this.vel.x);
       const want = Math.atan2(tz, tx);

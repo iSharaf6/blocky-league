@@ -1,4 +1,4 @@
-import type { Quality } from '../render/world';
+import type { Quality, TimeOfDay } from '../render/world';
 
 export interface Settings {
   sfx: boolean;
@@ -8,6 +8,7 @@ export interface Settings {
   difficulty: number;
   halfMinutes: number;
   autoSwitch: boolean;
+  timeOfDay: TimeOfDay | 'random';
 }
 
 export interface Record {
@@ -40,7 +41,7 @@ export function defaultSave(): SaveData {
     coins: 500,
     clubIdx: 5,
     opponentIdx: 6,
-    settings: { sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, autoSwitch: true },
+    settings: { sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, autoSwitch: true, timeOfDay: 'random' },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
     seenTutorial: false,

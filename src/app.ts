@@ -1,5 +1,6 @@
 import type { SaveData } from './core/save';
 import type { MatchResult } from './game/matchSession';
+import type { TimeOfDay } from './render/world';
 import type { Kit, Side, TeamDef } from './sim/types';
 import type { Menus } from './ui/menus';
 
@@ -20,6 +21,8 @@ export interface MatchRequest {
   halfMinutes: number;
   /** 0..1 crowd size. */
   attendance: number;
+  /** Lighting; omitted = the player's setting (random by default). */
+  timeOfDay?: TimeOfDay;
   /** Compute the coins for this result (called once at full time). */
   reward: (r: MatchResult) => Reward;
   /** Label for the full-time continue button. */

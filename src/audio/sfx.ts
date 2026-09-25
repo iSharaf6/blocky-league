@@ -18,6 +18,7 @@ export class Sfx {
   sfxOn = true;
   musicOn = true;
   crowdOn = true;
+  private muted = false;
 
   get ready(): boolean {
     return this.ctx !== null && this.ctx.state === 'running';
@@ -31,7 +32,7 @@ export class Sfx {
       this.ctx = new AC();
       const c = this.ctx;
       this.master = c.createGain();
-      this.master.gain.value = 0.9;
+      this.master.gain.value = this.muted ? 0 : 0.9;
       const comp = c.createDynamicsCompressor();
       comp.threshold.value = -14;
       comp.ratio.value = 4;
@@ -86,6 +87,13 @@ export class Sfx {
       src.start(0, Math.random() * 2);
     }
     this.crowdFilter.connect(this.crowdGain).connect(this.crowdBus);
+  }
+
+  /** Portal ads / platform mute: silence everything without losing state. */
+  setMuted(m: boolean): void {
+    this.muted = m;
+    if (!this.ctx) return;
+    this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.ctx.currentTime, 0.05);
   }
 
   setCrowd(active: boolean): void {

@@ -9,9 +9,11 @@ import { loadSave, writeSave } from './core/save';
 import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
-import { World } from './render/world';
+import { World, type TimeOfDay } from './render/world';
 import type { Side } from './sim/types';
 import { DIFF_LEVEL, Menus } from './ui/menus';
+import { openCareer } from './ui/career';
+import { openClub } from './ui/club';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const world = new World(canvas);
@@ -45,7 +47,7 @@ function startDemo(): void {
   const away = makeTeam(PRESET_CLUBS[b]);
   demo = new MatchSession(world, input, {
     home, away, halfLength: 600, difficulty: 3, humanSide: -1, seed: Math.floor(Math.random() * 1e9),
-    kits: [home.kit, resolveKitClash(home.kit, away.kit)], attendance: 0.8, demo: true,
+    kits: [home.kit, resolveKitClash(home.kit, away.kit)], attendance: 0.8, demo: true, timeOfDay: 'day',
   });
 }
 
@@ -53,7 +55,7 @@ const app: AppContext = {
   save,
   menus,
   persist,
-  startMatch: (req) => startMatch(req),
+  startMatch: (req) => void startMatch(req),
   mainMenu: () => mainMenu(),
 };
 
@@ -62,8 +64,8 @@ function mainMenu(): void {
   if (save.settings.music) sfx.startMusic();
   menus.main(save, {
     quick: quickMatch,
-    career: () => menus.comingSoon('CAREER', 'Six divisions, promotion, transfers and a stadium to grow. Unlocking in the next update — play quick matches to stack coins for it!', mainMenu),
-    club: () => menus.comingSoon('MY CLUB', 'Kit designer, squad and upgrades are on their way. Your coins are saved.', mainMenu),
+    career: () => openCareer(app),
+    club: () => openClub(app),
     settings: () => menus.settings(save, applySettings, mainMenu),
     howto: () => menus.howTo(mainMenu),
   });
@@ -101,6 +103,13 @@ function quickMatch(): void {
   });
 }
 
+function pickTime(): TimeOfDay {
+  const t = save.settings.timeOfDay;
+  if (t !== 'random') return t;
+  const r = Math.random();
+  return r < 0.5 ? 'day' : r < 0.75 ? 'sunset' : 'night';
+}
+
 function recordResult(r: MatchResult): void {
   const hs: Side = r.humanSide === 1 ? 1 : 0;
   const my = r.score[hs];
@@ -111,14 +120,18 @@ function recordResult(r: MatchResult): void {
   rec.goalsAgainst += their;
   if (my > their) {
     rec.won++;
-    ads.happyTime();
+    if (my - their >= 3) ads.happyTime();
   } else if (my === their) rec.drawn++;
   else rec.lost++;
 }
 
-function startMatch(req: MatchRequest): void {
+let matchesPlayed = 0;
+
+async function startMatch(req: MatchRequest): Promise<void> {
   menus.close();
   sfx.stopMusic();
+  // Portal interstitial at the natural break before a new kick-off (never on the first match).
+  if (matchesPlayed > 0) await ads.midgame();
   demo?.dispose();
   demo = null;
   const { kits, humanSide } = req;
@@ -131,6 +144,8 @@ function startMatch(req: MatchRequest): void {
     humanSide,
     attendance: req.attendance,
     seed: Math.floor(Math.random() * 1e9),
+    timeOfDay: req.timeOfDay ?? pickTime(),
+    tutorial: !save.seenTutorial,
   });
   session.match.autoSwitch = save.settings.autoSwitch;
   const s = session;
@@ -164,7 +179,9 @@ function startMatch(req: MatchRequest): void {
   };
   s.onFinish = (r) => {
     ads.gameplayStop();
+    matchesPlayed++;
     recordResult(r);
+    save.seenTutorial = true;
     const reward = req.reward(r);
     let earned = reward.coins;
     save.coins += reward.coins;
@@ -183,10 +200,9 @@ function startMatch(req: MatchRequest): void {
         }
         return ok;
       },
-      next: async () => {
+      next: () => {
         menus.close();
         endMatch();
-        await ads.midgame();
         req.onDone(r, earned);
       },
     });
@@ -215,15 +231,15 @@ function frame(now: number): void {
   last = now;
   (session ?? demo)?.update(dt);
   world.render();
+  world.adapt(dt);
   requestAnimationFrame(frame);
 }
 
 async function boot(): Promise<void> {
   world.setQuality(save.settings.quality);
-  ads.onMute = (m) => {
-    if (m) sfx.stopMusic();
-  };
-  await Promise.all([ads.init(), document.fonts?.ready]);
+  ads.onMute = (m) => sfx.setMuted(m);
+  // Never let a slow or blocked portal SDK hold the title screen hostage.
+  await Promise.all([Promise.race([ads.init(), new Promise<void>((r) => setTimeout(r, 3000))]), document.fonts?.ready]);
   startDemo();
   requestAnimationFrame(frame);
   document.getElementById('boot')?.classList.add('gone');

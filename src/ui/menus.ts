@@ -140,6 +140,7 @@ export class Menus {
           </div>
           <div class="opt-row"><label>DIFFICULTY</label><div class="seg" data-o="diff"></div></div>
           <div class="opt-row"><label>HALF LENGTH</label><div class="seg" data-o="len"></div></div>
+          <div class="opt-row"><label>KICK-OFF</label><div class="seg" data-o="tod"></div></div>
           <div class="btn-row">
             <button class="btn btn-white" data-a="back">BACK</button>
             <button class="btn btn-go btn-lg" data-a="go">KICK OFF</button>
@@ -178,7 +179,7 @@ export class Menus {
     };
     render('home');
     render('away');
-    const seg = (key: 'diff' | 'len', labels: string[], get: () => number, set: (i: number) => void) => {
+    const seg = (key: 'diff' | 'len' | 'tod', labels: string[], get: () => number, set: (i: number) => void) => {
       const el = $(d, `[data-o=${key}]`);
       const draw = () => {
         el.innerHTML = labels.map((l, i) => `<button class="${i === get() ? 'on' : ''}" data-i="${i}">${l}</button>`).join('');
@@ -194,6 +195,8 @@ export class Menus {
     };
     seg('diff', DIFFICULTIES, () => save.settings.difficulty, (i) => (save.settings.difficulty = i));
     seg('len', HALF_OPTIONS.map((m) => `${m} MIN`), () => Math.max(0, HALF_OPTIONS.indexOf(save.settings.halfMinutes)), (i) => (save.settings.halfMinutes = HALF_OPTIONS[i]));
+    const tods = ['day', 'sunset', 'night', 'random'] as const;
+    seg('tod', ['DAY', 'SUNSET', 'NIGHT', 'RANDOM'], () => Math.max(0, tods.indexOf(save.settings.timeOfDay)), (i) => (save.settings.timeOfDay = tods[i]));
     $(d, '[data-a=back]').addEventListener('click', onBack);
     $(d, '[data-a=go]').addEventListener('click', () => onKickOff(home, away));
   }
@@ -290,7 +293,7 @@ export class Menus {
           ${this.statsTable(m)}
           <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
           <div class="btn-row">
-            ${canDouble ? '<button class="btn btn-yellow" data-a="double">▶ WATCH AD · 2× COINS</button>' : ''}
+            ${canDouble ? '<button class="btn btn-yellow" data-a="double">🎬 2× COINS</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="next">${h.nextLabel ?? 'CONTINUE'}</button>
           </div>
         </div>
@@ -311,9 +314,11 @@ export class Menus {
     };
     setTimeout(() => count(reward.coins), 350);
     const dbl = d.querySelector<HTMLButtonElement>('[data-a=double]');
+    const nextBtn = $<HTMLButtonElement>(d, '[data-a=next]');
     dbl?.addEventListener('click', async () => {
       dbl.disabled = true;
-      const ok = await h.double();
+      nextBtn.disabled = true;
+      const ok = await h.double().finally(() => (nextBtn.disabled = false));
       if (ok) {
         count(reward.coins * 2);
         dbl.textContent = 'DOUBLED!';

@@ -102,7 +102,7 @@ export function meshVoxels(g: VoxelGrid, opt: MeshOptions): THREE.BufferGeometry
             const a = s1 && s2 ? 0 : 3 - (s1 + s2 + cc);
             ao.push(a);
             let k = AO_CURVE[a];
-            if (tint) k *= f === 2 ? 1.0 : f === 3 ? 0.82 : f <= 1 ? 0.95 : 0.92;
+            if (tint) k *= f === 2 ? 1.0 : f === 3 ? 0.7 : 0.9;
             col.push(r0 * k, g0 * k, b0 * k);
           }
           // Flip the quad diagonal to follow the AO gradient.

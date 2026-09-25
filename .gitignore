@@ -11,3 +11,5 @@ android/build/
 android/app/build/
 .vite/
 build/
+dist-*/
+release/

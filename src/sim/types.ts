@@ -84,7 +84,13 @@ export type MatchEvent =
   | { type: 'fulltime' }
   | { type: 'kickoffReady'; side: Side }
   | { type: 'foul'; by: number; on: number; penalty: boolean }
-  | { type: 'restart'; kind: RestartKind; side: Side };
+  | { type: 'restart'; kind: RestartKind; side: Side }
+  /** A pass or shot cannoned off a defender. */
+  | { type: 'block'; by: number; shot: boolean; x: number; z: number }
+  /** Keeper came for a cross: caught it or punched it clear. */
+  | { type: 'claim'; keeper: number; caught: boolean }
+  /** A dribbler wrong-footed a defender. */
+  | { type: 'beat'; by: number; on: number };
 
 export type KickKind = 'pass' | 'through' | 'lob' | 'shot' | 'clear' | 'header' | 'throw' | 'keeper';
 export type RestartKind = 'kickoff' | 'throwin' | 'corner' | 'goalkick' | 'freekick' | 'penalty';

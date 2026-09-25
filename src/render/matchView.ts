@@ -22,8 +22,10 @@ export class MatchView {
   private axis = new THREE.Vector3();
   private pose: PoseInput = {
     state: 0, stateT: 0, speed: 0, runPhase: 0, kickT: 0, kickLeg: 1, lean: 0, diveDir: 0, headerT: 0,
-    celebrate: 0, y: 0, keeper: false, hasBall: false,
+    celebrate: 0, y: 0, keeper: false, hasBall: false, look: 0, turn: 0,
   };
+  private lastFacing = new Float32Array(22);
+  private turnRate = new Float32Array(22);
   /** Interpolated frame the renderer last drew (read by camera, HUD). */
   readonly frame: Float32Array;
 
@@ -122,6 +124,15 @@ export class MatchView {
       pose.celebrate = f[o + 13];
       pose.hasBall = f[o + 14] > 0.5;
       pose.keeper = i === 0 || i === 11;
+      const bearing = Math.atan2(f[BALL_OFS + 2] - f[o + 1], f[BALL_OFS] - f[o]);
+      // Model left is -z; our facing angle grows towards +z, so negate for "left positive".
+      pose.look = -wrapAngle(bearing - f[o + 3]);
+      if (dt > 0) {
+        const dF = wrapAngle(f[o + 3] - this.lastFacing[i]) / dt;
+        this.turnRate[i] += (Math.max(-12, Math.min(12, -dF)) - this.turnRate[i]) * Math.min(1, dt * 8);
+      }
+      this.lastFacing[i] = f[o + 3];
+      pose.turn = this.turnRate[i];
       fb.pose(pose, time + i * 0.37);
     }
 

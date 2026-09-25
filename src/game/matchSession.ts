@@ -5,7 +5,7 @@ import { CameraRig } from '../render/cameraRig';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
 import { Stadium } from '../render/stadium';
-import type { World } from '../render/world';
+import type { TimeOfDay, World } from '../render/world';
 import { DT, HALF_L } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
 import type { Kit, MatchEvent, RestartKind, Side } from '../sim/types';
@@ -17,6 +17,9 @@ export interface SessionOptions extends MatchConfig {
   kits: [Kit, Kit];
   attendance: number;
   demo?: boolean;
+  timeOfDay?: TimeOfDay;
+  /** Show first-match control tips. */
+  tutorial?: boolean;
 }
 
 export interface MatchResult {
@@ -58,6 +61,8 @@ export class MatchSession {
   private lastMinute = -1;
   private goalHypeT = 0;
   private prevButtons = false;
+  private introLeft = 0;
+  private tut = { moved: false, passed: false, shot: false, switched: false, step: 0, t: 0 };
   private readonly demo: boolean;
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
@@ -73,9 +78,13 @@ export class MatchSession {
       seed: this.match.rng.int(1e9),
     });
     this.view = new MatchView(teams, opt.kits, opt.humanSide);
+    const tod = opt.timeOfDay ?? 'day';
+    world.setTimeOfDay(tod);
+    this.stadium.setTimeOfDay(tod);
     world.scene.add(this.stadium.group, this.view.group, this.effects.mesh);
     this.cam = new CameraRig(world.camera);
-    this.cam.setMode(this.demo ? 'menu' : 'broadcast');
+    this.cam.setMode(this.demo ? 'menu' : 'intro');
+    if (!this.demo) this.introLeft = 3.4;
     if (!this.demo) {
       this.hud = new Hud(
         [hudTeam(teams[0], opt.kits[0].shirt, opt.kits[0].shirt2), hudTeam(teams[1], opt.kits[1].shirt, opt.kits[1].shirt2)],
@@ -93,6 +102,10 @@ export class MatchSession {
     writeFrame(this.match, this.cur, 0);
     this.prev.set(this.cur);
     sfx.setCrowd(true);
+    if (this.hud) {
+      this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} · ${teams[1].name}`, 'small intro', 3.2);
+      this.prevButtons = true;
+    }
   }
 
   requestPause(): void {
@@ -123,7 +136,16 @@ export class MatchSession {
     this.time += dt;
     const m = this.match;
 
-    if (this.replay) {
+    if (this.introLeft > 0) {
+      this.introLeft -= dt;
+      this.cam.introT = Math.min(1, 1 - this.introLeft / 3.4);
+      const c = this.input.read();
+      const btn = c.pass || c.shoot || c.through;
+      if (btn && !this.prevButtons) this.introLeft = 0;
+      this.prevButtons = btn;
+      if (this.introLeft <= 0) this.cam.setMode('broadcast');
+      this.view.apply(this.prev, this.cur, 1, this.time, dt);
+    } else if (this.replay) {
       this.stepReplay(dt);
     } else if (!this.paused) {
       this.acc += dt;
@@ -150,18 +172,26 @@ export class MatchSession {
     const attack = hs >= 0 ? m.attackDir(hs as Side) : 1;
     let ax = f[BALL_OFS];
     let az = f[BALL_OFS + 2];
+    let avx = 0;
+    let avz = 0;
     const act = f[BALL_OFS + 8];
     if (this.cam.mode === 'celebrate' && m.lastGoalScorer >= 0) {
+      const sc = m.players[m.lastGoalScorer];
       ax = f[m.lastGoalScorer * PF];
       az = f[m.lastGoalScorer * PF + 1];
+      avx = sc.vel.x;
+      avz = sc.vel.z;
     } else if (act >= 0) {
       ax = f[act * PF];
       az = f[act * PF + 1];
     }
+    const owner = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
+    const lean = owner ? m.attackDir(owner.side) : 0;
     this.cam.update(dt, {
       bx: f[BALL_OFS], by: f[BALL_OFS + 1], bz: f[BALL_OFS + 2],
       bvx: f[BALL_OFS + 3], bvz: f[BALL_OFS + 5],
-      ax, az, attack,
+      ax, az, avx, avz, attack, lean,
+      setPiece: this.replay ? null : this.setPieceFrame(),
     }, this.time);
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
     this.view.faceCamera(this.world.camera);
@@ -184,6 +214,7 @@ export class MatchSession {
         this.replayDone = false;
         m.resumeAfterGoal();
         this.cam.setMode('broadcast');
+        this.view.setMarkerVisible(m.cfg.humanSide >= 0);
       }
     }
     if (m.phase === 'halftime' && !this.halftimeFired && m.phaseT > 1.6) {
@@ -198,6 +229,27 @@ export class MatchSession {
     }
   }
 
+  /** Frame the taker and where the ball is going for set pieces. */
+  private setPieceFrame(): { x: number; z: number; tx: number; tz: number } | null {
+    const m = this.match;
+    const r = m.restart;
+    if (!r || (m.phase !== 'restart' && m.phase !== 'out')) return null;
+    if (m.phase === 'out' && m.phaseT < 0.5) return null;
+    const ad = m.attackDir(r.side);
+    switch (r.kind) {
+      case 'corner':
+      case 'freekick':
+      case 'penalty':
+        return { x: r.x, z: r.z, tx: ad * (HALF_L - 9), tz: 0 };
+      case 'throwin':
+        return { x: r.x, z: r.z, tx: r.x + ad * 8, tz: r.z * 0.55 };
+      case 'goalkick':
+        return { x: r.x, z: r.z, tx: r.x + ad * 22, tz: 0 };
+      default:
+        return null;
+    }
+  }
+
   private startReplay(): void {
     const lead = 4.6 * 60;
     const tail = 1.3 * 60;
@@ -207,7 +259,9 @@ export class MatchSession {
     this.replay = frames.slice(0, Math.min(frames.length, cut));
     this.replayGoalIdx = Math.max(0, this.replay.length - tail);
     this.replayT = 0;
-    this.cam.replayAngle = Math.floor(Math.random() * 3);
+    this.cam.replayAngle = Math.floor(Math.random() * 2);
+    this.cam.replayGoalSign = this.match.attackDir(this.match.goalSide);
+    this.cam.replayShot = this.replay.length - this.replayGoalIdx > 0 && this.replayGoalIdx > 100 ? 'build' : 'goal';
     this.cam.setMode('replay');
     this.hud?.setReplay(true);
     this.view.setMarkerVisible(false);
@@ -217,9 +271,14 @@ export class MatchSession {
   private stepReplay(dt: number): void {
     const frames = this.replay!;
     const idx = this.replayT * 60;
-    // Slow-motion as the ball goes in.
-    const near = Math.abs(idx - this.replayGoalIdx) < 70;
-    this.replayT += dt * (near ? 0.38 : 0.75);
+    // Two shots like TV: the move in real-ish time, then the finish from behind the net in slow-mo.
+    const finish = idx >= this.replayGoalIdx - 95;
+    if (finish && this.cam.replayShot === 'build') {
+      this.cam.replayShot = 'goal';
+      this.cam.cut();
+    }
+    const near = finish;
+    this.replayT += dt * (near ? 0.36 : 0.85);
     const i = Math.floor(idx);
     const c = this.input.read();
     const btn = c.pass || c.shoot || c.through;
@@ -229,12 +288,11 @@ export class MatchSession {
       this.replay = null;
       this.replayDone = true;
       this.hud?.setReplay(false);
-      this.view.setMarkerVisible(this.match.cfg.humanSide >= 0);
       this.cam.setMode('broadcast');
       this.flow();
       return;
     }
-    this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * (near ? 0.38 : 0.75));
+    this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * (near ? 0.36 : 0.85));
   }
 
   private handleEvents(events: MatchEvent[]): void {
@@ -243,6 +301,10 @@ export class MatchSession {
       switch (e.type) {
         case 'kick': {
           sfx.kick(e.power, e.kind === 'header');
+          if (m.ball.lastTouch >= 0 && m.players[m.ball.lastTouch].side === m.cfg.humanSide) {
+            if (e.kind === 'shot' || e.kind === 'header') this.tut.shot = true;
+            else this.tut.passed = true;
+          }
           if (e.kind === 'shot' && e.power > 0.5) {
             this.effects.grass(e.x, e.z, 10, e.power);
             this.cam.kick(0.05 + e.power * 0.08);
@@ -267,6 +329,7 @@ export class MatchSession {
           this.effects.burst(gx, 1.5, m.ball.pos.z, cols, 60, 9);
           this.effects.confetti(gx * 0.7, 0, cols, 260, 60);
           this.cam.kick(0.25);
+          this.view.setMarkerVisible(false);
           if (!this.demo) this.cam.setMode('celebrate');
           void s;
           break;
@@ -373,6 +436,7 @@ export class MatchSession {
       hint = `${key('pass')} throw · ${key('through')} kick long`;
     }
     hud.setHint(this.replay ? '' : hint);
+    this.updateTutorial(dt, key);
     if (m.active >= 0) {
       const p = m.players[m.active];
       hud.setPlayer(p.def.number, p.def.name, p.stamina);
@@ -386,6 +450,34 @@ export class MatchSession {
     // Pause via keyboard / gamepad.
     const c = this.input.gamepadPause();
     if (c && !this.paused) this.requestPause();
+  }
+
+  private updateTutorial(dt: number, key: (k: 'pass' | 'shoot' | 'through') => string): void {
+    const hud = this.hud;
+    if (!hud || !this.opt.tutorial) return;
+    const m = this.match;
+    const t = this.tut;
+    const c = this.input.read();
+    if (Math.hypot(c.sx, c.sy) > 0.3 && m.phase === 'play') t.moved = true;
+    if (m.phase !== 'play' || this.replay) {
+      hud.setTip('');
+      return;
+    }
+    t.t += dt;
+    const dev = this.input.lastDevice;
+    const move = dev === 'gamepad' ? 'LEFT STICK' : dev === 'touch' ? 'the left thumbstick' : 'WASD / ARROWS';
+    const sprint = dev === 'gamepad' ? 'RT' : dev === 'touch' ? 'SPRINT' : 'SHIFT';
+    const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === m.cfg.humanSide;
+    let tip = '';
+    if (!t.moved) tip = `Move with <kbd>${move}</kbd> · sprint with <kbd>${sprint}</kbd>`;
+    else if (mine && !t.passed) tip = `<kbd>${key('pass')}</kbd> passes where you aim · tap <kbd>${key('through')}</kbd> for a through ball`;
+    else if (mine && !t.shot) tip = `Near goal? <b>Hold</b> <kbd>${key('shoot')}</kbd> and release to shoot — longer hold, more power`;
+    else if (!mine && m.ball.owner >= 0 && !t.switched) {
+      tip = `Defending: <kbd>${key('pass')}</kbd> switches player · <kbd>${key('shoot')}</kbd> slide tackles · run into them to steal`;
+      if (t.t > 60) t.switched = true;
+    }
+    if (t.moved && t.passed && t.shot && (t.switched || t.t > 90)) this.opt.tutorial = false;
+    hud.setTip(tip);
   }
 
   dispose(): void {
