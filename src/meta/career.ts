@@ -646,6 +646,17 @@ export function matchDifficulty(division: number): number {
   return d >= 5 ? 0 : d >= 3 ? 1 : d === 2 ? 2 : 3;
 }
 
+/**
+ * The ground a league rival plays at (0 park pitch .. STADIUM_MAX full bowl), for away matches: bigger in
+ * higher divisions (Sunday League 0 .. Elite League 5), and the division's stronger sides a size up.
+ */
+export function rivalStadiumLevel(division: number, rival: Pick<LeagueClub, 'level'>): number {
+  const d = clampDivision(division);
+  const base = BOTTOM_DIVISION - d;
+  const strong = rival.level > DIVISION_LEVEL[d] + 3 ? 1 : 0;
+  return clamp(base + strong, 0, STADIUM_MAX);
+}
+
 export function matchAttendance(stadium: number): number {
   return Math.min(1, 0.35 + clamp(stadium, 0, STADIUM_MAX) * 0.12);
 }

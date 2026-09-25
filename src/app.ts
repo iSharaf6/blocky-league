@@ -23,6 +23,8 @@ export interface MatchRequest {
   attendance: number;
   /** Lighting; omitted = the player's setting (random by default). */
   timeOfDay?: TimeOfDay;
+  /** Home stadium size 0 (park pitch) .. 5 (full bowl); omitted = 5. */
+  stadiumLevel?: number;
   /** Weather; omitted = the player's setting. */
   weather?: 'clear' | 'rain' | 'snow';
   /** Cup tie: level at full time goes to a penalty shootout. */

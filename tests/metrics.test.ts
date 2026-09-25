@@ -33,7 +33,9 @@ function checkBands(halfLength: number, n: number): void {
   // Set pieces and discipline: deflections, tips and glanced clearances put it behind, defenders
   // slide in on escaping carriers (~30% of slides are mistimed into fouls), a card or two a match.
   within(s.corners, 3, 6);
-  within(s.throwins, 3, halfLength <= 120 ? 8 : 10);
+  // Throw-ins: pokes and blocks out on the flank and clearances under pressure by the touchline go
+  // into touch (it used to be ~3.5 a match at 2x120 s against ~14 shots).
+  within(s.throwins, 5, halfLength <= 120 ? 8 : 10);
   within(s.fouls, 3, 5);
   within(s.slides, 2 * k, 6);
   within(s.yellows, 0, 2);

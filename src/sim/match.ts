@@ -1,6 +1,6 @@
-import { angleDiff, clamp, dist2 } from '../core/math';
+import { angleDiff, clamp, dist2, pointSegDist, turnToward } from '../core/math';
 import { Rng } from '../core/rng';
-import { onTarget, pickReceiver, resolveKick, stickCurl } from './actions';
+import { CURL_SPIN, onTarget, pickReceiver, resolveKick, stickCurl } from './actions';
 import { intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { Ball, type BallHit } from './ball';
 import {
@@ -46,6 +46,12 @@ export interface Pad {
   pass: boolean;
   shoot: boolean;
   through: boolean;
+  /**
+   * Optional: the stick is keyboard / d-pad (true) or an analog stick / touch thumbstick (false).
+   * Left out, the sim guesses from the vector (isDigitalStick). Keys turn a free-kick / corner aim
+   * gradually instead of snapping it to eight directions.
+   */
+  digital?: boolean;
 }
 
 export interface Restart {
@@ -82,6 +88,28 @@ export interface GoalRecord {
 
 export const EMPTY_PAD: Pad = { mx: 0, mz: 0, sprint: false, pass: false, shoot: false, through: false };
 
+/** How fast (rad/s) keyboard / d-pad input turns a set-piece aim (~60 degrees a second). */
+export const AIM_TURN = Math.PI / 3;
+
+/**
+ * Does this (world-space) stick vector look like keyboard / d-pad input: full length and along one of
+ * the eight 45-degree directions? The pad reaches the sim through the camera, so the directions are
+ * checked against the world axes (the broadcast camera) and against `ref` (the default aim, which a
+ * behind-the-ball set-piece camera looks along, give or take a few degrees). A full-tilt analog stick
+ * held exactly on one of those lines reads as digital too; the input layer can say for sure with
+ * Pad.digital.
+ */
+export function isDigitalStick(mx: number, mz: number, ref = 0): boolean {
+  const l = Math.hypot(mx, mz);
+  if (Math.abs(l - 1) > 0.02) return false;
+  const a = Math.atan2(mz, mx);
+  const off45 = (x: number) => {
+    const k = x / (Math.PI / 4);
+    return Math.abs(k - Math.round(k)) * 45;
+  };
+  return off45(a) < 2 || off45(a - ref) < 6;
+}
+
 /** Chance a contested header ends in a foul by the player who lost it. */
 const AERIAL_FOUL = 0.21;
 /** A shot passing this close (m) to an outfield body is usually blocked. */
@@ -110,12 +138,93 @@ const RUNUP_BACK = 1.5;
 const RUNUP_SIDE = 0.9;
 /** ... and steps in to strike it at this pace (m/s). */
 const RUNUP_SPEED = 5.5;
-/** AI managers look at their bench at the first dead ball after these minutes (second half). */
+/** The run-up spot stays at least this far (m) to his side of the ball-goal line, however he aims. */
+const RUNUP_LENS_CLEAR = 0.8;
+/** AI managers look at their bench at the first dead ball after these minutes (second half)... */
 const AUTO_SUB_MINUTES = [60, 75];
-/** ... and take off outfielders who are this tired. */
-const AUTO_SUB_STAMINA = 0.45;
+/**
+ * A driven corner (SHOOT): whipped at the near-post zone a touch softer than full power, dropping to
+ * ~1 m at the runner (so it's met, not flashed across the box and out for a throw on the far side).
+ */
+const DRIVEN_POWER = 0.75;
+const DRIVEN_LAND = 1.0;
+/** A shot struck at least this fast (m/s) into the top corner is beyond a diving keeper's full reach. */
+const TOP_CORNER_SPEED = 25.5;
+/** Shots from further out than this (m) are held more often (fully from 8 m further out). */
+const LONG_CATCH_FROM = 16;
+/** How much shorter a diving keeper's reach is against a fully bent free kick. */
+const CURL_REACH = 0.15;
+/** How much higher (m) than a shoulder the wall reaches for a straight (unbent) free kick. */
+const WALL_HEAD = 0.18;
+/** How much lower (m) the wall's reach is against a fully bent free kick (it's struck up and dips). */
+const WALL_CURL_DIP = 0.55;
+/** How far (m) in front of / behind his body line a diving keeper can still get a hand to the ball. */
+const DIVE_DEPTH = 0.5;
+/** The flank (m in from the touchline) where tackles and blocks tend to put the ball into touch... */
+const WING_TOUCH = 12;
+/** ... how often a won poke tackle there knocks it out (right by the line), and a block. */
+const WING_POKE_TOUCH = 0.85;
+const WING_BLOCK_TOUCH = 0.8;
+/**
+ * ... and take off outfielders more tired than this (per window: a busy player is ~0.5 fit by the hour
+ * mark, so the 60' look uses a looser bar than the 75' one).
+ */
+const AUTO_SUB_STAMINA = [0.55, 0.45];
 
 const otherSide = (s: Side): Side => (s === 0 ? 1 : 0);
+
+/**
+ * A formation change: which slot of `to` each slot of `from` moves to (index = old slot, value = new
+ * slot). The keeper keeps slot 0; the outfield slots are matched so the total distance (metres on the
+ * pitch) between old and new slot positions is least, with a small preference for slots of the
+ * player's natural role (`roles`, per old slot, optional). Exact (bitmask DP over the ten outfield slots).
+ */
+export function formationRemap(from: readonly Slot[], to: readonly Slot[], roles?: readonly string[]): number[] {
+  const n = Math.min(from.length, to.length);
+  const out = from.map((_, i) => i);
+  if (n <= 1) return out;
+  const k = n - 1; // outfield slots 1..n-1
+  const cost: number[][] = [];
+  for (let i = 0; i < k; i++) {
+    const a = from[i + 1];
+    const row: number[] = [];
+    for (let j = 0; j < k; j++) {
+      const b = to[j + 1];
+      let c = Math.hypot((a.x - b.x) * HALF_L, (a.z - b.z) * HALF_W);
+      if (roles && roles[i + 1] && roles[i + 1] !== b.role) c += 2;
+      row.push(c);
+    }
+    cost.push(row);
+  }
+  const full = (1 << k) - 1;
+  const dp = new Float64Array(1 << k).fill(Infinity);
+  const pick = new Int8Array(1 << k).fill(-1);
+  dp[0] = 0;
+  for (let mask = 0; mask < full; mask++) {
+    if (dp[mask] === Infinity) continue;
+    // The next old slot to place is the popcount of mask.
+    let i = 0;
+    for (let v = mask; v; v &= v - 1) i++;
+    for (let j = 0; j < k; j++) {
+      if (mask & (1 << j)) continue;
+      const nm = mask | (1 << j);
+      const c = dp[mask] + cost[i][j];
+      if (c < dp[nm] - 1e-9) {
+        dp[nm] = c;
+        pick[nm] = j;
+      }
+    }
+  }
+  // Walk back: the last old slot placed took pick[mask].
+  let mask = full;
+  for (let i = k - 1; i >= 0; i--) {
+    const j = pick[mask];
+    out[i + 1] = j + 1;
+    mask &= ~(1 << j);
+  }
+  return out;
+}
+
 /** The scorer's sprint away (s) before he slows so the mob can reach him. */
 const HERO_BURST = 0.7;
 /** A sent-off player's walk to the dugout: pace (m/s), and the longest it takes before he's there. */
@@ -173,6 +282,15 @@ export class Match {
   shooter = -1;
   shotKick = -1;
   shotWasOnTarget = false;
+  /** Launch speed (m/s) of the last shot, and how bent it was (0 straight .. 1 full curl). */
+  shotSpeed = 0;
+  shotCurl = 0;
+  /** How far out (m, to the goal centre) the last shot was struck from. */
+  shotDist = 0;
+  /** kickId of the last shot struck straight from a direct free kick. */
+  private fkShotKick = -1;
+  /** Where the ball was at the start of this step (swept contact checks). */
+  private readonly ballPrev = { x: 0, y: 0, z: 0 };
   ballPath: { t: number; x: number; y: number; z: number }[] = [];
   keeperHoldTime = 1.4;
   /** Human-controlled player index, -1 when nobody. */
@@ -223,6 +341,10 @@ export class Match {
   private adv: { by: number; on: number; side: Side; t: number; x: number; z: number; reckless: boolean; kick: number } | null = null;
   /** Next automatic substitution window (index into AUTO_SUB_MINUTES), per side. */
   private subWindow: [number, number] = [0, 0];
+  /** The stoppage each side's AI manager last looked at his bench (see aiSubs). */
+  private aiSubAt: [string, string] = ['', ''];
+  /** Players (by idx) who came on as substitutes. */
+  private readonly cameOn = new Set<number>();
   /** Conceding players' walk-away points during a goal celebration. */
   private concedeWalk = new Map<number, { x: number; z: number }>();
   /** The AI corner whose short-or-cross choice has been made. */
@@ -235,6 +357,8 @@ export class Match {
   stepIn = -1;
   runUpFoot = 1;
   private stepInT = 0;
+  /** The default aim (radians, world facing) the current restart's taker was set up with. */
+  restartAim = 0;
 
   /**
    * Foul probabilities scale with the half length (like fatigue), so a match of any length has a
@@ -412,6 +536,7 @@ export class Match {
     kicker.pos.x = -ad * 0.62;
     kicker.pos.z = 0.05;
     kicker.facing = ad > 0 ? 0 : Math.PI;
+    this.restartAim = kicker.facing;
     this.ball.owner = kicker.idx;
     this.ball.lastTouch = kicker.idx;
     this.ball.lastTouchSide = side;
@@ -459,30 +584,54 @@ export class Match {
     p.stamina = 1;
     // The yellow card belonged to the man going off, not to the slot.
     this.booked.delete(p.idx);
+    this.cameOn.add(p.idx);
     this.subsUsed[side]++;
     this.teams[side].players[slot] = on;
     this.events.push({ type: 'sub', side, slot, on: on.name, off: off.name });
     return true;
   }
 
-  /** AI managers: freshen up the most tired outfielders (called at half time). */
-  aiSubs(side: Side, count: number, below = 0.7): void {
+  /**
+   * AI managers: freshen up to `count` of the most tired outfielders (stamina under `below`), within
+   * the three-sub limit (called at half time, and by the automatic 60' / 75' windows). Each goes off
+   * for a bench player of the same role if there is one, otherwise any outfielder; a player who has
+   * already come on is never taken off again, and nobody is replaced by a keeper. A second call for
+   * the same side at the same stoppage (same half, phase and clock) does nothing, so a caller that
+   * asks twice at the break can't double the changes. Returns how many substitutions were made.
+   */
+  aiSubs(side: Side, count: number, below = 0.7): number {
+    const key = `${this.half}|${this.phase}|${this.clock}|${this.kickId}`;
+    if (this.aiSubAt[side] === key) return 0;
+    this.aiSubAt[side] = key;
+    let room = Math.max(0, Math.min(Math.floor(count), this.maxSubs - this.subsUsed[side]));
+    if (room <= 0) return 0;
     const tired = this.bySide[side]
-      .filter((p) => !p.isKeeper && !p.sentOff && p.stamina < below)
-      .sort((a, b) => a.stamina - b.stamina)
-      .slice(0, Math.max(0, Math.min(count, this.maxSubs - this.subsUsed[side])));
+      .filter((p) => !p.isKeeper && !p.sentOff && p.stamina < below && !this.cameOn.has(p.idx))
+      .sort((a, b) => a.stamina - b.stamina || a.slot - b.slot);
+    let made = 0;
     for (const p of tired) {
+      if (room <= 0) break;
       const bench = this.bench[side];
-      let idx = bench.findIndex((d) => d.role === p.role);
-      if (idx < 0) idx = bench.findIndex((d) => d.role !== 'GK');
-      if (idx >= 0) this.substitute(side, p.slot, idx);
+      // Like for like first, then any outfielder.
+      const order = [
+        ...bench.map((d, i) => ({ d, i })).filter((e) => e.d.role === p.role),
+        ...bench.map((d, i) => ({ d, i })).filter((e) => e.d.role !== p.role && e.d.role !== 'GK'),
+      ];
+      for (const e of order) {
+        if (this.substitute(side, p.slot, e.i)) {
+          made++;
+          room--;
+          break;
+        }
+      }
     }
+    return made;
   }
 
   /**
    * AI managers (both sides in AI-vs-AI, never the human's) look at their bench at the first dead
-   * ball after 60' and after 75': outfielders under AUTO_SUB_STAMINA come off, up to two at a time,
-   * within the three-sub limit. Each change is a 'sub' event.
+   * ball after 60' and after 75': outfielders under that window's AUTO_SUB_STAMINA come off, up to two
+   * at a time, within the three-sub limit. Each change is a 'sub' event.
    */
   private autoSubs(): void {
     if (this.half !== 2 || this.shootout) return;
@@ -493,22 +642,37 @@ export class Match {
       if (w >= AUTO_SUB_MINUTES.length || min < AUTO_SUB_MINUTES[w]) continue;
       while (w < AUTO_SUB_MINUTES.length && min >= AUTO_SUB_MINUTES[w]) w++;
       this.subWindow[side] = w;
-      this.aiSubs(side, 2, AUTO_SUB_STAMINA);
+      // (A stoppage that comes late enough to cover both windows uses the later, stricter bar.)
+      this.aiSubs(side, 2, AUTO_SUB_STAMINA[w - 1]);
     }
   }
 
   /**
-   * Change a side's formation mid-match (the tactics screen): every player on the pitch takes the
-   * slot of the same index in the new shape, with its role; the bench is untouched. Returns false
-   * for an unknown formation.
+   * Change a side's formation mid-match (the tactics screen). Each outfielder moves to the slot of
+   * the new shape nearest the one he held (the assignment with the least total distance between old
+   * and new slot positions, so a right-back stays on the right rather than becoming a left
+   * wing-back), and takes its role; the keeper stays in slot 0 and the bench is untouched.
+   * teamPlayers(side) (and the team's player list) stay in slot order. Returns false for an unknown
+   * formation.
    */
   setFormation(side: Side, id: FormationId): boolean {
     const slots = FORMATIONS[id];
     if (!slots) return false;
+    const old = this.slots[side];
+    const team = this.bySide[side];
+    const moveTo = formationRemap(old, slots, team.map((p) => p.def.role));
     this.slots[side] = slots;
     this.formation[side] = id;
-    for (const p of this.bySide[side]) {
-      if (!p.isKeeper) p.role = slots[p.slot].role;
+    const byNew: Player[] = new Array(team.length);
+    for (const p of team) {
+      const s = moveTo[p.slot];
+      byNew[s] = p;
+      p.slot = s;
+      if (!p.isKeeper) p.role = slots[s].role;
+    }
+    for (let s = 0; s < byNew.length; s++) {
+      team[s] = byNew[s];
+      this.teams[side].players[s] = byNew[s].def;
     }
     for (const s of [0, 1] as Side[]) {
       const br = this.brains[s];
@@ -587,6 +751,9 @@ export class Match {
     this.dribbleControl();
 
     this.hits.length = 0;
+    this.ballPrev.x = this.ball.pos.x;
+    this.ballPrev.y = this.ball.pos.y;
+    this.ballPrev.z = this.ball.pos.z;
     this.ball.step(dt, this.hits);
     for (const h of this.hits) {
       if (h.kind === 'post') {
@@ -940,6 +1107,11 @@ export class Match {
       this.shooter = p.idx;
       this.shotKick = this.kickId;
       this.shotWasOnTarget = this.shotOnTarget;
+      this.shotSpeed = Math.hypot(L.vx, L.vy, L.vz);
+      this.shotDist = dist2(b.pos.x, b.pos.z, this.attackDir(p.side) * HALF_L, 0);
+      this.shotCurl = clamp(Math.abs(L.spinY) / CURL_SPIN, 0, 1);
+      const rr = this.restart;
+      if (this.phase === 'restart' && rr && rr.taker === p.idx && isDirectFreeKick(this, rr)) this.fkShotKick = this.kickId;
       this.passTarget = -1;
     } else {
       this.passTarget = L.target;
@@ -1106,20 +1278,46 @@ export class Match {
       const t = this.players[this.restart.taker];
       this.active = t.idx;
       t.wantX = t.wantZ = 0;
-      if (stickLen > 0.3 && this.restart.kind !== 'kickoff' && this.stepIn !== t.idx) {
-        t.facing = Math.atan2(pad.mz, pad.mx);
+      const kind = this.restart.kind;
+      // Keyboard / d-pad (no analog magnitude): remembered from the last time the stick was pushed.
+      if (stickLen > 0.3) this.padDigital = pad.digital ?? isDigitalStick(pad.mx, pad.mz, this.restartAim);
+      else if (pad.digital !== undefined) this.padDigital = pad.digital;
+      // On free kicks and corners the keys turn the aim steadily (AIM_TURN) from the default instead of
+      // snapping it to one of eight directions; W (towards goal) puts it back. An analog stick aims
+      // directly. On the frame a free kick is struck the stick is read for curl only, so a flick
+      // sideways bends the ball without swinging the aim.
+      const rotating = this.padDigital && this.phase === 'restart' && (kind === 'freekick' || kind === 'corner');
+      const striking = kind === 'freekick' && (shootR || throughR || passP);
+      if (stickLen > 0.3 && kind !== 'kickoff' && this.stepIn !== t.idx && !striking) {
+        const want = Math.atan2(pad.mz, pad.mx);
+        if (!rotating) t.facing = want;
+        else {
+          const off = angleDiff(this.restartAim, want);
+          if (Math.abs(off) < 0.3) t.facing = this.restartAim;
+          else if (Math.abs(off) < 2.6) t.facing = turnToward(t.facing, want, AIM_TURN * dt);
+        }
       }
       if (this.phase === 'restart' && this.phaseT < 0.35) return;
-      const kind = this.restart.kind;
-      const dx = stickLen > 0.3 ? pad.mx : Math.cos(t.facing);
-      const dz = stickLen > 0.3 ? pad.mz : Math.sin(t.facing);
+      const useStick = stickLen > 0.3 && !rotating;
+      const dx = useStick ? pad.mx : Math.cos(t.facing);
+      const dz = useStick ? pad.mz : Math.sin(t.facing);
+      // A free kick is struck where the aim arrow (the taker's facing) meets the goal line; left on
+      // the default aim, he picks the side the keeper leaves open himself.
+      const fkShot = (pw: number) => {
+        const o = this.order(t, 'shot', Math.cos(t.facing), Math.sin(t.facing), pw, -1, false);
+        if (o) {
+          o.curl = stickCurl(pad.mz);
+          const az = Math.abs(angleDiff(this.restartAim, t.facing)) > 0.01 ? this.aimOnGoalLine(t) : null;
+          if (az !== null) o.aimZ = az;
+          else o.dirZ = 0;
+        }
+      };
       // Crossing set pieces: hold the delivery (briefly) until the runners are in the box, but
       // remember the button so the kick goes the moment they are.
       if (this.phase === 'restart' && isCrossingRestart(this, this.restart)) {
         let want: (() => void) | null = null;
-        // No stick: whip it into the zone a runner is attacking (near / far post on a corner).
-        const aimed = stickLen > 0.3;
-        const curl = stickCurl(pad.mz);
+        // No stick (or, on the keys, the default aim): whip it into the zone a runner is attacking.
+        const aimed = rotating ? Math.abs(angleDiff(this.restartAim, t.facing)) > 0.04 : stickLen > 0.3;
         if (passP && !aimed && kind === 'corner') {
           // Played short to the man who came across for it: no need to wait for the box.
           this.queuedKick = null;
@@ -1132,18 +1330,18 @@ export class Match {
           want = aimed ? () => this.order(t, 'lob', dx, dz, pw, -1, false) : () => this.deliverSetPiece(t, pw);
         } else if (shootR && kind === 'freekick') {
           const pw = shootPower;
-          want = () => {
-            const o = this.order(t, 'shot', dx, dz, pw, -1, false);
-            if (o) o.curl = curl;
-          };
+          want = () => fkShot(pw);
         } else if (shootR) {
           // SHOOT on a corner: a driven cross, flat and fast.
           want = aimed
             ? () => {
-              const o = this.order(t, 'lob', dx, dz, 1, -1, false);
-              if (o) o.driven = true;
+              const o = this.order(t, 'lob', dx, dz, DRIVEN_POWER, -1, false);
+              if (o) {
+                o.driven = true;
+                o.land = DRIVEN_LAND;
+              }
             }
-            : () => this.deliverSetPiece(t, 1, true);
+            : () => this.deliverSetPiece(t, DRIVEN_POWER, true);
         }
         if (want) this.queuedKick = want;
         if (setPieceReady(this, side) < 4 && this.phaseT < 1.6) return;
@@ -1162,13 +1360,14 @@ export class Match {
       } else if (kind === 'throwin') {
         if (passP || throughP) this.order(t, 'throw', dx, dz, 0.5, -1, false);
       } else {
-        if (passP) this.order(t, 'pass', dx, dz, 0.6, -1, false);
-        else if (throughR) this.order(t, 'lob', dx, dz, clamp(throughHold / 0.8, 0.3, 1), -1, false);
-        else if (shootR && (kind === 'freekick' || kind === 'penalty')) {
-          const o = this.order(t, 'shot', dx, dz, shootPower, -1, false);
-          // Free kicks bend with the stick; penalties are struck clean.
-          if (o && kind === 'freekick') o.curl = stickCurl(pad.mz);
-        } else if (shootR) this.order(t, 'lob', dx, dz, 1, -1, false);
+        const fdx = kind === 'freekick' ? Math.cos(t.facing) : dx;
+        const fdz = kind === 'freekick' ? Math.sin(t.facing) : dz;
+        if (passP) this.order(t, 'pass', fdx, fdz, 0.6, -1, false);
+        else if (throughR) this.order(t, 'lob', fdx, fdz, clamp(throughHold / 0.8, 0.3, 1), -1, false);
+        else if (shootR && kind === 'freekick') fkShot(shootPower);
+        // Penalties are struck clean.
+        else if (shootR && kind === 'penalty') this.order(t, 'shot', dx, dz, shootPower, -1, false);
+        else if (shootR) this.order(t, 'lob', fdx, fdz, 1, -1, false);
       }
       return;
     }
@@ -1411,12 +1610,16 @@ export class Match {
       case 'freekick': {
         const dg = dist2(r.x, r.z, gx, 0);
         if (isDirectFreeKick(this, r)) {
-          // Mostly bent round the wall into the corner behind it (the keeper covers the other one),
-          // now and then curled at the keeper's side.
+          // Mostly curled over the wall into the corner behind it (the keeper covers the other one):
+          // aimed just inside the near post and bent in from outside; now and then bent into the
+          // keeper's side instead, and now and then just hit.
           const near = Math.sign(r.z) || 1;
           const zs = this.rng.chance(0.65) ? near : -near;
           const o = this.order(t, 'shot', 0, zs, 0.72 + this.rng.next() * 0.22, -1, false);
-          if (o) o.curl = zs * (0.45 + this.rng.next() * 0.55);
+          if (o) {
+            o.aimZ = zs * (GOAL_W / 2 - 0.5 - this.rng.next() * 0.5);
+            o.curl = this.rng.chance(0.8) ? -near * (0.5 + this.rng.next() * 0.5) : 0;
+          }
         } else if (isCrossingRestart(this, r)) {
           if (this.cfg.humanSide !== r.side && setPieceReady(this, r.side) < 4 && this.phaseT < r.wait + 3) return;
           this.deliverSetPiece(t);
@@ -1435,8 +1638,9 @@ export class Match {
    * post on a corner). Used by the AI and by a human who takes it without aiming the stick.
    */
   private deliverSetPiece(t: Player, power = 0.8, driven = false): void {
-    const a = setPieceAim(this, t);
-    const o = this.order(t, 'lob', a.x - t.pos.x, a.z - t.pos.z, power, a.target, false, { x: a.x, z: a.z });
+    // A driven ball goes to the near-post runner (a flat ball to the far post just flies across).
+    const a = setPieceAim(this, t, driven);
+    const o = this.order(t, 'lob', a.x - t.pos.x, a.z - t.pos.z, power, a.target, false, { x: a.x, z: a.z }, driven ? DRIVEN_LAND : undefined);
     if (o && driven) o.driven = true;
   }
 
@@ -1529,6 +1733,7 @@ export class Match {
     fx /= fl;
     fz /= fl;
     taker.facing = Math.atan2(fz, fx);
+    this.restartAim = taker.facing;
     taker.setState('move');
     taker.vel.x = taker.vel.z = 0;
     if (r.kind === 'throwin') {
@@ -1919,11 +2124,36 @@ export class Match {
     // The side of the ball his kicking foot is on (world right of his facing is (-fz, fx)).
     const rx = -fz * this.runUpFoot;
     const rz = fx * this.runUpFoot;
-    const strikeX = r.x - fx * 0.62 - rx * 0.12;
-    const strikeZ = r.z - fz * 0.62 - rz * 0.12;
+    // However the kick is aimed, the taker keeps to his run-up side of the ball-goal line (the one
+    // the behind-the-ball camera looks along) and behind the ball, so he never walks across the lens.
+    // (Only where that camera is used: penalties and free kicks within ~35 m of goal.)
+    const filmed = this.phase === 'restart' &&
+      (r.kind === 'penalty' || (r.kind === 'freekick' && dist2(r.x, r.z, this.attackDir(r.side) * HALF_L, 0) < 35));
+    const lens = (x: number, z: number, minLat: number, maxAlong: number): { x: number; z: number } => {
+      if (!filmed) return { x, z };
+      const ux = Math.cos(this.restartAim);
+      const uz = Math.sin(this.restartAim);
+      let along = (x - r.x) * ux + (z - r.z) * uz;
+      let lat = (x - r.x) * -uz + (z - r.z) * ux;
+      const side = -this.runUpFoot;
+      if (lat * side < minLat) lat = side * minLat;
+      if (along > maxAlong) along = maxAlong;
+      // No further from the ball than the run-up ever is.
+      const l = Math.hypot(along, lat);
+      const maxL = Math.hypot(RUNUP_BACK, RUNUP_SIDE) + 0.05;
+      if (l > maxL) {
+        along *= maxL / l;
+        lat *= maxL / l;
+      }
+      return { x: r.x + ux * along - uz * lat, z: r.z + uz * along + ux * lat };
+    };
+    const strike = lens(r.x - fx * 0.62 - rx * 0.12, r.z - fz * 0.62 - rz * 0.12, 0.1, -0.35);
+    const strikeX = strike.x;
+    const strikeZ = strike.z;
     if (this.usesRunUp(t) && t.state === 'move') {
-      const upX = r.x - fx * RUNUP_BACK - rx * RUNUP_SIDE;
-      const upZ = r.z - fz * RUNUP_BACK - rz * RUNUP_SIDE;
+      const up = lens(r.x - fx * RUNUP_BACK - rx * RUNUP_SIDE, r.z - fz * RUNUP_BACK - rz * RUNUP_SIDE, RUNUP_LENS_CLEAR, -1);
+      const upX = up.x;
+      const upZ = up.z;
       if (this.stepIn === t.idx) {
         // Stepping in: a couple of strides onto the ball, then the strike.
         this.stepInT += DT;
@@ -2024,10 +2254,12 @@ export class Match {
     // A ball just struck (or any shot) can only be blocked by someone it's actually heading at.
     const fresh = this.kickId > 0 &&
       (dist2(this.kickX, this.kickZ, b.pos.x, b.pos.z) < 3.8 || this.shotClock < 1.2);
+    const wallLive = this.wallKick === this.kickId && this.sinceKick < 0.9;
     for (const p of this.players) {
       if (p.state !== 'move' || p.kickCooldown > 0 || p.sentOff) continue;
       if (p.order?.firstTime) continue;
       if (p.blockKick === this.kickId) continue;
+      if (wallLive && this.wall.includes(p.idx)) continue;
       if (fresh && p.side !== this.kickSide && hs > 4) {
         const fx = p.footX() - b.pos.x;
         const fz = p.footZ() - b.pos.z;
@@ -2050,7 +2282,7 @@ export class Match {
       const shot = this.shotClock < 1.2;
       const pBlock = shot ? 0.34 + def * 0.3 : 0.3 + def * 0.3;
       if (this.rng.chance(pBlock)) this.deflect(best, shot);
-      else if (shot && !this.shotOnTarget && this.rng.chance(0.55)) this.nick(best);
+      else if (shot && !this.shotOnTarget && this.rng.chance(0.7)) this.nick(best);
       return;
     }
     // Stretching to cut out a fast ball from wide inside your own box: often only a touch.
@@ -2108,11 +2340,14 @@ export class Match {
       this.kickX * this.attackDir(this.kickSide) > HALF_L * 0.35;
     const shot = this.shotClock < 1.2 && this.sinceKick < 1.2;
     if (!cross && !shot) return;
+    const wallLive = this.wallKick === this.kickId;
     for (const p of this.players) {
       if (p.side === this.kickSide || p.isKeeper || p.sentOff || p.blockKick === this.kickId || p.state !== 'move') continue;
+      // The wall on a direct free kick is checkWall's (a graze check here would let the ball through it).
+      if (wallLive && this.wall.includes(p.idx)) continue;
       const d = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
       // Crosses meet the body; shots the body, or a stretched leg if it's low (and going wide).
-      const reach = cross ? 0.6 : b.pos.y < 1.1 && !this.shotOnTarget ? 1.3 : 0.9;
+      const reach = cross ? (b.pos.y < 1.3 ? 0.85 : 0.6) : b.pos.y < 1.1 && !this.shotOnTarget ? 1.3 : 0.9;
       if (d > reach || b.pos.y > 1.95 + p.y) continue;
       p.blockKick = this.kickId;
       if (cross) {
@@ -2120,7 +2355,7 @@ export class Match {
       } else if (d < BODY_BLOCK && this.rng.chance(0.7)) {
         // Straight into a body: blocked.
         this.deflect(p, true);
-      } else if (!this.shotOnTarget && this.rng.chance(0.5)) this.nick(p);
+      } else if (!this.shotOnTarget && this.rng.chance(0.66)) this.nick(p);
       return;
     }
   }
@@ -2159,8 +2394,19 @@ export class Match {
     const nearLine = dLine < 22;
     const inBox = inOwnBox(this, p.side, b.pos.x, b.pos.z);
     const cross = Math.abs(this.kickZ) > HALF_W * 0.35 && this.kickKind !== 'shot';
-    const pBehind = inBox ? (cross ? 0.58 : 0.47) : nearLine ? (shot ? 0.45 : cross ? 0.52 : 0.28) : 0;
-    if (pBehind > 0 && this.rng.chance(pBehind)) {
+    const pBehind = inBox ? (cross ? 0.72 : 0.6) : nearLine ? (shot ? 0.55 : cross ? 0.62 : 0.3) : 0;
+    // Out on the flank (away from our goal), a block often just knocks it into touch.
+    const wing = !inBox && !cross && Math.abs(b.pos.z) > HALF_W - WING_TOUCH;
+    const pTouch = wing ? WING_BLOCK_TOUCH * clamp((Math.abs(b.pos.z) - (HALF_W - WING_TOUCH)) / 5, 0.4, 1) : 0;
+    if (pTouch > 0 && !(pBehind > 0 && dLine < 12) && this.rng.chance(pTouch)) {
+      // Off his shin and out over the touchline.
+      const zs = Math.sign(b.pos.z) || 1;
+      const ns = 7.5 + this.rng.next() * 4.5;
+      const fwd = (Math.sign(b.vel.x) || 1) * (1 + this.rng.next() * 3);
+      b.vel.x = fwd;
+      b.vel.z = zs * ns;
+      b.vel.y = 1 + this.rng.next() * 2.5;
+    } else if (pBehind > 0 && this.rng.chance(pBehind)) {
       // Blocked cross or shot near our goal: it loops up and off behind the byline, wide of the posts.
       const ns = clamp(5 + dLine * 0.6, 7, 18) + this.rng.next() * 4;
       const zside = Math.sign(b.pos.z) || (this.rng.chance(0.5) ? 1 : -1);
@@ -2205,12 +2451,25 @@ export class Match {
         w.y = 0.01;
       }
     }
+    // Swept: a 30 m/s strike covers half a metre a frame, so test the whole step, not its end.
+    // A well-bent free kick is struck up and over the wall and dips (the wall has less of it); a
+    // straight one has to clear the jumping heads.
+    const bend = this.fkShotKick === this.kickId ? this.shotCurl : 0;
+    // (A straight one is met by the tallest heads in the wall.)
+    const top = 1.8 + WALL_HEAD * (1 - bend) - WALL_CURL_DIP * bend;
+    const radius = 0.5 - 0.15 * bend;
+    const a = this.ballPrev;
     for (const idx of this.wall) {
       const w = this.players[idx];
       if (w.sentOff || w.blockKick === this.kickId) continue;
-      if (dist2(w.pos.x, w.pos.z, b.pos.x, b.pos.z) < 0.5 && b.pos.y < 1.8 + w.y) {
+      const { d, t } = pointSegDist(w.pos.x, w.pos.z, a.x, a.z, b.pos.x, b.pos.z);
+      const y = a.y + (b.pos.y - a.y) * t;
+      if (d < radius && y < top + w.y) {
         w.blockKick = this.kickId;
         this.wallKick = -1;
+        b.pos.x = a.x + (b.pos.x - a.x) * t;
+        b.pos.z = a.z + (b.pos.z - a.z) * t;
+        b.pos.y = Math.max(BALL_R, y);
         this.deflect(w, true);
         return;
       }
@@ -2239,11 +2498,22 @@ export class Match {
       const hx = k.pos.x;
       const hz = k.pos.z;
       const hy = diving ? k.y + 0.7 : claiming ? 1.55 + k.y : 1.1;
-      const dh = dist2(hx, hz, b.pos.x, b.pos.z);
       const dy = Math.abs(b.pos.y - hy);
       const keeping = k.stat.keeping / 100;
-      const reachH = (diving ? 0.72 : claiming ? 0.84 : 0.62) + keeping * 0.2 + this.keeperBonus(s);
+      let reachH = (diving ? 0.72 : claiming ? 0.84 : 0.62) + keeping * 0.2 + this.keeperBonus(s);
       const reachV = diving ? 1.1 : claiming ? 1.4 : 1.45;
+      const shotLive = this.shotClock < 2 && this.shotSide !== s && this.shotKick === this.kickId;
+      if (diving && shotLive) {
+        // A rocket (not a bent one) into the top corner: fingertips at best.
+        if (this.shotSpeed >= TOP_CORNER_SPEED && this.shotCurl < 0.3 && Math.abs(b.pos.z) > GOAL_W / 2 - 1.25 && b.pos.y > 1.2) reachH *= 0.5;
+        // A bending free kick is hard to judge: the keeper's reach is a little shorter against it.
+        if (this.fkShotKick === this.shotKick) reachH *= 1 - CURL_REACH * this.shotCurl;
+      }
+      // A diving keeper is stretched out along his line: full reach sideways, much less in front of
+      // or behind his body (a ball whipped across the face of goal from an angle goes past him).
+      const dh = diving
+        ? Math.hypot((hx - b.pos.x) * (reachH / DIVE_DEPTH), hz - b.pos.z)
+        : dist2(hx, hz, b.pos.x, b.pos.z);
       if (dh < reachH && dy < reachV && b.pos.y < GOAL_H + (claiming ? 0.7 : 0.3)) {
         const speed = b.speed();
         // Only a shot that was actually on target counts as a save.
@@ -2253,9 +2523,16 @@ export class Match {
           continue;
         }
         const catchLimit = 11 + keeping * 13 + this.keeperBonus(s) * 20;
-        // Diving saves are mostly parries; balls straight at the keeper get held.
-        // Most get parried (back into play or round the post); straight at him he may hold it.
-        const pCatch = speed < catchLimit ? (0.3 + keeping * 0.24) * (diving ? 0.42 : 1) : 0;
+        // A long shot (struck from 16 m out, fully from 24 m) gives him time to get his body behind
+        // it: held far more often than a strike from inside the box, which is mostly parried.
+        // Straight at him he usually holds it; at full stretch he mostly gets a hand to it.
+        const seen = shotLive ? clamp((this.shotDist - LONG_CATCH_FROM) / 8, 0, 1) : 0;
+        const stretch = diving ? clamp(dh / Math.max(0.1, reachH), 0, 1) : 0;
+        const pCatch = speed < catchLimit + seen * 7
+          ? diving
+            ? (0.3 + keeping * 0.24) * (0.42 + seen * (0.6 - stretch * 0.35))
+            : Math.min(0.92, 0.3 + keeping * 0.24 + seen * 0.3)
+          : 0;
         if (this.rng.chance(pCatch)) {
           this.catchBall(k, onFrame);
         } else {
@@ -2309,7 +2586,13 @@ export class Match {
     const vy0 = b.vel.y;
     const vz0 = b.vel.z;
     let tipped = false;
-    if (onFrame && this.rng.chance(0.76 + Math.min(0.16, (Math.abs(b.pos.z) / hw) * 0.16) + (sp > 24 ? 0.08 : 0))) {
+    // Tipped round the post or over the bar when it was heading for the edge of the frame; a save
+    // nearer the keeper's body is pushed back out into play (not behind for a corner every time).
+    const edge = Math.abs(b.pos.z) > hw - 1.3 || b.pos.y > GOAL_H - 0.75;
+    // (A long shot he's had time to get across to is palmed down or out rather than tipped behind.)
+    const set = this.shotKick === this.kickId ? clamp((this.shotDist - LONG_CATCH_FROM) / 8, 0, 1) : 0;
+    const pTip = edge ? 0.66 + Math.min(0.14, (Math.abs(b.pos.z) / hw) * 0.14) + (sp > 24 ? 0.08 : 0) - set * 0.25 : 0.1;
+    if (onFrame && this.rng.chance(pTip)) {
       // Tip it round the post or over the bar.
       if (Math.abs(b.pos.z) < 1.3 || b.pos.y > 1.7) {
         b.vel.x = -ad * (2.5 + this.rng.next() * 2);
@@ -2329,9 +2612,10 @@ export class Match {
       }
     }
     if (!tipped) {
-      // Parry away from goal.
+      // Parry away from goal: out to the side, and now and then back into the middle (a rebound).
       b.vel.x = Math.abs(b.vel.x) * 0.25 * ad + ad * 2.5;
-      b.vel.z = b.vel.z * 0.3 + (Math.sign(b.pos.z - k.pos.z) || (this.rng.chance(0.5) ? 1 : -1)) * (3 + this.rng.next() * 5);
+      const spill = this.rng.chance(0.5);
+      b.vel.z = b.vel.z * (spill ? 0.15 : 0.3) + (Math.sign(b.pos.z - k.pos.z) || (this.rng.chance(0.5) ? 1 : -1)) * (spill ? 1 + this.rng.next() * 2.5 : 3 + this.rng.next() * 5);
       b.vel.y = 2 + this.rng.next() * 3.5;
       b.spin.x = b.spin.y = b.spin.z = 0;
     }
@@ -2413,7 +2697,13 @@ export class Match {
         b.vel.x = Math.cos(p.facing) * sp + this.rng.gauss() * 1.5;
         b.vel.z = Math.sin(p.facing) * sp + this.rng.gauss() * 1.5;
         b.vel.y = 0.8;
-        // Sliding in by our own byline usually puts it out behind.
+        // Sliding in by the touchline often puts it out for a throw...
+        const wz = Math.abs(b.pos.z) - (HALF_W - WING_TOUCH);
+        if (wz > 0 && this.rng.chance(WING_POKE_TOUCH * clamp(wz / 5, 0.35, 1))) {
+          b.vel.z = Math.sign(b.pos.z) * (7 + this.rng.next() * 4);
+          b.vel.x *= 0.5;
+        }
+        // ... and by our own byline, usually behind.
         const gxOwn = -this.attackDir(p.side) * HALF_L;
         if (Math.abs(b.pos.x - gxOwn) < 13 && Math.abs(b.pos.z) > GOAL_W / 2 + 2 && this.rng.chance(0.5)) {
           b.vel.x = Math.sign(gxOwn - b.pos.x) * (5 + this.rng.next() * 3);
@@ -2645,7 +2935,10 @@ export class Match {
       this.events.push({ type: 'tackle', by: p.idx, won: true, slide: false });
       c.kickCooldown = 0.45;
       this.poke(p, b.pos.x, b.pos.z);
-      if (this.rng.chance(0.35 + def * 0.3)) {
+      // On the flank a poke often just knocks it into touch (the nearer the line, the likelier).
+      const wz = Math.abs(c.pos.z) - (HALF_W - WING_TOUCH);
+      const touch = wz > 0 && this.rng.chance(WING_POKE_TOUCH * clamp(wz / 5, 0.35, 1));
+      if (!touch && this.rng.chance(0.35 + def * 0.3)) {
         // Clean: the tackler comes away with it.
         p.kickCooldown = 0;
         b.vel.x = p.vel.x;
@@ -2660,8 +2953,12 @@ export class Match {
       const sp = 3 + this.rng.next() * 4;
       b.vel.x = ((dx / dl) * 0.5 + Math.cos(p.facing) * 0.5) * sp + this.rng.gauss();
       b.vel.z = ((dz / dl) * 0.5 + Math.sin(p.facing) * 0.5) * sp + this.rng.gauss();
-      // On the flank, a poke tackle often just knocks it into touch; by our own byline, behind.
-      if (Math.abs(c.pos.z) > HALF_W - 6 && this.rng.chance(0.45)) b.vel.z += Math.sign(c.pos.z) * (3 + this.rng.next() * 3);
+      if (touch) {
+        b.vel.z = Math.sign(c.pos.z) * (7 + this.rng.next() * 4);
+        b.vel.x *= 0.5;
+        b.vel.y = 0.8 + this.rng.next() * 1.4;
+      }
+      // By our own byline, behind.
       const gxOwn = -this.attackDir(p.side) * HALF_L;
       if (Math.abs(c.pos.x - gxOwn) < 13 && Math.abs(c.pos.z) > GOAL_W / 2 + 2 && this.rng.chance(0.45)) {
         b.vel.x = Math.sign(gxOwn - c.pos.x) * (4 + this.rng.next() * 4) + b.vel.x * 0.3;
@@ -2730,8 +3027,27 @@ export class Match {
     }
   }
 
+  /** Is the ball in flight from a shot struck straight from a direct free kick? */
+  freeKickShot(): boolean {
+    return this.fkShotKick === this.shotKick && this.shotKick === this.kickId && this.shotClock < 2;
+  }
+
+  /**
+   * Where `t`'s facing (the set-piece aim arrow) meets the goal line he attacks, or null when he's
+   * facing away from it.
+   */
+  aimOnGoalLine(t: Player): number | null {
+    const ad = this.attackDir(t.side);
+    const fx = Math.cos(t.facing);
+    const fz = Math.sin(t.facing);
+    if (fx * ad < 0.15) return null;
+    return this.ball.pos.z + (fz * (ad * HALF_L - this.ball.pos.x)) / fx;
+  }
+
   private cutAng = 0;
   private cutKick = -1;
+  /** The human's last stick input looked like keys / d-pad (see isDigitalStick, Pad.digital). */
+  private padDigital = false;
   /** A human set-piece delivery pressed while the box was still filling. */
   private queuedKick: (() => void) | null = null;
 
@@ -2874,6 +3190,9 @@ export class Match {
     this.keepHeldBall();
     this.dribbleControl();
     this.hits.length = 0;
+    this.ballPrev.x = this.ball.pos.x;
+    this.ballPrev.y = this.ball.pos.y;
+    this.ballPrev.z = this.ball.pos.z;
     this.ball.step(dt, this.hits);
     for (const h of this.hits) {
       if (h.kind === 'post') {

@@ -10,6 +10,10 @@ export interface Settings {
   autoSwitch: boolean;
   timeOfDay: TimeOfDay | 'random';
   weather: 'clear' | 'rain' | 'snow' | 'random';
+  /** Broadcast commentary ticker in matches (default on). */
+  commentary: boolean;
+  /** Spoken commentary through the browser's speech synthesis (default off). */
+  commentaryVoice: boolean;
 }
 
 export interface Record {
@@ -46,7 +50,7 @@ export function defaultSave(): SaveData {
     coins: 500,
     clubIdx: 5,
     opponentIdx: 6,
-    settings: { sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, autoSwitch: true, timeOfDay: 'random', weather: 'random' },
+    settings: { sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, autoSwitch: true, timeOfDay: 'random', weather: 'random', commentary: true, commentaryVoice: false },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
     cup: null,

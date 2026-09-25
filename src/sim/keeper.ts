@@ -6,6 +6,15 @@ import type { Side } from './types';
 
 type RestartLike = { kind: string; side: Side; x: number; z: number };
 
+/** Lateral dive pace scale (how far across goal a keeper gets in time). */
+const DIVE_PACE = 0.72;
+/** How far (m) towards his near post a keeper shades when the ball is out at a tight angle. */
+const NEAR_POST_SHADE = 0.8;
+/** Direct free kick: how far across towards the open side the keeper stands (1 = the middle of the gap). */
+const FK_KEEPER_SHADE = 0.2;
+/** Extra reaction time (s) to a free kick struck over the wall. */
+const FK_UNSIGHTED = 0.05;
+
 /**
  * Where a player may stand while a penalty is taken: outside the penalty area and at least ten
  * yards from the spot (the arc). Returns (x, z) moved to the nearest legal point.
@@ -93,7 +102,8 @@ export function freeKickWall(m: Match, r: RestartLike): WallPlan {
   const zIn = bz + (ez - bz) * ((gx - bx) / (Math.abs(ex - bx) > 1e-3 ? ex - bx : 1e-3));
   const zFar = -near * hw;
   // The wall hides the whole goal from here: stand just off-centre towards the far post.
-  const kz = (zIn - zFar) * near <= 0.6 ? zFar * 0.3 : (zIn + zFar) / 2;
+  // (Not all the way over: he has to be able to get across to a ball bent over the wall.)
+  const kz = (zIn - zFar) * near <= 0.6 ? zFar * 0.2 : ((zIn + zFar) / 2) * FK_KEEPER_SHADE;
   return { spots, keeper: { x: gx - Math.sign(gx) * 0.9, z: clamp(kz, -hw + 0.6, hw - 0.6) } };
 }
 
@@ -171,12 +181,13 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   if (b.owner < 0 && !b.held && toward > 7 && m.shotClock < 1.6) {
     const t = (k.pos.x - b.pos.x) / b.vel.x;
     if (t > 0 && t < 1.6) {
-      // A curler's bend is only half read.
-      const zc = b.pos.z + b.vel.z * t + curlDrift(m, t) * 0.5;
+      // A curler's bend is only half read (a free kick, which he's set for, a little better).
+      const zc = b.pos.z + b.vel.z * t + curlDrift(m, t) * (m.freeKickShot() ? 0.62 : 0.5);
       const yc = Math.max(BALL_R, b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t);
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
       if (onFrame) {
-        const reaction = clamp(0.33 - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37);
+        // A free kick struck over the wall is seen late (the wall is in the way).
+        const reaction = clamp(0.33 - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) + (m.freeKickShot() ? FK_UNSIGHTED : 0);
         const lateral = zc - k.pos.z;
         if (Math.abs(lateral) < 0.55 && yc < 1.9) {
           // Straight at them: shuffle and let the catch check do the work.
@@ -187,7 +198,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
         }
         if (m.shotClock >= reaction) {
           // Lateral dive speed (m/s): enough for the corners from range, not from close in.
-          const maxDive = (4.6 + keeping * 3 + m.keeperBonus(k.side) * 8) * 0.72;
+          const maxDive = (4.6 + keeping * 3 + m.keeperBonus(k.side) * 8) * DIVE_PACE;
           const need = Math.abs(lateral) / Math.max(t, 0.12);
           const vz = Math.sign(lateral) * Math.min(need * 1.05, maxDive);
           k.setState('dive');
@@ -285,8 +296,9 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   const dOut = clamp(0.7 + dd * 0.055, 0.7, 3.4);
   let tx = gx + (dx / dd) * dOut;
   let tz = (dz / dd) * dOut;
-  // Keep the near post covered.
-  tz = clamp(tz + bz * 0.04, -GOAL_W / 2 + 0.45, GOAL_W / 2 - 0.45);
+  // Keep the near post covered: from a tight angle he hugs it (and leaves the far post to his dive).
+  const tight = clamp((Math.atan2(Math.abs(dz), Math.abs(dx)) - 0.45) / 0.6, 0, 1);
+  tz = clamp(tz + bz * 0.04 + Math.sign(bz) * tight * NEAR_POST_SHADE, -GOAL_W / 2 + 0.45, GOAL_W / 2 - 0.45);
   if (Math.abs(tx - gx) < 0.5) tx = gx + ad * 0.5;
   moveTo(k, tx, tz, false);
   k.faceTarget = Math.atan2(bz - k.pos.z, bx - k.pos.x);

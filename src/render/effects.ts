@@ -9,21 +9,28 @@ interface Bit {
   drag: number;
 }
 
-/** Pooled voxel particles: grass flecks, confetti, sparks — all little cubes. */
-export class Effects {
+/** A cube with its face shading baked into vertex colours (top 1, sides 0.86-0.92, bottom 0.7): reads as a block unlit. */
+function shadedCube(): THREE.BufferGeometry {
+  const geo = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
+  const nor = geo.getAttribute('normal');
+  const col = new Float32Array(nor.count * 3);
+  for (let i = 0; i < nor.count; i++) {
+    const ny = nor.getY(i);
+    const k = ny > 0.5 ? 1 : ny < -0.5 ? 0.7 : Math.abs(nor.getX(i)) > 0.5 ? 0.92 : 0.86;
+    col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = k;
+  }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return geo;
+}
+
+/** One pool of particles in one instanced mesh. */
+class Pool {
   readonly mesh: THREE.InstancedMesh;
-  private bits: (Bit | null)[];
-  private free: number[] = [];
-  private m4 = new THREE.Matrix4();
-  private q = new THREE.Quaternion();
-  private e = new THREE.Euler();
-  private v = new THREE.Vector3();
-  private s = new THREE.Vector3();
+  readonly bits: (Bit | null)[];
+  readonly free: number[] = [];
   private c = new THREE.Color();
 
-  constructor(readonly capacity = 900) {
-    const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  constructor(readonly capacity: number, mat: THREE.Material, geo: THREE.BufferGeometry) {
     this.mesh = new THREE.InstancedMesh(geo, mat, capacity);
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = false;
@@ -36,15 +43,48 @@ export class Effects {
     }
   }
 
-  spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number, color: number, size: number, life: number, gravity = 14, drag = 0.4): void {
+  spawn(b: Bit, color: number): void {
     const i = this.free.pop();
     if (i === undefined) return;
-    this.bits[i] = {
-      x, y, z, vx, vy, vz, rx: Math.random() * 6, ry: Math.random() * 6, spin: (Math.random() - 0.5) * 14,
-      life, max: life, size, gravity, drag,
-    };
+    this.bits[i] = b;
     this.mesh.setColorAt(i, this.c.setHex(color));
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+}
+
+/**
+ * Pooled voxel particles: grass flecks, confetti, sparks, rain splashes — all little cubes. Grass flecks are
+ * lit like the lawn they come from; confetti, bursts and splashes are unlit (paper and water catch the
+ * floodlights: under rain or night lighting a lit confetti cube goes grey).
+ */
+export class Effects {
+  /** Both pools; add this to the scene. */
+  readonly mesh = new THREE.Group();
+  private lit: Pool;
+  private glow: Pool;
+  private m4 = new THREE.Matrix4();
+  private q = new THREE.Quaternion();
+  private e = new THREE.Euler();
+  private v = new THREE.Vector3();
+  private s = new THREE.Vector3();
+
+  constructor(readonly capacity = 900) {
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    this.lit = new Pool(Math.round(capacity * 0.3), new THREE.MeshLambertMaterial({ color: 0xffffff }), geo);
+    this.glow = new Pool(capacity - this.lit.capacity, new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true }), shadedCube());
+    this.mesh.add(this.lit.mesh, this.glow.mesh);
+  }
+
+  /** Live particles in each pool (lit grass flecks, unlit confetti / sparks / splashes). */
+  get live(): { lit: number; unlit: number } {
+    return { lit: this.lit.capacity - this.lit.free.length, unlit: this.glow.capacity - this.glow.free.length };
+  }
+
+  spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number, color: number, size: number, life: number, gravity = 14, drag = 0.4, unlit = true): void {
+    (unlit ? this.glow : this.lit).spawn({
+      x, y, z, vx, vy, vz, rx: Math.random() * 6, ry: Math.random() * 6, spin: (Math.random() - 0.5) * 14,
+      life, max: life, size, gravity, drag,
+    }, color);
   }
 
   grass(x: number, z: number, n: number, power: number): void {
@@ -52,7 +92,7 @@ export class Effects {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 1 + Math.random() * 2.5 * power;
-      this.spawn(x, 0.08, z, Math.cos(a) * sp, 1.5 + Math.random() * 3 * power, Math.sin(a) * sp, cols[i % 4], 0.07 + Math.random() * 0.06, 0.5 + Math.random() * 0.4);
+      this.spawn(x, 0.08, z, Math.cos(a) * sp, 1.5 + Math.random() * 3 * power, Math.sin(a) * sp, cols[i % 4], 0.07 + Math.random() * 0.06, 0.5 + Math.random() * 0.4, 14, 0.4, false);
     }
   }
 
@@ -81,12 +121,14 @@ export class Effects {
    * Rain hitting the lawn: tiny pale droplets kicked up around the camera focus (~90 a second over a
    * 44 x 30 m patch), each a two-bit crown that lives a quarter of a second.
    */
-  rain(dt: number, cx: number, cz: number, rx = 22, rz = 15, rate = 90): void {
+  rain(dt: number, cx: number, cz: number, rx = 22, rz = 15, rate = 90, lens?: THREE.Vector3): void {
     this.splashAcc += dt * rate;
     while (this.splashAcc >= 1) {
       this.splashAcc -= 1;
       const x = cx + (Math.random() * 2 - 1) * rx;
       const z = cz + (Math.random() * 2 - 1) * rz;
+      // Not right under a low lens (replays, set pieces): up close a splash reads as a floating cube.
+      if (lens && lens.y < 12 && Math.hypot(x - lens.x, z - lens.z) < 9) continue;
       for (let k = 0; k < 2; k++) {
         const a = Math.random() * Math.PI * 2;
         const sp = 0.7 + Math.random() * 0.9;
@@ -102,27 +144,34 @@ export class Effects {
 
   clear(): void {
     const zero = new THREE.Matrix4().makeScale(0, 0, 0);
-    for (let i = 0; i < this.capacity; i++) {
-      if (this.bits[i]) {
-        this.bits[i] = null;
-        this.free.push(i);
-        this.mesh.setMatrixAt(i, zero);
+    for (const p of [this.lit, this.glow]) {
+      for (let i = 0; i < p.capacity; i++) {
+        if (p.bits[i]) {
+          p.bits[i] = null;
+          p.free.push(i);
+          p.mesh.setMatrixAt(i, zero);
+        }
       }
+      p.mesh.instanceMatrix.needsUpdate = true;
     }
-    this.mesh.instanceMatrix.needsUpdate = true;
   }
 
   update(dt: number): void {
+    this.updatePool(this.lit, dt);
+    this.updatePool(this.glow, dt);
+  }
+
+  private updatePool(p: Pool, dt: number): void {
     let dirty = false;
-    for (let i = 0; i < this.capacity; i++) {
-      const b = this.bits[i];
+    for (let i = 0; i < p.capacity; i++) {
+      const b = p.bits[i];
       if (!b) continue;
       dirty = true;
       b.life -= dt;
       if (b.life <= 0) {
-        this.bits[i] = null;
-        this.free.push(i);
-        this.mesh.setMatrixAt(i, this.m4.makeScale(0, 0, 0));
+        p.bits[i] = null;
+        p.free.push(i);
+        p.mesh.setMatrixAt(i, this.m4.makeScale(0, 0, 0));
         continue;
       }
       b.vy -= b.gravity * dt;
@@ -150,8 +199,8 @@ export class Effects {
       const sz = b.size * fade;
       this.q.setFromEuler(this.e.set(b.rx, b.ry, 0));
       this.m4.compose(this.v.set(b.x, b.y, b.z), this.q, this.s.set(sz, sz, sz));
-      this.mesh.setMatrixAt(i, this.m4);
+      p.mesh.setMatrixAt(i, this.m4);
     }
-    if (dirty) this.mesh.instanceMatrix.needsUpdate = true;
+    if (dirty) p.mesh.instanceMatrix.needsUpdate = true;
   }
 }

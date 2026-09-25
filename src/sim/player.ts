@@ -128,12 +128,19 @@ export class Player {
   jog: number;
   top: number;
 
+  /**
+   * Formation slot (index into Match.slots[side]); slot 0 is always the keeper. Outfielders can move
+   * to another slot when the formation changes (Match.setFormation).
+   */
+  slot: number;
+
   constructor(
     readonly idx: number,
     readonly side: Side,
-    readonly slot: number,
+    slot: number,
     public def: PlayerDef,
   ) {
+    this.slot = slot;
     this.role = def.role;
     this.isKeeper = slot === 0;
     const pace = def.stats.pace / 100;

@@ -391,8 +391,9 @@ body {
   display: grid;
   gap: 18px;
   animation: pop 0.28s cubic-bezier(0.2, 1.5, 0.4, 1);
-  max-height: calc(100vh - 40px);
-  max-height: calc(100dvh - 40px);
+  /* Never taller than the screen (16 px clear top and bottom): the rest scrolls inside the panel. */
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -407,13 +408,18 @@ body {
 }
 
 /* The closing button row of a panel stays pinned to its bottom edge while the rest scrolls,
-   so the primary action is on screen at every size. */
+   so the primary action is on screen at every size. The row carries the panel's bottom padding itself
+   (no negative bottom margin: that left ~14 px of phantom overflow, i.e. a scrollbar on panels that fit). */
+.panel:has(> .btn-row:last-child:not(.no-stick)) {
+  padding-bottom: 0;
+}
+
 .panel > .btn-row:last-child:not(.no-stick) {
   position: sticky;
-  bottom: calc(-1 * var(--pp));
+  bottom: 0;
   z-index: 3;
-  margin: 0 calc(-1 * var(--pp)) calc(-1 * var(--pp));
-  padding: 12px var(--pp) calc(var(--pp) + 4px);
+  margin: 0 calc(-1 * var(--pp));
+  padding: 12px var(--pp) var(--pp);
   background: var(--cream);
 }
 
@@ -741,6 +747,26 @@ body {
   color: var(--ink-2);
 }
 
+/* Full time: the coins earned ride in the sticky footer beside CONTINUE, so they are never scrolled away. */
+.ft-foot {
+  align-items: center;
+}
+
+.ft-foot .reward {
+  flex: 1 0 100%;
+  gap: 10px;
+  font-size: 24px;
+}
+
+.ft-foot .reward i {
+  width: 24px;
+  height: 24px;
+}
+
+@media (min-width: 560px) {
+  .ft-foot .reward { flex: 0 1 auto; margin-right: auto; }
+}
+
 .toggles {
   display: grid;
   gap: 8px;
@@ -780,6 +806,183 @@ body {
   margin: 0 0 8px;
   font: 400 16px/1.3 var(--round);
 }
+
+/* How to play: device tabs, then that device's controls. */
+.ht-tabs {
+  justify-self: center;
+  width: min(440px, 100%);
+}
+
+.ht-body {
+  display: grid;
+  gap: 12px;
+}
+
+.ht-body > .fine,
+.ht-touch > .fine {
+  margin: 0;
+}
+
+.ht-touch {
+  display: grid;
+  gap: 10px;
+}
+
+/* Wide screens: the pad and its note on the left, what each button does on the right. */
+@media (min-width: 640px) {
+  .ht-touch {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    grid-template-areas: 'pad table' 'note table' 'fine fine';
+    align-items: start;
+    column-gap: 16px;
+  }
+  .ht-touch .ht-pad { grid-area: pad; }
+  .ht-touch .ht-note { grid-area: note; }
+  .ht-touch .ht-table { grid-area: table; margin-top: -5px; }
+  .ht-touch > .fine { grid-area: fine; }
+}
+
+@media (max-height: 520px) {
+  .ht-note { font-size: 15px; }
+  .ht-table td { padding: 4px 7px 3px; }
+}
+
+/* A slice of the match screen: grass, the floating stick, the button cluster. */
+.ht-pad {
+  position: relative;
+  height: 148px;
+  background: repeating-linear-gradient(90deg, #86c653 0 44px, #7cbb4a 44px 88px);
+  border: 3px solid var(--ink);
+  box-shadow: 0 5px 0 var(--cream-2);
+  overflow: hidden;
+}
+
+.ht-stick {
+  position: absolute;
+  left: 18px;
+  top: 46%;
+  width: 78px;
+  height: 78px;
+  margin-top: -39px;
+  background: rgba(38, 38, 46, 0.28);
+  border: 3px solid rgba(251, 251, 244, 0.7);
+}
+
+.ht-stick i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  transform: translate(-25%, -70%);
+  background: var(--cream);
+  box-shadow: 0 4px 0 #b9b5aa;
+}
+
+.ht-pad-l {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  font: 400 14px / 1 var(--round);
+  letter-spacing: 1px;
+  color: #fff;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+
+.ht-cluster {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 146px;
+  height: 128px;
+}
+
+.ht-tb {
+  --c: var(--go);
+  --cd: var(--go-d);
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: var(--c);
+  color: #fff;
+  font: 400 14px / 1 var(--round);
+  font-style: normal;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+  box-shadow: 0 4px 0 var(--cd), 0 6px 0 rgba(0, 0, 0, 0.16);
+}
+
+.ht-tb.pass { right: 0; bottom: 0; width: 66px; height: 66px; }
+.ht-tb.shoot { --c: var(--red); --cd: var(--red-d); right: 72px; bottom: 2px; width: 58px; height: 58px; }
+.ht-tb.through { --c: var(--blue); --cd: var(--blue-d); right: 0; bottom: 72px; width: 62px; height: 62px; font-size: 14px; letter-spacing: -0.3px; }
+.ht-tb.sprint { --c: var(--ink-2); --cd: var(--ink); right: 74px; bottom: 70px; width: 54px; height: 54px; }
+
+.ht-note {
+  margin: 0;
+  font: 400 16px / 1.3 var(--round);
+}
+
+.ht-note b,
+.ht-table b {
+  font-weight: 400;
+  color: var(--blue-d);
+  margin-right: 3px;
+}
+
+.ht-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 5px;
+  font: 400 15px / 1.25 var(--round);
+}
+
+.ht-table th {
+  font: 400 14px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+  text-align: left;
+  padding: 0 8px;
+}
+
+.ht-table td {
+  background: #fff;
+  border-top: 3px solid var(--ink);
+  border-bottom: 3px solid var(--ink);
+  padding: 6px 8px 5px;
+  vertical-align: middle;
+}
+
+.ht-table td:first-child {
+  width: 30px;
+  border-left: 3px solid var(--ink);
+  text-align: center;
+}
+
+.ht-table td:last-child {
+  border-right: 3px solid var(--ink);
+}
+
+.ht-dot {
+  --c: var(--go);
+  --cd: var(--go-d);
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  vertical-align: -5px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: var(--c);
+  box-shadow: 0 0 0 2px var(--ink), 0 3px 0 2px var(--cd);
+}
+
+td:first-child .ht-dot { margin-right: 0; }
+.ht-dot.def { --c: var(--yellow); --cd: var(--yellow-d); }
+.ht-dot.shoot { --c: var(--red); --cd: var(--red-d); }
+.ht-dot.through { --c: var(--blue); --cd: var(--blue-d); }
+.ht-dot.sprint { --c: var(--ink-2); --cd: var(--ink); }
 
 kbd {
   display: inline-block;
@@ -875,13 +1078,16 @@ kbd {
   margin-left: 4px;
 }
 
-/* Bookings: a chip under each side of the score bug. */
+/* Bookings: a chip under each side of the score bug. Inline-size containment: the plate never widens the
+   score bug's columns (it wraps inside its team's column instead). */
 .sb-cards {
   grid-row: 2;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   padding-top: 5px;
+  contain: inline-size;
+  min-width: 0;
 }
 
 .sb-cards.h { grid-column: 1; justify-content: flex-start; }
@@ -890,6 +1096,8 @@ kbd {
 
 .sb-card {
   display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   align-items: center;
   gap: 4px;
   background: var(--ink);
@@ -912,6 +1120,15 @@ kbd {
 .sb-chip.red { background: var(--red); }
 .sb-chip.new { animation: card-pop 0.5s cubic-bezier(0.2, 1.8, 0.4, 1); }
 .sb-card b { font-weight: 400; margin-left: 1px; }
+/* Who the card is for: the chip alone read as a mystery icon. */
+.sb-card em {
+  font: 400 14px / 1 var(--round);
+  font-style: normal;
+  letter-spacing: 0.5px;
+  margin: 1px 4px 0 1px;
+  white-space: nowrap;
+}
+.sb-card em:last-child { margin-right: 0; }
 
 @keyframes card-pop {
   from { transform: translateY(-10px) scale(0.5); opacity: 0; }
@@ -970,6 +1187,30 @@ kbd {
 .hud-banner.small .bn-title { font-size: clamp(38px, 7vw, 90px); }
 .hud-banner.card .bn-title i { color: var(--yellow); }
 .hud-banner.card.red .bn-title i { color: var(--red); }
+/* Cards: the lower third, above the minimap. The close-up frames the referee holding the card up at the
+   centre of the lens, so the banner must not sit across his face. */
+.hud-banner.card {
+  top: auto;
+  bottom: max(9%, calc(max(12px, env(safe-area-inset-bottom)) + clamp(110px, 12vw, 180px) * 0.625 + 16px));
+  align-content: end;
+  gap: 6px;
+}
+
+@media (max-height: 419.98px) {
+  .hud-banner.card { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 81px); }
+}
+
+/* Portrait phones: the stick and the buttons own the lower third, so the card banner hangs under the top
+   cluster instead (still clear of the referee, who is framed in the middle). */
+@media (orientation: portrait) and (max-width: 720px) {
+  .hud-banner.card {
+    top: calc(max(12px, env(safe-area-inset-top)) + 248px);
+    bottom: auto;
+    align-content: start;
+  }
+}
+.hud-banner.card .bn-title { font-size: clamp(30px, 5vw, 64px); }
+.hud-banner.card .bn-sub { font-size: clamp(16px, 1.8vw, 24px); padding: 6px 14px 5px; }
 /* Goals: up top and a size smaller, so the celebrating scorer (centre of the lens) stays in view. */
 .hud-banner.goal {
   top: max(12%, calc(max(12px, env(safe-area-inset-top)) + 46px));
@@ -1000,24 +1241,29 @@ kbd {
   animation: drop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1) 0.3s both;
 }
 
+/* Event flag ("CORNER", "FOUL!"): hangs off the bottom-left of the score bug like a broadcast tab (the HUD
+   sets left / top from the score bug), up at the top edge where it never covers players in the box. */
 .hud-toast {
-  top: max(16%, calc(max(12px, env(safe-area-inset-top)) + 58px));
-  left: 50%;
-  transform: translate(-50%, -20px) scale(0.9);
-  font: 700 clamp(16px, 2vw, 24px) var(--px);
+  top: calc(max(12px, env(safe-area-inset-top)) + 48px);
+  left: max(12px, env(safe-area-inset-left));
+  transform: translateY(-5px);
+  font: 700 clamp(16px, 1.6vw, 20px) / 1 var(--px);
+  letter-spacing: 1px;
   color: var(--ink);
   background: var(--yellow);
-  padding: 10px 16px 8px;
-  box-shadow: 0 5px 0 var(--yellow-d), 0 9px 0 rgba(0, 0, 0, 0.2);
+  padding: 8px 12px 6px;
+  box-shadow: 0 4px 0 var(--yellow-d), 0 7px 0 rgba(0, 0, 0, 0.2);
   opacity: 0;
-  transition: opacity 0.2s, transform 0.25s cubic-bezier(0.2, 1.6, 0.4, 1);
+  transition: opacity 0.18s, transform 0.22s cubic-bezier(0.2, 1.6, 0.4, 1);
   white-space: nowrap;
 }
 
 .hud-toast.on {
   opacity: 1;
-  transform: translate(-50%, 0) scale(1);
+  transform: translateY(0);
 }
+
+.hud.replaying .hud-toast { opacity: 0; }
 
 .hud-hint {
   /* Up top (clear of the score bug and its booking chips): at set pieces the taker stands mid / low in the lens. */
@@ -1035,11 +1281,84 @@ kbd {
   text-align: center;
 }
 
-/* Hint and toast share the slot; the short toast ("CORNER") goes first, and the tutorial tip gives way to both. */
-.hud:has(.hud-toast.on) .hud-hint,
+/* The tutorial tip gives way to the set-piece hint and the event flag. */
 .hud:has(.hud-toast.on) .hud-tip,
 .hud:has(.hud-hint.on) .hud-tip {
   opacity: 0;
+}
+
+/* Taker up in the far part of the screen (a far-side corner): the hint drops to the bottom band (the HUD
+   sets left / bottom / max-width clear of the chip, stick, buttons and minimap). Specificity beats the
+   "clear the booking row" top offsets further down. */
+.hud .hud-hint.low,
+.hud:has(.sb-cards:not(:empty)) .hud-hint.low {
+  top: auto;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  left: max(12px, env(safe-area-inset-left));
+  transform: none;
+  text-align: left;
+}
+.hud .hud-hint.low.on { animation: none; }
+
+/* ---------------------------------------------------------------- commentary ticker */
+
+/* One broadcast caption line: minute tag, club-colour stripe, text. The HUD places it (top band beside the
+   score bug, under the top cluster, or the lower third) wherever the ball is not. */
+.hud-cm {
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  display: flex;
+  align-items: stretch;
+  max-width: calc(100vw - 24px);
+  background: rgba(38, 38, 46, 0.9);
+  color: var(--cream);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  border-left: 6px solid var(--cm, var(--cream-2));
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.3s, transform 0.3s cubic-bezier(0.2, 1.4, 0.4, 1);
+  white-space: nowrap;
+}
+
+.hud-cm.on {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hud-cm[data-slot='low'] { transform: translateY(6px); }
+.hud-cm[data-slot='low'].on { transform: translateY(0); }
+
+.cm-tag {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  padding: 0 8px;
+  font: 700 16px / 1 var(--px);
+  color: var(--ink);
+  background: var(--yellow);
+}
+
+.hud-cm[data-tone='red'] .cm-tag { background: var(--red); color: #fff; }
+.hud-cm[data-tone='goal'] .cm-tag { background: var(--go); color: #fff; }
+.hud-cm[data-tone='big'] .cm-tag { background: var(--cream); }
+
+.cm-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 8px 12px 7px;
+  font: 400 clamp(15px, 1.35vw, 18px) / 1.15 var(--round);
+  letter-spacing: 0.3px;
+}
+
+.hud-cm[data-tone='goal'] .cm-text { color: var(--yellow); }
+
+.hud.replaying .hud-cm { opacity: 0; transition: opacity 0.15s; }
+
+@media (max-width: 480px), (max-height: 420px) {
+  .cm-tag { min-width: 38px; padding: 0 6px; }
+  .cm-text { font-size: 14px; padding: 7px 9px 6px; }
 }
 
 .hud-hint.on {
@@ -1163,9 +1482,13 @@ kbd {
 }
 
 .hud-replay span {
-  font: 400 15px var(--round);
+  justify-self: start;
+  font: 400 16px / 1 var(--round);
+  letter-spacing: 0.5px;
   color: var(--cream);
-  text-shadow: 0 2px 0 var(--ink);
+  background: rgba(38, 38, 46, 0.85);
+  padding: 6px 9px 5px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.25);
 }
 
 @keyframes blink {
@@ -1572,8 +1895,8 @@ kbd {
 
 .meta .panel.mc {
   width: min(900px, 100%);
-  max-height: calc(100vh - 20px);
-  max-height: calc(100dvh - 20px);
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   gap: 14px;
   align-content: start;
   --pp: clamp(12px, 2.2vw, 24px);
@@ -2615,36 +2938,63 @@ button.mc-pl:active {
 
 /* stadium */
 
+/* Upgrade screen: the ground now and after the upgrade (slowly orbiting 3D previews), then the numbers. */
 .mc-stadium {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr);
   align-items: center;
-  gap: 22px;
-  padding: 16px;
+  gap: 14px;
+  padding: 14px;
   background: #fff;
   border: 3px solid var(--ink);
   box-shadow: 0 5px 0 var(--cream-2);
 }
 
-.mc-stands {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
+.mc-stadview {
+  margin: 0;
+  display: grid;
   gap: 6px;
-  height: 120px;
-  padding: 0 6px;
-  border-bottom: 8px solid var(--grass);
+  min-width: 0;
 }
 
-.mc-stands i {
-  width: 28px;
-  background: var(--cream-2);
-  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.1);
+.mc-stadview.solo { grid-column: span 2; }
+
+.mc-stad3d,
+.mc-stadiso {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: linear-gradient(#9fd6f2, #d9f0fb 70%);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--cream-2);
 }
 
-.mc-stands i.on {
-  background: var(--blue);
-  box-shadow: inset 0 6px 0 var(--red), inset 0 -4px 0 var(--blue-d);
+.mc-stadview figcaption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font: 400 14px / 1 var(--round);
+  letter-spacing: 0.5px;
+}
+
+.mc-stadview figcaption span {
+  flex: none;
+  padding: 4px 7px 3px;
+  background: var(--ink);
+  color: var(--cream);
+}
+
+.mc-stadview.next figcaption span {
+  background: var(--go);
+  color: #fff;
+}
+
+.mc-stadview figcaption b {
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mc-stadinfo {
@@ -2789,7 +3139,8 @@ button.mc-pl:active {
   .mc-st .nm-full { display: none; }
   .mc-st .nm-short { display: inline; }
   .mc-trainbtn.btn { min-width: 100px; font-size: 14px; padding: 10px 8px 8px; }
-  .mc-stadium { grid-template-columns: 1fr; justify-items: stretch; }
+  .mc-stadium { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; padding: 10px; }
+  .mc-stadium .mc-stadinfo { grid-column: 1 / -1; }
   .mc-cards { grid-template-columns: 1fr; }
   .mc-fx { gap: 6px; padding: 6px 8px; font-size: 15px; }
   .mc-pl { grid-template-columns: 34px 24px auto minmax(0, 1fr) auto; gap: 6px; padding: 6px; }
@@ -2891,6 +3242,13 @@ button.mc-pl:active {
   min-width: 3ch;
 }
 
+/* The score bug's own pixel crest, a size down. */
+.so-row .crest-svg {
+  flex: none;
+  width: 16px;
+  height: auto;
+}
+
 .so-crest {
   width: 12px;
   height: 14px;
@@ -2953,8 +3311,7 @@ button.mc-pl:active {
   .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 42px); }
   .hud-tip { top: calc(max(12px, env(safe-area-inset-top)) + 46px); }
   .hud:has(.sb-cards:not(:empty)) .hud-tip,
-  .hud:has(.sb-cards:not(:empty)) .hud-hint,
-  .hud:has(.sb-cards:not(:empty)) .hud-toast { top: calc(max(12px, env(safe-area-inset-top)) + 72px); }
+  .hud:has(.sb-cards:not(:empty)) .hud-hint { top: calc(max(12px, env(safe-area-inset-top)) + 72px); }
 }
 
 /* The radar only shows the line-up during penalties, and it covers the taker's feet. */
@@ -3008,6 +3365,28 @@ button.mc-pl:active {
 .cup-pick {
   justify-self: center;
   width: min(360px, 100%);
+}
+
+/* Club picker and the prize list side by side, so the prizes are on screen above ENTER THE CUP. */
+.cup-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.cup-entry .cup-pick {
+  width: auto;
+  justify-self: stretch;
+  align-content: center;
+}
+
+.cup-entry .mc-prize {
+  align-content: center;
+}
+
+@media (max-width: 560px) {
+  .cup-entry { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 }
 
 .cup-go {
@@ -3270,6 +3649,27 @@ button.mc-pl:active {
   .seg button { font-size: 14px; padding-left: 2px; padding-right: 2px; }
 }
 
+/* Short screens (760 px tall and under, e.g. 1280 x 720): panel spacing drops by a quarter so the common
+   screens fit without scrolling; anything longer scrolls under the sticky button row (its fade shows there
+   is more). The phone rules below (450 px and under) tighten further. */
+@media (max-height: 760px) {
+  .panel { --pp: clamp(14px, 2.25vw, 22px); gap: 13px; }
+  .panel h2 { font-size: clamp(22px, 2.6vw, 32px); }
+  .panel h3 { margin-bottom: 4px; }
+  .panel > .btn-row:last-child:not(.no-stick) { padding-top: 9px; }
+  .meta .panel.mc { --pp: clamp(10px, 1.65vw, 18px); gap: 10px; }
+  .panel.mc .mc-h { margin: 2px 0 -5px; }
+  .btn-lg { padding-top: 15px; padding-bottom: 13px; }
+  .final { gap: 9px; }
+  .f-score { padding-top: 12px; }
+  .stats { gap: 5px; }
+  .toggles { gap: 6px; }
+  .toggles button { padding-top: 10px; padding-bottom: 8px; }
+  .howto p { margin-bottom: 6px; }
+  .mc-prize { gap: 6px; padding: 9px 12px; }
+  .cup-hero { padding: 9px 14px; }
+}
+
 @media (max-height: 450px) {
   .screen { padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
   .panel-wrap { padding: 8px; }
@@ -3406,14 +3806,14 @@ button.mc-pl:active {
   .sb-cards.h { padding-right: 4px; }
   .sb-cards.a { padding-left: 4px; }
 
-  /* Minimap under the pause button, below the two-row score bug; banners / hints / tips below that. */
+  /* Minimap under the pause button, below the two-row score bug (and its booking plates, which can wrap to
+     two lines); banners / hints / tips below that. */
   .hud-radar { top: calc(max(12px, env(safe-area-inset-top)) + 76px); }
+  .hud:has(.sb-cards:not(:empty)) .hud-radar { top: calc(max(12px, env(safe-area-inset-top)) + 116px); }
   .hud-tip,
-  .hud-hint,
-  .hud-toast,
+  .hud-hint { top: calc(max(12px, env(safe-area-inset-top)) + 150px); }
   .hud:has(.sb-cards:not(:empty)) .hud-tip,
-  .hud:has(.sb-cards:not(:empty)) .hud-hint,
-  .hud:has(.sb-cards:not(:empty)) .hud-toast { top: calc(max(12px, env(safe-area-inset-top)) + 150px); }
+  .hud:has(.sb-cards:not(:empty)) .hud-hint { top: calc(max(12px, env(safe-area-inset-top)) + 190px); }
   .hud-tip { max-width: calc(100vw - 24px); }
   .hud-replay,
   .hud:has(.sb-cards:not(:empty)) .hud-replay { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
@@ -3718,6 +4118,7 @@ button.mc-pl:active {
     background: none;
   }
   .panel.tx > .btn-row:last-child:not(.no-stick)::before { display: none; }
+  .panel.tx:has(> .btn-row:last-child:not(.no-stick)) { padding-bottom: var(--pp); }
 }
 
 @media (orientation: landscape) and (min-width: 600px) and (min-height: 600px) {

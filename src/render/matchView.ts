@@ -16,6 +16,8 @@ export type RefSignal = 'arm' | 'advantage' | 'card';
 export const CARD_YELLOW = 0xffd43b;
 export const CARD_RED = 0xe03131;
 
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
 /** Everything that draws a match: 22 voxel footballers, the ball, and the control marker. */
 export class MatchView {
   readonly group = new THREE.Group();
@@ -44,6 +46,7 @@ export class MatchView {
   private charging = false;
   /** Night: four faint floodlight shadows per player, one away from each tower. */
   private floodShadows: THREE.InstancedMesh | null = null;
+  private towers: readonly { x: number; z: number; h: number }[] = FLOODLIGHT_TOWERS;
   private m4 = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private v3 = new THREE.Vector3();
@@ -57,6 +60,8 @@ export class MatchView {
     celebrate: 0, y: 0, keeper: false, hasBall: false, look: 0, turn: 0,
   };
   private lastFacing = new Float32Array(22);
+  /** A player held on his mark for a close-up (the booked player facing the referee), render only. */
+  private pinned: { i: number; x: number; z: number; facing: number } | null = null;
   private turnRate = new Float32Array(22);
   /** Interpolated frame the renderer last drew (read by camera, HUD). */
   readonly frame: Float32Array;
@@ -81,9 +86,10 @@ export class MatchView {
     const card = (color: number) => {
       const b = new BoxBuilder();
       // A chunky card held up past the fingertips (the arms are short), face on to the offender (model +x),
-      // thick enough to read from the side too.
-      b.box(0.02, -0.3, 0, 0.1, 0.6, 0.4, color);
-      const m = new THREE.Mesh(b.build(), voxelMaterial);
+      // thick enough to read from the side too; 1.4x life size so it reads in the close-up.
+      b.box(0.03, -0.42, 0, 0.14, 0.84, 0.56, color);
+      // Unlit: held up in the referee's own shadow it would otherwise read olive / maroon, not yellow / red.
+      const m = new THREE.Mesh(b.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
       m.castShadow = true;
       m.visible = false;
       this.referee.holdInHand(m, true);
@@ -207,6 +213,17 @@ export class MatchView {
     }
     for (let k = 0; k < 6; k++) f[BALL_OFS + k] = lerp(a[BALL_OFS + k], b[BALL_OFS + k], alpha);
     for (let k = 6; k < 11; k++) f[BALL_OFS + k] = b[BALL_OFS + k];
+    const pin = this.pinned;
+    if (pin) {
+      // Stood still on his mark, facing the referee (the sim is already walking him to the free kick).
+      const o = pin.i * PF;
+      f[o] = pin.x;
+      f[o + 1] = pin.z;
+      f[o + 2] = 0;
+      f[o + 3] = pin.facing;
+      f[o + 7] = 0;
+      if (f[o + 4] !== SENT_OFF_CODE && f[o + 4] !== PSTATE.dejected) f[o + 4] = PSTATE.move;
+    }
 
     const pose = this.pose;
     this.charK = screenCharK();
@@ -368,10 +385,62 @@ export class MatchView {
     }
   }
 
+  /**
+   * Hold player `i` on (x, z) facing the referee for a close-up (render only: the camera cuts away before he
+   * is let go, so the jump to where the sim has walked him is never seen). null lets him go.
+   */
+  pinPlayer(i: number | null, x = 0, z = 0): void {
+    if (i === null || i < 0) {
+      this.pinned = null;
+      return;
+    }
+    const r = this.ref;
+    this.pinned = { i, x, z, facing: Math.atan2(r.z - z, r.x - x) };
+  }
+
   /** Where the referee stands and whom he faces (card close-ups). */
   get refState(): { x: number; z: number; faceX: number; faceZ: number; booking: boolean } {
     const r = this.ref;
     return { x: r.x, z: r.z, faceX: r.faceX, faceZ: r.faceZ, booking: r.kind === 'card' && r.signal > 0 };
+  }
+
+  /**
+   * Low lenses: players within `radius` (ground metres) of the lens at (cx, cz), or standing on the sight
+   * line from it to any of `sight`, fade to `alpha`; `keep` (the taker, the offender) never fade.
+   */
+  fadeNearLens(cx: number, cz: number, radius: number, alpha: number, keep: number[], sight: { x: number; z: number }[]): void {
+    const f = this.frame;
+    for (let i = 0; i < 22; i++) {
+      const fb = this.players[i];
+      if (keep.includes(i)) {
+        fb.setOpacity(1);
+        continue;
+      }
+      const x = f[i * PF];
+      const z = f[i * PF + 1];
+      const dc = Math.hypot(x - cx, z - cz);
+      // Full fade inside the radius, back to solid over the next metre; right at the lens nearly gone.
+      let k = dc <= radius ? 0 : Math.min(1, (dc - radius) / 1);
+      if (dc < radius * 0.5) {
+        fb.setOpacity(alpha * 0.4);
+        continue;
+      }
+      for (const t of sight) {
+        const lx = t.x - cx;
+        const lz = t.z - cz;
+        const l2 = lx * lx + lz * lz || 1;
+        const u = ((x - cx) * lx + (z - cz) * lz) / l2;
+        if (u < 0.02 || u > 0.97) continue;
+        const d = Math.hypot(x - (cx + lx * u), z - (cz + lz * u));
+        k = Math.min(k, clamp01((d - 0.85) / 0.5));
+      }
+      fb.setOpacity(alpha + (1 - alpha) * k);
+    }
+  }
+
+  /** Everyone solid again (the low camera has cut away). */
+  clearFades(): void {
+    for (const fb of this.players) if (fb.opacity < 1) fb.setOpacity(1);
   }
 
   /** Top of a standing player's head (m) at the current draw scale. */
@@ -386,7 +455,7 @@ export class MatchView {
     const f = new Footballer(def, kit, i === 0 || i === 11);
     f.group.position.copy(old.group.position);
     f.group.rotation.copy(old.group.rotation);
-    old.group.removeFromParent();
+    old.dispose();
     this.players[i] = f;
     this.group.add(f.group);
     this.names[i] = def.name.split('. ').pop()!.toUpperCase();
@@ -415,9 +484,10 @@ export class MatchView {
     this.nameTag.visible = mode === 'full';
   }
 
-  /** Night adds faint floodlight shadows (one per tower) under every player. */
-  setTimeOfDay(t: 'day' | 'sunset' | 'night'): void {
+  /** Night adds faint floodlight shadows (one per light tower: the corner masts, or a small ground's portable lamps). */
+  setTimeOfDay(t: 'day' | 'sunset' | 'night', towers: readonly { x: number; z: number; h: number }[] = FLOODLIGHT_TOWERS): void {
     const night = t === 'night';
+    this.towers = towers;
     if (night && !this.floodShadows) {
       const c = document.createElement('canvas');
       c.width = c.height = 64;
@@ -434,7 +504,7 @@ export class MatchView {
         color: 0x0c1428, alphaMap: tex, transparent: true, opacity: 0.14, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
       });
-      this.floodShadows = new THREE.InstancedMesh(geo, mat, 22 * FLOODLIGHT_TOWERS.length);
+      this.floodShadows = new THREE.InstancedMesh(geo, mat, 22 * towers.length);
       this.floodShadows.frustumCulled = false;
       this.floodShadows.renderOrder = 1;
       this.group.add(this.floodShadows);
@@ -451,7 +521,7 @@ export class MatchView {
       const x = f[o];
       const z = f[o + 1];
       const lift = Math.max(0, 1 - f[o + 2] * 0.6);
-      for (const t of FLOODLIGHT_TOWERS) {
+      for (const t of this.towers) {
         const dx = x - t.x;
         const dz = z - t.z;
         const d = Math.hypot(dx, dz) || 1;

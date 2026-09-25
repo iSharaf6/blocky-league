@@ -2,6 +2,7 @@ import '@fontsource/lilita-one/400.css';
 import '@fontsource/silkscreen/400.css';
 import '@fontsource/silkscreen/700.css';
 import './style.css';
+import { Vector3 } from 'three';
 import type { AppContext, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
 import { Input } from './core/input';
@@ -9,6 +10,7 @@ import { loadSave, writeSave } from './core/save';
 import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
+import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
 import type { Match } from './sim/match';
 import type { FormationId, Side } from './sim/types';
@@ -19,6 +21,8 @@ import { overall } from './sim/types';
 import { openCareer } from './ui/career';
 import { openCup } from './ui/cup';
 import { openClub } from './ui/club';
+import { stopSpeech } from './ui/commentary';
+import type { Projector } from './ui/hud';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const world = new World(canvas);
@@ -39,9 +43,21 @@ function applySettings(): void {
   sfx.setMusic(s.music);
   if (s.music && !session) sfx.startMusic();
   world.setQuality(s.quality);
-  if (session) session.match.autoSwitch = s.autoSwitch;
+  if (session) {
+    session.match.autoSwitch = s.autoSwitch;
+    session.hud?.setCommentary(s.commentary, s.commentaryVoice);
+  }
   persist();
 }
+
+/** World point -> viewport CSS px through the match camera (the HUD keeps its captions off the ball). */
+const projV = new Vector3();
+const project: Projector = (x, y, z) => {
+  projV.set(x, y + PITCH_Y, z).project(world.camera);
+  if (!Number.isFinite(projV.x) || projV.z > 1) return null;
+  const r = canvas.getBoundingClientRect();
+  return { x: r.left + ((projV.x + 1) / 2) * r.width, y: r.top + ((1 - projV.y) / 2) * r.height };
+};
 
 function startDemo(): void {
   demo?.dispose();
@@ -137,7 +153,7 @@ function mainMenu(): void {
     cup: () => openCup(app),
     club: () => openClub(app),
     settings: () => menus.settings(save, applySettings, mainMenu),
-    howto: () => menus.howTo(mainMenu),
+    howto: () => menus.howTo(mainMenu, input.lastDevice),
   }, info);
 }
 
@@ -166,6 +182,7 @@ function quickMatch(): void {
       difficulty,
       halfMinutes: save.settings.halfMinutes,
       attendance: 0.9,
+      stadiumLevel: 5,
       reward: (r) => standardReward(r, difficulty),
       onDone: () => mainMenu(),
       onQuit: () => mainMenu(),
@@ -224,9 +241,12 @@ async function startMatch(req: MatchRequest): Promise<void> {
     timeOfDay: req.timeOfDay ?? pickTime(),
     weather: req.weather ?? pickWeather(),
     knockout: req.knockout,
+    stadiumLevel: Math.max(0, Math.min(5, Math.round(req.stadiumLevel ?? 5))),
     tutorial: !save.seenTutorial,
   });
   session.match.autoSwitch = save.settings.autoSwitch;
+  session.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
+  session.hud?.setProjector(project);
   const s = session;
   ads.gameplayStart();
   const tacticsMenu = (back: () => void) =>
@@ -239,6 +259,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     });
   s.onPause = () => {
     ads.gameplayStop();
+    stopSpeech();
     const pauseMenu = (): void =>
       menus.pause({
         tactics: () => tacticsMenu(pauseMenu),
@@ -247,7 +268,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
           s.resume();
           ads.gameplayStart();
         },
-        howto: () => menus.howTo(pauseMenu),
+        howto: () => menus.howTo(pauseMenu, input.lastDevice),
         settings: () => menus.settings(save, applySettings, pauseMenu),
         quit: () => {
           menus.close();
@@ -306,6 +327,7 @@ function pauseKey(e: KeyboardEvent): void {
 
 function endMatch(): void {
   window.removeEventListener('keydown', pauseKey);
+  stopSpeech();
   session?.dispose();
   session = null;
 }
@@ -340,7 +362,7 @@ async function boot(): Promise<void> {
     const away = makeTeam(PRESET_CLUBS[save.opponentIdx]);
     startMatch({
       home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)], humanSide: 0,
-      difficulty: save.settings.difficulty, halfMinutes: save.settings.halfMinutes, attendance: 0.9,
+      difficulty: save.settings.difficulty, halfMinutes: save.settings.halfMinutes, attendance: 0.9, stadiumLevel: 5,
       reward: (r) => standardReward(r, save.settings.difficulty), onDone: () => mainMenu(),
     });
     return;

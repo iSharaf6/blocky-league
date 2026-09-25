@@ -8,7 +8,7 @@ import {
   BOTTOM_DIVISION, CLUBS_PER_DIVISION, DIVISION_NAMES, KEY_STATS, MATCHDAYS, SQUAD_MAX, SQUAD_MIN, STADIUM_NAMES, STAT_SHORT,
   TOP_DIVISION, YOU,
   buyPlayer, canBuy, canSell, clubRating, finishSeason, forfeitScore, leagueClubs, leagueTable, matchAttendance, matchDifficulty,
-  matchReward, newSeason, nextMatch, payTable, playerPrice, refreshMarket, resolveMatchday, sellPlayer, sellValue, startNextSeason,
+  matchReward, newSeason, nextMatch, payTable, playerPrice, refreshMarket, resolveMatchday, rivalStadiumLevel, sellPlayer, sellValue, startNextSeason,
   type CareerState, type Fixture, type LeagueClub, type SeasonState, type TableRow,
 } from '../meta/career';
 import { cssHex } from '../render/palette';
@@ -340,6 +340,8 @@ function playMatchday(app: AppContext, st: CareerState): void {
   const seasonNo = season.number;
   const division = season.division;
   const stadium = st.stadium;
+  // Home games at your ground; away games at the rival's (sized by division).
+  const venue = userHome ? stadium : rivalStadiumLevel(division, rival);
   st.notice = null;
   closeMeta();
   app.startMatch({
@@ -349,7 +351,8 @@ function playMatchday(app: AppContext, st: CareerState): void {
     humanSide: userHome ? 0 : 1,
     difficulty: matchDifficulty(division),
     halfMinutes: app.save.settings.halfMinutes,
-    attendance: matchAttendance(stadium),
+    attendance: matchAttendance(venue),
+    stadiumLevel: venue,
     reward: (r) => {
       const my = userHome ? r.score[0] : r.score[1];
       const their = userHome ? r.score[1] : r.score[0];

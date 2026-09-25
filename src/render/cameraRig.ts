@@ -38,9 +38,23 @@ interface Shot {
 const PITCH_DEG = 27;
 const FOV = 24;
 const DEG = Math.PI / 180;
-/** The over-the-shoulder shot stays on a struck free kick / penalty this long, then eases back out. */
+/** Steepest the broadcast lens tilts to keep the near stand out of the bottom of the frame. */
+const NEAR_PITCH_MAX = 40;
+/** Near stand, front-row heads (z, height; with a hop and a flag), the first thing the broadcast frame would clip at the bottom. */
+const NEAR_STAND_Z = HALF_W + 5.9;
+const NEAR_STAND_Y = 2.7;
+/** Card close-up: preferred angle (degrees) of the lens off the referee-offender line, and the side (+1 / -1) of his card hand. */
+const CARD_DEG = 70;
+const CARD_HAND = 1;
+/**
+ * The over-the-shoulder shot stays on a struck free kick / penalty this long, then cuts back to the
+ * broadcast shot (a cut, never an ease: easing 40 m back up to the gantry reads as a whip pan).
+ */
 const POST_HOLD = 1.4;
-const POST_EASE = 0.6;
+/** Near-touchline framing: the front-row heads of the near stand stay below this NDC height (bottom 8%). */
+const NEAR_STAND_NDC = -0.84;
+/** ...and the ball stays above this one (clear of the bottom HUD: minimap, player chip). */
+const NEAR_BALL_NDC = -0.62;
 /** Where the wanted shot moves further than this in one frame (players reset, a new set piece), cut. */
 const CUT_JUMP = 8;
 /** Top speed of the gliding cameras, m/s: faster than this reads as a whip pan. */
@@ -86,6 +100,8 @@ export class CameraRig {
   private postLook = new THREE.Vector3();
   /** Card close-up: signed angle (rad) of the lens off the referee's facing (chosen once per booking). */
   private cardSide = 0;
+  /** Touch layout (thumbstick bottom-left, buttons bottom-right): set pieces keep the taker in the left 60%. */
+  touchLayout = false;
   /** 0..1 progress of the pre-match fly-in. */
   introT = 0;
 
@@ -132,6 +148,19 @@ export class CameraRig {
     return this.behind;
   }
 
+  /** True while the struck set piece is being followed from over the taker's shoulder (the post-strike hold). */
+  get holding(): boolean {
+    return this.post > 0 && this.postShot !== null && this.behind;
+  }
+
+  /**
+   * End the post-strike hold now (the ball has come back towards the taker, or someone other than the taker
+   * or a keeper has touched it): the next frame cuts to the broadcast shot.
+   */
+  endHold(): void {
+    if (this.post > 0) this.post = 0;
+  }
+
   /** Metres of pitch the broadcast shot shows across the screen. */
   private broadcastWidth(): number {
     const a = this.camera.aspect;
@@ -175,11 +204,64 @@ export class CameraRig {
       }
       const edge = HALF_L - 0.3 * W;
       tx = clamp(fx, -edge, edge);
+      // Touch screens: the buttons own the bottom-right, so a set-piece taker is kept in the left 60% of the
+      // frame (even if that shows a little of the end stand beyond the corner flag).
+      if (piece && this.touchLayout) tx = Math.max(tx, Math.min(piece.x - 0.06 * W, HALF_L + 2));
       tz = clamp(fz, -(HALF_W - 12), HALF_W - 10);
       // Distance so W metres span the screen with a long, near-orthographic lens.
       const zoom = 1 + clamp(f.by * 0.015 + sp * 0.003, 0, 0.1);
       const d = (W / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2)) * cam.aspect)) * zoom;
-      const a = THREE.MathUtils.degToRad(PITCH_DEG);
+      const hf = THREE.MathUtils.degToRad(FOV / 2);
+      // Play by the near touchline: the lens rises (a steeper look down, target and distance kept) until the
+      // near stand's front-row heads drop out of the bottom band (<= 8% of the height), and only if even the
+      // steepest angle can't manage that does the look target come back up the pitch; either way the ball
+      // itself stays clear of the bottom HUD.
+      const bz = piece ? Math.max(piece.z, f.bz) : f.bz;
+      const ndcAt = (tzz: number, a: number, z: number, y: number) => {
+        const cz = tzz + d * Math.cos(a);
+        const cy = d * Math.sin(a);
+        return -Math.tan(Math.atan2(cy - y, cz - z) - a) / Math.tan(hf);
+      };
+      const standOk = (tzz: number, a: number) => ndcAt(tzz, a, NEAR_STAND_Z, NEAR_STAND_Y) <= NEAR_STAND_NDC;
+      const ballOk = (tzz: number, a: number) => ndcAt(tzz, a, bz, 0) >= NEAR_BALL_NDC;
+      const a0 = PITCH_DEG * DEG;
+      const aMax = NEAR_PITCH_MAX * DEG;
+      let a = a0;
+      if (!standOk(tz, a0)) {
+        if (standOk(tz, aMax)) {
+          // Smallest pitch that clears the stand (bisection keeps it continuous as the ball moves).
+          let lo = a0;
+          let hi = aMax;
+          for (let i = 0; i < 14; i++) {
+            const mid = (lo + hi) / 2;
+            if (standOk(tz, mid)) hi = mid;
+            else lo = mid;
+          }
+          a = hi;
+        } else {
+          a = aMax;
+          // Pull the target back up the pitch (never so far that the ball drops under the HUD).
+          let lo = tz - 14;
+          let hi = tz;
+          for (let i = 0; i < 14; i++) {
+            const mid = (lo + hi) / 2;
+            if (standOk(mid, a)) lo = mid;
+            else hi = mid;
+          }
+          tz = lo;
+        }
+        // The ball wins over the stand: ease the target back towards it until it clears the HUD.
+        if (!ballOk(tz, a)) {
+          let lo = tz;
+          let hi = tz + 10;
+          for (let i = 0; i < 12; i++) {
+            const mid = (lo + hi) / 2;
+            if (ballOk(mid, a)) hi = mid;
+            else lo = mid;
+          }
+          tz = hi;
+        }
+      }
       px = tx;
       py = d * Math.sin(a);
       pz = tz + d * Math.cos(a);
@@ -198,7 +280,7 @@ export class CameraRig {
   private holdShot(f: CamFocus, dt: number): Shot {
     const h0 = this.postShot!;
     const base = Math.atan2(h0.tz - h0.pz, h0.tx - h0.px);
-    const k = clamp(POST_HOLD + POST_EASE - this.post, 0, POST_HOLD);
+    const k = clamp(POST_HOLD - this.post, 0, POST_HOLD);
     const h = {
       ...h0,
       px: h0.px - Math.cos(base) * k * 0.9,
@@ -232,9 +314,8 @@ export class CameraRig {
     let behind = false;
     /** Gliding cameras: speed-limited, and cut (not flown) when the wanted shot jumps. */
     let glide = false;
-    /** A designed move (post-strike ease): follow it exactly, no speed limit, no jump cuts. */
+    /** A designed move (the intro fly-in, the post-strike hold): follow it exactly, no speed limit, no jump cuts. */
     let scripted = false;
-    let behindNoCut = false;
     switch (this.mode) {
       case 'menu': {
         this.orbit += dt * 0.045;
@@ -319,33 +400,35 @@ export class CameraRig {
           glide = true;
           break;
         }
-        // Referee close-up: ~55 degrees off the way he faces, so the raised card, his face and the
-        // offender in front of him share a tight frame.
+        // Referee close-up: the lens orbits the midpoint between the referee and the offender he faces, ~70
+        // degrees off the line between them, so both stand side by side in a tight frame: the raised card, his
+        // face and the player it is shown to.
         let dx = c.fx - c.rx;
         let dz = c.fz - c.rz;
         const dl = Math.hypot(dx, dz) || 1;
         dx /= dl;
         dz /= dl;
-        const D = 7.2;
+        const mx = (c.rx + c.fx) / 2;
+        const mz = (c.rz + c.fz) / 2;
+        const D = 6.6;
         const at = (sg: number) => {
           const off = Math.abs(sg);
           const ux = dx * Math.cos(off) - dz * Math.sign(sg) * Math.sin(off);
           const uz = dz * Math.cos(off) + dx * Math.sign(sg) * Math.sin(off);
-          return { x: c.rx + ux * D, z: c.rz + uz * D };
+          return { x: mx + ux * D, z: mz + uz * D };
         };
         if (this.cardSide === 0) {
-          // 40-75 degrees off the way he faces, either side: clear of the stands and of anyone standing
-          // between the lens and the referee, then the side nearer the main stand (the broadcast way).
-          let best = 55 * DEG;
+          // 55-90 degrees off the line, either side: clear of the stands and of anyone standing between the
+          // lens and the pair, then the referee's card-hand side, then the side nearer the main stand.
+          let best = CARD_DEG * DEG;
           let bestScore = Infinity;
-          for (const deg of [55, 45, 65, 75, 40]) {
+          for (const deg of [CARD_DEG, 62, 80, 55, 90]) {
             for (const sgn of [1, -1]) {
               const sg = sgn * deg * DEG;
               const q = at(sg);
               let score = (Math.max(0, Math.abs(q.x) - (HALF_L + 3)) + Math.max(0, Math.abs(q.z) - (HALF_W + 2.2))) * 10;
-              score += this.sightBlock(q.x, q.z, c.rx, c.rz, -1) * 6;
-              // His right-hand side (sg > 0) sees the raised card; from his left it hides behind his head.
-              score += Math.abs(deg - 55) * 0.02 - q.z * 0.03 + (sgn < 0 ? 1.2 : 0);
+              score += this.sightBlock(q.x, q.z, mx, mz, -1) * 3;
+              score += Math.abs(deg - CARD_DEG) * 0.02 - q.z * 0.03 + (sgn !== CARD_HAND ? 1.2 : 0);
               if (score < bestScore) {
                 bestScore = score;
                 best = sg;
@@ -358,11 +441,11 @@ export class CameraRig {
         px = clamp(q.x, -(HALF_L + 3), HALF_L + 3);
         pz = clamp(q.z, -(HALF_W + 2.2), HALF_W + 2.2);
         const tall = f.tall ?? 1.9;
-        py = tall * 1.05;
-        // The referee and his raised card left of centre, the offender right: the caption goes between.
-        tx = c.rx + dx * 1.1;
-        tz = c.rz + dz * 1.1;
-        ty = tall * 0.8;
+        py = tall * 1.0;
+        // Framed on the midpoint between the referee (raised card) and the offender he faces.
+        tx = mx;
+        tz = mz;
+        ty = tall * 0.78;
         fov = 30;
         rate = 6;
         glide = true;
@@ -421,7 +504,7 @@ export class CameraRig {
           behind = true;
           // Controls follow the lens: stick-up aims along the camera, left / right as seen on screen.
           this.yaw = Math.atan2(b.tx - b.px, -(b.tz - b.pz));
-          this.post = POST_HOLD + POST_EASE;
+          this.post = POST_HOLD;
           this.postCheck = 0.2;
           this.postShot = b;
           this.postYaw = this.yaw;
@@ -434,8 +517,9 @@ export class CameraRig {
         glide = true;
         if (this.post > 0 && this.postShot) {
           // The kick is away. A real strike (a shot, a whipped cross) keeps the over-the-shoulder shot on
-          // it for POST_HOLD, then eases back out to the broadcast shot; a short pass, the ball going out
-          // or a new stoppage cuts straight back.
+          // it for POST_HOLD, then cuts back to the broadcast shot; a short pass, the ball going out, a new
+          // stoppage or the session ending the hold (endHold: a rebound, a touch by anyone but the taker or a
+          // keeper) cuts straight back.
           if (!f.hold || f.setPiece) this.post = 0;
           else if (this.postCheck > 0) {
             if (Math.hypot(f.bvx, f.bvz) > 11) this.postCheck = 0;
@@ -446,17 +530,13 @@ export class CameraRig {
           }
         }
         if (this.post > 0 && this.postShot) {
-          const h = this.holdShot(f, dt);
-          const w = this.post > POST_EASE ? 1 : smoothstep(0, POST_EASE, this.post);
-          tx = lerp(tx, h.tx, w); ty = lerp(ty, h.ty, w); tz = lerp(tz, h.tz, w);
-          px = lerp(px, h.px, w); py = lerp(py, h.py, w); pz = lerp(pz, h.pz, w);
-          fov = lerp(fov, h.fov, w);
-          if (w >= 0.5) this.yaw = this.postYaw;
-          behind = w >= 0.5;
-          behindNoCut = true;
+          ({ tx, ty, tz, px, py, pz, fov } = this.holdShot(f, dt));
+          this.yaw = this.postYaw;
+          behind = true;
           rate = 14;
           glide = false;
           scripted = true;
+          // When it runs out, the next frame is the broadcast shot and `behind` flipping makes it a cut.
           this.post -= dt;
         }
       }
@@ -464,7 +544,7 @@ export class CameraRig {
     // The over-the-shoulder set-piece camera is a different camera: cut to it and back, never fly.
     if (behind !== this.behind) {
       this.behind = behind;
-      if (!behindNoCut) this.snap = true;
+      this.snap = true;
     }
     // Low cameras (goal line, celebrations, card close-ups) step around anyone standing where the lens would be.
     if ((this.mode === 'replay' && this.replayShot === 'goal') || this.mode === 'celebrate' || this.mode === 'card') {

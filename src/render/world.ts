@@ -34,7 +34,7 @@ const LOOKS: Record<TimeOfDay, Look> = {
   // lawn stays bright while the stands and the world outside drop into the dark (see Stadium.setTimeOfDay).
   night: {
     skyTop: 0x0b1030, skyMid: 0x1c2a5c, skyBottom: 0x2f4478, hemiSky: 0x5a6fae, hemiGround: 0x1e2e24, hemi: 0.45,
-    sun: 0xeef2ff, sunI: 2.0, offset: [-18, 62, 34], fog: 0x1c2a5c, fillI: 0.8,
+    sun: 0xeef2ff, sunI: 2.0, offset: [-18, 62, 34], fog: 0x0b1030, fillI: 0.8,
   },
 };
 

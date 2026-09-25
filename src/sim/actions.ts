@@ -42,8 +42,21 @@ export function laneRisk(m: Match, side: number, ax: number, az: number, bx: num
 
 /** Lateral error scale on every shot (tuned with the keepers so ~55-60% of shots are on target). */
 const FINISH_ERR = 0.93;
+/**
+ * Lateral aim error (sd, m at the goal line, before the skill / power / pressure factors) is
+ * SHOT_ERR_BASE + distance x SHOT_ERR_DIST: a long shot is less precise, but not so much that
+ * nothing from 25 m ever finds a corner (the distance term used to be 0.066).
+ */
+export const SHOT_ERR_BASE = 1.0;
+export const SHOT_ERR_DIST = 0.047;
+/** How far inside the post (m, at least) the AI aims a shot it places itself. */
+const AI_POST_AIM = 0.12;
+/** Beyond this distance (m) a full-power strike no longer climbs as much (so it isn't always over). */
+const LONG_RISE_FROM = 20;
 /** How much steadier a header is than it used to be (1 = as precise as a shot with the foot). */
-const HEADER_COMPOSURE = 0.66;
+const HEADER_COMPOSURE = 0.72;
+/** Headers from a corner / wide free-kick delivery (a crowded box, a marker on you) are rougher still. */
+const SET_PIECE_HEADER = 0.7;
 
 /** Longest a throw-in (or a keeper's throw / roll) can go, m. */
 export const THROW_RANGE = 26;
@@ -138,6 +151,15 @@ export function skillErr(m: Match, p: Player): number {
   return 1.3 - m.kickSkill(p) * 0.125;
 }
 
+/**
+ * An AI shooter's finishing error on top of skillErr: a touch steadier than before, since keepers now
+ * hold more of the long shots they used to spill (the AI's goal rate was tuned against those rebounds).
+ */
+const AI_FINISH = 0.88;
+function aiFinish(m: Match, p: Player): number {
+  return m.isHumanControlled(p) ? 1 : AI_FINISH;
+}
+
 /** Being closed down makes every kick a little less clean. */
 function pressureErr(m: Match, p: Player): number {
   const d = nearestOppDist(m, p);
@@ -198,7 +220,9 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
         tz = r.pos.z + r.vel.z * t * 0.85;
       }
       tx = clamp(tx, -HALF_L + 1, HALF_L - 1);
-      tz = clamp(tz, -HALF_W + 0.8, HALF_W - 0.8);
+      // A keeper rolls / throws it to the full-back's feet, not onto the touchline.
+      const zMax = kind === 'keeper' ? HALF_W - 3 : HALF_W - 0.8;
+      tz = clamp(tz, -zMax, zMax);
       let d = dist2(b.x, b.z, tx, tz);
       if (throwIn && d > THROW_RANGE) {
         // Nobody can throw (or roll) it further than this: it drops short, towards the target.
@@ -275,8 +299,10 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
         tz = b.z + dir.z * reach;
       }
     }
-    tx = clamp(tx, -HALF_L + 1, HALF_L - 1);
-    tz = clamp(tz, -HALF_W + 1, HALF_W - 1);
+    // A deliberate clearance (or headed clearance) may be aimed off the pitch: into touch, or behind.
+    const out = (kind === 'clear' || kind === 'header') && order.aimX !== undefined && tgt < 0 ? 6 : -1;
+    tx = clamp(tx, -HALF_L - out, HALF_L + out);
+    tz = clamp(tz, -HALF_W - out, HALF_W + out);
     const d = Math.max(3, dist2(b.x, b.z, tx, tz));
     const flight = kind === 'header'
       ? clamp(0.5 + d / 30, 0.5, 1.2)
@@ -285,7 +311,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
     const s = solveLob(d, flight, land);
     let err = passError(p, m, kind === 'clear' ? 2.2 : 1.4);
     // A scrambled clearance from inside our own box sometimes slices off behind for a corner.
-    if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.36 * pressureErr(m, p))) {
+    if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.75 * pressureErr(m, p))) {
       const toLine = -ad; // towards our own goal line
       const zs = Math.sign(b.z || 1);
       // Rotate so the ball heads for the byline on the near side, well wide of the goal.
@@ -308,14 +334,18 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   const acc = p.stat.shooting / 100;
   const power = clamp(order.power, 0, 1);
   const hw = GOAL_W / 2;
-  const sk = skillErr(m, p);
+  const sk = skillErr(m, p) * aiFinish(m, p);
   const press = pressureErr(m, p);
 
-  // Aim: stick across the goal picks a corner; otherwise the side the keeper leaves open.
+  // Aim: an explicit point on the goal line (a free kick aimed with the arrow), else the stick across
+  // the goal picks a corner; otherwise the side the keeper leaves open.
   const keeper = m.keeperOf(p.side === 0 ? 1 : 0);
   const lateral = clamp(order.dirZ, -1, 1); // world z is lateral for both ends
+  const human = m.isHumanControlled(p);
   let aimZ: number;
-  if (Math.abs(lateral) > 0.3) {
+  if (!header && order.aimZ !== undefined && Number.isFinite(order.aimZ)) {
+    aimZ = clamp(order.aimZ, -hw - 4, hw + 4);
+  } else if (Math.abs(lateral) > 0.3) {
     aimZ = Math.sign(lateral) * (hw - 0.5);
   } else {
     // Where the keeper blocks the goal line, seen from the ball.
@@ -330,19 +360,29 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
     let dir = gapR >= gapL ? 1 : -1;
     // Similar gaps: mix it up (near post / far post) so keepers can't cheat.
     if (Math.abs(gapR - gapL) < 0.9 && m.rng.chance(0.4)) dir = -dir;
-    aimZ = dir * (hw - 0.35 - m.rng.next() * 0.55);
+    // A human who doesn't aim gets the open side, but not the corner every time close in (aim for
+    // that); from range, where only the corners beat a keeper, it's placed nearer them. The AI goes for
+    // the corner, right by the post.
+    const spread = 1.25 - clamp((dist2(b.x, b.z, gx, 0) - 14) / 10, 0, 1) * 0.65;
+    aimZ = dir * (human ? hw - 0.35 - m.rng.next() * spread : hw - AI_POST_AIM - m.rng.next() * 0.5);
     if (header) aimZ *= 0.75;
   }
   const d = Math.max(2, dist2(b.x, b.z, gx, aimZ));
-  // Headers are less precise than a strike with the foot (but a free header is still a chance).
-  const composure = header ? HEADER_COMPOSURE : 1;
-  const errZ = (m.rng.gauss() * (0.82 + d * 0.066) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press * FINISH_ERR) / composure;
+  // Headers are less precise than a strike with the foot (but a free header is still a chance);
+  // a header from a set-piece delivery, in traffic, less so again.
+  const composure = header ? HEADER_COMPOSURE * (m.setPieceKick === m.kickId ? SET_PIECE_HEADER : 1) : 1;
+  // Coming in at an angle the same miss in the air lands further along the goal line (1 / cos).
+  const obl = Math.pow(clamp(Math.abs(gx - b.x) / d, 0.45, 1), 0.8);
+  const errZ = (m.rng.gauss() * (SHOT_ERR_BASE + d * SHOT_ERR_DIST) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press * FINISH_ERR) /
+    (composure * obl);
   const tz = aimZ + errZ;
-  // Height at the line: placed shots stay low, blasted ones climb (and can fly over).
-  const skew = Math.abs(m.rng.gauss()) * (1.15 - acc) * (0.35 + power) * 2.1 * sk * press;
+  // Height at the line: placed shots stay low, blasted ones climb (and can fly over). From range
+  // the climb of a full-power strike is capped, so a hit from 25 m isn't mostly over the bar.
+  const rise = header ? 1 : clamp(1 - (d - LONG_RISE_FROM) * 0.035, 0.62, 1);
+  const skew = Math.abs(m.rng.gauss()) * (1.15 - acc) * (0.35 + power) * 2.1 * sk * press * rise;
   let h = header
     ? 0.3 + power * 0.8 + skew * 0.9 + m.rng.gauss() * 0.55
-    : 0.25 + power * power * 1.25 + skew + m.rng.gauss() * 0.25;
+    : 0.25 + power * power * 1.25 * rise + skew + m.rng.gauss() * 0.25;
   if (!header && b.y > 0.7) h += b.y * 0.35; // volleys fly
   h = Math.max(0.15, h);
   let speed = header ? 11 + power * 8 + acc * 3 : 15 + power * 16 * (0.78 + acc * 0.3);
@@ -359,13 +399,16 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   const curl = header ? 0 : clamp(order.curl ?? 0, -1, 1);
   if (Math.abs(curl) > 0.02) {
     // A bent strike: a touch less precise than a clean one, and it starts outside the target.
-    bendShot(m, L, gx, tz + m.rng.gauss() * Math.abs(curl) * 0.25, curl);
+    bendShot(m, L, gx, tz + m.rng.gauss() * Math.abs(curl) * CURL_ERR, curl);
   } else {
     // A little natural curl so shots don't look like laser beams.
     L.spinY = m.rng.gauss() * 1.2;
   }
   return L;
 }
+
+/** Extra lateral error (sd, m) of a fully bent strike: judging the bend is part of the skill. */
+const CURL_ERR = 0.45;
 
 /** Sidespin (rad/s) of a full-curl strike: bends a 25 m free kick ~2 m. */
 export const CURL_SPIN = 10;

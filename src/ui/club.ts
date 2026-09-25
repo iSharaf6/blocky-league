@@ -13,9 +13,11 @@ import {
 } from '../meta/career';
 import { KIT_COLORS } from '../meta/data';
 import { cssHex } from '../render/palette';
+import { STADIUM_LEVELS } from '../render/stadium';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, type FormationId, type Kit, type KitPattern, type PlayerDef, type PlayerStats } from '../sim/types';
 import { pitchLayout, shirtArt } from './menus';
+import { StadiumPreview, stadiumIsoSvg } from './preview';
 
 // ------------------------------------------------------------------ shared screen kit
 
@@ -32,8 +34,23 @@ export interface MetaScreen {
 }
 
 let activeRoot: HTMLDivElement | null = null;
+/** Run when the meta screen closes (3D previews free their WebGL context). */
+let cleanups: (() => void)[] = [];
+
+export function onMetaClose(fn: () => void): void {
+  cleanups.push(fn);
+}
 
 export function closeMeta(): void {
+  const fns = cleanups;
+  cleanups = [];
+  for (const fn of fns) {
+    try {
+      fn();
+    } catch {
+      // A failed cleanup must not keep the next screen from opening.
+    }
+  }
   activeRoot?.remove();
   activeRoot = null;
 }
@@ -407,24 +424,58 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       </div>
     </div>`;
 
+  /** Upgrade-screen 3D grounds (now / next), alive only while the STADIUM tab is showing. */
+  let pv: StadiumPreview | null = null;
+  const dropPreview = () => {
+    pv?.dispose();
+    pv = null;
+  };
+  onMetaClose(dropPreview);
+  const has3d = () => {
+    pv ??= new StadiumPreview({ home: club.kit.shirt, homeName: club.name });
+    return pv.ok;
+  };
+
+  const stadiumView = (l: number, when: 'NOW' | 'NEXT', solo: boolean, gl: boolean) => `
+    <figure class="mc-stadview ${when === 'NEXT' ? 'next' : 'now'} ${solo ? 'solo' : ''}">
+      ${gl ? `<canvas class="mc-stad3d" data-slot="${when === 'NOW' ? 0 : 1}" aria-label="${STADIUM_NAMES[l]} preview"></canvas>` : stadiumIsoSvg(l)}
+      <figcaption><span>${when}</span><b>${STADIUM_NAMES[l]}</b></figcaption>
+    </figure>`;
+
   const stadiumHtml = () => {
     const lvl = st.stadium;
     const maxed = lvl >= STADIUM_MAX;
     const cost = stadiumUpgradeCost(lvl);
     const crowd = (l: number) => `${Math.round(matchAttendance(l) * 100)}%`;
+    const cap = (l: number) => fmt(STADIUM_LEVELS[l]?.capacity ?? 0);
     const next = (a: string, b: string) => (maxed ? `<b>${a}</b>` : `<b>${a} <em>→ ${b}</em></b>`);
-    return `<div class="mc-stadium">
-        <div class="mc-stands" aria-hidden="true">${Array.from({ length: STADIUM_MAX }, (_, i) => `<i class="${i < lvl ? 'on' : ''}" style="height:${28 + i * 16}px"></i>`).join('')}</div>
+    const gl = has3d();
+    return `<div class="mc-stadium ${maxed ? 'maxed' : ''}">
+        ${stadiumView(lvl, 'NOW', maxed, gl)}
+        ${maxed ? '' : stadiumView(lvl + 1, 'NEXT', false, gl)}
         <div class="mc-stadinfo">
           <b class="mc-stadname">${STADIUM_NAMES[lvl]}</b>
           <span class="mc-stadlvl">LEVEL ${lvl} / ${STADIUM_MAX}</span>
+          <div class="mc-kv"><span>CAPACITY</span>${next(cap(lvl), cap(lvl + 1))}</div>
           <div class="mc-kv"><span>CROWD</span>${next(crowd(lvl), crowd(lvl + 1))}</div>
           <div class="mc-kv"><span>MATCH COINS</span>${next(`+${lvl * 10}%`, `+${(lvl + 1) * 10}%`)}</div>
-          ${maxed ? '' : `<div class="mc-kv"><span>NEXT</span><b>${STADIUM_NAMES[lvl + 1]}</b></div>`}
         </div>
       </div>
-      <p class="mc-hint">A bigger ground packs in more fans and pays more coins for every match you play.</p>
+      <p class="mc-hint">A bigger ground packs in more fans and pays more coins for every home match.</p>
       <div class="btn-row"><button class="btn btn-go btn-lg ${app.save.coins < cost ? 'poor' : ''}" data-a="upgrade" ${maxed ? 'disabled' : ''}>${maxed ? 'FULLY UPGRADED' : `UPGRADE · ${fmt(cost)}`}</button></div>`;
+  };
+
+  /** After a render: point the previews at the fresh canvases (or free them off the STADIUM tab). */
+  const bindPreview = () => {
+    if (tab !== 'stadium') {
+      dropPreview();
+      return;
+    }
+    if (!pv?.ok) return;
+    const lvl = st.stadium;
+    const canvases = scr.panel.querySelectorAll<HTMLCanvasElement>('.mc-stad3d');
+    canvases.forEach((c) => pv!.set(Number(c.dataset.slot), c, lvl + Number(c.dataset.slot)));
+    if (lvl >= STADIUM_MAX) pv.clear(1);
   };
 
   const draw = () => {
@@ -524,8 +575,8 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           if (!ok) return;
           club.name = sanitizeName(v);
           app.persist();
-          const pv = scr.panel.querySelector('.mc-preview');
-          if (pv) pv.innerHTML = previewHtml(club.kit, club.name, club.short);
+          const kp = scr.panel.querySelector('.mc-preview');
+          if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short);
           const bar = scr.panel.querySelector('.mc-clubtxt b');
           if (bar) bar.textContent = club.name;
         },
@@ -536,11 +587,12 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           if (v.length !== 3) return;
           club.short = v;
           app.persist();
-          const pv = scr.panel.querySelector('.mc-preview');
-          if (pv) pv.innerHTML = previewHtml(club.kit, club.name, club.short);
+          const kp = scr.panel.querySelector('.mc-preview');
+          if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short);
         },
       },
     );
+    bindPreview();
   };
   draw();
 }

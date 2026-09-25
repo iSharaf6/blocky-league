@@ -4,7 +4,7 @@ import { clamp, damp } from '../core/math';
 import { CameraRig } from '../render/cameraRig';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
-import { PITCH_Y, Stadium } from '../render/stadium';
+import { PITCH_Y, Stadium, stadiumFill } from '../render/stadium';
 import { Weather, type WeatherKind } from '../render/weather';
 import type { TimeOfDay, World } from '../render/world';
 import { DT, HALF_L, HALF_W } from '../sim/constants';
@@ -23,6 +23,8 @@ export interface SessionOptions extends MatchConfig {
   demo?: boolean;
   timeOfDay?: TimeOfDay;
   weather?: WeatherKind;
+  /** Home stadium size 0..5 (5 = full bowl). */
+  stadiumLevel?: number;
   /** Show first-match control tips. */
   tutorial?: boolean;
 }
@@ -61,6 +63,22 @@ const GOAL_WIDE_S = 0.9;
 const REPLAY_AT = 3.6;
 /** Referee close-up when a card is shown at a stoppage. */
 const CARD_CAM_S = 1.8;
+
+/** Players within this distance of a low lens (free kick, card close-up) fade to LENS_FADE opacity. */
+const LENS_CLEAR = 3;
+const LENS_FADE = 0.25;
+
+/**
+ * On-screen labels of the touch buttons (mirrors ui/touch.ts LABELS): hints name the button the player sees.
+ * [pass, shoot, through] per context.
+ */
+const TOUCH_LABELS = {
+  attack: ['PASS', 'SHOOT', 'THROUGH'],
+  defend: ['SWITCH', 'TACKLE', 'PRESS'],
+  setpiece: ['PASS', 'SHOOT', 'CROSS'],
+} as const;
+type HintCtx = keyof typeof TOUCH_LABELS;
+type HintKey = 'pass' | 'shoot' | 'through';
 
 const RESTART_LABEL: Record<RestartKind, string> = {
   kickoff: 'KICK OFF', throwin: 'THROW-IN', corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!',
@@ -107,8 +125,17 @@ export class MatchSession {
   private cardT = 0;
   /** Where the last foul happened (a sent-off player is already by his dugout when the card is shown). */
   private foulAt = { x: 0, z: 0 };
+  /** Where the fouler stood when he committed it (the booked player's mark in the close-up if he's sent off). */
+  private foulBy = { x: 0, z: 0 };
   /** Smoothed radius of the celebrating group the camera frames. */
   private celebG = 0;
+  /** Who is being booked (never faded out of the card close-up). */
+  private cardPlayer = -1;
+  /**
+   * Our set piece filmed over the taker's shoulder: the taker, the spot, and how far the ball has got, so the
+   * post-strike hold can end early (a rebound back towards him, a touch by anyone but him or a keeper).
+   */
+  private holdKick: { taker: number; x: number; z: number; far: number; struck: boolean } | null = null;
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
     this.demo = !!opt.demo;
@@ -117,22 +144,27 @@ export class MatchSession {
     opt.kits = [home, resolveKitClash(home, grassSafeKit(opt.kits[1]))];
     this.match = new Match(opt);
     const teams = this.match.teams;
+    const level = Math.max(0, Math.min(5, Math.round(opt.stadiumLevel ?? 5)));
     this.stadium = new Stadium({
       home: opt.kits[0].shirt,
       away: opt.kits[1].shirt,
       homeName: teams[0].name,
       awayName: teams[1].name,
-      // Fewer fans on lower graphics settings: the crowd is the biggest vertex cost.
-      attendance: opt.attendance * (world.quality === 'low' ? 0.45 : world.quality === 'medium' ? 0.75 : 1),
+      // A small ground rarely sells out; and fewer fans on lower graphics settings (the crowd is the biggest
+      // vertex cost).
+      attendance: opt.attendance * stadiumFill(level) * (world.quality === 'low' ? 0.45 : world.quality === 'medium' ? 0.75 : 1),
+      level,
       seed: this.match.rng.int(1e9),
     });
     this.view = new MatchView(teams, opt.kits, opt.humanSide);
     const tod = opt.timeOfDay ?? 'day';
     const wx = opt.weather ?? 'clear';
     world.setTimeOfDay(tod, wx);
+    // Night matches: the UI can key off this (vignette, HUD tint); the 3D vignette is the stadium's own.
+    if (!this.demo) document.body.classList.toggle('night', tod === 'night');
     this.stadium.setTimeOfDay(tod);
     this.stadium.setWeather(wx);
-    this.view.setTimeOfDay(tod);
+    this.view.setTimeOfDay(tod, this.stadium.lightTowers);
     this.weather.set(wx, world.quality);
     sfx.setRain(wx === 'rain');
     this.view.group.position.y = PITCH_Y;
@@ -140,6 +172,7 @@ export class MatchSession {
     world.scene.add(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
     this.cam = new CameraRig(world.camera);
     this.cam.players = this.view.frame;
+    this.cam.touchLayout = !this.demo && isTouchDevice();
     this.cam.setMode(this.demo ? 'menu' : 'intro');
     if (!this.demo) this.introLeft = 3.4;
     if (!this.demo) {
@@ -188,14 +221,16 @@ export class MatchSession {
   }
 
   continueSecondHalf(): void {
-    // The AI manager freshens up tired legs at the break.
-    const ai = (this.match.cfg.humanSide === 0 ? 1 : 0) as Side;
-    const before = this.match.teamPlayers(ai).map((p) => p.def);
-    this.match.aiSubs(ai, 2);
-    this.match.teamPlayers(ai).forEach((p, i) => {
-      if (p.def !== before[i]) this.view.replacePlayer(p.idx, p.def, this.opt.kits[ai]);
-    });
-    if (this.match.cfg.humanSide < 0) this.match.aiSubs(0, 2);
+    // The AI managers (both in AI-vs-AI, never the human's) freshen up tired legs at the break.
+    const m = this.match;
+    for (const side of [0, 1] as Side[]) {
+      if (side === m.cfg.humanSide) continue;
+      const before = m.teamPlayers(side).map((p) => p.def);
+      m.aiSubs(side, 2);
+      m.teamPlayers(side).forEach((p, i) => {
+        if (p.def !== before[i]) this.view.replacePlayer(p.idx, p.def, this.opt.kits[side]);
+      });
+    }
     this.match.continueSecondHalf();
     this.resetView();
     this.halftimeFired = false;
@@ -206,7 +241,8 @@ export class MatchSession {
     if (this.demo || this.match.cfg.humanSide < 0) return EMPTY_PAD;
     const c = this.input.read();
     const w = this.cam.screenToWorld(c.sx, c.sy);
-    return { mx: w.x, mz: w.z, sprint: c.sprint, pass: c.pass, shoot: c.shoot, through: c.through };
+    // Keys give 8-way digital input: the sim turns set-piece aim gradually for those.
+    return { mx: w.x, mz: w.z, sprint: c.sprint, pass: c.pass, shoot: c.shoot, through: c.through, digital: this.input.lastDevice === 'keyboard' };
   }
 
   update(realDt: number): void {
@@ -249,6 +285,8 @@ export class MatchSession {
         // Back to the game when the close-up is done, or at once if play restarts under it.
         if (this.cardT <= 0 || m.phase === 'play' || m.phase === 'goal') {
           this.cardT = 0;
+          this.view.pinPlayer(null);
+          this.cardPlayer = -1;
           if (this.cam.mode === 'card') this.cam.setMode('broadcast');
         }
       }
@@ -321,6 +359,7 @@ export class MatchSession {
     const owner = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
     const lean = owner ? m.attackDir(owner.side) : 0;
     const ref = this.cam.mode === 'card' ? this.view.refState : null;
+    this.trackHold();
     this.cam.update(this.paused ? 0 : dt, {
       bx: f[BALL_OFS], by: f[BALL_OFS + 1], bz: f[BALL_OFS + 2],
       bvx: f[BALL_OFS + 3], bvz: f[BALL_OFS + 5],
@@ -335,9 +374,10 @@ export class MatchSession {
     // Low cameras (over the set-piece taker's shoulder, the shootout, the referee close-up) drop the name
     // tag and arrow, which would otherwise float over the goal mouth.
     this.view.setMarkerMode(this.cam.behindActive || this.cam.mode === 'penalty' || this.cam.mode === 'card' ? 'ring' : 'full');
+    this.updateFades(ref);
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
     this.stadium.updateGlare(this.world.camera);
-    if (this.weather.kind === 'rain' && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ);
+    if (this.weather.kind === 'rain' && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ, 22, 15, 90, this.world.camera.position);
     this.view.faceCamera(this.world.camera);
     this.view.updateReferee(this.paused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
@@ -476,6 +516,7 @@ export class MatchSession {
     this.replay = frames.slice(0, Math.min(frames.length, cut));
     this.replayGoalIdx = Math.max(0, this.replay.length - tail);
     this.replayT = 0;
+    // No confetti / grass flecks from the live celebration drifting over the replayed build-up.
     this.effects.clear();
     this.cam.replayAngle = Math.floor(Math.random() * 2);
     this.cam.replayGoalSign = this.match.attackDir(this.match.goalSide);
@@ -523,6 +564,8 @@ export class MatchSession {
   private handleEvents(events: MatchEvent[]): void {
     const m = this.match;
     for (const e of events) {
+      // Every event goes to the commentary ticker too.
+      this.hud?.commentary(e, m);
       switch (e.type) {
         case 'kick': {
           sfx.kick(e.power, e.kind === 'header');
@@ -635,19 +678,32 @@ export class MatchSession {
           // live play he just shows it: the game never waits for the camera).
           const live = m.phase === 'play';
           const gone = isSentOff(p);
-          const x = gone ? this.foulAt.x : p.pos.x;
-          const z = gone ? this.foulAt.z : p.pos.z;
+          let x = gone ? this.foulBy.x : p.pos.x;
+          let z = gone ? this.foulBy.z : p.pos.z;
+          // Never on top of the man he brought down (he is drawn on his mark for the close-up).
+          const dv = Math.hypot(x - this.foulAt.x, z - this.foulAt.z);
+          if (dv < 1.3) {
+            const ux = dv > 0.05 ? (x - this.foulAt.x) / dv : 1;
+            const uz = dv > 0.05 ? (z - this.foulAt.z) / dv : 0;
+            x = this.foulAt.x + ux * 1.3;
+            z = this.foulAt.z + uz * 1.3;
+          }
           const close = !live && !this.demo && !this.replay && this.cam.mode === 'broadcast';
           this.view.showCard(red ? 'red' : 'yellow', x, z, close ? CARD_CAM_S : red ? 2.2 : 1.8, close);
           if (close) {
             this.cardT = CARD_CAM_S;
+            this.cardPlayer = p.idx;
+            // He stands on his mark facing the referee for the close-up (render only).
+            this.view.pinPlayer(p.idx, x, z);
             this.cam.setMode('card');
           }
           break;
         }
         case 'foul': {
           const on = m.players[e.on];
+          const by = m.players[e.by];
           this.foulAt = { x: on.pos.x, z: on.pos.z };
+          this.foulBy = { x: by.pos.x, z: by.pos.z };
           this.view.refSignal(1.2);
           if (!e.penalty) this.hud?.toastMsg('FOUL!', 1.2);
           break;
@@ -705,6 +761,62 @@ export class MatchSession {
     }
   }
 
+  /**
+   * Post-strike hold on our set piece: it ends early (a cut to the broadcast shot) once the ball comes back
+   * towards the taker (off the wall, the woodwork, a parry) or anyone but the taker or a keeper touches it.
+   */
+  private trackHold(): void {
+    const m = this.match;
+    const b = m.ball;
+    if (this.cam.behindActive && m.phase === 'restart' && m.restart) {
+      this.holdKick = { taker: m.restart.taker, x: b.pos.x, z: b.pos.z, far: 0, struck: false };
+      return;
+    }
+    const hk = this.holdKick;
+    if (!hk) return;
+    if (!this.cam.holding) {
+      if (m.phase !== 'restart') this.holdKick = null;
+      return;
+    }
+    if (!hk.struck) {
+      // Armed from the moment the taker's boot sends it on its way.
+      if (b.owner < 0 && b.lastTouch === hk.taker) hk.struck = true;
+      else return;
+    }
+    const d = Math.hypot(b.pos.x - hk.x, b.pos.z - hk.z);
+    hk.far = Math.max(hk.far, d);
+    const lt = b.lastTouch;
+    const other = lt >= 0 && lt !== hk.taker && !m.players[lt].isKeeper;
+    if (other || (hk.far > 4 && d < hk.far - 1.5)) {
+      this.cam.endHold();
+      this.holdKick = null;
+    }
+  }
+
+  /**
+   * Low lenses see through whoever crowds them: within LENS_CLEAR of the camera a player fades to LENS_FADE
+   * (the free-kick camera's team-mates behind the ball, anyone by the card close-up's lens), and in the card
+   * close-up so does anyone standing on the sight line to the referee or the offender.
+   */
+  private updateFades(ref: { x: number; z: number; faceX: number; faceZ: number } | null): void {
+    const cam = this.cam;
+    const low = cam.behindActive || cam.mode === 'penalty' || cam.mode === 'card' || (cam.mode === 'replay' && cam.replayShot === 'goal');
+    if (!low) {
+      this.view.clearFades();
+      return;
+    }
+    const m = this.match;
+    const keep: number[] = [];
+    const sight: { x: number; z: number }[] = [];
+    if (cam.mode === 'card') {
+      if (this.cardPlayer >= 0) keep.push(this.cardPlayer);
+      if (ref) sight.push({ x: ref.x, z: ref.z }, { x: ref.faceX, z: ref.faceZ });
+    } else if (cam.mode === 'penalty' && m.shootout) keep.push(m.shootout.taker);
+    else if (cam.behindActive && m.restart) keep.push(m.restart.taker);
+    const lens = this.world.camera.position;
+    this.view.fadeNearLens(lens.x, lens.z, LENS_CLEAR, LENS_FADE, keep, sight);
+  }
+
   private updateAtmosphere(dt: number): void {
     const m = this.match;
     const bx = m.ball.pos.x;
@@ -756,25 +868,34 @@ export class MatchSession {
     const hs = m.cfg.humanSide;
     if (hs < 0) return;
     const dev = this.input.lastDevice;
-    const key = (k: 'pass' | 'shoot' | 'through') =>
-      dev === 'gamepad' ? { pass: 'A', shoot: 'B', through: 'X' }[k] : dev === 'touch' ? k.toUpperCase() : { pass: 'SPACE', shoot: 'K', through: 'L' }[k];
-    let hint = '';
     const r = m.restart;
     const so = m.phase === 'shootout' ? m.shootout : null;
+    const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
+    // The context the touch buttons are labelled for right now: hints name the button on screen.
+    const ctx: HintCtx = so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine ? 'attack' : 'defend';
+    const key = (k: HintKey): string =>
+      dev === 'gamepad' ? { pass: 'A', shoot: 'B', through: 'X' }[k]
+        : dev === 'touch' ? TOUCH_LABELS[ctx][k === 'pass' ? 0 : k === 'shoot' ? 1 : 2]
+          : { pass: 'SPACE', shoot: 'K', through: 'L' }[k];
+    let hint = '';
     const soAim = !!so && (so.stage === 'aim' || so.stage === 'intro');
+    // Hold for power, let go to strike (never "SHOOT to shoot": the touch button already says SHOOT).
+    const strike = `hold ${key('shoot')} to strike`;
     if (so) {
-      if (soAim) hint = so.turn === hs ? `Aim + hold ${key('shoot')} to shoot` : 'Dive: point the stick when they shoot';
+      if (soAim) hint = so.turn === hs ? `Aim · ${strike}` : 'Dive: point the stick when they shoot';
     } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs) {
       switch (r.kind) {
         case 'kickoff': hint = `${key('pass')} to kick off`; break;
-        case 'throwin': hint = `Aim + ${key('pass')} to throw`; break;
-        case 'corner': hint = `${key('pass')} short · hold ${key('through')} to cross`; break;
+        case 'throwin': hint = `Aim · ${key('pass')} to throw`; break;
+        // SHOOT on a corner is a driven cross (flat and fast), not a shot. (Touch labels the through button
+        // CROSS at set pieces, so the verb is "whip it in", never "CROSS to cross".)
+        case 'corner': hint = `${key('pass')} short · hold ${key('through')} to whip it in · ${key('shoot')} = driven cross`; break;
         case 'goalkick': hint = `${key('pass')} short · hold ${key('through')} to go long`; break;
-        case 'freekick': hint = `${key('shoot')} to shoot · hold ${key('through')} to cross`; break;
-        case 'penalty': hint = `Aim + hold ${key('shoot')} to shoot`; break;
+        case 'freekick': hint = `Aim · ${strike} · hold ${key('through')} to whip it in`; break;
+        case 'penalty': hint = `Aim · ${strike}`; break;
       }
-    } else if (m.ball.held && m.ball.owner >= 0 && m.players[m.ball.owner].side === hs) {
-      hint = `${key('pass')} throw · ${key('through')} kick long`;
+    } else if (m.ball.held && mine) {
+      hint = `${key('pass')} to throw it out · ${key('through')} to kick long`;
     }
     hud.setHint(this.replay ? '' : hint);
     // Aim arrow for our set pieces (shootout: at the spot picked across the goal mouth).
@@ -796,17 +917,14 @@ export class MatchSession {
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
       this.touch.setVisible(!(this.introLeft > 0 || this.replay || m.phase === 'goal' || m.phase === 'halftime' || m.phase === 'fulltime'));
-      const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
-      this.touch.setContext(
-        so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine ? 'attack' : 'defend',
-      );
+      this.touch.setContext(ctx);
     }
     // Pause via keyboard / gamepad.
     const c = this.input.gamepadPause();
     if (c && !this.paused) this.requestPause();
   }
 
-  private updateTutorial(dt: number, key: (k: 'pass' | 'shoot' | 'through') => string): void {
+  private updateTutorial(dt: number, key: (k: HintKey) => string): void {
     const hud = this.hud;
     if (!hud || !this.opt.tutorial) return;
     const m = this.match;
@@ -836,6 +954,7 @@ export class MatchSession {
 
   dispose(): void {
     this.world.scene.remove(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
+    if (!this.demo) document.body.classList.remove('night');
     sfx.setRain(false);
     this.hud?.dispose();
     this.touch?.root.remove();

@@ -4,6 +4,7 @@ import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview } from './preview';
 import { crestSvg } from './crest';
+import { speechAvailable } from './commentary';
 import { cssHex, shade } from '../render/palette';
 import { FORMATIONS, FORMATION_IDS, type Slot } from '../sim/formations';
 import type { Match } from '../sim/match';
@@ -155,6 +156,83 @@ export function pitchLayout(slots: Slot[]): [number, number, number][] {
   });
   return out;
 }
+
+/** Touch screens get the touch controls first (a coarse pointer, i.e. a phone or tablet). */
+export function defaultDevice(): 'keyboard' | 'touch' {
+  try {
+    return typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 'touch' : 'keyboard';
+  } catch {
+    return 'keyboard';
+  }
+}
+
+const HOWTO_KEYS = `
+  <div class="howto">
+    <div class="ht-col">
+      <h3>ATTACK</h3>
+      <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
+      <p><kbd>SPACE</kbd> pass (aim with the stick)</p>
+      <p><kbd>K</kbd> hold &amp; release to shoot</p>
+      <p><kbd>L</kbd> tap: through ball · hold: lob / cross</p>
+      <p><kbd>SHIFT</kbd> sprint · double-tap to knock it past a defender</p>
+    </div>
+    <div class="ht-col">
+      <h3>DEFEND</h3>
+      <p><kbd>SPACE</kbd> switch player</p>
+      <p><kbd>K</kbd> slide tackle</p>
+      <p><kbd>L</kbd> hold to press the ball</p>
+      <p>Run into the dribbler to steal it</p>
+      <p><kbd>ESC</kbd> pause</p>
+    </div>
+  </div>
+  <p class="fine">First-time finish: press SHOOT just before a pass or cross reaches you.</p>`;
+
+const HOWTO_PAD = `
+  <div class="howto">
+    <div class="ht-col">
+      <h3>ATTACK</h3>
+      <p><kbd>LEFT STICK</kbd> move</p>
+      <p><kbd>A</kbd> pass (aim with the stick)</p>
+      <p><kbd>B</kbd> hold &amp; release to shoot</p>
+      <p><kbd>X</kbd> tap: through ball · hold: lob / cross</p>
+      <p><kbd>RT</kbd> sprint · double-tap to knock it past</p>
+    </div>
+    <div class="ht-col">
+      <h3>DEFEND</h3>
+      <p><kbd>A</kbd> switch player</p>
+      <p><kbd>B</kbd> slide tackle</p>
+      <p><kbd>X</kbd> hold to press the ball</p>
+      <p>Run into the dribbler to steal it</p>
+      <p><kbd>START</kbd> pause</p>
+    </div>
+  </div>
+  <p class="fine">First-time finish: press SHOOT just before a pass or cross reaches you.</p>`;
+
+/** One of the in-match touch buttons, drawn small (same colours, rim and base as the real ones). */
+const touchBtn = (cls: string, label: string) => `<i class="ht-tb ${cls}"><span>${label}</span></i>`;
+const dot = (cls: string) => `<i class="ht-dot ${cls}"></i>`;
+
+const HOWTO_TOUCH = `
+  <div class="ht-touch">
+    <div class="ht-pad" aria-hidden="true">
+      <div class="ht-stick"><i></i></div>
+      <span class="ht-pad-l">DRAG TO MOVE</span>
+      <div class="ht-cluster">
+        ${touchBtn('sprint', 'SPRINT')}${touchBtn('through', 'THROUGH')}${touchBtn('shoot', 'SHOOT')}${touchBtn('pass', 'PASS')}
+      </div>
+    </div>
+    <p class="ht-note"><b>MOVE</b> Put your thumb down anywhere on the left half and drag: the stick follows your thumb.</p>
+    <table class="ht-table">
+      <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
+      <tbody>
+        <tr><td>${dot('pass')}</td><td><b>PASS</b> where you aim</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
+        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder</td><td><b>TACKLE</b> slide in</td></tr>
+        <tr><td>${dot('through')}</td><td><b>THROUGH</b> tap · hold for a lob or cross</td><td><b>PRESS</b> hold to close down</td></tr>
+        <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold · double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
+      </tbody>
+    </table>
+    <p class="fine">The buttons relabel themselves with the play. Set pieces: <b>PASS</b> short · <b>SHOOT</b> at goal · <b>CROSS</b> hold to whip it in. Tap to skip a replay; <b>II</b> pauses.</p>
+  </div>`;
 
 export class Menus {
   readonly root: HTMLElement;
@@ -635,8 +713,8 @@ export class Menus {
           ${this.scoreHeader(m, kits)}${pens}
           ${motmHtml}
           ${this.statsTable(m, kits)}
-          <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
-          <div class="btn-row">
+          <div class="btn-row ft-foot">
+            <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
             ${canDouble ? '<button class="btn btn-yellow" data-a="double">🎬 2× COINS</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="next">${h.nextLabel ?? 'CONTINUE'}</button>
           </div>
@@ -683,23 +761,34 @@ export class Menus {
             <button data-k="sfx"></button>
             <button data-k="crowd"></button>
             <button data-k="music"></button>
+            <button data-k="commentary"></button>
+            <button data-k="commentaryVoice"></button>
             <button data-k="autoSwitch"></button>
             <button data-k="quality"></button>
           </div>
           <div class="btn-row"><button class="btn btn-go" data-a="back">DONE</button></div>
         </div>
       </div>`, 'settings');
-    const labels: Record<string, string> = { sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', autoSwitch: 'AUTO SWITCH', quality: 'GRAPHICS' };
+    const labels: Record<string, string> = {
+      sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', commentaryVoice: 'COMMENTARY VOICE', autoSwitch: 'AUTO SWITCH', quality: 'GRAPHICS',
+    };
+    const canSpeak = speechAvailable();
     const draw = () => {
       d.querySelectorAll<HTMLButtonElement>('.toggles button').forEach((b) => {
         const k = b.dataset.k as keyof typeof s;
         const v = s[k];
+        if (k === 'commentaryVoice' && !canSpeak) {
+          b.disabled = true;
+          b.innerHTML = `<span>${labels[k]}</span><b class="off na">N/A</b>`;
+          return;
+        }
         const val = k === 'quality' ? String(v).toUpperCase() : v ? 'ON' : 'OFF';
         b.innerHTML = `<span>${labels[k]}</span><b class="${v === false ? 'off' : ''}">${val}</b>`;
       });
     };
     d.querySelectorAll<HTMLButtonElement>('.toggles button').forEach((b) =>
       b.addEventListener('click', () => {
+        if (b.disabled) return;
         sfx.click();
         const k = b.dataset.k as keyof typeof s;
         if (k === 'quality') s.quality = s.quality === 'high' ? 'medium' : s.quality === 'medium' ? 'low' : 'high';
@@ -712,34 +801,40 @@ export class Menus {
     $(d, '[data-a=back]').addEventListener('click', onBack);
   }
 
-  howTo(onBack: () => void): void {
+  /**
+   * Controls for the device in hand: the touch pad (stick + the coloured buttons and what each one does when
+   * attacking / defending), keyboard, or gamepad. Tabs show the others.
+   */
+  howTo(onBack: () => void, device: 'keyboard' | 'touch' | 'gamepad' = defaultDevice()): void {
     const d = this.mount(`
       <div class="panel-wrap dim">
-        <div class="panel">
+        <div class="panel howto-panel">
           <h2>HOW TO PLAY</h2>
-          <div class="howto">
-            <div class="ht-col">
-              <h3>ATTACK</h3>
-              <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
-              <p><kbd>SPACE</kbd> pass (aim with the stick)</p>
-              <p><kbd>K</kbd> hold &amp; release to shoot</p>
-              <p><kbd>L</kbd> tap: through ball · hold: lob / cross</p>
-              <p><kbd>SHIFT</kbd> sprint · double-tap to knock it past a defender</p>
-            </div>
-            <div class="ht-col">
-              <h3>DEFEND</h3>
-              <p><kbd>SPACE</kbd> switch player</p>
-              <p><kbd>K</kbd> slide tackle</p>
-              <p><kbd>L</kbd> hold to press the ball</p>
-              <p>Run into the dribbler to steal it</p>
-              <p><kbd>ESC</kbd> pause</p>
-            </div>
+          <div class="seg ht-tabs" role="tablist">
+            <button data-dev="touch" role="tab">TOUCH</button>
+            <button data-dev="keyboard" role="tab">KEYBOARD</button>
+            <button data-dev="gamepad" role="tab">GAMEPAD</button>
           </div>
-          <p class="fine">Gamepad: A pass · B shoot · X through · RT sprint. Touch: stick on the left, buttons on the right.</p>
-          <p class="fine">First-time finish: press SHOOT just before a pass or cross reaches you.</p>
+          <div class="ht-body"></div>
           <div class="btn-row"><button class="btn btn-go" data-a="back">GOT IT</button></div>
         </div>
       </div>`, 'howto-screen');
+    const body = $(d, '.ht-body');
+    const show = (dev: 'keyboard' | 'touch' | 'gamepad') => {
+      d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) => {
+        const on = b.dataset.dev === dev;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-selected', String(on));
+      });
+      body.innerHTML = dev === 'touch' ? HOWTO_TOUCH : dev === 'gamepad' ? HOWTO_PAD : HOWTO_KEYS;
+    };
+    d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) =>
+      b.addEventListener('click', () => {
+        sfx.click();
+        show(b.dataset.dev as 'keyboard' | 'touch' | 'gamepad');
+      }),
+    );
+    show(device);
     $(d, '[data-a=back]').addEventListener('click', onBack);
   }
 

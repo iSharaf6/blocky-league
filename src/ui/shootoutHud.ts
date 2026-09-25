@@ -1,10 +1,14 @@
 import { cssHex } from '../render/palette';
-import type { Side } from '../sim/types';
+import type { Kit, Side } from '../sim/types';
+import { crestSvg } from './crest';
 
 export interface TrackerTeam {
   short: string;
   color: number;
   color2: number;
+  /** Club name + kit: draws the same pixel crest as the score bug. */
+  name?: string;
+  kit?: Kit;
 }
 
 export interface TrackerState {
@@ -24,6 +28,8 @@ export class ShootoutHud {
   readonly root: HTMLDivElement;
   private key = '';
   private readonly clock: HTMLElement | null;
+  /** Crest markup per side: the score bug's own crest when it has one, so both read as the same club. */
+  private readonly crests: [string, string];
 
   constructor(parent: HTMLElement, private readonly teams: [TrackerTeam, TrackerTeam]) {
     this.root = document.createElement('div');
@@ -33,6 +39,14 @@ export class ShootoutHud {
     parent.appendChild(this.root);
     // The match clock means nothing now.
     this.clock = parent.querySelector<HTMLElement>('.sb-clock');
+    const bug = parent.querySelectorAll('.scorebug .sb-team');
+    this.crests = [0, 1].map((i) => {
+      const t = teams[i];
+      if (t.kit) return crestSvg(t.name ?? t.short, t.short, t.kit, 2);
+      const svg = bug[i]?.querySelector('svg.crest-svg');
+      if (svg) return svg.outerHTML;
+      return `<i class="so-crest" style="--a:${cssHex(t.color)};--b:${cssHex(t.color2)}"></i>`;
+    }) as [string, string];
   }
 
   update(s: TrackerState): void {
@@ -55,7 +69,7 @@ export class ShootoutHud {
       const goals = k.filter(Boolean).length;
       const up = s.winner < 0 && side === s.turn ? ' up' : s.winner === side ? ' won' : '';
       return `<div class="so-row${up}">
-        <i class="so-crest" style="--a:${cssHex(t.color)};--b:${cssHex(t.color2)}"></i>
+        ${this.crests[side]}
         <b>${t.short}</b><span class="so-dots">${dots}</span><em>${goals}</em>
       </div>`;
     };

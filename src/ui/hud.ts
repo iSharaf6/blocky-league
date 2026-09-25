@@ -1,8 +1,23 @@
 import { BALL_OFS, PF } from '../game/replay';
 import { BOX_DEPTH, BOX_W, CENTER_R, HALF_L, HALF_W } from '../sim/constants';
-import type { Kit, TeamDef } from '../sim/types';
+import type { Match } from '../sim/match';
+import type { Kit, MatchEvent, TeamDef } from '../sim/types';
 import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
+import { Commentator, speak, stopSpeech, surname, type CommentaryLine } from './commentary';
+
+/** Screen position (CSS px, viewport origin) of a world point, or null when it is behind the camera. */
+export type Projector = (x: number, y: number, z: number) => { x: number; y: number } | null;
+
+type Rect = { l: number; t: number; r: number; b: number };
+
+/** Seconds a commentary line stays up (goals and other big moments a little longer). */
+const LINE_S = 3;
+const BIG_LINE_S = 4;
+/** A showing line can be replaced by an equal-priority one after this long; a higher priority cuts in at once. */
+const LINE_MIN_S = 1.5;
+/** Queued lines go stale: commentary must never lag behind play. */
+const PENDING_MAX_S = 2.5;
 
 export interface HudTeam {
   short: string;
@@ -46,6 +61,28 @@ export class Hud {
   private anon = 0;
   private toast: HTMLDivElement;
   private toastTimer = 0;
+  /** Commentary ticker. */
+  private cm: HTMLDivElement;
+  private cmTag: HTMLElement;
+  private cmText: HTMLElement;
+  private readonly commentator = new Commentator();
+  private cmTextOn = true;
+  private cmVoice = false;
+  private cmLine: CommentaryLine | null = null;
+  private cmLeft = 0;
+  private cmAge = 0;
+  private cmPending: { line: CommentaryLine; age: number } | null = null;
+  private cmPlaceT = 0;
+  private cmSlot = '';
+  private cmLastShown = -99;
+  private clockS = 0;
+  /** The match the session forwards events from (names for the booking chips). */
+  private m: Match | null = null;
+  private readonly teamColor: [string, string];
+  private project: Projector | null = null;
+  private lastFrame: Float32Array | null = null;
+  private hintLow = false;
+  private hintT = 0;
   onPause: (() => void) | null = null;
 
   constructor(teams: [HudTeam, HudTeam], humanSide: number) {
@@ -66,8 +103,9 @@ export class Hud {
       <div class="hud-toast"></div>
       <div class="hud-hint"></div>
       <div class="hud-tip"></div>
+      <div class="hud-cm" role="status" aria-live="polite"><b class="cm-tag"></b><span class="cm-text"></span></div>
       <div class="hud-chip"><span class="chip-num"></span><span class="chip-name"></span><div class="chip-stam"><div></div></div></div>
-      <div class="hud-replay"><b>REPLAY</b><span class="rp-key">press any button to skip</span><span class="rp-tap">tap to skip</span></div>
+      <div class="hud-replay"><b>REPLAY</b><span class="rp-key">PRESS ANY BUTTON TO SKIP</span><span class="rp-tap">TAP TO SKIP</span></div>
       <canvas class="hud-radar" width="240" height="150" aria-hidden="true"></canvas>`;
     this.score = this.root.querySelector('.sb-score')!;
     this.clock = this.root.querySelector('.sb-clock')!;
@@ -81,6 +119,10 @@ export class Hud {
     this.replay = this.root.querySelector('.hud-replay')!;
     this.radar = this.root.querySelector('.hud-radar')!;
     this.toast = this.root.querySelector('.hud-toast')!;
+    this.cm = this.root.querySelector('.hud-cm')!;
+    this.cmTag = this.root.querySelector('.cm-tag')!;
+    this.cmText = this.root.querySelector('.cm-text')!;
+    this.teamColor = [cssHex(h.color), cssHex(a.color)];
     this.cards = [this.root.querySelector('.sb-cards.h')!, this.root.querySelector('.sb-cards.a')!];
     const lum = (c: number) => (0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)) / 255;
     this.dotFill = [cssHex(h.color), cssHex(a.color)];
@@ -115,15 +157,248 @@ export class Hud {
     this.bannerTimer = seconds;
   }
 
+  /**
+   * Event flag ("CORNER", "FOUL!"): hangs off the bottom of the score bug (under any booking chips or the
+   * shootout tracker), at the top edge where it never covers players in the box.
+   */
   toastMsg(text: string, seconds = 1.4): void {
     this.toast.textContent = text;
+    this.placeToast();
+    this.toast.classList.remove('on');
+    void this.toast.offsetWidth;
     this.toast.classList.add('on');
     this.toastTimer = seconds;
   }
 
+  /** Under the score bug (and its booking chips / the shootout tracker); below the portrait minimap if they'd meet. */
+  private placeToast(): void {
+    const sb = this.rectOf('.scorebug', false);
+    if (!sb) return;
+    let top = sb.b;
+    const so = this.rectOf('.so-track', false);
+    if (so) top = Math.max(top, so.b);
+    top += 8;
+    const w = this.toast.offsetWidth;
+    const h = this.toast.offsetHeight;
+    const radar = this.rectOf('.hud-radar', false);
+    if (radar && radar.t < window.innerHeight * 0.4 && radar.l < sb.l + w && radar.b > top && radar.t < top + h) top = radar.b + 8;
+    this.toast.style.left = `${Math.round(sb.l)}px`;
+    this.toast.style.top = `${Math.round(top)}px`;
+  }
+
   setHint(text: string): void {
-    this.hint.textContent = text;
-    this.hint.classList.toggle('on', text.length > 0);
+    if (this.hint.textContent !== text) this.hint.textContent = text;
+    const on = text.length > 0;
+    if (on && !this.hint.classList.contains('on')) {
+      // Decide the slot before it fades in, so it never flashes over the taker first.
+      this.hintT = 0;
+      this.placeHint(true);
+    }
+    this.hint.classList.toggle('on', on);
+  }
+
+  /** Where the camera puts world points on screen; enables keep-clear placement of the ticker and hints. */
+  setProjector(fn: Projector | null): void {
+    this.project = fn;
+  }
+
+  /** Text ticker and spoken commentary switches (Settings). Turning speech off stops it mid-sentence. */
+  setCommentary(text: boolean, voice: boolean): void {
+    this.cmTextOn = text;
+    if (this.cmVoice && !voice) stopSpeech();
+    this.cmVoice = voice;
+    if (!text) this.hideLine();
+  }
+
+  /** Commentary hook: the session forwards every match event here (before its own handling). */
+  commentary(e: MatchEvent, m: Match): void {
+    this.m = m;
+    try {
+      if (e.type === 'card') {
+        // Normally this runs before the session's card() call; if not, name the chip once it exists.
+        const side = m.players[e.player]?.side;
+        if (side !== undefined) queueMicrotask(() => this.unnamed[side] && this.drawCards(side));
+      }
+      if (!this.cmTextOn && !this.cmVoice) return;
+      if (this.root.classList.contains('replaying')) return;
+      const line = this.commentator.line(e, m);
+      if (!line) return;
+      // Colour lines only when the ticker has been quiet a while, and not every time.
+      if (line.priority === 1 && (this.clockS - this.cmLastShown < 6 || this.cmLine || Math.random() < 0.45)) return;
+      if (!this.cmLine || line.priority > this.cmLine.priority || this.cmAge >= LINE_MIN_S) this.showLine(line);
+      else if (!this.cmPending || line.priority >= this.cmPending.line.priority) this.cmPending = { line, age: 0 };
+    } catch {
+      // Commentary must never break the match loop.
+    }
+  }
+
+  /** The line on the ticker right now (tests / debugging). */
+  get commentaryText(): string {
+    return this.cmLine ? this.cmText.textContent ?? '' : '';
+  }
+
+  private showLine(line: CommentaryLine): void {
+    this.cmLine = line;
+    this.cmAge = 0;
+    this.cmLeft = line.priority >= 5 || line.tone === 'goal' ? BIG_LINE_S : LINE_S;
+    this.cmLastShown = this.clockS;
+    if (this.cmVoice) speak(line.text, line.priority >= 5);
+    if (!this.cmTextOn) return;
+    this.cmTag.textContent = line.tag;
+    this.cmText.textContent = line.text;
+    this.cm.dataset.tone = line.tone;
+    this.cm.style.setProperty('--cm', line.side === -1 ? 'var(--cream-2)' : this.teamColor[line.side]);
+    this.cmSlot = '';
+    this.placeTicker();
+    this.cm.classList.remove('on');
+    void this.cm.offsetWidth;
+    this.cm.classList.add('on');
+  }
+
+  private hideLine(): void {
+    this.cmLine = null;
+    this.cmPending = null;
+    this.cm.classList.remove('on');
+  }
+
+  private rectOf(sel: string, visible = true): Rect | null {
+    const el = this.root.querySelector<HTMLElement>(sel) ?? document.querySelector<HTMLElement>(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    if (visible) {
+      let n: HTMLElement | null = el;
+      while (n && n !== document.body) {
+        const cs = getComputedStyle(n);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.2) return null;
+        n = n.parentElement;
+      }
+    }
+    return { l: r.left, t: r.top, r: r.right, b: r.bottom };
+  }
+
+  private ballOnScreen(): { x: number; y: number } | null {
+    const f = this.lastFrame;
+    if (!f || !this.project) return null;
+    try {
+      return this.project(f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2]);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Put the ticker where it covers nothing: the top band beside the score bug (landscape), or under the top
+   * HUD cluster (portrait); the lower third instead whenever the ball is up there.
+   */
+  private placeTicker(): void {
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const g = W < 480 ? 8 : 12;
+    const sb = this.rectOf('.scorebug', false);
+    const pause = this.rectOf('.hud-pause', false);
+    if (!sb) return;
+    const h = this.cm.offsetHeight || 34;
+    const bands: { k: string; l: number; r: number; t: number }[] = [];
+    // 1) Top band between the score bug and the pause button.
+    const bl = sb.r + g;
+    const br = (pause ? pause.l : W) - g;
+    const topRow = this.rectOf('.scorebug .sb-clock', false) ?? sb;
+    if (br - bl >= 300) bands.push({ k: 'top', l: bl, r: br, t: topRow.t });
+    // 2) Under the top cluster (score bug + chips, shootout tracker, flag, radar in portrait, hint, tip).
+    let under = sb.b;
+    for (const sel of ['.so-track', '.hud-toast.on', '.hud-hint.on:not(.low)', '.hud-tip.on', '.hud-radar', '.hud-banner.on.goal .bn-sub']) {
+      // By class, not opacity: a widget fading in counts at once, and the minimap counts even while faded
+      // out (it comes back mid-line). display:none (the shootout's minimap) never does.
+      const r = this.rectOf(sel, false);
+      if (r && r.t < H * 0.45) under = Math.max(under, r.b);
+    }
+    bands.push({ k: 'under', l: g, r: W - g, t: under + 8 });
+    // 3) Lower third: above the minimap, clear of the player chip, a low hint and the touch buttons.
+    let low = H - Math.max(g, 12);
+    let ll = g;
+    let lr = W - g;
+    // The minimap counts even while faded out: it comes back as soon as play moves off the near touchline.
+    const radar = this.rectOf('.hud-radar', false);
+    if (radar && radar.t > H * 0.5) low = Math.min(low, radar.t - 8);
+    const hint = this.rectOf('.hud-hint.on.low');
+    if (hint) low = Math.min(low, hint.t - 8);
+    const chip = this.rectOf('.hud-chip');
+    if (chip && chip.t > H * 0.5) ll = Math.max(ll, chip.r + g);
+    // The resting thumbstick on touch screens.
+    const stick = this.rectOf('#ui > .touch:not(.hidden) .touch-base');
+    if (stick && stick.b > low - h - 4 && stick.l < W / 2) ll = Math.max(ll, stick.r + g);
+    const btns = this.rectOf('#ui > .touch:not(.hidden) .touch-btns');
+    if (btns) lr = Math.min(lr, btns.l - g);
+    if (lr - ll >= 220) bands.push({ k: 'low', l: ll, r: lr, t: low - h });
+    const ball = this.ballOnScreen();
+    const clear = (b: { l: number; r: number; t: number }) => {
+      if (!ball) return Infinity;
+      const dx = Math.max(b.l - ball.x, 0, ball.x - b.r);
+      const dy = Math.max(b.t - ball.y, 0, ball.y - (b.t + h));
+      return Math.hypot(dx, dy);
+    };
+    // First band that keeps ~80 px clear of the ball (the players around it), else the farthest from it.
+    const pref = bands.filter((b) => b.k !== 'under' || !bands.some((x) => x.k === 'top'));
+    let pick = pref.find((b) => clear(b) > 80);
+    if (!pick) pick = [...pref].sort((a, b) => clear(b) - clear(a))[0];
+    if (!pick) return;
+    // Stay put unless the ball really is in the way (no jitter between two bands).
+    const cur = pref.find((b) => b.k === this.cmSlot);
+    if (cur && cur !== pick && clear(cur) > 40) pick = cur;
+    const width = pick.r - pick.l;
+    this.cm.style.maxWidth = `${Math.round(width)}px`;
+    const w = Math.min(this.cm.offsetWidth, width);
+    const left = pick.k === 'top' ? pick.l : pick.l + (width - w) / 2;
+    this.cm.style.left = `${Math.round(left)}px`;
+    this.cm.style.top = `${Math.round(pick.t)}px`;
+    this.cm.dataset.slot = pick.k;
+    this.cmSlot = pick.k;
+  }
+
+  /**
+   * Set-piece hint: top centre by default; down in the bottom band when the taker (the ball) is in the upper
+   * part of the screen, e.g. a far-side corner, so it never sits over him or his delivery. Down there it keeps
+   * clear of the player chip, the resting thumbstick, the touch buttons and the minimap.
+   */
+  private placeHint(force = false): void {
+    const ball = this.ballOnScreen();
+    const H = window.innerHeight;
+    const W = window.innerWidth;
+    const y = ball ? ball.y / H : 1;
+    const low = !!ball && (force ? y < 0.44 : this.hintLow ? y < 0.5 : y < 0.4);
+    if (low !== this.hintLow) {
+      this.hintLow = low;
+      this.hint.classList.toggle('low', low);
+    }
+    const st = this.hint.style;
+    if (!low) {
+      st.left = st.bottom = st.maxWidth = '';
+      return;
+    }
+    const g = 12;
+    let ll = g;
+    let lr = W - g;
+    let bottom = 14;
+    const chip = this.rectOf('.hud-chip');
+    if (chip && chip.t > H * 0.5) bottom = Math.max(bottom, H - chip.t + 8);
+    const stick = this.rectOf('#ui > .touch:not(.hidden) .touch-base');
+    if (stick && stick.t > H * 0.4 && stick.l < W / 2) ll = Math.max(ll, stick.r + 10);
+    const btns = this.rectOf('#ui > .touch:not(.hidden) .touch-btns');
+    if (btns) lr = Math.min(lr, btns.l - 10);
+    if (lr - ll < 240) {
+      // Portrait phone: no room between the controls, so above all of them, full width.
+      ll = g;
+      lr = W - g;
+      if (stick) bottom = Math.max(bottom, H - stick.t + 8);
+      if (btns) bottom = Math.max(bottom, H - btns.t + 8);
+    }
+    st.left = `${Math.round(ll)}px`;
+    st.maxWidth = `${Math.round(lr - ll)}px`;
+    const hr = ll + Math.min(this.hint.offsetWidth, lr - ll);
+    const radar = this.rectOf('.hud-radar');
+    if (radar && radar.t > H * 0.5 && radar.l < hr && radar.r > ll) bottom = Math.max(bottom, H - radar.t + 8);
+    st.bottom = `${Math.round(bottom)}px`;
   }
 
   /** Hide play-only widgets (radar, player chip, tips) outside live play. */
@@ -146,6 +421,7 @@ export class Hud {
    */
   card(side: 0 | 1, color: 'yellow' | 'red', player?: number): void {
     const b = this.booked[side];
+    this.lastBooked[side] = player ?? null;
     if (color === 'yellow') {
       const key = player ?? `a${this.anon++}`;
       if (!b.yellow.includes(key) && !b.red.includes(key)) b.yellow.push(key);
@@ -173,19 +449,42 @@ export class Hud {
     this.drawCards(side, color);
   }
 
+  /** A booking chip was drawn before its player's name was known. */
+  private unnamed: [boolean, boolean] = [false, false];
+  /** Latest booking per side: its player is named on the plate. */
+  private lastBooked: [number | string | null, number | string | null] = [null, null];
+
+  private playerName(key: number | string): string {
+    return typeof key === 'number' ? this.m?.players[key]?.def.name ?? '' : '';
+  }
+
   private drawCards(side: 0 | 1, fresh?: 'yellow' | 'red'): void {
     const b = this.booked[side];
-    // One plate per side: a chip per booking, up to three per colour (more collapse into chip + count).
+    const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+    // One plate per side: a chip per booking (more than three of a colour collapse to chip + count), then the
+    // surname of the latest booked player, so the plate reads "yellow card: DASH" rather than a mystery icon.
+    // Every name is in the tooltip / label.
     const chips = (k: 'yellow' | 'red') => {
       const n = b[k].length;
       if (!n) return '';
       return n > 3 ? `<i class="sb-chip ${k}"></i><b>${n}</b>` : Array.from({ length: n }, () => `<i class="sb-chip ${k}"></i>`).join('');
     };
+    const last = this.lastBooked[side];
+    const lastName = last !== null && (b.yellow.includes(last) || b.red.includes(last)) ? surname(this.playerName(last)).toUpperCase() : '';
     const y = b.yellow.length;
     const r = b.red.length;
     const el = this.cards[side];
-    const label = [y ? `${y} yellow card${y > 1 ? 's' : ''}` : '', r ? `${r} red card${r > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ');
-    el.innerHTML = y || r ? `<span class="sb-card" role="img" aria-label="${label}">${chips('yellow')}${chips('red')}</span>` : '';
+    const who = (k: 'yellow' | 'red') => b[k].map((key) => this.playerName(key)).filter(Boolean).join(', ');
+    this.unnamed[side] = [...b.yellow, ...b.red].some((key) => typeof key === 'number' && !this.playerName(key));
+    const label = [
+      y ? `${y} yellow card${y > 1 ? 's' : ''}${who('yellow') ? `: ${who('yellow')}` : ''}` : '',
+      r ? `${r} red card${r > 1 ? 's' : ''}${who('red') ? `: ${who('red')}` : ''}` : '',
+    ].filter(Boolean).join('; ');
+    el.innerHTML = y || r
+      ? `<span class="sb-card" role="img" title="${esc(label)}" aria-label="${esc(label)}">${chips('yellow')}${chips('red')}${lastName ? `<em>${esc(lastName)}</em>` : ''}</span>`
+      : '';
+    // The booking row grows the score bug: the event flag under it moves down with it.
+    if (this.toast.classList.contains('on')) this.placeToast();
     if (fresh) {
       const icons = el.querySelectorAll(`.sb-chip.${fresh}`);
       icons[icons.length - 1]?.classList.add('new');
@@ -208,6 +507,8 @@ export class Hud {
   setReplay(on: boolean): void {
     this.replay.classList.toggle('on', on);
     this.root.classList.toggle('replaying', on);
+    // Replays are silent on the ticker: nothing queued comes back afterwards either.
+    if (on) this.hideLine();
   }
 
   setPlayer(num: number, name: string, stamina: number): void {
@@ -222,6 +523,41 @@ export class Hud {
 
   update(dt: number, frame: Float32Array): void {
     this.justYellow[0] = this.justYellow[1] = null;
+    this.lastFrame = frame;
+    this.clockS += dt;
+    if (this.cmPending) {
+      this.cmPending.age += dt;
+      if (this.cmPending.age > PENDING_MAX_S) this.cmPending = null;
+    }
+    if (this.cmLine) {
+      this.cmAge += dt;
+      this.cmLeft -= dt;
+      if (this.cmPending && this.cmAge >= LINE_MIN_S + 0.6) {
+        const next = this.cmPending.line;
+        this.cmPending = null;
+        this.showLine(next);
+      } else if (this.cmLeft <= 0) {
+        this.cmLine = null;
+        this.cm.classList.remove('on');
+      } else if (this.cmTextOn) {
+        this.cmPlaceT -= dt;
+        if (this.cmPlaceT <= 0) {
+          this.cmPlaceT = 0.3;
+          this.placeTicker();
+        }
+      }
+    } else if (this.cmPending) {
+      const next = this.cmPending.line;
+      this.cmPending = null;
+      this.showLine(next);
+    }
+    if (this.hint.classList.contains('on')) {
+      this.hintT -= dt;
+      if (this.hintT <= 0) {
+        this.hintT = 0.25;
+        this.placeHint();
+      }
+    }
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.banner.classList.remove('on');
@@ -318,6 +654,7 @@ export class Hud {
 
   dispose(): void {
     this.radarObs?.disconnect();
+    if (this.cmVoice) stopSpeech();
     this.root.remove();
   }
 }

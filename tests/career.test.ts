@@ -8,7 +8,7 @@ import {
   stadiumUpgradeCost, startNextSeason, swapPlayers, trainPlayer, trainingCost, upgradeStadium, userFixture,
   type CareerState, type Fixture,
 } from '../src/meta/career';
-import { KIT_COLORS, makePlayer } from '../src/meta/data';
+import { KIT_COLORS, makePlayer, makeTeam, PRESET_CLUBS, randomClubSeed, surnameOf, uniqueName } from '../src/meta/data';
 import { Rng } from '../src/core/rng';
 import { FORMATIONS } from '../src/sim/formations';
 import { overall, type Kit } from '../src/sim/types';
@@ -29,6 +29,41 @@ function playMine(st: CareerState, wallet: { coins: number }, my: number, their:
   const home = f ? f.home === YOU : true;
   return resolveMatchday(st, wallet, s.matchday, home ? my : their, home ? their : my);
 }
+
+describe('squad names', () => {
+  it('no two players in a generated squad (XI and bench) share a surname', () => {
+    const seeds = [...PRESET_CLUBS];
+    const rng = new Rng(99);
+    for (let i = 0; i < 80; i++) seeds.push(randomClubSeed(rng, 40 + (i % 50)));
+    for (const seed of seeds) {
+      const t = makeTeam(seed);
+      const names = [...t.players, ...(t.bench ?? [])].map((p) => surnameOf(p.name));
+      expect(names.length).toBe(16);
+      expect(new Set(names).size).toBe(names.length);
+    }
+    // Still deterministic per club.
+    expect(JSON.stringify(makeTeam(PRESET_CLUBS[3]))).toBe(JSON.stringify(makeTeam(PRESET_CLUBS[3])));
+  });
+
+  it('uniqueName skips surnames already used (and records the one it picks), with or without an rng', () => {
+    const used = new Set<string>(['Pebble', 'Novak']);
+    const rng = new Rng(5);
+    for (let i = 0; i < 40; i++) {
+      const n = uniqueName(used, rng);
+      expect(n).toMatch(/^[A-Z]\. /);
+      expect(used.has(surnameOf(n))).toBe(true);
+    }
+    expect(used.size).toBe(42);
+    const a = new Set(['Stone']);
+    const b = new Set(['Stone']);
+    expect(uniqueName(a)).toBe(uniqueName(b));
+    // Past the whole list it numbers the repeats rather than repeating.
+    const all = new Set<string>();
+    for (let i = 0; i < 80; i++) uniqueName(all, rng);
+    expect(all.size).toBe(80);
+    expect(surnameOf('A. Pebble')).toBe('Pebble');
+  });
+});
 
 describe('club creation', () => {
   it('builds a 16-man squad (1 GK, 5 DF, 6 MF, 4 FW) with unique ids and shirt numbers', () => {

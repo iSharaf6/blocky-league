@@ -99,10 +99,47 @@ export function makeName(rng: Rng): string {
   return `${rng.pick(FIRST)[0]}. ${rng.pick(LAST)}`;
 }
 
-export function makePlayer(rng: Rng, role: Role, level: number, number: number, id: string): PlayerDef {
+/** The surname part of a generated name ("A. Pebble" -> "Pebble"; a name without an initial is all surname). */
+export function surnameOf(name: string): string {
+  const m = /^\S+\.\s+(.*)$/.exec(name.trim());
+  return (m ? m[1] : name.trim()) || name;
+}
+
+/**
+ * A generated name whose surname isn't in `used` (a set of surnames; full "A. Pebble" names in it are
+ * honoured too), which is then added to it. It draws from `rng` exactly as makeName does (so squads
+ * generated with it only differ where a surname would have repeated) and, on a clash, walks on
+ * through the surname list to the next free one. Without an `rng` the pick is seeded from `used`, so
+ * it's still deterministic. Use one set per squad (XI + bench) to keep surnames unique within it.
+ */
+export function uniqueName(used: Set<string>, rng?: Rng): string {
+  const r = rng ?? new Rng(hashString([...used].sort().join('|')) ^ 0x5bd1e995);
+  const first = r.pick(FIRST)[0];
+  const i0 = LAST.indexOf(r.pick(LAST));
+  const taken = (last: string) => used.has(last) || used.has(`${first}. ${last}`);
+  for (let k = 0; k < LAST.length; k++) {
+    const last = LAST[(i0 + k) % LAST.length];
+    if (!taken(last)) {
+      used.add(last);
+      return `${first}. ${last}`;
+    }
+  }
+  // Every surname taken (a squad of 70+): number the repeats.
+  const base = LAST[i0];
+  let n = 2;
+  while (taken(`${base} ${n}`)) n++;
+  used.add(`${base} ${n}`);
+  return `${first}. ${base} ${n}`;
+}
+
+/**
+ * A generated player. Pass `used` (the squad's surnames so far) to keep surnames unique within the
+ * squad; the draw from `rng` is the same either way.
+ */
+export function makePlayer(rng: Rng, role: Role, level: number, number: number, id: string, used?: Set<string>): PlayerDef {
   return {
     id,
-    name: makeName(rng),
+    name: used ? uniqueName(used, rng) : makeName(rng),
     number,
     role,
     stats: makeStats(rng, role, level),
@@ -127,17 +164,19 @@ export function makeTeam(seed: ClubSeed, id = seed.short): TeamDef {
   const rng = new Rng(hashString(seed.name));
   const slots = FORMATIONS[seed.formation];
   const used = new Set<number>();
+  // One surname per player across the XI and the bench (no two Novaks in a squad).
+  const names = new Set<string>();
   const players = slots.map((slot, i) => {
     let n = NUMBERS[slot.role].find((x) => !used.has(x)) ?? 20 + i;
     used.add(n);
-    return makePlayer(rng, slot.role, seed.level, n, `${id}-${i}`);
+    return makePlayer(rng, slot.role, seed.level, n, `${id}-${i}`, names);
   });
   const benchRoles: Role[] = ['GK', 'DF', 'MF', 'MF', 'FW'];
   const bench = benchRoles.map((role, i) => {
     let n = NUMBERS[role].find((x) => !used.has(x)) ?? 12 + i * 2;
     while (used.has(n)) n++;
     used.add(n);
-    return makePlayer(rng, role, seed.level - 3, n, `${id}-b${i}`);
+    return makePlayer(rng, role, seed.level - 3, n, `${id}-b${i}`, names);
   });
   return { id, name: seed.name, short: seed.short, kit: seed.kit, formation: seed.formation, players, bench };
 }

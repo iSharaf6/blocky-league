@@ -287,6 +287,9 @@ export class Footballer {
   private readonly legR: THREE.Mesh;
   /** Extra draw scale on top of CHAR_SCALE (phones: see screenCharK). */
   scaleK = 1;
+  /** Own see-through copy of the voxel material, made the first time this player is faded. */
+  private fadeMat: THREE.MeshLambertMaterial | null = null;
+  private alpha = 1;
 
   constructor(readonly def: PlayerDef, kit: Kit, keeper: boolean) {
     const o = outfitFor(kit, keeper);
@@ -320,6 +323,28 @@ export class Footballer {
     this.armR.position.set(0, (TORSO_H - 0.5) * VU, (TORSO_W / 2 + 1) * VU);
     this.legL.position.set(0, 0, -2 * VU);
     this.legR.position.set(0, 0, 2 * VU);
+  }
+
+  get opacity(): number {
+    return this.alpha;
+  }
+
+  /**
+   * See-through (low cameras fade whoever stands by the lens): below 1 the body parts swap to this player's
+   * own transparent copy of the voxel material; back at 1 they share the opaque one again.
+   */
+  setOpacity(a: number): void {
+    a = clamp(a, 0, 1);
+    if (Math.abs(a - this.alpha) < 0.004 && (a < 1 || this.alpha === 1)) return;
+    this.alpha = a >= 0.995 ? 1 : a;
+    const faded = this.alpha < 1;
+    if (faded && !this.fadeMat) {
+      this.fadeMat = voxelMaterial.clone();
+      this.fadeMat.transparent = true;
+    }
+    if (this.fadeMat) this.fadeMat.opacity = this.alpha;
+    const mat = faded ? this.fadeMat! : voxelMaterial;
+    for (const m of [this.torso, this.head, this.armL, this.armR, this.legL, this.legR]) m.material = mat;
   }
 
   /** Hang a prop (the referee's card) in a hand: `obj` is placed in that arm's space at the hand. */
@@ -572,6 +597,7 @@ export class Footballer {
 
   dispose(): void {
     this.group.removeFromParent();
+    this.fadeMat?.dispose();
   }
 }
 

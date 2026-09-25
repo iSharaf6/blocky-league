@@ -3,7 +3,7 @@ import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { DT } from '../src/sim/constants';
 import { shapeTarget } from '../src/sim/ai';
 import { FORMATIONS } from '../src/sim/formations';
-import { EMPTY_PAD, Match } from '../src/sim/match';
+import { EMPTY_PAD, formationRemap, Match } from '../src/sim/match';
 import type { FormationId, MatchEvent, Side } from '../src/sim/types';
 
 function match(seed = 3, humanSide: Side | -1 = -1) {
@@ -63,7 +63,7 @@ describe('substitutions and mentality', () => {
     expect(m.substitute(0, 5, m.bench[0].findIndex((d) => d.role !== 'GK'))).toBe(false);
   });
 
-  it("AI benches make late changes at a dead ball after 60' / 75' for tired legs, three subs at most", () => {
+  it("AI benches make late changes at a dead ball after 60' (under 0.55 fit) / 75' (under 0.45), three subs at most", () => {
     let late = 0;
     for (const seed of [3, 7, 11, 19, 23]) {
       const m = match(seed);
@@ -73,7 +73,8 @@ describe('substitutions and mentality', () => {
         expect(s.minute).toBeGreaterThanOrEqual(60);
         // Only ever at a stoppage (the ball was out, or it's the kick-off after a goal).
         expect(['out', 'kickoff'].includes(s.phase)).toBe(true);
-        expect(s.stamina).toBeLessThan(0.45);
+        // The 60' look takes off anyone under 0.55; from 75' the bar is 0.45.
+        expect(s.stamina).toBeLessThan(s.minute >= 75 ? 0.45 : 0.55);
         const p = m.teamPlayers(s.e.side)[s.e.slot];
         expect(p.isKeeper).toBe(false);
       }
@@ -116,6 +117,92 @@ describe('substitutions and mentality', () => {
     const slot = 5;
     expect(m.substitute(0, slot, m.bench[0].findIndex((d) => d.role !== 'GK'))).toBe(true);
     expect(m.teamPlayers(0)[slot].role).toBe(FORMATIONS[to][slot].role);
+  });
+
+  it('a formation change moves each player to the nearest new slot (a right-back stays on the right)', () => {
+    const cases: [FormationId, FormationId][] = [['4-4-2', '3-5-2'], ['4-3-3', '5-3-2'], ['3-5-2', '4-2-3-1'], ['5-3-2', '4-4-2'], ['4-2-3-1', '4-3-3']];
+    for (const [from, to] of cases) {
+      const map = formationRemap(FORMATIONS[from], FORMATIONS[to]);
+      expect(map[0]).toBe(0);
+      expect([...map].sort((a, b) => a - b)).toEqual(map.map((_, i) => i));
+      let cost = 0;
+      let byIndex = 0;
+      for (let i = 1; i < map.length; i++) {
+        const a = FORMATIONS[from][i];
+        const b = FORMATIONS[to][map[i]];
+        const c = FORMATIONS[to][i];
+        cost += Math.hypot((a.x - b.x) * 48, (a.z - b.z) * 30);
+        byIndex += Math.hypot((a.x - c.x) * 48, (a.z - c.z) * 30);
+        // Nobody swaps flanks.
+        if (Math.abs(a.z) > 0.3) expect(Math.sign(b.z)).not.toBe(-Math.sign(a.z));
+      }
+      expect(cost).toBeLessThanOrEqual(byIndex + 1e-9);
+    }
+
+    const m = match(6);
+    m.setFormation(0, '4-4-2');
+    const rb = m.teamPlayers(0)[4];
+    expect(m.slots[0][4].label).toBe('RB');
+    const lb = m.teamPlayers(0)[1];
+    expect(m.setFormation(0, '3-5-2')).toBe(true);
+    // The old right-back is still on the right (it used to become the left wing-back), the left-back
+    // on the left.
+    expect(m.slots[0][rb.slot].z).toBeGreaterThan(0.15);
+    expect(m.slots[0][rb.slot].label).not.toBe('LWB');
+    expect(m.slots[0][lb.slot].z).toBeLessThan(-0.15);
+    expect(rb.role).toBe(m.slots[0][rb.slot].role);
+    // teamPlayers stays in slot order, the team sheet with it, and the keeper stays in goal.
+    m.teamPlayers(0).forEach((p, s) => {
+      expect(p.slot).toBe(s);
+      expect(m.teams[0].players[s]).toBe(p.def);
+    });
+    expect(m.teamPlayers(0)[0].isKeeper).toBe(true);
+    // Back again: everyone returns to where they started.
+    const before = m.teamPlayers(0).map((p) => p.idx);
+    m.setFormation(0, '4-4-2');
+    m.setFormation(0, '3-5-2');
+    expect(m.teamPlayers(0).map((p) => p.idx)).toEqual(before);
+  });
+
+  it('aiSubs is safe to call twice at the same stoppage, and never takes off a man who came on', () => {
+    const m = match(8);
+    for (const p of m.teamPlayers(1)) if (!p.isKeeper) p.stamina = 0.3;
+    m.phase = 'halftime';
+    expect(m.aiSubs(1, 2)).toBe(2);
+    expect(m.aiSubs(1, 2)).toBe(0);
+    expect(m.subsUsed[1]).toBe(2);
+    m.continueSecondHalf();
+    for (const p of m.teamPlayers(1)) if (!p.isKeeper) p.stamina = 0.2;
+    // Later, another stoppage: only the one change left, and not one of the two who came on.
+    const fresh = m.teamPlayers(1).filter((p) => p.def.id.includes('-b')).map((p) => p.idx);
+    expect(fresh.length).toBe(2);
+    m.clock = 50;
+    expect(m.aiSubs(1, 3)).toBe(1);
+    expect(m.subsUsed[1]).toBe(3);
+    const off = m.drainEvents().filter((e) => e.type === 'sub');
+    expect(off.length).toBe(3);
+    for (const e of off.slice(2)) if (e.type === 'sub') expect(fresh).not.toContain(m.teamPlayers(1)[e.slot].idx);
+    expect(m.aiSubs(1, 2, 0.9)).toBe(0);
+  });
+
+  it("the 60' look takes off anyone under 0.55; by 75' the bar is 0.45", () => {
+    const at = (minute: number, stamina: number) => {
+      const m = match(12);
+      m.phase = 'halftime';
+      m.continueSecondHalf();
+      m.phase = 'play';
+      m.clock = ((minute - 45 + 0.5) / 45) * m.cfg.halfLength;
+      expect(m.minute()).toBe(minute);
+      for (const p of m.teamPlayers(0)) if (!p.isKeeper) p.stamina = 0.9;
+      m.teamPlayers(0)[6].stamina = stamina;
+      m.drainEvents();
+      (m as unknown as { goOut: (k: string, s: number, x: number, z: number) => void }).goOut('throwin', 1, 0, 30);
+      return m.drainEvents().filter((e) => e.type === 'sub' && e.side === 0).length;
+    };
+    expect(at(62, 0.5)).toBe(1);
+    expect(at(62, 0.6)).toBe(0);
+    expect(at(77, 0.5)).toBe(0);
+    expect(at(77, 0.4)).toBe(1);
   });
 
   it('attacking mentality raises the shape, defensive drops it', () => {

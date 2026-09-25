@@ -18,8 +18,66 @@ export interface StadiumOptions {
   awayName: string;
   /** 0..1 — how full the stands are. */
   attendance: number;
+  /** Stadium size 0 (park pitch) .. 5 (full bowl). Default 5. */
+  level?: number;
   seed?: number;
+  /** Small preview render (upgrade screen): no far-off world (roads, river, traffic, clouds, forest). */
+  preview?: boolean;
 }
+
+/** One stand: rows in the lower / upper tier, half-length along the pitch (m), and whether it has a roof. */
+interface StandSpec { t1: number; t2: number; span: number; roof: boolean }
+type Side4 = 'far' | 'near' | 'left' | 'right';
+type Layout = Partial<Record<Side4, StandSpec>>;
+
+const LONG_SPAN = HALF_L + 5;
+const END_SPAN = HALF_W + 4;
+const MAIN_SMALL: StandSpec = { t1: 7, t2: 0, span: 26, roof: true };
+const MAIN_BIG: StandSpec = { t1: 14, t2: 10, span: LONG_SPAN, roof: true };
+const NEAR_SMALL: StandSpec = { t1: 4, t2: 0, span: 34, roof: false };
+const NEAR_LOW: StandSpec = { t1: 4, t2: 0, span: LONG_SPAN, roof: false };
+const END_OPEN: StandSpec = { t1: 11, t2: 0, span: END_SPAN, roof: false };
+const END_BOWL: StandSpec = { t1: 11, t2: 6, span: END_SPAN, roof: true };
+/**
+ * Ground progression: 0 park pitch (fence, benches, a few fans, trees), 1 a small main stand, 2 + a low near
+ * stand, 3 a two-tier main stand under floodlights, 4 + open end stands, 5 the full roofed bowl.
+ */
+const LAYOUTS: Layout[] = [
+  {},
+  { far: MAIN_SMALL },
+  { far: MAIN_SMALL, near: NEAR_SMALL },
+  { far: MAIN_BIG, near: NEAR_LOW },
+  { far: MAIN_BIG, near: NEAR_LOW, left: END_OPEN, right: END_OPEN },
+  { far: MAIN_BIG, near: NEAR_LOW, left: END_BOWL, right: END_BOWL },
+];
+
+/** Upgrade-screen facts per stadium level (capacity is the number shown to the player). */
+export const STADIUM_LEVELS: readonly { name: string; capacity: number }[] = [
+  { name: 'Park Pitch', capacity: 300 },
+  { name: 'Main Stand', capacity: 2500 },
+  { name: 'Two Stands', capacity: 6000 },
+  { name: 'Two-Tier Main Stand', capacity: 14000 },
+  { name: 'Four Stands', capacity: 26000 },
+  { name: 'Blocky Bowl', capacity: 42000 },
+];
+
+/** How full a ground of this level gets relative to the match's attendance (small grounds rarely sell out). */
+export function stadiumFill(level: number): number {
+  return [0.55, 0.72, 0.8, 0.88, 0.94, 1][clampLevel(level)];
+}
+
+function clampLevel(level: number | undefined): number {
+  return Math.max(0, Math.min(5, Math.round(level ?? 5)));
+}
+
+/** Night multipliers (material colour) for the stands, the crowd, the world outside and the lawn. */
+const NIGHT = {
+  stand: [0.08, 0.085, 0.12],
+  crowd: [0.26, 0.27, 0.33],
+  outer: [0.12, 0.14, 0.22],
+  grass: [1.16, 1.18, 1.12],
+  grassSat: 1.1,
+};
 
 const LINE_W = 0.18;
 const BOARD_Z = HALF_W + 3.2;
@@ -29,7 +87,6 @@ const STAND_X = HALF_L + 6.2;
 const STEP_D = 0.86;
 const STEP_H = 0.56;
 const BANNER_X = [-30, -4, 22, 42];
-type Side4 = 'far' | 'near' | 'left' | 'right';
 /** The playing surface is a raised lawn; players, ball and goals sit on top of it. */
 export const PITCH_Y = 0.12;
 
@@ -38,19 +95,30 @@ export const FLOODLIGHT_TOWERS: readonly { x: number; z: number; h: number }[] =
   [-1, 1].map((sz) => ({ x: sx * (HALF_L + 13), z: sz * (HALF_W + 16), h: 27.6 })),
 );
 
+/** Smaller grounds (levels 0-2) light night games with portable lamp towers along the touchlines. */
+export const PORTABLE_LIGHTS: readonly { x: number; z: number; h: number }[] = [-1, 1].flatMap((sz) =>
+  [-38, 0, 38].map((x) => ({ x, z: sz * (HALF_W + 7.2), h: 10.5 })),
+);
+
 /**
  * Vertex-coloured Lambert (like voxelMaterial) with a snow blend: `uSnow` 0..1 mixes every face toward
  * `snowCol`. The material colour multiplies the lot, which doubles as the night dimmer.
  */
-function snowMaterial(snow: { value: number }, snowCol: number, key: string): THREE.MeshLambertMaterial {
+function snowMaterial(snow: { value: number }, snowCol: number, key: string, sat?: { value: number }): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true });
   const col = { value: new THREE.Color(snowCol) };
+  const satU = sat ?? { value: 1 };
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uSnow = snow;
     sh.uniforms.uSnowCol = col;
+    // uSat: saturation of the albedo (night pushes the floodlit lawn's green up against the cool light).
+    sh.uniforms.uSat = satU;
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uSnow;\nuniform vec3 uSnowCol;')
-      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, uSnowCol * diffuse, uSnow);');
+      .replace('#include <common>', '#include <common>\nuniform float uSnow;\nuniform vec3 uSnowCol;\nuniform float uSat;')
+      .replace(
+        '#include <color_fragment>',
+        '#include <color_fragment>\ndiffuseColor.rgb = max(mix(vec3(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114))), diffuseColor.rgb, uSat), 0.0);\ndiffuseColor.rgb = mix(diffuseColor.rgb, uSnowCol * diffuse, uSnow);',
+      );
   };
   m.customProgramCacheKey = () => `snow-${key}`;
   return m;
@@ -88,11 +156,13 @@ export class Stadium {
   private readonly snowPitch = { value: 0 };
   private readonly snowLine = { value: 0 };
   private readonly snowOuter = { value: 0 };
+  /** Lawn albedo saturation (1 by day; night pushes it up so the floodlit green stays vivid). */
+  private readonly grassSat = { value: 1 };
   private snowing = false;
   private snowT = 0;
   // Own materials (not the shared voxelMaterial) so night can dim the stands but keep the lawn floodlit,
   // and snow can settle on the grass without whitening the players.
-  private readonly grassMat = snowMaterial(this.snowPitch, 0xeef4f8, 'grass');
+  private readonly grassMat = snowMaterial(this.snowPitch, 0xeef4f8, 'grass', this.grassSat);
   private readonly lineMat = snowMaterial(this.snowLine, 0xffffff, 'line');
   private readonly groundMat = snowMaterial(this.snowOuter, 0xf2f6fa, 'ground');
   private readonly standMat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -103,21 +173,41 @@ export class Stadium {
   private flareV = new THREE.Vector3();
   private flareW = new THREE.Vector3();
   private night = false;
+  /** 0 park pitch .. 5 full bowl (see LAYOUTS). */
+  readonly level: number;
+  private readonly layout: Layout;
+  /** Where the night lights stand (masts from level 3, portable towers below): night shadows fall from these. */
+  readonly lightTowers: readonly { x: number; z: number; h: number }[];
+  /** Portable night lights (levels 0-2), built the first time the match is played at night. */
+  private portable: THREE.Object3D[] = [];
+  /** Far-stand fan banners actually hung (x of each; the rows under them stay empty). */
+  private bannerX: number[] = [];
+  /** Standing fans (no stand on that side): ground spots along the fence / on the grass banks. */
+  private standSpots: { x: number; z: number; rot: number }[] = [];
+  /** Full-screen night vignette (a clip-space quad drawn last). */
+  private vignette: THREE.Mesh | null = null;
 
   constructor(readonly opt: StadiumOptions) {
     this.rng = new Rng(opt.seed ?? 42);
+    this.level = clampLevel(opt.level);
+    this.layout = LAYOUTS[this.level];
+    this.lightTowers = this.level >= 3 ? FLOODLIGHT_TOWERS : PORTABLE_LIGHTS;
+    this.bannerX = this.layout.far ? BANNER_X.filter((x) => Math.abs(x) < this.layout.far!.span - 5) : [];
     this.pitch.position.y = PITCH_Y;
     this.group.add(this.pitch);
     this.buildPitch();
     this.buildGoals();
-    this.buildBoards();
+    if (this.level >= 1) this.buildBoards();
+    else this.buildFence();
     this.buildStands();
+    this.buildStandingSpots();
     this.buildCrowd();
-    this.buildFloodlights();
+    if (this.level >= 3) this.buildFloodlights();
     this.buildSurroundings();
     this.buildFlags();
-    this.buildDugouts();
-    this.buildPhotographers();
+    if (this.level >= 1) this.buildDugouts();
+    else this.buildBenches();
+    if (this.level >= 3) this.buildPhotographers();
     this.buildBanners();
     this.buildFlashes();
     this.scoreCanvas = document.createElement('canvas');
@@ -125,7 +215,7 @@ export class Stadium {
     this.scoreCanvas.height = 160;
     this.scoreTex = new THREE.CanvasTexture(this.scoreCanvas);
     this.scoreTex.colorSpace = THREE.SRGBColorSpace;
-    this.buildScoreboard();
+    if (this.layout.right) this.buildScoreboard();
     this.setScore(0, 0, "0'");
   }
 
@@ -217,14 +307,20 @@ export class Stadium {
   // ------------------------------------------------------------------ goals
 
   private buildGoals(): void {
+    // Posts and crossbar: pure white and unlit (lit, their shaded faces read grey against the lawn).
+    const postMat = new THREE.MeshBasicMaterial({ vertexColors: true });
     for (const s of [-1, 1]) {
+      const front = new BoxBuilder();
       const b = new BoxBuilder();
       const gx = s * HALF_L;
       const t = 0.2;
-      const white = 0xfbfbf6;
-      b.box(gx + s * t * 0.5, GOAL_H / 2, -GOAL_W / 2 - t / 2, t, GOAL_H + t, t, white);
-      b.box(gx + s * t * 0.5, GOAL_H / 2, GOAL_W / 2 + t / 2, t, GOAL_H + t, t, white);
-      b.box(gx + s * t * 0.5, GOAL_H + t / 2, 0, t, t, GOAL_W + t * 2, white);
+      const white = 0xf4f4f0;
+      front.box(gx + s * t * 0.5, GOAL_H / 2, -GOAL_W / 2 - t / 2, t, GOAL_H + t, t, white);
+      front.box(gx + s * t * 0.5, GOAL_H / 2, GOAL_W / 2 + t / 2, t, GOAL_H + t, t, white);
+      front.box(gx + s * t * 0.5, GOAL_H + t / 2, 0, t, t, GOAL_W + t * 2, white);
+      const posts = new THREE.Mesh(front.build(), postMat);
+      posts.castShadow = true;
+      this.pitch.add(posts);
       // Back frame (thin, grey)
       const bx = gx + s * GOAL_DEPTH;
       const f = 0.07;
@@ -254,7 +350,7 @@ export class Stadium {
 
   // ------------------------------------------------------------------ ad boards
 
-  private makeBoardTexture(words: string[], bgs: number[]): THREE.CanvasTexture {
+  private makeBoardTexture(words: string[], bgs: number[], fgs?: string[]): THREE.CanvasTexture {
     const c = document.createElement('canvas');
     c.width = 2048;
     c.height = 64;
@@ -268,7 +364,7 @@ export class Stadium {
       g.fillStyle = 'rgba(0,0,0,0.18)';
       g.fillRect(i * segW, 56, segW, 8);
       const light = ((bg >> 16) & 255) * 0.3 + ((bg >> 8) & 255) * 0.59 + (bg & 255) * 0.11 > 170;
-      g.fillStyle = light ? '#26262e' : '#fbfbf4';
+      g.fillStyle = fgs ? fgs[i % fgs.length] : light ? '#26262e' : '#fbfbf4';
       let size = 42;
       g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
       const wMax = segW * 0.86;
@@ -319,11 +415,82 @@ export class Stadium {
     this.group.add(m);
   }
 
+  /** Park pitch (level 0): a knee-high white rail fence where the ad boards would be. */
+  private buildFence(): void {
+    const b = new BoxBuilder();
+    const white = 0xf6f4ec;
+    const run = (x1: number, z1: number, x2: number, z2: number) => {
+      const len = Math.hypot(x2 - x1, z2 - z1);
+      const n = Math.max(1, Math.round(len / 2.4));
+      const alongX = Math.abs(x2 - x1) > Math.abs(z2 - z1);
+      for (let i = 0; i <= n; i++) {
+        const x = x1 + ((x2 - x1) * i) / n;
+        const z = z1 + ((z2 - z1) * i) / n;
+        b.box(x, 0.45, z, 0.16, 0.9, 0.16, white, { top: 0xffffff });
+      }
+      for (const y of [0.38, 0.78]) {
+        b.box((x1 + x2) / 2, y, (z1 + z2) / 2, alongX ? len : 0.08, 0.1, alongX ? 0.08 : len, white, { top: 0xffffff });
+      }
+    };
+    run(-BOARD_X, -BOARD_Z, BOARD_X, -BOARD_Z);
+    run(-BOARD_X, BOARD_Z, BOARD_X, BOARD_Z);
+    run(-BOARD_X, -BOARD_Z, -BOARD_X, BOARD_Z);
+    run(BOARD_X, -BOARD_Z, BOARD_X, BOARD_Z);
+    const m = new THREE.Mesh(b.build(), voxelMaterial);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    this.group.add(m);
+  }
+
+  /**
+   * Where fans stand when a side has no stand: small groups along the fence (the park), beside a short main
+   * stand, and on the grass behind the goals until the end stands go up (level 4).
+   */
+  private buildStandingSpots(): void {
+    const rng = this.rng;
+    const L = this.layout;
+    const out: { x: number; z: number; rot: number }[] = this.standSpots;
+    const line = (along: 'x' | 'z', from: number, to: number, at: number, depth: number, rot: number, rows: number) => {
+      let t = from;
+      while (t < to) {
+        // A group of 2-7, then a gap.
+        const n = 2 + rng.int(6);
+        for (let k = 0; k < n && t < to; k++, t += 0.8 + rng.next() * 0.25) {
+          for (let r = 0; r < rows; r++) {
+            if (r > 0 && !rng.chance(0.55)) continue;
+            const d = at + depth * (0.9 + r * 0.85 + rng.next() * 0.3);
+            out.push(along === 'x' ? { x: t, z: d, rot } : { x: d, z: t, rot });
+          }
+        }
+        t += 1.5 + rng.next() * 4;
+      }
+    };
+    const farSpan = L.far ? L.far.span + 1 : 0;
+    const nearSpan = L.near ? L.near.span + 1 : 0;
+    const rowsLong = this.level === 0 ? 1 : 2;
+    // Far side (the broadcast camera's top strip), either side of a short main stand.
+    if (!L.far || farSpan < HALF_L) {
+      if (!L.far) line('x', -42, 42, -BOARD_Z, -1, 0, rowsLong);
+      else {
+        line('x', -HALF_L - 2, -farSpan, -BOARD_Z, -1, 0, 2);
+        line('x', farSpan, HALF_L + 2, -BOARD_Z, -1, 0, 2);
+      }
+    }
+    if (!L.near) line('x', -40, 40, BOARD_Z, 1, Math.PI, 1);
+    else if (nearSpan < HALF_L) {
+      line('x', -HALF_L, -nearSpan, BOARD_Z, 1, Math.PI, 1);
+      line('x', nearSpan, HALF_L, BOARD_Z, 1, Math.PI, 1);
+    }
+    if (!L.left) line('z', -HALF_W + 4, HALF_W - 4, -BOARD_X, -1, -Math.PI / 2, this.level === 0 ? 1 : 3);
+    if (!L.right) line('z', -HALF_W + 4, HALF_W - 4, BOARD_X, 1, Math.PI / 2, this.level === 0 ? 1 : 3);
+  }
+
   // ------------------------------------------------------------------ stands
 
-  /** Row profile of a stand: distance from its front edge and the seat height, two tiers. */
+  /** Row profile of a stand: distance from its front edge and the seat height, one or two tiers. */
   private profile(side: Side4): { d: number; h: number; tier: number }[] {
-    const [t1, t2] = side === 'far' ? [14, 10] : side === 'near' ? [4, 0] : [11, 6];
+    const spec = this.layout[side];
+    const [t1, t2] = spec ? [spec.t1, spec.t2] : [0, 0];
     const rows: { d: number; h: number; tier: number }[] = [];
     for (let i = 0; i < t1; i++) rows.push({ d: i * STEP_D, h: 0.9 + i * STEP_H, tier: 1 });
     const d0 = t1 * STEP_D + 1.7;
@@ -333,7 +500,7 @@ export class Stadium {
   }
 
   private span(side: Side4): number {
-    return side === 'far' || side === 'near' ? HALF_L + 5 : HALF_W + 4;
+    return this.layout[side]?.span ?? (side === 'far' || side === 'near' ? HALF_L + 5 : HALF_W + 4);
   }
 
   /** Front edge distance from the pitch centre line for a side. */
@@ -359,11 +526,16 @@ export class Stadium {
     b.box(p.x, y, p.z, alongX ? len : depth, h, alongX ? depth : len, color, { top, skipBottom: y - h / 2 <= 0.01 });
   }
 
+  /** The sides that have a stand at this level. */
+  private sides(): Side4[] {
+    return (['far', 'near', 'left', 'right'] as Side4[]).filter((sd) => this.layout[sd]);
+  }
+
   private buildStands(): void {
     const b = new BoxBuilder();
     const { home, away } = this.opt;
-    const sides: Side4[] = ['far', 'near', 'left', 'right'];
-    for (const side of sides) {
+    for (const side of this.sides()) {
+      const spec = this.layout[side]!;
       const rows = this.profile(side);
       const span = this.span(side);
       const seatCol = side === 'right' ? away : home;
@@ -386,9 +558,24 @@ export class Stadium {
         this.standBox(b, side, 0, cd + 0.85, ch / 2, span * 2, 1.7, ch, shade(CONCRETE, 0.78), shade(CONCRETE, 0.9));
         this.standBox(b, side, 0, cd + 1.55, t2[0].h - 0.9, span * 2, 0.3, 0.8, shade(seatCol, 0.7));
       }
-      // The near stand is kept low and open so the broadcast camera looks over it.
+      // The near stand is kept low and open so the broadcast camera looks over it; the back it turns to the
+      // gantry is a dark LED ad board (the strip along the bottom of the frame), not bare concrete.
       if (side === 'near') {
-        this.standBox(b, side, 0, backD + 0.3, last.h / 2 + 0.4, span * 2, 0.6, last.h + 0.8, shade(CONCRETE, 0.92), shade(seatCol, 0.8));
+        this.standBox(b, side, 0, backD + 0.3, last.h / 2 + 0.4, span * 2, 0.6, last.h + 0.8, 0x1d1f27, 0x2a2d38);
+        const led = this.makeBoardTexture(
+          ['BLOCKY LEAGUE', 'CUBE COLA', 'HOP HOP', 'VOXEL BANK', 'CHUNKY BOOTS', 'PIXEL AIR'],
+          [0x14161d, 0x161a26, 0x14161d, 0x1a1620, 0x14161d, 0x14201a],
+          ['#ffd23a', '#5cc9f2', '#ff8a2b', '#7ddc5a', '#fbfbf4', '#ff79b0'],
+        );
+        led.repeat.x = (span * 2) / 60;
+        const face = new THREE.Mesh(new THREE.PlaneGeometry(span * 2, 1.05), new THREE.MeshBasicMaterial({ map: led }));
+        face.position.set(0, last.h + 0.8 - 0.62, STAND_Z + backD + 0.62);
+        this.group.add(face);
+        continue;
+      }
+      // Open end stands (level 4): a plain back wall, no roof.
+      if (!spec.roof) {
+        this.standBox(b, side, 0, backD + 0.3, (last.h + 1.2) / 2, span * 2, 0.6, last.h + 1.2, shade(CONCRETE, 0.92), shade(seatCol, 0.8));
         continue;
       }
       // Back wall and roof on stilts.
@@ -405,8 +592,8 @@ export class Stadium {
         this.standBox(b, side, a, backD + 0.1, roofY / 2, 0.6, 0.6, roofY, STEEL);
       }
     }
-    // Corners: low stepped blocks so there are no holes.
-    for (const sx of [-1, 1]) {
+    // Corners (the full bowl only): low stepped blocks so there are no holes.
+    for (const sx of this.level >= 5 ? [-1, 1] : []) {
       for (const sz of [-1, 1]) {
         for (let i = 0; i < 9; i++) {
           const top = 0.9 + i * STEP_H;
@@ -416,14 +603,18 @@ export class Stadium {
         }
       }
     }
-    const m = new THREE.Mesh(b.build(), this.standMat);
-    m.receiveShadow = true;
-    // Stands don't cast: their shadow would be clipped by the moving shadow frustum into wedges on the pitch.
-    m.castShadow = false;
-    this.group.add(m);
+    if (!b.empty) {
+      const m = new THREE.Mesh(b.build(), this.standMat);
+      m.receiveShadow = true;
+      // Stands don't cast: their shadow would be clipped by the moving shadow frustum into wedges on the pitch.
+      m.castShadow = false;
+      this.group.add(m);
+    }
 
+    if (!this.layout.far) return;
     // Stadium name on the far roof fascia + an LED ribbon on the upper-tier front.
     const farRows = this.profile('far');
+    const farSpan = this.span('far');
     const roofY = farRows[farRows.length - 1].h + 4;
     const c = document.createElement('canvas');
     c.width = 2048;
@@ -440,10 +631,14 @@ export class Stadium {
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(HALF_L * 2 + 11, 0.95), new THREE.MeshBasicMaterial({ map: tex }));
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(farSpan * 2 + 1, 0.95), new THREE.MeshBasicMaterial({ map: tex }));
+    tex.repeat.x = (farSpan * 2 + 1) / (HALF_L * 2 + 11);
+    tex.wrapS = THREE.RepeatWrapping;
     sign.position.set(0, roofY - 0.5, -(STAND_Z - 0.9) + 0.27);
     this.group.add(sign);
     const t2 = farRows.filter((r) => r.tier === 2)[0];
+    // Small main stand: no upper tier, no roof gantry (the floodlights come with the big stand).
+    if (!t2) return;
     const words = ['BLOCKY LEAGUE', 'CUBE COLA', 'HOP HOP', 'VOXEL BANK', 'CHUNKY BOOTS', 'PIXEL AIR'];
     const ribbon = this.makeBoardTexture(words, [0x26262e, 0x2f6fe0, 0x26262e, 0xe8443a, 0x26262e, 0x2fae5a]);
     ribbon.repeat.x = (HALF_L * 2 + 10) / 60;
@@ -460,7 +655,8 @@ export class Stadium {
       gantry.box(x, roofY + 0.55, fz - 0.1, 2.2, 0.9, 0.7, 0x3a3f48);
       faces.box(x, roofY + 0.5, fz + 0.28, 1.9, 0.6, 0.08, 0xfffbe0);
       this.lampHeads.push(new THREE.Vector3(x, roofY + 0.5, fz + 0.5));
-      this.lampGlow.push({ size: 7, flare: 0.8 });
+      // A faint haze only: a strong one lifts the whole top strip out of the dark.
+      this.lampGlow.push({ size: 7, flare: 0.3 });
     }
     this.group.add(new THREE.Mesh(gantry.build(), this.standMat));
     this.group.add(new THREE.Mesh(faces.build(), new THREE.MeshBasicMaterial({ vertexColors: true })));
@@ -471,8 +667,7 @@ export class Stadium {
     const att = this.opt.attendance;
     type Seat = { x: number; y: number; z: number; rot: number; team: number };
     const seats: Seat[] = [];
-    const sides: Side4[] = ['far', 'near', 'left', 'right'];
-    for (const side of sides) {
+    for (const side of this.sides()) {
       const rows = this.profile(side);
       const span = this.span(side) - 0.5;
       rows.forEach((r, i) => {
@@ -480,7 +675,7 @@ export class Stadium {
         for (let t = -span; t <= span; t += 0.86) {
           if (!rng.chance(fill)) continue;
           // Leave the rows under the fan banners empty.
-          if (side === 'far' && i <= 3 && BANNER_X.some((bx) => Math.abs(t - bx) < 5.3)) continue;
+          if (side === 'far' && i <= 3 && this.bannerX.some((bx) => Math.abs(t - bx) < 5.3)) continue;
           const depth = r.tier === 2 ? STEP_D * 1.05 : STEP_D;
           const p = this.place(side, t + (rng.next() - 0.5) * 0.1, r.d + depth * 0.45);
           // Away fans are packed into one end, in blocks.
@@ -492,6 +687,13 @@ export class Stadium {
         }
       });
     }
+    // No stand on a side: a few fans stand along the fence / on the grass bank.
+    for (const sp of this.standSpots) {
+      if (!rng.chance(Math.min(1, att * 1.1))) continue;
+      const away = sp.x > HALF_L + 2 ? rng.chance(0.8) : false;
+      seats.push({ x: sp.x, y: 0, z: sp.z, rot: sp.rot, team: away ? 1 : rng.chance(0.1) ? 2 : 0 });
+    }
+    if (seats.length === 0) return;
     // One mesh per fan: body + head + hair top, coloured per part in the shader.
     const body = new THREE.BoxGeometry(0.52, 0.56, 0.34).translate(0, 0.28, 0);
     const head = new THREE.BoxGeometry(0.42, 0.42, 0.42).translate(0, 0.56 + 0.21, 0);
@@ -667,9 +869,66 @@ export class Stadium {
     this.group.add(l);
   }
 
+  /**
+   * Portable lamp towers (levels 0-2 at night): a yellow trailer, a telescopic mast and a four-lamp head
+   * aimed across the pitch.
+   */
+  private buildPortableLights(): void {
+    const b = new BoxBuilder();
+    const lamps = new BoxBuilder();
+    for (const t of PORTABLE_LIGHTS) {
+      const sz = Math.sign(t.z);
+      // Trailer, wheels, outriggers.
+      b.box(t.x, 0.75, t.z, 2.6, 0.9, 1.4, 0xffc21a, { top: 0xffd84a });
+      for (const wx of [-0.8, 0.8]) b.box(t.x + wx, 0.3, t.z, 0.6, 0.6, 1.6, 0x2a2a30);
+      b.box(t.x, 0.2, t.z, 3.6, 0.14, 0.2, 0x3a3f48);
+      // Mast and head.
+      const h = t.h;
+      b.box(t.x, (h - 0.6) / 2 + 1, t.z, 0.26, h - 1.6, 0.26, STEEL);
+      b.box(t.x, h, t.z + sz * 0.1, 2.6, 1.3, 0.34, 0x3a3f48);
+      for (let i = 0; i < 2; i++) {
+        for (let j = 0; j < 2; j++) {
+          lamps.box(t.x + (i - 0.5) * 1.15, h - 0.3 + j * 0.62, t.z - sz * 0.1, 1.0, 0.5, 0.12, 0xfffbe0);
+        }
+      }
+      this.lampHeads.push(new THREE.Vector3(t.x, h, t.z - sz * 0.4));
+      this.lampGlow.push({ size: 8, flare: 0.9 });
+    }
+    const m = new THREE.Mesh(b.build(), voxelMaterial);
+    m.castShadow = true;
+    const l = new THREE.Mesh(lamps.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
+    this.group.add(m, l);
+    this.portable.push(m, l);
+  }
+
+  /** Subtle night vignette: a clip-space quad (no camera maths), drawn after everything else. */
+  private buildVignette(): void {
+    const mat = new THREE.ShaderMaterial({
+      transparent: true, depthTest: false, depthWrite: false, fog: false,
+      uniforms: { uStrength: { value: 0.62 } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `uniform float uStrength; varying vec2 vUv;
+        void main() {
+          vec2 q = vUv - 0.5;
+          float r = length(q * vec2(1.0, 0.82)) * 1.42;
+          float a = smoothstep(0.42, 1.1, r) * uStrength;
+          gl_FragColor = vec4(0.012, 0.02, 0.06, a);
+        }`,
+    });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    quad.frustumCulled = false;
+    quad.renderOrder = 50;
+    this.vignette = quad;
+    this.group.add(quad);
+  }
+
   /** Night: glowing floodlight halos and a starry sky. */
   setTimeOfDay(t: 'day' | 'sunset' | 'night'): void {
     const night = t === 'night';
+    if (night && this.level < 3 && this.portable.length === 0) this.buildPortableLights();
+    for (const o of this.portable) o.visible = night;
+    if (night && !this.vignette && !this.opt.preview) this.buildVignette();
+    if (this.vignette) this.vignette.visible = night;
     if (night && this.glows.length === 0) {
       const c = document.createElement('canvas');
       c.width = c.height = 64;
@@ -707,16 +966,21 @@ export class Stadium {
     }
     for (const g of this.glows) g.visible = night;
     if (this.stars) this.stars.visible = night;
-    // Floodlit night: the lawn keeps its light, everything the lamps aren't aimed at falls away.
-    const stand = night ? [0.4, 0.42, 0.52] : [1, 1, 1];
-    const outer = night ? [0.2, 0.22, 0.3] : [1, 1, 1];
+    // Floodlit night: the lawn keeps its light (and its colour: a saturation push against the cool key), while
+    // everything the lamps aren't aimed at falls away: near-black concrete, the crowd in half light, the world
+    // outside in the dark.
+    const stand = night ? NIGHT.stand : [1, 1, 1];
+    const crowd = night ? NIGHT.crowd : [1, 1, 1];
+    const outer = night ? NIGHT.outer : [1, 1, 1];
     this.standMat.color.setRGB(stand[0], stand[1], stand[2]);
-    for (const m of this.crowdMats) m.color.setRGB(stand[0] * 1.1, stand[1] * 1.1, stand[2] * 1.05);
-    for (const m of this.bannerMats) m.color.setRGB(stand[0] * 1.2, stand[1] * 1.2, stand[2] * 1.1);
+    for (const m of this.crowdMats) m.color.setRGB(crowd[0], crowd[1], crowd[2]);
+    for (const m of this.bannerMats) m.color.setRGB(crowd[0] * 0.85, crowd[1] * 0.82, crowd[2] * 0.8);
     this.outerMat.color.setRGB(outer[0], outer[1], outer[2]);
     this.groundMat.color.setRGB(outer[0], outer[1], outer[2]);
+    this.grassSat.value = night ? NIGHT.grassSat : 1;
     // Golden hour: take the last of the orange back out of the lawn so it reads green, not khaki.
     if (t === 'sunset') this.grassMat.color.setRGB(0.9, 1.04, 1);
+    else if (night) this.grassMat.color.setRGB(NIGHT.grass[0], NIGHT.grass[1], NIGHT.grass[2]);
     else this.grassMat.color.setRGB(1, 1, 1);
     this.night = night;
     for (const f of this.flares) f.visible = false;
@@ -731,14 +995,15 @@ export class Stadium {
   private buildSurroundings(): void {
     const rng = this.rng;
     const g = new BoxBuilder();
+    const preview = !!this.opt.preview;
     // Ground tiles in alternating lanes.
-    const R = 230;
+    const R = preview ? 100 : 230;
     for (let z = -R; z < R; z += 6) {
       const lane = Math.floor(z / 6);
       g.box(0, -0.35, z + 3, R * 2, 0.5, 6, lane % 2 ? GRASS_OUT_A : shade(GRASS_OUT_B, 0.98));
     }
     // Roads encircling the ground.
-    const roadZ = [-(STAND_Z + 33), STAND_Z + 19];
+    const roadZ = preview ? [] : [-(STAND_Z + 33), STAND_Z + 19];
     for (const rz of roadZ) {
       g.box(0, -0.08, rz, R * 2, 0.06, 7, ROAD);
       for (let x = -R; x < R; x += 4) g.box(x, -0.04, rz, 1.8, 0.02, 0.22, 0xf6f4ec);
@@ -747,11 +1012,13 @@ export class Stadium {
     }
     // A river beyond the far road with sandy banks.
     const riverZ = -(STAND_Z + 52);
-    g.box(0, -0.2, riverZ, R * 2, 0.2, 10, WATER);
-    g.box(0, -0.12, riverZ - 5.6, R * 2, 0.12, 1.4, SAND);
-    g.box(0, -0.12, riverZ + 5.6, R * 2, 0.12, 1.4, SAND);
+    if (!preview) {
+      g.box(0, -0.2, riverZ, R * 2, 0.2, 10, WATER);
+      g.box(0, -0.12, riverZ - 5.6, R * 2, 0.12, 1.4, SAND);
+      g.box(0, -0.12, riverZ + 5.6, R * 2, 0.12, 1.4, SAND);
+    }
     // Car park strip behind the end stands.
-    for (const sx of [-1, 1]) {
+    for (const sx of preview ? [] : [-1, 1]) {
       const px = sx * (STAND_X + 24);
       g.box(px, -0.07, 0, 12, 0.06, 70, shade(ROAD, 1.15));
       for (let z = -32; z <= 32; z += 3.2) g.box(px, -0.03, z, 11, 0.02, 0.14, 0xf6f4ec);
@@ -781,7 +1048,7 @@ export class Stadium {
       roadZ.some((rz) => Math.abs(z - rz) < 5) ||
       Math.abs(z - riverZ) < 7.5 ||
       (Math.abs(Math.abs(x) - (STAND_X + 24)) < 8 && Math.abs(z) < 38);
-    for (let i = 0; i < 520; i++) {
+    for (let i = 0; i < (preview ? 0 : 520); i++) {
       const x = (rng.next() - 0.5) * R * 2;
       const z = (rng.next() - 0.5) * R * 2;
       if (avoid(x, z)) continue;
@@ -790,7 +1057,40 @@ export class Stadium {
     // Dense tree line hugging the stadium so the stands sit in a park.
     for (let x = -STAND_X - 26; x <= STAND_X + 26; x += 3.2 + rng.next() * 2) {
       if (rng.chance(0.8)) tree(x, -(STAND_Z + 26 + rng.next() * 1.5));
-      if (rng.chance(0.8)) tree(x, STAND_Z + 13.5 + rng.next() * 1.5);
+      if (!preview && rng.chance(0.8)) tree(x, STAND_Z + 13.5 + rng.next() * 1.5);
+    }
+    // Smaller grounds sit among the trees: a staggered belt of them wherever a side has no stand (and beside
+    // a short one), a few metres behind the fans at the fence.
+    if (this.level < 5) {
+      const lamps = this.level < 3 ? PORTABLE_LIGHTS : [];
+      const clearOfLamps = (x: number, z: number) => lamps.every((l) => Math.hypot(x - l.x, z - l.z) > 3.2);
+      const belt = (along: 'x' | 'z', from: number, to: number, at: number, dir: number) => {
+        for (let row = 0; row < 3; row++) {
+          for (let a = from + rng.next() * 2; a < to; a += 3 + rng.next() * 1.8) {
+            if (!rng.chance(0.82)) continue;
+            const d = dir * (at + row * 3.4 + rng.next() * 1.4);
+            const x = along === 'x' ? a : d;
+            const z = along === 'x' ? d : a;
+            if (clearOfLamps(x, z)) tree(x, z);
+          }
+        }
+      };
+      const L = this.layout;
+      const farEnd = L.far ? L.far.span + 2 : -1;
+      const longAt = BOARD_Z + 6.5;
+      if (!L.far) belt('x', -BOARD_X - 8, BOARD_X + 8, longAt, -1);
+      else if (farEnd < HALF_L) {
+        belt('x', -BOARD_X - 8, -farEnd, longAt, -1);
+        belt('x', farEnd, BOARD_X + 8, longAt, -1);
+      }
+      const nearEnd = L.near ? L.near.span + 2 : -1;
+      if (!L.near) belt('x', -BOARD_X - 8, BOARD_X + 8, longAt, 1);
+      else if (nearEnd < HALF_L) {
+        belt('x', -BOARD_X - 8, -nearEnd, longAt, 1);
+        belt('x', nearEnd, BOARD_X + 8, longAt, 1);
+      }
+      if (!L.left) belt('z', -BOARD_Z - 4, BOARD_Z + 4, BOARD_X + 6, -1);
+      if (!L.right) belt('z', -BOARD_Z - 4, BOARD_Z + 4, BOARD_X + 6, 1);
     }
     const trees = new THREE.Mesh(t.build(), this.outerMat);
     trees.castShadow = true;
@@ -818,7 +1118,7 @@ export class Stadium {
       }
     });
     // Logs drifting on the river.
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < (preview ? 0 : 8); i++) {
       const lb = new BoxBuilder();
       const len = 3 + rng.next() * 3;
       lb.box(0, 0, 0, len, 0.5, 1.1, TRUNK, { top: shade(TRUNK, 1.15) });
@@ -828,7 +1128,7 @@ export class Stadium {
       this.logs.push({ mesh: log, speed: (i % 2 ? 1 : -1) * (1.4 + rng.next()) });
     }
     // Chunky clouds.
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < (preview ? 0 : 14); i++) {
       const cb = new BoxBuilder();
       const n = 2 + rng.int(3);
       for (let k = 0; k < n; k++) {
@@ -860,18 +1160,31 @@ export class Stadium {
     }
   }
 
-  private buildDugouts(): void {
+  /** Park pitch: the dugouts are plain wooden benches in the open. */
+  private buildBenches(): void {
+    this.buildDugouts(false);
+  }
+
+  private buildDugouts(shelter = true): void {
     const b = new BoxBuilder();
     const rng = this.rng;
     const z0 = HALF_W + 1.9;
     for (const [sx, col] of [[-1, this.opt.home], [1, this.opt.away]] as const) {
       const cx = sx * 9;
-      // Shelter: back wall, side walls, perspex roof, bench.
-      b.box(cx, 0.9, z0 + 1.15, 7.2, 1.8, 0.2, shade(col, 0.75));
-      b.box(cx - 3.5, 0.9, z0 + 0.6, 0.2, 1.8, 1.3, shade(col, 0.75));
-      b.box(cx + 3.5, 0.9, z0 + 0.6, 0.2, 1.8, 1.3, shade(col, 0.75));
-      b.box(cx, 1.85, z0 + 0.55, 7.4, 0.1, 1.5, 0xbfe6f5, { top: 0xd6f0fa });
-      b.box(cx, 0.25, z0 + 0.8, 6.6, 0.5, 0.5, 0xf6f4ec);
+      if (shelter) {
+        // Shelter: back wall, side walls, perspex roof, bench.
+        b.box(cx, 0.9, z0 + 1.15, 7.2, 1.8, 0.2, shade(col, 0.75));
+        b.box(cx - 3.5, 0.9, z0 + 0.6, 0.2, 1.8, 1.3, shade(col, 0.75));
+        b.box(cx + 3.5, 0.9, z0 + 0.6, 0.2, 1.8, 1.3, shade(col, 0.75));
+        b.box(cx, 1.85, z0 + 0.55, 7.4, 0.1, 1.5, 0xbfe6f5, { top: 0xd6f0fa });
+        b.box(cx, 0.25, z0 + 0.8, 6.6, 0.5, 0.5, 0xf6f4ec);
+      } else {
+        // A slatted wooden bench on two trestles, a kit bag and a water crate beside it.
+        b.box(cx, 0.46, z0 + 0.8, 6.6, 0.1, 0.5, 0xb07a48, { top: 0xc48c56 });
+        for (const lx of [-2.9, 0, 2.9]) b.box(cx + lx, 0.21, z0 + 0.8, 0.14, 0.42, 0.44, TRUNK);
+        b.box(cx + 3.9, 0.22, z0 + 0.7, 0.9, 0.44, 0.5, shade(col, 0.8));
+        b.box(cx - 3.8, 0.2, z0 + 0.8, 0.5, 0.4, 0.4, 0x3a8ad8, { top: 0x5cc9f2 });
+      }
       // Substitutes on the bench (seen from behind).
       for (let i = 0; i < 6; i++) {
         const x = cx - 2.8 + i * 1.1;
@@ -888,7 +1201,7 @@ export class Stadium {
       b.box(mx, 0.76 + 0.3, mz - 0.18, 0.12, 0.3, 0.05, col);
     }
     // Fourth official's board.
-    b.box(0, 0.5, HALF_W + 2.2, 0.8, 1, 0.8, 0x2a2a30, { top: 0xffd23a });
+    if (shelter) b.box(0, 0.5, HALF_W + 2.2, 0.8, 1, 0.8, 0x2a2a30, { top: 0xffd23a });
     const m = new THREE.Mesh(b.build(), voxelMaterial);
     m.castShadow = true;
     m.receiveShadow = true;
@@ -930,7 +1243,7 @@ export class Stadium {
       ['ONE CLUB · ONE DREAM', shade(home, 0.75), 0xffd23a],
       [`${awayName.split(' ')[0].toUpperCase()} AWAY DAY`, away, 0xfbfbf4],
     ];
-    const places: [number, number][] = BANNER_X.map((x, i) => [x, i]);
+    const places: [number, number][] = BANNER_X.map((x, i) => [x, i] as [number, number]).filter(([x]) => this.bannerX.includes(x));
     for (const [x, ti] of places) {
       const [text, bg, fg] = texts[ti];
       const c = document.createElement('canvas');
@@ -1079,12 +1392,27 @@ export class Stadium {
       const sp = this.flares[i];
       v.copy(this.lampHeads[i]).project(cam);
       const w = this.flareW.copy(this.lampHeads[i]).applyMatrix4(cam.matrixWorldInverse).z;
-      const k = w > 0 || v.y < 0.95 ? 0 : (1 - smoothstep(0.95, 1.5, Math.abs(v.x))) * (1 - smoothstep(1.1, 4.5, v.y));
+      // The big lamps (corner masts, portable towers) throw their glare in from well outside the frame too:
+      // the far pair always hang a glow in the top corners of the broadcast shot.
+      const big = this.lampGlow[i].size >= 8;
+      const xr = big ? 2.6 : 1.5;
+      const k = w > 0 || v.y < 0.95 ? 0 : (1 - smoothstep(xr - 0.55, xr, Math.abs(v.x))) * (1 - smoothstep(1.1, big ? 6 : 4.5, v.y));
       if (k <= 0.01) {
         sp.visible = false;
         continue;
       }
       sp.visible = true;
+      if (big) {
+        // A mast (or lamp tower) just over the top of the frame: its round glow sits in the top strip, pulled
+        // in from the corner, 12% of the width across.
+        v.set(clamp(v.x, -0.86, 0.86), 0.9, 0.5).unproject(cam);
+        sp.position.copy(cam.position).addScaledVector(v.sub(cam.position).normalize(), D);
+        const r = D * halfW * 2 * 0.12;
+        sp.scale.set(r, r, 1);
+        (sp.material as THREE.SpriteMaterial).map = this.haloTex;
+        (sp.material as THREE.SpriteMaterial).opacity = Math.min(1, this.lampGlow[i].flare * k * 1.15);
+        continue;
+      }
       // Hang it from the top edge, 12 m in front of the lens: 18% of the width, 20% of the height.
       v.set(clamp(v.x, -1, 1), 0.8, 0.5).unproject(cam);
       sp.position.copy(cam.position).addScaledVector(v.sub(cam.position).normalize(), D);
@@ -1093,7 +1421,25 @@ export class Stadium {
     }
   }
 
+  /** Round lamp glow (a hot core in a soft halo) for the big lamps' glare in the top strip. */
+  private haloTex: THREE.CanvasTexture | null = null;
+
   private buildFlares(): void {
+    {
+      const hc = document.createElement('canvas');
+      hc.width = hc.height = 64;
+      const hg = hc.getContext('2d')!;
+      const grad = hg.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grad.addColorStop(0, 'rgba(255,255,248,1)');
+      grad.addColorStop(0.12, 'rgba(255,252,232,0.95)');
+      grad.addColorStop(0.3, 'rgba(255,246,210,0.4)');
+      grad.addColorStop(0.62, 'rgba(255,240,200,0.1)');
+      grad.addColorStop(1, 'rgba(255,240,200,0)');
+      hg.fillStyle = grad;
+      hg.fillRect(0, 0, 64, 64);
+      this.haloTex = new THREE.CanvasTexture(hc);
+      this.haloTex.colorSpace = THREE.SRGBColorSpace;
+    }
     const c = document.createElement('canvas');
     c.width = 128;
     c.height = 64;
@@ -1154,6 +1500,7 @@ export class Stadium {
   dispose(): void {
     const seen = new Set<THREE.Material | THREE.Texture>();
     this.group.traverse((o) => {
+      (o as THREE.Mesh).geometry?.dispose();
       const mats = (o as THREE.Mesh).material;
       if (!mats) return;
       for (const m of Array.isArray(mats) ? mats : [mats]) {
@@ -1177,24 +1524,84 @@ export class Stadium {
   }
 }
 
+/**
+ * A stadium of `level` (0 park pitch .. 5 full bowl) for a small preview render, e.g. the upgrade screen:
+ * the ground, stands, crowd and a belt of trees, without the far-off world (roads, river, traffic, clouds).
+ * Add `stadium.group` to a scene lit by `stadiumPreviewLights()`, frame it with STADIUM_PREVIEW_VIEW, call
+ * `stadium.update(dt, time)` each frame (crowd, flags, scrolling boards) and `stadium.dispose()` when done.
+ */
+export function buildStadiumPreview(
+  level: number,
+  opts: Partial<Pick<StadiumOptions, 'home' | 'away' | 'homeName' | 'awayName' | 'attendance' | 'seed'>> = {},
+): Stadium {
+  const st = new Stadium({
+    home: opts.home ?? 0x2f6fe0,
+    away: opts.away ?? 0xe8443a,
+    homeName: opts.homeName ?? 'Blocky FC',
+    awayName: opts.awayName ?? 'Visitors',
+    attendance: (opts.attendance ?? 0.85) * stadiumFill(level),
+    level,
+    seed: opts.seed ?? 7,
+    preview: true,
+  });
+  st.setTimeOfDay('day');
+  st.setScore(0, 0, "0'");
+  return st;
+}
+
+/** Camera for a stadium preview: a high three-quarter view from the main-camera side. */
+export const STADIUM_PREVIEW_VIEW = { position: [72, 84, 124] as const, target: [0, 0, -6] as const, fov: 34 };
+
+/** Day lights for a stadium preview scene (hemisphere + a sun from the camera side, no shadows). */
+export function stadiumPreviewLights(): THREE.Object3D[] {
+  const hemi = new THREE.HemisphereLight(0xd6e8ff, 0x7a9a5c, 1.3);
+  const sun = new THREE.DirectionalLight(0xfff6e6, 2.8);
+  sun.position.set(-44, 48, 30);
+  return [hemi, sun, sun.target];
+}
+
 let netTexture: THREE.CanvasTexture | null = null;
 
-/** Chunky net strands in a tiling alpha-tested texture. */
+/** Net mesh: metres between strands (a cell) and the texture tile, which holds 4 x 4 cells. */
+const NET_CELL = 0.135;
+
+/**
+ * Fine net strands (~1.7 cm on a 13.5 cm mesh) as a tiling alpha map (white = string). The mip chain is drawn
+ * by hand, each level keeping thin strong lines rather than averaging them away, so from the broadcast
+ * gantry the net is a light white mesh, not a vanishing grey film.
+ */
 function getNetTexture(): THREE.CanvasTexture {
   if (netTexture) return netTexture;
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d')!;
-  g.clearRect(0, 0, 64, 64);
-  g.fillStyle = '#ffffff';
-  for (let i = 0; i < 64; i += 16) {
-    g.fillRect(i, 0, 2, 64);
-    g.fillRect(0, i, 64, 2);
-  }
-  netTexture = new THREE.CanvasTexture(c);
+  const level = (n: number): HTMLCanvasElement => {
+    const c = document.createElement('canvas');
+    c.width = c.height = n;
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#000000';
+    g.fillRect(0, 0, n, n);
+    const step = n / 4;
+    if (step < 1) {
+      g.fillStyle = 'rgba(255,255,255,0.42)';
+      g.fillRect(0, 0, n, n);
+      return c;
+    }
+    // 2 px strands on the full-size tile; one pixel, a little brighter the smaller the level.
+    const w = Math.max(1, Math.round(n / 32));
+    const a = n >= 64 ? 1 : n >= 32 ? 0.95 : n >= 16 ? 0.8 : n >= 8 ? 0.62 : 0.5;
+    g.fillStyle = `rgba(255,255,255,${a})`;
+    for (let i = 0; i < n; i += step) {
+      g.fillRect(i, 0, w, n);
+      g.fillRect(0, i, n, w);
+    }
+    return c;
+  };
+  const top = level(64);
+  netTexture = new THREE.CanvasTexture(top);
+  netTexture.mipmaps = [64, 32, 16, 8, 4, 2, 1].map(level);
+  netTexture.generateMipmaps = false;
   netTexture.wrapS = netTexture.wrapT = THREE.RepeatWrapping;
-  netTexture.magFilter = THREE.NearestFilter;
-  netTexture.anisotropy = 4;
+  netTexture.magFilter = THREE.LinearFilter;
+  netTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  netTexture.anisotropy = 8;
   return netTexture;
 }
 
@@ -1213,7 +1620,7 @@ class GoalNet {
     const idx: number[] = [];
     const gx = sign * HALF_L;
     const bx = gx + sign * GOAL_DEPTH;
-    const cell = 1 / 3; // metres per texture tile of 4 strands
+    const cell = NET_CELL; // metres between strands (a texture tile holds 4)
     const panel = (
       w: number, h: number, nu: number, nv: number,
       at: (u: number, v: number) => [number, number, number],
@@ -1235,8 +1642,11 @@ class GoalNet {
         }
       }
     };
-    panel(GOAL_W, GOAL_H, 16, 8, (u, v) => [bx, v * GOAL_H, -GOAL_W / 2 + u * GOAL_W], [sign, 0, 0]);
-    panel(GOAL_DEPTH, GOAL_W, 6, 16, (u, v) => [gx + sign * u * GOAL_DEPTH, GOAL_H, -GOAL_W / 2 + v * GOAL_W], [0, 1, 0]);
+    // A little slack: the back net bellies out low in the middle and the roof sags between the bars.
+    const belly = (u: number, v: number) => 0.09 * Math.sin(Math.PI * u) * Math.sin(Math.PI * Math.min(1, v * 1.15));
+    const sag = (u: number, v: number) => 0.14 * Math.sin(Math.PI * u) * Math.sin(Math.PI * v);
+    panel(GOAL_W, GOAL_H, 16, 8, (u, v) => [bx + sign * belly(u, v), v * GOAL_H, -GOAL_W / 2 + u * GOAL_W], [sign, 0, 0]);
+    panel(GOAL_DEPTH, GOAL_W, 6, 16, (u, v) => [gx + sign * u * GOAL_DEPTH, GOAL_H - sag(u, v), -GOAL_W / 2 + v * GOAL_W], [0, 1, 0]);
     for (const zs of [-1, 1]) {
       panel(GOAL_DEPTH, GOAL_H, 6, 8, (u, v) => [gx + sign * u * GOAL_DEPTH, v * GOAL_H, (zs * GOAL_W) / 2], [0, 0, zs]);
     }
@@ -1248,9 +1658,10 @@ class GoalNet {
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(idx);
-    // Unlit so the strands read as bright string, not grey bars.
+    // Unlit so the strands read as bright string, not grey bars; blended (not alpha-tested) so the fine mesh
+    // fades to a light haze with distance instead of breaking up.
     const mat = new THREE.MeshBasicMaterial({
-      color: 0xf6f6ee, map: getNetTexture(), alphaTest: 0.5, side: THREE.DoubleSide,
+      color: 0xf6f6ee, alphaMap: getNetTexture(), transparent: true, depthWrite: false, side: THREE.DoubleSide,
     });
     this.mesh = new THREE.Mesh(geo, mat);
   }

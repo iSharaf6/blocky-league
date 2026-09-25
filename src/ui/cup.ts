@@ -74,25 +74,27 @@ function cupEntry(app: AppContext): void {
         <div class="cup-hero-icon">${pixelIcon('trophy', '#ffd23a', 8)}</div>
         <p>Win three ties to lift the cup. Level after full time? Straight to penalties.</p>
       </section>
-      <div class="team-pick cup-pick">
-        <span class="tp-label">YOUR CLUB</span>
-        <div class="tp-body">
-          <button class="arrow" data-a="prev" aria-label="Previous club">◀</button>
-          <div class="tp-kit">${shirtArt(c.kit, 8)}</div>
-          <button class="arrow" data-a="next" aria-label="Next club">▶</button>
+      <div class="cup-entry">
+        <div class="team-pick cup-pick">
+          <span class="tp-label">YOUR CLUB</span>
+          <div class="tp-body">
+            <button class="arrow" data-a="prev" aria-label="Previous club">◀</button>
+            <div class="tp-kit">${shirtArt(c.kit, 8)}</div>
+            <button class="arrow" data-a="next" aria-label="Next club">▶</button>
+          </div>
+          <b class="tp-name">${esc(c.name)}</b>
+          <span class="tp-stars">${stars(clubRating(club))}</span>
+          <span class="tp-meta">OVR ${clubRating(club)} · ${c.formation}</span>
         </div>
-        <b class="tp-name">${esc(c.name)}</b>
-        <span class="tp-stars">${stars(clubRating(club))}</span>
-        <span class="tp-meta">OVR ${clubRating(club)} · ${c.formation}</span>
+        <div class="mc-prize">${lines}
+          <div><span>LIFT THE TROPHY</span><b><i></i>+${fmt(TROPHY_PRIZE * mult)}</b></div>
+          <div class="total"><span>UP FOR GRABS</span><b><i></i>${fmt(total)}</b></div>
+        </div>
       </div>
       <div class="opt-row"><label>DIFFICULTY</label><div class="seg">${DIFFICULTIES.map(
         (l, i) => `<button class="${i === diff ? 'on' : ''}" data-a="diff" data-i="${i}">${l}</button>`,
       ).join('')}</div></div>
       <p class="mc-hint">Harder cups draw stronger rivals and pay more.</p>
-      <div class="mc-prize">${lines}
-        <div><span>LIFT THE TROPHY</span><b><i></i>+${fmt(TROPHY_PRIZE * mult)}</b></div>
-        <div class="total"><span>UP FOR GRABS</span><b><i></i>${fmt(total)}</b></div>
-      </div>
       <div class="btn-row"><button class="btn btn-go btn-lg cup-go" data-a="start">ENTER THE CUP</button></div>`,
       {
         back: () => toMenu(app),
@@ -256,6 +258,7 @@ function playTie(app: AppContext, st: CupState): void {
     difficulty: st.difficulty,
     halfMinutes: app.save.settings.halfMinutes,
     attendance: [0.75, 0.9, 1][round] ?? 1,
+    stadiumLevel: 5,
     knockout: true,
     nextLabel: 'BACK TO THE CUP',
     // Called once at full time: the cup is updated here so the result is saved with the coins.
