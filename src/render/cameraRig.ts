@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { clamp, damp, smoothstep } from '../core/math';
 import { HALF_L, HALF_W } from '../sim/constants';
 
-export type CamMode = 'broadcast' | 'replay' | 'celebrate' | 'menu' | 'intro';
+export type CamMode = 'broadcast' | 'replay' | 'celebrate' | 'menu' | 'intro' | 'penalty';
 
 export interface CamFocus {
   bx: number; by: number; bz: number;
@@ -13,10 +13,10 @@ export interface CamFocus {
   /** Attacking direction of the side in possession (0 = loose). */
   lean?: number;
   /** Set piece being taken: frame the taker and the target area together. */
-  setPiece?: { x: number; z: number; tx: number; tz: number } | null;
+  setPiece?: { x: number; z: number; tx: number; tz: number; behind?: boolean } | null;
 }
 
-const PITCH_DEG = 34;
+const PITCH_DEG = 27;
 const FOV = 24;
 
 export class CameraRig {
@@ -28,6 +28,8 @@ export class CameraRig {
   replayAngle = 0;
   /** Which goal (+1 / -1) the replayed goal went into. */
   replayGoalSign = 1;
+  /** Shootout: which goal (+1 / -1) every kick is taken at. */
+  penaltyGoal = 1;
   private target = new THREE.Vector3();
   private pos = new THREE.Vector3(0, 60, 90);
   private lead = new THREE.Vector2();
@@ -63,7 +65,7 @@ export class CameraRig {
   /** Metres of pitch the broadcast shot shows across the screen. */
   private broadcastWidth(): number {
     const a = this.camera.aspect;
-    const w = a >= 1.6 ? 46 : a >= 1.25 ? 40 + (a - 1.25) * 17 : 38;
+    const w = a >= 1.6 ? 41 : a >= 1.25 ? 36 + (a - 1.25) * 14 : 35;
     // Small phone screens get a tighter shot so the players stay readable.
     const h = typeof window !== 'undefined' ? window.innerHeight : 720;
     return w * (h < 420 ? 0.78 : h < 560 ? 0.88 : 1);
@@ -124,11 +126,11 @@ export class CameraRig {
           cam.fov = 34;
           rate = 8;
         } else if (this.replayAngle % 2 === 0) {
-          // Low touchline tracking shot, a step behind the ball.
+          // Touchline tracking shot, a step behind the ball, kept out of the stand.
           px = f.bx - gs * 6;
-          py = 4.5;
-          pz = f.bz + 22;
-          cam.fov = 30;
+          py = 6.2;
+          pz = Math.min(f.bz + 20, HALF_W + 2.6);
+          cam.fov = 32;
           rate = 5;
         } else {
           // High reverse angle from the far side.
@@ -138,6 +140,20 @@ export class CameraRig {
           cam.fov = 30;
           rate = 5;
         }
+        break;
+      }
+      case 'penalty': {
+        // Shootout: low behind the taker's shoulder, the whole goal mouth framed, easing after the ball.
+        const g = this.penaltyGoal;
+        this.yaw = g > 0 ? Math.PI / 2 : -Math.PI / 2;
+        const spot = g * (HALF_L - 10);
+        // High enough that the taker's head sits below the goal line, so the keeper is never hidden.
+        tx = g * HALF_L; ty = 0.5; tz = clamp(f.bz * 0.3, -2, 2);
+        px = spot - g * 9; py = 4; pz = g * 1.8 + clamp(f.bz * 0.15, -1, 1);
+        // Keep ~13 m of goal line in shot whatever the screen shape (portrait phones need a wider lens).
+        const half = Math.atan(6.5 / (19 * Math.max(0.3, cam.aspect)));
+        cam.fov = clamp(THREE.MathUtils.radToDeg(half * 2), 34, 74);
+        rate = 5;
         break;
       }
       default: {
@@ -157,13 +173,30 @@ export class CameraRig {
         } else {
           this.yaw = 0;
           const W = this.broadcastWidth();
+          const small = typeof window !== 'undefined' && window.innerHeight < 420;
           let fx = f.bx * 0.82 + f.ax * 0.18 + this.lead.x;
-          let fz = f.bz * 0.45 + this.lead.y * 0.5;
+          // Aim a little beyond the ball so the far boards and a few stand rows frame the top.
+          let fz = small ? f.bz * 0.9 : f.bz * 0.6 - 5 + this.lead.y * 0.5;
           const lean = f.lean ?? 0;
           if (lean !== 0) fx += lean * 5 * smoothstep(12, 34, lean * f.bx);
-          if (f.setPiece) {
-            fx = (f.setPiece.x + f.setPiece.tx) / 2;
-            fz = (f.setPiece.z + f.setPiece.tz) / 2;
+          const piece = f.setPiece;
+          if (piece) {
+            // Taker and target together, but never let the taker leave the frame.
+            fx = clamp((piece.x + piece.tx) / 2, piece.x - 0.3 * W, piece.x + 0.3 * W);
+            fz = clamp((piece.z + piece.tz) / 2, piece.z - 0.22 * W, piece.z + 0.22 * W);
+          }
+          if (piece?.behind) {
+            // Our own dead ball near goal: look over the taker's shoulder at the target.
+            const dx = piece.tx - piece.x;
+            const dz = piece.tz - piece.z;
+            const dl = Math.hypot(dx, dz) || 1;
+            tx = piece.tx; ty = 1; tz = piece.tz;
+            px = piece.x - (dx / dl) * 9;
+            pz = piece.z - (dz / dl) * 9;
+            py = 3.6;
+            cam.fov = 40;
+            rate = 3;
+            break;
           }
           const edge = HALF_L - 0.3 * W;
           tx = clamp(fx, -edge, edge);

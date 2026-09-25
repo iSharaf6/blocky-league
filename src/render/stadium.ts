@@ -275,7 +275,7 @@ export class Stadium {
 
   /** Row profile of a stand: distance from its front edge and the seat height, two tiers. */
   private profile(side: Side4): { d: number; h: number; tier: number }[] {
-    const [t1, t2] = side === 'far' ? [14, 10] : side === 'near' ? [12, 0] : [11, 6];
+    const [t1, t2] = side === 'far' ? [14, 10] : side === 'near' ? [4, 0] : [11, 6];
     const rows: { d: number; h: number; tier: number }[] = [];
     for (let i = 0; i < t1; i++) rows.push({ d: i * STEP_D, h: 0.9 + i * STEP_H, tier: 1 });
     const d0 = t1 * STEP_D + 1.7;
@@ -337,6 +337,11 @@ export class Stadium {
         const ch = t2[0].h - 0.5;
         this.standBox(b, side, 0, cd + 0.85, ch / 2, span * 2, 1.7, ch, shade(CONCRETE, 0.78), shade(CONCRETE, 0.9));
         this.standBox(b, side, 0, cd + 1.55, t2[0].h - 0.9, span * 2, 0.3, 0.8, shade(seatCol, 0.7));
+      }
+      // The near stand is kept low and open so the broadcast camera looks over it.
+      if (side === 'near') {
+        this.standBox(b, side, 0, backD + 0.3, last.h / 2 + 0.4, span * 2, 0.6, last.h + 0.8, shade(CONCRETE, 0.92), shade(seatCol, 0.8));
+        continue;
       }
       // Back wall and roof on stilts.
       const roofY = last.h + 4;
@@ -1009,8 +1014,8 @@ function getNetTexture(): THREE.CanvasTexture {
   g.clearRect(0, 0, 64, 64);
   g.fillStyle = '#ffffff';
   for (let i = 0; i < 64; i += 16) {
-    g.fillRect(i, 0, 3, 64);
-    g.fillRect(0, i, 64, 3);
+    g.fillRect(i, 0, 2, 64);
+    g.fillRect(0, i, 64, 2);
   }
   netTexture = new THREE.CanvasTexture(c);
   netTexture.wrapS = netTexture.wrapT = THREE.RepeatWrapping;
@@ -1069,8 +1074,9 @@ class GoalNet {
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(idx);
-    const mat = new THREE.MeshLambertMaterial({
-      color: 0xf4f4ec, map: getNetTexture(), alphaTest: 0.5, side: THREE.DoubleSide,
+    // Unlit so the strands read as bright string, not grey bars.
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xf6f6ee, map: getNetTexture(), alphaTest: 0.5, side: THREE.DoubleSide,
     });
     this.mesh = new THREE.Mesh(geo, mat);
   }

@@ -200,9 +200,11 @@ export class MatchView {
     }
     void vy;
     this.ballShadow.position.set(bx, 0.02, bz);
-    const hs = Math.max(0.35, 1 - by * 0.12);
+    // Contact shadow straight under the ball: shrinks and fades with height so you can read it.
+    const hs = Math.max(0.4, 1 - by * 0.1);
     this.ballShadow.scale.set(hs, hs, hs);
-    this.ballShadow.visible = by > 0.5;
+    (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = 0.3 * Math.max(0.35, 1 - by * 0.08);
+    this.ballShadow.visible = f[BALL_OFS + 6] < 0.5;
 
     // Marker on the human-controlled player.
     const active = f[BALL_OFS + 8];
@@ -302,7 +304,7 @@ export class MatchView {
     const g = c.getContext('2d')!;
     g.clearRect(0, 0, c.width, c.height);
     const name = this.names[idx] ?? '';
-    g.font = '700 26px "Silkscreen", "Courier New", monospace';
+    g.font = '400 30px "Lilita One", "Arial Rounded MT Bold", sans-serif';
     const w = Math.min(c.width - 8, g.measureText(name).width + 22);
     const x = (c.width - w) / 2;
     g.fillStyle = 'rgba(38,38,46,0.82)';

@@ -137,7 +137,7 @@ export class Menus {
     $(d, '[data-a=start]').addEventListener('click', go);
   }
 
-  main(save: SaveData, h: { quick: () => void; career: () => void; club: () => void; settings: () => void; howto: () => void }): void {
+  main(save: SaveData, h: { quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void }): void {
     const r = save.record;
     const d = this.mount(`
       <div class="topbar"><div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div></div>
@@ -148,6 +148,7 @@ export class Menus {
           <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span></button>
           <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span></button>
           <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
+          <button class="btn btn-red tile tile-wide" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span></button>
         </div>
         <div class="main-foot">
           <button class="btn btn-ghost" data-a="howto">HOW TO PLAY</button>
@@ -156,6 +157,7 @@ export class Menus {
       </div>`, 'main');
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
     $(d, '[data-a=career]').addEventListener('click', h.career);
+    $(d, '[data-a=cup]').addEventListener('click', h.cup);
     $(d, '[data-a=club]').addEventListener('click', h.club);
     $(d, '[data-a=settings]').addEventListener('click', h.settings);
     $(d, '[data-a=howto]').addEventListener('click', h.howto);
@@ -423,13 +425,19 @@ export class Menus {
       : '';
     const my = m.score[humanSide];
     const their = m.score[humanSide === 0 ? 1 : 0];
-    const verdict = my > their ? 'YOU WIN!' : my === their ? 'DRAW' : 'YOU LOSE';
-    const cls = my > their ? 'win' : my === their ? 'draw' : 'lose';
+    // A level knockout tie is settled on penalties.
+    const so = m.shootout && m.shootout.winner >= 0 ? m.shootout : null;
+    const res = so ? (so.winner === humanSide ? 1 : -1) : Math.sign(my - their);
+    const verdict = res > 0 ? 'YOU WIN!' : res === 0 ? 'DRAW' : 'YOU LOSE';
+    const cls = res > 0 ? 'win' : res === 0 ? 'draw' : 'lose';
+    const pens = so
+      ? `<p class="ft-pens">${m.teams[so.winner as 0 | 1].short} WIN ${so.kicks[so.winner as 0 | 1].filter(Boolean).length}-${so.kicks[so.winner === 0 ? 1 : 0].filter(Boolean).length} ON PENALTIES</p>`
+      : '';
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel">
           <h2 class="verdict ${cls}">${verdict}</h2>
-          ${this.scoreHeader(m, kits)}
+          ${this.scoreHeader(m, kits)}${pens}
           ${motmHtml}
           ${this.statsTable(m, kits)}
           <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>

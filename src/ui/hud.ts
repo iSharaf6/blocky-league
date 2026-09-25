@@ -98,6 +98,11 @@ export class Hud {
     this.hint.classList.toggle('on', text.length > 0);
   }
 
+  /** Hide play-only widgets (radar, player chip, tips) outside live play. */
+  setLive(on: boolean): void {
+    this.root.classList.toggle('dead', !on);
+  }
+
   /** Tutorial tip (top centre). Empty string hides it. */
   setTip(html: string): void {
     if (this.tip.dataset.t === html) return;

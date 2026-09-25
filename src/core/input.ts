@@ -28,7 +28,8 @@ export class Input {
   private keys = new Set<string>();
   readonly touch: TouchState = { enabled: false, sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false };
   private listeners: ((code: string) => void)[] = [];
-  lastDevice: 'keyboard' | 'touch' | 'gamepad' = 'keyboard';
+  lastDevice: 'keyboard' | 'touch' | 'gamepad' =
+    typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 'touch' : 'keyboard';
 
   constructor() {
     window.addEventListener('keydown', (e) => {

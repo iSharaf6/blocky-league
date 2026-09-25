@@ -89,13 +89,18 @@ export type MatchEvent =
   | { type: 'sub'; side: Side; slot: number; on: string; off: string }
   | { type: 'card'; player: number; color: 'yellow' }
   | { type: 'skill'; player: number }
+  | { type: 'setpiece'; kind: RestartKind; side: Side }
   | { type: 'restart'; kind: RestartKind; side: Side }
   /** A pass or shot cannoned off a defender. */
   | { type: 'block'; by: number; shot: boolean; x: number; z: number }
   /** Keeper came for a cross: caught it or punched it clear. */
   | { type: 'claim'; keeper: number; caught: boolean }
   /** A dribbler wrong-footed a defender. */
-  | { type: 'beat'; by: number; on: number };
+  | { type: 'beat'; by: number; on: number }
+  /** One penalty of a shootout has been settled. */
+  | { type: 'shootoutKick'; side: Side; taker: number; scored: boolean }
+  /** The shootout (and the tie) is over. */
+  | { type: 'shootoutEnd'; winner: Side };
 
 export type KickKind = 'pass' | 'through' | 'lob' | 'shot' | 'clear' | 'header' | 'throw' | 'keeper';
 export type RestartKind = 'kickoff' | 'throwin' | 'corner' | 'goalkick' | 'freekick' | 'penalty';

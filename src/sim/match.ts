@@ -1,7 +1,7 @@
 import { angleDiff, clamp, dist2 } from '../core/math';
 import { Rng } from '../core/rng';
 import { onTarget, pickReceiver, resolveKick } from './actions';
-import { intercept, isCrossingRestart, makeBrain, setPieceReady, updateTeamAI, type TeamBrain } from './ai';
+import { intercept, isCrossingRestart, makeBrain, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { Ball, type BallHit } from './ball';
 import {
   AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
@@ -10,9 +10,13 @@ import {
 import { FORMATIONS, kickoffSlot, type Slot } from './formations';
 import { inOwnBox } from './keeper';
 import { Player } from './player';
+import {
+  HUMAN_WINDOW, INTRO_BEAT, KICK_TIMEOUT, RESULT_BEAT, aiPenaltyAim, divePlan, keeperGuess, lineupSpot, nextTurn, penaltyLaunch,
+  predictCrossing, shootoutWinner, takerOrder, type KeeperDive, type KickHow, type PenAim, type ShootoutState,
+} from './shootout';
 import type { KickKind, MatchEvent, PlayerDef, RestartKind, Side, TeamDef } from './types';
 
-export type Phase = 'kickoff' | 'play' | 'out' | 'restart' | 'goal' | 'halftime' | 'fulltime';
+export type Phase = 'kickoff' | 'play' | 'out' | 'restart' | 'goal' | 'halftime' | 'fulltime' | 'shootout';
 
 export interface MatchConfig {
   home: TeamDef;
@@ -28,6 +32,8 @@ export interface MatchConfig {
    * Used for AI-vs-AI balancing; the default keeps both sides on `difficulty`.
    */
   sideDifficulty?: [number, number];
+  /** Cup tie: level at full time goes straight to a penalty shootout (no extra time). */
+  knockout?: boolean;
 }
 
 /** Held button state from the input layer, move vector already in world space. */
@@ -102,6 +108,7 @@ export class Match {
   passTarget = -1;
   passT = 0;
   shotClock = 99;
+  shotOnTarget = false;
   shotSide: Side = 0;
   ballPath: { t: number; x: number; y: number; z: number }[] = [];
   keeperHoldTime = 1.4;
@@ -132,6 +139,10 @@ export class Match {
   kickZ = 0;
   kickSide: Side = 0;
   kickKind: KickKind = 'pass';
+  /** Penalty shootout of a knockout tie level at full time; null until one starts. */
+  shootout: ShootoutState | null = null;
+  /** Match stats frozen at the final whistle (shootout kicks aren't match stats). */
+  private soStats: Stats | null = null;
 
   constructor(readonly cfg: MatchConfig) {
     this.rng = new Rng(cfg.seed ?? 12345);
@@ -159,6 +170,9 @@ export class Match {
   // ---------------------------------------------------------------- queries
 
   attackDir(side: Side): number {
+    const so = this.shootout;
+    // Every shootout kick is taken at the same end: the kicking side attacks it, the keeper defends it.
+    if (so && this.phase === 'shootout') return side === so.turn ? so.goal : -so.goal;
     const base = side === 0 ? 1 : -1;
     return this.half === 1 ? base : -base;
   }
@@ -326,6 +340,11 @@ export class Match {
   step(dt: number, pad: Pad): void {
     this.phaseT += dt;
     if (this.phase === 'halftime' || this.phase === 'fulltime') return;
+    if (this.phase === 'shootout') {
+      this.stepShootout(dt, pad);
+      this.prev = { ...pad };
+      return;
+    }
 
     this.pathT -= dt;
     if (this.pathT <= 0) {
@@ -387,7 +406,9 @@ export class Match {
       if (this.clock >= this.cfg.halfLength && this.phase === 'play') {
         const b = this.ball.pos;
         const danger = Math.abs(b.x) > HALF_L - BOX_DEPTH - 6 && Math.abs(b.z) < BOX_W / 2 + 4;
-        if (!danger || this.clock > this.cfg.halfLength + 7) this.endHalf();
+        // Never blow while the ball is in the air, a shot is live or a set piece has just been taken.
+        const live = b.y > 1 || this.shotClock < 1.5 || this.phaseT < 2.5;
+        if ((!danger && !live) || this.clock > this.cfg.halfLength + 8) this.endHalf();
       }
     }
     this.passT += dt;
@@ -407,6 +428,10 @@ export class Match {
     if (this.half === 1) {
       this.phase = 'halftime';
       this.events.push({ type: 'whistle', kind: 'long' }, { type: 'halftime' });
+    } else if (this.cfg.knockout && this.score[0] === this.score[1]) {
+      this.events.push({ type: 'whistle', kind: 'end' });
+      this.startShootout();
+      return;
     } else {
       this.phase = 'fulltime';
       this.events.push({ type: 'whistle', kind: 'end' }, { type: 'fulltime' });
@@ -561,7 +586,8 @@ export class Match {
         b.pos.y = 0.55;
       }
     }
-    const L = resolveKick(this, p, o);
+    const so = this.phase === 'shootout' && this.shootout?.taker === p.idx ? this.shootout : null;
+    const L = so?.pen ? penaltyLaunch(this, p, so.pen) : resolveKick(this, p, o);
     b.owner = -1;
     b.vel.x = L.vx;
     b.vel.y = L.vy;
@@ -586,7 +612,8 @@ export class Match {
       this.shotClock = 0;
       this.shotSide = p.side;
       this.stats.shots[p.side]++;
-      if (onTarget(this, p.side)) this.stats.onTarget[p.side]++;
+      this.shotOnTarget = onTarget(this, p.side);
+      if (this.shotOnTarget) this.stats.onTarget[p.side]++;
       this.passTarget = -1;
     } else {
       this.passTarget = L.target;
@@ -604,6 +631,7 @@ export class Match {
       this.phaseT = 0;
       this.restart = null;
     }
+    if (so?.stage === 'aim') this.shootoutStrike();
   }
 
   keeperDistribute(k: Player, dirX = 0, dirZ = 0, long = false): void {
@@ -714,6 +742,10 @@ export class Match {
     const throughHold = this.throughCharge;
     this.shootCharge = pad.shoot ? this.shootCharge + dt : 0;
     this.throughCharge = pad.through ? this.throughCharge + dt : 0;
+    if (this.phase === 'shootout') {
+      this.shootoutInput(pad, shootR, shootPower, stickLen);
+      return;
+    }
 
     // Set pieces we're taking.
     if ((this.phase === 'kickoff' || this.phase === 'restart') && this.restart && this.restart.side === side) {
@@ -1110,6 +1142,21 @@ export class Match {
         }
       }
     }
+    // Corners and crossing free kicks: snap everyone into the set-piece shape (TV cuts to it).
+    if (isCrossingRestart(this, r)) {
+      for (const side of [0, 1] as Side[]) {
+        const targets = setPieceTargets(this, side);
+        for (const [idx, t] of targets) {
+          const p = this.players[idx];
+          if (p === taker || p.isKeeper) continue;
+          p.pos.x = t.x;
+          p.pos.z = t.z;
+          p.vel.x = p.vel.z = 0;
+          p.facing = Math.atan2(r.z - t.z, r.x - t.x);
+        }
+      }
+      this.events.push({ type: 'setpiece', kind: r.kind, side: r.side });
+    }
     this.phase = 'restart';
     this.phaseT = 0;
     if (this.cfg.humanSide === r.side) this.active = taker.idx;
@@ -1490,11 +1537,12 @@ export class Match {
       const dh = dist2(hx, hz, b.pos.x, b.pos.z);
       const dy = Math.abs(b.pos.y - hy);
       const keeping = k.stat.keeping / 100;
-      const reachH = (diving ? 0.82 : claiming ? 0.92 : 0.72) + keeping * 0.2 + this.keeperBonus(s);
+      const reachH = (diving ? 0.88 : claiming ? 0.92 : 0.76) + keeping * 0.2 + this.keeperBonus(s);
       const reachV = diving ? 1.1 : claiming ? 1.4 : 1.45;
       if (dh < reachH && dy < reachV && b.pos.y < GOAL_H + (claiming ? 0.7 : 0.3)) {
         const speed = b.speed();
-        const onFrame = this.shotClock < 2 && this.shotSide !== s;
+        // Only a shot that was actually on target counts as a save.
+        const onFrame = this.shotClock < 2 && this.shotSide !== s && this.shotOnTarget;
         if (claiming && !onFrame) {
           this.claimCross(k);
           continue;
@@ -1784,6 +1832,276 @@ export class Match {
     const c = this.players[b.owner];
     if (c.side === p.side) return;
     if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) < 1.0) this.tryTackle(p, c, 1);
+  }
+
+  // ---------------------------------------------------------------- penalty shootout
+
+  private startShootout(): void {
+    const first = (this.rng.chance(0.5) ? 0 : 1) as Side;
+    this.shootout = {
+      kicks: [[], []],
+      turn: first,
+      winner: -1,
+      first,
+      goal: this.rng.chance(0.5) ? 1 : -1,
+      order: [takerOrder(this.bySide[0]), takerOrder(this.bySide[1])],
+      stage: 'intro',
+      t: 0,
+      taker: -1,
+      keeper: -1,
+      aimZ: 0,
+      stick: { x: 0, z: 0 },
+      pen: null,
+      dive: null,
+      post: false,
+      last: null,
+    };
+    this.soStats = structuredClone(this.stats);
+    this.phase = 'shootout';
+    this.phaseT = 0;
+    this.setupShootoutKick();
+    this.shootout.stage = 'intro';
+  }
+
+  /** Next taker on the spot, keeper on the line, everyone else lined up on halfway. */
+  private setupShootoutKick(): void {
+    const s = this.shootout!;
+    const side = nextTurn(s.kicks, s.first);
+    const def = (side === 0 ? 1 : 0) as Side;
+    s.turn = side;
+    const g = s.goal;
+    const order = s.order[side];
+    const taker = this.players[order[s.kicks[side].length % order.length]];
+    const k = this.bySide[def][0];
+    s.taker = taker.idx;
+    s.keeper = k.idx;
+    s.stage = 'aim';
+    s.t = 0;
+    s.pen = null;
+    s.dive = null;
+    s.post = false;
+    s.aimZ = 0;
+    const spotX = g * (HALF_L - PEN_SPOT);
+    for (const p of this.players) {
+      p.setState('move');
+      p.order = null;
+      p.vel.x = p.vel.z = 0;
+      p.wantX = p.wantZ = 0;
+      p.sprint = false;
+      p.running = false;
+      p.faceTarget = null;
+      p.claiming = false;
+      p.y = 0;
+      p.vy = 0;
+      p.kickT = 0;
+      p.kickCooldown = 0;
+      if (p === taker) {
+        p.pos.x = spotX - g * 0.62;
+        p.pos.z = 0;
+        p.facing = g > 0 ? 0 : Math.PI;
+      } else if (p === k) {
+        p.pos.x = g * (HALF_L - 0.3);
+        p.pos.z = 0;
+        p.facing = g > 0 ? Math.PI : 0;
+      } else {
+        const q = lineupSpot(p, g);
+        p.pos.x = q.x;
+        p.pos.z = q.z;
+        p.facing = q.facing;
+      }
+    }
+    this.ball.reset(spotX, 0);
+    this.ball.owner = taker.idx;
+    this.ball.lastTouch = taker.idx;
+    this.ball.lastTouchSide = side;
+    this.passTarget = -1;
+    this.shotClock = 99;
+    this.restart = { kind: 'penalty', side, x: spotX, z: 0, taker: taker.idx, wait: 1.1 + this.rng.next() * 0.7 };
+    const hs = this.cfg.humanSide;
+    if (hs === side) this.active = taker.idx;
+    else if (hs === def) this.active = k.idx;
+  }
+
+  /** Only the taker, the keeper and the ball are simulated; the line-up just waits. */
+  private stepShootout(dt: number, pad: Pad): void {
+    const s = this.shootout!;
+    s.t += dt;
+    if (s.stage === 'intro' && s.t >= INTRO_BEAT) {
+      s.stage = 'aim';
+      s.t = 0;
+      this.events.push({ type: 'whistle', kind: 'short' });
+    }
+    if (s.stage === 'result' && s.t >= RESULT_BEAT) {
+      if (s.winner >= 0) this.finishShootout();
+      else {
+        this.setupShootoutKick();
+        this.events.push({ type: 'whistle', kind: 'short' });
+      }
+      return;
+    }
+    const taker = this.players[s.taker];
+    const k = this.players[s.keeper];
+    this.applyHuman(dt, pad);
+    if (s.stage === 'aim') {
+      // AI takers step up after a breath; a human who never shoots gets the kick taken for them.
+      const wait = this.cfg.humanSide === s.turn ? HUMAN_WINDOW : this.restart?.wait ?? 1.4;
+      if (!taker.order && s.t > wait) this.shootoutKick(taker, aiPenaltyAim(this.rng));
+      k.wantX = k.wantZ = 0;
+      k.faceTarget = Math.atan2(this.ball.pos.z - k.pos.z, this.ball.pos.x - k.pos.x);
+    } else if (s.stage === 'flight' && s.dive && s.t >= s.dive.at && k.state === 'move') {
+      this.commitDive(k, s.dive);
+    }
+    this.resolveOrders(dt);
+    taker.step(dt, this.ball.owner === taker.idx);
+    k.step(dt, false);
+    this.keepHeldBall();
+    this.dribbleControl();
+    this.hits.length = 0;
+    this.ball.step(dt, this.hits);
+    for (const h of this.hits) {
+      if (h.kind === 'post') {
+        if (s.stage === 'flight') s.post = true;
+        this.events.push({ type: 'post', x: h.x, y: h.y, z: h.z, speed: h.speed });
+      } else if (h.kind === 'bounce') this.events.push({ type: 'bounce', speed: h.speed });
+      else this.events.push({ type: 'net', x: h.x, y: h.y, z: h.z, speed: h.speed });
+    }
+    if (s.stage === 'flight') {
+      this.checkKeeperHands();
+      this.judgeKick();
+    }
+    this.shotClock += dt;
+    this.sinceKick += dt;
+  }
+
+  /** Human taker aims across the goal mouth and shoots on release; the stick is also the keeper's dive. */
+  private shootoutInput(pad: Pad, shootR: boolean, shootPower: number, stickLen: number): void {
+    const s = this.shootout;
+    if (!s) return;
+    s.stick.x = pad.mx;
+    s.stick.z = pad.mz;
+    if (this.cfg.humanSide !== s.turn || (s.stage !== 'aim' && s.stage !== 'intro')) return;
+    const t = this.players[s.taker];
+    this.active = t.idx;
+    // Sideways share of the stick picks the spot; it stays where it was left.
+    if (stickLen > 0.3) s.aimZ = clamp(pad.mz / stickLen / 0.85, -1, 1) * (GOAL_W / 2 - 0.5);
+    if (s.stage !== 'aim' || s.t < 0.35 || t.order) return;
+    if (shootR) this.shootoutKick(t, { z: s.aimZ, h: 0.3 + shootPower * 0.75, power: shootPower });
+  }
+
+  private shootoutKick(t: Player, aim: PenAim): void {
+    const s = this.shootout!;
+    s.pen = aim;
+    t.facing = s.goal > 0 ? 0 : Math.PI;
+    this.order(t, 'shot', s.goal, 0, aim.power, -1, false);
+  }
+
+  /** The ball is struck: the keeper commits (human stick, or the AI's read / guess). */
+  private shootoutStrike(): void {
+    const s = this.shootout!;
+    s.stage = 'flight';
+    s.t = 0;
+    const k = this.players[s.keeper];
+    const keeping = k.stat.keeping / 100;
+    const pred = predictCrossing(this.ball, s.goal * HALF_L);
+    const st = s.stick;
+    const sl = Math.hypot(st.x, st.z);
+    const human = this.cfg.humanSide === k.side && sl > 0.3;
+    let dir: -1 | 0 | 1;
+    let read = false;
+    if (human) dir = Math.abs(st.z) / sl > 0.38 ? (st.z > 0 ? 1 : -1) : 0;
+    else ({ dir, read } = keeperGuess(this.rng, keeping, this.keeperBonus(k.side), pred.z));
+    const plan = divePlan(dir, pred, this.rng);
+    if (!plan) {
+      s.dive = null;
+      return;
+    }
+    // Commit early, but leave the line late enough to still be in the air when the ball arrives;
+    // a keeper who read the taker gets away sharp.
+    const reaction = human ? 0.05 : clamp(0.13 - keeping * 0.06, 0.06, 0.13);
+    const at = read ? reaction : Math.max(reaction, pred.t - 0.55);
+    // Knowing the side isn't knowing the spot.
+    const miss = this.rng.gauss() * 0.35 * (human ? 1 : 1.2 - keeping);
+    s.dive = { at, z: plan.z + miss, y: plan.y, arrive: pred.t, boost: read ? 3 : 0 };
+  }
+
+  private commitDive(k: Player, d: KeeperDive): void {
+    const s = this.shootout!;
+    s.dive = null;
+    const lateral = d.z - k.pos.z;
+    if (Math.abs(lateral) < 0.6) {
+      // Down the middle: stand tall and let the hands do it (a hop for a high one).
+      if (d.y > 1.9) {
+        k.vy = 3.6;
+        k.y = 0.01;
+      }
+      return;
+    }
+    const keeping = k.stat.keeping / 100;
+    const tLeft = Math.max(0.12, d.arrive - d.at);
+    const need = Math.max(0, Math.abs(lateral) - 0.85) / tLeft;
+    const maxDive = 3.4 + keeping * 1.8 + this.keeperBonus(k.side) * 6 + d.boost;
+    k.setState('dive');
+    k.vel.z = Math.sign(lateral) * clamp(need * 1.1, 3.2, maxDive);
+    k.vel.x = this.attackDir(k.side) * 0.5;
+    k.vy = clamp(Math.max(d.y * 2.5 - 0.3, 7.5 * tLeft), 1.5, 5.8);
+    k.y = 0.01;
+    k.diveDir = Math.sign(lateral) * (Math.cos(k.facing) >= 0 ? 1 : -1);
+  }
+
+  /** Settle the kick in flight: in, held, out, bounced back into play, or timed out. */
+  private judgeKick(): void {
+    const s = this.shootout!;
+    const b = this.ball;
+    const g = s.goal;
+    const hw = GOAL_W / 2;
+    const touched = b.lastTouch === s.keeper;
+    const past = Math.abs(b.pos.x) > HALF_L + BALL_R && Math.sign(b.pos.x) === g;
+    const missHow = (): KickHow =>
+      touched ? 'saved' : s.post ? 'post' : Math.abs(b.pos.z) < hw + 0.3 && b.pos.y >= GOAL_H - BALL_R ? 'over' : 'wide';
+    let how: KickHow | null = null;
+    if (b.inGoal === g || (past && Math.abs(b.pos.z) < hw && b.pos.y < GOAL_H)) how = 'goal';
+    else if (b.held) how = 'saved';
+    else if (past || Math.abs(b.pos.z) > HALF_W) how = missHow();
+    else if ((s.t > 0.15 && b.vel.x * g < -0.3) || s.t > KICK_TIMEOUT) how = missHow();
+    if (how) this.endKick(how);
+  }
+
+  private endKick(how: KickHow): void {
+    const s = this.shootout!;
+    const side = s.turn;
+    const scored = how === 'goal';
+    s.kicks[side].push(scored);
+    s.last = { side, taker: s.taker, scored, how };
+    s.stage = 'result';
+    s.t = 0;
+    s.dive = null;
+    s.winner = shootoutWinner(s.kicks);
+    const taker = this.players[s.taker];
+    const k = this.players[s.keeper];
+    if (taker.state === 'move') {
+      taker.setState(scored ? 'celebrate' : 'dejected');
+      taker.celebrate = this.rng.int(4);
+    }
+    if (scored) {
+      this.goalSide = side;
+      if (k.state === 'move') k.setState('dejected');
+    }
+    this.events.push({ type: 'shootoutKick', side, taker: s.taker, scored });
+    if (!scored) this.events.push({ type: 'ooh' });
+  }
+
+  private finishShootout(): void {
+    const s = this.shootout!;
+    if (this.soStats) this.stats = this.soStats;
+    this.soStats = null;
+    this.phase = 'fulltime';
+    this.phaseT = 0;
+    this.restart = null;
+    for (const p of this.players) {
+      p.order = null;
+      p.wantX = p.wantZ = 0;
+    }
+    this.events.push({ type: 'whistle', kind: 'end' }, { type: 'fulltime' }, { type: 'shootoutEnd', winner: s.winner as Side });
   }
 
   drainEvents(): MatchEvent[] {

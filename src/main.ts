@@ -13,6 +13,7 @@ import { World, type TimeOfDay } from './render/world';
 import type { Side } from './sim/types';
 import { DIFF_LEVEL, Menus } from './ui/menus';
 import { openCareer } from './ui/career';
+import { openCup } from './ui/cup';
 import { openClub } from './ui/club';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -65,6 +66,7 @@ function mainMenu(): void {
   menus.main(save, {
     quick: quickMatch,
     career: () => openCareer(app),
+    cup: () => openCup(app),
     club: () => openClub(app),
     settings: () => menus.settings(save, applySettings, mainMenu),
     howto: () => menus.howTo(mainMenu),
@@ -153,6 +155,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     seed: Math.floor(Math.random() * 1e9),
     timeOfDay: req.timeOfDay ?? pickTime(),
     weather: req.weather ?? pickWeather(),
+    knockout: req.knockout,
     tutorial: !save.seenTutorial,
   });
   session.match.autoSwitch = save.settings.autoSwitch;
@@ -204,7 +207,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     save.coins += reward.coins;
     persist();
     let doubled = false;
-    menus.fulltime(r.match, kits, humanSide, reward, ads.rewardedAvailable, {
+    menus.fulltime(r.match, kits, humanSide, reward, ads.rewardedAvailable && reward.coins > 0, {
       nextLabel: req.nextLabel,
       double: async () => {
         if (doubled) return false;

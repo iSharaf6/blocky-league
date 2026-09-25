@@ -25,6 +25,8 @@ export interface MatchRequest {
   timeOfDay?: TimeOfDay;
   /** Weather; omitted = the player's setting. */
   weather?: 'clear' | 'rain' | 'snow';
+  /** Cup tie: level at full time goes to a penalty shootout. */
+  knockout?: boolean;
   /** Compute the coins for this result (called once at full time). */
   reward: (r: MatchResult) => Reward;
   /** Label for the full-time continue button. */

@@ -9,9 +9,12 @@ import { Weather, type WeatherKind } from '../render/weather';
 import type { TimeOfDay, World } from '../render/world';
 import { DT, HALF_L } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
+import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, RestartKind, Side } from '../sim/types';
 import { Hud, hudTeam } from '../ui/hud';
+import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
+import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { BALL_OFS, FRAME_LEN, PF, ReplayBuffer, writeFrame } from './replay';
 
 export interface SessionOptions extends MatchConfig {
@@ -39,6 +42,8 @@ export interface MatchResult {
   match: Match;
   /** Per-player 1–10 ratings, best first. */
   ratings?: PlayerRating[];
+  /** Who went through: by the score, or by the shootout in a level knockout tie (undefined = a draw). */
+  winner?: Side;
 }
 
 interface Tally {
@@ -89,9 +94,14 @@ export class MatchSession {
   private lastPasser: [number, number] = [-1, -1];
   private tut = { moved: false, passed: false, shot: false, switched: false, step: 0, t: 0 };
   private readonly demo: boolean;
+  /** Penalty tracker, once a knockout tie goes to a shootout. */
+  private so: ShootoutHud | null = null;
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
     this.demo = !!opt.demo;
+    // Readability first: no green shirts on green grass, then re-check the clash.
+    const home = grassSafeKit(opt.kits[0]);
+    opt.kits = [home, resolveKitClash(home, grassSafeKit(opt.kits[1]))];
     this.match = new Match(opt);
     const teams = this.match.teams;
     this.stadium = new Stadium({
@@ -274,11 +284,40 @@ export class MatchSession {
       if (this.demo) m.continueSecondHalf();
       else this.onHalftime?.();
     }
+    if (m.phase === 'shootout' && !this.so && this.hud) this.startShootoutView();
     if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > 2.4) {
       this.finishFired = true;
       if (this.demo) return;
-      this.onFinish?.({ score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings() });
+      this.onFinish?.({
+        score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings(), winner: this.winner(),
+      });
     }
+  }
+
+  /** Who won: by the score, or by the shootout in a level knockout tie. */
+  private winner(): Side | undefined {
+    const m = this.match;
+    if (m.score[0] !== m.score[1]) return m.score[0] > m.score[1] ? 0 : 1;
+    const w = m.shootout?.winner ?? -1;
+    return w >= 0 ? (w as Side) : undefined;
+  }
+
+  /** Level knockout tie at the final whistle: penalty camera, kick tracker, banner (no replays from here). */
+  private startShootoutView(): void {
+    const m = this.match;
+    const so = m.shootout!;
+    const [h, a] = m.teams;
+    const [kh, ka] = this.opt.kits;
+    this.so = new ShootoutHud(this.hud!.root, [
+      { short: h.short, color: kh.shirt, color2: kh.shirt2 },
+      { short: a.short, color: ka.shirt, color2: ka.shirt2 },
+    ]);
+    this.so.update(so);
+    this.cam.penaltyGoal = so.goal;
+    this.cam.setMode('penalty');
+    this.cam.cut();
+    this.view.setMarkerVisible(m.cfg.humanSide >= 0);
+    this.hud?.show('PENALTIES!', `${h.short} ${m.score[0]} - ${m.score[1]} ${a.short}`, 'small', 2.2);
   }
 
   /** DLS-style 1–10 match ratings from what each player actually did. */
@@ -302,17 +341,21 @@ export class MatchSession {
   }
 
   /** Frame the taker and where the ball is going for set pieces. */
-  private setPieceFrame(): { x: number; z: number; tx: number; tz: number } | null {
+  private setPieceFrame(): { x: number; z: number; tx: number; tz: number; behind?: boolean } | null {
     const m = this.match;
     const r = m.restart;
     if (!r || (m.phase !== 'restart' && m.phase !== 'out')) return null;
     if (m.phase === 'out' && m.phaseT < 0.5) return null;
     const ad = m.attackDir(r.side);
+    const ours = r.side === m.cfg.humanSide && m.phase === 'restart';
     switch (r.kind) {
       case 'corner':
+        return { x: r.x, z: r.z, tx: ad * (HALF_L - 9), tz: 0, behind: ours };
       case 'freekick':
-      case 'penalty':
-        return { x: r.x, z: r.z, tx: ad * (HALF_L - 9), tz: 0 };
+      case 'penalty': {
+        const near = Math.hypot(ad * HALF_L - r.x, r.z) < 35;
+        return { x: r.x, z: r.z, tx: ad * (HALF_L - (near ? 0 : 9)), tz: 0, behind: ours && near };
+      }
       case 'throwin':
         return { x: r.x, z: r.z, tx: r.x + ad * 8, tz: r.z * 0.55 };
       case 'goalkick':
@@ -323,7 +366,7 @@ export class MatchSession {
   }
 
   private startReplay(): void {
-    const lead = 4.6 * 60;
+    const lead = 3.3 * 60;
     const tail = 1.3 * 60;
     const since = this.recorded - this.goalFrame;
     const frames = this.buffer.snapshot(Math.min(this.buffer.count, since + lead));
@@ -331,6 +374,7 @@ export class MatchSession {
     this.replay = frames.slice(0, Math.min(frames.length, cut));
     this.replayGoalIdx = Math.max(0, this.replay.length - tail);
     this.replayT = 0;
+    this.effects.clear();
     this.cam.replayAngle = Math.floor(Math.random() * 2);
     this.cam.replayGoalSign = this.match.attackDir(this.match.goalSide);
     this.cam.replayShot = this.replay.length - this.replayGoalIdx > 0 && this.replayGoalIdx > 100 ? 'build' : 'goal';
@@ -458,6 +502,9 @@ export class MatchSession {
           if (e.kind !== 'kickoff') this.hud?.toastMsg(RESTART_LABEL[e.kind], 1.2);
           if (e.kind === 'penalty') this.hud?.show('PENALTY!', '', 'small', 1.8);
           break;
+        case 'setpiece':
+          this.cam.cut();
+          break;
         case 'sub':
           this.hud?.toastMsg(`SUB · ${e.on} ON · ${e.off} OFF`, 2);
           break;
@@ -477,6 +524,33 @@ export class MatchSession {
         case 'fulltime':
           this.hud?.show('FULL TIME', `${m.score[0]} - ${m.score[1]}`, 'small', 3);
           break;
+        case 'shootoutKick': {
+          // A short beat per kick: banner + burst, never the goal replay.
+          const how = m.shootout?.last?.how ?? (e.scored ? 'goal' : 'saved');
+          const ours = m.cfg.humanSide < 0 || e.side === m.cfg.humanSide;
+          const title = e.scored ? 'SCORED!' : how === 'saved' ? 'SAVED!' : how === 'post' ? 'POST!' : how === 'over' ? 'OVER!' : 'WIDE!';
+          this.hud?.show(title, m.players[e.taker].def.name, e.scored ? (ours ? 'small goal' : 'small goal against') : 'small', 1.2);
+          if (e.scored) {
+            sfx.cheer(0.9);
+            this.goalHypeT = 2;
+            const k = this.opt.kits[e.side];
+            this.effects.burst((m.shootout?.goal ?? 1) * HALF_L, 1.2, m.ball.pos.z, [k.shirt, k.shirt2, 0xffd23a], 36, 7);
+            this.cam.kick(0.12);
+          }
+          break;
+        }
+        case 'shootoutEnd': {
+          const so = m.shootout;
+          const pens = so ? `${goalsOf(so.kicks[e.winner])} - ${goalsOf(so.kicks[e.winner === 0 ? 1 : 0])}` : '';
+          const ours = m.cfg.humanSide < 0 || e.winner === m.cfg.humanSide;
+          this.hud?.show(`${m.teams[e.winner].short} WIN!`, `ON PENALTIES ${pens}`, ours ? 'goal' : 'small goal against', 3.2);
+          if (ours) {
+            sfx.goal();
+            const k = this.opt.kits[e.winner];
+            this.effects.confetti((so?.goal ?? 1) * HALF_L * 0.7, 0, [k.shirt, k.shirt2, 0xffd23a, 0xfbfbf4], 220, 50);
+          }
+          break;
+        }
         default:
           break;
       }
@@ -519,6 +593,8 @@ export class MatchSession {
       this.stadium.setScore(m.score[0], m.score[1], extra ? `${minute}+${extra}'` : `${minute}'`);
     }
     hud.update(dt, this.view.frame);
+    hud.setLive(!this.replay && this.cam.mode !== 'celebrate' && m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0);
+    if (this.so && m.shootout) this.so.update(m.shootout);
     const hs = m.cfg.humanSide;
     if (hs < 0) return;
     const dev = this.input.lastDevice;
@@ -526,7 +602,11 @@ export class MatchSession {
       dev === 'gamepad' ? { pass: 'A', shoot: 'B', through: 'X' }[k] : dev === 'touch' ? k.toUpperCase() : { pass: 'SPACE', shoot: 'K', through: 'L' }[k];
     let hint = '';
     const r = m.restart;
-    if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs) {
+    const so = m.phase === 'shootout' ? m.shootout : null;
+    const soAim = !!so && (so.stage === 'aim' || so.stage === 'intro');
+    if (so) {
+      if (soAim) hint = so.turn === hs ? `Aim + hold ${key('shoot')} to shoot` : 'Dive: point the stick when they shoot';
+    } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs) {
       switch (r.kind) {
         case 'kickoff': hint = `${key('pass')} to kick off`; break;
         case 'throwin': hint = `Aim + ${key('pass')} to throw`; break;
@@ -539,8 +619,11 @@ export class MatchSession {
       hint = `${key('pass')} throw · ${key('through')} kick long`;
     }
     hud.setHint(this.replay ? '' : hint);
-    // Aim arrow for our set pieces.
-    if (!this.replay && r && r.side === hs && m.phase === 'restart' && r.kind !== 'kickoff') {
+    // Aim arrow for our set pieces (shootout: at the spot picked across the goal mouth).
+    if (so && soAim && so.turn === hs) {
+      const t = m.players[so.taker];
+      this.view.setAim(true, t.pos.x, t.pos.z, Math.atan2(so.aimZ - t.pos.z, so.goal * HALF_L - t.pos.x), 1.3);
+    } else if (!this.replay && r && r.side === hs && m.phase === 'restart' && r.kind !== 'kickoff') {
       const t = m.players[r.taker];
       const long = r.kind === 'corner' || r.kind === 'goalkick' ? 1.6 : r.kind === 'freekick' || r.kind === 'penalty' ? 1.3 : 1;
       this.view.setAim(true, t.pos.x, t.pos.z, t.facing, long);
@@ -554,7 +637,9 @@ export class MatchSession {
     }
     if (this.touch) {
       const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
-      this.touch.setContext(m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine ? 'attack' : 'defend');
+      this.touch.setContext(
+        so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine ? 'attack' : 'defend',
+      );
     }
     // Pause via keyboard / gamepad.
     const c = this.input.gamepadPause();
