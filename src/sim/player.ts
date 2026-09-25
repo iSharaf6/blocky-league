@@ -67,6 +67,8 @@ export class Player {
   lean = 0;
 
   slideHit = false;
+  /** Seconds of extra pace after a knock-on. */
+  burstT = 0;
 
   // AI scratch state.
   aiT = 0;
@@ -150,6 +152,7 @@ export class Player {
   step(dt: number, dribbling: boolean): void {
     this.stateT += dt;
     this.kickCooldown = Math.max(0, this.kickCooldown - dt);
+    this.burstT = Math.max(0, this.burstT - dt);
     this.tackleCooldown = Math.max(0, this.tackleCooldown - dt);
     this.slowT = Math.max(0, this.slowT - dt);
 
@@ -220,6 +223,7 @@ export class Player {
 
   private locomote(dt: number, dribbling: boolean): void {
     let max = this.sprint ? this.top * (0.72 + 0.28 * this.stamina) : this.jog;
+    if (this.burstT > 0) max = Math.max(max, this.top) * 1.1;
     if (dribbling) max *= DRIBBLE_MULT * (0.9 + (this.stat.dribbling / 100) * 0.12);
     let tx = this.wantX;
     let tz = this.wantZ;

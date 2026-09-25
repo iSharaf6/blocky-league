@@ -853,6 +853,7 @@ kbd {
 }
 .hud-banner.on.against .bn-title i { color: #ffb4ae; }
 .hud-banner.small .bn-title { font-size: clamp(38px, 7vw, 90px); }
+.hud-banner.card .bn-title i { color: var(--yellow); }
 
 @keyframes letter {
   from { transform: translateY(-120px) scale(0.4); opacity: 0; }

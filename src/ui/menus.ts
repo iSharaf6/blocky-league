@@ -518,7 +518,7 @@ export class Menus {
               <p><kbd>SPACE</kbd> pass (aim with the stick)</p>
               <p><kbd>K</kbd> hold &amp; release to shoot</p>
               <p><kbd>L</kbd> tap: through ball · hold: lob / cross</p>
-              <p><kbd>SHIFT</kbd> sprint</p>
+              <p><kbd>SHIFT</kbd> sprint · double-tap to knock it past a defender</p>
             </div>
             <div class="ht-col">
               <h3>DEFEND</h3>

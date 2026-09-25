@@ -83,6 +83,8 @@ export class Match {
   /** -1 defensive · 0 balanced · +1 attacking, per side. */
   mentality: [number, number] = [0, 0];
   subsUsed: [number, number] = [0, 0];
+  /** Players already in the referee's book. */
+  readonly booked = new Set<number>();
   readonly maxSubs = 3;
   readonly bench: [PlayerDef[], PlayerDef[]];
   half = 1;
@@ -115,6 +117,8 @@ export class Match {
   possessionSide: Side | -1 = -1;
 
   private prev: Pad = { ...EMPTY_PAD };
+  private lastSprintTap = -9;
+  private humanTime = 0;
   private hits: BallHit[] = [];
   private switchT = 0;
   private firstKickoff: Side = 0;
@@ -648,6 +652,27 @@ export class Match {
     }
   }
 
+  /** Skill move: push the ball 5–6 m ahead and burst after it. */
+  knockOn(p: Player, dirX: number, dirZ: number): void {
+    const b = this.ball;
+    const l = Math.hypot(dirX, dirZ) || 1;
+    const ux = dirX / l;
+    const uz = dirZ / l;
+    const sp = Math.max(p.speed(), 5) + 6.5 + (p.stat.pace / 100) * 2;
+    b.owner = -1;
+    b.vel.x = ux * sp;
+    b.vel.z = uz * sp;
+    b.vel.y = 0.6;
+    b.lastTouch = p.idx;
+    b.lastTouchSide = p.side;
+    p.kickCooldown = 0.32;
+    p.burstT = 1.1;
+    p.facing = Math.atan2(uz, ux);
+    this.passTarget = -1;
+    this.events.push({ type: 'kick', power: 0.3, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: 'pass' });
+    this.events.push({ type: 'skill', player: p.idx });
+  }
+
   /** Keeper with the ball at their feet: safe pass if one is on, otherwise hoof it. */
   keeperClear(k: Player): void {
     const ad = this.attackDir(k.side);
@@ -776,8 +801,18 @@ export class Match {
     const dirX = stickLen > 0.25 ? pad.mx : Math.cos(p.facing);
     const dirZ = stickLen > 0.25 ? pad.mz : Math.sin(p.facing);
     const hasBall = b.owner === p.idx;
+    // Double-tap sprint while dribbling: knock it past your man and chase it.
+    this.humanTime += dt;
+    if (pad.sprint && !this.prev.sprint) {
+      if (hasBall && this.humanTime - this.lastSprintTap < 0.3 && p.state === 'move' && !b.held) {
+        this.knockOn(p, dirX, dirZ);
+        this.lastSprintTap = -9;
+      } else {
+        this.lastSprintTap = this.humanTime;
+      }
+    }
 
-    if (hasBall) {
+    if (hasBall && b.owner === p.idx) {
       if (passP) this.order(p, 'pass', dirX, dirZ, 0.6, -1, false);
       else if (shootR) this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0, shootPower, -1, false);
       else if (throughR) {
@@ -1626,6 +1661,12 @@ export class Match {
     this.stats.fouls[by.side]++;
     const inBox = inOwnBox(this, by.side, on.pos.x, on.pos.z);
     this.events.push({ type: 'foul', by: by.idx, on: on.idx, penalty: inBox });
+    // Reckless slides get booked more often than clumsy standing fouls.
+    const reckless = by.state === 'slide';
+    if (!this.booked.has(by.idx) && this.rng.chance(reckless ? 0.5 : inBox ? 0.35 : 0.12)) {
+      this.booked.add(by.idx);
+      this.events.push({ type: 'card', player: by.idx, color: 'yellow' });
+    }
     if (inBox) {
       const ad = this.attackDir(on.side);
       this.goOut('penalty', on.side, ad * (HALF_L - PEN_SPOT), 0);

@@ -239,6 +239,7 @@ export class MatchSession {
     }, this.time);
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
     this.view.faceCamera(this.world.camera);
+    this.view.updateReferee(this.paused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
     this.effects.update(dt);
     this.updateAtmosphere(dt);
@@ -453,7 +454,14 @@ export class MatchSession {
         case 'sub':
           this.hud?.toastMsg(`SUB · ${e.on} ON · ${e.off} OFF`, 2);
           break;
+        case 'card': {
+          const p = m.players[e.player];
+          this.hud?.show('YELLOW CARD', p.def.name, 'small card', 1.8);
+          this.view.refSignal(1.8);
+          break;
+        }
         case 'foul':
+          this.view.refSignal(1.2);
           if (!e.penalty) this.hud?.toastMsg('FOUL!', 1.2);
           break;
         case 'halftime':

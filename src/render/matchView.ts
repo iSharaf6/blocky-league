@@ -23,6 +23,8 @@ export class MatchView {
   private targetRing: THREE.Mesh;
   private aim: THREE.Mesh;
   private names: string[] = [];
+  private referee: Footballer;
+  private ref = { x: -8, z: -10, vx: 0, vz: 0, facing: 0, phase: 0, signal: 0 };
   private powerFill: THREE.Mesh;
   private ballQuat = new THREE.Quaternion();
   private tmpQ = new THREE.Quaternion();
@@ -45,6 +47,14 @@ export class MatchView {
       });
     }
     this.frame = new Float32Array(FRAME_LEN);
+    const refKit: Kit = { shirt: 0x2a2a30, shirt2: 0xffd23a, pattern: 'plain', shorts: 0x2a2a30, socks: 0x2a2a30, gk: 0x2a2a30 };
+    const refDef: PlayerDef = {
+      id: 'ref', name: 'Referee', number: -1, role: 'MF',
+      stats: { pace: 70, shooting: 1, passing: 1, dribbling: 1, defending: 1, keeping: 1, stamina: 90 },
+      look: { skin: 2, hair: 1, hairColor: 6, beard: 0, boots: 0x2a2a30 },
+    };
+    this.referee = new Footballer(refDef, refKit, false);
+    this.group.add(this.referee.group);
     this.ball = new THREE.Mesh(buildBallGeometry(BALL_R * 1.25), voxelMaterial);
     this.ball.castShadow = true;
     this.group.add(this.ball);
@@ -215,6 +225,47 @@ export class MatchView {
     } else {
       this.targetRing.visible = false;
     }
+  }
+
+  /** The referee jogs a diagonal about 10 m from the ball and signals fouls. */
+  updateReferee(dt: number, time: number, visible: boolean): void {
+    const g = this.referee.group;
+    g.visible = visible;
+    if (!visible || dt <= 0) return;
+    const f = this.frame;
+    const bx = f[BALL_OFS];
+    const bz = f[BALL_OFS + 2];
+    const r = this.ref;
+    const tx = Math.max(-44, Math.min(44, bx - 7));
+    const tz = Math.max(-26, Math.min(26, bz > 0 ? bz - 11 : bz + 11));
+    const dx = tx - r.x;
+    const dz = tz - r.z;
+    const d = Math.hypot(dx, dz);
+    const want = d < 1.2 ? 0 : Math.min(7, d * 1.2);
+    const k = Math.min(1, dt * 3);
+    r.vx += ((d > 0 ? (dx / d) * want : 0) - r.vx) * k;
+    r.vz += ((d > 0 ? (dz / d) * want : 0) - r.vz) * k;
+    r.x += r.vx * dt;
+    r.z += r.vz * dt;
+    const sp = Math.hypot(r.vx, r.vz);
+    const faceTo = sp > 1.2 ? Math.atan2(r.vz, r.vx) : Math.atan2(bz - r.z, bx - r.x);
+    r.facing += wrapAngle(faceTo - r.facing) * Math.min(1, dt * 6);
+    r.phase = (r.phase + (sp * dt) / 2.1) % 1;
+    r.signal = Math.max(0, r.signal - dt);
+    g.position.set(r.x, 0, r.z);
+    g.rotation.y = -r.facing;
+    const pose = this.pose;
+    pose.state = 0; pose.stateT = 0; pose.speed = sp; pose.runPhase = r.phase; pose.kickT = 0; pose.kickLeg = 1;
+    pose.lean = Math.min(0.3, sp * 0.03); pose.diveDir = 0; pose.headerT = 0; pose.celebrate = 0; pose.y = 0;
+    pose.keeper = false; pose.hasBall = false; pose.turn = 0;
+    pose.look = -wrapAngle(Math.atan2(bz - r.z, bx - r.x) - r.facing);
+    pose.signal = r.signal > 0;
+    this.referee.pose(pose, time);
+    pose.signal = false;
+  }
+
+  refSignal(seconds: number): void {
+    this.ref.signal = seconds;
   }
 
   /** Swap the model for a substitute coming on. */

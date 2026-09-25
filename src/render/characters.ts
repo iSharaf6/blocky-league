@@ -85,7 +85,7 @@ function buildTorso(o: Outfit, number: number): THREE.BufferGeometry {
   for (let z = 0; z < TORSO_W; z++) for (let x = 0; x < TORSO_D; x++) g.set(x, SHORTS - 1, z, shade(o.shorts, 0.84));
   // Shirt number on the back (x = 0): two 3x5 digits fill the 5 shirt rows.
   const ink = o.pattern === 'plain' || o.pattern === 'sleeves' || o.pattern === 'halves' ? contrast(o.shirt) : 0xfbfbf4;
-  const txt = String(number % 100);
+  const txt = number < 0 ? '' : String(number % 100);
   const startZ = txt.length === 1 ? 2 : 0;
   for (let d = 0; d < txt.length; d++) {
     const rows = DIGITS[txt[d]];
@@ -224,6 +224,8 @@ export interface PoseInput {
   look: number;
   /** Smoothed turn rate, rad/s (+ = turning left). */
   turn: number;
+  /** Referee signal: right arm raised. */
+  signal?: boolean;
 }
 
 export const PSTATE = {
@@ -467,6 +469,10 @@ export class Footballer {
         aR.rotation.set(0.95, 0, 2.55);
         break;
       }
+    }
+    if (p.signal) {
+      aR.rotation.set(0.2, 0, 3.0);
+      head.rotation.z = 0.1;
     }
     // Heads follow the ball; bodies bank into turns.
     if (p.state === PSTATE.move || p.state === PSTATE.hold || p.state === PSTATE.stand) {
