@@ -38,6 +38,10 @@ export interface MatchMetrics {
   rawPasses: number;
   shotOut: Record<string, number>;
   byKind: Record<string, [number, number]>;
+  runs: number;
+  overlaps: number;
+  beats: number;
+  claims: number;
 }
 
 const PASS_KINDS = new Set(['pass', 'through', 'lob', 'throw', 'keeper']);
@@ -56,8 +60,10 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     passAtt: [0, 0], passCmp: [0, 0], carrierStretches: 0, carrierTime: 0,
     tackleAttempts: 0, tacklesWon: 0, slides: 0, corners: 0, throwins: 0, goalkicks: 0, freekicks: 0,
     penalties: 0, fouls: 0, saves: 0, maxStall: 0, finalThird: [0, 0], crosses: 0, headers: 0, blocks: 0,
-    rawPasses: 0, shotOut: {}, byKind: {},
+    rawPasses: 0, shotOut: {}, byKind: {}, runs: 0, overlaps: 0, beats: 0, claims: 0,
   };
+  const wasRunning = new Set<number>();
+  const lastOverlap: [number, number] = [-1, -1];
   // Shot being tracked until something resolves it.
   let shot: { side: Side } | null = null;
   const shotDone = (k: string) => {
@@ -137,10 +143,18 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
             r.tackleAttempts++;
           } else if (!e.slide) r.tackleAttempts++;
           break;
-        default: {
-          // Newer sims may emit a 'block' event; count it without depending on the type.
-          if ((e as { type: string }).type === 'block') r.blocks++;
-        }
+        case 'block':
+          r.blocks++;
+          break;
+        case 'beat':
+          r.beats++;
+          break;
+        case 'claim':
+          r.claims++;
+          resolve(m.players[e.keeper].side);
+          break;
+        default:
+          break;
       }
     }
     const shotsNow = m.stats.shots[0] + m.stats.shots[1];
@@ -180,6 +194,18 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
         curOwner = -1;
         curT = 0;
       }
+    }
+    // Runs in behind and overlaps (edge-triggered).
+    for (const p of m.players) {
+      if (p.running && !wasRunning.has(p.idx)) {
+        r.runs++;
+        wasRunning.add(p.idx);
+      } else if (!p.running) wasRunning.delete(p.idx);
+    }
+    for (const s of [0, 1] as Side[]) {
+      const o = m.brains[s].overlap;
+      if (o >= 0 && o !== lastOverlap[s]) r.overlaps++;
+      lastOverlap[s] = o;
     }
     // Final-third entries.
     for (const s of [0, 1] as Side[]) {
@@ -252,6 +278,10 @@ export interface Summary {
   rawPasses: number;
   shotOut: string;
   passKinds: string;
+  runs: number;
+  overlaps: number;
+  beats: number;
+  claims: number;
 }
 
 export function summarise(list: MatchMetrics[]): Summary {
@@ -289,6 +319,10 @@ export function summarise(list: MatchMetrics[]): Summary {
     headers: avg((r) => r.headers),
     blocks: avg((r) => r.blocks),
     rawPasses: avg((r) => r.rawPasses),
+    runs: avg((r) => r.runs),
+    overlaps: avg((r) => r.overlaps),
+    beats: avg((r) => r.beats),
+    claims: avg((r) => r.claims),
     passKinds: (() => {
       const agg: Record<string, [number, number]> = {};
       for (const r of list) {

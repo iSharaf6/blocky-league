@@ -323,7 +323,10 @@ export class Match {
       this.checkBounds();
       this.autoSwitchUpdate(dt);
     } else if (this.phase === 'out') {
-      if (this.phaseT > 0.85 && this.pendingRestart) this.beginRestart(this.pendingRestart);
+      // Corners and wide free kicks get a beat longer so the box can fill.
+      const pr = this.pendingRestart;
+      const beat = pr && isCrossingRestart(this, pr) ? 1.3 : 0.85;
+      if (this.phaseT > beat && pr) this.beginRestart(pr);
     }
 
     if (this.phase === 'play' || this.phase === 'out' || this.phase === 'restart') {
@@ -565,7 +568,9 @@ export class Match {
     for (const t of this.bySide[k.side]) {
       if (t === k) continue;
       const d = dist2(k.pos.x, k.pos.z, t.pos.x, t.pos.z);
-      if (d > 36 || d < 6) continue;
+      if (d > 28 || d < 6) continue;
+      // Never roll it across the face of our own goal.
+      if (Math.sign(t.pos.z) !== Math.sign(k.pos.z) && Math.abs(t.pos.z - k.pos.z) > 16) continue;
       let open = 10;
       for (const o of this.bySide[k.side === 0 ? 1 : 0]) open = Math.min(open, dist2(o.pos.x, o.pos.z, t.pos.x, t.pos.z));
       const s = open - d * 0.08 + this.rng.next() * 2;
@@ -645,6 +650,8 @@ export class Match {
         t.facing = Math.atan2(pad.mz, pad.mx);
       }
       if (this.phase === 'restart' && this.phaseT < 0.35) return;
+      // Crossing set pieces: wait (briefly) for the runners to get into the box.
+      if (this.phase === 'restart' && isCrossingRestart(this, this.restart) && setPieceReady(this, side) < 4 && this.phaseT < 1.6) return;
       const kind = this.restart.kind;
       const dx = stickLen > 0.3 ? pad.mx : Math.cos(t.facing);
       const dz = stickLen > 0.3 ? pad.mz : Math.sin(t.facing);

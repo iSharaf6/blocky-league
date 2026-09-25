@@ -1,6 +1,7 @@
 import { sfx } from '../audio/sfx';
 import type { SaveData } from '../core/save';
-import { PRESET_CLUBS, type ClubSeed } from '../meta/data';
+import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
+import { KitPreview } from './preview';
 import { cssHex, shade } from '../render/palette';
 import type { Match } from '../sim/match';
 import type { Kit } from '../sim/types';
@@ -89,6 +90,7 @@ function stars(level: number): string {
 export class Menus {
   readonly root: HTMLElement;
   private screen: HTMLDivElement | null = null;
+  private preview: KitPreview | null = null;
 
   constructor() {
     this.root = document.getElementById('ui')!;
@@ -108,6 +110,8 @@ export class Menus {
   close(): void {
     this.screen?.remove();
     this.screen = null;
+    this.preview?.dispose();
+    this.preview = null;
   }
 
   get open(): boolean {
@@ -178,6 +182,8 @@ export class Menus {
           </div>
         </div>
       </div>`, 'qm-screen');
+    this.preview = new KitPreview();
+    const preview = this.preview;
     const render = (side: 'home' | 'away') => {
       const idx = side === 'home' ? home : away;
       const c: ClubSeed = PRESET_CLUBS[idx];
@@ -186,12 +192,17 @@ export class Menus {
         <span class="tp-label">${side === 'home' ? 'YOU' : 'RIVAL'}</span>
         <div class="tp-body">
           <button class="arrow" data-d="-1">◀</button>
-          <div class="tp-kit">${shirtArt(c.kit, 9)}</div>
+          <div class="tp-kit">${preview.ok ? '<canvas class="tp-3d"></canvas>' : shirtArt(c.kit, 9)}</div>
           <button class="arrow" data-d="1">▶</button>
         </div>
         <b class="tp-name">${c.name}</b>
         <span class="tp-stars">${stars(c.level)}</span>
         <span class="tp-meta">OVR ${c.level} · ${c.formation}</span>`;
+      const cv = el.querySelector<HTMLCanvasElement>('.tp-3d');
+      if (cv) {
+        const team = makeTeam(c);
+        preview.set(side === 'home' ? 0 : 1, cv, team.players[9], c.kit);
+      }
       el.querySelectorAll<HTMLButtonElement>('.arrow').forEach((b) =>
         b.addEventListener('click', () => {
           sfx.click();

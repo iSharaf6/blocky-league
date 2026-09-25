@@ -36,6 +36,7 @@ export interface TeamBrain {
   boxZones: Map<number, { x: number; z: number }>;
   /** Set-piece positions, computed once per restart (`spFor`). */
   spFor: object | null;
+  spTaker: number;
   spTargets: Map<number, { x: number; z: number }>;
   /** Attacking set piece: players meant to attack the delivery, in delivery-zone order. */
   spRunners: number[];
@@ -47,7 +48,7 @@ export function makeBrain(): TeamBrain {
     supporter: -1, supportX: 0, supportZ: 0, supportT: 0,
     supporter2: -1, support2X: 0, support2Z: 0,
     marks: new Map(), overlap: -1, overlapT: 0, line: -0.5, boxZones: new Map(),
-    spFor: null, spTargets: new Map(), spRunners: [],
+    spFor: null, spTaker: -1, spTargets: new Map(), spRunners: [],
   };
 }
 
@@ -744,7 +745,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     return;
   }
   p.aiT = firstTouch ? 0.32 + m.rng.next() * 0.3 - skill * 0.03 : 0.24 + m.rng.next() * 0.2 - skill * 0.015;
-  if (firstTouch) p.holdT = 1 + m.rng.next() * 1.4;
+  if (firstTouch) p.holdT = 1.1 + m.rng.next() * 1.5;
 
   const team = m.teamPlayers(side);
   const choices: Choice[] = [];
@@ -1022,8 +1023,9 @@ export function setPieceTargets(m: Match, side: Side): Map<number, { x: number; 
   const brain = m.brains[side];
   const r = m.restart;
   if (!r) return brain.spTargets;
-  if (brain.spFor === r) return brain.spTargets;
+  if (brain.spFor === r && brain.spTaker === r.taker) return brain.spTargets;
   brain.spFor = r;
+  brain.spTaker = r.taker;
   brain.spTargets = new Map();
   brain.spRunners = [];
   if (!isCrossingRestart(m, r)) return brain.spTargets;

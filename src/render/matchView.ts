@@ -21,6 +21,7 @@ export class MatchView {
   private nameTex: THREE.CanvasTexture;
   private nameFor = -1;
   private targetRing: THREE.Mesh;
+  private aim: THREE.Mesh;
   private names: string[] = [];
   private powerFill: THREE.Mesh;
   private ballQuat = new THREE.Quaternion();
@@ -100,6 +101,17 @@ export class MatchView {
     this.targetRing.position.y = 0.05;
     this.targetRing.visible = false;
     this.group.add(this.targetRing);
+
+    // Set-piece aim: a dashed chunky arrow along the taker's facing.
+    const ab2 = new BoxBuilder();
+    for (let i = 0; i < 6; i++) ab2.box(1.0 + i * 0.9, 0, 0, 0.55, 0.02, 0.22, 0xffd23a);
+    ab2.box(6.6, 0, 0, 0.3, 0.02, 0.9, 0xffd23a);
+    ab2.box(6.9, 0, 0, 0.3, 0.02, 0.55, 0xffd23a);
+    ab2.box(7.2, 0, 0, 0.3, 0.02, 0.22, 0xffd23a);
+    this.aim = new THREE.Mesh(ab2.build(), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }));
+    this.aim.position.y = 0.06;
+    this.aim.visible = false;
+    this.group.add(this.aim);
 
     this.powerBar = new THREE.Group();
     const bg = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 0.16), new THREE.MeshBasicMaterial({ color: 0x26262e }));
@@ -203,6 +215,16 @@ export class MatchView {
     } else {
       this.targetRing.visible = false;
     }
+  }
+
+  /** Show the set-piece aim arrow from (x, z) along `angle` (radians, world facing). */
+  setAim(on: boolean, x = 0, z = 0, angle = 0, length = 1): void {
+    this.aim.visible = on;
+    if (!on) return;
+    this.aim.position.x = x;
+    this.aim.position.z = z;
+    this.aim.rotation.y = -angle;
+    this.aim.scale.x = length;
   }
 
   setMarkerVisible(v: boolean): void {

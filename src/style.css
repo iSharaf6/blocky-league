@@ -484,6 +484,20 @@ body {
   box-shadow: 0 1px 0 #000;
 }
 
+.tp-3d {
+  display: block;
+  width: clamp(100px, 13vw, 160px);
+  aspect-ratio: 1;
+}
+
+@media (max-height: 820px) {
+  .panel.qm { gap: 12px; padding-top: 16px; padding-bottom: 16px; }
+  .panel.qm h2 { font-size: 28px; }
+  .qm .tp-3d { width: clamp(90px, 11vw, 132px); }
+  .qm .team-pick { gap: 4px; padding: 8px 8px 10px; }
+  .qm .seg button { padding: 8px 4px 7px; }
+}
+
 .tp-name {
   font: 400 clamp(17px, 2vw, 22px) var(--round);
 }

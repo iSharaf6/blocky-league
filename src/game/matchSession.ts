@@ -501,6 +501,12 @@ export class MatchSession {
       hint = `${key('pass')} throw · ${key('through')} kick long`;
     }
     hud.setHint(this.replay ? '' : hint);
+    // Aim arrow for our set pieces.
+    if (!this.replay && r && r.side === hs && m.phase === 'restart' && r.kind !== 'kickoff') {
+      const t = m.players[r.taker];
+      const long = r.kind === 'corner' || r.kind === 'goalkick' ? 1.6 : r.kind === 'freekick' || r.kind === 'penalty' ? 1.3 : 1;
+      this.view.setAim(true, t.pos.x, t.pos.z, t.facing, long);
+    } else this.view.setAim(false);
     this.updateTutorial(dt, key);
     if (m.active >= 0) {
       const p = m.players[m.active];

@@ -23,8 +23,8 @@ const LOOKS: Record<TimeOfDay, Look> = {
     sun: 0xfff6e6, sunI: 2.8, offset: [-44, 48, 30], fog: SKY_BOTTOM,
   },
   sunset: {
-    skyTop: 0x5b6fd6, skyMid: 0xff9a6b, skyBottom: 0xffd08a, hemiSky: 0xffd9c2, hemiGround: 0x8fa85a, hemi: 1.25,
-    sun: 0xffb070, sunI: 2.6, offset: [-70, 30, 22], fog: 0xffc08a,
+    skyTop: 0x5b6fd6, skyMid: 0xff9a6b, skyBottom: 0xffd08a, hemiSky: 0xffe2cc, hemiGround: 0x8fa85a, hemi: 1.5,
+    sun: 0xffc08a, sunI: 2.9, offset: [-60, 38, 26], fog: 0xffc08a,
   },
   night: {
     skyTop: 0x0b1030, skyMid: 0x1c2a5c, skyBottom: 0x2f4478, hemiSky: 0xbfd4ff, hemiGround: 0x3a5a3a, hemi: 1.05,

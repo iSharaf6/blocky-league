@@ -176,7 +176,8 @@ export function resolveKick(m: Match, p: Player, order: KickOrder): Launch {
       tz = clamp(tz, -HALF_W + 0.8, HALF_W - 0.8);
       const d = dist2(b.x, b.z, tx, tz);
       if (throwIn) {
-        const flight = clamp(0.45 + d / 30, 0.5, 1.1);
+        // Thrown balls travel at catchable speeds: longer throws hang in the air longer.
+        const flight = clamp(0.4 + d / 22, 0.55, 1.6);
         const s = solveLob(d, flight, 0.5);
         const ex = passError(p, m, 0.6);
         const u = rotate((tx - b.x) / d, (tz - b.z) / d, ex);
@@ -249,7 +250,15 @@ export function resolveKick(m: Match, p: Player, order: KickOrder): Launch {
     const flight = kind === 'header' ? clamp(0.5 + d / 30, 0.5, 1.2) : clamp(0.75 + d / 34, 0.9, 2.3);
     const land = order.land ?? (kind === 'clear' ? BALL_R : 1.3);
     const s = solveLob(d, flight, land);
-    const err = passError(p, m, kind === 'clear' ? 2.2 : 1.4);
+    let err = passError(p, m, kind === 'clear' ? 2.2 : 1.4);
+    // A scrambled clearance from inside our own box sometimes slices off behind for a corner.
+    if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.14 * pressureErr(m, p))) {
+      const toLine = -ad; // towards our own goal line
+      const zs = Math.sign(b.z || 1);
+      // Rotate so the ball heads for the byline on the near side, well wide of the goal.
+      const want = Math.atan2(zs * 0.9, toLine * 0.45);
+      err = want - Math.atan2((tz - b.z) / d, (tx - b.x) / d);
+    }
     const u = rotate((tx - b.x) / d, (tz - b.z) / d, err);
     const vy = kind === 'header' ? s.vy - Math.max(0, b.y - BALL_R) / flight : s.vy;
     return launch(u.x * s.vh, vy, u.z * s.vh, 0, m.rng.gauss() * 1.5, 0, tgt, kind, clamp(s.vh / 28, 0, 1));
@@ -293,7 +302,7 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   }
   const d = Math.max(2, dist2(b.x, b.z, gx, aimZ));
   const composure = header ? 0.4 : 1;
-  const errZ = (m.rng.gauss() * (0.7 + d * 0.058) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press) / composure;
+  const errZ = (m.rng.gauss() * (0.78 + d * 0.062) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press) / composure;
   const tz = aimZ + errZ;
   // Height at the line: placed shots stay low, blasted ones climb (and can fly over).
   const skew = Math.abs(m.rng.gauss()) * (1.15 - acc) * (0.35 + power) * 2.1 * sk * press;
