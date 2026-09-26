@@ -14,7 +14,8 @@ import type { TimeOfDay, World } from '../render/world';
 import { BALL_R, DT, HALF_L, HALF_W } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
-import type { Kit, MatchEvent, PowerUpKind, RestartKind, Side } from '../sim/types';
+import type { Kit, MatchEvent, PowerUpKind, RestartKind, ScenarioSpec, Side } from '../sim/types';
+import type { ScenarioOutcome } from '../sim/scenario';
 import { EdgeArrows, type EdgeMate, type EdgeRect } from '../ui/edgeArrows';
 import { Hud, hudTeam } from '../ui/hud';
 import { ShootoutHud } from '../ui/shootoutHud';
@@ -43,6 +44,8 @@ export interface SessionOptions extends MatchConfig {
   ballSkin?: string;
   /** The human side's goal celebration (progression; CelebrationId); undefined = classic. */
   celebration?: string;
+  /** A Football Moment to run instead of a full match (src/sim/scenario.ts applies and judges it). */
+  scenario?: ScenarioSpec;
 }
 
 export interface PlayerRating {
@@ -62,6 +65,8 @@ export interface MatchResult {
   ratings?: PlayerRating[];
   /** Who went through: by the score, or by the shootout in a level knockout tie (undefined = a draw). */
   winner?: Side;
+  /** A Football Moment's verdict (only when SessionOptions.scenario was set). */
+  scenarioOutcome?: ScenarioOutcome;
 }
 
 interface Tally {
