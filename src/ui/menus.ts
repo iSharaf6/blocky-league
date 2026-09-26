@@ -316,7 +316,6 @@ export class Menus {
     const d = this.mount(`
       <div class="title-wrap">
         <h1 class="logo"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
-        <p class="tagline">Chunky football. Big goals.</p>
         <button class="btn btn-go btn-xl pulse" data-a="start">TAP TO PLAY</button>
         <p class="fine">Keyboard · Gamepad · Touch</p>
       </div>`, 'title');
