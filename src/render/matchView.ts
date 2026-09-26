@@ -1087,6 +1087,35 @@ export class MatchView {
     return i >= 0 && i < 22 ? this.throughW[i] : 0;
   }
 
+
+  private landingRing: THREE.Group | null = null;
+  /**
+   * Where an airborne ball will come down (the human side's lobs, crosses and clearances): a ring on the spot,
+   * so the receiver can see where to be. Off when `on` is false. `pulse` is a clock for the gentle throb.
+   */
+  setLanding(on: boolean, x = 0, z = 0, pulse = 0): void {
+    if (!on) {
+      if (this.landingRing) this.landingRing.visible = false;
+      return;
+    }
+    if (!this.landingRing) {
+      const mat = (color: number, opacity: number) =>
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, fog: false });
+      const g = new THREE.Group();
+      const edge = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 32).rotateX(-Math.PI / 2), mat(PASS_WHITE, 0.85));
+      const fill = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.8, 32).rotateX(-Math.PI / 2), mat(PASS_TEAL, 0.7));
+      edge.renderOrder = 8;
+      fill.renderOrder = 8;
+      g.add(edge, fill);
+      this.group.add(g);
+      this.landingRing = g;
+    }
+    this.landingRing.visible = true;
+    this.landingRing.position.set(x, 0.03, z);
+    const k = 1 + 0.1 * Math.sin(pulse * 9);
+    this.landingRing.scale.set(k, 1, k);
+  }
+
   private makePreviewRing(): THREE.Group {
     const mat = (color: number) =>
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false });

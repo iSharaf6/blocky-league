@@ -10,7 +10,7 @@ import { MatchView } from '../render/matchView';
 import { PITCH_Y, Stadium, stadiumFill } from '../render/stadium';
 import { Weather, type WeatherKind } from '../render/weather';
 import type { TimeOfDay, World } from '../render/world';
-import { DT, HALF_L, HALF_W } from '../sim/constants';
+import { BALL_R, DT, HALF_L, HALF_W } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, PowerUpKind, RestartKind, Side } from '../sim/types';
@@ -1606,6 +1606,7 @@ export class MatchSession {
     if (off || this.replay || hs < 0 || !(charge >= 0) || passer < 0 || passer >= m.players.length) {
       this.view.setPassCharge(null);
       this.updatePreview(off || !!this.replay || hs < 0, dt);
+      this.updateLanding(off || !!this.replay || hs < 0);
       return;
     }
     // (The charge visuals take over from the preview at once.)
@@ -1633,6 +1634,17 @@ export class MatchSession {
    * (MatchView.setPassPreview cross-fades any change of target). The broadcast shot only, never under a low
    * lens; anything else fades it off.
    */
+  /** A ring where the human side's airborne ball (a lob, cross or clearance, not a shot) will come down. */
+  private updateLanding(off: boolean): void {
+    const m = this.match;
+    const b = m.ball;
+    const ours = m.cfg.humanSide >= 0 && b.lastTouchSide === m.cfg.humanSide;
+    const flying = !b.held && b.owner < 0 && b.pos.y > 1.2 && m.kickKind !== 'shot' && m.kickKind !== 'header';
+    const down = off || !ours || !flying ? undefined : m.ballPath.find((q) => q.y <= BALL_R + 0.05);
+    if (!down) this.view.setLanding(false);
+    else this.view.setLanding(true, down.x, down.z, this.time);
+  }
+
   private updatePreview(off: boolean, dt: number): void {
     const m = this.match;
     const cam = this.cam;
