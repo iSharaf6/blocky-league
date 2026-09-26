@@ -4953,3 +4953,9 @@ button.mc-pl:active {
   .qm .tp-3d { width: clamp(90px, 10vw, 120px); }
   .qm-why { margin-top: -8px; }
 }
+
+/* Progression: the next unlock line (full time, main-menu level badge) and the locked look in Settings > BALL. */
+.ft-next { margin-top: 6px; font: 14px/1.2 'Lilita One', sans-serif; letter-spacing: 0.02em; opacity: 0.9; }
+.ft-next b { color: #e0b23a; }
+.record-chip.lvl .lvl-next { display: block; font: 14px/1.2 'Lilita One', sans-serif; opacity: 0.85; }
+.toggles button b small.lock { font: 14px/1 'Lilita One', sans-serif; opacity: 0.7; }

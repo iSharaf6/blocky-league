@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CHALLENGE_POOL, LEVEL_TITLES, MAX_LEVEL, advanceDaily, dailyChallenges, dailyFor, defaultProgress, defaultSave, levelOf, levelTitle,
-  loadSave, matchStars, matchXp, nextStreak, normalizeProgress, normalizeSettings, streakMult, xpToNext, type MatchSummary,
-} from '../src/core/save';
+  loadSave, matchStars, matchXp, nextStreak, normalizeProgress, normalizeSettings, streakMult, xpToNext, type MatchSummary, BALL_SKIN_LEVEL, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, xpAt } from '../src/core/save';
 
 const KEY = 'blocky-league-save-v1';
 
@@ -190,5 +189,32 @@ describe('save migration', () => {
     stubStorage(s);
     expect(loadSave().settings.lastMode).toBe('blitz');
     expect(normalizeSettings({ lastMode: 'turbo' }).lastMode).toBe('classic');
+  });
+});
+
+describe('unlock ladder (earned only)', () => {
+  it('ball looks open by level, the classic one always', () => {
+    expect(skinUnlocked('classic', 1)).toBe(true);
+    expect(skinUnlocked('retro', 1)).toBe(false);
+    expect(skinUnlocked('retro', BALL_SKIN_LEVEL.retro)).toBe(true);
+    expect(skinUnlocked('gold', BALL_SKIN_LEVEL.gold - 1)).toBe(false);
+  });
+  it('xpAt is the running total of the per-level needs', () => {
+    expect(xpAt(1)).toBe(0);
+    expect(xpAt(2)).toBe(xpToNext(1));
+    expect(xpAt(4)).toBe(xpToNext(1) + xpToNext(2) + xpToNext(3));
+  });
+  it('nextUnlock names the first look above the level and counts the XP left, then runs out', () => {
+    const n0 = nextUnlock(0)!;
+    expect(n0.id).toBe('retro');
+    expect(n0.xpLeft).toBe(xpAt(BALL_SKIN_LEVEL.retro));
+    const atRetro = nextUnlock(xpAt(BALL_SKIN_LEVEL.retro))!;
+    expect(atRetro.id).toBe('blaze');
+    expect(atRetro.xpLeft).toBe(xpAt(BALL_SKIN_LEVEL.blaze) - xpAt(BALL_SKIN_LEVEL.retro));
+    expect(nextUnlock(xpAt(BALL_SKIN_LEVEL.gold))).toBeNull();
+  });
+  it('LEGEND opens at the star count', () => {
+    expect(legendUnlocked({ stars: LEGEND_STARS - 1 })).toBe(false);
+    expect(legendUnlocked({ stars: LEGEND_STARS })).toBe(true);
   });
 });

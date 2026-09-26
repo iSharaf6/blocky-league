@@ -84,6 +84,7 @@ export function normalizeSettings(raw: unknown): Settings {
   const s: Settings = { ...base, ...(raw && typeof raw === 'object' ? (raw as Partial<Settings>) : {}) };
   if (!CAM_ZOOMS.includes(s.camZoom as CamZoom)) s.camZoom = 'normal';
   if (s.lastMode !== 'classic' && s.lastMode !== 'blitz') s.lastMode = 'classic';
+  if (s.ballSkin !== undefined && !(BALL_SKIN_IDS as readonly string[]).includes(s.ballSkin)) s.ballSkin = undefined;
   if (!ASSIST_LEVELS.includes(s.groundAssist as AssistLevel)) s.groundAssist = CONTROL_DEFAULTS.groundAssist;
   if (!ASSIST_LEVELS.includes(s.throughAssist as AssistLevel)) s.throughAssist = CONTROL_DEFAULTS.throughAssist;
   for (const k of ['autoSwitch', 'moveAssist', 'timedFinish', 'trainer', 'quickPass'] as const) {
@@ -399,4 +400,38 @@ export function advanceDaily(d: DailyState, cs: readonly Challenge[], s: MatchSu
     }
   });
   return done;
+}
+
+// ------------------------------------------------------------------ unlocks (earned only: levels and stars)
+
+/** Ball looks (src/render/characters BALL_SKINS) and the level that earns each; 'classic' is always there. */
+export const BALL_SKIN_IDS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold'] as const;
+export type BallSkinId = (typeof BALL_SKIN_IDS)[number];
+export const BALL_SKIN_LEVEL: { readonly [k in BallSkinId]: number } = { classic: 1, retro: 2, blaze: 4, ice: 6, neon: 8, gold: 12 };
+export const BALL_SKIN_NAMES: { readonly [k in BallSkinId]: string } = { classic: 'Classic', retro: 'Retro', blaze: 'Blaze', ice: 'Ice', neon: 'Neon', gold: 'Gold' };
+
+export function skinUnlocked(id: BallSkinId, level: number): boolean {
+  return level >= BALL_SKIN_LEVEL[id];
+}
+
+/** Match stars that open LEGEND difficulty (Easy, Normal and Hard are always open). */
+export const LEGEND_STARS = 10;
+export function legendUnlocked(p: Pick<Progress, 'stars'>): boolean {
+  return p.stars >= LEGEND_STARS;
+}
+
+/** Total XP at which `level` starts. */
+export function xpAt(level: number): number {
+  let t = 0;
+  for (let l = 1; l < level; l++) t += xpToNext(l);
+  return t;
+}
+
+/** The next thing XP earns (the first ball look above the current level) and the XP still needed; null past the last. */
+export function nextUnlock(xp: number): { id: BallSkinId; name: string; level: number; xpLeft: number } | null {
+  const lv = levelOf(xp).level;
+  const next = BALL_SKIN_IDS.filter((id) => BALL_SKIN_LEVEL[id] > lv).sort((a, b) => BALL_SKIN_LEVEL[a] - BALL_SKIN_LEVEL[b])[0];
+  if (!next) return null;
+  const level = BALL_SKIN_LEVEL[next];
+  return { id: next, name: `${BALL_SKIN_NAMES[next]} ball`, level, xpLeft: Math.max(0, xpAt(level) - xp) };
 }

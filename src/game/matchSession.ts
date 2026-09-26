@@ -332,6 +332,7 @@ export class MatchSession {
     this.cam.players = this.view.frame;
     this.cam.touchLayout = !this.demo && isTouchDevice();
     this.cam.setZoom(opt.camZoom ?? 'normal');
+    this.view.setBallSkin(opt.ballSkin);
     this.cam.setMode(this.demo ? 'menu' : 'intro');
     if (!this.demo && !opt.skipIntro) this.introLeft = INTRO_S;
     if (!this.demo) {
@@ -386,6 +387,11 @@ export class MatchSession {
   }
 
   /** Broadcast camera distance, live (Settings changed mid-match): the camera cuts to the new framing. */
+  /** Change the ball's look mid-match (Settings > BALL). */
+  setBallSkin(id: string | undefined): void {
+    this.view.setBallSkin(id);
+  }
+
   setCamZoom(z: CamZoom): void {
     this.cam.setZoom(z);
   }

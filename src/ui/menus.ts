@@ -1,5 +1,5 @@
 import { sfx } from '../audio/sfx';
-import { ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData } from '../core/save';
+import { ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData, BALL_SKIN_IDS, BALL_SKIN_LEVEL, BALL_SKIN_NAMES, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, type BallSkinId } from '../core/save';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview, faceHtml, hydrateFaces } from './preview';
@@ -71,6 +71,8 @@ export interface MainInfo {
   daily?: { list: readonly Challenge[]; progress: readonly number[]; claimed: readonly boolean[]; fresh: boolean };
   /** Current win streak (shown on the level badge from 2). */
   streak?: number;
+  /** The next thing XP earns, for the badge (null: everything earned). */
+  unlock?: { name: string; level: number; xpLeft: number } | null;
 }
 
 /** What the full-time screen shows for progression (stars, XP, streak, challenges done this match). */
@@ -391,7 +393,7 @@ export class Menus {
         </div>`
       : '';
     const badge = lv
-      ? `<span class="record-chip lvl" title="${lv.into} / ${lv.need} XP to the next level"><b>LV ${lv.level} · ${lv.title.toUpperCase()}${info?.streak && info.streak >= 2 ? ` · 🔥${info.streak}` : ''}</b><span>W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i></span>`
+      ? `<span class="record-chip lvl" title="${lv.into} / ${lv.need} XP to the next level"><b>LV ${lv.level} · ${lv.title.toUpperCase()}${info?.streak && info.streak >= 2 ? ` · 🔥${info.streak}` : ''}</b><span>W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()} · ${info.unlock.xpLeft} XP</small>` : ''}</span>`
       : `<span class="record-chip">W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span>`;
     const d = this.mount(`
       <div class="topbar">
@@ -524,7 +526,13 @@ export class Menus {
       drawWhy();
     });
     drawWhy();
-    seg('diff', DIFFICULTIES, () => save.settings.difficulty, (i) => (save.settings.difficulty = i));
+    // LEGEND is earned: LEGEND_STARS match stars open it (an old save sitting on it drops to HARD until then).
+    const legendOk = legendUnlocked(save.progress);
+    if (!legendOk && save.settings.difficulty === 3) save.settings.difficulty = 2;
+    seg('diff', DIFFICULTIES.map((l, i) => (i === 3 && !legendOk ? `${l} 🔒 ${LEGEND_STARS}★` : l)), () => save.settings.difficulty, (i) => {
+      if (i === 3 && !legendOk) return;
+      save.settings.difficulty = i;
+    });
     seg('len', HALF_OPTIONS.map((m) => `${m} MIN`), () => Math.max(0, HALF_OPTIONS.indexOf(save.settings.halfMinutes)), (i) => (save.settings.halfMinutes = HALF_OPTIONS[i]));
     const tods = ['day', 'sunset', 'night', 'random'] as const;
     seg('tod', ['DAY', 'SUNSET', 'NIGHT', 'RANDOM'], () => Math.max(0, tods.indexOf(save.settings.timeOfDay)), (i) => (save.settings.timeOfDay = tods[i]));
@@ -875,6 +883,7 @@ export class Menus {
             <div class="ft-xp-h"><b class="ft-lv">LV ${lv0.level}</b><span class="ft-title">${levelTitle(lv0.level).toUpperCase()}</span><em class="ft-xp-n">+0 XP</em></div>
             <div class="ft-xp-bar"><i style="width:${Math.round((lv0.into / lv0.need) * 100)}%"></i></div>
             <div class="ft-levelup" aria-live="polite"></div>
+            ${(() => { const nu = nextUnlock(prog.xpTo); return nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b> · LV ${nu.level} · ${nu.xpLeft} XP</div>` : ''; })()}
           </div>
           ${prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">🔥 ${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : ''}
           ${prog.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : ''}
@@ -1010,6 +1019,7 @@ export class Menus {
               <button data-k="commentaryVoice"></button>
               <button data-k="quality"></button>
               <button data-k="camZoom"></button>
+              <button data-k="ballSkin"></button>
             </div>
           </div>
           <div class="set-pane ctl-pane" data-pane="controls" role="tabpanel">
@@ -1073,7 +1083,7 @@ export class Menus {
     drawControls();
     const labels: Record<string, string> = {
       sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', commentaryVoice: 'COMMENTARY VOICE', quality: 'GRAPHICS',
-      camZoom: 'CAMERA',
+      camZoom: 'CAMERA', ballSkin: 'BALL',
     };
     const canSpeak = speechAvailable();
     const draw = () => {
@@ -1083,6 +1093,14 @@ export class Menus {
         if (k === 'commentaryVoice' && !canSpeak) {
           b.disabled = true;
           b.innerHTML = `<span>${labels[k]}</span><b class="off na">N/A</b>`;
+          return;
+        }
+        if (k === 'ballSkin') {
+          // The ball look, and the next one still to earn (levels: see BALL_SKIN_LEVEL).
+          const lvl = levelOf(save.progress.xp).level;
+          const id = (s.ballSkin ?? 'classic') as BallSkinId;
+          const locked = BALL_SKIN_IDS.find((x) => !skinUnlocked(x, lvl));
+          b.innerHTML = `<span>${labels[k]}</span><b>${BALL_SKIN_NAMES[id].toUpperCase()}${locked ? `<small class="lock"> · 🔒 ${BALL_SKIN_NAMES[locked].toUpperCase()} LV${BALL_SKIN_LEVEL[locked]}</small>` : ''}</b>`;
           return;
         }
         const val = k === 'quality' ? String(v).toUpperCase() : k === 'camZoom' ? (s.camZoom ?? 'normal').toUpperCase() : v ? 'ON' : 'OFF';
@@ -1097,7 +1115,13 @@ export class Menus {
         if (k === 'quality') s.quality = s.quality === 'high' ? 'medium' : s.quality === 'medium' ? 'low' : 'high';
         // Camera distance: WIDE -> NORMAL -> CLOSE -> WIDE.
         else if (k === 'camZoom') s.camZoom = CAM_ZOOMS[(CAM_ZOOMS.indexOf(s.camZoom ?? 'normal') + 1) % CAM_ZOOMS.length];
-        else (s as unknown as Record<string, boolean>)[k] = !s[k];
+        else if (k === 'ballSkin') {
+          // Cycle through the looks this level has earned.
+          const lvl = levelOf(save.progress.xp).level;
+          const open = BALL_SKIN_IDS.filter((x) => skinUnlocked(x, lvl));
+          const cur = open.indexOf((s.ballSkin ?? 'classic') as BallSkinId);
+          s.ballSkin = open[(cur + 1) % open.length];
+        } else (s as unknown as Record<string, boolean>)[k] = !s[k];
         draw();
         onChange();
       }),

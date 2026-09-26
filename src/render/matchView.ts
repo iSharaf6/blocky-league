@@ -3,7 +3,7 @@ import { lerp, wrapAngle } from '../core/math';
 import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, PlayerDef, TeamDef } from '../sim/types';
-import { CHAR_H, Footballer, PSTATE, buildBallGeometry, charMaterial, screenCharK, setCharacterFill, setCharacterHemiFill, type PoseInput } from './characters';
+import { CHAR_H, Footballer, PSTATE, ballSkinOf, buildBallGeometry, charMaterial, screenCharK, setCharacterFill, setCharacterHemiFill, type PoseInput } from './characters';
 import { FLOODLIGHT_TOWERS } from './stadium';
 import { BoxBuilder } from './voxel';
 
@@ -788,6 +788,12 @@ export class MatchView {
   }
 
   /** Team rings under the outfield players: on for the broadcast shot, off for close-ups and replays. */
+
+  /** The ball's look (a progression unlock; an unknown id is the classic ball). Geometries are cached per skin. */
+  setBallSkin(id: string | undefined): void {
+    this.ball.geometry = buildBallGeometry(BALL_R * 1.25, ballSkinOf(id));
+  }
+
   setTeamRings(on: boolean): void {
     if (on === this.ringsOn) return;
     this.ringsOn = on;

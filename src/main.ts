@@ -8,8 +8,7 @@ import { sfx } from './audio/sfx';
 import { Input } from './core/input';
 import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
-  streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary,
-} from './core/save';
+  streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock, skinUnlocked, type BallSkinId } from './core/save';
 import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
@@ -46,6 +45,12 @@ function camZoom(): CamZoom {
 }
 
 /** Live camera-distance change (Settings opened from the pause menu). Optional: older sessions lack it. */
+/** The ball look to play with: the chosen one if this level has earned it, else the classic ball. */
+function equippedSkin(): string | undefined {
+  const id = save.settings.ballSkin as BallSkinId | undefined;
+  return id && skinUnlocked(id, levelOf(save.progress.xp).level) ? id : undefined;
+}
+
 function applyCamZoom(s: MatchSession | null): void {
   (s as { setCamZoom?: (z: CamZoom) => void } | null)?.setCamZoom?.(camZoom());
 }
@@ -148,6 +153,7 @@ function applySettings(): void {
     applyControls(session.match);
     session.hud?.setCommentary(s.commentary, s.commentaryVoice);
     applyCamZoom(session);
+    (session as { setBallSkin?: (id?: string) => void }).setBallSkin?.(equippedSkin());
   }
   persist();
 }
@@ -236,6 +242,7 @@ function mainInfo(): MainInfo {
   const p = save.progress;
   const lv = levelOf(p.xp);
   info.level = { level: lv.level, title: levelTitle(lv.level), into: lv.into, need: lv.need };
+  info.unlock = nextUnlock(save.progress.xp);
   const dayBefore = p.daily.day;
   const daily = dailyFor(p, localDay());
   if (daily.day !== dayBefore) persist();
@@ -368,6 +375,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     stadiumLevel: Math.max(0, Math.min(5, Math.round(req.stadiumLevel ?? 5))),
     tutorial: !save.seenTutorial,
     camZoom: camZoom(),
+    ballSkin: equippedSkin(),
   });
   applyControls(session.match);
   session.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
