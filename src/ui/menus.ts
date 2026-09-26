@@ -204,8 +204,8 @@ const HOWTO_KEYS = `
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
-      <p><kbd>SPACE</kbd> tap: pass to the mate you point at · hold: harder</p>
-      <p><kbd>L</kbd> tap: through ball · hold: lob / cross</p>
+      <p><kbd>SPACE</kbd> pass to the <b>ringed</b> mate: tap = instant · hold = harder</p>
+      <p><kbd>L</kbd> through ball: your runner goes · hold: lob / cross</p>
       <p><kbd>K</kbd> hold &amp; release to shoot · the keys aim while you charge</p>
       <p>Tap <kbd>K</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
       <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip · soft <kbd>K</kbd> on a diagonal: curler</p>
@@ -214,21 +214,21 @@ const HOWTO_KEYS = `
     <div class="ht-col">
       <h3>DEFEND</h3>
       <p><kbd>SPACE</kbd> switch player</p>
-      <p><kbd>K</kbd> slide tackle</p>
-      <p><kbd>L</kbd> hold to press the ball</p>
-      <p>Run into the dribbler to steal it</p>
+      <p><kbd>K</kbd> tap: tackle · hold: slide</p>
+      <p><kbd>L</kbd> hold to press: he stays goal-side and steals loose touches</p>
+      <p>Flick the stick sharply while dribbling to cut past a defender</p>
       <p><kbd>ESC</kbd> pause</p>
     </div>
   </div>
-  <p class="fine">Your player turns to face the man you pass to before he strikes it. First-time finish: press SHOOT just before the ball reaches you. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+  <p class="fine">The <b>ringed</b> team-mate is who a pass goes to: point the stick to pick another (arrows at the screen edge show mates out of shot). First-time finish: press SHOOT just before the ball reaches you. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
 
 const HOWTO_PAD = `
   <div class="howto">
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>LEFT STICK</kbd> move</p>
-      <p><kbd>A</kbd> tap: pass to the mate you point at · hold: harder</p>
-      <p><kbd>X</kbd> tap: through ball · hold: lob / cross</p>
+      <p><kbd>A</kbd> pass to the <b>ringed</b> mate: tap = instant · hold = harder</p>
+      <p><kbd>X</kbd> through ball: your runner goes · hold: lob / cross</p>
       <p><kbd>B</kbd> hold &amp; release to shoot · the stick aims while you charge</p>
       <p>Tap <kbd>B</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
       <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip · soft <kbd>B</kbd> on a diagonal: curler</p>
@@ -237,13 +237,13 @@ const HOWTO_PAD = `
     <div class="ht-col">
       <h3>DEFEND</h3>
       <p><kbd>A</kbd> switch player</p>
-      <p><kbd>B</kbd> slide tackle</p>
-      <p><kbd>X</kbd> hold to press the ball</p>
-      <p>Run into the dribbler to steal it</p>
+      <p><kbd>B</kbd> tap: tackle · hold: slide</p>
+      <p><kbd>X</kbd> hold to press: he stays goal-side and steals loose touches</p>
+      <p>Flick the stick sharply while dribbling to cut past a defender</p>
       <p><kbd>START</kbd> pause</p>
     </div>
   </div>
-  <p class="fine">Your player turns to face the man you pass to before he strikes it. First-time finish: press SHOOT just before the ball reaches you. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+  <p class="fine">The <b>ringed</b> team-mate is who a pass goes to: point the stick to pick another (arrows at the screen edge show mates out of shot). First-time finish: press SHOOT just before the ball reaches you. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
 
 /** One of the in-match touch buttons, drawn small (same colours, rim and base as the real ones). */
 const touchBtn = (cls: string, label: string) => `<i class="ht-tb ${cls}"><span>${label}</span></i>`;
@@ -262,15 +262,15 @@ const HOWTO_TOUCH = `
     <table class="ht-table">
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
-        <tr><td>${dot('pass')}</td><td><b>PASS</b> tap: to the mate you point at · hold: harder</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
-        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder · the stick aims</td><td><b>TACKLE</b> slide in</td></tr>
-        <tr><td>${dot('through')}</td><td><b>THROUGH</b> tap · hold for a lob or cross</td><td><b>PRESS</b> hold to close down</td></tr>
+        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed mate: tap = instant · hold = harder</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
+        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder · the stick aims</td><td><b>TACKLE</b> tap to tackle · hold to slide</td></tr>
+        <tr><td>${dot('through')}</td><td><b>THROUGH</b> your runner goes · hold: lob or cross</td><td><b>PRESS</b> hold: stay goal-side, steal loose touches</td></tr>
         <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold · double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>PERFECT FINISH</b> tap SHOOT again as the foot hits the ball (mistime it and it flies)</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT + tap THROUGH/CROSS · <b>CURL</b> a soft SHOOT with the stick on a diagonal</td></tr>
       </tbody>
     </table>
-    <p class="fine">Your player turns to face the man you pass to first. Set pieces: <b>PASS</b> short · <b>SHOOT</b> at goal · <b>CROSS</b> hold to whip it in. Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
+    <p class="fine">The <b>ringed</b> team-mate is who PASS goes to: point the stick to pick another (edge arrows show mates out of shot). Set pieces: <b>PASS</b> short · <b>SHOOT</b> at goal · <b>CROSS</b> hold to whip it in. Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
   </div>`;
 
 export class Menus {

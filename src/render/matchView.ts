@@ -58,6 +58,21 @@ const PASS_ARROW_SHORT = 1.1;
 const PASS_ARROW_MAX = 5.5;
 /** ...and turned this far (rad, about the raised arm) from facing the offender towards the lens side. */
 const CARD_TURN = -1.3;
+/**
+ * Pass-target preview (the human on the ball, not charging): who a PASS pressed now goes to stands on a calm
+ * white ring (teal inside; no pulse: the charge ring is the one that pulses) and his pip turns white and
+ * PREVIEW_PIP_K bigger; who a THROUGH ball goes to gets a fainter dashed ring out in the space ahead of him.
+ * A change of target cross-fades over PREVIEW_FADE_S (the old one out, the new one in: never a flicker).
+ */
+const PREVIEW_FADE_S = 0.1;
+const PREVIEW_PIP_K = 0.4;
+const PREVIEW_RING_IN = 0.42;
+const PREVIEW_RING_OUT = 0.6;
+const PREVIEW_EDGE_IN = 0.66;
+const PREVIEW_EDGE_OUT = 0.9;
+const THROUGH_R = 0.72;
+const THROUGH_DASHES = 10;
+const THROUGH_ALPHA = 0.75;
 
 /**
  * Ring / pip colours per side: `bright` (the human's team: the shirt colour, lifted and saturated so it glows
@@ -125,6 +140,17 @@ export class MatchView {
   private pipColor = new THREE.Color();
   /** The team-mate a charging pass is locked onto (his pip lights up white), -1 when none. */
   private passAimIdx = -1;
+  /**
+   * Pass-target preview (see PREVIEW_FADE_S): per player, how much of the PASS / THROUGH highlight he wears
+   * (0..1, eased), his rings (made the first time he is picked), and where the through ring stands ahead.
+   */
+  private previewW = new Float32Array(22);
+  private throughW = new Float32Array(22);
+  private previewRings: (THREE.Group | null)[] = new Array(22).fill(null);
+  private throughRings: (THREE.Mesh | null)[] = new Array(22).fill(null);
+  private throughAt = new Float32Array(44);
+  /** The human's team colours (ring / pip fill and its edge), for the HUD's off-screen arrows. */
+  readonly teamColor = { fill: 0xffffff, edge: 0x26262e };
   /** Power bar at the shooter's feet (over-the-shoulder set-piece lens) rather than over his head. */
   private powerLow = false;
   private powerAt = new THREE.Vector3();
@@ -150,6 +176,7 @@ export class MatchView {
   private up = new THREE.Vector3(0, 1, 0);
   private ballQuat = new THREE.Quaternion();
   private tmpC = new THREE.Color();
+  private white = new THREE.Color(PASS_WHITE);
   private tmpQ = new THREE.Quaternion();
   private axis = new THREE.Vector3();
   private pose: PoseInput = {
@@ -267,6 +294,8 @@ export class MatchView {
         this.group.add(im);
       }
       this.pipColor.copy(us.bright);
+      this.teamColor.fill = us.bright.getHex();
+      this.teamColor.edge = us.edge.getHex();
       for (let k = 0; k < 11; k++) {
         this.pipFill.setColorAt(k, us.bright);
         this.pipEdge.setColorAt(k, us.edge);
@@ -768,7 +797,8 @@ export class MatchView {
         const o = i * PF;
         // Shrinks away under a jump; gone for a player sent off (parked by his dugout) or faded out of a lens.
         const gone = i === active || f[o + 4] === SENT_OFF_CODE || this.players[i].opacity < 0.5;
-        const s = gone ? 0 : k * Math.max(0.5, 1 - f[o + 2] * 0.5);
+        // (The pass-preview ring takes over from his team ring as it fades in: one ring under him, never two.)
+        const s = gone ? 0 : k * Math.max(0.5, 1 - f[o + 2] * 0.5) * (1 - this.previewW[i]);
         this.m4.compose(this.v3.set(f[o], 0.03, f[o + 1]), this.q, this.s3.set(s, 1, s));
         mesh.setMatrixAt(n, this.m4);
       });
@@ -793,14 +823,15 @@ export class MatchView {
       const o = i * PF;
       const hide = i === active || f[o + 4] === SENT_OFF_CODE || this.players[i].opacity < 0.5;
       const aimed = i === this.passAimIdx && this.passing;
-      const s = hide ? 0 : k * (aimed ? 1.3 : 1);
-      this.m4.compose(this.v3.set(f[o], top + f[o + 2], f[o + 1]), cam.quaternion, this.s3.set(s, s, s));
+      // Lit white (and bigger) for the charging pass's lock-on, or as much as the pass preview has faded in.
+      const w = aimed ? 1 : this.previewW[i];
+      const s = hide ? 0 : k * (aimed ? 1.3 : 1 + PREVIEW_PIP_K * w);
+      this.m4.compose(this.v3.set(f[o], top + f[o + 2] + (aimed ? 0 : 0.12 * w * k), f[o + 1]), cam.quaternion, this.s3.set(s, s, s));
       fill.setMatrixAt(n, this.m4);
       edge.setMatrixAt(n, this.m4);
-      const want = aimed ? PASS_WHITE : -1;
       fill.getColorAt(n, this.tmpC);
       const cur = this.tmpC.getHex();
-      const next = want >= 0 ? want : this.pipColor.getHex();
+      const next = w <= 0 ? this.pipColor.getHex() : w >= 1 ? PASS_WHITE : this.tmpC.copy(this.pipColor).lerp(this.white, w).getHex();
       if (cur !== next) {
         fill.setColorAt(n, this.tmpC.setHex(next));
         dirty = true;
@@ -969,6 +1000,102 @@ export class MatchView {
     const shaft = Math.max(0.05, len - 1.05);
     this.passShaft.scale.set(shaft, 1, 1);
     this.passHead.position.x = shaft;
+  }
+
+  /**
+   * Pass-target preview, every frame while it may show (see PREVIEW_FADE_S): `pass` / `through` are who a
+   * PASS / THROUGH pressed now would go to (-1: nobody; the highlight fades off), `ax, az` where the through
+   * ball's dashed ring stands (the space ahead of that runner). `snap`: gone at once (the charge visuals take
+   * over, or the shot has cut away).
+   */
+  setPassPreview(pass: number, through: number, ax: number, az: number, dt: number, snap = false): void {
+    const f = this.frame;
+    const rate = dt / PREVIEW_FADE_S;
+    const k = this.charK;
+    for (const i of this.pipIdx) {
+      const o = i * PF;
+      const gone = f[o + 4] === SENT_OFF_CODE;
+      // Pass: the calm ring at his feet.
+      const wp = snap || gone ? 0 : clamp01(this.previewW[i] + clamp01(i === pass ? 1 : 0) * rate * 2 - rate);
+      this.previewW[i] = wp;
+      let ring = this.previewRings[i];
+      if (wp > 0.004 && !ring) ring = this.previewRings[i] = this.makePreviewRing();
+      if (ring) {
+        ring.visible = wp > 0.004;
+        if (ring.visible) {
+          ring.position.set(f[o], 0.05, f[o + 1]);
+          // (Grows in a touch as it fades in: the eye catches the new target.)
+          ring.scale.setScalar(k * (0.86 + 0.14 * wp));
+          const [edge, fill] = ring.children as THREE.Mesh[];
+          (edge.material as THREE.MeshBasicMaterial).opacity = 0.95 * wp;
+          (fill.material as THREE.MeshBasicMaterial).opacity = 0.9 * wp;
+        }
+      }
+      // Through: the dashed ring out ahead of him (eased after the runner; placed at once as it appears).
+      const wt = snap || gone ? 0 : clamp01(this.throughW[i] + (i === through ? 1 : 0) * rate * 2 - rate);
+      if (i === through && this.throughW[i] <= 0.004) {
+        this.throughAt[i * 2] = ax;
+        this.throughAt[i * 2 + 1] = az;
+      } else if (i === through && dt > 0) {
+        const e = Math.min(1, dt * 12);
+        this.throughAt[i * 2] += (ax - this.throughAt[i * 2]) * e;
+        this.throughAt[i * 2 + 1] += (az - this.throughAt[i * 2 + 1]) * e;
+      }
+      this.throughW[i] = wt;
+      let tr = this.throughRings[i];
+      if (wt > 0.004 && !tr) tr = this.throughRings[i] = this.makeThroughRing();
+      if (tr) {
+        tr.visible = wt > 0.004;
+        if (tr.visible) {
+          tr.position.set(this.throughAt[i * 2], 0.05, this.throughAt[i * 2 + 1]);
+          tr.scale.setScalar(k * (0.8 + 0.2 * wt));
+          (tr.material as THREE.MeshBasicMaterial).opacity = THROUGH_ALPHA * wt;
+        }
+      }
+    }
+  }
+
+  /** How much of the PASS preview highlight player `i` wears right now (0..1; the HUD's edge arrows match it). */
+  previewWeight(i: number): number {
+    return i >= 0 && i < 22 ? this.previewW[i] : 0;
+  }
+
+  /** ...and of the THROUGH preview. */
+  throughWeight(i: number): number {
+    return i >= 0 && i < 22 ? this.throughW[i] : 0;
+  }
+
+  private makePreviewRing(): THREE.Group {
+    const mat = (color: number) =>
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false });
+    const g = new THREE.Group();
+    const edge = new THREE.Mesh(new THREE.RingGeometry(PREVIEW_EDGE_IN, PREVIEW_EDGE_OUT, 32).rotateX(-Math.PI / 2), mat(PASS_WHITE));
+    const fill = new THREE.Mesh(new THREE.RingGeometry(PREVIEW_RING_IN, PREVIEW_RING_OUT, 32).rotateX(-Math.PI / 2), mat(PASS_TEAL));
+    edge.renderOrder = 8;
+    fill.renderOrder = 8;
+    g.add(edge, fill);
+    g.visible = false;
+    this.group.add(g);
+    return g;
+  }
+
+  private makeThroughRing(): THREE.Mesh {
+    // THROUGH_DASHES short arcs round a circle: a "space here" marker, lighter than the pass ring.
+    const b = new BoxBuilder();
+    const len = ((Math.PI * 2 * THROUGH_R) / THROUGH_DASHES) * 0.55;
+    for (let d = 0; d < THROUGH_DASHES; d++) {
+      const a = (d / THROUGH_DASHES) * Math.PI * 2;
+      // (Each dash along the circle's tangent there.)
+      b.box(Math.cos(a) * THROUGH_R, 0, Math.sin(a) * THROUGH_R, len, 0.02, 0.12, PASS_LIGHT, { rotY: -(a + Math.PI / 2) });
+    }
+    const m = new THREE.Mesh(
+      b.build(),
+      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false }),
+    );
+    m.renderOrder = 8;
+    m.visible = false;
+    this.group.add(m);
+    return m;
   }
 
   faceCamera(cam: THREE.Camera): void {

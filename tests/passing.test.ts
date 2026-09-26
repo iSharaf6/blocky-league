@@ -85,7 +85,7 @@ describe('human pass assistance', () => {
     expect(ok / n).toBeGreaterThanOrEqual(0.9);
   }, 60_000);
 
-  it('the body turns to the man before the strike: a pass 120 degrees off his facing is struck square (within 20)', () => {
+  it('the body turns to the man at once: a pass 120 degrees off his facing is struck within 35 degrees of it (the outside of the foot), promptly', () => {
     const offs: number[] = [];
     const delays: number[] = [];
     for (let seed = 1; seed <= 12; seed++) {
@@ -112,19 +112,23 @@ describe('human pass assistance', () => {
         expect(k).not.toBeNull();
         expect(k!.e.type === 'kick' && k!.e.kind).toBe('pass');
         expect(m.passTarget).toBe(mate.idx);
-        // While it's held: locked onto him, the bar filling.
+        // While it's held: locked onto him; the bar (above the ideal weight) only fills past the 0.3 s tap window.
         expect(aim).toBe(mate.idx);
-        if (hold) expect(charge).toBeGreaterThan(0.35);
+        if (hold) {
+          expect(charge).toBeGreaterThan(0.1);
+          expect(charge).toBeLessThan(0.3);
+        } else expect(charge).toBe(0);
         offs.push(Math.abs(angleDiff(k!.facing, k!.dir)));
         delays.push((k!.i + 1 - frames) * DT);
       }
     }
     const worst = Math.max(...offs);
     // eslint-disable-next-line no-console
-    console.log(`120-degree pass: body ${deg(worst).toFixed(1)} deg off the line at worst at the strike; strike ${Math.max(...delays).toFixed(2)} s after release at worst`);
-    expect(worst).toBeLessThan((20 * Math.PI) / 180);
-    // It still goes promptly (the old strike came 0.11 s after the press).
-    expect(Math.max(...delays)).toBeLessThanOrEqual(0.3);
+    console.log(`120-degree pass: body ${deg(worst).toFixed(1)} deg off the line at worst at the strike; strike ${Math.max(...delays).toFixed(3)} s after release at worst`);
+    // (A flick is struck the next frame, the body a stride short of square: the outside of the foot. Round 8
+    // waited for him to square up, and the strike came 0.12-0.23 s after the release.)
+    expect(worst).toBeLessThan((35 * Math.PI) / 180);
+    expect(Math.max(...delays)).toBeLessThanOrEqual(0.07 + DT + 1e-9);
   }, 60_000);
 
   it('manual: the ball goes along the stick, not to the man 20 degrees off it (assisted: to him)', () => {

@@ -394,11 +394,13 @@ let last = performance.now();
 function frame(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  // (Our own work this frame, for the dynamic resolution: a CPU-bound hitch is no reason to drop pixels.)
+  const t0 = performance.now();
   canvasRect = canvas.getBoundingClientRect();
   (session ?? demo)?.update(dt);
   syncControlsUi(session);
   world.render();
-  world.adapt(dt);
+  world.adapt(dt, (performance.now() - t0) / 1000);
   requestAnimationFrame(frame);
 }
 

@@ -1,12 +1,16 @@
 import { angleDiff, clamp, dist2, pointSegDist, turnToward } from '../core/math';
 import { Rng } from '../core/rng';
-import { CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, onTarget, passAimPoint, pickReceiver, resolveKick, stickCurl } from './actions';
+import {
+  assistLevel, crossAim, crossTarget, CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, humanThroughTarget, isCrossPosition, onTarget, passAimPoint,
+  pickReceiver, resolveKick, shotQuality, stickCurl,
+} from './actions';
 import { assistRun, intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { headerAtGoal, reaimShot, WILD_LIFT, type Launch } from './actions';
 import { Ball, groundPassSpeed, type BallHit } from './ball';
 import {
-  AssistState, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAP, PRESS_LEAD, pressSteal,
-  standingFoulChance, standingTackleChance, STAND_REACH, tackleClosing, vsHuman,
+  AssistState, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAIN, PRESS_GAP, PRESS_LEAD, pressSteal,
+  standingFoulChance, standingTackleChance, STAND_REACH, tackleClosing, vsHuman, HUMAN_SLIDE_BOOST, HUMAN_SLIDE_MIN,
+  HUMAN_SLIDE_REACH, HUMAN_SLIDE_T, humanSlideFoul,
 } from './dribble';
 import {
   AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
@@ -116,6 +120,8 @@ export function isDigitalStick(mx: number, mz: number, ref = 0): boolean {
   return off45(a) < 2 || off45(a - ref) < 6;
 }
 
+/** A won assisted standing tackle (the human's) comes away with the ball this often (plus his defending x 0.3). */
+const ASSISTED_CLEAN = 0.65;
 /** Chance a contested header ends in a foul by the player who lost it. */
 const AERIAL_FOUL = 0.21;
 /** A shot passing this close (m) to an outfield body is usually blocked. */
@@ -180,32 +186,76 @@ const SHOOT_CHARGE_MOVE = 0.6;
  */
 export const SHOOT_FULL_T = 0.5;
 export const SHOOT_BAR = 0.85;
-/** The human's assisted receive sprints onto a pass whose meeting point is further than this (m). */
-const RECEIVE_SPRINT = 2.5;
 /**
- * A human pass (PASS with the ball at his feet): held, it charges over PASS_CHARGE_T s (passCharge 0..1);
- * let go sooner than PASS_TAP s and it's a tap, at the pace the assist judges.
+ * The human's assisted receive runs flat out onto a ground pass (at a sprint when the meeting point is further
+ * than RECEIVE_SPRINT m, or an opponent is within RECEIVE_MARKED m of it): he steps to the ball, off his man.
+ * (A ball in the air he attacks as before: a sprint from 2.5 m.)
  */
-const PASS_CHARGE_T = 0.9;
-const PASS_TAP = 0.12;
-/** THROUGH held at least this long (s) is a lofted ball, not a through ball; its charge fills over LOB_CHARGE_T s. */
-const THROUGH_LOB_HOLD = 0.24;
+const RECEIVE_SPRINT = 1.2;
+const RECEIVE_MARKED = 3.5;
+/**
+ * The human's own pass is met cleanly by the man it's for: its first touch is judged as if it came in no faster
+ * than this (m/s, relative to him): the arcade zip of humanGroundSpeed doesn't bounce off his shins.
+ */
+const HUMAN_PASS_TRAP = 17;
+/**
+ * A human pass (PASS / THROUGH with the ball at his feet: humanPass). The man it's for is locked at the PRESS
+ * (the one the preview highlights: passPreview / throughPreview) and his body starts turning to him at once.
+ * Let go within PASS_TAP_MAX s, however long the tap, it's played at the ideal pace for the assist level (never
+ * weaker); held longer it charges ABOVE that (passCharge 0..1 over PASS_OVER_T s more: the bar starts at the
+ * ideal weight and goes up).
+ */
+const PASS_TAP_MAX = 0.3;
+const PASS_OVER_T = 0.6;
+/**
+ * Let go within PASS_FLICK s: the ultra-quick pass, struck on the very next frame (HUMAN_FLICK_WINDUP), unless
+ * his body is still more than FLICK_SQUARE rad off the line (then it's the usual HUMAN_PASS_WINDUP, turning).
+ */
+const PASS_FLICK = 0.08;
+const FLICK_SQUARE = 0.6;
+/**
+ * The boot meets a human pass HUMAN_PASS_WINDUP s after the kick is ordered on the release (an AI kick winds
+ * up for KICK_WINDUP, 0.11 s), a flick HUMAN_FLICK_WINDUP s after.
+ */
+const HUMAN_PASS_WINDUP = 0.045;
+const HUMAN_FLICK_WINDUP = 0.015;
+/**
+ * THROUGH held at least this long (s) is a lofted ball (from wide in the final third, a cross onto a box
+ * runner), not a through ball; its charge fills over LOB_CHARGE_T s.
+ */
+const THROUGH_LOB_HOLD = PASS_TAP_MAX;
 const LOB_CHARGE_T = 0.8;
-/** How much of the stick still moves him while he charges a pass and turns his body to it. */
+/** How much of the stick still moves him through a tap, and while he charges it beyond. */
+const PASS_TAP_MOVE = 0.85;
 const PASS_CHARGE_MOVE = 0.5;
-/** The passer's body turn towards the pass line (rad/s) standing still, and the share of it lost at a sprint. */
-const PASS_TURN = 14;
-const PASS_TURN_SPRINT_LOSS = 0.55;
+/** The passer's body turn towards the pass line (rad/s) standing still, by the ball's assist level, and the share lost at a sprint. */
+const PASS_TURN: Record<AssistLevel, number> = { assisted: 24, semi: 20, manual: 14 };
+const PASS_TURN_SPRINT_LOSS = 0.35;
 /**
- * Let go with his body still more than PASS_SQUARE_MAX (rad) off the line and the kick waits for the turn
- * (at most PASS_TURN_WAIT s) rather than going out of the side of his foot; he keeps turning through the
- * wind-up, so he's square to it at the strike.
+ * Let go with his body within PASS_OUTSIDE (rad, by the ball's assist level) of the line and it's struck at
+ * once, with the side or outside of the foot ('assisted': the error margin reads his body at contact, after
+ * the wind-up's turn); further round the kick waits (at most PASS_TURN_WAIT s) for the turn.
  */
-const PASS_SQUARE_MAX = Math.PI / 4;
-const PASS_TURN_WAIT = 0.15;
-/** While charging, the lock-on is picked again when the stick swings this far (rad), or every PASS_REPICK s. */
-const PASS_REPICK_ANGLE = 0.12;
-const PASS_REPICK = 0.25;
+const PASS_OUTSIDE: Record<AssistLevel, number> = { assisted: (100 * Math.PI) / 180, semi: (70 * Math.PI) / 180, manual: Math.PI / 4 };
+const PASS_TURN_WAIT = 0.1;
+/** The man locked on at the press stays locked while the button is held unless the stick swings more than this (rad) off its line then. */
+const PASS_RELOCK = 0.5;
+/**
+ * The preview (passPreview / throughPreview) sticks with its man (actions.PREVIEW_STICKY) until the stick turns
+ * PREVIEW_TURN rad from where it was when he was picked; it's picked again every PREVIEW_EVERY s.
+ */
+const PREVIEW_TURN = 0.35;
+const PREVIEW_EVERY = 0.1;
+/** A man called (by the PASS / THROUGH press locked onto him) makes his move for up to this long (s) before the ball comes. */
+const CALL_T = 1.2;
+/**
+ * The human's man auto-volleys (no button) a cross dropping at his feet within AUTO_VOLLEY_D m, below
+ * AUTO_VOLLEY_Y m, with a sight of goal (shotQuality over AUTO_VOLLEY_Q) from inside AUTO_VOLLEY_GOAL m.
+ */
+const AUTO_VOLLEY_D = 1.6;
+const AUTO_VOLLEY_Y = 1.0;
+const AUTO_VOLLEY_Q = 0.22;
+const AUTO_VOLLEY_GOAL = 16;
 /** PASS pressed while a pass is on its way to him is a first-time ball when it arrives (a one-two), for up to this long (s). */
 const PASS_BUFFER = 1.5;
 /**
@@ -246,8 +296,12 @@ interface PassCharge {
   /** The man it's locked onto (-1: none). */
   target: number;
   mode: 'pass' | 'through' | 'lob';
-  pickT: number;
-  pickA: number;
+  /** The aim's line (world angle) when he was locked on. */
+  lockA: number;
+  /** A lofted ball from wide in the final third: a cross onto a box runner (actions.crossTarget / crossAim). */
+  cross: boolean;
+  /** A THROUGH with nobody to run onto it, played to the open man's feet instead (actions.humanThroughTarget). */
+  feet: boolean;
   /** The pass line (world angle) his body turns to. */
   line: number;
   /** The kick has been ordered: he's winding up. */
@@ -505,6 +559,23 @@ export class Match {
   passCharge = -1;
   /** The teammate the charging pass is locked onto, -1 when none (render marks him). */
   passAim = -1;
+  /**
+   * While the human has the ball (not charging): who a PASS / THROUGH pressed right now would go to, -1 when
+   * nobody. Updated every step from the stick so the render can highlight the receiver before the press.
+   */
+  passPreview = -1;
+  throughPreview = -1;
+  /**
+   * The teammate a PASS / THROUGH press has just locked onto (-1: none): he makes his move before the ball
+   * comes (ai.ts: checks towards the ball for a pass, starts his sprint in behind for a through ball).
+   */
+  calledRun = -1;
+  calledMode: 'pass' | 'through' | 'lob' | null = null;
+  private calledT = 0;
+  /** Preview hysteresis: whose preview it is, the aim's line when it was picked, the men shown, its age (s). */
+  private readonly pv = { carrier: -1, a: 0, pass: -1, through: -1, feet: false, t: 0 };
+  /** kickId of the human's last pass / through ball (its receiver's first touch: HUMAN_PASS_TRAP). */
+  private humanPassKick = -1;
   /**
    * What the charging ball is while PASS / THROUGH is held (and until it's struck): a pass, a through ball
    * (THROUGH tapped) or a lofted one (THROUGH held THROUGH_LOB_HOLD s or more); null otherwise.
@@ -789,6 +860,12 @@ export class Match {
     return best;
   }
 
+  /** Is an opponent of `side` (on the pitch) within `r` m of (x, z)? */
+  private oppWithin(side: Side, x: number, z: number, r: number): boolean {
+    for (const o of this.bySide[otherSide(side)]) if (!o.sentOff && dist2(o.pos.x, o.pos.z, x, z) < r) return true;
+    return false;
+  }
+
   /**
    * Bring on bench player `benchIdx` for the player in `slot`. Fresh legs, same slot and role;
    * the replaced player takes no further part. Returns false if not allowed.
@@ -1010,6 +1087,7 @@ export class Match {
       this.checkBounds();
       if (this.phase === 'play') this.updateAdvantage(dt);
       this.autoSwitchUpdate(dt);
+      this.freshPreview();
     } else if (this.phase === 'out') {
       // A late change that's due (a side still without one past FORCED_SUB_MINUTE, or a window that opened
       // while the ball was already dead) is made while the ball is out, not held over to the next stoppage.
@@ -1397,6 +1475,8 @@ export class Match {
       this.passTarget = L.target;
       this.passT = 0;
       if (L.target >= 0) this.stats.passes[p.side]++;
+      // (The human's own ball: its receiver's first touch is kind to it, HUMAN_PASS_TRAP.)
+      if (this.isHumanControlled(p)) this.humanPassKick = this.kickId;
     }
     // Offside is judged the moment a pass is played (never from a throw-in, corner or goal kick).
     this.offWatch = null;
@@ -1568,6 +1648,11 @@ export class Match {
     }
     // A pass being charged doesn't outlive open play.
     if (this.hp && this.phase !== 'play') this.endPass();
+    // The pass preview is set again below while his man has it at his feet (updatePreview); a called run
+    // lasts until the ball comes (or CALL_T).
+    this.passPreview = this.throughPreview = -1;
+    this.calledT += dt;
+    if (this.calledRun >= 0 && (this.calledT > CALL_T || this.phase !== 'play')) this.calledRun = -1;
 
     // Set pieces we're taking.
     if ((this.phase === 'kickoff' || this.phase === 'restart') && this.restart && this.restart.side === side) {
@@ -1597,6 +1682,7 @@ export class Match {
       const useStick = stickLen > 0.3 && !rotating;
       const dx = useStick ? pad.mx : Math.cos(t.facing);
       const dz = useStick ? pad.mz : Math.sin(t.facing);
+      this.restartPreview(t, kind, pad, stickLen, dx, dz);
       // A free kick is struck where the aim arrow (the taker's facing) meets the goal line; left on
       // the default aim, he picks the side the keeper leaves open himself.
       const fkShot = (pw: number) => {
@@ -1682,6 +1768,9 @@ export class Match {
       if (this.hp) this.endPass();
       const dx = stickLen > 0.3 ? pad.mx : this.attackDir(side);
       const dz = stickLen > 0.3 ? pad.mz : 0;
+      // (Who his roll-out, PASS, or his kick, THROUGH / SHOOT, would find: keeperDistribute's pick.)
+      this.passPreview = pickReceiver(this, k, dx, dz, 'pass');
+      this.throughPreview = pickReceiver(this, k, dx, dz, 'lob');
       if (k.stateT > 0.4) {
         if (passP) this.keeperDistribute(k, dx, dz, false);
         else if (throughP || shootP) this.keeperDistribute(k, dx, dz, true);
@@ -1724,7 +1813,9 @@ export class Match {
     const chipTap = throughP && pad.shoot && this.prev.shoot;
     if (chipTap) this.chipArmed = true;
     if (hasBall && b.owner === p.idx) {
-      // PASS / THROUGH: charged, with his body turned to the man it's for first (see humanPass).
+      // Who a PASS / THROUGH now would go to (the render highlights him), then the pass itself: locked onto
+      // that man at the press, his body turned to him (see humanPass).
+      if (!this.hp) this.updatePreview(p, pad, stickLen, dt);
       if (this.humanPass(p, pad, stickLen, passP, throughP, shootP, dt)) {
         // (The charge, the wait for his turn, or the wind-up: that's this frame.)
       } else if (chipTap) {
@@ -1756,6 +1847,7 @@ export class Match {
       }
     } else {
       if (this.hp) this.endPass(); // (lost it mid-charge, or it's away)
+      this.pv.carrier = -1;
       const d = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
       const loose = b.owner < 0 && !b.held;
       const opp = b.owner >= 0 && this.players[b.owner].side !== side;
@@ -1778,7 +1870,8 @@ export class Match {
       // Move assist: the run the AI had him making, just after a switch or with the stick left alone.
       this.moveAssistRun(p, pad, stickLen);
       // Hold "press" to have your player close the carrier down automatically: goal-side of the ball, reading
-      // his run, facing it; an exposed touch is poked away (pressSteal).
+      // his run and mirroring it (his velocity, plus PRESS_GAIN of the gap to the spot every second), facing it;
+      // an exposed touch is poked away (pressSteal).
       if (pad.through && opp && stickLen < 0.3) {
         const c = this.players[b.owner];
         const gx = -this.attackDir(side) * HALF_L;
@@ -1787,46 +1880,86 @@ export class Match {
         const ul = Math.hypot(ux, uz) || 1;
         const tx = b.pos.x + c.vel.x * PRESS_LEAD + (ux / ul) * PRESS_GAP - p.pos.x;
         const tz = b.pos.z + c.vel.z * PRESS_LEAD + (uz / ul) * PRESS_GAP - p.pos.z;
-        const tl = Math.hypot(tx, tz) || 1;
-        const f = Math.min(1, tl / 0.6);
-        p.wantX = (tx / tl) * f;
-        p.wantZ = (tz / tl) * f;
-        p.sprint = tl > 2;
+        const vx = c.vel.x + tx * PRESS_GAIN;
+        const vz = c.vel.z + tz * PRESS_GAIN;
+        p.sprint = Math.hypot(vx, vz) > p.jogPace() * 0.95;
+        const max = p.sprint ? p.sprintPace() : p.jogPace();
+        p.wantX = vx / max;
+        p.wantZ = vz / max;
         if (d < 3.5) p.faceTarget = Math.atan2(b.pos.z - p.pos.z, b.pos.x - p.pos.x);
         pressSteal(this, p, c);
       }
       // TACKLE (SHOOT) while they have it: tap for a standing tackle (closing first from further off), hold or
       // double-tap for a slide (dribble.ts).
       humanTackle(this, p, pad, shootP, stickLen, dt);
-      // Assisted receive: if a pass is on its way to you and you're not steering, go meet it (at a
-      // sprint when it's a few metres off: an AI man racing for it would). Still holding the stick the
-      // way it was when control came to him (he just played the pass along it) isn't steering, and
-      // nor, just after the switch, is a stick roughly along the run to it.
+      // Assisted receive: if a pass is on its way to you and you're not steering, go meet it: straight onto
+      // its line, flat out (a sprint when it's more than a stride off, or when a man is near where he meets
+      // it), so a marker on his back doesn't get there first. Still holding the stick the way it was when
+      // control came to him (he just played the pass along it) isn't steering, and nor, just after the
+      // switch, is a stick roughly along the run to it.
       if (this.passTarget === p.idx && this.receiveAssisted(p, pad, stickLen)) {
         const i = intercept(this, p);
         const tx = i.x - p.pos.x;
         const tz = i.z - p.pos.z;
         const tl = Math.hypot(tx, tz);
+        // (A ball in the air, a cross or a corner, he attacks as he always did: his aerial duels are as they were.)
+        const ground = this.kickKind === 'pass' || this.kickKind === 'through';
         if (tl > 0.3) {
-          p.wantX = (tx / tl) * Math.min(1, tl / 2);
-          p.wantZ = (tz / tl) * Math.min(1, tl / 2);
-          if (tl > RECEIVE_SPRINT) p.sprint = true;
+          const ease = ground ? 0.8 : 2;
+          p.wantX = (tx / tl) * Math.min(1, tl / ease);
+          p.wantZ = (tz / tl) * Math.min(1, tl / ease);
+          if (ground ? tl > RECEIVE_SPRINT || this.oppWithin(p.side, i.x, i.z, RECEIVE_MARKED) : tl > 2.5) p.sprint = true;
+        }
+        // Square to a ball coming at him as he meets it (not one he's running onto).
+        if (ground && tl < 1.5 && b.vel.x * (p.pos.x - b.pos.x) + b.vel.z * (p.pos.z - b.pos.z) > 0) {
+          p.faceTarget = Math.atan2(b.pos.z - p.pos.z, b.pos.x - p.pos.x);
         }
       }
     }
   }
 
   /**
-   * PASS / THROUGH with the ball at the human's feet (open play). Pressing starts a charge (passCharge rises
-   * 0..1 over PASS_CHARGE_T s for PASS; THROUGH's bar is its hold time, see THROUGH_LOB_HOLD). While the
-   * button is held the stick picks the man it's locked onto (passAim, picked again as the stick swings) and
-   * he turns his body to him (PASS_TURN, slower at speed), slowed to PASS_CHARGE_MOVE of his pace. Let go and
-   * it's played to that man: a tap (under PASS_TAP s) at the pace the assist judges, a longer PASS hold at
-   * the charged pace (nudged by the assist level, see actions.assistPace), a THROUGH hold as a lofted ball
-   * whose charge is its carry. Let go with his body still more than PASS_SQUARE_MAX off the line and the kick
-   * waits (at most PASS_TURN_WAIT s) for the turn; through the wind-up he keeps turning to it. A PASS pressed
-   * while a pass was on its way to him (passBuffer) starts one as he takes it. True while the pass owns the
-   * frame (the charge, the wait, the wind-up).
+   * Who a PASS / THROUGH pressed now would go to (passPreview / throughPreview: the render highlights him): the
+   * assist's pick along the stick (his facing with it left alone), sticking with the man it showed last
+   * (actions.PREVIEW_STICKY: another has to be clearly better) until the stick turns PREVIEW_TURN from where it
+   * pointed when he was picked. Picked again every PREVIEW_EVERY s, and at once when the stick turns. -1 on
+   * 'manual', or with nobody that way.
+   */
+  private updatePreview(p: Player, pad: Pad, stickLen: number, dt: number): void {
+    const pv = this.pv;
+    const dx = stickLen > 0.25 ? pad.mx / stickLen : Math.cos(p.facing);
+    const dz = stickLen > 0.25 ? pad.mz / stickLen : Math.sin(p.facing);
+    const a = Math.atan2(dz, dx);
+    const fresh = pv.carrier !== p.idx || Math.abs(angleDiff(pv.a, a)) > PREVIEW_TURN;
+    pv.t += dt;
+    if (fresh || pv.t >= PREVIEW_EVERY) {
+      const pass = pickReceiver(this, p, dx, dz, 'pass', fresh ? -1 : pv.pass);
+      const through = humanThroughTarget(this, p, dx, dz, fresh ? -1 : pv.through);
+      if (fresh || pass !== pv.pass || through.idx !== pv.through) pv.a = a;
+      pv.carrier = p.idx;
+      pv.pass = pass;
+      pv.through = through.idx;
+      pv.feet = through.feet;
+      pv.t = 0;
+    }
+    this.passPreview = pv.pass;
+    this.throughPreview = pv.through;
+  }
+
+  /**
+   * PASS / THROUGH with the ball at the human's feet (open play). The PRESS locks the man it's for (the one the
+   * preview shows: passPreview / throughPreview), calls his move (calledRun: he checks towards the ball for a
+   * pass, starts his sprint in behind for a through ball) and starts the passer's body turning to him
+   * (PASS_TURN, a little slower at a sprint). The lock holds while the button is held unless the stick swings
+   * more than PASS_RELOCK off its line; a THROUGH held THROUGH_LOB_HOLD s or more is a lofted ball instead (from
+   * wide in the final third a cross, locked onto the best box runner: actions.crossTarget, dropped where he'll
+   * meet it: crossAim). Let go, it's played to that man: within PASS_TAP_MAX s at the ideal pace (never weaker),
+   * a longer PASS hold above it (passCharge 0..1 over PASS_OVER_T s more: actions.overhitPace), a lofted ball
+   * with its charge as the carry. It's struck at once (HUMAN_PASS_WINDUP after the release; a flick let go
+   * inside PASS_FLICK s, HUMAN_FLICK_WINDUP) with his body anywhere within PASS_OUTSIDE of the line (the side or
+   * outside of the foot); further round, it waits at most PASS_TURN_WAIT s for the turn. A PASS pressed while a
+   * pass was on its way to him (passBuffer) starts one as he takes it. True while the pass owns the frame (the
+   * hold, the wait, the wind-up).
    */
   private humanPass(
     p: Player, pad: Pad, stickLen: number, passP: boolean, throughP: boolean, shootP: boolean, dt: number,
@@ -1841,16 +1974,24 @@ export class Match {
       this.passBuffer = 0;
       if (!btn || p.state !== 'move') return false;
       const l = stickLen > 0.25 ? stickLen : 0;
+      const dirX = l ? pad.mx / l : Math.cos(p.facing);
+      const dirZ = l ? pad.mz / l : Math.sin(p.facing);
+      // Locked at the press: the man the preview shows, picked again from this frame's positions with him
+      // preferred (so it's him unless someone just stepped into his lane: then the man the preview was about to
+      // move to).
+      const shown = btn === 'pass' ? this.passPreview : this.throughPreview;
+      const pick = btn === 'pass' ? { idx: pickReceiver(this, p, dirX, dirZ, btn, shown), feet: false } : humanThroughTarget(this, p, dirX, dirZ, shown);
+      const target = pick.idx;
       hp = this.hp = {
-        btn, player: p.idx, t: 0,
-        dirX: l ? pad.mx / l : Math.cos(p.facing), dirZ: l ? pad.mz / l : Math.sin(p.facing),
-        released: false, wait: 0, target: -1, mode: btn, pickT: Infinity, pickA: 0, line: p.facing, ordered: false, relSpeed: 0,
+        btn, player: p.idx, t: 0, dirX, dirZ, released: false, wait: 0, target, mode: btn,
+        lockA: Math.atan2(dirZ, dirX), cross: false, feet: pick.feet, line: p.facing, ordered: false, relSpeed: 0,
       };
+      this.callRun(target, pick.feet ? 'pass' : btn);
     }
     if (hp.ordered) {
       // Winding up: his body keeps coming round to the line.
       if (p.order && p.state === 'kick') {
-        p.facing = turnToward(p.facing, hp.line, this.passTurnRate(p) * dt);
+        p.facing = turnToward(p.facing, hp.line, this.passTurnRate(p, hp.mode) * dt);
         return true;
       }
       this.endPass();
@@ -1875,35 +2016,57 @@ export class Match {
       }
     } else hp.wait += dt;
     const mode = hp.btn === 'pass' ? 'pass' : hp.t < THROUGH_LOB_HOLD ? 'through' : 'lob';
-    // The lock-on follows the stick while it's held (and on the frame it's let go).
-    hp.pickT += dt;
+    // The man locked on at the press stays locked, unless the stick swings well off its line while it's held
+    // (or a THROUGH held on turns into a lofted ball: from wide in the final third, a cross).
     const a = Math.atan2(hp.dirZ, hp.dirX);
-    if ((!hp.released || letGo) && (mode !== hp.mode || hp.pickT >= PASS_REPICK || Math.abs(angleDiff(hp.pickA, a)) > PASS_REPICK_ANGLE)) {
-      hp.target = pickReceiver(this, p, hp.dirX, hp.dirZ, mode);
+    const swung = (!hp.released || letGo) && Math.abs(angleDiff(hp.lockA, a)) > PASS_RELOCK;
+    if (mode !== hp.mode || swung) {
+      const keep = swung ? -1 : hp.target;
+      hp.cross = mode === 'lob' && this.throughAssist !== 'manual' && isCrossPosition(this, p);
+      hp.feet = false;
+      let t = hp.cross ? crossTarget(this, p, hp.dirX, hp.dirZ, keep) : -1;
+      if (t < 0 && mode === 'through') {
+        const pk = humanThroughTarget(this, p, hp.dirX, hp.dirZ, keep);
+        t = pk.idx;
+        hp.feet = pk.feet;
+        hp.cross = false;
+      } else if (t < 0) {
+        hp.cross = false;
+        t = pickReceiver(this, p, hp.dirX, hp.dirZ, mode, keep);
+      }
+      hp.target = t;
       hp.mode = mode;
-      hp.pickT = 0;
-      hp.pickA = a;
+      hp.lockA = a;
+      this.callRun(t, hp.feet ? 'pass' : mode);
     }
     const b = this.ball.pos;
-    const pt = passAimPoint(this, p, hp.target, mode, hp.dirX, hp.dirZ);
+    const aim = hp.cross && hp.target >= 0 ? crossAim(this, p, this.players[hp.target]) : null;
+    const pt = aim ?? passAimPoint(this, p, hp.target, hp.feet ? 'pass' : mode, hp.dirX, hp.dirZ);
     hp.line = Math.atan2(pt.z - b.z, pt.x - b.x);
     this.passAim = hp.target;
     this.passMode = mode;
-    this.passCharge = hp.btn === 'pass' && !hp.released ? clamp(hp.t / PASS_CHARGE_T, 0, 1) : -1;
-    // Square up to it, at a controlled pace (locomote holds the facing he's turned to).
-    p.facing = turnToward(p.facing, hp.line, this.passTurnRate(p) * dt);
+    // The bar starts at the ideal weight (0) and fills above it once the tap window is over.
+    const over = clamp((hp.t - PASS_TAP_MAX) / PASS_OVER_T, 0, 1);
+    this.passCharge = hp.btn === 'pass' && !hp.released ? over : -1;
+    // Square up to it, quickly (locomote holds the facing he's turned to); through a tap he keeps his stride.
+    p.facing = turnToward(p.facing, hp.line, this.passTurnRate(p, mode) * dt);
     p.faceTarget = p.facing;
-    p.wantX = pad.mx * PASS_CHARGE_MOVE;
-    p.wantZ = pad.mz * PASS_CHARGE_MOVE;
-    p.sprint = false;
+    const tap = hp.t <= PASS_TAP_MAX;
+    p.wantX = pad.mx * (tap ? PASS_TAP_MOVE : PASS_CHARGE_MOVE);
+    p.wantZ = pad.mz * (tap ? PASS_TAP_MOVE : PASS_CHARGE_MOVE);
+    p.sprint = tap && pad.sprint;
     if (!hp.released) return true;
-    // Still side-on to it: a few frames more for the turn (the wind-up squares him up the rest of the way).
-    if (Math.abs(angleDiff(p.facing, hp.line)) > PASS_SQUARE_MAX && hp.wait < PASS_TURN_WAIT) return true;
-    // Play it. (A through ball is always weighted by the assist; a lofted one by its charge.)
-    const charge = mode === 'lob' ? clamp(hp.t / LOB_CHARGE_T, 0.3, 1)
-      : mode === 'pass' && hp.t >= PASS_TAP ? clamp(hp.t / PASS_CHARGE_T, 0, 1) : undefined;
+    // Turned right away from it: a frame or two more for the turn (the wind-up squares him up the rest of the way).
+    const level = assistLevel(this, mode);
+    const off = Math.abs(angleDiff(p.facing, hp.line));
+    if (off > PASS_OUTSIDE[level] && hp.wait < PASS_TURN_WAIT) return true;
+    // Play it: a tap at the ideal pace, a longer PASS hold above it, a lofted ball by its charge.
+    const charge = mode === 'lob' ? clamp(hp.t / LOB_CHARGE_T, 0.3, 1) : mode === 'pass' && hp.t > PASS_TAP_MAX ? over : undefined;
     const power = charge ?? (mode === 'through' ? 0.7 : 0.6);
-    const o = this.order(p, mode, hp.dirX, hp.dirZ, power, hp.target, false);
+    // (A THROUGH with nobody to run onto it goes to the open man's feet: the pass the preview showed.)
+    const o = aim
+      ? this.order(p, 'lob', hp.dirX, hp.dirZ, power, hp.target, false, { x: aim.x, z: aim.z }, aim.land)
+      : this.order(p, mode === 'through' && hp.feet ? 'pass' : mode, hp.dirX, hp.dirZ, power, hp.target, false);
     if (!o) {
       // (Not on his feet this instant: try again for a moment, then forget it.)
       if (hp.wait > 0.4) this.endPass();
@@ -1911,9 +2074,55 @@ export class Match {
     }
     o.charge = charge;
     o.runSpeed = hp.relSpeed;
-    o.bodyOff = Math.abs(angleDiff(p.facing, hp.line));
+    // ('assisted': the error margin reads his body at contact, after the wind-up's turn.)
+    o.bodyOff = level === 'assisted' ? undefined : off;
+    // Struck at once: a short wind-up (a flick's shorter still), the swing paced to meet the ball then.
+    const windup = hp.t < PASS_FLICK && off <= FLICK_SQUARE ? HUMAN_FLICK_WINDUP : HUMAN_PASS_WINDUP;
+    p.kickWindup = windup;
+    p.kickT = Math.max(0, 0.32 - (Math.ceil(windup / DT - 1e-6) * DT) / 0.34);
     hp.ordered = true;
     return true;
+  }
+
+  /**
+   * The pass preview at a restart we take: who PASS (THROUGH: its lofted ball, or the same throw / kick-off
+   * pass) would find, along the same line the kick would go (the kick-off's default, a free kick's aim arrow,
+   * else the stick or his facing). Nobody on a corner, a wide free kick (the delivery goes to a zone) or a penalty.
+   */
+  private restartPreview(t: Player, kind: RestartKind, pad: Pad, stickLen: number, dx: number, dz: number): void {
+    const r = this.restart;
+    if (!r || kind === 'corner' || kind === 'penalty' || (this.phase === 'restart' && isCrossingRestart(this, r))) return;
+    let px = dx;
+    let pz = dz;
+    if (kind === 'kickoff') {
+      px = stickLen > 0.3 ? pad.mx : -this.attackDir(t.side) * 0.4;
+      pz = stickLen > 0.3 ? pad.mz : 1;
+    } else if (kind === 'freekick') {
+      px = Math.cos(t.facing);
+      pz = Math.sin(t.facing);
+    }
+    this.passPreview = pickReceiver(this, t, px, pz, 'pass');
+    this.throughPreview = kind === 'kickoff' || kind === 'throwin' ? this.passPreview : pickReceiver(this, t, px, pz, 'lob');
+  }
+
+  /**
+   * The human's man has just brought it under control (after this step's applyHuman): his pass preview from
+   * this very frame, not the next one.
+   */
+  private freshPreview(): void {
+    if (this.cfg.humanSide < 0 || this.active < 0 || this.hp) return;
+    const p = this.players[this.active];
+    const b = this.ball;
+    if (b.owner !== p.idx || b.held || this.pv.carrier === p.idx) return;
+    const pad = this.prev;
+    this.updatePreview(p, pad, Math.hypot(pad.mx, pad.mz), 0);
+  }
+
+  /** The man a PASS / THROUGH press has locked onto makes his move before the ball comes (ai.ts). */
+  private callRun(target: number, mode: 'pass' | 'through' | 'lob'): void {
+    this.calledRun = target;
+    this.calledMode = target >= 0 ? mode : null;
+    this.calledT = 0;
   }
 
   /** The pass charge is over (struck, lost, or play stopped). */
@@ -1922,11 +2131,13 @@ export class Match {
     this.passCharge = -1;
     this.passAim = -1;
     this.passMode = null;
+    this.calledRun = -1;
+    this.calledMode = null;
   }
 
-  /** How fast (rad/s) a passer turns his body to the pass line: PASS_TURN standing, less at speed. */
-  private passTurnRate(p: Player): number {
-    return PASS_TURN * (1 - PASS_TURN_SPRINT_LOSS * Math.min(1, p.speed() / SPRINT_SPEED));
+  /** How fast (rad/s) a passer turns his body to the pass line: PASS_TURN (by the ball's assist level) standing, less at speed. */
+  private passTurnRate(p: Player, mode: 'pass' | 'through' | 'lob'): number {
+    return PASS_TURN[assistLevel(this, mode)] * (1 - PASS_TURN_SPRINT_LOSS * Math.min(1, p.speed() / SPRINT_SPEED));
   }
 
   /**
@@ -1990,12 +2201,19 @@ export class Match {
    * anyway, the way an AI teammate would, rather than letting it sail over his head (a human-delivered
    * corner switches control to its target runner, and most of them used to go untouched). In sight of
    * goal (shotQuality over 0.12, as the AI judges it) it's a header at goal, otherwise a header on towards
-   * goal. SHOOT / PASS / THROUGH still decide.
+   * goal. An open-play cross of ours dropping at his feet in front of goal (AUTO_VOLLEY_*) is volleyed at it.
+   * SHOOT / PASS / THROUGH still decide.
    */
   private autoHeader(p: Player, d: number): void {
     const b = this.ball;
-    if (d > AUTO_HEADER_D || b.pos.y < 1.15 || b.pos.y > 3 || b.vel.y > 3) return;
     const ad = this.attackDir(p.side);
+    if (this.kickKind === 'lob' && this.kickSide === p.side && this.setPieceKick !== this.kickId && d < AUTO_VOLLEY_D && b.pos.y < AUTO_VOLLEY_Y &&
+      b.hspeed() > 3 &&
+      dist2(p.pos.x, p.pos.z, ad * HALF_L, 0) < AUTO_VOLLEY_GOAL && shotQuality(p.pos.x, p.pos.z, ad) > AUTO_VOLLEY_Q) {
+      this.order(p, 'shot', 0, 0, 0.7, -1, true);
+      return;
+    }
+    if (d > AUTO_HEADER_D || b.pos.y < 1.15 || b.pos.y > 3 || b.vel.y > 3) return;
     // (The same call an AI teammate makes: close in, with a sight of goal, a header at it.)
     if (headerAtGoal(this, p)) {
       this.order(p, 'header', 0, 0, 0.75, -1, true);
@@ -2917,7 +3135,9 @@ export class Match {
     const back = clamp((0.2 - faceIt) / 1.2, 0, 1);
     const air = clamp((b.pos.y - 0.45) / 0.5, 0, 1);
     const ctrl = p.stat.dribbling / 100;
-    let heavy = (rel / 20) ** 2 * (1.2 - ctrl) * (1 + 0.8 * press + 0.5 * back + 0.4 * air + (p.stumbleT > 0 ? 0.6 : 0)) *
+    // (The human's own pass to his own man is taken as if it came in no faster than HUMAN_PASS_TRAP.)
+    const r = human && this.humanPassKick === this.kickId ? Math.min(rel, HUMAN_PASS_TRAP) : rel;
+    let heavy = (r / 20) ** 2 * (1.2 - ctrl) * (1 + 0.8 * press + 0.5 * back + 0.4 * air + (p.stumbleT > 0 ? 0.6 : 0)) *
       (1.15 - this.kickSkill(p) * 0.075);
     heavy *= human ? TOUCH_ASSIST[this.groundAssist] : TOUCH_AI;
     const dist = Math.min(TOUCH_MAX, TOUCH_BASE + heavy * TOUCH_K * (0.6 + 0.8 * this.rng.next()));
@@ -3448,12 +3668,18 @@ export class Match {
     if (emit) this.events.push({ type: 'save', keeper: k.idx, caught: true });
   }
 
+  /**
+   * `p` goes to ground. The human's man slides long, fast and forgivingly (dribble.ts HUMAN_SLIDE_*: a foul only
+   * through the back of the carrier, or when it misses the ball and takes him); an AI slide is shorter and its
+   * timing rides on his defending.
+   */
   startSlide(p: Player): void {
     if (p.state !== 'move' || p.isKeeper || p.sentOff) return;
+    const human = this.isHumanControlled(p);
     // How well-timed is it? Going through the back of a carrier (or a poor tackler lunging) often
     // takes the man as well as the ball: that's a foul even if the ball is won.
     const b = this.ball;
-    let pFoul = 0.12;
+    let pFoul = human ? humanSlideFoul(0) : 0.12;
     if (b.owner >= 0 && this.players[b.owner].side !== p.side) {
       const c = this.players[b.owner];
       const tx = p.pos.x - c.pos.x;
@@ -3461,10 +3687,11 @@ export class Match {
       const tl = Math.hypot(tx, tz) || 1;
       const behind = clamp(-(Math.cos(c.facing) * tx + Math.sin(c.facing) * tz) / tl, 0, 1);
       const def = p.stat.defending / 100;
-      pFoul = clamp(0.03 + behind * 0.14 + (0.75 - def) * 0.2 + (c.speed() > 6 ? 0.03 : 0), 0.02, 0.4);
+      pFoul = human ? humanSlideFoul(behind) : clamp(0.03 + behind * 0.14 + (0.75 - def) * 0.2 + (c.speed() > 6 ? 0.03 : 0), 0.02, 0.4);
     }
     p.setState('slide');
-    const sp = Math.max(p.speed(), 5) + 2.2;
+    p.longSlide = human;
+    const sp = human ? Math.max(p.speed(), HUMAN_SLIDE_MIN) + HUMAN_SLIDE_BOOST : Math.max(p.speed(), 5) + 2.2;
     p.vel.x = Math.cos(p.facing) * sp;
     p.vel.z = Math.sin(p.facing) * sp;
     p.slideHit = false;
@@ -3477,10 +3704,14 @@ export class Match {
   private checkSlides(): void {
     const b = this.ball;
     for (const p of this.players) {
-      if (p.state !== 'slide' || p.stateT > 0.5 || p.sentOff) continue;
+      if (p.state !== 'slide' || p.stateT > (p.longSlide ? HUMAN_SLIDE_T : 0.5) || p.sentOff) continue;
       const tipX = p.pos.x + Math.cos(p.facing) * 0.75;
       const tipZ = p.pos.z + Math.sin(p.facing) * 0.75;
-      if (!p.slideHit && !b.held && b.pos.y < 0.7 && b.owner !== p.idx && dist2(tipX, tipZ, b.pos.x, b.pos.z) < 0.85) {
+      // (The human's slide: anywhere near the line from his body to his boot.)
+      const onIt = p.longSlide
+        ? b.pos.y < 0.9 && pointSegDist(b.pos.x, b.pos.z, p.pos.x, p.pos.z, tipX, tipZ).d < HUMAN_SLIDE_REACH
+        : b.pos.y < 0.7 && dist2(tipX, tipZ, b.pos.x, b.pos.z) < 0.85;
+      if (!p.slideHit && !b.held && b.owner !== p.idx && onIt) {
         if (b.owner < 0 && this.offsideTouch(p)) return;
         const prev = b.owner;
         const c = prev >= 0 ? this.players[prev] : null;
@@ -3495,7 +3726,8 @@ export class Match {
           return;
         }
         b.owner = -1;
-        const sp = 6 + this.rng.next() * 3;
+        // (The human's long slide takes it rather than hoofing it: it runs on a few metres.)
+        const sp = p.longSlide ? 3 + this.rng.next() * 2.5 : 6 + this.rng.next() * 3;
         b.vel.x = Math.cos(p.facing) * sp + this.rng.gauss() * 1.5;
         b.vel.z = Math.sin(p.facing) * sp + this.rng.gauss() * 1.5;
         b.vel.y = 0.8;
@@ -3753,7 +3985,7 @@ export class Match {
       // On the flank a poke often just knocks it into touch (the nearer the line, the likelier).
       const wz = Math.abs(c.pos.z) - (HALF_W - WING_TOUCH);
       const touch = wz > 0 && this.rng.chance(WING_POKE_TOUCH * clamp(wz / 5, 0.35, 1));
-      if (!touch && this.rng.chance((assisted ? 0.5 : 0.35) + def * 0.3)) {
+      if (!touch && this.rng.chance((assisted ? ASSISTED_CLEAN : 0.35) + def * 0.3)) {
         // Clean: the tackler comes away with it.
         p.kickCooldown = 0;
         b.vel.x = p.vel.x;

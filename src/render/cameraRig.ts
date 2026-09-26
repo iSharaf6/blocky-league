@@ -90,12 +90,15 @@ const CUT_JUMP = 8;
 /** Top speed of the gliding cameras, m/s: faster than this reads as a whip pan. */
 const MAX_GLIDE = 30;
 /**
- * Broadcast camera distance (Settings): how much closer than the wide shot (41 m of pitch across a 16:9
- * screen) each setting films. 'normal' draws a player ~30% taller than 'wide'; 'close' ~20% tighter still.
- * Portrait (the end-on lens) narrows its field of view by the matching PORTRAIT_ZOOM factor instead.
+ * Broadcast camera distance (Settings): how much closer than the base shot (41 m of pitch across a 16:9
+ * screen) each setting films. Round 9 (owner: "hard to see other players in my team to pass to"): 'normal'
+ * is that base shot again (building from the back / midfield, a median 6 of the 10 team-mates on screen and
+ * ~75% of the time at least 5, a player ~55 px tall at 720p; round 7's 1.3 showed a median 5, p25 3); 'wide'
+ * pulls back further (48 m: median 7), 'close' is round 7's tight shot (~73 px players, median 5).
+ * Portrait (the end-on lens) widens / narrows its field of view by the matching PORTRAIT_ZOOM factor instead.
  */
-const ZOOM_K: Record<CamZoom, number> = { wide: 1, normal: 1.3, close: 1.56 };
-const PORTRAIT_ZOOM: Record<CamZoom, number> = { wide: 1, normal: 0.88, close: 0.76 };
+const ZOOM_K: Record<CamZoom, number> = { wide: 0.85, normal: 1, close: 1.3 };
+const PORTRAIT_ZOOM: Record<CamZoom, number> = { wide: 1.12, normal: 1, close: 0.88 };
 /**
  * Corners (always filmed at the wide width: the whole box has to fit): where the penalty spot sits on
  * screen, NDC y (+0.07 = 46.5% down from the top). Touch layouts lift the framing ~28% (the spot to ~33%
@@ -132,7 +135,11 @@ const PUSH_RATE = 4;
 const LEAN_M = 5;
 const LEAN_W = 4;
 const LEAN_HOLD = 0.35;
-/** The controlled player's pull on the framing, and how gently it follows a switch of player (rad/s). */
+/**
+ * The controlled player's pull on the framing, and how gently it follows a switch of player (rad/s). What is
+ * eased is where he stands relative to the ball (so a carrier dribbling it is never trailed: that offset
+ * hardly changes); a switch, or a pass leaving him behind, moves it and that is what eases.
+ */
 const AX_K = 0.18;
 const AX_W = 2.5;
 /** Ball speed / height dolly-out and the follow rate it drives: eased at this rate (rad/s). */
@@ -140,12 +147,19 @@ const ZOOM_W = 2.5;
 /** The controlled player's feet kept clear of the bottom HUD too: that extra pull eases at this rate (rad/s). */
 const FEET_W = 2;
 /**
- * The broadcast lens follows its framing as a critically damped spring (FOLLOW_K x the damping rate: the
- * same lag as a plain exponential ease, but the velocity never jumps), never faster than MAX_GLIDE and never
- * accelerating harder than MAX_ACC (m/s^2): a big re-frame (a corner struck) is a smooth glide, not a whip.
+ * The broadcast lens follows its framing as a critically damped spring (FOLLOW_K x the damping rate), never
+ * faster than MAX_GLIDE and never accelerating harder than MAX_ACC (m/s^2): a big re-frame (a corner struck)
+ * is a smooth glide, not a whip. It is fed forward FOLLOW_FF of the framing's own velocity (from frame to
+ * frame, through a critically damped low-pass at FOLLOW_VEL_W rad/s: a sustained run comes through, a
+ * dribbler's weave mostly doesn't), so a moving ball is followed locked on rather than trailed:
+ * the steady lag behind a sprint dribble or a long pass is (1 - FOLLOW_FF) of a plain spring's (round 8 trailed
+ * a sprint dribble by ~2.3 m, 93 px at its 'normal'; the same 41 m shot now ~14 px), and a ball that stops
+ * is overshot by < 0.15 m.
  */
 const FOLLOW_K = 2;
 const MAX_ACC = 110;
+const FOLLOW_FF = 0.8;
+const FOLLOW_VEL_W = 6;
 /** Soft edges (m): the framing slows into its limits over this distance instead of stopping dead on them. */
 const EDGE_KNEE = 3;
 
@@ -250,6 +264,11 @@ export class CameraRig {
   /** Broadcast lens velocity (look target, position), m/s: the spring follow's state. */
   private velT = new THREE.Vector3();
   private velP = new THREE.Vector3();
+  /** The wanted shot's own velocity (look target, position), m/s: fed forward to the follow (FOLLOW_FF). */
+  private wantVT = new THREE.Vector3();
+  private wantVP = new THREE.Vector3();
+  private wantAT = new THREE.Vector3();
+  private wantAP = new THREE.Vector3();
   /** Eased broadcast inputs: the controlled player, the possession lean, the ball-speed dolly-out. */
   private axE = new Ease();
   private azE = new Ease();
@@ -443,8 +462,10 @@ export class CameraRig {
     this.spPrimed = true;
     this.lead.x = damp(this.lead.x, f.bvx * 0.35, 1.4, dt);
     this.lead.y = damp(this.lead.y, f.bvz * 0.2, 1.4, dt);
-    const ax = this.axE.to(f.ax, AX_W, dt);
-    this.azE.to(f.az, AX_W, dt);
+    // (His offset from the ball is what eases: see AX_K.)
+    const axo = this.axE.to(f.ax - f.bx, AX_W, dt);
+    const azo = this.azE.to(f.az - f.bz, AX_W, dt);
+    const ax = f.bx + axo;
     const lean = this.leanShift(f, dt);
     let tx: number, tz: number, px: number, py: number, pz: number, fov: number;
     if (this.portrait) {
@@ -547,8 +568,8 @@ export class CameraRig {
       // across the pitch never drags the ball off the top).
       // (His extra pull is eased on its own, so a switch of player or a pass away from him never tugs the
       // framing across and back; the ball's own limit is never eased.)
-      const near = 1 - smoothstep(10, 18, Math.hypot(ax - f.bx, this.azE.x - f.bz));
-      const extra = this.feetE.to(piece ? 0 : Math.max(0, (this.azE.x - f.bz) * near), FEET_W, dt);
+      const near = 1 - smoothstep(10, 18, Math.hypot(axo, azo));
+      const extra = this.feetE.to(piece ? 0 : Math.max(0, azo * near), FEET_W, dt);
       const bz = piece ? Math.max(piece.z, f.bz) : f.bz + extra;
       // NDC height of ground-plane point (z, y) for a lens looking at (tzz) pitched down `a`. A point behind
       // the lens is never in shot (-Infinity: "below the frame"). (The closer settings put the lens over the
@@ -950,10 +971,36 @@ export class CameraRig {
     if (!easing && (glide || this.mode === 'replay') && this.hasWant && (Math.hypot(tx - this.wantT.x, tz - this.wantT.z) > CUT_JUMP || Math.hypot(px - this.wantP.x, py - this.wantP.y, pz - this.wantP.z) > CUT_JUMP)) {
       this.snap = true;
     }
+    // The framing's own velocity (fed forward to the spring follow, see FOLLOW_FF): frame to frame, through a
+    // critically damped low-pass (sustained motion comes through, a dribbler's weave mostly doesn't); nothing
+    // across a cut or out of a camera that isn't the spring-followed broadcast shot.
+    const cutting = this.snap || (scripted && rate >= 60);
+    if (spring && this.hasWant && !cutting && dt > 0) {
+      const w = FOLLOW_VEL_W;
+      const e = Math.exp(-w * dt);
+      const vel = (u: THREE.Vector3, du: THREE.Vector3, x: number, y: number, z: number, o: THREE.Vector3) => {
+        for (let i = 0; i < 3; i++) {
+          const raw = ((i === 0 ? x : i === 1 ? y : z) - o.getComponent(i)) / dt;
+          const x0 = u.getComponent(i) - raw;
+          const k = (du.getComponent(i) + w * x0) * dt;
+          du.setComponent(i, (du.getComponent(i) - w * k) * e);
+          u.setComponent(i, raw + (x0 + k) * e);
+        }
+        const s = u.length();
+        if (s > MAX_GLIDE) u.multiplyScalar(MAX_GLIDE / s);
+      };
+      vel(this.wantVT, this.wantAT, tx, ty, tz, this.wantT);
+      vel(this.wantVP, this.wantAP, px, py, pz, this.wantP);
+    } else {
+      this.wantVT.set(0, 0, 0);
+      this.wantVP.set(0, 0, 0);
+      this.wantAT.set(0, 0, 0);
+      this.wantAP.set(0, 0, 0);
+    }
     this.wantT.set(tx, ty, tz);
     this.wantP.set(px, py, pz);
     this.hasWant = true;
-    this.cutNow = this.snap || (scripted && rate >= 60);
+    this.cutNow = cutting;
     if (this.cutNow) {
       this.target.set(tx, ty, tz);
       this.pos.set(px, py, pz);
@@ -963,8 +1010,8 @@ export class CameraRig {
       this.velP.set(0, 0, 0);
     } else if (spring) {
       // The broadcast lens: a critically damped follow, speed- and acceleration-limited (see FOLLOW_K).
-      this.follow(this.target, this.velT, tx, ty, tz, rate * FOLLOW_K, dt);
-      this.follow(this.pos, this.velP, px, py, pz, rate * FOLLOW_K, dt);
+      this.follow(this.target, this.velT, tx, ty, tz, this.wantVT, rate * FOLLOW_K, dt);
+      this.follow(this.pos, this.velP, px, py, pz, this.wantVP, rate * FOLLOW_K, dt);
       this.fov = damp(this.fov, fov, rate, dt);
     } else {
       this.velT.set(0, 0, 0);
@@ -1005,15 +1052,20 @@ export class CameraRig {
   }
 
   /**
-   * One step of the broadcast follow: `x` (velocity `v`) springs towards (gx, gy, gz) at `w` rad/s, critically
-   * damped (exact step), then the change of velocity is held to MAX_ACC and the speed to MAX_GLIDE.
+   * One step of the broadcast follow: `x` (velocity `v`) springs towards (gx, gy, gz), which is moving at `u`,
+   * at `w` rad/s, critically damped with FOLLOW_FF of `u` fed forward (exact step: x'' = -w^2 (x - g) -
+   * 2w (x' - FOLLOW_FF u), solved in the frame moving with the target, where the steady lag is -c u), then the
+   * change of velocity is held to MAX_ACC and the speed to MAX_GLIDE. With u = 0 it is the plain spring.
    */
-  private follow(x: THREE.Vector3, v: THREE.Vector3, gx: number, gy: number, gz: number, w: number, dt: number): void {
+  private follow(x: THREE.Vector3, v: THREE.Vector3, gx: number, gy: number, gz: number, u: THREE.Vector3, w: number, dt: number): void {
     if (dt <= 0) return;
     const e = Math.exp(-w * dt);
-    const ox = x.x - gx, oy = x.y - gy, oz = x.z - gz;
-    const kx = (v.x + w * ox) * dt, ky = (v.y + w * oy) * dt, kz = (v.z + w * oz) * dt;
-    let nx = (v.x - w * kx) * e, ny = (v.y - w * ky) * e, nz = (v.z - w * kz) * e;
+    const c = (2 * (1 - FOLLOW_FF)) / w;
+    // Shifted error at the start of the step (the target then stood u dt short of where it is now).
+    const ox = x.x - gx + u.x * (dt + c), oy = x.y - gy + u.y * (dt + c), oz = x.z - gz + u.z * (dt + c);
+    const rx = v.x - u.x, ry = v.y - u.y, rz = v.z - u.z;
+    const kx = (rx + w * ox) * dt, ky = (ry + w * oy) * dt, kz = (rz + w * oz) * dt;
+    let nx = (rx - w * kx) * e + u.x, ny = (ry - w * ky) * e + u.y, nz = (rz - w * kz) * e + u.z;
     let limited = false;
     const dv = Math.hypot(nx - v.x, ny - v.y, nz - v.z);
     const dvMax = MAX_ACC * dt;
@@ -1033,7 +1085,7 @@ export class CameraRig {
       limited = true;
     }
     if (limited) x.set(x.x + (v.x + nx) * 0.5 * dt, x.y + (v.y + ny) * 0.5 * dt, x.z + (v.z + nz) * 0.5 * dt);
-    else x.set(gx + (ox + kx) * e, gy + (oy + ky) * e, gz + (oz + kz) * e);
+    else x.set(gx + (ox + kx) * e - c * u.x, gy + (oy + ky) * e - c * u.y, gz + (oz + kz) * e - c * u.z);
     v.set(nx, ny, nz);
   }
 

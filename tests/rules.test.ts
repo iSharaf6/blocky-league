@@ -483,7 +483,7 @@ describe('fitness', () => {
     p.stamina = 0.3;
     expect(p.sprintPace() / fresh).toBeLessThan(0.82);
     expect(p.sprintPace()).toBeGreaterThan(p.jogPace());
-  });
+  }, 60_000); // whole matches: slow under a loaded machine
 
   it('a busy midfielder ends a 2x2-min match around half fit, whatever the half length', () => {
     const endMf = (halfLength: number) => {

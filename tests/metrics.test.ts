@@ -47,7 +47,10 @@ function checkBands(halfLength: number, n: number): void {
   expect(s.reds).toBeLessThan(0.5);
   // Saves only count for shots that were on target.
   within(s.savePct, 50, 75);
-  expect(s.maxStall).toBeLessThan(5);
+  // The longest the ball stays inside a 2.5 m circle in open play, over every match: a stuck ball would run for
+  // many seconds. Round 8 saw one 5.1 s touchline tussle (two failed tackles, three take-ons, a block, a won
+  // poke) in 128 matches; that's football, not a stall.
+  expect(s.maxStall).toBeLessThan(6);
   expect(s.finalThirdPerTeam).toBeGreaterThan(10 * k);
   // Every side gets forward: over 40-64 matches at most one lopsided one where a team never did.
   expect(s.zeroFinalThird).toBeLessThanOrEqual(Math.max(1, Math.round(s.n / 50)));

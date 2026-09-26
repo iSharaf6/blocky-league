@@ -365,12 +365,15 @@ const POKE_S = 0.18;
 const KICK_S = 0.34;
 /**
  * Pose cross-fades (s): a change of state (or of move within one: a header, a celebration style) blends
- * the limbs from the last drawn pose instead of snapping. Quick into a strike (the swing must stay crisp),
- * a touch longer getting up off the grass.
+ * the limbs from the last drawn pose instead of snapping, a touch longer getting up off the grass. The
+ * actions (a strike, a poke, a header, a slide, a dive) must read as immediate: a short ease-OUT, so the very
+ * first frame after the sim starts one already shows ~half the new pose (round 8's 0.08 s smoothstep showed
+ * 11% of it, 38% by the second frame: the kick looked like it started late) and it is all there by the third.
+ * Only the low-importance changes (getting up, celebrating, standing about) keep the gentle smoothstep.
  */
 const BLEND_S = 0.12;
-const BLEND_KICK_S = 0.08;
-const BLEND_FAST_S = 0.07;
+const BLEND_KICK_S = 0.06;
+const BLEND_FAST_S = 0.06;
 const BLEND_GETUP_S = 0.15;
 /** Entry speed (m/s) from which a strike gets a plant step (full plant at the top value). */
 const PLANT_FROM = 3.2;
@@ -385,6 +388,13 @@ function blendTime(from: number, to: number): number {
   if (to === PSTATE.slide || to === PSTATE.dive) return BLEND_FAST_S;
   if (to === PSTATE.stand && (from === PSTATE.slide || from === PSTATE.fallen || from === PSTATE.dive)) return BLEND_GETUP_S;
   return BLEND_S;
+}
+
+/** An action (see BLEND_KICK_S): blended in with an ease-out, never the slow-starting smoothstep. */
+function isAction(key: number): boolean {
+  const state = key >> 4;
+  // (A header while running is the move state's sub-pose 1.)
+  return state === PSTATE.kick || state === PSTATE.slide || state === PSTATE.dive || ((state === PSTATE.move || state === PSTATE.stand) && (key & 15) === 1);
 }
 
 export class Footballer {
@@ -409,6 +419,8 @@ export class Footballer {
   private readonly curPose = new Float32Array(POSE_N);
   private blendT = 0;
   private blendS = 0;
+  /** The fade under way is into an action (ease-out: see BLEND_KICK_S). */
+  private blendAction = false;
   private lastTime = NaN;
   /** Speed going into the current strike (a sprint gets the plant step). */
   private kickEntry = 0;
@@ -537,7 +549,8 @@ export class Footballer {
       if (this.poseKey >= 0 && dt > 0) {
         this.fromPose.set(this.lastPose);
         this.blendT = 0;
-        this.blendS = blendTime(this.poseState, p.state);
+        this.blendAction = isAction(key);
+        this.blendS = this.blendAction && p.state !== PSTATE.slide && p.state !== PSTATE.dive ? BLEND_KICK_S : blendTime(this.poseState, p.state);
       } else this.blendS = 0;
       if (p.state === PSTATE.kick && this.poseState !== PSTATE.kick) this.kickEntry = p.speed;
       this.poseKey = key;
@@ -547,7 +560,8 @@ export class Footballer {
     this.poseRaw(p, time, dt);
     if (this.blendS > 0) {
       this.blendT += dt;
-      const w = smoothstep(0, this.blendS, this.blendT);
+      const u = clamp(this.blendT / this.blendS, 0, 1);
+      const w = this.blendAction ? 1 - (1 - u) * (1 - u) : smoothstep(0, this.blendS, this.blendT);
       if (w >= 1) this.blendS = 0;
       else {
         const c = this.curPose;

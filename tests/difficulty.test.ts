@@ -37,6 +37,7 @@ describe('difficulty against a realistic human', () => {
       expect(b.resist).toBeLessThan(a.resist);
       expect(b.cut).toBeLessThan(a.cut);
       expect(b.auto).toBeLessThan(a.auto);
+      expect(b.read).toBeGreaterThan(a.read);
     }
     // Off the ends of the menu it holds at the nearest level.
     expect(vsHuman(-1)).toEqual(e);

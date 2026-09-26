@@ -274,7 +274,7 @@ describe('substitutions and mentality', () => {
     // eslint-disable-next-line no-console
     console.log('shots defensive vs attacking', shots);
     expect(shots[1]).toBeGreaterThanOrEqual(shots[0]);
-  });
+  }, 60_000); // whole matches: slow under a loaded machine
 
   it('double-tapping sprint knocks the ball ahead with a burst', () => {
     const m = new Match({

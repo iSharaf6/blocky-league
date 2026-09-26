@@ -19,10 +19,13 @@ import type { Player } from './player';
  * - path assist: a defender square in the run within PATH_R m bends it up to PATH_BEND toward the free side.
  *
  * Defending (humanTackle, from applyHuman while the other side has it): SHOOT is TACKLE.
- * - TAP within TAP_LUNGE m: an assisted standing tackle, a lunge and a poke at the ball;
+ * - PRESS with the ball already in reach (STAND_REACH m off his boot): the assisted standing tackle goes in
+ *   on that frame, no wind-up;
+ * - TAP within TAP_LUNGE m: an instant lunge at the ball (LUNGE_SPEED) and the poke the moment it's in reach;
  * - TAP from TAP_LUNGE..TAP_CLOSE m: he closes at a sprint and pokes on arrival (within CLOSE_T s; pulling
  *   the stick hard away cancels it);
- * - HOLD (SLIDE_HOLD s) or double-tap: a slide (Match.startSlide), aimed at the ball;
+ * - HOLD (SLIDE_HOLD s, the ball not yet in reach when pressed) or double-tap: a slide (Match.startSlide),
+ *   aimed where the ball will be, the human's long forgiving one;
  * - PRESS (THROUGH held): a goal-side jockey PRESS_GAP m off the ball, facing it, plus pressSteal, an
  *   automatic poke when the carrier's touch leaves the ball exposed and our man is nearer it. Running into
  *   the carrier still tackles on its own (Match.autoTackle), a little less surely.
@@ -66,22 +69,26 @@ const SKILL_GAP = 1.2;
 
 /** Double-tap SPRINT with the ball: the second press within this (s) knocks it on. */
 export const KNOCK_TAP = 0.35;
-/** PRESS: the jockey stands this far (m) goal-side of the ball, reading the carrier's run this far ahead (s). */
-export const PRESS_GAP = 1.6;
-export const PRESS_LEAD = 0.25;
+/**
+ * PRESS: the jockey stands this far (m) goal-side of the ball, reading the carrier's run this far ahead (s),
+ * mirroring his run (his velocity) and closing any gap to that spot at PRESS_GAIN per second.
+ */
+export const PRESS_GAP = 1.0;
+export const PRESS_LEAD = 0.1;
+export const PRESS_GAIN = 4;
 
-/** TACKLE: a tap this near (m, ball) lunges; from there to TAP_CLOSE he closes first. */
-export const TAP_LUNGE = 2.5;
+/** TACKLE: a tap this near (m, ball) is an instant lunge; from there to TAP_CLOSE he closes first. */
+export const TAP_LUNGE = 3;
 export const TAP_CLOSE = 6;
 /** Held this long (s), TACKLE is a slide; a second press within DOUBLE_TAP s too. */
 export const SLIDE_HOLD = 0.25;
 export const DOUBLE_TAP = 0.3;
 /** How long (s) the tap keeps closing in before it gives up. */
 export const CLOSE_T = 0.8;
-/** Foot-to-ball reach (m) of the assisted standing tackle (the AI's is 1.15). */
-export const STAND_REACH = 1.45;
+/** Foot-to-ball reach (m) of the assisted standing tackle (the AI's is 1.15): it goes in the moment it's in reach. */
+export const STAND_REACH = 1.6;
 /** The lunge: at least this pace (m/s) at the ball the moment a close tap lands. */
-const LUNGE_SPEED = 6.5;
+const LUNGE_SPEED = 9;
 /** PRESS auto-steal: the carrier's ball this far (m) from him, and our foot within this of it. */
 export const STEAL_EXPOSED = 0.9;
 const STEAL_REACH = 1.4;
@@ -109,12 +116,15 @@ export class AssistState {
 export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt: number): void {
   const st = m.assist;
   st.t += dt;
+  // (Winding up a shot he plants: his quick legs don't carry him across the goal as he aims.)
+  p.quickLegs = !pad.shoot;
   if (st.carrier !== p.idx) {
     st.carrier = p.idx;
     st.hist.length = 0;
   }
   if (p.state !== 'move') return;
-  const busy = pad.shoot || m.passMode !== null;
+  // (Charging a shot or a pass, or aiming one with PASS / THROUGH down, the stick is aiming: no skill move.)
+  const busy = pad.shoot || pad.pass || pad.through || m.passMode !== null;
   // ---- Skill cut. (A flick across a thumbstick passes near the middle for a frame or two: those frames
   // are skipped, not a reset.)
   const h = st.hist;
@@ -343,18 +353,21 @@ export interface VsHuman {
   beaten: number;
   /** How sure the human's automatic tackle (running into the carrier, Match.autoTackle) is, as an aggression. */
   auto: number;
+  /** How quickly (per s) its carrier reads the human's man coming in for it and moves the ball on (readsHuman). */
+  read: number;
 }
 
 /** The menu's difficulty levels (MatchConfig.difficulty), and vsHuman's value at each (linear between). */
 const LEVELS = [0.6, 1.8, 3, 4];
 const VS_HUMAN: Record<keyof VsHuman, number[]> = {
-  press: [0.72, 1.05, 1.1, 1.15],
-  tackle: [0.8, 1.06, 1.1, 1.14],
-  resist: [1, 0.72, 0.64, 0.56],
-  cut: [0.06, -0.1, -0.13, -0.17],
-  takeOn: [0.8, 1.42, 1.5, 1.6],
-  beaten: [0.4, 0.72, 0.78, 0.85],
-  auto: [0.55, 0.3, 0.26, 0.22],
+  press: [0.72, 1, 1.15, 1.2],
+  tackle: [0.8, 1, 1.1, 1.2],
+  resist: [1.08, 0.85, 0.74, 0.66],
+  cut: [0.06, -0.08, -0.13, -0.17],
+  takeOn: [0.8, 1.25, 1.5, 1.7],
+  beaten: [0.4, 0.62, 0.78, 0.85],
+  auto: [0.8, 0.45, 0.4, 0.35],
+  read: [0.3, 1.5, 5, 8],
 };
 
 export function vsHuman(skill: number): VsHuman {
@@ -363,7 +376,7 @@ export function vsHuman(skill: number): VsHuman {
   while (i < LEVELS.length - 2 && s > LEVELS[i + 1]) i++;
   const f = (s - LEVELS[i]) / (LEVELS[i + 1] - LEVELS[i]);
   const at = (k: keyof VsHuman) => VS_HUMAN[k][i] + (VS_HUMAN[k][i + 1] - VS_HUMAN[k][i]) * f;
-  return { press: at('press'), tackle: at('tackle'), resist: at('resist'), cut: at('cut'), takeOn: at('takeOn'), beaten: at('beaten'), auto: at('auto') };
+  return { press: at('press'), tackle: at('tackle'), resist: at('resist'), cut: at('cut'), takeOn: at('takeOn'), beaten: at('beaten'), auto: at('auto'), read: at('read') };
 }
 
 /** How an AI tackle on the human's carrier fares against the same tackle on an AI one (vsHuman, his dribbling). */
@@ -398,6 +411,8 @@ export function standingFoulChance(behind: number, shielded: number): number {
 export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stickLen: number, dt: number): void {
   const st = m.assist;
   st.t += dt;
+  // His quick legs answer the stick and PRESS (and a TACKLE closing in, below), not a run the sim makes for him.
+  p.quickLegs = stickLen > 0.2 || pad.through;
   const b = m.ball;
   const c = b.owner >= 0 && !b.held && m.players[b.owner].side !== p.side ? m.players[b.owner] : null;
   if (shootP && c && p.state === 'move' && !p.sentOff) {
@@ -412,6 +427,12 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
     if (d < TAP_CLOSE) {
       st.tackle = { t: 0, held: true, target: c.idx, born: m.clock };
       if (d < TAP_LUNGE) lunge(p, b.pos.x + b.vel.x * 0.1, b.pos.z + b.vel.z * 0.1);
+      // Already in reach: no wind-up, the tackle goes in on the press.
+      if (p.tackleCooldown <= 0 && dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) <= STAND_REACH) {
+        st.tackle = null;
+        m.tryTackle(p, c, 1, true);
+        return;
+      }
     }
   }
   const tk = st.tackle;
@@ -441,6 +462,8 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
   p.wantZ = tz / tl;
   p.sprint = tl > 1.2;
   p.faceTarget = Math.atan2(tz, tx);
+  p.quickLegs = true;
+  // Arriving: a tap goes in the moment he's in reach (a press still held is on its way to being a slide).
   if (!tk.held && p.tackleCooldown <= 0 && dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) <= STAND_REACH) {
     st.tackle = null;
     m.tryTackle(p, c, 1, true);
@@ -457,6 +480,20 @@ export function takeOnVsHuman(m: Match, o: Player): number {
   return m.assist.tackle !== null ? TAKE_ON_LUNGING : vsHuman(m.aiSkill(o.side === 0 ? 1 : 0)).takeOn;
 }
 const TAKE_ON_LUNGING = 0.35;
+
+/**
+ * An AI carrier `p` sees the human's man `o` (his nearest opponent, `d` m off) coming in for it (closing at pace,
+ * or a TACKLE on its way) and decides again now rather than dribbling on into the challenge: at vsHuman.read per
+ * second. (AI carriers against AI defenders, and every AI-vs-AI match, never get here.)
+ */
+export function readsHuman(m: Match, p: Player, o: Player | null, d: number, dt: number): boolean {
+  if (!o || d > READ_D || !m.isHumanControlled(o) || p.ballT < 0.2) return false;
+  const closing = ((o.vel.x * (p.pos.x - o.pos.x) + o.vel.z * (p.pos.z - o.pos.z)) / Math.max(0.1, d)) > READ_CLOSING;
+  if (!closing && m.assist.tackle === null) return false;
+  return m.rng.chance(vsHuman(m.aiSkill(p.side)).read * dt);
+}
+const READ_D = 3;
+const READ_CLOSING = 2;
 
 /** A tap is closing in on the carrier (Match.autoTackle leaves the challenge to it). */
 export function tackleClosing(m: Match): boolean {
@@ -475,12 +512,31 @@ export function pressSteal(m: Match, p: Player, c: Player): void {
   if (exposed > STEAL_EXPOSED && mine < STEAL_REACH && mine < exposed) m.tryTackle(p, c, 1, true);
 }
 
-/** Face the ball (a beat ahead of it) and go in with a slide. */
+/** Face where the ball will be when he gets there, and go in with a slide (the human's long one). */
 function slideAt(m: Match, p: Player): void {
   const b = m.ball;
   if (p.state !== 'move') return;
-  p.facing = Math.atan2(b.pos.z + b.vel.z * 0.22 - p.pos.z, b.pos.x + b.vel.x * 0.22 - p.pos.x);
+  const lead = clamp(dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z) / 9, 0.1, 0.45);
+  p.facing = Math.atan2(b.pos.z + b.vel.z * lead - p.pos.z, b.pos.x + b.vel.x * lead - p.pos.x);
   m.startSlide(p);
+}
+
+/**
+ * The human's slide (Match.startSlide / checkSlides): long and fast (HUMAN_SLIDE_BOOST m/s on top of his pace,
+ * at least HUMAN_SLIDE_MIN + BOOST; it glides ~0.5 s, Player.longSlide), and forgiving: it takes the ball if it's
+ * within HUMAN_SLIDE_REACH m of the line from his body to his boot, through HUMAN_SLIDE_T s. A foul only when it
+ * goes through the back of the man (the carrier facing away, `behind` over HUMAN_SLIDE_BEHIND) or misses the
+ * ball and takes him.
+ */
+export const HUMAN_SLIDE_BOOST = 3.5;
+export const HUMAN_SLIDE_MIN = 6.5;
+export const HUMAN_SLIDE_REACH = 1.2;
+export const HUMAN_SLIDE_T = 0.65;
+export const HUMAN_SLIDE_BEHIND = 0.6;
+
+/** Chance a human slide is mistimed (takes the man with the ball): from behind only. */
+export function humanSlideFoul(behind: number): number {
+  return behind > HUMAN_SLIDE_BEHIND ? 0.35 : 0.02;
 }
 
 /** The lunge of a close tap: straight at the ball, at LUNGE_SPEED at least. */

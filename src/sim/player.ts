@@ -116,14 +116,26 @@ export const DRIBBLE_TURN = 5.8;
 const DRIBBLE_CUT_MAX = 2.4;
 const DRIBBLE_CUT_LOSS = 0.16;
 const DRIBBLE_FACE_TURN = 1.8;
-/** Close control (the human's dribbler jogging, not sprinting): he turns this much quicker. */
-export const CLOSE_TURN = 1.4;
+/**
+ * The human's man answers the stick quicker than the AI's players (snappy, Mario-Strikers style): he speeds
+ * up and slows down HUMAN_ACCEL x as hard, turns (body, and his run with the ball) HUMAN_TURN x as fast, and
+ * with the stick let go he stops dead (HUMAN_STOP m/s², ~0.13 s from a sprint) rather than drifting on.
+ */
+export const HUMAN_ACCEL = 1.5;
+export const HUMAN_TURN = 1.4;
+const HUMAN_STOP = 60;
+/** Close control (the human's dribbler jogging, not sprinting): he turns this much quicker again. */
+export const CLOSE_TURN = 1.2;
 /**
  * A skill cut (see dribble.ts): for Player.cutT s the run and the body swing round this much faster again,
- * through any angle (a cut-back too), losing only CUT_KEEP_LOSS of the usual pace loss.
+ * losing only CUT_KEEP_LOSS of the usual pace loss. (A cut-back past DRIBBLE_CUT_MAX brakes and goes, which
+ * the human's quicker legs make quicker still.)
  */
-export const CUT_TURN_BOOST = 1.7;
+export const CUT_TURN_BOOST = 1.5;
 const CUT_KEEP_LOSS = 0.35;
+/** The human's long slide: glides (light drag) this long, and he's back up to stand after HUMAN_SLIDE_END s. */
+const HUMAN_SLIDE_GLIDE = 0.5;
+const HUMAN_SLIDE_END = 0.85;
 /** Wrong-footed (Player.wrongFootT): top pace and acceleration are cut to these fractions. */
 const WRONG_FOOT_PACE = 0.3;
 const WRONG_FOOT_ACCEL = 0.3;
@@ -163,6 +175,14 @@ export class Player {
   slideHit = false;
   /** This slide is mistimed: if it reaches the ball it takes the man too (a foul). */
   slideFoul = false;
+  /** The current slide is the human's long, forgiving one (HUMAN_SLIDE_GLIDE s of glide; see dribble.ts). */
+  longSlide = false;
+  /**
+   * The human's man is being driven by the human (the stick, PRESS, a TACKLE closing in): his quick legs apply
+   * (HUMAN_ACCEL). Not while he winds up a shot (he plants and aims), nor on a run the sim makes for him with the
+   * stick left alone (move assist, meeting a pass or a cross), which keeps an AI player's pace of reaction.
+   */
+  quickLegs = false;
   /** The current 'kick' state is a quick tackle poke, not a strike (lighter braking, can chain a kick). */
   poke = false;
   /** Red-carded: off the pitch for the rest of the match, takes no further part. */
@@ -310,8 +330,9 @@ export class Player {
   }
 
   /**
-   * `agile`: a human-controlled dribbler, who cuts sharply (DRIBBLE_TURN) instead of the AI's rounder
-   * turn through the velocity blend.
+   * `agile`: the human-controlled player: quicker to speed up, slow down and turn (HUMAN_ACCEL, HUMAN_TURN),
+   * stopping dead when the stick is let go, and with the ball he cuts sharply (DRIBBLE_TURN) instead of the AI's
+   * rounder turn through the velocity blend.
    */
   step(dt: number, dribbling: boolean, agile = false): void {
     this.stateT += dt;
@@ -350,8 +371,13 @@ export class Player {
         break;
       }
       case 'slide':
-        this.brake(dt, this.stateT < 0.35 ? 1.2 : 6);
-        if (this.stateT > 0.75) this.setState('stand');
+        if (this.longSlide) {
+          this.brake(dt, this.stateT < HUMAN_SLIDE_GLIDE ? 0.9 : 6);
+          if (this.stateT > HUMAN_SLIDE_END) this.setState('stand');
+        } else {
+          this.brake(dt, this.stateT < 0.35 ? 1.2 : 6);
+          if (this.stateT > 0.75) this.setState('stand');
+        }
         break;
       case 'fallen':
         this.brake(dt, 5);
@@ -459,16 +485,19 @@ export class Player {
       turn = Math.abs(angleDiff(cur, want));
       if (turn > 1.6) accel = DECEL * 1.1;
     }
+    // The human's man: quicker legs, and the stick let go means stop.
+    const quickLegs = agile && this.quickLegs ? HUMAN_ACCEL : 1;
+    if (agile) accel = tl > 0.05 ? accel * quickLegs : HUMAN_STOP;
     const cut = dribbling && agile;
-    // Close control (jogging with it) turns quicker; a skill cut's burst quicker again, through any angle.
-    const quick = cut ? (this.sprint ? 1 : CLOSE_TURN) * (this.cutT > 0 ? CUT_TURN_BOOST : 1) : 1;
-    if (cut && sp > 1.5 && tl > 0.05 && turn > 0.05 && (turn < DRIBBLE_CUT_MAX || this.cutT > 0)) {
+    // The human's man turns quicker; close control (jogging with it) quicker still; a skill cut's burst more.
+    const quick = agile ? HUMAN_TURN * (cut ? (this.sprint ? 1 : CLOSE_TURN) * (this.cutT > 0 ? CUT_TURN_BOOST : 1) : 1) : 1;
+    if (cut && sp > 1.5 && tl > 0.05 && turn > 0.05 && turn < DRIBBLE_CUT_MAX) {
       // A cut with the ball: the run bends round instead of braking through the turn.
       const cur = Math.atan2(this.vel.z, this.vel.x);
       const a = turnToward(cur, Math.atan2(tz, tx), DRIBBLE_TURN * quick * (this.slowT > 0 ? 0.5 : 1) * dt);
       const loss = DRIBBLE_CUT_LOSS * (this.cutT > 0 ? CUT_KEEP_LOSS : 1);
       const want = Math.hypot(tx, tz) * (1 - loss * Math.min(1, turn / (Math.PI / 2)));
-      const nsp = sp + clamp(want - sp, -ACCEL * dt, ACCEL * dt);
+      const nsp = sp + clamp(want - sp, -ACCEL * quickLegs * dt, ACCEL * quickLegs * dt);
       this.vel.x = Math.cos(a) * nsp;
       this.vel.z = Math.sin(a) * nsp;
     } else {
@@ -486,7 +515,7 @@ export class Player {
     }
 
     const nsp = this.speed();
-    const turnRate = dribbling ? (9 - nsp * 0.5) * (cut ? DRIBBLE_FACE_TURN * quick : 1) : 13 - nsp * 0.7;
+    const turnRate = (dribbling ? (9 - nsp * 0.5) * (cut ? DRIBBLE_FACE_TURN : 1) : 13 - nsp * 0.7) * quick;
     let face: number | null = this.faceTarget;
     if (face === null && nsp > 0.35) face = Math.atan2(this.vel.z, this.vel.x);
     if (face !== null) this.facing = turnToward(this.facing, face, Math.max(4, turnRate) * dt);

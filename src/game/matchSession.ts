@@ -1,7 +1,7 @@
 import { sfx } from '../audio/sfx';
 import type { Input } from '../core/input';
 import type { CamZoom } from '../core/save';
-import { clamp, damp } from '../core/math';
+import { clamp, damp, smoothstep } from '../core/math';
 import { CameraRig } from '../render/cameraRig';
 import { setCharacterFill, setCharacterHemiFill, setCharacterWhiteBalance } from '../render/characters';
 import { Effects } from '../render/effects';
@@ -13,6 +13,7 @@ import { DT, HALF_L, HALF_W } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, RestartKind, Side } from '../sim/types';
+import { EdgeArrows, type EdgeMate, type EdgeRect } from '../ui/edgeArrows';
 import { Hud, hudTeam } from '../ui/hud';
 import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
@@ -100,6 +101,30 @@ const RADAR_OCCLUDE_HOLD = 1;
 /** Margin (px) round the minimap that counts as under it, and how often (s) its rectangle is re-measured. */
 const RADAR_MARGIN = 14;
 const RADAR_RECT_S = 0.5;
+/**
+ * Fixed-step phase: the frame drawn blends the last two sim steps by the time left over (acc / DT), so it
+ * trails the newest step (the one that just read the stick and buttons) by (1 - acc / DT) of a step: up to a
+ * whole 16.7 ms, wherever the phase happened to settle. On a display running at about the step rate the
+ * leftover is nudged (at most PHASE_NUDGE of a step a frame, a time stretch nobody can see) towards
+ * PHASE_WANT, so what is drawn is ~85% of the newest step (~2.5 ms behind it) and every frame still runs
+ * exactly one step (the margin either side absorbs rAF jitter).
+ */
+const PHASE_WANT = 0.85;
+const PHASE_NUDGE = 0.03;
+/**
+ * Off-screen team-mate arrows (ui/edgeArrows): on with our ball (or a loose one near us: within EDGE_LOOSE m of
+ * one of ours and nearer to us than to them) in open play on the broadcast shot, easing in / out over
+ * EDGE_FADE_S. Each fades with his distance from the ball: solid to EDGE_NEAR m, down to EDGE_MIN_ALPHA by
+ * EDGE_FAR m. They stay inside a band clear of the score bug (EDGE_TOP px) and the bottom HUD (EDGE_BOTTOM px).
+ */
+const EDGE_LOOSE = 9;
+const EDGE_FADE_S = 0.15;
+const EDGE_NEAR = 18;
+const EDGE_FAR = 50;
+const EDGE_MIN_ALPHA = 0.4;
+const EDGE_SIDE = 22;
+const EDGE_TOP = 72;
+const EDGE_BOTTOM = 82;
 
 /**
  * On-screen labels of the touch buttons (mirrors ui/touch.ts LABELS): hints name the button the player sees.
@@ -187,6 +212,20 @@ export class MatchSession {
   private radarRectT = 0;
   private radarOccT = 0;
   private scratchV: THREE.Vector3 | null = null;
+  /**
+   * Action presses since the last live sim step (keyboard key-downs, touch button presses): a tap that goes
+   * down and up between two steps (shorter than a frame, or during a slow frame) still reaches the sim as a
+   * one-step press, never lost. Cleared whenever the sim isn't stepping (intro, replay, pause), so a press
+   * that skipped a replay never fires a pass at the restart.
+   */
+  private latch = { pass: false, shoot: false, through: false };
+  private offKey: (() => void) | null = null;
+  /** Off-screen team-mate arrows (see EDGE_FADE_S), their eased opacity, and the HUD boxes they keep off. */
+  private edge: EdgeArrows | null = null;
+  private edgeFade = 0;
+  private edgeAvoid: EdgeRect[] = [];
+  private edgeAvoidT = 0;
+  private edgeMates: EdgeMate[] = [];
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
     this.demo = !!opt.demo;
@@ -228,9 +267,19 @@ export class MatchSession {
       );
       this.hud.onPause = () => this.requestPause();
       document.getElementById('ui')!.appendChild(this.hud.root);
+      if (opt.humanSide === 0 || opt.humanSide === 1) {
+        this.edge = new EdgeArrows(this.view.teamColor.fill, this.view.teamColor.edge);
+        this.hud.root.appendChild(this.edge.root);
+      }
       this.touch = new TouchControls(input);
       document.getElementById('ui')!.appendChild(this.touch.root);
       this.touch.setEnabled(isTouchDevice());
+      // Latch presses as they happen (see `latch`): a key-down is read through Input itself (whatever it maps
+      // to), a touch button by its own press.
+      this.offKey = input.onKey(() => this.latchPresses(input.read()));
+      this.touch.onPress = (k) => {
+        if (k !== 'sprint') this.latch[k] = true;
+      };
     } else {
       this.hud = null;
       this.touch = null;
@@ -304,12 +353,33 @@ export class MatchSession {
     this.hud?.show('SECOND HALF', '', 'small', 1.6);
   }
 
+  /** The pad for the next sim step: the controls as they are now, plus any press latched since the last step. */
   private buildPad(): Pad {
     if (this.demo || this.match.cfg.humanSide < 0) return EMPTY_PAD;
     const c = this.input.read();
     const w = this.cam.screenToWorld(c.sx, c.sy);
-    // Keys give 8-way digital input: the sim turns set-piece aim gradually for those.
-    return { mx: w.x, mz: w.z, sprint: c.sprint, pass: c.pass, shoot: c.shoot, through: c.through, digital: this.input.lastDevice === 'keyboard' };
+    const l = this.latch;
+    const pad: Pad = {
+      mx: w.x, mz: w.z, sprint: c.sprint, pass: c.pass || l.pass, shoot: c.shoot || l.shoot, through: c.through || l.through,
+      // Keys give 8-way digital input: the sim turns set-piece aim gradually for those.
+      digital: this.input.lastDevice === 'keyboard',
+    };
+    this.clearLatch();
+    return pad;
+  }
+
+  /** Note whichever action buttons are down right now (called on every key-down). */
+  private latchPresses(c: { pass: boolean; shoot: boolean; through: boolean }): void {
+    if (this.demo || this.paused) return;
+    const l = this.latch;
+    l.pass ||= c.pass;
+    l.shoot ||= c.shoot;
+    l.through ||= c.through;
+  }
+
+  private clearLatch(): void {
+    const l = this.latch;
+    l.pass = l.shoot = l.through = false;
   }
 
   update(realDt: number): void {
@@ -317,6 +387,8 @@ export class MatchSession {
     this.time += dt;
     const m = this.match;
 
+    // (A press only carries over to the next live step: nothing latched while the sim isn't stepping.)
+    if (this.paused || this.introLeft > 0 || this.replay) this.clearLatch();
     if (this.paused) {
       // Frozen: live play, a replay or the pre-match fly-in all wait for the pause menu.
     } else if (this.introLeft > 0) {
@@ -349,7 +421,9 @@ export class MatchSession {
         steps++;
       }
       if (steps === 6) this.acc = 0;
-      this.view.apply(this.prev, this.cur, this.acc / DT, this.time, dt);
+      // (See PHASE_WANT: at about the step rate, keep the drawn frame close to the newest step.)
+      if (dt > DT * 0.8 && dt < DT * 2.5) this.acc += clamp(PHASE_WANT * DT - this.acc, -PHASE_NUDGE * DT, PHASE_NUDGE * DT);
+      this.view.apply(this.prev, this.cur, clamp(this.acc / DT, 0, 1), this.time, dt);
       this.flow();
       if (this.cardT > 0) {
         this.cardT -= dt;
@@ -1068,7 +1142,8 @@ export class MatchSession {
       // Over his head is the goal mouth on the over-the-shoulder free-kick lens: the bar goes to his feet there.
       this.view.setPower(charging ? Math.min(1, m.shootCharge / 0.85) : null, p.pos.x, p.pos.z, p.y, this.cam.behindActive);
     }
-    this.updatePassCharge(cinematic);
+    this.updatePassCharge(cinematic, dt);
+    this.updateEdgeArrows(dt);
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
       // Off for the referee close-up too (the buttons would sit on the booked player).
@@ -1119,9 +1194,10 @@ export class MatchSession {
   /**
    * Pass charging (PASS held, Match.passCharge 0..1 / passAim): the teal bar at the passer's feet, and the
    * ring and arrow on the teammate the pass is locked onto. Live play only (never over a replay or the card
-   * close-up); it all goes the frame PASS is let go (passCharge back to -1).
+   * close-up); it all goes the frame PASS is let go (passCharge back to -1). Not charging, with the ball at
+   * the human's feet: the pass-target preview (Match.passPreview / throughPreview; see updatePreview).
    */
-  private updatePassCharge(off: boolean): void {
+  private updatePassCharge(off: boolean, dt: number): void {
     const m = this.match;
     const hs = m.cfg.humanSide;
     const charge = typeof m.passCharge === 'number' ? m.passCharge : -1;
@@ -1129,8 +1205,11 @@ export class MatchSession {
     const passer = own >= 0 && m.players[own].side === hs ? own : m.active;
     if (off || this.replay || hs < 0 || !(charge >= 0) || passer < 0 || passer >= m.players.length) {
       this.view.setPassCharge(null);
+      this.updatePreview(off || !!this.replay || hs < 0, dt);
       return;
     }
+    // (The charge visuals take over from the preview at once.)
+    this.view.setPassPreview(-1, -1, 0, 0, dt, true);
     const f = this.view.frame;
     const aim = typeof m.passAim === 'number' ? m.passAim : -1;
     const locked = aim >= 0 && aim < m.players.length && aim !== passer && m.players[aim].side === hs;
@@ -1138,6 +1217,137 @@ export class MatchSession {
       charge, f[passer * PF], f[passer * PF + 1], locked ? f[aim * PF] : null, locked ? f[aim * PF + 1] : 0, this.cam.behindActive,
       locked ? aim : -1,
     );
+  }
+
+  /** A preview index from the sim made safe: one of the human's team-mates on the pitch (not him), else -1. */
+  private mateIdx(v: unknown): number {
+    const m = this.match;
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= m.players.length || v === m.active) return -1;
+    const p = m.players[v];
+    return p.side === m.cfg.humanSide && !isSentOff(p) ? v : -1;
+  }
+
+  /**
+   * Pass-target preview while the human has the ball at his feet and isn't charging: the calm ring (and white
+   * pip) on whoever a PASS pressed now goes to, the dashed ring in the space ahead of whoever a THROUGH goes to
+   * (MatchView.setPassPreview cross-fades any change of target). The broadcast shot only, never under a low
+   * lens; anything else fades it off.
+   */
+  private updatePreview(off: boolean, dt: number): void {
+    const m = this.match;
+    const cam = this.cam;
+    const on = !off && m.active >= 0 && m.ball.owner === m.active && (m.phase === 'play' || m.phase === 'restart') &&
+      cam.mode === 'broadcast' && !cam.behindActive && this.introLeft <= 0;
+    if (!on) {
+      this.view.setPassPreview(-1, -1, 0, 0, dt, !!this.replay || cam.mode !== 'broadcast');
+      return;
+    }
+    const pass = this.mateIdx((m as { passPreview?: unknown }).passPreview);
+    const through = this.mateIdx((m as { throughPreview?: unknown }).throughPreview);
+    let ax = 0;
+    let az = 0;
+    if (through >= 0) {
+      // The space ahead of the runner: along his run, or (standing) towards the goal we attack.
+      const r = m.players[through];
+      const f = this.view.frame;
+      const sp = Math.hypot(r.vel.x, r.vel.z);
+      const ad = m.attackDir(m.cfg.humanSide as Side);
+      const ux = sp > 1.2 ? r.vel.x / sp : ad;
+      const uz = sp > 1.2 ? r.vel.z / sp : 0;
+      const ahead = clamp(2.4 + sp * 0.35, 2.4, 5);
+      ax = clamp(f[through * PF] + ux * ahead, -HALF_L + 1, HALF_L - 1);
+      az = clamp(f[through * PF + 1] + uz * ahead, -HALF_W + 1, HALF_W - 1);
+    }
+    this.view.setPassPreview(pass, through, ax, az, dt);
+  }
+
+  /**
+   * Off-screen team-mates (EDGE_FADE_S): project the human's team-mates through this frame's camera and hand
+   * them to the edge arrows, which draw the ones outside the frame. Our ball, or a loose one near us, in open
+   * play on the broadcast shot only: never over a set piece, a replay, a celebration or a close-up.
+   */
+  private updateEdgeArrows(dt: number): void {
+    const ea = this.edge;
+    if (!ea || typeof window === 'undefined') return;
+    const m = this.match;
+    const hs = m.cfg.humanSide as Side;
+    const cam = this.cam;
+    const show = !this.paused && !this.replay && this.introLeft <= 0 && m.phase === 'play' && cam.mode === 'broadcast' &&
+      !cam.behindActive && this.nearOurBall();
+    this.edgeFade = clamp(this.edgeFade + (show ? dt : -dt) / EDGE_FADE_S, 0, 1);
+    if (this.edgeFade <= 0) {
+      ea.hide();
+      return;
+    }
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    this.edgeAvoidT -= dt;
+    if (this.edgeAvoidT <= 0) {
+      // The minimap and (touch) the action buttons: re-measured twice a second.
+      this.edgeAvoidT = RADAR_RECT_S;
+      this.edgeAvoid = [];
+      const boxes = [this.hud?.root.querySelector('.hud-radar'), this.touch?.isVisible ? this.touch.root.querySelector('.touch-btns') : null];
+      for (const el of boxes) {
+        const r = el?.getBoundingClientRect();
+        if (r && r.width > 0 && r.height > 0) this.edgeAvoid.push({ l: r.left, t: r.top, r: r.right, b: r.bottom });
+      }
+    }
+    const camera = this.world.camera;
+    camera.updateMatrixWorld();
+    const v = (this.scratchV ??= camera.position.clone());
+    const f = this.view.frame;
+    const bx = f[BALL_OFS];
+    const bz = f[BALL_OFS + 2];
+    const out = this.edgeMates;
+    out.length = 0;
+    // While a pass is charged, the man it's locked onto is the one lit (the preview is off by then).
+    const charging = typeof m.passCharge === 'number' && m.passCharge >= 0;
+    const aim = charging && typeof m.passAim === 'number' ? m.passAim : -1;
+    for (const p of m.teamPlayers(hs)) {
+      const i = p.idx;
+      if (i === m.active || isSentOff(p)) continue;
+      const x = f[i * PF];
+      const z = f[i * PF + 1];
+      // Chest height, in the lens's own space first: someone behind it (portrait, end-on) points the other way.
+      v.set(x, this.view.headTop * 0.5 + PITCH_Y, z).applyMatrix4(camera.matrixWorldInverse);
+      let sx: number;
+      let sy: number;
+      if (v.z > -0.5) {
+        sx = W / 2 + v.x * 1e4;
+        sy = H / 2 - v.y * 1e4;
+      } else {
+        v.applyMatrix4(camera.projectionMatrix);
+        sx = ((v.x + 1) / 2) * W;
+        sy = ((1 - v.y) / 2) * H;
+      }
+      const d = Math.hypot(x - bx, z - bz);
+      out.push({
+        idx: i, x: sx, y: sy, num: p.def.number,
+        alpha: 1 - (1 - EDGE_MIN_ALPHA) * smoothstep(EDGE_NEAR, EDGE_FAR, d),
+        pass: i === aim ? 1 : this.view.previewWeight(i), through: this.view.throughWeight(i),
+      });
+    }
+    const box = { l: EDGE_SIDE, t: Math.min(EDGE_TOP, H * 0.2), r: W - EDGE_SIDE, b: H - Math.min(EDGE_BOTTOM, H * 0.22) };
+    ea.update(out, this.edgeFade, box, this.edgeAvoid);
+  }
+
+  /** Our ball, our pass on its way, or a loose ball nearer one of ours (within EDGE_LOOSE m) than any of them. */
+  private nearOurBall(): boolean {
+    const m = this.match;
+    const hs = m.cfg.humanSide;
+    const b = m.ball;
+    if (b.owner >= 0) return m.players[b.owner].side === hs;
+    const pt = this.view.frame[BALL_OFS + 10];
+    if (pt >= 0 && pt < 22 && m.players[pt].side === hs) return true;
+    let us = Infinity;
+    let them = Infinity;
+    for (const p of m.players) {
+      if (isSentOff(p)) continue;
+      const d = Math.hypot(p.pos.x - b.pos.x, p.pos.z - b.pos.z);
+      if (p.side === hs) us = Math.min(us, d);
+      else them = Math.min(them, d);
+    }
+    return us < EDGE_LOOSE && us <= them;
   }
 
   private updateTutorial(dt: number, key: (k: HintKey) => string): void {
@@ -1158,7 +1368,12 @@ export class MatchSession {
     const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === m.cfg.humanSide;
     let tip = '';
     if (!t.moved) tip = `Move with <kbd>${move}</kbd> · sprint with <kbd>${sprint}</kbd>`;
-    else if (mine && !t.passed) tip = `Tap <kbd>${key('pass')}</kbd> to pass to the mate you point at · hold it to hit it harder · tap <kbd>${key('through')}</kbd> for a through ball`;
+    // (Round 9 controls: PASS goes at once to the mate the preview rings; THROUGH sends that runner in behind.)
+    else if (mine && !t.passed) {
+      // (On MANUAL passing nobody is ringed: the ball goes where the stick points.)
+      const to = m.groundAssist === 'manual' ? 'passes where you point the stick' : 'passes to the <b>ringed</b> mate at once (point the stick to pick him)';
+      tip = `<kbd>${key('pass')}</kbd> ${to} · hold it to hit it harder · <kbd>${key('through')}</kbd> sends a runner through`;
+    }
     else if (mine && !t.shot) {
       tip = `Near goal? <b>Hold</b> <kbd>${key('shoot')}</kbd> and release to shoot: a tap drives it low, a long hold rises`;
       if (this.match.timedFinish) tip += ` · tap it again as the boot meets the ball for a perfect finish`;
@@ -1170,7 +1385,7 @@ export class MatchSession {
       if (t.chipT > 14) t.chip = true;
     }
     else if (!mine && m.ball.owner >= 0 && !t.switched) {
-      tip = `Defending: <kbd>${key('pass')}</kbd> switches player · <kbd>${key('shoot')}</kbd> slide tackles · run into them to steal`;
+      tip = `Defending: tap <kbd>${key('shoot')}</kbd> to tackle (hold it to slide) · hold <kbd>${key('through')}</kbd> to press · <kbd>${key('pass')}</kbd> switches player`;
       if (t.t > 60) t.switched = true;
     }
     if (t.moved && t.passed && t.shot && t.chip && (t.switched || t.t > 90)) this.opt.tutorial = false;
@@ -1185,6 +1400,8 @@ export class MatchSession {
     setCharacterHemiFill(0);
     setCharacterWhiteBalance();
     sfx.setRain(false);
+    this.offKey?.();
+    this.offKey = null;
     this.hud?.dispose();
     this.touch?.root.remove();
     this.input.touch.enabled = false;

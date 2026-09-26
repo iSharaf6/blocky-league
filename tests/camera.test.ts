@@ -6,6 +6,7 @@ import { KIT_MIN_DL, contrastAwayKit, kitLightnessGap, readKit, readsApart } fro
 import { BALL_OFS, FRAME_LEN, writeFrame } from '../src/game/replay';
 import { grassLike, grassSafeKit, makeTeam, PRESET_CLUBS, resolveKitClash } from '../src/meta/data';
 import { CameraRig, type CamFocus } from '../src/render/cameraRig';
+import { ResolutionGovernor } from '../src/render/world';
 import { Footballer, PSTATE, type PoseInput } from '../src/render/characters';
 import { DT } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
@@ -375,6 +376,185 @@ describe('broadcast camera: the inputs that used to jump are eased', { timeout: 
   });
 });
 
+describe('broadcast camera: locked on, and wide enough to see who to pass to', { timeout: 60_000 }, () => {
+  /** Ball offset (px, 1280 x 720) between the lens and the shot the rig wants this frame. */
+  function lagPx(rig: CameraRig, cam: THREE.PerspectiveCamera, want: THREE.PerspectiveCamera, x: number, y: number, z: number): number {
+    const r = rig as unknown as { wantT: THREE.Vector3; wantP: THREE.Vector3 };
+    want.fov = cam.fov;
+    want.aspect = cam.aspect;
+    want.position.copy(r.wantP);
+    want.lookAt(r.wantT);
+    want.updateProjectionMatrix();
+    want.updateMatrixWorld();
+    cam.updateMatrixWorld();
+    const a = new THREE.Vector3(x, y, z).project(cam);
+    const b = new THREE.Vector3(x, y, z).project(want);
+    return Math.hypot(((a.x - b.x) * 1280) / 2, ((a.y - b.y) * 720) / 2);
+  }
+
+  it('a sprint dribble and a long pass are followed, not trailed', () => {
+    // HEAD 709a690 ('normal', then 31.5 m wide): a sprint dribble trailed by ~93 px (2.3 m) all the way, a long
+    // pass by 90 px (p50). Same width now (41 m) before / after: 69 -> ~14 px, 71 -> ~8 px.
+    for (const zoom of ZOOMS) {
+      for (const kind of ['sprint', 'pass'] as const) {
+        const { rig, cam } = newRig(LANDSCAPE, zoom);
+        const want = new THREE.PerspectiveCamera(24, LANDSCAPE, 0.5, 900);
+        let x = -30, z = 4, y = 0, vx = 0, vz = 0, vy = 0;
+        const lags: number[] = [];
+        for (let i = 0; i < 60 * 6; i++) {
+          const t = i / 60;
+          if (kind === 'sprint') vx = t < 1 ? 0 : x > 36 ? 0 : Math.min(8, (t - 1) * 17);
+          else {
+            if (i === 60) { vx = 22; vz = -12; vy = 7; }
+            const sp = Math.hypot(vx, vz);
+            if (sp > 0 && y <= 0.01) { const d = Math.min(sp, (2.3 + 0.3 * sp) / 60); vx -= (vx / sp) * d; vz -= (vz / sp) * d; }
+            if (y > 0 || vy > 0) vy -= 11.5 / 60;
+            y = Math.max(0, y + vy / 60);
+            if (y <= 0 && vy < 0) vy = 0;
+          }
+          x += vx / 60;
+          z += vz / 60;
+          rig.update(1 / 60, focusAt(x, z, { by: y, bvx: vx, bvz: vz, lean: 1 }), t);
+          if (t > 1) lags.push(lagPx(rig, cam, want, x, y, z));
+        }
+        lags.sort((a, b) => a - b);
+        const p50 = lags[Math.floor(lags.length / 2)];
+        expect(p50, `${zoom} ${kind}`).toBeLessThan(zoom === 'close' ? 30 : 24);
+      }
+    }
+  });
+
+  it("'normal' shows most of the team building from the back and through midfield", () => {
+    // HEAD 709a690's 'normal' (31.5 m of pitch across the screen): a median 5 of the 10 team-mates on screen,
+    // p25 3. Now (41 m): a median 6, and at least 5 about three quarters of the time.
+    const counts: number[] = [];
+    for (const seed of [3, 7]) {
+      const m = newMatch(seed, -1);
+      const { rig, cam } = newRig(LANDSCAPE, 'normal');
+      const f = new Float32Array(FRAME_LEN);
+      rig.players = f;
+      const v = new THREE.Vector3();
+      let sample = 0;
+      for (let fr = 0; fr < 150 * 60 && m.phase !== 'fulltime'; fr++) {
+        m.step(DT, EMPTY_PAD);
+        for (const e of m.drainEvents()) if (e.type === 'setpiece') rig.softCut();
+        if (m.phase === 'goal' && m.phaseT > 2) {
+          m.resumeAfterGoal();
+          rig.cut();
+        } else if (m.phase === 'halftime') {
+          m.continueSecondHalf();
+          rig.cut();
+        }
+        writeFrame(m, f, fr / 60);
+        rig.update(DT, playFocus(m, f, TALL), fr / 60);
+        if (++sample % 6 || m.phase !== 'play' || rig.behindActive || rig.justCut) continue;
+        const own = m.ball.owner;
+        if (own < 0 || m.players[own].side !== 0 || m.ball.pos.x * m.attackDir(0) > 16) continue;
+        cam.updateMatrixWorld();
+        let n = 0;
+        for (const p of m.teamPlayers(0)) {
+          if (p.idx === own) continue;
+          v.set(p.pos.x, 1, p.pos.z).project(cam);
+          if (Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1) n++;
+        }
+        counts.push(n);
+      }
+    }
+    counts.sort((a, b) => a - b);
+    expect(counts.length).toBeGreaterThan(200);
+    expect(counts[Math.floor(counts.length / 2)]).toBeGreaterThanOrEqual(6);
+    expect(counts.filter((n) => n >= 5).length / counts.length).toBeGreaterThan(0.65);
+  });
+
+  it("the three distances: 'wide' pulls back past the old wide shot, 'normal' is it (~41 m), 'close' is round 7's", () => {
+    const seen: Record<string, number> = {};
+    for (const zoom of ZOOMS) {
+      const { rig, cam } = newRig(LANDSCAPE, zoom);
+      for (let i = 0; i < 120; i++) rig.update(1 / 60, focusAt(0, 0), i / 60);
+      cam.updateMatrixWorld();
+      // Metres of the ball's line across the screen (two points 10 m either side of the ball, projected).
+      const l = new THREE.Vector3(-10, 0, 0).project(cam).x;
+      const r = new THREE.Vector3(10, 0, 0).project(cam).x;
+      seen[zoom] = (20 * 2) / (r - l);
+    }
+    const txt = JSON.stringify(seen);
+    // (41 m at the look point, a few metres beyond the ball: ~37.5 m on the ball's own line.)
+    expect(seen.normal, txt).toBeGreaterThan(35);
+    expect(seen.normal, txt).toBeLessThan(40);
+    expect(seen.wide / seen.normal, txt).toBeGreaterThan(1.1);
+    expect(seen.close / seen.normal, txt).toBeLessThan(0.82);
+  });
+});
+
+describe('dynamic resolution (World.adapt)', () => {
+  const feedDts = (g: ResolutionGovernor, seconds: number, dt: (i: number) => number): number[] => {
+    const out: number[] = [];
+    let t = 0;
+    for (let i = 0; t < seconds; i++) {
+      const d = dt(i);
+      t += d;
+      g.frame(d);
+      out.push(g.ratio);
+    }
+    return out;
+  };
+
+  it('rAF jitter at 60 Hz (and 120 Hz falling back to 60) never costs resolution', () => {
+    const g = new ResolutionGovernor(2);
+    // Headless Chrome's vsync intervals: 15.2 .. 18.7 ms.
+    const r = feedDts(g, 20, (i) => (i % 3 === 0 ? 0.0187 : i % 3 === 1 ? 0.0152 : 0.0161));
+    expect(Math.min(...r)).toBe(2);
+    const g2 = new ResolutionGovernor(2);
+    expect(Math.min(...feedDts(g2, 10, (i) => (i % 2 ? 1 / 120 : 1 / 60)))).toBe(2);
+  });
+
+  it('a sudden load drops the pixel ratio within ~1.5 s and it is all back ~7 s after the load ends', () => {
+    const g = new ResolutionGovernor(2);
+    feedDts(g, 2, () => 1 / 60);
+    // Every other frame dropped (a GPU just over budget at 60 Hz), for 3 s.
+    const loaded = feedDts(g, 3, (i) => (i % 2 ? 1 / 30 : 1 / 60));
+    const at = (arr: number[], s: number, dt: number) => arr[Math.min(arr.length - 1, Math.floor(s / dt))];
+    expect(at(loaded, 1.6, 1 / 40)).toBeLessThanOrEqual(1.05);
+    const low = g.ratio;
+    expect(low).toBeGreaterThanOrEqual(0.6);
+    const calm = feedDts(g, 10, () => 1 / 60);
+    const back = calm.findIndex((r) => r >= 2);
+    expect(back).toBeGreaterThan(0);
+    expect(back / 60).toBeLessThan(9);
+  });
+
+  it('slow frames our own main-thread work explains (a busy CPU) cost no pixels: fewer would not help', () => {
+    const g = new ResolutionGovernor(2);
+    let t = 0;
+    for (let i = 0; t < 6; i++) {
+      const dt = i % 2 ? 1 / 30 : 1 / 60;
+      t += dt;
+      g.frame(dt, dt * 0.9);
+    }
+    expect(g.ratio).toBe(2);
+  });
+
+  it('a lone hitch (a GC pause) is ignored, and a raise that brings the stutter back is not tried again at once', () => {
+    const g = new ResolutionGovernor(2);
+    const r = feedDts(g, 10, (i) => (i === 300 ? 0.08 : 1 / 60));
+    expect(Math.min(...r)).toBe(2);
+    // A GPU that manages 60 Hz at ratio <= 1.2 only: it settles instead of sawing up and down.
+    const g2 = new ResolutionGovernor(2);
+    let changes = 0;
+    let last = g2.ratio;
+    let t = 0;
+    for (let i = 0; t < 30; i++) {
+      const dt = g2.ratio > 1.2 ? (i % 2 ? 1 / 30 : 1 / 60) : 1 / 60;
+      t += dt;
+      g2.frame(dt);
+      if (g2.ratio !== last && t > 10) changes++;
+      last = g2.ratio;
+    }
+    expect(g2.ratio).toBeLessThanOrEqual(1.2);
+    expect(changes).toBeLessThanOrEqual(4);
+  });
+});
+
 describe('broadcast camera through real play', { timeout: 60_000 }, () => {
   const cases: { name: string; aspect: number; zoom: CamZoom }[] = [
     ...ZOOMS.map((zoom) => ({ name: `landscape ${zoom}`, aspect: LANDSCAPE, zoom })),
@@ -454,6 +634,46 @@ describe('footballer poses cross-fade between states (render)', { timeout: 60_00
     expect(spike([{ state: PSTATE.slide, dur: 0.75, speed: (t) => Math.max(0, 7 - t * 9) }, { state: PSTATE.stand, dur: 0.38, speed: () => 0 }, { state: PSTATE.move, dur: 0.5, speed: run }])).toBeLessThan(0.3);
     expect(spike([{ state: PSTATE.move, dur: 0.3, speed: () => 7 }, { state: PSTATE.fallen, dur: 1.05, speed: (t) => Math.max(0, 5 - t * 8) }, { state: PSTATE.stand, dur: 0.38, speed: () => 0 }])).toBeLessThan(0.35);
     expect(spike([{ state: PSTATE.move, dur: 0.5, speed: () => 0 }, { state: PSTATE.move, dur: 0.6, speed: (t) => Math.min(6, t * 14) }], true)).toBeLessThan(0.3);
+  });
+
+  it('a strike reads at once: the first frame of a kick already shows ~half the strike pose', () => {
+    // HEAD 709a690: an 0.08 s smoothstep showed 11% of it on the first frame and 38% on the second.
+    const def = makeTeam(PRESET_CLUBS[5]).players[3];
+    const kit = { shirt: 0xe0b23a, shirt2: 0x222222, pattern: 'plain' as const, shorts: 0x222222, socks: 0xe0b23a, gk: 0xff8a2b };
+    const live = new Footballer(def, kit, false);
+    const raw = new Footballer(def, kit, false);
+    const limbs = ['body', 'torso', 'head', 'armL', 'armR', 'legL', 'legR'] as const;
+    const read = (fb: Footballer) => limbs.flatMap((k) => {
+      const r = (fb as unknown as Record<string, THREE.Object3D>)[k].rotation;
+      return [r.x, r.y, r.z];
+    });
+    const dist = (a: number[], b: number[]) => Math.hypot(...a.map((v, i) => v - b[i]));
+    const input = (state: number, st: number, speed: number, phase: number, dt: number): PoseInput => ({
+      state, stateT: st, speed, runPhase: phase, kickT: state === PSTATE.kick ? Math.min(1, st / 0.34) : 0, kickLeg: 1,
+      lean: 0.1, diveDir: 0, headerT: 0, celebrate: 0, y: 0, keeper: false, hasBall: true, look: 0.2, turn: 0, dt,
+    });
+    let t = 0;
+    let phase = 0;
+    for (let f = 0; f < 24; f++) {
+      phase = (phase + 5 / 60 / 2.1) % 1;
+      live.pose(input(PSTATE.move, f / 60, 5, phase, 1 / 60), t);
+      raw.pose(input(PSTATE.move, f / 60, 5, phase, 1 / 60), t);
+      t += 1 / 60;
+    }
+    const from = read(live);
+    const progress: number[] = [];
+    for (let f = 0; f < 4; f++) {
+      live.pose(input(PSTATE.kick, f / 60, 4, phase, 1 / 60), t);
+      // (dt 0: the pose as it is, no cross-fade: what the fade is heading for this frame.)
+      raw.pose(input(PSTATE.kick, f / 60, 4, phase, 0), t);
+      t += 1 / 60;
+      const want = read(raw);
+      progress.push(1 - dist(read(live), want) / Math.max(1e-6, dist(from, want)));
+    }
+    // (The head's own easing towards the ball keeps the last few % apart: that isn't the cross-fade.)
+    expect(progress[0], progress.join(' ')).toBeGreaterThan(0.4);
+    expect(progress[1], progress.join(' ')).toBeGreaterThan(0.75);
+    expect(progress[3], progress.join(' ')).toBeGreaterThan(0.95);
   });
 
   it('a strike out of a run or a sprint blends in no faster than the swing itself', () => {

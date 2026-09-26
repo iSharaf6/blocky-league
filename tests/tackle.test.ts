@@ -95,7 +95,7 @@ function play(m: Match, p: Player, frames: number, input: (i: number) => Pad) {
 const tap = (i: number) => pad(0, 0, { shoot: i < 4 });
 
 describe('TACKLE: tap', () => {
-  it('within 2.5 m, from the front: a standing tackle there and then that wins it most of the time and rarely fouls', () => {
+  it('within 3 m, from the front: a standing tackle there and then that wins it most of the time and rarely fouls', () => {
     let tried = 0;
     let won = 0;
     let fouls = 0;
@@ -176,10 +176,61 @@ describe('TACKLE: tap', () => {
   });
 });
 
+describe('TACKLE: tap to contact', () => {
+  it('no wind-up: in reach it goes in on the press; from 3 m the lunge gets there within ~0.1 s', () => {
+    const lat = (gap: number) => {
+      const fr: number[] = [];
+      for (let s = 0; s < 20; s++) {
+        const { m, p } = duel(9800 + s, gap, -1, -1, 2);
+        const r = play(m, p, 30, tap);
+        if (r.first >= 0) fr.push(r.first);
+      }
+      return { n: fr.length, max: Math.max(...fr), avg: fr.reduce((a, f) => a + f, 0) / Math.max(1, fr.length) };
+    };
+    const near = lat(2);
+    const far = lat(3);
+    // eslint-disable-next-line no-console
+    console.log(`TACKLE tap to contact: from 2 m ${near.avg.toFixed(1)} frames (max ${near.max}), from 3 m ${far.avg.toFixed(1)} (max ${far.max}), of 20 each: ${near.n}, ${far.n}`);
+    expect(near.n).toBeGreaterThanOrEqual(18);
+    expect(near.max).toBe(0);
+    expect(far.n).toBeGreaterThanOrEqual(16);
+    expect(far.max * DT).toBeLessThanOrEqual(0.12);
+  });
+});
+
 describe('TACKLE: hold or double-tap to slide', () => {
-  it(`held ${SLIDE_HOLD} s: a slide, aimed at the ball`, () => {
+  it("the human's slide is long, fast and forgiving: from 4 m it takes a carrier crossing its path, and rarely fouls", () => {
+    let won = 0;
+    let fouls = 0;
+    const N = 30;
+    let far = 0;
+    for (let s = 0; s < N; s++) {
+      // He carries it across our path 4 m ahead of us; we go to ground (double tap), aimed a beat ahead of it.
+      const { m, p, c } = duel(9900 + s, 4, -1, 1, 1);
+      c.pos.z = 1.5;
+      c.facing = -Math.PI / 2;
+      c.vel.x = 0;
+      c.vel.z = -3;
+      c.aiDirX = 0;
+      c.aiDirZ = -1;
+      m.ball.pos.x = c.footX();
+      m.ball.pos.z = c.footZ();
+      const x0 = p.pos.x;
+      const r = play(m, p, 60, (i) => pad(0, 0, { shoot: i < 2 || (i >= 5 && i < 7) }));
+      if (r.evs.some((e) => e.type === 'tackle' && e.by === p.idx && e.slide && e.won)) won++;
+      if (r.foul) fouls++;
+      far = Math.max(far, p.pos.x - x0);
+    }
+    // eslint-disable-next-line no-console
+    console.log(`human slide from 4 m at a carrier crossing: won ${won}/${N}, fouls ${fouls}, travelled up to ${far.toFixed(1)} m`);
+    expect(won).toBeGreaterThanOrEqual(N * 0.7);
+    expect(fouls).toBeLessThanOrEqual(N * 0.1);
+    expect(far).toBeGreaterThan(3.5);
+  });
+
+  it(`held ${SLIDE_HOLD} s (the ball not yet in reach when pressed): a slide, aimed at the ball`, () => {
     for (let s = 0; s < 6; s++) {
-      const { m, p } = duel(6000 + s, 2.6, -1, -1, 2);
+      const { m, p } = duel(6000 + s, 3.6, -1, -1, 2);
       const r = play(m, p, 30, (i) => pad(0, 0, { shoot: i < 24 }));
       expect(r.slide).toBe(true);
       expect(r.evs.some((e) => e.type === 'tackle' && e.by === p.idx && e.slide)).toBe(true);
@@ -205,6 +256,36 @@ describe('TACKLE: hold or double-tap to slide', () => {
       const { m, p } = duel(8000 + s, 2, -1, -1);
       expect(play(m, p, 40, tap).slide).toBe(false);
     }
+  });
+});
+
+describe('PRESS: the jockey', () => {
+  it('holding PRESS, our man mirrors the carrier: he stays goal-side and close however the carrier runs', () => {
+    let worst = 0;
+    let sum = 0;
+    let n = 0;
+    let goalSide = 0;
+    for (let s = 0; s < 10; s++) {
+      // He runs at our goal (-x) and veers; we start 4 m off him, goal-side.
+      const { m, p, c } = duel(9700 + s, 4, -1, -1, 5);
+      c.aiDirZ = s % 2 ? 0.6 : -0.6;
+      for (let i = 0; i < 90; i++) {
+        m.step(DT, pad(0, 0, { through: true }));
+        m.drainEvents();
+        if (m.ball.owner !== c.idx || p.state !== 'move') break;
+        if (i < 30) continue;
+        const d = Math.hypot(p.pos.x - c.pos.x, p.pos.z - c.pos.z);
+        worst = Math.max(worst, d);
+        sum += d;
+        n++;
+        if (p.pos.x < c.pos.x) goalSide++;
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`PRESS: gap to the carrier averages ${(sum / Math.max(1, n)).toFixed(2)} m, worst ${worst.toFixed(2)} m, goal-side ${((goalSide / Math.max(1, n)) * 100).toFixed(0)}% of the time`);
+    expect(sum / Math.max(1, n)).toBeLessThan(2.2);
+    expect(worst).toBeLessThan(3.2);
+    expect(goalSide / Math.max(1, n)).toBeGreaterThan(0.85);
   });
 });
 

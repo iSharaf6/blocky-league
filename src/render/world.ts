@@ -40,6 +40,112 @@ const LOOKS: Record<TimeOfDay, Look> = {
   },
 };
 
+/**
+ * Dynamic resolution (World.adapt): trades pixels for frame rate, fast. A frame is slow when it took longer
+ * than SLOW_DT (a 60 Hz frame and a third: a dropped frame at 60 Hz, never rAF jitter; a 120 / 144 Hz display
+ * falling back to 60 is fine). A few slow frames within ~half a second (not one GC hiccup) drop the pixel
+ * ratio by DROP_K at once, again after DROP_COOL s if still slow: 2 -> 1 in ~1.5 s under a sudden load (round 8
+ * dropped only 15% per 1.5 s). Once RAISE_CALM s pass without a slow frame it climbs back RAISE_K every
+ * RAISE_EVERY s (0.6 -> 2 in ~7 s; round 8 took ~19 s). A raise that brings the slow frames straight back
+ * (within RAISE_PROBE s) goes straight back to the ratio before it, which becomes a ceiling for CEIL_S s,
+ * doubling with each failed try (at most CEIL_MAX s), so it settles instead of sawing up and down.
+ */
+const SLOW_DT = 1.35 / 60;
+const SLOW_BURST = 2.5;
+const SLOW_WIN = 0.5;
+const DROP_K = 0.8;
+const DROP_COOL = 0.5;
+const RAISE_K = 1.15;
+const RAISE_EVERY = 0.75;
+const RAISE_CALM = 1.5;
+const CEIL_S = 8;
+/** A slow frame whose own main-thread work took at least this share of SLOW_DT is CPU bound. */
+const CPU_BOUND = 0.6;
+const CEIL_MAX = 60;
+const RAISE_PROBE = 2;
+export const MIN_RATIO = 0.6;
+
+export class ResolutionGovernor {
+  ratio: number;
+  private max: number;
+  private t = 0;
+  private burst = 0;
+  private lastSlow = -99;
+  private lastChange = -99;
+  private lastRaise = -99;
+  private ceiling = Infinity;
+  private ceilT = 0;
+  /** The ratio before the last raise, and how many raises in a row have failed. */
+  private beforeRaise = 0;
+  private fails = 0;
+  private lastFail = -99;
+
+  constructor(max: number) {
+    this.max = max;
+    this.ratio = max;
+  }
+
+  /** A new top ratio (the quality setting changed): start there again, all history forgotten. */
+  reset(max: number): void {
+    this.max = max;
+    this.ratio = max;
+    this.t = 0;
+    this.burst = 0;
+    this.lastSlow = this.lastChange = this.lastRaise = -99;
+    this.ceiling = Infinity;
+    this.ceilT = 0;
+    this.beforeRaise = 0;
+    this.fails = 0;
+    this.lastFail = -99;
+  }
+
+  /**
+   * One frame took `dt` s, `work` s of it our own main-thread work (sim + render calls; 0 = unknown): the new
+   * pixel ratio if it should change now, else null. A slow frame that our own work already explains (CPU
+   * bound: a busy machine, other tabs) is no reason to drop pixels (fewer pixels wouldn't make it faster),
+   * though it still holds off a raise.
+   */
+  frame(dt: number, work = 0): number | null {
+    // (A stall this long is a hidden tab or a breakpoint, not the renderer.)
+    if (!(dt > 0) || dt > 0.25) return null;
+    this.t += dt;
+    const slow = dt > SLOW_DT;
+    const gpu = slow && work < SLOW_DT * CPU_BOUND;
+    this.burst = this.burst * Math.exp(-dt / SLOW_WIN) + (gpu ? 1 : 0);
+    if (slow) this.lastSlow = this.t;
+    if (this.ceilT > 0) {
+      this.ceilT -= dt;
+      if (this.ceilT <= 0) this.ceiling = Infinity;
+    }
+    // A raise that has held for a while was right: the next failure starts the back-off afresh.
+    if (this.fails > 0 && this.lastRaise > this.lastFail && this.t - this.lastRaise > CEIL_S) this.fails = 0;
+    if (this.burst >= SLOW_BURST && this.t - this.lastChange >= DROP_COOL && this.ratio > MIN_RATIO + 0.001) {
+      if (this.t - this.lastRaise < RAISE_PROBE && this.beforeRaise > 0) {
+        // That raise was one too many: back to where it was, and stay there a while.
+        this.ratio = this.beforeRaise;
+        this.ceiling = this.beforeRaise;
+        this.ceilT = Math.min(CEIL_MAX, CEIL_S * 2 ** this.fails);
+        this.fails++;
+        this.lastFail = this.t;
+      } else this.ratio = Math.max(MIN_RATIO, this.ratio * DROP_K);
+      this.beforeRaise = 0;
+      this.lastChange = this.t;
+      this.burst = 0;
+      return this.ratio;
+    }
+    if (this.t - this.lastSlow >= RAISE_CALM && this.t - this.lastChange >= RAISE_EVERY && this.ratio < this.max - 0.001) {
+      const next = Math.min(this.max, this.ceiling, this.ratio * RAISE_K);
+      if (next > this.ratio + 0.01) {
+        this.beforeRaise = this.ratio;
+        this.ratio = next;
+        this.lastChange = this.lastRaise = this.t;
+        return this.ratio;
+      }
+    }
+    return null;
+  }
+}
+
 /** Renderer, scene, sun + sky light. Colours stay flat and saturated (no tone mapping). */
 function mixHex(a: number, b: number, t: number): number {
   const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
@@ -62,8 +168,8 @@ export class World {
   time: TimeOfDay = 'day';
   private maxRatio = 2;
   private ratio = 2;
-  private frameEma = 1 / 60;
-  private adaptT = 0;
+  /** Dynamic resolution (see ResolutionGovernor). */
+  readonly governor = new ResolutionGovernor(2);
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -141,6 +247,7 @@ export class World {
     const dpr = window.devicePixelRatio || 1;
     this.maxRatio = q === 'high' ? Math.min(dpr, 2) : q === 'medium' ? Math.min(dpr, 1.5) : 1;
     this.ratio = this.maxRatio;
+    this.governor.reset(this.maxRatio);
     this.renderer.setPixelRatio(this.ratio);
     // Crisp toy shadows need texels: 4096 on desktop-class GPUs, less on phones.
     const coarse = matchMedia('(pointer: coarse)').matches;
@@ -190,17 +297,13 @@ export class World {
     this.renderer.render(this.scene, this.camera);
   }
 
-  /** Dynamic resolution: trade pixels for frame rate on slow devices. */
-  adapt(dt: number): void {
-    if (dt <= 0 || dt > 0.1) return;
-    this.frameEma += (dt - this.frameEma) * 0.05;
-    this.adaptT += dt;
-    if (this.adaptT < 1.5) return;
-    this.adaptT = 0;
-    let next = this.ratio;
-    if (this.frameEma > 1 / 48) next = Math.max(0.6, this.ratio * 0.85);
-    else if (this.frameEma < 1 / 58 && this.ratio < this.maxRatio) next = Math.min(this.maxRatio, this.ratio * 1.1);
-    if (Math.abs(next - this.ratio) > 0.02) {
+  /**
+   * Dynamic resolution: trade pixels for frame rate on slow devices (ResolutionGovernor), every frame. `work`:
+   * seconds of this frame's own main-thread work (sim + render calls), so a CPU-bound hitch costs no pixels.
+   */
+  adapt(dt: number, work = 0): void {
+    const next = this.governor.frame(dt, work);
+    if (next !== null && Math.abs(next - this.ratio) > 0.005) {
       this.ratio = next;
       this.renderer.setPixelRatio(next);
       this.resize();

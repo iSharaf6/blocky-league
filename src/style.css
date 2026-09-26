@@ -1592,6 +1592,72 @@ kbd {
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
 }
 
+/* Off-screen team-mates (ui/edgeArrows.ts): a chevron at the edge pointing at him, his number just inside
+   it. The PASS target is lit white and a touch bigger (cross-faded in 0.1 s); the THROUGH target gets a
+   light rim. The session moves them every frame (transform / rotate / translate, never animated). */
+.hud-edge {
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.hud.dead .hud-edge,
+.hud.replaying .hud-edge,
+.hud.cinematic .hud-edge {
+  opacity: 0;
+}
+
+.ea {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  will-change: transform, opacity;
+}
+
+.ea-arrow {
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  width: 26px;
+  height: 26px;
+  overflow: visible;
+  transform-origin: 50% 50%;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.35));
+  transition: scale 0.1s ease-out;
+}
+
+.ea-arrow path {
+  fill: var(--ea-fill);
+  stroke: var(--ea-edge);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+  transition: fill 0.1s ease-out, stroke 0.1s ease-out;
+}
+
+.ea-num {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  min-width: 21px;
+  padding: 1px 4px 0;
+  font: 400 13px / 17px var(--round);
+  text-align: center;
+  color: var(--ea-text);
+  background: var(--ea-fill);
+  border: 2px solid var(--ea-edge);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+  transition: background-color 0.1s ease-out, color 0.1s ease-out, scale 0.1s ease-out;
+}
+
+.ea.pass .ea-arrow { scale: 1.25; }
+.ea.pass .ea-arrow path { fill: #fbfbf4; stroke: #26262e; }
+.ea.pass .ea-num { background: #fbfbf4; color: #26262e; border-color: #26262e; scale: 1.15; }
+.ea.through .ea-arrow path { stroke: #9ff7ee; }
+.ea.through .ea-num { border-color: #9ff7ee; }
+
 /* The ball, our man or his pass target is under the minimap (Hud.fadeRadar): nearly see-through. */
 .hud-radar.under {
   opacity: 0.18;

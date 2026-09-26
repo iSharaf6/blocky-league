@@ -1,8 +1,8 @@
 import { clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
-import { headerAtGoal } from './actions';
+import { headerAtGoal, throughLead } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, WALL_DIST } from './constants';
-import { takeOnVsHuman, vsHuman } from './dribble';
+import { readsHuman, takeOnVsHuman, vsHuman } from './dribble';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import type { Match } from './match';
 import type { Player } from './player';
@@ -377,6 +377,12 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
       defend(m, p, brain, focus, dt);
       continue;
     }
+    // The man the human's PASS / THROUGH press has locked onto makes his move before the ball comes.
+    const called = owner && m.calledRun === p.idx && m.cfg.humanSide === side ? calledSpot(m, p, owner) : null;
+    if (called) {
+      moveTo(p, called.x, called.z, 1, ball.pos);
+      continue;
+    }
     if (weHave && focus) {
       const t = attackTarget(m, p, brain, focus);
       moveTo(p, t.x, t.z, t.u, ball.pos);
@@ -409,10 +415,12 @@ function organiseAttack(m: Match, side: Side, c: Player, brain: TeamBrain, dt: n
   const team = m.teamPlayers(side);
   const cN = nX(m, side, c.pos.x);
   const free = (p: Player) => !p.isKeeper && !p.sentOff && p !== c && p.state === 'move' && !m.isHumanControlled(p);
+  // The human's man on it: his teammates move sooner and more (humanFlow).
+  const hum = humanFlow(m, side, c);
 
   // ---- Box runs when the ball is out wide in the final third (or a cross is in the air).
   brain.boxZones.clear();
-  const wideFinal = Math.abs(c.pos.z) > HALF_W * 0.36 && cN > 0.4;
+  const wideFinal = Math.abs(c.pos.z) > HALF_W * (hum ? HUMAN_WIDE : 0.36) && cN > (hum ? HUMAN_WIDE_FINAL : 0.4);
   const crossing = m.ball.owner < 0 && b.y > 0.8 && nX(m, side, b.x) > 0.45;
   if (wideFinal || crossing) {
     const s0 = Math.sign(crossing ? b.z : c.pos.z) || 1;
@@ -425,7 +433,7 @@ function organiseAttack(m: Match, side: Side, c: Player, brain: TeamBrain, dt: n
     const used = new Set<number>();
     for (const z of zones) {
       let best: Player | null = null;
-      let bd = 30;
+      let bd = hum ? HUMAN_BOX_REACH : 30;
       for (const p of team) {
         if (!free(p) || used.has(p.idx) || p.role === 'DF') continue;
         const d = dist2(p.pos.x, p.pos.z, z.x, z.z) - (p.role === 'FW' ? 6 : 0);
@@ -494,6 +502,64 @@ function organiseAttack(m: Match, side: Side, c: Player, brain: TeamBrain, dt: n
   pick([-0.95, -0.5, 0.5, 0.95], 16, avail[1]?.p, 2);
 }
 
+/**
+ * The human's man has it (or a pass is on its way to him): his teammates move sooner and more, the Mario
+ * Strikers way. Forwards make their runs in behind far more often (HUMAN_RUN_BOOST, and one always goes when
+ * nobody is running); box runs start from further out (HUMAN_WIDE, HUMAN_WIDE_FINAL) and from further away
+ * (HUMAN_BOX_REACH m). (Round 9 also tried busier support runs for him, spots picked more often, round where he
+ * was going, with a local search and more weight on room: the open options it measured barely moved, 22% ->
+ * 20-24% of his time on the ball without a clear one 8-16 m away, and a casual human's passes were cut out a
+ * point or two more often; so the support spots are the AI's.)
+ */
+function humanFlow(m: Match, side: Side, c: Player | null): boolean {
+  return m.cfg.humanSide === side && !!c && c.side === side && m.isHumanControlled(c);
+}
+const HUMAN_RUN_BOOST = 1.6;
+const HUMAN_WIDE = 0.33;
+const HUMAN_WIDE_FINAL = 0.32;
+const HUMAN_BOX_REACH = 45;
+
+/**
+ * The move a man makes the moment the human's PASS / THROUGH press locks onto him (Match.calledRun), before the
+ * ball comes: for a pass he checks towards the ball, a few strides, and off his marker if one is on him; for a
+ * through ball he starts his sprint in behind at once (along the offside line until it's played, with the law
+ * on, so the run doesn't take him offside before the pass). Null for a lofted ball (its runner keeps his run).
+ */
+function calledSpot(m: Match, p: Player, c: Player): { x: number; z: number } | null {
+  if (m.calledMode === 'pass') {
+    const dx = c.pos.x - p.pos.x;
+    const dz = c.pos.z - p.pos.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const step = Math.min(CALLED_CHECK, d * 0.3);
+    let x = p.pos.x + (dx / d) * step;
+    let z = p.pos.z + (dz / d) * step;
+    const o = nearestOpp(m, p.side, p.pos.x, p.pos.z);
+    if (o.o && o.d < 4 && o.d > 0.01) {
+      x += ((p.pos.x - o.o.pos.x) / o.d) * CALLED_SHAKE;
+      z += ((p.pos.z - o.o.pos.z) / o.d) * CALLED_SHAKE;
+    }
+    return { x, z };
+  }
+  if (m.calledMode !== 'through') return null;
+  const ad = m.attackDir(p.side);
+  const pt = throughLead(m, p, CALLED_RUN);
+  if (m.offside) {
+    const lim = (Math.max(m.offsideLine(p.side), nX(m, p.side, m.ball.pos.x)) * HALF_L - 0.5) * ad;
+    if ((pt.x - lim) * ad > 0) {
+      // On the line: a diagonal along it (towards the middle from out wide, else away from the nearest man).
+      const near = nearestOpp(m, p.side, p.pos.x, p.pos.z).o;
+      const zs = Math.abs(p.pos.z) > 7 ? -Math.sign(p.pos.z) : near && near.pos.z > p.pos.z ? -1 : 1;
+      return { x: (p.pos.x - lim) * ad > -1 ? lim : pt.x * 0.5 + lim * 0.5, z: clamp(p.pos.z + zs * 5, -HALF_W + 2, HALF_W - 2) };
+    }
+  }
+  return pt;
+}
+/** A called pass: he checks this far (m) towards the ball, and shakes this far off a marker within 4 m. */
+const CALLED_CHECK = 3;
+const CALLED_SHAKE = 1.5;
+/** A called through ball: his sprint is aimed this far (m) ahead of him (actions.throughLead). */
+const CALLED_RUN = 9;
+
 /** Runs in behind: only when the carrier has time and is facing forward to play the pass. */
 function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: number): void {
   if (p.role === 'DF') {
@@ -531,13 +597,18 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
   const line = m.defLine(other(p.side));
   const n = nX(m, p.side, p.pos.x);
   const ment = m.mentality[p.side];
-  const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45);
-  if (pr > 2.2 && facingFwd && n > line - 0.32 && line < 0.8 && m.rng.chance(chance)) {
+  // The human's carrier facing forward in the middle or final third: a forward always goes when nobody is
+  // running, and runs come far more often (humanFlow).
+  const hum = humanFlow(m, p.side, c) && nX(m, p.side, c.pos.x) > -0.33;
+  const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45) * (hum ? HUMAN_RUN_BOOST : 1);
+  const due = hum && p.role === 'FW' && !m.teamPlayers(p.side).some((t) => t.running && !t.sentOff);
+  // (The roll is made either way, as it always was: a forward who's due doesn't change the rng's course.)
+  if (pr > (hum ? 1.5 : 2.2) && facingFwd && n > line - 0.32 && line < 0.8 && (m.rng.chance(chance) || due)) {
     p.running = true;
     p.runCued = false;
     p.runT = 2.1 + m.rng.next() * 0.9;
   } else {
-    p.runT = 0.7 + m.rng.next() * 1.8;
+    p.runT = hum ? 0.3 + m.rng.next() * 0.6 : 0.7 + m.rng.next() * 1.8;
   }
 }
 
@@ -1050,7 +1121,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
 
   p.aiT -= dt;
   const firstTouch = p.ballT < 0.05 && p.aiT <= -dt * 0.5;
-  const squeezed = near.d < 1.4 && p.aiMode === 'dribble' && p.aiT > 0.1 && p.ballT > 0.3;
+  const squeezed = (near.d < 1.4 && p.aiMode === 'dribble' && p.aiT > 0.1 && p.ballT > 0.3) || readsHuman(m, p, near.o, near.d, dt);
   if (!firstTouch && p.aiT > 0 && !squeezed) {
     if (p.aiMode === 'shield' && near.o && near.d < 3.5) shield(m, p, near.o);
     else dribble(m, p, p.aiDirX, p.aiDirZ);

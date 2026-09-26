@@ -29,6 +29,8 @@ export class TouchControls {
   private skipTimer = 0;
   /** Charge drawn on PASS / THROUGH (0..1 in 1/50 steps, -1 = none): style writes only when it changes. */
   private charge: Record<'pass' | 'through', number> = { pass: -1, through: -1 };
+  /** Called the moment a button goes down (the session latches it: a tap shorter than a frame still counts). */
+  onPress: ((k: BtnKey) => void) | null = null;
 
   constructor(private input: Input) {
     this.root = document.createElement('div');
@@ -103,6 +105,7 @@ export class TouchControls {
       b.addEventListener('pointerdown', (e) => {
         b.setPointerCapture(e.pointerId);
         set(true);
+        this.onPress?.(k);
         input.lastDevice = 'touch';
         navigator.vibrate?.(8);
         e.preventDefault();

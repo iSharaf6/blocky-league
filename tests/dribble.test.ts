@@ -94,6 +94,66 @@ describe('dribble assist: close control', () => {
   });
 });
 
+describe("the human's man answers the stick quicker than the AI's", () => {
+  it('with the ball: ~0.25 s to 90% of his sprint, ~0.12 s to turn a 3 m/s run round, and he stops dead', () => {
+    const legs = (human: boolean) => {
+      const m = scenario(20);
+      if (!human) (m.cfg as { humanSide: number }).humanSide = -1;
+      const p = m.players[9];
+      place(p, -20, 0);
+      p.facing = 0;
+      giveBall(m, p);
+      // (The AI would steer him itself: drive his controls directly for the comparison.)
+      const drive = (x: number, sprint: boolean) => {
+        if (human) m.step(DT, pad(x, 0, { sprint }));
+        else {
+          p.wantX = x;
+          p.wantZ = 0;
+          p.sprint = sprint;
+          p.step(DT, true, false);
+        }
+      };
+      const sps: number[] = [];
+      for (let i = 0; i < 90; i++) {
+        drive(1, true);
+        sps.push(p.speed());
+      }
+      const top = Math.max(...sps);
+      const t90 = (sps.findIndex((v) => v >= 0.9 * top) + 1) * DT;
+      place(p, -20, 0);
+      p.facing = 0;
+      p.vel.x = 3;
+      giveBall(m, p);
+      let rev = -1;
+      for (let i = 0; i < 60 && rev < 0; i++) {
+        drive(-0.55, false);
+        if (p.vel.x <= 0) rev = (i + 1) * DT;
+      }
+      place(p, -20, 0);
+      p.facing = 0;
+      p.vel.x = 5;
+      giveBall(m, p);
+      let stop = -1;
+      for (let i = 0; i < 60 && stop < 0; i++) {
+        drive(0, false);
+        if (p.speed() < 0.3) stop = (i + 1) * DT;
+      }
+      return { t90, rev, stop };
+    };
+    const h = legs(true);
+    const ai = legs(false);
+    // eslint-disable-next-line no-console
+    console.log(`with the ball: 90% sprint ${h.t90.toFixed(2)} s (AI ${ai.t90.toFixed(2)}), reverse at 3 m/s ${h.rev.toFixed(2)} s (AI ${ai.rev.toFixed(2)}), stop from 5 m/s ${h.stop.toFixed(2)} s (AI ${ai.stop.toFixed(2)})`);
+    expect(h.t90).toBeLessThanOrEqual(0.3);
+    expect(h.t90).toBeLessThan(ai.t90 * 0.8);
+    expect(h.rev).toBeGreaterThan(0);
+    expect(h.rev).toBeLessThanOrEqual(0.14);
+    expect(h.rev).toBeLessThan(ai.rev);
+    expect(h.stop).toBeGreaterThan(0);
+    expect(h.stop).toBeLessThanOrEqual(0.12);
+  });
+});
+
 describe('dribble assist: skill cut', () => {
   /** A defender 2.4 m in front closing at `closing` m/s, our man flicks the stick 90 degrees. */
   const cutAt = (seed: number, closing: number, flick = true) => {
