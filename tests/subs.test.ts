@@ -3,7 +3,7 @@ import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { DT } from '../src/sim/constants';
 import { shapeTarget } from '../src/sim/ai';
 import { FORMATIONS } from '../src/sim/formations';
-import { EMPTY_PAD, formationRemap, Match } from '../src/sim/match';
+import { EMPTY_PAD, FORCED_SUB_MINUTE, formationRemap, Match } from '../src/sim/match';
 import type { FormationId, MatchEvent, Side } from '../src/sim/types';
 
 function match(seed = 3, humanSide: Side | -1 = -1) {
@@ -81,12 +81,12 @@ describe('substitutions and mentality', () => {
         expect(s.minute).toBeGreaterThanOrEqual(60);
         // Only ever at a stoppage (the ball was out, or it's the kick-off after a goal).
         expect(['out', 'kickoff'].includes(s.phase)).toBe(true);
-        // The 60' look takes off anyone under 0.55; from 75' the bar is 0.45. Past 70' a side that
-        // hasn't made a change yet makes one whatever the legs look like (its first sub of the match).
+        // The 60' look takes off anyone under 0.55; from 75' the bar is 0.45. Past FORCED_SUB_MINUTE (66') a
+        // side that hasn't made a change yet makes one whatever the legs look like (its first sub of the match).
         const first = subs.filter((x) => x.e.side === s.e.side).indexOf(s) === 0;
         if (s.stamina >= (s.minute >= 75 ? 0.45 : 0.55)) {
           expect(first).toBe(true);
-          expect(s.minute).toBeGreaterThanOrEqual(70);
+          expect(s.minute).toBeGreaterThanOrEqual(FORCED_SUB_MINUTE);
           forced++;
         }
         const p = m.teamPlayers(s.e.side)[s.e.slot];
@@ -101,7 +101,7 @@ describe('substitutions and mentality', () => {
     }
     expect(late).toBeGreaterThan(0);
     // eslint-disable-next-line no-console
-    console.log(`late AI subs over 5 matches: ${late} (${forced} forced at 70')`);
+    console.log(`late AI subs over 5 matches: ${late} (${forced} forced from ${FORCED_SUB_MINUTE}')`);
   }, 60_000);
 
   it("never makes the human manager's changes", () => {
@@ -212,7 +212,7 @@ describe('substitutions and mentality', () => {
     expect(m.aiSubs(1, 2, 0.9)).toBe(0);
   });
 
-  it("the 60' look takes off anyone under 0.55; by 75' the bar is 0.45; by 70' every AI bench has been used", () => {
+  it("the 60' look takes off anyone under 0.55; by 75' the bar is 0.45; from 66' every AI bench gets used", () => {
     const at = (minute: number, stamina: number, used = 1) => {
       const m = match(12);
       m.phase = 'halftime';
@@ -233,8 +233,11 @@ describe('substitutions and mentality', () => {
     expect(at(62, 0.6).n).toBe(0);
     expect(at(77, 0.5).n).toBe(0);
     expect(at(77, 0.4).n).toBe(1);
-    // No change made yet: from 70' one comes on regardless, for the most tired outfielder.
-    expect(at(66, 0.8, 0).n).toBe(0);
+    // No change made yet: from 66' (round 7: was 70', and it landed at 72-77') one comes on regardless,
+    // for the most tired outfielder.
+    expect(FORCED_SUB_MINUTE).toBe(66);
+    expect(at(65, 0.8, 0).n).toBe(0);
+    expect(at(66, 0.8, 0).n).toBe(1);
     const forced = at(72, 0.8, 0);
     expect(forced.n).toBe(1);
     expect(forced.slot).toBe(6);

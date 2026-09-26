@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { crossingZ, stickCurl, THROW_RANGE } from '../src/sim/actions';
+import { crossingZ, HEADER_MAX_D, HEADER_MAX_VH, LOB_MAX_SPEED, resolveKick, stickCurl, THROW_RANGE } from '../src/sim/actions';
 import { Ball, type BallHit } from '../src/sim/ball';
 import { BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_W, HALF_L, HALF_W, PEN_SPOT, SEP_MATE, SEP_OPP, WALL_DIST } from '../src/sim/constants';
 import { EMPTY_PAD, Match, OFFSIDE_TOL, type Pad } from '../src/sim/match';
-import type { Player } from '../src/sim/player';
+import type { KickOrder, Player } from '../src/sim/player';
 import type { MatchEvent, Side } from '../src/sim/types';
 
 function newMatch(seed: number, humanSide: Side | -1 = -1, halfLength = 150): Match {
@@ -445,8 +445,14 @@ describe('curl', () => {
 describe('fitness', () => {
   it('stamina drains over a half and costs sprint pace', () => {
     let sum = 0;
+    let sumBusiest = 0;
     let m = newMatch(11, -1, 120);
-    for (const seed of [11, 23, 41]) {
+    // (Round 7: over eight halves, not three. One half's outfield average swings from ~0.75 to ~0.93 with the
+    // seed, at HEAD as well: 2 of 24 halves there finished at 0.92+, so a per-half bar of 0.92 on three seeds
+    // failed on whichever small change reshuffled them. The mean bar is unchanged; a single half only has to
+    // show nobody finished it fresh, which is what the sprint-heavy bug looked like: 0.95-1.0.)
+    const seeds = [11, 23, 41, 53, 67, 79, 97, 109];
+    for (const seed of seeds) {
       m = newMatch(seed, -1, 120);
       for (let i = 0; i < 60 * 200 && m.phase !== 'halftime'; i++) {
         m.step(DT, EMPTY_PAD);
@@ -460,14 +466,16 @@ describe('fitness', () => {
       const busiest = Math.min(...mfs.map((p) => p.stamina));
       // eslint-disable-next-line no-console
       console.log(`stamina after a 2-min half (seed ${seed}): outfield avg ${avg.toFixed(2)}, busiest MF ${busiest.toFixed(2)}`);
-      expect(avg).toBeLessThan(0.92);
-      expect(busiest).toBeLessThan(0.85);
+      expect(avg).toBeLessThan(0.95);
+      expect(busiest).toBeLessThan(0.88);
       // Keepers barely tire.
       expect(m.keeperOf(0)!.stamina).toBeGreaterThan(0.85);
       sum += avg;
+      sumBusiest += busiest;
     }
     // A sprint-heavy 2-minute half used to leave everyone at 0.95-1.0.
-    expect(sum / 3).toBeLessThan(0.87);
+    expect(sum / seeds.length).toBeLessThan(0.87);
+    expect(sumBusiest / seeds.length).toBeLessThan(0.8);
     // Tired legs lose a lot of their top speed.
     const p = m.players[6];
     p.stamina = 1;
@@ -872,5 +880,230 @@ describe('goal celebration', () => {
       m.resumeAfterGoal();
       expect(m.phase).toBe('kickoff');
     }
+  });
+});
+
+describe('round 7: headers and long balls fly at footballing speeds', () => {
+  /** Where a ball launched from (x, y, z) at `v` first comes down to the grass (no players), and its peak. */
+  const carry = (x: number, y: number, z: number, v: { x: number; y: number; z: number }) => {
+    const b = new Ball();
+    b.reset(x, z);
+    b.pos.y = y;
+    Object.assign(b.vel, v);
+    const hits: BallHit[] = [];
+    for (let i = 0; i < 600; i++) {
+      b.step(DT, hits);
+      if (i > 3 && b.pos.y <= BALL_R + 0.01 && b.vel.y <= 0.01) break;
+      if (hits.some((h) => h.kind === 'bounce')) break;
+    }
+    return Math.hypot(b.pos.x - x, b.pos.z - z);
+  };
+  const order = (kind: KickOrder['kind'], aimX: number, aimZ: number, firstTime: boolean): KickOrder =>
+    ({ kind, dirX: 1, dirZ: 0, power: 1, target: -1, aimX, aimZ, expires: 0.6, firstTime });
+
+  it('a header carries HEADER_MAX_D m at most, at no more than HEADER_MAX_VH m/s along the ground (it was 50-58 m/s)', () => {
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+      const m = scenario(seed);
+      const d = m.players[13];
+      const ad = m.attackDir(d.side);
+      place(d, -ad * 40, (seed - 3) * 4);
+      m.ball.reset(d.pos.x + ad * 0.3, d.pos.z);
+      m.ball.pos.y = 2.2;
+      // A defender's first-time clearance (35 m upfield, into touch) met at head height becomes a header.
+      for (const aim of [{ x: d.pos.x + ad * 35, z: HALF_W - 1.5 }, { x: d.pos.x + ad * 20, z: 20 }, { x: d.pos.x + ad * 12, z: 0 }]) {
+        const L = resolveKick(m, d, order('header', aim.x, aim.z, true));
+        const hs = Math.hypot(L.vx, L.vz);
+        expect(hs).toBeLessThanOrEqual(HEADER_MAX_VH + 1e-6);
+        expect(carry(m.ball.pos.x, m.ball.pos.y, m.ball.pos.z, { x: L.vx, y: L.vy, z: L.vz })).toBeLessThan(HEADER_MAX_D + 2.5);
+      }
+    }
+  });
+
+  it('a lofted ball or a clearance leaves the foot at LOB_MAX_SPEED m/s at most: a long one is hit higher, not harder', () => {
+    for (const seed of [1, 2, 3, 4]) {
+      const m = scenario(seed);
+      const p = m.players[3];
+      const ad = m.attackDir(0);
+      place(p, -ad * 38, 5);
+      giveBall(m, p);
+      for (const [kind, dist] of [['lob', 30], ['lob', 45], ['lob', 60], ['clear', 45], ['clear', 70]] as const) {
+        const L = resolveKick(m, p, order(kind, p.pos.x + ad * dist, 0, false));
+        expect(Math.hypot(L.vx, L.vy, L.vz)).toBeLessThanOrEqual(LOB_MAX_SPEED + 1e-6);
+        // Up to ~45 m it still gets there (the flight cap is 3.2 s, not 2.3 s).
+        if (dist <= 45) expect(carry(m.ball.pos.x, m.ball.pos.y, m.ball.pos.z, { x: L.vx, y: L.vy, z: L.vz })).toBeGreaterThan(dist - 4);
+      }
+    }
+  });
+});
+
+describe('round 7: touches by a defender near his own goal', () => {
+  /** Would a ball launched like this (no players) go into the goal at x = gx? */
+  const headsIn = (m: Match, gx: number) => {
+    const b = new Ball();
+    b.reset(m.ball.pos.x, m.ball.pos.z);
+    b.pos.y = m.ball.pos.y;
+    Object.assign(b.vel, m.ball.vel);
+    const hits: BallHit[] = [];
+    for (let i = 0; i < 300; i++) {
+      b.step(DT, hits);
+      if (b.inGoal !== 0) return Math.sign(gx) === b.inGoal;
+      if (Math.abs(b.pos.x) > HALF_L + 0.5 || Math.abs(b.pos.z) > HALF_W || b.hspeed() < 0.3) return false;
+    }
+    return false;
+  };
+  const touch = (m: Match, name: 'nick' | 'deflect', p: Player, shot = true) =>
+    (m as unknown as Record<string, (p: Player, shot: boolean) => void>)[name](p, shot);
+
+  it('a shot going just wide of the far post that grazes a defender is turned further wide (it used to be turned back in) and slowed', () => {
+    for (let seed = 1; seed <= 12; seed++) {
+      const m = scenario(seed);
+      const ad = m.attackDir(0);
+      const gx = ad * HALF_L;
+      const d = m.players[14];
+      // The ball 8 m out, left of centre, heading just wide of the far (+z) post.
+      const b = m.ball;
+      b.reset(gx - ad * 8, -1);
+      b.pos.y = 0.6;
+      const tz = GOAL_W / 2 + 0.6;
+      const l = Math.hypot(8, tz + 1);
+      b.vel.x = ((ad * 8) / l) * 25;
+      b.vel.z = ((tz + 1) / l) * 25;
+      b.lastTouch = m.players[9].idx;
+      b.lastTouchSide = 0;
+      place(d, b.pos.x, b.pos.z - 0.4);
+      touch(m, 'nick', d);
+      const zLine = b.pos.z + (b.vel.z * (gx - b.pos.x)) / b.vel.x;
+      expect(zLine).toBeGreaterThan(tz + 1.5);
+      expect(b.hspeed()).toBeLessThanOrEqual(25 * 0.6 * 0.94 + 1e-6);
+      expect(headsIn(m, gx)).toBe(false);
+    }
+  });
+
+  it('a block right by his own goal turns the ball away from it, and kills it', () => {
+    let inAtHead = 0;
+    const n = 40;
+    for (let seed = 1; seed <= n; seed++) {
+      const m = scenario(seed);
+      const ad = m.attackDir(0);
+      const gx = ad * HALF_L;
+      const d = m.players[14];
+      const b = m.ball;
+      // A ball 7 m out, going 2 m wide of the post, off a defender's shin.
+      b.reset(gx - ad * 7, 3);
+      b.pos.y = 0.7;
+      b.vel.x = ad * 20 * Math.cos(0.405);
+      b.vel.z = 20 * Math.sin(0.405);
+      b.lastTouch = m.players[9].idx;
+      b.lastTouchSide = 0;
+      place(d, b.pos.x, b.pos.z);
+      // How far (rad) the ball's heading is off the line to the middle of the goal, before and after.
+      const off = () => {
+        const a = Math.atan2(b.vel.z, b.vel.x) - Math.atan2(-b.pos.z, gx - b.pos.x);
+        return Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
+      };
+      const off0 = off();
+      touch(m, 'deflect', d, seed % 2 === 0);
+      if (headsIn(m, gx)) inAtHead++;
+      // Looped off behind, well wide of the post; or knocked away at least DEFLECT_SAFE_TURN (0.35 rad)
+      // further from the goal than it was going (a block used to turn it towards the goal as often as away).
+      const toLine = (gx - b.pos.x) / (b.vel.x || 1e-6);
+      const wideBehind = toLine > 0 && Math.abs(b.pos.z + b.vel.z * toLine) > GOAL_W / 2 + 1.5;
+      if (!wideBehind) expect(off()).toBeGreaterThanOrEqual(off0 + 0.35 - 1e-6);
+    }
+    // eslint-disable-next-line no-console
+    console.log(`blocks 7 m out that end up heading into the net: ${inAtHead}/${n}`);
+    expect(inAtHead / n).toBeLessThanOrEqual(0.1);
+  });
+});
+
+describe('round 7: a zonal defender at a corner', () => {
+  it('heads away a delivery that comes through within 1.2 m of him below 2.2 m when no attacker is on it', () => {
+    let headed = 0;
+    const n = 8;
+    for (let seed = 1; seed <= n; seed++) {
+      const m = newMatch(seed, -1, 120);
+      m.clock = 20;
+      m.phase = 'play';
+      m.ball.owner = -1;
+      const ad = m.attackDir(0);
+      const gx = ad * HALF_L;
+      const s0 = seed % 2 ? 1 : -1;
+      (m as unknown as { goOut: (k: string, s: number, x: number, z: number) => void }).goOut('corner', 0, gx - ad * 0.35, s0 * (HALF_W - 0.35));
+      for (let i = 0; (m.phase as string) !== 'restart' && i < 400; i++) m.step(DT, EMPTY_PAD);
+      // Take it (AI) and wait for the strike.
+      let kid = m.kickId;
+      for (let i = 0; i < 600 && m.kickId === kid; i++) {
+        m.step(DT, EMPTY_PAD);
+        m.drainEvents();
+      }
+      expect(m.setPieceKick).toBe(m.kickId);
+      kid = m.kickId;
+      const zonal = [...m.brains[1].spZonal.keys()].map((i) => m.players[i]);
+      expect(zonal.length).toBe(3);
+      const z = zonal[seed % 3];
+      // Everyone else well away from him, and the ball coming through 1 m in front of him at 1.5 m.
+      for (const q of m.players) if (q !== z && !q.isKeeper && Math.hypot(q.pos.x - z.pos.x, q.pos.z - z.pos.z) < 5) place(q, q.pos.x - ad * 8, q.pos.z);
+      const b = m.ball;
+      b.reset(z.pos.x - ad * 1.0, z.pos.z + s0 * 4);
+      b.pos.y = 1.5;
+      b.vel.x = 0;
+      b.vel.y = 1.2;
+      b.vel.z = -s0 * 20;
+      b.lastTouch = m.restart ? m.restart.taker : b.lastTouch;
+      m.updateBallPath();
+      let by = -1;
+      for (let i = 0; i < 30 && by < 0; i++) {
+        m.step(DT, EMPTY_PAD);
+        for (const e of m.drainEvents()) if (e.type === 'kick' && m.ball.lastTouch === z.idx) by = z.idx;
+        if (m.kickId !== kid && by < 0) break;
+      }
+      if (by === z.idx) headed++;
+    }
+    expect(headed).toBe(n);
+  });
+});
+
+describe('round 7: the AI on the ball', () => {
+  it('about to shoot from a tight angle with a teammate unmarked in the middle, he finds him about half the time', () => {
+    let shots = 0;
+    let passes = 0;
+    const n = 60;
+    for (let s = 0; s < n; s++) {
+      const m = newMatch(1 + s * 7, -1, 120);
+      m.phase = 'play';
+      m.restart = null;
+      m.clock = 20;
+      const ad = m.attackDir(0);
+      m.players.forEach((p, i) => place(p, -ad * 40, -HALF_W + 2 + i * 2.6));
+      const c = m.players[9];
+      const t = m.players[10];
+      place(c, ad * (HALF_L - 11), 11);
+      c.facing = ad > 0 ? 0 : Math.PI;
+      place(t, ad * (HALF_L - 9), -1);
+      place(m.keeperOf(1)!, ad * (HALF_L - 1), 2);
+      // Two defenders back on the line, wide of the posts (the man in the middle is onside, the lane clear).
+      place(m.players[12], ad * (HALF_L - 0.5), -8);
+      place(m.players[13], ad * (HALF_L - 0.5), 17);
+      giveBall(m, c);
+      c.ballT = 1;
+      c.aiT = 0;
+      c.holdT = 0.5;
+      m.drainEvents();
+      let res = '';
+      for (let i = 0; i < 90 && !res; i++) {
+        m.step(DT, EMPTY_PAD);
+        for (const e of m.drainEvents()) {
+          if (e.type === 'kick' && m.ball.lastTouch === c.idx) res = m.shotKick === m.kickId ? 'shot' : m.passTarget === t.idx ? 'pass' : 'other';
+        }
+      }
+      if (res === 'shot') shots++;
+      else if (res === 'pass') passes++;
+    }
+    // eslint-disable-next-line no-console
+    console.log(`tight angle, mate free in the middle: ${shots} shots, ${passes} passes to him (of ${n})`);
+    // It was 58 shots and 2 passes.
+    expect(passes / n).toBeGreaterThanOrEqual(0.3);
+    expect(passes / n).toBeLessThanOrEqual(0.7);
+    expect(shots + passes).toBe(n);
   });
 });

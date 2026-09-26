@@ -14,7 +14,13 @@ export interface Settings {
   commentary: boolean;
   /** Spoken commentary through the browser's speech synthesis (default off). */
   commentaryVoice: boolean;
+  /** Match camera distance (default 'normal'; older saves lack it). */
+  camZoom?: CamZoom;
 }
+
+export type CamZoom = 'wide' | 'normal' | 'close';
+
+export const CAM_ZOOMS: readonly CamZoom[] = ['wide', 'normal', 'close'];
 
 export interface Record {
   played: number;
@@ -50,7 +56,7 @@ export function defaultSave(): SaveData {
     coins: 500,
     clubIdx: 5,
     opponentIdx: 6,
-    settings: { sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, autoSwitch: true, timeOfDay: 'random', weather: 'random', commentary: true, commentaryVoice: false },
+    settings: { sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, autoSwitch: true, timeOfDay: 'random', weather: 'random', commentary: true, commentaryVoice: false, camZoom: 'normal' },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
     cup: null,
@@ -65,10 +71,13 @@ export function loadSave(): SaveData {
     if (!raw) return defaultSave();
     const d = JSON.parse(raw) as Partial<SaveData>;
     const base = defaultSave();
+    const settings: Settings = { ...base.settings, ...(d.settings ?? {}) };
+    // Saves from before the camera setting (or with a value this build doesn't know) get the normal lens.
+    if (!CAM_ZOOMS.includes(settings.camZoom as CamZoom)) settings.camZoom = 'normal';
     return {
       ...base,
       ...d,
-      settings: { ...base.settings, ...(d.settings ?? {}) },
+      settings,
       record: { ...base.record, ...(d.record ?? {}) },
       // Saves from before the cup existed (or a blob that isn't an object) start with no cup.
       cup: typeof d.cup === 'object' ? d.cup : null,

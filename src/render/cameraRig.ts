@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { clamp, damp, dampAngle, lerp, smoothstep, wrapAngle } from '../core/math';
+import type { CamZoom } from '../core/save';
 import { PF } from '../game/replay';
-import { GOAL_DEPTH, GOAL_H, GOAL_W, HALF_L, HALF_W } from '../sim/constants';
+import { GOAL_DEPTH, GOAL_H, GOAL_W, HALF_L, HALF_W, WALL_DIST } from '../sim/constants';
 
 export type CamMode = 'broadcast' | 'replay' | 'celebrate' | 'menu' | 'intro' | 'penalty' | 'card';
 
@@ -77,6 +78,30 @@ const NEAR_BALL_NDC = -0.62;
 const CUT_JUMP = 8;
 /** Top speed of the gliding cameras, m/s: faster than this reads as a whip pan. */
 const MAX_GLIDE = 30;
+/**
+ * Broadcast camera distance (Settings): how much closer than the wide shot (41 m of pitch across a 16:9
+ * screen) each setting films. 'normal' draws a player ~30% taller than 'wide'; 'close' ~20% tighter still.
+ * Portrait (the end-on lens) narrows its field of view by the matching PORTRAIT_ZOOM factor instead.
+ */
+const ZOOM_K: Record<CamZoom, number> = { wide: 1, normal: 1.3, close: 1.56 };
+const PORTRAIT_ZOOM: Record<CamZoom, number> = { wide: 1, normal: 0.88, close: 0.76 };
+/**
+ * Corners (always filmed at the wide width: the whole box has to fit): where the penalty spot sits on
+ * screen, NDC y (+0.07 = 46.5% down from the top). Touch layouts lift the framing ~28% (the spot to ~33%
+ * down, still under the score bug and set-piece hint) so the buttons along the bottom never cover the box.
+ * A far-side corner keeps its taker in frame, which may lower the spot, but never below CORNER_PEN_NDC_LOW
+ * (55% down).
+ */
+const CORNER_PEN_NDC = 0.07;
+const CORNER_PEN_NDC_TOUCH = 0.34;
+const CORNER_PEN_NDC_LOW = -0.1;
+/** After a corner is struck: seconds the framing glides (speed-limited) rather than jump-cutting to the ball. */
+const CORNER_EASE_S = 1.2;
+/** Goal-line replay: the lens never looks further out than this from the goal line (m). */
+const REPLAY_LOOK_MAX = 12;
+/** Post-strike hold: once the ball is past the wall the lens pushes in after it, this far at most (m), at this rate. */
+const PUSH_MAX = 6;
+const PUSH_RATE = 4;
 
 export class CameraRig {
   mode: CamMode = 'menu';
@@ -116,6 +141,15 @@ export class CameraRig {
   private postShot: Shot | null = null;
   private postYaw = 0;
   private postLook = new THREE.Vector3();
+  /** Post-strike hold: the dead-ball spot, and how far (m) the lens has pushed in after the ball so far. */
+  private postSpotX = 0;
+  private postSpotZ = 0;
+  private postPush = 0;
+  /** Broadcast camera distance (Settings; see ZOOM_K). */
+  private zoomSetting: CamZoom = 'normal';
+  /** A corner was being framed last frame / seconds left of the post-corner glide (no jump cuts). */
+  private wasCorner = false;
+  private cornerEase = 0;
   /** Card close-up: signed angle (rad) of the lens off the referee's facing (chosen once per booking). */
   private cardSide = 0;
   /** Touch layout (thumbstick bottom-left, buttons bottom-right): set pieces keep the taker in the left 60%. */
@@ -181,14 +215,32 @@ export class CameraRig {
     if (this.post > 0) this.post = 0;
   }
 
-  /** Metres of pitch the broadcast shot shows across the screen. */
-  private broadcastWidth(): number {
+  /** Broadcast camera distance (Settings). A change cuts straight to the new framing (never a slow zoom). */
+  get zoom(): CamZoom {
+    return this.zoomSetting;
+  }
+
+  setZoom(z: CamZoom): void {
+    if (!(z in ZOOM_K) || z === this.zoomSetting) return;
+    this.zoomSetting = z;
+    if (this.mode === 'broadcast' && !this.behind) this.snap = true;
+  }
+
+  /**
+   * Metres of pitch the broadcast shot shows across the screen at the 'wide' setting (41 m on a 16:9
+   * screen). Small (phone landscape) screens keep a wider shot, ~42 m, and draw the players bigger instead
+   * (characters.screenCharK) so the game still reads.
+   */
+  private wideWidth(): number {
     const a = this.camera.aspect;
     const w = a >= 1.6 ? 41 : a >= 1.25 ? 36 + (a - 1.25) * 14 : 35;
-    // Small (phone landscape) screens keep a wide shot, ~42 m, and draw the players bigger instead
-    // (characters.screenCharK) so the game still reads.
     const h = typeof window !== 'undefined' ? window.innerHeight : 720;
     return h < 560 ? Math.max(w, 42) : w;
+  }
+
+  /** Metres of pitch the broadcast shot shows across the screen at the current camera distance. */
+  private broadcastWidth(): number {
+    return this.wideWidth() / ZOOM_K[this.zoomSetting];
   }
 
   /** The main broadcast framing (landscape gantry or portrait end-on). Updates the look-ahead: once a frame. */
@@ -242,17 +294,20 @@ export class CameraRig {
       }
       px = tx - ad * G;
       pz = tz;
-      fov = 38;
+      // Closer settings narrow the lens (same spot, same tilt): the players drawn bigger, the ball still
+      // above the touch buttons.
+      fov = (2 * Math.atan(Math.tan(19 * DEG) * PORTRAIT_ZOOM[this.zoomSetting])) / DEG;
     } else {
       this.yaw = 0;
-      const W = this.broadcastWidth();
+      const piece = f.setPiece;
+      // Corners keep the wide shot whatever the setting: the whole box has to be in the frame.
+      const W = piece?.corner ? this.wideWidth() : this.broadcastWidth();
       const small = typeof window !== 'undefined' && window.innerHeight < 420;
       let fx = f.bx * 0.82 + f.ax * 0.18 + this.lead.x;
       // Aim a little beyond the ball so the far boards and a few stand rows frame the top.
       let fz = small ? f.bz * 0.9 : f.bz * 0.6 - 5 + this.lead.y * 0.5;
       const lean = f.lean ?? 0;
       if (lean !== 0) fx += lean * 5 * smoothstep(12, 34, lean * f.bx);
-      const piece = f.setPiece;
       if (piece) {
         // Taker and target together, but never let the taker leave the frame.
         let mx = (piece.x + piece.tx) / 2;
@@ -299,7 +354,26 @@ export class CameraRig {
       const a0 = PITCH_DEG * DEG;
       const aMax = NEAR_PITCH_MAX * DEG;
       let a = a0;
-      if (!standOk(tz, a0)) {
+      // Look target (z) that puts ground point z at NDC height `yN` (a point nearer the lens sits lower on
+      // screen, so this is monotonic in the target).
+      const tzFor = (z: number, y: number, yN: number) => {
+        let lo = z - 60;
+        let hi = z + 60;
+        for (let i = 0; i < 24; i++) {
+          const mid = (lo + hi) / 2;
+          if (ndcAt(mid, a0, z, y) < yN) lo = mid;
+          else hi = mid;
+        }
+        return (lo + hi) / 2;
+      };
+      if (piece?.corner) {
+        // Corners: framed on the box, the penalty spot at ~46% of the height (~33% on touch layouts, so the
+        // buttons never cover the box). A near-side taker may drop out of the bottom until he strikes it
+        // (the delivery flies into shot); a far-side one is kept below the top 8% as far as the spot can
+        // come down (55%) for him.
+        tz = tzFor(0, 0, this.touchLayout ? CORNER_PEN_NDC_TOUCH : CORNER_PEN_NDC);
+        if (piece.z < 0) tz = Math.max(Math.min(tz, tzFor(piece.z, (f.tall ?? 1.9) + 0.3, 0.84)), tzFor(0, 0, CORNER_PEN_NDC_LOW));
+      } else if (!standOk(tz, a0)) {
         if (standOk(tz, aMax)) {
           // Smallest pitch that clears the stand (bisection keeps it continuous as the ball moves).
           let lo = a0;
@@ -353,10 +427,17 @@ export class CameraRig {
     const h0 = this.postShot!;
     const base = Math.atan2(h0.tz - h0.pz, h0.tx - h0.px);
     const k = clamp(POST_HOLD - this.post, 0, POST_HOLD);
+    // Once the ball is past the wall, the lens eases in after it (PUSH_RATE, up to PUSH_MAX m along the aim
+    // line): the shot is followed on its way to goal, never snapped to.
+    const out = Math.hypot(f.bx - this.postSpotX, f.bz - this.postSpotZ);
+    const past = out > WALL_DIST + 0.5;
+    const pushWant = past ? Math.min(PUSH_MAX, out - WALL_DIST) : this.postPush;
+    this.postPush = damp(this.postPush, Math.max(this.postPush, pushWant), PUSH_RATE, dt);
+    const fwd = this.postPush - k * 0.9 * (1 - this.postPush / PUSH_MAX);
     const h = {
       ...h0,
-      px: h0.px - Math.cos(base) * k * 0.9,
-      pz: h0.pz - Math.sin(base) * k * 0.9,
+      px: h0.px + Math.cos(base) * fwd,
+      pz: h0.pz + Math.sin(base) * fwd,
       py: h0.py + k * 1.4,
     };
     const D0 = Math.max(4, Math.hypot(h.tx - h.px, h.tz - h.pz));
@@ -371,9 +452,10 @@ export class CameraRig {
     const lx = h.px + Math.cos(ang) * D0;
     const lz = h.pz + Math.sin(ang) * D0;
     const ly = h.py + Math.tan(el) * D0;
-    this.postLook.x = damp(this.postLook.x, lx, 3, dt);
-    this.postLook.y = damp(this.postLook.y, ly, 3, dt);
-    this.postLook.z = damp(this.postLook.z, lz, 3, dt);
+    const lr = past ? PUSH_RATE : 3;
+    this.postLook.x = damp(this.postLook.x, lx, lr, dt);
+    this.postLook.y = damp(this.postLook.y, ly, lr, dt);
+    this.postLook.z = damp(this.postLook.z, lz, lr, dt);
     return { tx: this.postLook.x, ty: this.postLook.y, tz: this.postLook.z, px: h.px, py: h.py, pz: h.pz, fov: h.fov };
   }
 
@@ -502,6 +584,15 @@ export class CameraRig {
           px = gs * (HALF_L - 5);
           pz = this.replaySide * (GOAL_W / 2 + 9);
           py = 2;
+          // Always looking at the goal end: never further out than REPLAY_LOOK_MAX from the line (a ball
+          // still out on the edge of the box is framed coming in, not chased upfield).
+          tx = gs > 0 ? Math.max(f.bx, HALF_L - REPLAY_LOOK_MAX) : Math.min(f.bx, -HALF_L + REPLAY_LOOK_MAX);
+          tz = clamp(f.bz, -(GOAL_W / 2 + 8), GOAL_W / 2 + 8);
+          // ...and while the ball is still coming in, the look leans towards the goal mouth (up to 30% of the
+          // way at 12 m out, none by the line) so the goal it is heading for is in the frame too.
+          const lean = 0.3 * clamp((Math.abs(gs * HALF_L - tx) - 3) / 9, 0, 1);
+          tx += (gs * HALF_L - tx) * lean;
+          tz -= tz * lean;
           ty = clamp(f.by, 0, 2.6) * 0.6 + 0.45;
           fov = 30;
           rate = 8;
@@ -550,12 +641,21 @@ export class CameraRig {
           this.postShot = b;
           this.postYaw = this.yaw;
           this.postLook.set(b.tx, b.ty, b.tz);
+          this.postSpotX = piece.x;
+          this.postSpotZ = piece.z;
+          this.postPush = 0;
+          this.wasCorner = false;
           break;
         }
         const bc = this.broadcastShot(f, dt);
         ({ tx, ty, tz, px, py, pz, fov } = bc.shot);
         rate = bc.rate;
         glide = true;
+        // A corner has just been struck: the framing swings from the box to the ball (and back in to the
+        // chosen camera distance) as a speed-limited glide, never a jump cut at the moment of the kick.
+        const corner = !!piece?.corner && !this.portrait;
+        if (this.wasCorner && !corner && !piece) this.cornerEase = CORNER_EASE_S;
+        this.wasCorner = corner;
         if (this.post > 0 && this.postShot) {
           // The kick is away. A real strike (a shot, a whipped cross) keeps the over-the-shoulder shot on
           // it for POST_HOLD, then cuts back to the broadcast shot; a short pass, the ball going out, a new
@@ -600,7 +700,9 @@ export class CameraRig {
       this.softCutReq = false;
       if (Math.hypot(px - this.pos.x, pz - this.pos.z) > CUT_JUMP || Math.hypot(tx - this.target.x, tz - this.target.z) > CUT_JUMP) this.snap = true;
     }
-    if ((glide || this.mode === 'replay') && this.hasWant && (Math.hypot(tx - this.wantT.x, tz - this.wantT.z) > CUT_JUMP || Math.hypot(px - this.wantP.x, py - this.wantP.y, pz - this.wantP.z) > CUT_JUMP)) {
+    const easing = this.cornerEase > 0 && this.mode === 'broadcast' && !behind;
+    this.cornerEase = easing ? Math.max(0, this.cornerEase - dt) : 0;
+    if (!easing && (glide || this.mode === 'replay') && this.hasWant && (Math.hypot(tx - this.wantT.x, tz - this.wantT.z) > CUT_JUMP || Math.hypot(px - this.wantP.x, py - this.wantP.y, pz - this.wantP.z) > CUT_JUMP)) {
       this.snap = true;
     }
     this.wantT.set(tx, ty, tz);
@@ -700,13 +802,13 @@ export class CameraRig {
    * is proportionally bigger): the taker stands full length in the lower half, the wall and goal above him.
    */
   readonly behindRig = {
-    back: 8, up: 2.8, side: 0.25, fov: 38, look: 9, barNdc: 0.5, barNdcSmall: 0.38,
+    back: 8, up: 3.3, side: 1.2, fov: 38, look: 9, barNdc: 0.5, barNdcSmall: 0.38,
     penBack: 6.5, penUp: 4.8, cornerBack: 6.5, cornerUp: 4.8,
   };
 
   /**
    * Our dead ball near goal, filmed from behind the taker. Free kicks at goal: a low lens (`back` 8 m behind
-   * the ball, 2.8 m up, 38 degrees) just off the aim line on the other side of it from the taker (he waits
+   * the ball, 3.3 m up, 38 degrees) 1.2 m off the aim line on the other side of it from the taker (he waits
    * off to one side for his run-up): the ball in the middle, the taker full length beside it in the lower
    * half (~40% of the height, clear of the touch controls in the corners), and the wall, keeper and goal
    * mouth lined up above them, crossbar just under the set-piece hint. Anyone else within 4 m of the

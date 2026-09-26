@@ -55,20 +55,30 @@ const DIGITS: Record<string, string[]> = {
  * so at night the players read against the floodlit lawn instead of going muddy. Off (black) by day.
  */
 const charFill = { value: new THREE.Color(0, 0, 0) };
+/**
+ * Neutral hemisphere fill for the footballers only (a white sky over a mid-grey ground), same units as
+ * charFill: tops of heads and shoulders get it all, sides 75%, undersides 50%. Sunset uses it so shirts and
+ * faces keep their true colours under the orange key instead of going orange-brown. Off (black) otherwise.
+ */
+const charHemi = { value: new THREE.Color(0, 0, 0) };
 
-/** Vertex-coloured Lambert (like voxelMaterial) plus the camera-side character fill. */
+/** Vertex-coloured Lambert (like voxelMaterial) plus the camera-side and sky character fills. */
 function makeCharMaterial(): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true });
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uCharFill = charFill;
+    sh.uniforms.uCharHemi = charHemi;
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uCharFill;')
+      .replace('#include <common>', '#include <common>\nuniform vec3 uCharFill;\nuniform vec3 uCharHemi;')
       .replace(
         '#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * uCharFill * (0.35 + 0.65 * max(normal.z, 0.0));',
+        `#include <emissivemap_fragment>
+        totalEmissiveRadiance += diffuseColor.rgb * uCharFill * (0.35 + 0.65 * max(normal.z, 0.0));
+        vec3 charUpV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+        totalEmissiveRadiance += diffuseColor.rgb * uCharHemi * (0.75 + 0.25 * dot(normal, charUpV));`,
       );
   };
-  m.customProgramCacheKey = () => 'char-fill';
+  m.customProgramCacheKey = () => 'char-fill-hemi';
   return m;
 }
 
@@ -79,6 +89,12 @@ export const charMaterial = makeCharMaterial();
 export function setCharacterFill(intensity: number): void {
   const k = Math.max(0, intensity) / Math.PI;
   charFill.value.setRGB(k * 0.96, k * 0.98, k * 1.06);
+}
+
+/** Neutral sky fill on the footballers (light units like a HemisphereLight's intensity; 0 = off). */
+export function setCharacterHemiFill(intensity: number): void {
+  const k = Math.max(0, intensity) / Math.PI;
+  charHemi.value.setRGB(k, k, k);
 }
 
 const geoCache = new Map<string, THREE.BufferGeometry>();
@@ -610,8 +626,9 @@ export class Footballer {
         aR.rotation.set(0.3, 0, 1.45);
         head.rotation.z = 0.05;
       } else if (kind === 2) {
-        // Card: held straight up and a little out (clear of the big head), the other arm pointing at him.
-        aR.rotation.set(0.32, 0, 3.0);
+        // Card: held up and out to his side (clear of the big head: the card is life-size-ish, so it no
+        // longer pokes up above it), the other arm pointing at him.
+        aR.rotation.set(0.62, 0, 3.0);
         aL.rotation.set(-0.15, 0, 1.2);
         torso.rotation.z = 0.06;
         head.rotation.z = 0.12;

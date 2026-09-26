@@ -51,9 +51,28 @@ function checkBands(halfLength: number, n: number): void {
   expect(s.headerShots).toBeGreaterThan(1);
   // Offside is enforced but rare: the AI holds its runs on the line (DLS: an offside or so a match).
   within(s.offsides, 0.4, 1.5);
-  // Parries and deflections off an on-target shot are the shooter's goals, not own goals (was ~14%).
-  expect(s.ownGoalPct).toBeLessThan(10);
-  // Late AI changes at 60' / 75' (and a forced one by 70' for a side that hasn't made any) on top of
+  // Parries and deflections off an on-target shot are the shooter's goals, not own goals (was ~14%). Round 7:
+  // a shot going wide that grazed a defender used to be turned back in when it was on the other side of the
+  // pitch from its line (~5-6% of goals were own goals, ~15% in the critic's sample); now ~0.5% (real: 3-5%).
+  expect(s.ownGoalPct).toBeLessThanOrEqual(5);
+  // Headed balls, clearances and long balls at footballing speeds (headers used to leave at 50-58 m/s).
+  // (Read the step after the strike, so the ball's |v| with its lift: a header's ground speed is <= 18.)
+  expect(s.headerMax).toBeLessThanOrEqual(20);
+  expect(s.clearMax).toBeLessThanOrEqual(30.5);
+  expect(s.lobMax).toBeLessThanOrEqual(30.5);
+  // The AI threads a through ball only into a lane it won't have cut out.
+  expect(s.throughPct).toBeGreaterThanOrEqual(55);
+  // A striker who's about to shoot finds a clearly better-placed teammate half the time: one man no longer
+  // scores most of a side's goals (the top scorer's share was 49-56%).
+  expect(s.topScorerPct).toBeLessThan(50);
+  // A side that hasn't changed anything by 66' does so at the next dead ball (it used to land at 72-77').
+  const firsts = [...s.firstLateSubMinutes].sort((a, b) => a - b);
+  if (firsts.length >= 8) {
+    const q = (f: number) => firsts[Math.min(firsts.length - 1, Math.floor(firsts.length * f))];
+    within(q(0.5), 66, 70);
+    expect(q(0.75)).toBeLessThanOrEqual(72);
+  }
+  // Late AI changes at 60' / 75' (and a forced one from 66' for a side that hasn't made any) on top of
   // the half-time ones, never more than five.
   expect(s.maxSubs).toBeLessThanOrEqual(5);
   expect(s.lateSubs).toBeGreaterThan(0.3);

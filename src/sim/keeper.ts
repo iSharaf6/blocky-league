@@ -25,6 +25,12 @@ const KEEPER_REACT = 0.33;
 /** Extra reaction time (s) to a free kick struck over the wall. */
 const FK_UNSIGHTED = 0.05;
 /**
+ * Extra reaction time (s) to a finesse shot struck from outside the line of the near post: it starts
+ * out wide of the far post and bends back in, so the keeper reads it late. (With the round-7 finesse
+ * pace / placement, ~38% of 18 m angled far-post curlers go in against a set keeper: finishing.test.ts.)
+ */
+const FINESSE_READ = 0.12;
+/**
  * How far (m) a diving keeper's body travels sideways at most (plus a little for a great keeper); his
  * reach does the rest. So a shot placed right inside the post from the edge of the box is beyond him
  * even when it isn't struck hard: the corner is beaten by placement, not only by pace. A ball that
@@ -240,7 +246,9 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
       if (onFrame) {
         // A free kick struck over the wall is seen late (the wall is in the way).
-        const reaction = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) + (m.freeKickShot() ? FK_UNSIGHTED : 0);
+        const finesse = m.shotStyle === 'finesse' && m.shotKick === m.kickId && Math.abs(m.kickZ) > GOAL_W / 2;
+        const reaction = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) + (m.freeKickShot() ? FK_UNSIGHTED : 0) +
+          (finesse ? FINESSE_READ : 0);
         const lateral = zc - k.pos.z;
         if (Math.abs(lateral) < 0.55 && yc < 1.9) {
           // Straight at them: shuffle and let the catch check do the work.

@@ -1330,8 +1330,10 @@ kbd {
 /* Nowhere clear to go (a set piece with the goal filling every free band): hidden until there is. */
 .hud-cm.on.blocked { opacity: 0; transition: opacity 0.15s; }
 
-.hud-cm[data-slot='low'] { transform: translateY(6px); }
-.hud-cm[data-slot='low'].on { transform: translateY(0); }
+.hud-cm[data-slot='low'],
+.hud-cm[data-slot^='foot'] { transform: translateY(6px); }
+.hud-cm[data-slot='low'].on,
+.hud-cm[data-slot^='foot'].on { transform: translateY(0); }
 
 .cm-tag {
   flex: none;
@@ -1509,6 +1511,30 @@ kbd {
   opacity: 0 !important;
   transition: opacity 0.2s;
 }
+
+/* Cinematic shots (the referee's card close-up; Hud.setCinematic): only the score bug, clock, booking chips,
+   the booking plate and the pause button stay. The ticker, event flag ("FREE KICK"), set-piece hint, player
+   chip, tips and minimap fade out in 0.15 s (and back at their own pace afterwards). */
+.hud.cinematic .hud-cm,
+.hud.cinematic .hud-toast,
+.hud.cinematic .hud-hint,
+.hud.cinematic .hud-tip,
+.hud.cinematic .hud-chip,
+.hud.cinematic .hud-radar {
+  opacity: 0 !important;
+  transition: opacity 0.15s ease-out !important;
+}
+
+/* The touch controls would sit on the booked player: off for the close-up too. */
+#ui:has(.hud.cinematic) .touch .touch-btns,
+#ui:has(.hud.cinematic) .touch .touch-base {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s, visibility 0s linear 0.15s;
+}
+
+/* Intro skipped: the title card goes at once rather than fading over the kick-off. */
+.hud-banner.skip { transition: opacity 0.1s; }
 
 /* ---------------------------------------------------------------- touch */
 
@@ -4251,6 +4277,17 @@ button.mc-pl:active {
   .tx-b .face ~ i { justify-self: stretch; align-self: center; height: 24px; margin: 0; padding: 0; box-shadow: none; font-size: 15px; }
   .tx-b i { height: 24px; }
   .panel.tx > .btn-row .btn-lg { padding: 11px 26px 9px; }
+}
+
+/* Narrow landscape phones (667 x 375): beside the pitch the side column is too narrow for a label plus five
+   formation (or three mentality) buttons, which ran off the panel. There the labels sit above their rows. */
+@media (orientation: landscape) and (min-width: 600px) {
+  .tx-side { container: txside / inline-size; }
+}
+
+@container txside (max-width: 359.98px) {
+  .tx-row { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .tx-row label { line-height: 1.1; }
 }
 
 /* Portrait: one column. Title + formation, then the pitch, mentality and bench; DONE stays pinned. */

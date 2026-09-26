@@ -1,8 +1,9 @@
 import { sfx } from '../audio/sfx';
 import type { Input } from '../core/input';
+import type { CamZoom } from '../core/save';
 import { clamp, damp } from '../core/math';
 import { CameraRig } from '../render/cameraRig';
-import { setCharacterFill } from '../render/characters';
+import { setCharacterFill, setCharacterHemiFill } from '../render/characters';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
 import { PITCH_Y, Stadium, stadiumFill } from '../render/stadium';
@@ -28,6 +29,8 @@ export interface SessionOptions extends MatchConfig {
   stadiumLevel?: number;
   /** Show first-match control tips. */
   tutorial?: boolean;
+  /** Broadcast camera distance (default 'normal'). */
+  camZoom?: CamZoom;
 }
 
 export interface PlayerRating {
@@ -78,6 +81,10 @@ const FK_LENS_CLEAR = 4;
  */
 const REPLAY_LENS_CLEAR = 4.5;
 const REPLAY_KEEP = 3;
+/** Replays never fade anyone below this (a see-through ghost, never gone): the finish stays readable. */
+const REPLAY_MIN_ALPHA = 0.6;
+/** The replay's goal-line shot only starts once the ball is this close (m) to the goal it went into. */
+const REPLAY_GOAL_NEAR = 18;
 /**
  * Card close-up: the man who was fouled is held this far (m) beyond the booked player (away from the
  * referee) and this much further from the lens: small in the background, well clear of him (~6.5 m).
@@ -160,6 +167,8 @@ export class MatchSession {
    * post-strike hold can end early (a rebound back towards him, a touch by anyone but him or a keeper).
    */
   private holdKick: { taker: number; x: number; z: number; far: number; struck: boolean } | null = null;
+  /** The HUD is in its cinematic state (card close-up: ticker, tags and touch buttons off). */
+  private cineHud = false;
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
     this.demo = !!opt.demo;
@@ -197,6 +206,7 @@ export class MatchSession {
     this.cam = new CameraRig(world.camera);
     this.cam.players = this.view.frame;
     this.cam.touchLayout = !this.demo && isTouchDevice();
+    this.cam.setZoom(opt.camZoom ?? 'normal');
     this.cam.setMode(this.demo ? 'menu' : 'intro');
     if (!this.demo) this.introLeft = 3.4;
     if (!this.demo) {
@@ -220,6 +230,11 @@ export class MatchSession {
       this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} · ${teams[1].name}`, 'small intro', 3.2);
       this.prevButtons = true;
     }
+  }
+
+  /** Broadcast camera distance, live (Settings changed mid-match): the camera cuts to the new framing. */
+  setCamZoom(z: CamZoom): void {
+    this.cam.setZoom(z);
   }
 
   requestPause(): void {
@@ -283,7 +298,11 @@ export class MatchSession {
       const btn = c.pass || c.shoot || c.through;
       if (btn && !this.prevButtons) this.introLeft = 0;
       this.prevButtons = btn;
-      if (this.introLeft <= 0) this.cam.setMode('broadcast');
+      if (this.introLeft <= 0) {
+        this.cam.setMode('broadcast');
+        // Skipped (or over): the pre-match title card goes with the fly-in, never lingering over the kick-off.
+        this.hud?.hideIntro();
+      }
       this.view.apply(this.prev, this.cur, 1, this.time, dt);
     } else if (this.replay) {
       this.stepReplay(dt);
@@ -400,6 +419,14 @@ export class MatchSession {
     // Low cameras (over the set-piece taker's shoulder, the shootout) drop the name tag and arrow, which would
     // otherwise float over the goal mouth; the referee close-up drops the marker altogether.
     this.view.setMarkerMode(this.cam.mode === 'card' ? 'off' : this.cam.behindActive || this.cam.mode === 'penalty' ? 'ring' : 'full');
+    // Team rings: the broadcast shot (and the fly-in landing on it) only; never under a low or close lens.
+    this.view.setTeamRings((this.cam.mode === 'broadcast' && !this.cam.behindActive) || this.cam.mode === 'intro');
+    // The referee close-up is a clean cinematic frame: the HUD drops its ticker, tags and touch buttons.
+    const cine = this.cam.mode === 'card';
+    if (cine !== this.cineHud) {
+      this.cineHud = cine;
+      this.hud?.setCinematic(cine);
+    }
     this.updateFades(ref, this.paused ? 0 : dt);
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
     this.stadium.updateGlare(this.world.camera);
@@ -556,7 +583,8 @@ export class MatchSession {
     const early = this.replay[Math.max(0, this.replayGoalIdx - 60)];
     const zg = atGoal[BALL_OFS + 2];
     this.cam.replaySide = Math.abs(zg) > 0.6 ? -Math.sign(zg) : early[BALL_OFS + 2] > 0 ? -1 : 1;
-    this.cam.replayShot = this.replay.length - this.replayGoalIdx > 0 && this.replayGoalIdx > 100 ? 'build' : 'goal';
+    // A short replay may open on the goal-line shot, but only with the ball already near the goal.
+    this.cam.replayShot = this.replayGoalIdx > 100 || this.replayBallFar(this.replay[0]) ? 'build' : 'goal';
     this.cam.setMode('replay');
     // The camera cuts on this frame: show the first replay frame now, so it cuts to where the replay starts.
     this.view.apply(this.replay[0], this.replay[Math.min(1, this.replay.length - 1)], 0, this.time, 0);
@@ -568,8 +596,12 @@ export class MatchSession {
   private stepReplay(dt: number): void {
     const frames = this.replay!;
     const idx = this.replayT * 60;
-    // Two shots like TV: the move in real-ish time, then the finish from behind the net in slow-mo.
-    const finish = idx >= this.replayGoalIdx - 95;
+    // Two shots like TV: the move in real-ish time, then the finish from the goal line in slow-mo: from ~1.6 s
+    // before the goal, but never while the ball is still more than REPLAY_GOAL_NEAR m out (a long-range
+    // strike is seen struck on the wide shot, then arriving on the goal-line one).
+    const at = frames[Math.min(frames.length - 1, Math.floor(idx))];
+    const finish = this.cam.replayShot === 'goal' || idx >= this.replayGoalIdx - 20 ||
+      (idx >= this.replayGoalIdx - 95 && !this.replayBallFar(at));
     if (finish && this.cam.replayShot === 'build') {
       this.cam.replayShot = 'goal';
       this.cam.cut();
@@ -590,6 +622,12 @@ export class MatchSession {
       return;
     }
     this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * (near ? 0.36 : 0.85));
+  }
+
+  /** Is the ball in this replay frame still more than REPLAY_GOAL_NEAR m from the goal it went into? */
+  private replayBallFar(fr: Float32Array): boolean {
+    const gx = this.cam.replayGoalSign * HALF_L;
+    return Math.hypot(fr[BALL_OFS] - gx, fr[BALL_OFS + 2]) > REPLAY_GOAL_NEAR;
   }
 
   private handleEvents(events: MatchEvent[]): void {
@@ -893,10 +931,26 @@ export class MatchSession {
       }
     } else if (cam.mode === 'penalty' && m.shootout) keep.push(m.shootout.taker);
     else if (cam.mode === 'replay') {
-      // Replays keep the action (whoever is at the ball: shooter, keeper, last defender) and, on the low
-      // goal-line angle, clear anyone standing between the lens and the ball.
-      for (let i = 0; i < 22; i++) if (Math.hypot(f[i * PF] - f[BALL_OFS], f[i * PF + 1] - f[BALL_OFS + 2]) < REPLAY_KEEP) keep.push(i);
-      if (cam.replayShot === 'goal') sight.push({ x: f[BALL_OFS], z: f[BALL_OFS + 2] });
+      // Replays keep the action (whoever is at the ball; both keepers, the scorer and the defender nearest
+      // the ball, always) and, on the low goal-line angle, see through anyone else standing between the
+      // lens and the ball (never below REPLAY_MIN_ALPHA).
+      const bx = f[BALL_OFS];
+      const bz = f[BALL_OFS + 2];
+      for (let i = 0; i < 22; i++) if (Math.hypot(f[i * PF] - bx, f[i * PF + 1] - bz) < REPLAY_KEEP) keep.push(i);
+      keep.push(0, 11);
+      if (m.lastGoalScorer >= 0) keep.push(m.lastGoalScorer);
+      let best = -1;
+      let bd = Infinity;
+      for (const p of m.teamPlayers(m.goalSide === 0 ? 1 : 0)) {
+        if (p.isKeeper) continue;
+        const d = Math.hypot(f[p.idx * PF] - bx, f[p.idx * PF + 1] - bz);
+        if (d < bd) {
+          bd = d;
+          best = p.idx;
+        }
+      }
+      if (best >= 0) keep.push(best);
+      if (cam.replayShot === 'goal') sight.push({ x: bx, z: bz });
     } else if (cam.behindActive && m.restart && !this.replay) keep.push(m.restart.taker);
     // The card close-up is a clean two-shot: everyone (but the pair and the man held in the background)
     // standing no further from the lens than the booked player is cleared out of the frame.
@@ -907,7 +961,8 @@ export class MatchSession {
         : cam.behindActive && !this.replay ? FK_LENS_CLEAR : LENS_CLEAR;
     // (The card shot latches its fades, with wider sight lines: a clean frame, no ghosts at the edges.)
     const card = cam.mode === 'card';
-    this.view.fadeNearLens(lens.x, lens.z, radius, 0, keep, sight, card ? 1.3 : 0.85, card, dt, cam.justCut);
+    const floor = cam.mode === 'replay' ? REPLAY_MIN_ALPHA : 0;
+    this.view.fadeNearLens(lens.x, lens.z, radius, floor, keep, sight, card ? 1.3 : 0.85, card, dt, cam.justCut);
   }
 
   private updateAtmosphere(dt: number): void {
@@ -1010,7 +1065,8 @@ export class MatchSession {
       const p = m.players[m.active];
       hud.setPlayer(p.def.number, p.def.name, p.stamina);
       const charging = m.ball.owner === p.idx && m.shootCharge > 0.04;
-      this.view.setPower(charging ? Math.min(1, m.shootCharge / 0.85) : null, p.pos.x, p.pos.z, p.y);
+      // Over his head is the goal mouth on the over-the-shoulder free-kick lens: the bar goes to his feet there.
+      this.view.setPower(charging ? Math.min(1, m.shootCharge / 0.85) : null, p.pos.x, p.pos.z, p.y, this.cam.behindActive);
     }
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
@@ -1062,6 +1118,7 @@ export class MatchSession {
     if (!this.demo) document.body.classList.remove('night');
     // The night fill is shared by every footballer drawn (menu kit previews too): off until a match sets it.
     setCharacterFill(0);
+    setCharacterHemiFill(0);
     sfx.setRain(false);
     this.hud?.dispose();
     this.touch?.root.remove();

@@ -53,8 +53,11 @@ export const SHOT_ERR_BASE = 1.0;
 export const SHOT_ERR_DIST = 0.047;
 /** How far inside the post (m, at least) the AI aims a shot it places itself. */
 const AI_POST_AIM = 0.12;
-/** How far inside the post (m) a shot aimed with the stick at a corner is aimed (16 m out and beyond)... */
-const STICK_POST_AIM = 0.9;
+/**
+ * How far inside the post (m) a shot aimed with the stick at a corner is aimed (16 m out and beyond; was
+ * 0.9, and 25-50% of them went wide)...
+ */
+const STICK_POST_AIM = 1.2;
 /** ... and from 11 m or closer. */
 const STICK_POST_AIM_CLOSE = 0.45;
 /** A human's lateral finishing error relative to the base model (the stick does the aiming)... */
@@ -75,6 +78,21 @@ const DRIVEN_HEADER = 0.65;
 
 /** Longest a throw-in (or a keeper's throw / roll) can go, m. */
 export const THROW_RANGE = 26;
+/**
+ * Headed balls that aren't shots: at most HEADER_MAX_D m (a clearance aimed further drops there), at most
+ * HEADER_MAX_VH m/s along the ground (they used to fly off at 50-58 m/s: a volley's clearance target
+ * solved as a header with its 1.2 s flight cap).
+ */
+export const HEADER_MAX_D = 20;
+export const HEADER_MAX_VH = 18;
+/**
+ * Lofted balls and clearances: at most LOB_MAX_SPEED m/s off the foot, and hang times up to
+ * LOB_MAX_FLIGHT s (a long ball is lofted higher rather than struck harder; the cap used to be 2.3 s).
+ */
+export const LOB_MAX_SPEED = 30;
+const LOB_MAX_FLIGHT = 3.2;
+/** A driven cross struck at power p hangs (1 + (1 - p) x this) times as long as a full-power one. */
+const DRIVEN_HANG = 0.3;
 
 /** Launch speed of a ground pass to feet over `d` metres (firmer the longer it is). */
 export function passSpeed(d: number): number {
@@ -158,7 +176,8 @@ export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 
 /** How likely a human's ball to `t` is to be cut out: the lane (ground passes), and his marker. */
 function passRisk(m: Match, p: Player, t: Player, mode: 'pass' | 'through' | 'lob'): number {
   const d = dist2(p.pos.x, p.pos.z, t.pos.x, t.pos.z);
-  if (mode === 'through') return throughRisk(m, p, t);
+  // (A through ball with no safe lead point is played to his feet instead: that pass's risk.)
+  if (mode === 'through') return throughRisk(m, p, t) ?? passRisk(m, p, t, 'pass');
   const v0 = passSpeed(d) * humanPassPace(d);
   const lane = mode === 'pass'
     ? Math.max(
@@ -216,30 +235,70 @@ export function throughLead(m: Match, r: Player, lead?: number): { x: number; z:
 
 /**
  * A human's through ball to `t`: the rolling ball's lane to the space ahead of him, and the race for
- * that space (his time to it against the quickest opponent's, keepers included).
+ * that space (his time to it against the quickest opponent's, keepers included). Null when no lead point
+ * is safe to play into (see THROUGH_MAX_INTERCEPT).
  */
-function throughRisk(m: Match, p: Player, t: Player): number {
-  return humanThrough(m, p, t).risk;
+function throughRisk(m: Match, p: Player, t: Player): number | null {
+  return humanThrough(m, p, t)?.risk ?? null;
 }
 
 /** Lead distances (m ahead of the runner) a human's through ball weighs: into his stride, or longer. */
 const HUMAN_THROUGH_LEADS = [3.5, 6];
+/**
+ * A through-ball lead point a defender would cut out more often than this (interceptRisk) isn't played:
+ * the ball goes to the runner's feet instead (round 7: 54% of human through balls were intercepted).
+ */
+export const THROUGH_MAX_INTERCEPT = 0.45;
 
-/** The human's through ball to `t`: the lead (into his stride, or the full run) the space allows. */
-function humanThrough(m: Match, p: Player, t: Player): { x: number; z: number; risk: number } {
+/**
+ * A through ball rolled into space with nobody in particular running onto it (a human's, with no
+ * teammate in the stick's cone): how likely the other side gets there first. The lane's interception,
+ * or the race for the spot between our nearest man (who has to read it first) and theirs.
+ */
+function spaceBallRisk(m: Match, p: Player, x: number, z: number, v0: number): number {
+  const b = m.ball.pos;
+  const d = Math.max(2, dist2(b.x, b.z, x, z));
+  const ir = interceptRisk(m, p.side, b.x, b.z, x, z, v0);
+  const tBall = rollTime(v0, d);
+  let tUs = Infinity;
+  let tThem = Infinity;
+  for (const q of m.players) {
+    if (q === p || q.sentOff || (q.isKeeper && q.side === p.side)) continue;
+    const reach = Math.max(0, dist2(q.pos.x, q.pos.z, x, z) - 1);
+    if (q.side === p.side) tUs = Math.min(tUs, reach / (q.top * 0.95) + 0.3);
+    else tThem = Math.min(tThem, reach / (q.top * 0.9) + 0.25);
+  }
+  const race = clamp(0.5 + (Math.max(tUs, tBall) - tThem) * 0.9, 0, 1);
+  return Math.max(ir, race);
+}
+
+/**
+ * The human's through ball to `t`: the lead (into his stride, or the full run) the space allows, or null
+ * when every lead point's lane is one a defender would cut out (the caller plays it to feet).
+ */
+function humanThrough(m: Match, p: Player, t: Player): { x: number; z: number; risk: number } | null {
   const rs = Math.hypot(t.vel.x, t.vel.z);
-  let best = { x: t.pos.x, z: t.pos.z, risk: 2 };
+  let best: { x: number; z: number; risk: number } | null = null;
   for (const l of HUMAN_THROUGH_LEADS) {
     const pt = throughLead(m, t, l + rs * 0.7);
     const risk = throughSpaceRisk(m, p, t, pt);
-    if (risk < best.risk - 0.05) best = { ...pt, risk };
+    if (risk === null) continue;
+    if (!best || risk < best.risk - 0.05) best = { ...pt, risk };
   }
   return best;
 }
 
-function throughSpaceRisk(m: Match, p: Player, t: Player, pt: { x: number; z: number }): number {
+/**
+ * Risk of a through ball from `p` into the space `pt` ahead of `t`: the race for the space, and the lane
+ * weighed the way a pass to feet's is (passRisk: the lane itself, the ball's interception, the race along
+ * it). Null when the interception risk alone is over THROUGH_MAX_INTERCEPT.
+ */
+function throughSpaceRisk(m: Match, p: Player, t: Player, pt: { x: number; z: number }): number | null {
   const d = Math.max(2, dist2(p.pos.x, p.pos.z, pt.x, pt.z));
-  const tBall = rollTime(throughSpeed(d), d);
+  const v0 = throughSpeed(d);
+  const ir = interceptRisk(m, p.side, p.pos.x, p.pos.z, pt.x, pt.z, v0);
+  if (ir > THROUGH_MAX_INTERCEPT) return null;
+  const tBall = rollTime(v0, d);
   const tMe = dist2(t.pos.x, t.pos.z, pt.x, pt.z) / (t.top * 0.95);
   let tThem = Infinity;
   for (const o of m.players) {
@@ -247,8 +306,12 @@ function throughSpaceRisk(m: Match, p: Player, t: Player, pt: { x: number; z: nu
     tThem = Math.min(tThem, Math.max(0, dist2(o.pos.x, o.pos.z, pt.x, pt.z) - 1) / (o.top * 0.9) + 0.25);
   }
   const race = clamp(0.5 + (Math.max(tMe, tBall) - tThem) * 0.9, 0, 1);
-  const lane = interceptRisk(m, p.side, p.pos.x, p.pos.z, pt.x, pt.z, throughSpeed(d));
-  return Math.max(race, lane * 0.9);
+  const lane = Math.max(
+    laneRisk(m, p.side, p.pos.x, p.pos.z, pt.x, pt.z) * 0.8,
+    ir,
+    laneRace(m, p.side, p.pos.x, p.pos.z, pt.x, pt.z, v0),
+  );
+  return Math.max(race, lane);
 }
 
 /**
@@ -287,7 +350,7 @@ function scanReceivers(
       risk = passRisk(m, p, t, mode);
       if (mode === 'pass' || mode === 'through') score -= risk * HUMAN_LANE_W;
       if (nearestOppDist(m, t) < HUMAN_MARK_R) score -= mode === 'lob' ? HUMAN_MARKED * 0.6 : HUMAN_MARKED;
-    } else if (mode === 'pass') score -= laneRisk(m, p.side, p.pos.x, p.pos.z, t.pos.x, t.pos.z) * 0.5;
+    } else if (mode === 'pass' || mode === 'through') score -= laneRisk(m, p.side, p.pos.x, p.pos.z, t.pos.x, t.pos.z) * 0.5;
     if (mode === 'through') score += ((t.pos.x - p.pos.x) * ad) / 40 + (t.vel.x * ad) / 20;
     if (t.isKeeper) score -= 1.2;
     if (score > bestScore) {
@@ -374,46 +437,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
   if (kind === 'pass' || kind === 'throw' || kind === 'keeper') {
     const tgt = order.target >= 0 ? order.target : pickReceiver(m, p, dir.x, dir.z, 'pass');
     const throwIn = kind === 'throw' || kind === 'keeper';
-    if (tgt >= 0) {
-      const r = m.players[tgt];
-      // Lead the receiver: iterate the travel time twice.
-      let tx = r.pos.x;
-      let tz = r.pos.z;
-      let v0 = 12;
-      for (let i = 0; i < 2; i++) {
-        const d = Math.max(1, dist2(b.x, b.z, tx, tz));
-        v0 = passSpeed(d);
-        const t = Math.min(rollTime(v0, d), 3);
-        tx = r.pos.x + r.vel.x * t * 0.85;
-        tz = r.pos.z + r.vel.z * t * 0.85;
-      }
-      tx = clamp(tx, -HALF_L + 1, HALF_L - 1);
-      // A keeper rolls / throws it to the full-back's feet, not onto the touchline.
-      const zMax = kind === 'keeper' ? HALF_W - 3 : HALF_W - 0.8;
-      tz = clamp(tz, -zMax, zMax);
-      let d = dist2(b.x, b.z, tx, tz);
-      if (throwIn && d > THROW_RANGE) {
-        // Nobody can throw (or roll) it further than this: it drops short, towards the target.
-        tx = b.x + ((tx - b.x) / d) * THROW_RANGE;
-        tz = b.z + ((tz - b.z) / d) * THROW_RANGE;
-        d = THROW_RANGE;
-      }
-      if (throwIn) {
-        // Thrown balls travel at catchable speeds: longer throws hang in the air longer.
-        const flight = clamp(0.4 + d / 22, 0.55, 1.6);
-        const s = solveLob(d, flight, 0.5);
-        const ex = passError(p, m, 0.6);
-        const u = rotate((tx - b.x) / d, (tz - b.z) / d, ex);
-        // solveLob launches from grass height; we release from the hands.
-        const vy = s.vy - (b.y - BALL_R) / flight;
-        return launch(u.x * s.vh, vy, u.z * s.vh, 0, 0, 0, tgt, kind, 0.4);
-      }
-      const ex = passError(p, m, 1);
-      const u = rotate((tx - b.x) / d, (tz - b.z) / d, ex);
-      const pace = kind === 'pass' && m.isHumanControlled(p) ? humanPassPace(d) : 1;
-      const sp = Math.min(28, v0 * pace) * (1 + m.rng.gauss() * (1 - p.stat.passing / 100) * 0.05);
-      return launch(u.x * sp, 0, u.z * sp, 0, 0, 0, tgt, kind, clamp(sp / 28, 0, 1));
-    }
+    if (tgt >= 0) return passToFeet(m, p, tgt, kind);
     // Pass into space along the stick.
     const sp = throwIn ? 9 : 13;
     return launch(dir.x * sp, throwIn ? 3 : 0, dir.z * sp, 0, 0, 0, -1, kind, 0.4);
@@ -427,8 +451,10 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
       tz = order.aimZ;
     } else if (tgt >= 0) {
       // Into the space ahead of the runner, biased towards goal (a human's is weighted into his stride
-      // when a defender would win the race to the longer ball).
+      // when a defender would win the race to the longer ball; when a defender would cut out any ball
+      // into that space, it's played to his feet instead).
       const pt = m.isHumanControlled(p) ? humanThrough(m, p, m.players[tgt]) : throughLead(m, m.players[tgt]);
+      if (!pt) return passToFeet(m, p, tgt, 'pass');
       tx = pt.x;
       tz = pt.z;
     } else {
@@ -439,6 +465,14 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
     tz = clamp(tz, -HALF_W + 1.5, HALF_W - 1.5);
     const d = Math.max(2, dist2(b.x, b.z, tx, tz));
     const v0 = throughSpeed(d);
+    if (tgt < 0 && order.aimX === undefined && m.isHumanControlled(p) && spaceBallRisk(m, p, tx, tz, v0) > THROUGH_MAX_INTERCEPT) {
+      // Nobody to run onto it, and a defender in the way or first to the space (straight after a kick-off,
+      // say): the open man that way gets it to feet rather than the defence getting it rolled to them.
+      // (Everyone that way covered: the least covered of them, rather than the ball rolled to a defender.)
+      let alt = pickReceiver(m, p, dir.x, dir.z, 'pass');
+      if (alt < 0) alt = scanReceivers(m, p, dir.x, dir.z, 'pass', HUMAN_LAST_CONE, true).idx;
+      if (alt >= 0) return passToFeet(m, p, alt, 'pass');
+    }
     const u = rotate((tx - b.x) / d, (tz - b.z) / d, passError(p, m, 1.3));
     return launch(u.x * v0, 0, u.z * v0, 0, 0, 0, tgt, kind, clamp(v0 / 28, 0, 1));
   }
@@ -467,12 +501,43 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
     const out = (kind === 'clear' || kind === 'header') && order.aimX !== undefined && tgt < 0 ? 6 : -1;
     tx = clamp(tx, -HALF_L - out, HALF_L + out);
     tz = clamp(tz, -HALF_W - out, HALF_W + out);
+    const d0 = dist2(b.x, b.z, tx, tz);
+    if (kind === 'header' && d0 > HEADER_MAX_D) {
+      // Nobody heads it further than this: a clearance aimed 35 m upfield drops 20 m out.
+      tx = b.x + ((tx - b.x) / d0) * HEADER_MAX_D;
+      tz = b.z + ((tz - b.z) / d0) * HEADER_MAX_D;
+    }
     const d = Math.max(3, dist2(b.x, b.z, tx, tz));
-    const flight = kind === 'header'
+    let flight = kind === 'header'
       ? clamp(0.5 + d / 30, 0.5, 1.2)
-      : order.driven ? clamp(0.42 + d / 42, 0.6, 1.3) : clamp(0.75 + d / 34, 0.9, 2.3) + (order.hang ?? 0);
+      // (A driven ball struck softer hangs a touch longer: DRIVEN_POWER.)
+      : order.driven ? clamp(0.42 + d / 42, 0.6, 1.3) * (1 + (1 - clamp(order.power, 0, 1)) * DRIVEN_HANG)
+        : clamp(0.75 + d / 34, 0.9, LOB_MAX_FLIGHT) + (order.hang ?? 0);
     const land = order.land ?? (kind === 'clear' ? BALL_R : order.driven ? 1.1 : 1.3);
-    const s = solveLob(d, flight, land);
+    let s = solveLob(d, flight, land);
+    if (kind === 'header') {
+      // A header can't be struck like a volley: longer ones are looped up rather than fired.
+      while (s.vh > HEADER_MAX_VH && flight < 2) {
+        flight += 0.05;
+        s = solveLob(d, flight, land);
+      }
+      s = { vh: Math.min(s.vh, HEADER_MAX_VH), vy: s.vy };
+    } else {
+      // A long ball is hit higher, not harder (the least launch speed for a long carry is near 45 degrees;
+      // a driven one only gets the few hundredths of a second of extra hang it needs).
+      while (Math.hypot(s.vh, s.vy) > LOB_MAX_SPEED && flight < LOB_MAX_FLIGHT) {
+        const f = Math.min(LOB_MAX_FLIGHT, flight + (order.driven ? 0.03 : 0.1));
+        const n = solveLob(d, f, land);
+        if (Math.hypot(n.vh, n.vy) >= Math.hypot(s.vh, s.vy)) break;
+        flight = f;
+        s = n;
+      }
+    }
+    const sp0 = Math.hypot(s.vh, s.vy);
+    if (kind !== 'header' && sp0 > LOB_MAX_SPEED) {
+      // Nobody hits it harder than this: the longest hoofs drop short.
+      s = { vh: (s.vh * LOB_MAX_SPEED) / sp0, vy: (s.vy * LOB_MAX_SPEED) / sp0 };
+    }
     let err = passError(p, m, kind === 'clear' ? 2.2 : 1.4);
     // A scrambled clearance from inside our own box sometimes slices off behind for a corner.
     if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.75 * pressureErr(m, p))) {
@@ -489,6 +554,50 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
 
   // Fallback: tap it forward.
   return launch(dir.x * 8, 0, dir.z * 8, 0, 0, 0, -1, kind, 0.3);
+}
+
+/** A ground pass (or a throw / keeper's roll) to teammate `tgt`'s feet, leading him on his run. */
+function passToFeet(m: Match, p: Player, tgt: number, kind: KickKind): Launch {
+  const b = m.ball.pos;
+  const throwIn = kind === 'throw' || kind === 'keeper';
+  const r = m.players[tgt];
+  // Lead the receiver: iterate the travel time twice.
+  let tx = r.pos.x;
+  let tz = r.pos.z;
+  let v0 = 12;
+  for (let i = 0; i < 2; i++) {
+    const d = Math.max(1, dist2(b.x, b.z, tx, tz));
+    v0 = passSpeed(d);
+    const t = Math.min(rollTime(v0, d), 3);
+    tx = r.pos.x + r.vel.x * t * 0.85;
+    tz = r.pos.z + r.vel.z * t * 0.85;
+  }
+  tx = clamp(tx, -HALF_L + 1, HALF_L - 1);
+  // A keeper rolls / throws it to the full-back's feet, not onto the touchline.
+  const zMax = kind === 'keeper' ? HALF_W - 3 : HALF_W - 0.8;
+  tz = clamp(tz, -zMax, zMax);
+  let d = dist2(b.x, b.z, tx, tz);
+  if (throwIn && d > THROW_RANGE) {
+    // Nobody can throw (or roll) it further than this: it drops short, towards the target.
+    tx = b.x + ((tx - b.x) / d) * THROW_RANGE;
+    tz = b.z + ((tz - b.z) / d) * THROW_RANGE;
+    d = THROW_RANGE;
+  }
+  if (throwIn) {
+    // Thrown balls travel at catchable speeds: longer throws hang in the air longer.
+    const flight = clamp(0.4 + d / 22, 0.55, 1.6);
+    const s = solveLob(d, flight, 0.5);
+    const ex = passError(p, m, 0.6);
+    const u = rotate((tx - b.x) / d, (tz - b.z) / d, ex);
+    // solveLob launches from grass height; we release from the hands.
+    const vy = s.vy - (b.y - BALL_R) / flight;
+    return launch(u.x * s.vh, vy, u.z * s.vh, 0, 0, 0, tgt, kind, 0.4);
+  }
+  const ex = passError(p, m, 1);
+  const u = rotate((tx - b.x) / d, (tz - b.z) / d, ex);
+  const pace = kind === 'pass' && m.isHumanControlled(p) ? humanPassPace(d) : 1;
+  const sp = Math.min(28, v0 * pace) * (1 + m.rng.gauss() * (1 - p.stat.passing / 100) * 0.05);
+  return launch(u.x * sp, 0, u.z * sp, 0, 0, 0, tgt, kind, clamp(sp / 28, 0, 1));
 }
 
 function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): Launch {
@@ -564,7 +673,7 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   h = Math.max(0.15, h);
   // (A tapped shot still has some pace on it: an edge-of-the-box side-foot isn't a back-pass.)
   let speed = header ? 11 + power * 8 + acc * 3 : SHOT_SPEED_BASE + power * SHOT_SPEED_POWER * (0.78 + acc * 0.3);
-  if (finesse) speed *= FINESSE_PACE;
+  if (finesse) speed = Math.max(speed * FINESSE_PACE, FINESSE_MIN_SPEED);
   speed = Math.min(speed, 35);
   const dx = gx - b.x;
   const dz = tz - b.z;
@@ -594,12 +703,15 @@ const CURL_ERR = 0.45;
 /**
  * Finesse shot (SHOOT with the stick pushed diagonally at a corner, under FINESSE_MAX_POWER): curled
  * (FINESSE_CURL, bending away from the keeper into the corner) and placed FINESSE_POST_AIM m inside the
- * post, FINESSE_PACE of a normal strike's speed with FINESSE_ACC of its lateral error.
+ * post, FINESSE_PACE of a normal strike's speed (never under FINESSE_MIN_SPEED m/s) with FINESSE_ACC of its
+ * lateral error. (Round 7: at 0.84 of a placed strike's ~24 m/s and 0.6 m inside the post it was 0/48 from
+ * 18 m angled spots, every one saved; a curler into the far corner has to be struck with some pace.)
  */
 export const FINESSE_CURL = 0.6;
 export const FINESSE_MAX_POWER = 0.6;
-const FINESSE_POST_AIM = 0.6;
-const FINESSE_PACE = 0.84;
+const FINESSE_POST_AIM = 0.35;
+const FINESSE_PACE = 0.95;
+export const FINESSE_MIN_SPEED = 24;
 const FINESSE_ACC = 0.6;
 
 /**
@@ -608,7 +720,16 @@ const FINESSE_ACC = 0.6;
  */
 export const CHIP_VH = 14;
 export const CHIP_VY = 7;
+/**
+ * (Round 7 tried 2.7, to open the window: it narrowed it. A keeper gets a hand to a ball ~2.6-3.3 m up,
+ * so a chip solved to pass 2.7 m over him was claimed: 57% of 15 m chips over a rushing keeper went in
+ * against 87% at 3.1 (2.9: 73%, 3.3: 87%). The window is widened by solving against where he'll be.)
+ */
 const CHIP_CLEAR = 3.1;
+/** Most lift (m/s) the chip solver tries (was 10: a keeper right on top of you needs a steeper one). */
+const CHIP_VY_MAX = 11;
+/** How far ahead (s) the chip allows for the keeper's run: it's lifted over where he'll be, not where he was. */
+const CHIP_KEEPER_AHEAD = 0.45;
 /** The height (m) at the goal line a chip is best dropping through. */
 const CHIP_DROP = 1.5;
 /** Error (sd, m/s, times 1.25 - shooting) in a chip's lift. */
@@ -659,13 +780,24 @@ function resolveChip(m: Match, p: Player, order: KickOrder): Launch {
   const d = Math.max(3, dist2(b.x, b.z, gx, aimZ));
   const ux = (gx - b.x) / d;
   const uz = (aimZ - b.z) / d;
-  // How far along the chip's line the keeper stands (a keeper on his line: nothing to clear).
-  const kAlong = keeper ? (keeper.pos.x - b.x) * ux + (keeper.pos.z - b.z) * uz : d;
+  // How far along the chip's line the keeper will be when the ball gets to him (a keeper rushing out
+  // meets it sooner; a keeper on his line: nothing to clear).
+  let kAlong = d;
+  if (keeper) {
+    let kx = keeper.pos.x;
+    let kz = keeper.pos.z;
+    for (let i = 0; i < 2; i++) {
+      const t = clamp(((kx - b.x) * ux + (kz - b.z) * uz) / CHIP_VH, 0, CHIP_KEEPER_AHEAD);
+      kx = keeper.pos.x + keeper.vel.x * t;
+      kz = keeper.pos.z + keeper.vel.z * t;
+    }
+    kAlong = (kx - b.x) * ux + (kz - b.z) * uz;
+  }
   const clearAt = clamp(kAlong, 1.5, d - 0.4);
   let best = { vh: CHIP_VH, vy: CHIP_VY };
   let bestCost = Infinity;
   for (let vh = 8; vh <= 18.01; vh += 0.5) {
-    for (let vy = 4; vy <= 10.01; vy += 0.25) {
+    for (let vy = 4; vy <= CHIP_VY_MAX + 0.01; vy += 0.25) {
       const [yk, yl] = chipHeights(b.y, vh, vy, clearAt, d);
       if (yl < 0.3 || yl > GOAL_H - 0.45) continue;
       const short = Math.max(0, CHIP_CLEAR - yk);
@@ -683,7 +815,7 @@ function resolveChip(m: Match, p: Player, order: KickOrder): Launch {
   const u = rotate(ux, uz, m.rng.gauss() * (0.03 + (1 - acc) * 0.06) * sk);
   const vy = best.vy + m.rng.gauss() * CHIP_LIFT_ERR * (1.25 - acc) * sk;
   const vh = best.vh * (1 + m.rng.gauss() * 0.07 * sk);
-  const L = launch(u.x * vh, vy, u.z * vh, 0, 0, 0, -1, 'shot', 0.35);
+  const L = launch(u.x * vh, vy, u.z * vh, 0, 0, 0, -1, 'shot', clamp(order.power, 0.2, 0.6));
   L.style = 'chip';
   return L;
 }

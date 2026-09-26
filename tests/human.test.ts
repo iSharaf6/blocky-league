@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { CHIP_VY, FINESSE_CURL, interceptRisk, pickReceiver, CURL_SPIN } from '../src/sim/actions';
+import { CHIP_VY, FINESSE_CURL, FINESSE_MIN_SPEED, interceptRisk, pickReceiver, CURL_SPIN } from '../src/sim/actions';
 import { solveLob } from '../src/sim/ball';
 import { crossingZ } from '../src/sim/actions';
 import { BOX_DEPTH, BOX_W, DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
@@ -493,11 +493,16 @@ describe('human assists and skill moves', () => {
       for (let s = 0; s < N; s++) {
         const { m, p } = oneOnOne(1 + s * 11, dist, kOut, rush);
         const kid = m.kickId;
-        for (let i = 0; i < 14; i++) {
+        // (Round 7: the THROUGH tap fires the chip there and then, at the charge so far, so the strike can
+        // come while SHOOT is still held: watch for it from the first frame.)
+        const evs: MatchEvent[] = [];
+        for (let i = 0; i < 14 && m.kickId === kid; i++) {
           const through = how === 'tap' ? i >= 6 && i < 10 : how === 'hold' ? i >= 9 : false;
           m.step(DT, pad(0, 0, { shoot: true, through }));
+          evs.push(...m.drainEvents());
         }
-        const evs: MatchEvent[] = [];
+        // The tap is the strike: it's away (after the wind-up) with SHOOT still held.
+        if (how === 'tap') expect(m.kickId).not.toBe(kid);
         for (let i = 0; i < 12 && m.kickId === kid; i++) {
           m.step(DT, EMPTY_PAD);
           evs.push(...m.drainEvents());
@@ -526,7 +531,8 @@ describe('human assists and skill moves', () => {
     console.log(`1v1, keeper rushing out: plain ${(plain * 100).toFixed(0)}% | chip ${(chip * 100).toFixed(0)}% (${(held * 100).toFixed(0)}% from 14 m, keeper 5 m out) | chip at a keeper on his line ${(setKeeper * 100).toFixed(0)}%`);
     expect(chip).toBeGreaterThan(plain + 0.2);
     expect(chip).toBeLessThanOrEqual(0.92);
-    expect(held).toBeGreaterThanOrEqual(0.2);
+    // (Round 7: solved against where the keeper will be, and struck on the THROUGH tap: 37% -> ~70%.)
+    expect(held).toBeGreaterThanOrEqual(0.5);
     // Against a keeper set on his line it's a gift for him.
     expect(setKeeper).toBeLessThanOrEqual(0.15);
   }, 60_000);
@@ -536,6 +542,7 @@ describe('human assists and skill moves', () => {
     let goals = 0;
     const N = 30;
     for (let s = 0; s < N; s++) {
+      let finSpeed = 0;
       for (const style of ['finesse', 'power'] as const) {
         const { m, ad } = oneOnOne(3 + s * 7, 16, 1.5, 0);
         const lat = s % 2 ? 1 : -1;
@@ -551,6 +558,8 @@ describe('human assists and skill moves', () => {
         const kick = evs.find((e) => e.type === 'kick');
         if (style === 'power') {
           expect(kick?.type === 'kick' && kick.style).toBeUndefined();
+          // (Slower than a strike: the full-power one from the same spot is well quicker.)
+          expect(m.shotSpeed).toBeGreaterThan(finSpeed + 2);
           continue;
         }
         expect(kick?.type === 'kick' && kick.style).toBe('finesse');
@@ -558,7 +567,10 @@ describe('human assists and skill moves', () => {
         const spin = -m.ball.spin.y * Math.sign(m.ball.vel.x) * lat;
         expect(spin).toBeGreaterThan(FINESSE_CURL * CURL_SPIN * 0.85);
         expect(spin).toBeLessThanOrEqual(FINESSE_CURL * CURL_SPIN + 1e-6);
-        expect(m.shotSpeed).toBeLessThan(24);
+        // Round 7: struck with some pace (at least FINESSE_MIN_SPEED; it used to be ~21 m/s, and saved).
+        expect(m.shotSpeed).toBeGreaterThanOrEqual(FINESSE_MIN_SPEED);
+        expect(m.shotSpeed).toBeLessThan(27);
+        finSpeed = m.shotSpeed;
         const cross = crossingZ(m.ball.pos.x, m.ball.pos.y, m.ball.pos.z, m.ball.vel.x, m.ball.vel.y, m.ball.vel.z, m.ball.spin.y, ad * HALF_L);
         if (cross === null || Math.abs(cross) > GOAL_W / 2) wide++;
         if (finish(m).goal) goals++;
@@ -591,5 +603,102 @@ describe('human assists and skill moves', () => {
     console.log(`AI 1v1 against a rushing keeper: ${chips} chips in ${shots} shots`);
     expect(chips).toBeGreaterThanOrEqual(3);
     expect(chips).toBeLessThan(shots * 0.6);
+  }, 60_000);
+});
+
+describe('round 7: human through balls', () => {
+  it('THROUGH at goal with nobody running and a defender in the way plays it to the open man, not to the defender', () => {
+    let feet = 0;
+    const n = 6;
+    for (let seed = 1; seed <= n; seed++) {
+      const m = scenario(seed);
+      const ad = m.attackDir(0);
+      const c = m.players[6];
+      place(c, -ad * 2, 0);
+      c.facing = ad > 0 ? 0 : Math.PI;
+      // Nobody of ours ahead: two midfielders square and one behind; a defender 9 m ahead, in the lane.
+      place(m.players[7], -ad * 3, 12);
+      place(m.players[8], -ad * 3, -12);
+      place(m.players[5], -ad * 14, 2);
+      place(m.players[16], ad * 7, 0.3);
+      giveBall(m, c);
+      for (let i = 0; i < 4; i++) m.step(DT, EMPTY_PAD);
+      m.drainEvents();
+      let kick: MatchEvent | undefined;
+      for (let i = 0; i < 30 && !kick; i++) {
+        m.step(DT, pad(ad, 0, { through: i === 0 }));
+        kick = m.drainEvents().find((e) => e.type === 'kick');
+      }
+      expect(kick?.type).toBe('kick');
+      if (kick?.type === 'kick' && kick.kind === 'pass' && m.passTarget >= 0 && m.players[m.passTarget].side === 0) feet++;
+    }
+    // (It used to be rolled 18 m along the stick, straight to him.)
+    expect(feet).toBe(n);
+  });
+
+  it('over whole matches, a human who taps THROUGH whenever he has it in their half keeps the ball (it was 39% / 54% intercepted)', () => {
+    const st = { through: [0, 0, 0], pass: [0, 0, 0] } as Record<string, [number, number, number]>;
+    for (let s = 0; s < 10; s++) {
+      const m = new Match({ home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 120, difficulty: 2, humanSide: 0, seed: 700 + s * 11 });
+      let pending: string | null = null;
+      let awaiting = false;
+      let owned = -1;
+      let ownT = 0;
+      let tapped = false;
+      const resolve = (side: number) => {
+        if (!pending) return;
+        const a = (st[pending] ??= [0, 0, 0]);
+        a[0]++;
+        if (side === 0) a[1]++;
+        else if (side === 1) a[2]++;
+        pending = null;
+      };
+      for (let steps = 0; m.phase !== 'fulltime' && steps < 60 * 300; steps++) {
+        const b = m.ball;
+        const ad = m.attackDir(0);
+        let p: Pad = EMPTY_PAD;
+        if (m.phase === 'play' && b.owner >= 0 && b.owner === m.active && m.players[b.owner].side === 0 && !b.held) {
+          if (owned !== b.owner) {
+            owned = b.owner;
+            ownT = 0;
+            tapped = false;
+          }
+          ownT += DT;
+          const c = m.players[b.owner];
+          if (ownT > 0.35 && !tapped) {
+            tapped = true;
+            // In their half: THROUGH, the stick at goal or 30 degrees either side of it. In ours: a pass forward.
+            if (c.pos.x * ad > -5) {
+              const a = (((s + steps) % 3) - 1) * 0.5;
+              p = pad(Math.cos(a) * ad, Math.sin(a), { through: true });
+              awaiting = true;
+            } else p = pad(ad, 0, { pass: true });
+          }
+        } else owned = -1;
+        m.step(DT, p);
+        for (const e of m.drainEvents()) {
+          if (e.type === 'kick') {
+            const k = m.players[b.lastTouch];
+            if (pending && k) resolve(k.side);
+            if (awaiting && k && k.side === 0) {
+              pending = e.kind === 'through' ? 'through' : e.kind === 'pass' ? 'pass' : null;
+              awaiting = false;
+            }
+          } else if (e.type === 'control') resolve(m.players[e.player].side);
+          else if ((e.type === 'save' && e.caught) || e.type === 'claim') resolve(1);
+          else if ((e.type === 'restart' && e.kind !== 'kickoff') || e.type === 'goal') resolve(-1);
+        }
+        if (m.phase === 'halftime') m.continueSecondHalf();
+        if (m.phase === 'goal' && m.phaseT > 3) m.resumeAfterGoal();
+      }
+    }
+    const t = st.through;
+    const all = [t[0] + st.pass[0], t[1] + st.pass[1], t[2] + st.pass[2]];
+    // eslint-disable-next-line no-console
+    console.log(`THROUGH presses: ${all[0]}, ${((all[1] / all[0]) * 100).toFixed(0)}% kept, ${((all[2] / all[0]) * 100).toFixed(0)}% to the opponent | played as through balls ${t[0]}: ${((t[1] / t[0]) * 100).toFixed(0)}% completed, ${((t[2] / t[0]) * 100).toFixed(0)}% intercepted`);
+    expect(t[0]).toBeGreaterThan(20);
+    expect(t[1] / t[0]).toBeGreaterThanOrEqual(0.55);
+    expect(all[1] / all[0]).toBeGreaterThanOrEqual(0.55);
+    expect(all[2] / all[0]).toBeLessThanOrEqual(0.35);
   }, 60_000);
 });

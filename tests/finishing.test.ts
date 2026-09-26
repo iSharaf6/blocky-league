@@ -190,7 +190,10 @@ describe('finishing (human 1v1 against the keeper)', () => {
     // eslint-disable-next-line no-console
     console.log(`human 1v1: 12 m ${(close.goal * 100).toFixed(0)}% | 18 m ${(mid.goal * 100).toFixed(0)}% | 25 m ${(long.goal * 100).toFixed(0)}% | 14 m angled ${(angled.goal * 100).toFixed(0)}% | parried out for corners: 18 m ${(mid.parriedToCorner * 100).toFixed(0)}%, 25 m ${(long.parriedToCorner * 100).toFixed(0)}%`);
     // 25 m used to be 0/32 in the browser (4% on this bench), 14 m wide 0/16; 12 m stays the best chance.
-    expect(long.goal).toBeGreaterThanOrEqual(0.05);
+    // (Round 7: ~3%, from 9%. Most of that 9% was the striker carried ~4 m nearer goal by the stick while he
+    // charged the shot; he now stands and aims (SHOOT_CHARGE_MOVE), so a 25 m strike is from 25 m. A 25 m
+    // shot against a set keeper going in about one time in thirty is about right.)
+    expect(long.goal).toBeGreaterThanOrEqual(0.025);
     expect(long.goal).toBeLessThanOrEqual(0.16);
     expect(angled.goal).toBeGreaterThanOrEqual(0.12);
     // (Round 6 made aiming with the stick reliable: a corner picked from an angle is found more often.)
@@ -322,6 +325,124 @@ describe('edge-of-the-box finishing (shd.js)', () => {
     expect(saves).toBeGreaterThan(60);
     expect(corners / saves).toBeLessThanOrEqual(0.3);
   }, 120_000);
+});
+
+/**
+ * A human 1v1 from anywhere: the striker at (dist from the line, z) with only the keeper (set on his angle for
+ * `settle` frames; everyone else parked at the far end), SHOOT held `hold` frames with the stick at (fwd
+ * towards goal, lat across) all the way through. What came of it, how far the charge carried him, and where
+ * the ball as struck was going at the line.
+ */
+function setShot(seed: number, dist: number, z: number, hold: number, fwd: number, lat: number, settle: number, half2 = false) {
+  const m = newMatch(seed);
+  if (half2) {
+    m.phase = 'halftime';
+    m.continueSecondHalf();
+  }
+  m.phase = 'play';
+  m.restart = null;
+  m.clock = 20;
+  const ad = m.attackDir(0);
+  m.players.forEach((p, i) => place(p, -ad * 40, -HALF_W + 2 + i * 2.6));
+  const p = m.players[9];
+  place(p, ad * (HALF_L - dist), z);
+  p.facing = Math.atan2(-z * 0.3, ad);
+  place(m.keeperOf(1)!, ad * (HALF_L - 1.5), z * 0.1);
+  const b = m.ball;
+  b.reset(p.pos.x + ad * 0.5, p.pos.z);
+  b.owner = p.idx;
+  b.lastTouch = p.idx;
+  b.lastTouchSide = 0;
+  m.active = p.idx;
+  m.updateBallPath();
+  for (let i = 0; i < settle; i++) m.step(DT, EMPTY_PAD);
+  m.drainEvents();
+  const stick = pad(ad * fwd, lat);
+  const x0 = p.pos.x;
+  const z0 = p.pos.z;
+  let style: string | undefined;
+  let drift = -1;
+  let line: { z: number; y: number } | null | undefined;
+  const watch = () => {
+    for (const e of m.drainEvents()) {
+      if (e.type === 'kick' && drift < 0) {
+        style = e.style;
+        drift = Math.hypot(p.pos.x - x0, p.pos.z - z0);
+        line = lineCrossing(b, ad);
+      }
+    }
+  };
+  for (let i = 0; i < hold; i++) {
+    m.step(DT, { ...stick, shoot: true });
+    watch();
+  }
+  const g0 = m.score[0];
+  for (let i = 0; i < 260; i++) {
+    m.step(DT, i < 6 ? stick : EMPTY_PAD);
+    watch();
+    if (m.score[0] > g0) return { goal: true, style, drift, wide: false };
+    if (phase(m) !== 'play' || (m.ball.owner >= 0 && m.players[m.ball.owner].side === 1)) break;
+  }
+  const wide = line === null || (!!line && Math.abs(line.z) >= GOAL_W / 2);
+  return { goal: false, style, drift, wide };
+}
+
+describe('finesse and stick-aimed finishing (round 7)', () => {
+  it('a finesse curler at the far post from ~18 m out wide of the post beats a set keeper 30-40% of the time', () => {
+    let n = 0;
+    let goals = 0;
+    let wide = 0;
+    for (const [dist, zAbs] of [[16.5, 7], [15, 10], [13.5, 12], [17.2, 5]] as const) {
+      for (const sgn of [1, -1]) {
+        for (const hold of [20, 28]) {
+          for (let k = 0; k < 12; k++) {
+            // The stick diagonally at the far post, a placed (under 60%) strike: the finesse shot.
+            const r = setShot(100 + k * 31 + hold, dist, zAbs * sgn, hold, Math.SQRT1_2, -sgn * Math.SQRT1_2, 40);
+            expect(r.style).toBe('finesse');
+            n++;
+            if (r.goal) goals++;
+            if (r.wide) wide++;
+          }
+        }
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`finesse, far post, from ~18 m wide of the post: ${goals}/${n} (${((goals / n) * 100).toFixed(0)}%), ${wide} wide`);
+    // It was 0/48 in the browser (every one saved: too slow, too far inside the post, read at once).
+    expect(goals / n).toBeGreaterThanOrEqual(0.3);
+    expect(goals / n).toBeLessThanOrEqual(0.42);
+  }, 60_000);
+
+  it('a shot aimed with the stick from the edge of the box: under 20% wide on either side, and the charge no longer drags him', () => {
+    let n = 0;
+    let wide = 0;
+    let drift = 0;
+    const bySide = { left: [0, 0], right: [0, 0] };
+    for (const half2 of [false, true]) {
+      for (const lat of [1, -1]) {
+        for (let k = 0; k < 50; k++) {
+          const r = setShot(1000 + k * 17 + (lat > 0 ? 0 : 5000) + (half2 ? 9000 : 0), 16, 0, 51, 0, lat, 4, half2);
+          n++;
+          drift += r.drift;
+          if (r.wide) wide++;
+          // (Attacking +x, +z is the shooter's right.)
+          const side = lat * (half2 ? -1 : 1) > 0 ? bySide.right : bySide.left;
+          side[0]++;
+          if (r.wide) side[1]++;
+        }
+      }
+    }
+    const l = bySide.left[1] / bySide.left[0];
+    const rr = bySide.right[1] / bySide.right[0];
+    // eslint-disable-next-line no-console
+    console.log(`stick-aimed from 16 m: ${((wide / n) * 100).toFixed(0)}% wide (left ${(l * 100).toFixed(0)}%, right ${(rr * 100).toFixed(0)}%), charge drift ${(drift / n).toFixed(2)} m`);
+    // It was 25-50% wide in the browser, and a stick held across carried him ~4 m while he charged.
+    expect(wide / n).toBeLessThan(0.2);
+    expect(l).toBeLessThan(0.23);
+    expect(rr).toBeLessThan(0.23);
+    expect(Math.abs(l - rr)).toBeLessThan(0.08);
+    expect(drift / n).toBeLessThan(1.6);
+  }, 60_000);
 });
 
 describe('set-piece balance', () => {

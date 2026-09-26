@@ -6,7 +6,7 @@ import { Vector3 } from 'three';
 import type { AppContext, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
 import { Input } from './core/input';
-import { loadSave, writeSave } from './core/save';
+import { loadSave, writeSave, type CamZoom } from './core/save';
 import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
@@ -36,6 +36,16 @@ function persist(): void {
   writeSave(save);
 }
 
+/** The match camera distance from Settings (older saves: normal). */
+function camZoom(): CamZoom {
+  return save.settings.camZoom ?? 'normal';
+}
+
+/** Live camera-distance change (Settings opened from the pause menu). Optional: older sessions lack it. */
+function applyCamZoom(s: MatchSession | null): void {
+  (s as { setCamZoom?: (z: CamZoom) => void } | null)?.setCamZoom?.(camZoom());
+}
+
 function applySettings(): void {
   const s = save.settings;
   sfx.sfxOn = s.sfx;
@@ -46,16 +56,19 @@ function applySettings(): void {
   if (session) {
     session.match.autoSwitch = s.autoSwitch;
     session.hud?.setCommentary(s.commentary, s.commentaryVoice);
+    applyCamZoom(session);
   }
   persist();
 }
 
 /** World point -> viewport CSS px through the match camera (the HUD keeps its captions off the ball). */
 const projV = new Vector3();
+/** The canvas box, read once a frame (and on resize): the HUD projects dozens of points a frame. */
+let canvasRect = canvas.getBoundingClientRect();
 const project: Projector = (x, y, z) => {
   projV.set(x, y + PITCH_Y, z).project(world.camera);
   if (!Number.isFinite(projV.x) || projV.z > 1) return null;
-  const r = canvas.getBoundingClientRect();
+  const r = canvasRect;
   return { x: r.left + ((projV.x + 1) / 2) * r.width, y: r.top + ((1 - projV.y) / 2) * r.height };
 };
 
@@ -69,6 +82,7 @@ function startDemo(): void {
   demo = new MatchSession(world, input, {
     home, away, halfLength: 600, difficulty: 3, humanSide: -1, seed: Math.floor(Math.random() * 1e9),
     kits: [home.kit, resolveKitClash(home.kit, away.kit)], attendance: 0.8, demo: true, timeOfDay: 'day',
+    camZoom: camZoom(),
   });
 }
 
@@ -243,6 +257,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     knockout: req.knockout,
     stadiumLevel: Math.max(0, Math.min(5, Math.round(req.stadiumLevel ?? 5))),
     tutorial: !save.seenTutorial,
+    camZoom: camZoom(),
   });
   session.match.autoSwitch = save.settings.autoSwitch;
   session.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
@@ -335,12 +350,16 @@ function endMatch(): void {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && session && !session.paused && !menus.open) session.requestPause();
 });
-window.addEventListener('resize', () => world.resize());
+window.addEventListener('resize', () => {
+  world.resize();
+  canvasRect = canvas.getBoundingClientRect();
+});
 
 let last = performance.now();
 function frame(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  canvasRect = canvas.getBoundingClientRect();
   (session ?? demo)?.update(dt);
   world.render();
   world.adapt(dt);

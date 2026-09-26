@@ -105,10 +105,17 @@ const CANOPY_RIB = 0x98a2b2;
 /** Window glass tint (a white-vertex mesh, so this is the pane colour): dark blue sky reflection by day, lit at night. */
 const GLASS = { day: 0x3f5676, sunset: 0x6c5f7a, night: 0xffd489 };
 
-/** Golden-hour lawn tint (material colour): see Stadium.setTimeOfDay. */
-const SUNSET_GRASS = [1.14, 1.52, 2.1];
-/** ...and paint tint, so the lines stay a warm cream in the orange light instead of going salmon. */
-const SUNSET_LINE = [0.88, 1.18, 1.5];
+/**
+ * Golden-hour lawn tint (material colour): see Stadium.setTimeOfDay. Tuned at the broadcast camera so the
+ * two mowing stripes average a lit lawn pixel of ~(120, 150, 60) sRGB (R/G ~0.8; ~(132, 160, 68) and
+ * ~(111, 144, 52)): fresh evening grass rather than khaki.
+ */
+const SUNSET_GRASS = [0.74, 1.23, 2.3];
+/**
+ * ...and paint tint, so the lines stay a warm cream in the orange light instead of going salmon: ~(236, 222,
+ * 192) sRGB at the broadcast camera.
+ */
+const SUNSET_LINE = [0.99, 1.8, 2.45];
 
 const LINE_W = 0.18;
 const BOARD_Z = HALF_W + 3.2;
@@ -895,24 +902,34 @@ export class Stadium {
   private buildCrowd(): void {
     const rng = this.rng;
     const att = this.opt.attendance;
-    type Seat = { x: number; y: number; z: number; rot: number; team: number };
+    // Fans come in groups: runs of 3-4 neighbours along a row share a team and a shirt (a gap or the end of
+    // the row starts a new run), so the stands read as blocks of colour rather than per-seat noise.
+    type Seat = { x: number; y: number; z: number; rot: number; team: number; run: number };
     const seats: Seat[] = [];
+    let run = 0;
     for (const side of this.sides()) {
       const rows = this.profile(side);
       const span = this.span(side) - 0.5;
       rows.forEach((r, i) => {
         const fill = att * (0.95 - (i / rows.length) * 0.2);
+        let runLeft = 0;
+        let runTeam = 0;
         for (let t = -span; t <= span; t += 0.86) {
-          if (!rng.chance(fill)) continue;
           // Leave the rows under the fan banners empty.
-          if (side === 'far' && i <= 3 && this.bannerX.some((bx) => Math.abs(t - bx) < 5.3)) continue;
+          if (!rng.chance(fill) || (side === 'far' && i <= 3 && this.bannerX.some((bx) => Math.abs(t - bx) < 5.3))) {
+            runLeft = 0;
+            continue;
+          }
+          if (runLeft <= 0) {
+            run++;
+            runLeft = rng.chance(0.5) ? 3 : 4;
+            // Away fans are packed into one end, in blocks; a few neutrals among the home support.
+            runTeam = side === 'right' ? (rng.chance(0.88) ? 1 : 0) : rng.chance(0.05) ? 2 : 0;
+          }
+          runLeft--;
           const depth = r.tier === 2 ? STEP_D * 1.05 : STEP_D;
           const p = this.place(side, t + (rng.next() - 0.5) * 0.1, r.d + depth * 0.45);
-          // Away fans are packed into one end, in blocks.
-          let team = 0;
-          if (side === 'right') team = rng.chance(0.88) ? 1 : 0;
-          else if (rng.chance(0.08)) team = 2;
-          seats.push({ x: p.x, y: r.h, z: p.z, rot: p.rot, team });
+          seats.push({ x: p.x, y: r.h, z: p.z, rot: p.rot, team: runTeam, run });
           if (rng.chance(0.08)) this.seatSpots.push(new THREE.Vector3(p.x, r.h + 1.2, p.z));
         }
       });
@@ -921,7 +938,7 @@ export class Stadium {
     for (const sp of this.standSpots) {
       if (!rng.chance(Math.min(1, att * 1.1))) continue;
       const away = sp.x > HALF_L + 2 ? rng.chance(0.8) : false;
-      seats.push({ x: sp.x, y: 0, z: sp.z, rot: sp.rot, team: away ? 1 : rng.chance(0.1) ? 2 : 0 });
+      seats.push({ x: sp.x, y: 0, z: sp.z, rot: sp.rot, team: away ? 1 : rng.chance(0.06) ? 2 : 0, run: ++run });
     }
     if (seats.length === 0) return;
     // One mesh per fan: body + head + hair top, coloured per part in the shader.
@@ -957,14 +974,22 @@ export class Stadium {
     const col = new THREE.Color();
     const { home, away } = this.opt;
     const neutral = [0xe8443a, 0x2f6fe0, 0xffd23a, 0x2fae5a, 0xf6f4ec, 0x2a2a30, 0xff79b0, 0x8a55d8];
+    let lastRun = -1;
+    let kitCol = home;
+    let shirt = home;
     seats.forEach((s, i) => {
       q.setFromAxisAngle(up, s.rot + (rng.next() - 0.5) * 0.3);
       const sc = 0.92 + rng.next() * 0.18;
       m4.compose(new THREE.Vector3(s.x, s.y, s.z), q, new THREE.Vector3(sc, sc, sc));
       fans.setMatrixAt(i, m4);
-      const kitCol = s.team === 0 ? home : s.team === 1 ? away : rng.pick(neutral);
-      const shirt = rng.chance(0.74) ? kitCol : rng.chance(0.55) ? 0xf6f4ec : rng.pick(neutral);
-      fans.setColorAt(i, col.setHex(shade(shirt, 0.9 + rng.next() * 0.16)));
+      if (s.run !== lastRun) {
+        // One shirt per run, mostly the team's colours (even the neutrals lean to the home side).
+        lastRun = s.run;
+        kitCol = s.team === 0 ? home : s.team === 1 ? away : rng.chance(0.5) ? home : rng.pick(neutral);
+        shirt = rng.chance(0.85) ? kitCol : rng.chance(0.65) ? 0xf6f4ec : rng.pick(neutral);
+      }
+      // Half the old per-seat spread (0.94..1.02, was 0.9..1.06): the blocks stay blocks.
+      fans.setColorAt(i, col.setHex(shade(shirt, 0.94 + rng.next() * 0.08)));
       col.setHex(rng.pick(SKIN));
       skin[i * 3] = col.r; skin[i * 3 + 1] = col.g; skin[i * 3 + 2] = col.b;
       col.setHex(rng.chance(0.18) ? kitCol : rng.pick(HAIR));
@@ -1209,8 +1234,8 @@ export class Stadium {
     this.glassMat.color.setHex(night ? GLASS.night : t === 'sunset' ? GLASS.sunset : GLASS.day);
     this.groundMat.color.setRGB(outer[0], outer[1], outer[2]);
     this.grassSat.value = night ? NIGHT.grassSat : 1;
-    // Golden hour: the low orange sun and peach sky warm the lawn (R/G ~0.9 at the broadcast camera, from
-    // ~0.73 by day); this tint keeps it bright, living grass (hue ~70 degrees) rather than dark khaki.
+    // Golden hour: the low orange sun and peach sky warm the lawn (R/G ~0.8 at the broadcast camera, from
+    // ~0.7 by day); this tint keeps it bright, living grass rather than khaki.
     if (t === 'sunset') this.grassMat.color.setRGB(SUNSET_GRASS[0], SUNSET_GRASS[1], SUNSET_GRASS[2]);
     else if (night) this.grassMat.color.setRGB(NIGHT.grass[0], NIGHT.grass[1], NIGHT.grass[2]);
     else this.grassMat.color.setRGB(1, 1, 1);

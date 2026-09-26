@@ -1,5 +1,5 @@
 import { sfx } from '../audio/sfx';
-import type { SaveData } from '../core/save';
+import { CAM_ZOOMS, type SaveData } from '../core/save';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview, faceHtml, hydrateFaces } from './preview';
@@ -172,7 +172,7 @@ const HOWTO_KEYS = `
       <h3>ATTACK</h3>
       <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
       <p><kbd>SPACE</kbd> pass (aim with the stick)</p>
-      <p><kbd>K</kbd> hold &amp; release to shoot</p>
+      <p><kbd>K</kbd> hold &amp; release to shoot · the stick aims while you charge</p>
       <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip the keeper</p>
       <p>Soft <kbd>K</kbd> with a diagonal stick: finesse curler</p>
       <p><kbd>L</kbd> tap: through ball · hold: lob / cross</p>
@@ -195,7 +195,7 @@ const HOWTO_PAD = `
       <h3>ATTACK</h3>
       <p><kbd>LEFT STICK</kbd> move</p>
       <p><kbd>A</kbd> pass (aim with the stick)</p>
-      <p><kbd>B</kbd> hold &amp; release to shoot</p>
+      <p><kbd>B</kbd> hold &amp; release to shoot · the stick aims while you charge</p>
       <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip the keeper</p>
       <p>Soft <kbd>B</kbd> with a diagonal stick: finesse curler</p>
       <p><kbd>X</kbd> tap: through ball · hold: lob / cross</p>
@@ -230,7 +230,7 @@ const HOWTO_TOUCH = `
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
         <tr><td>${dot('pass')}</td><td><b>PASS</b> where you aim</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
-        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder</td><td><b>TACKLE</b> slide in</td></tr>
+        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder · the stick aims</td><td><b>TACKLE</b> slide in</td></tr>
         <tr><td>${dot('through')}</td><td><b>THROUGH</b> tap · hold for a lob or cross</td><td><b>PRESS</b> hold to close down</td></tr>
         <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold · double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT + tap THROUGH/CROSS · <b>CURL</b> a soft SHOOT with the stick on a diagonal</td></tr>
@@ -427,7 +427,7 @@ export class Menus {
             <button class="btn btn-go btn-lg" data-a="resume">RESUME</button>
             ${h.tactics ? '<button class="btn btn-blue" data-a="tactics">TACTICS &amp; SUBS</button>' : ''}
             <button class="btn btn-white" data-a="howto">CONTROLS</button>
-            <button class="btn btn-white" data-a="settings">SOUND</button>
+            <button class="btn btn-white" data-a="settings">SETTINGS</button>
             <button class="btn btn-red" data-a="quit">QUIT MATCH</button>
           </div>
         </div>
@@ -784,12 +784,14 @@ export class Menus {
             <button data-k="commentaryVoice"></button>
             <button data-k="autoSwitch"></button>
             <button data-k="quality"></button>
+            <button data-k="camZoom"></button>
           </div>
           <div class="btn-row"><button class="btn btn-go" data-a="back">DONE</button></div>
         </div>
       </div>`, 'settings');
     const labels: Record<string, string> = {
       sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', commentaryVoice: 'COMMENTARY VOICE', autoSwitch: 'AUTO SWITCH', quality: 'GRAPHICS',
+      camZoom: 'CAMERA',
     };
     const canSpeak = speechAvailable();
     const draw = () => {
@@ -801,7 +803,7 @@ export class Menus {
           b.innerHTML = `<span>${labels[k]}</span><b class="off na">N/A</b>`;
           return;
         }
-        const val = k === 'quality' ? String(v).toUpperCase() : v ? 'ON' : 'OFF';
+        const val = k === 'quality' ? String(v).toUpperCase() : k === 'camZoom' ? (s.camZoom ?? 'normal').toUpperCase() : v ? 'ON' : 'OFF';
         b.innerHTML = `<span>${labels[k]}</span><b class="${v === false ? 'off' : ''}">${val}</b>`;
       });
     };
@@ -811,6 +813,8 @@ export class Menus {
         sfx.click();
         const k = b.dataset.k as keyof typeof s;
         if (k === 'quality') s.quality = s.quality === 'high' ? 'medium' : s.quality === 'medium' ? 'low' : 'high';
+        // Camera distance: WIDE -> NORMAL -> CLOSE -> WIDE.
+        else if (k === 'camZoom') s.camZoom = CAM_ZOOMS[(CAM_ZOOMS.indexOf(s.camZoom ?? 'normal') + 1) % CAM_ZOOMS.length];
         else (s as unknown as Record<string, boolean>)[k] = !s[k];
         draw();
         onChange();

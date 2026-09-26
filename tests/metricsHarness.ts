@@ -51,6 +51,17 @@ export interface MatchMetrics {
   subs: [number, number];
   /** Lowest outfield stamina on the pitch at full time. */
   minStamina: number;
+  /** Passes (by kind) that the other side took: [attempts, lost to an opponent]. */
+  lostByKind: Record<string, [number, number]>;
+  /**
+   * Launch speed (m/s, the ball's speed the step after the strike) by kick kind, headed and cleared balls
+   * (never shots): count, sum, max. Header shots are 'headerShot'.
+   */
+  kickSpeed: Record<string, [number, number, number]>;
+  /** Goals per scorer, keyed `side:slot` (own goals left out). */
+  scorers: Record<string, number>;
+  /** Every second-half substitution: side, minute, whether it was that side's first change of the match. */
+  subLog: { side: Side; minute: number; first: boolean }[];
 }
 
 const PASS_KINDS = new Set(['pass', 'through', 'lob', 'throw', 'keeper']);
@@ -71,6 +82,7 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     penalties: 0, fouls: 0, yellows: 0, reds: 0, saves: 0, maxStall: 0, finalThird: [0, 0], crosses: 0, headers: 0, blocks: 0,
     rawPasses: 0, shotOut: {}, byKind: {}, runs: 0, overlaps: 0, beats: 0, claims: 0,
     ownGoals: 0, offsides: 0, advantages: 0, lateSubs: 0, subs: [0, 0], minStamina: 1,
+    lostByKind: {}, kickSpeed: {}, scorers: {}, subLog: [],
   };
   const wasRunning = new Set<number>();
   const lastOverlap: [number, number] = [-1, -1];
@@ -88,10 +100,12 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     if (!pending) return;
     const bk = (r.byKind[pending.kind] ??= [0, 0]);
     bk[0]++;
+    const lk = (r.lostByKind[pending.kind] ??= [0, 0]);
+    lk[0]++;
     if (side === pending.side) {
       r.passCmp[pending.side]++;
       bk[1]++;
-    }
+    } else if (side !== -1) lk[1]++;
     pending = null;
   };
   // Carrier stretches (merging brief control flickers by the same player).
@@ -106,6 +120,7 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
   let shotsSeen = 0;
 
   while (m.phase !== 'fulltime' && steps < 60 * 60 * 14) {
+    const shotsBefore = m.stats.shots[0] + m.stats.shots[1];
     m.step(DT, EMPTY_PAD);
     steps++;
     const b = m.ball;
@@ -114,6 +129,16 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
         case 'kick': {
           const k = m.players[b.lastTouch];
           if (!k) break;
+          const isShot = m.stats.shots[0] + m.stats.shots[1] > shotsBefore;
+          // (Read after the step: the ball has flown one frame since the strike.)
+          const kk = e.kind === 'header' && isShot ? 'headerShot' : isShot ? 'shot' : e.kind;
+          if (b.owner < 0) {
+            const ks = (r.kickSpeed[kk] ??= [0, 0, 0]);
+            const sp = b.speed();
+            ks[0]++;
+            ks[1] += sp;
+            ks[2] = Math.max(ks[2], sp);
+          }
           const ad = m.attackDir(k.side);
           if (pending && pending.kicker !== k.idx) resolve(k.side);
           if (shot && m.shotClock > 0) shotDone(k.side === shot.side ? 'reboundKick' : 'cleared');
@@ -147,6 +172,11 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
           resolve(-1);
           shotDone('goal');
           if (e.own) r.ownGoals++;
+          else {
+            const sc = m.players[e.scorer];
+            const key = `${sc.side}:${sc.slot}`;
+            r.scorers[key] = (r.scorers[key] ?? 0) + 1;
+          }
           break;
         case 'tackle':
           if (e.slide && !e.won) {
@@ -177,7 +207,10 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
         case 'sub':
           r.subs[e.side]++;
           // Half-time changes are drained on the first step of the second half (clock still 0).
-          if (m.half === 2 && m.clock > 1) r.lateSubs++;
+          if (m.half === 2 && m.clock > 1) {
+            r.lateSubs++;
+            r.subLog.push({ side: e.side, minute: m.minute(), first: r.subs[e.side] === 1 });
+          }
           break;
         default:
           break;
@@ -325,6 +358,19 @@ export interface Summary {
   lateSubs: number;
   maxSubs: number;
   minStamina: number;
+  /** Through balls: completed / taken by the other side, %. */
+  throughPct: number;
+  throughLostPct: number;
+  /** Launch speeds (m/s): mean and max per kind, `kind:mean/max`. */
+  kickSpeeds: string;
+  /** Fastest headed ball that wasn't a shot, and fastest clearance / lofted ball (m/s). */
+  headerMax: number;
+  clearMax: number;
+  lobMax: number;
+  /** Share (%) of a side's goals scored by its top scorer, summed over all the matches (same two clubs). */
+  topScorerPct: number;
+  /** Minutes of each side's first change of the match when it came in the second half (the forced one). */
+  firstLateSubMinutes: number[];
 }
 
 export function summarise(list: MatchMetrics[]): Summary {
@@ -375,6 +421,47 @@ export function summarise(list: MatchMetrics[]): Summary {
     lateSubs: avg((r) => r.lateSubs),
     maxSubs: Math.max(...list.map((r) => Math.max(r.subs[0], r.subs[1]))),
     minStamina: avg((r) => r.minStamina),
+    throughPct: (() => {
+      const a = list.reduce((x, r) => x + (r.lostByKind.through?.[0] ?? 0), 0);
+      return (list.reduce((x, r) => x + (r.byKind.through?.[1] ?? 0), 0) / Math.max(1, a)) * 100;
+    })(),
+    throughLostPct: (() => {
+      const a = list.reduce((x, r) => x + (r.lostByKind.through?.[0] ?? 0), 0);
+      return (list.reduce((x, r) => x + (r.lostByKind.through?.[1] ?? 0), 0) / Math.max(1, a)) * 100;
+    })(),
+    kickSpeeds: (() => {
+      const agg: Record<string, [number, number, number]> = {};
+      for (const r of list) {
+        for (const [k, v] of Object.entries(r.kickSpeed)) {
+          const a = (agg[k] ??= [0, 0, 0]);
+          a[0] += v[0];
+          a[1] += v[1];
+          a[2] = Math.max(a[2], v[2]);
+        }
+      }
+      return Object.entries(agg).map(([k, v]) => `${k}:${(v[1] / Math.max(1, v[0])).toFixed(1)}/${v[2].toFixed(1)}`).join(' ');
+    })(),
+    headerMax: Math.max(0, ...list.map((r) => r.kickSpeed.header?.[2] ?? 0)),
+    clearMax: Math.max(0, ...list.map((r) => r.kickSpeed.clear?.[2] ?? 0)),
+    lobMax: Math.max(0, ...list.map((r) => r.kickSpeed.lob?.[2] ?? 0)),
+    topScorerPct: (() => {
+      const bySide: [Record<string, number>, Record<string, number>] = [{}, {}];
+      for (const r of list) {
+        for (const [k, v] of Object.entries(r.scorers)) {
+          const side = Number(k.split(':')[0]) as Side;
+          bySide[side][k] = (bySide[side][k] ?? 0) + v;
+        }
+      }
+      let top = 0;
+      let tot = 0;
+      for (const s of bySide) {
+        const vals = Object.values(s);
+        top += Math.max(0, ...vals);
+        tot += vals.reduce((a, v) => a + v, 0);
+      }
+      return (top / Math.max(1, tot)) * 100;
+    })(),
+    firstLateSubMinutes: list.flatMap((r) => r.subLog.filter((x) => x.first).map((x) => x.minute)),
     passKinds: (() => {
       const agg: Record<string, [number, number]> = {};
       for (const r of list) {
@@ -396,6 +483,6 @@ export function summarise(list: MatchMetrics[]): Summary {
 
 export function fmt(s: Summary): string {
   return Object.entries(s)
-    .map(([k, v]) => `${k.padEnd(18)} ${typeof v === 'number' ? v.toFixed(2) : v}`)
+    .map(([k, v]) => `${k.padEnd(18)} ${typeof v === 'number' ? v.toFixed(2) : Array.isArray(v) ? v.join(',') : v}`)
     .join('\n');
 }

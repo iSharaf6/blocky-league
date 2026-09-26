@@ -1,6 +1,6 @@
 import { angleDiff, clamp, dist2, pointSegDist, turnToward } from '../core/math';
 import { Rng } from '../core/rng';
-import { CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, onTarget, pickReceiver, resolveKick, stickCurl } from './actions';
+import { CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, onTarget, pickReceiver, resolveKick, shotQuality, stickCurl } from './actions';
 import { intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { Ball, type BallHit } from './ball';
 import {
@@ -144,15 +144,27 @@ const RUNUP_LENS_CLEAR = 0.8;
 const AUTO_SUB_MINUTES = [60, 75];
 /**
  * ... and a side that still hasn't made a change by this minute makes one at the next dead ball
- * whatever the legs look like (the most tired outfielder comes off): every AI bench gets used.
+ * whatever the legs look like (the most tired outfielder comes off): every AI bench gets used. (Was 70',
+ * checked only as the ball went out, so it landed at 72-77'; from 66' on it's checked on every step the
+ * ball is dead and lands by ~70'.)
  */
-const FORCED_SUB_MINUTE = 70;
+export const FORCED_SUB_MINUTE = 66;
 /**
- * A driven corner (SHOOT): whipped at the near-post zone a touch softer than full power, dropping to
- * ~1 m at the runner (so it's met, not flashed across the box and out for a throw on the far side).
+ * A driven corner (SHOOT): whipped at the near-post zone short of full power (a softer driven ball hangs a
+ * touch longer: DRIVEN_HANG in actions.ts, ~10% here), dropping to ~1 m at the runner (so it's met, not
+ * flashed across the box and out for a throw on the far side). Was 0.75 (which only labelled the kick).
  */
-const DRIVEN_POWER = 0.75;
+const DRIVEN_POWER = 0.65;
 const DRIVEN_LAND = 1.0;
+/** The human's man heads a ball dropping onto him on his own (no button) from this close (m): see autoHeader. */
+const AUTO_HEADER_D = 3.2;
+/** A zonal defender at a corner heads away a delivery that passes this close (m) and this low (m). */
+const ZONAL_HEAD_R = 1.2;
+const ZONAL_HEAD_Y = 2.2;
+/** ... unless an attacker is within this (m) of it too: then it's a contest for the first-time contact. */
+const ZONAL_CONTEST_R = 2;
+/** How much of the stick moves the human's man while he winds up a shot with the ball at his feet. */
+const SHOOT_CHARGE_MOVE = 0.3;
 /** The human's assisted receive sprints onto a pass whose meeting point is further than this (m). */
 const RECEIVE_SPRINT = 2.5;
 /** Extra hang time (s) on a corner to the far post, so it clears the near-post crowd. */
@@ -174,6 +186,13 @@ const WALL_HEAD = 0.18;
 const WALL_CURL_DIP = 0.55;
 /** How far (m) in front of / behind his body line a diving keeper can still get a hand to the ball. */
 const DIVE_DEPTH = 0.5;
+/**
+ * A shot or cross grazed or blocked within DEFLECT_SAFE_D m of the defender's own goal turns at least
+ * DEFLECT_SAFE_TURN rad away from it and keeps DEFLECT_SAFE_PACE of its pace (own goals were ~15%).
+ */
+const DEFLECT_SAFE_D = 12;
+const DEFLECT_SAFE_TURN = 0.35;
+const DEFLECT_SAFE_PACE = 0.6;
 /** The flank (m in from the touchline) where tackles and blocks tend to put the ball into touch... */
 const WING_TOUCH = 12;
 /** ... how often a won poke tackle there knocks it out (right by the line), and a block. */
@@ -794,6 +813,7 @@ export class Match {
       this.checkSlides();
       this.checkKeeperHands();
       this.checkWall();
+      this.checkZonal();
       this.checkPossession();
       this.checkGraze();
       this.autoTackle();
@@ -802,6 +822,9 @@ export class Match {
       if (this.phase === 'play') this.updateAdvantage(dt);
       this.autoSwitchUpdate(dt);
     } else if (this.phase === 'out') {
+      // A late change that's due (a side still without one past FORCED_SUB_MINUTE, or a window that opened
+      // while the ball was already dead) is made while the ball is out, not held over to the next stoppage.
+      if (this.half === 2 && this.minute() >= AUTO_SUB_MINUTES[0] && this.pendingRestart?.kind !== 'penalty') this.autoSubs();
       // Corners and wide free kicks get a beat longer so the box can fill.
       const pr = this.pendingRestart;
       const beat = pr && (isCrossingRestart(this, pr) || isDirectFreeKick(this, pr)) ? 1.3 : 0.85;
@@ -1362,16 +1385,11 @@ export class Match {
           const pw = shootPower;
           want = () => fkShot(pw);
         } else if (shootR) {
-          // SHOOT on a corner: a driven cross, flat and fast.
-          want = aimed
-            ? () => {
-              const o = this.order(t, 'lob', dx, dz, DRIVEN_POWER, -1, false);
-              if (o) {
-                o.driven = true;
-                o.land = DRIVEN_LAND;
-              }
-            }
-            : () => this.deliverSetPiece(t, DRIVEN_POWER, true);
+          // SHOOT on a corner: a driven cross, flat and fast, whipped at a box runner's zone (the aim picks
+          // which runner; left alone, the near-post one). It used to fly along the aim at whoever the
+          // pass assist found (often the short man, or nobody, and out for a throw on the far side).
+          const aim = aimed ? { x: dx, z: dz } : undefined;
+          want = () => this.deliverSetPiece(t, DRIVEN_POWER, true, aim);
         }
         if (want) this.queuedKick = want;
         if (setPieceReady(this, side) < 4 && this.phaseT < 1.6) return;
@@ -1432,14 +1450,17 @@ export class Match {
     }
     if (this.active < 0) return;
     const p = this.players[this.active];
+    const hasBall = b.owner === p.idx;
     p.faceTarget = null;
-    p.wantX = pad.mx;
-    p.wantZ = pad.mz;
-    p.sprint = pad.sprint;
+    // Winding up a shot he mostly plants and aims: the stick picks the corner, it doesn't carry him (he
+    // used to be dragged ~4 m sideways by a stick held across the goal while charging).
+    const move = hasBall && pad.shoot ? SHOOT_CHARGE_MOVE : 1;
+    p.wantX = pad.mx * move;
+    p.wantZ = pad.mz * move;
+    p.sprint = pad.sprint && move === 1;
 
     const dirX = stickLen > 0.25 ? pad.mx : Math.cos(p.facing);
     const dirZ = stickLen > 0.25 ? pad.mz : Math.sin(p.facing);
-    const hasBall = b.owner === p.idx;
     // Double-tap sprint while dribbling: knock it past your man and chase it.
     this.humanTime += dt;
     if (pad.sprint && !this.prev.sprint) {
@@ -1451,11 +1472,16 @@ export class Match {
       }
     }
 
-    // Chip: THROUGH tapped while SHOOT is charging (or SHOOT let go with THROUGH held).
-    if (throughP && pad.shoot && this.prev.shoot) this.chipArmed = true;
+    // Chip: THROUGH tapped while SHOOT is charging fires it there and then, at the charge so far (or SHOOT
+    // let go with THROUGH held).
+    const chipTap = throughP && pad.shoot && this.prev.shoot;
+    if (chipTap) this.chipArmed = true;
     if (hasBall && b.owner === p.idx) {
       if (passP) this.order(p, 'pass', dirX, dirZ, 0.6, -1, false);
-      else if (shootR) {
+      else if (chipTap) {
+        const o = this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0, shootPower, -1, false);
+        if (o) o.style = 'chip';
+      } else if (shootR) {
         const sx = stickLen > 0.25 ? pad.mx : 0;
         const sz = stickLen > 0.25 ? pad.mz : 0;
         const o = this.order(p, 'shot', sx, sz, shootPower, -1, false);
@@ -1486,6 +1512,7 @@ export class Match {
         if (passP) this.order(p, 'pass', dirX, dirZ, 0.6, -1, true);
         else if (shootP) this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0, 0.8, -1, true);
         else if (throughP) this.order(p, 'through', dirX, dirZ, 0.7, -1, true);
+        else if (this.passTarget === p.idx && !p.order) this.autoHeader(p, d);
       } else {
         if (passP) this.switchPlayer(stickLen > 0.3 ? pad.mx : 0, stickLen > 0.3 ? pad.mz : 0);
         else if (shootP && opp && d < 6) this.startSlide(p);
@@ -1517,6 +1544,26 @@ export class Match {
           if (tl > RECEIVE_SPRINT) p.sprint = true;
         }
       }
+    }
+  }
+
+  /**
+   * A cross or lofted pass is dropping onto the human's man and he hasn't pressed anything: he attacks it
+   * anyway, the way an AI teammate would, rather than letting it sail over his head (a human-delivered
+   * corner switches control to its target runner, and most of them used to go untouched). In sight of
+   * goal (shotQuality over 0.12, as the AI judges it) it's a header at goal, otherwise a header on towards
+   * goal. SHOOT / PASS / THROUGH still decide.
+   */
+  private autoHeader(p: Player, d: number): void {
+    const b = this.ball;
+    if (d > AUTO_HEADER_D || b.pos.y < 1.15 || b.pos.y > 3 || b.vel.y > 3) return;
+    const ad = this.attackDir(p.side);
+    // (The same call an AI teammate makes: a sight of goal is worth a header at it.)
+    if (shotQuality(p.pos.x, p.pos.z, ad) > 0.12) {
+      this.order(p, 'header', 0, 0, 0.75, -1, true);
+    } else {
+      const x = clamp(p.pos.x + ad * 12, -HALF_L + 4, HALF_L - 4);
+      this.order(p, 'header', ad, 0, 0.6, -1, true, { x, z: p.pos.z * 0.7 });
     }
   }
 
@@ -1686,9 +1733,9 @@ export class Match {
    * Corner / wide free kick: whip it into the zone one of the box runners is attacking (near or far
    * post on a corner). Used by the AI and by a human who takes it without aiming the stick.
    */
-  private deliverSetPiece(t: Player, power = 0.8, driven = false): void {
+  private deliverSetPiece(t: Player, power = 0.8, driven = false, dir?: { x: number; z: number }): void {
     // A driven ball goes to the near-post runner (a flat ball to the far post just flies across).
-    const a = setPieceAim(this, t, driven);
+    const a = setPieceAim(this, t, driven, dir);
     const o = this.order(t, 'lob', a.x - t.pos.x, a.z - t.pos.z, power, a.target, false, { x: a.x, z: a.z }, driven ? DRIVEN_LAND : undefined);
     if (o && driven) o.driven = true;
     // One aimed beyond the near post (a corner to the far post) is hung up over the heads there.
@@ -2418,12 +2465,22 @@ export class Match {
   private nick(p: Player): void {
     this.offsideTouch(p);
     const b = this.ball;
-    const out = Math.sign(b.pos.z) || (this.rng.chance(0.5) ? 1 : -1);
     const hs = b.hspeed();
     const a = Math.atan2(b.vel.z, b.vel.x);
-    // Turn it away from the goal: towards +z if it's on the +z side.
-    const turn = (0.05 + this.rng.next() * 0.12) * out * (Math.cos(a) >= 0 ? 1 : -1);
-    const ns = hs * (0.82 + this.rng.next() * 0.12);
+    // Turn it away from the goal: further out on the side of the post it was already going wide of (where
+    // it would cross the goal line; it used to be the side of the pitch the ball was on, which turned a
+    // shot going wide of the far post back in off the defender).
+    const gxOwn = -this.attackDir(p.side) * HALF_L;
+    const tLine = Math.abs(b.vel.x) > 0.5 ? (gxOwn - b.pos.x) / b.vel.x : -1;
+    const zLine = tLine > 0 ? b.pos.z + b.vel.z * tLine : b.pos.z;
+    const out = Math.sign(zLine) || (this.rng.chance(0.5) ? 1 : -1);
+    let turn = (0.05 + this.rng.next() * 0.12) * out * (Math.cos(a) >= 0 ? 1 : -1);
+    let ns = hs * (0.82 + this.rng.next() * 0.12);
+    if (dist2(b.pos.x, b.pos.z, gxOwn, 0) < DEFLECT_SAFE_D) {
+      // Right by his own goal it comes off him well wide, and dead.
+      turn = Math.sign(turn) * Math.max(Math.abs(turn), DEFLECT_SAFE_TURN);
+      ns *= DEFLECT_SAFE_PACE;
+    }
     b.vel.x = Math.cos(a + turn) * ns;
     b.vel.z = Math.sin(a + turn) * ns;
     b.vel.y = b.vel.y * 0.8 + this.rng.next() * 1.5;
@@ -2470,8 +2527,16 @@ export class Match {
       b.vel.y = 3 + this.rng.next() * 3.5;
     } else {
       const heading = Math.atan2(b.vel.z, b.vel.x);
-      const turn = (this.rng.chance(0.5) ? 1 : -1) * (0.35 + this.rng.next() * (shot ? 1.5 : 2.3));
-      const ns = sp * (0.25 + this.rng.next() * (shot ? 0.45 : 0.3));
+      let turn = (this.rng.chance(0.5) ? 1 : -1) * (0.35 + this.rng.next() * (shot ? 1.5 : 2.3));
+      let ns = sp * (0.25 + this.rng.next() * (shot ? 0.45 : 0.3));
+      if (dist2(b.pos.x, b.pos.z, gxOwn, 0) < DEFLECT_SAFE_D) {
+        // By his own goal the block turns it away from the goal (by at least DEFLECT_SAFE_TURN), not
+        // towards it, and kills it (own goals were ~15% of all goals).
+        const toGoal = Math.atan2(-b.pos.z, gxOwn - b.pos.x);
+        const away = Math.abs(angleDiff(toGoal, heading + Math.abs(turn))) >= Math.abs(angleDiff(toGoal, heading - Math.abs(turn))) ? 1 : -1;
+        turn = away * Math.max(Math.abs(turn), DEFLECT_SAFE_TURN);
+        ns *= DEFLECT_SAFE_PACE;
+      }
       b.vel.x = Math.cos(heading + turn) * ns;
       b.vel.z = Math.sin(heading + turn) * ns;
       b.vel.y = 0.8 + this.rng.next() * (shot ? 4.5 : 3);
@@ -2524,6 +2589,46 @@ export class Match {
         this.deflect(w, true);
         return;
       }
+    }
+  }
+
+  /**
+   * A corner / wide free-kick delivery: a zonal defender heads (or hooks) away any ball that comes through
+   * within ZONAL_HEAD_R m of him below ZONAL_HEAD_Y m (plus his leap), unless an attacker is right there
+   * on it too (then the first-time contact settles it). Flat, driven ones used to fly through the
+   * six-yard box untouched.
+   */
+  private checkZonal(): void {
+    if (this.setPieceKick !== this.kickId || this.sinceKick > 1.8) return;
+    const b = this.ball;
+    if (b.owner >= 0 || b.held || b.pos.y > ZONAL_HEAD_Y + 0.6) return;
+    const atk = this.kickSide;
+    const zonal = this.brains[otherSide(atk)].spZonal;
+    if (zonal.size === 0) return;
+    const a = this.ballPrev;
+    for (const idx of zonal.keys()) {
+      const p = this.players[idx];
+      if (p.sentOff || p.side === atk || p.state !== 'move' || p.blockKick === this.kickId || p.kickCooldown > 0 || (p.order && !p.order.firstTime)) continue;
+      const { d, t } = pointSegDist(p.pos.x, p.pos.z, a.x, a.z, b.pos.x, b.pos.z);
+      const y = a.y + (b.pos.y - a.y) * t;
+      if (d > ZONAL_HEAD_R || y > ZONAL_HEAD_Y + p.y || y < 0.3) continue;
+      const cx = a.x + (b.pos.x - a.x) * t;
+      const cz = a.z + (b.pos.z - a.z) * t;
+      let contested = false;
+      for (const q of this.bySide[atk]) {
+        if (!q.sentOff && !q.isKeeper && dist2(q.pos.x, q.pos.z, cx, cz) < ZONAL_CONTEST_R) contested = true;
+      }
+      if (contested) continue;
+      p.blockKick = this.kickId;
+      const ad = this.attackDir(p.side);
+      const aim = { x: p.pos.x + ad * 20, z: clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 11, -HALF_W + 4, HALF_W - 4) };
+      const o = this.order(p, 'header', ad, 0, 1, -1, true, aim);
+      if (!o) continue;
+      b.pos.x = cx;
+      b.pos.z = cz;
+      b.pos.y = Math.max(BALL_R, y);
+      this.firstTimeContact(p, y >= 1.05 ? 'head' : 'foot');
+      return;
     }
   }
 

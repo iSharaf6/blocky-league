@@ -26,7 +26,8 @@ const LOOKS: Record<TimeOfDay, Look> = {
   },
   // Golden hour: a low, strong orange key (long shadows raking across the lawn; faces, shirts and the stands
   // glow) under a warm peach sky, so the whole frame reads as evening, not day: the lawn goes warm
-  // (R/G ~0.9) but stays grass; Stadium.setTimeOfDay keeps its hue on the green side of khaki.
+  // (R/G ~0.8) but stays grass; Stadium.setTimeOfDay keeps its hue well clear of khaki. (The footballers
+  // get a neutral sky fill on top, MatchView.setTimeOfDay, so kits don't go orange-brown.)
   sunset: {
     skyTop: 0x5b6fd6, skyMid: 0xff9a6b, skyBottom: 0xffd08a, hemiSky: 0xffc0a0, hemiGround: 0x5a7a2a, hemi: 1.8,
     sun: 0xffa860, sunI: 3.2, offset: [-70, 24, 30], fog: 0xffc08a,

@@ -3,7 +3,7 @@ import { lerp, wrapAngle } from '../core/math';
 import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, PlayerDef, TeamDef } from '../sim/types';
-import { CHAR_H, Footballer, PSTATE, buildBallGeometry, charMaterial, screenCharK, setCharacterFill, type PoseInput } from './characters';
+import { CHAR_H, Footballer, PSTATE, buildBallGeometry, charMaterial, screenCharK, setCharacterFill, setCharacterHemiFill, type PoseInput } from './characters';
 import { FLOODLIGHT_TOWERS } from './stadium';
 import { BoxBuilder } from './voxel';
 
@@ -21,8 +21,21 @@ export const CARD_RED = 0xe03131;
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+/** Outfield players (every index but the two keepers, 0 and 11): the ones that get a team ring. */
+const RING_IDX = Array.from({ length: 22 }, (_, i) => i).filter((i) => i !== 0 && i !== 11);
+
 /** Night: camera-side fill light on the footballers (light units; see characters.setCharacterFill). */
 const NIGHT_CHAR_FILL = 0.6;
+/** Sunset: neutral sky fill on the footballers, so kits and skin stay true under the orange key. */
+const SUNSET_CHAR_HEMI = 0.35;
+/** Team ring under every outfield player: radii (m, before the draw scale) and opacity. */
+const TEAM_RING_IN = 0.4;
+const TEAM_RING_OUT = 0.56;
+const TEAM_RING_ALPHA = 0.45;
+/** The referee's card (the chunky 1.4x mesh), scaled down so the close-up reads as a card, not a sign. */
+const CARD_SCALE = 0.35;
+/** ...and turned this far (rad, about the raised arm) from facing the offender towards the lens side. */
+const CARD_TURN = -1.3;
 
 /** Everything that draws a match: 22 voxel footballers, the ball, and the control marker. */
 export class MatchView {
@@ -52,6 +65,12 @@ export class MatchView {
   private charging = false;
   /** Night: four faint floodlight shadows per player, one away from each tower. */
   private floodShadows: THREE.InstancedMesh | null = null;
+  /** Team-coloured ground ring under each outfield player (instance k: outfield player RING_IDX[k]). */
+  private teamRings: THREE.InstancedMesh;
+  private ringsOn = true;
+  /** Power bar at the shooter's feet (over-the-shoulder set-piece lens) rather than over his head. */
+  private powerLow = false;
+  private powerAt = new THREE.Vector3();
   private towers: readonly { x: number; z: number; h: number }[] = FLOODLIGHT_TOWERS;
   private m4 = new THREE.Matrix4();
   private q = new THREE.Quaternion();
@@ -105,6 +124,10 @@ export class MatchView {
       const m = new THREE.Mesh(b.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
       m.castShadow = true;
       m.visible = false;
+      m.scale.setScalar(CARD_SCALE);
+      // Turned part way from the offender towards the close-up lens (which films from the card-hand side),
+      // so the card reads as a card, not a coloured sliver seen edge-on.
+      m.rotation.y = CARD_TURN;
       this.referee.holdInHand(m, true);
       return m;
     };
@@ -121,6 +144,27 @@ export class MatchView {
     blob.position.y = 0.02;
     this.ballShadow = blob;
     this.group.add(blob);
+
+    // Team rings: a flat, see-through ring in the shirt colour under every outfield player, so the two sides
+    // read at a glance (one instanced draw; lifted off the lawn and polygon-offset, so no z-fighting).
+    const ringGeo = new THREE.RingGeometry(TEAM_RING_IN, TEAM_RING_OUT, 20).rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: TEAM_RING_ALPHA, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    });
+    this.teamRings = new THREE.InstancedMesh(ringGeo, ringMat, RING_IDX.length);
+    this.teamRings.frustumCulled = false;
+    this.teamRings.renderOrder = 2;
+    const rc = new THREE.Color();
+    const hsl = { h: 0, s: 0, l: 0 };
+    RING_IDX.forEach((i, k) => {
+      // Dark shirts (navy, black) would vanish into the lawn at 45%: their ring is the same hue, lifted.
+      rc.setHex(kits[i < 11 ? 0 : 1].shirt).getHSL(hsl);
+      if (hsl.l < 0.5) rc.setHSL(hsl.h, hsl.s, 0.5);
+      this.teamRings.setColorAt(k, rc);
+    });
+    if (this.teamRings.instanceColor) this.teamRings.instanceColor.needsUpdate = true;
+    this.group.add(this.teamRings);
 
     // Control marker: a chunky square ring + bobbing arrow in the human's colour.
     const markColor = humanSide >= 0 ? 0xffd23a : 0xffffff;
@@ -173,7 +217,13 @@ export class MatchView {
     ab2.box(6.6, 0, 0, 0.3, 0.02, 0.9, 0xffd23a);
     ab2.box(6.9, 0, 0, 0.3, 0.02, 0.55, 0xffd23a);
     ab2.box(7.2, 0, 0, 0.3, 0.02, 0.22, 0xffd23a);
-    this.aim = new THREE.Mesh(ab2.build(), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }));
+    // Drawn over everything (depthTest off, late render order): a wall or a team-mate standing on the line
+    // never hides where the kick is going.
+    this.aim = new THREE.Mesh(
+      ab2.build(),
+      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false, fog: false }),
+    );
+    this.aim.renderOrder = 9;
     this.aim.position.y = 0.06;
     this.aim.visible = false;
     this.group.add(this.aim);
@@ -272,6 +322,7 @@ export class MatchView {
       pose.turn = this.turnRate[i];
       fb.pose(pose, time + i * 0.37);
     }
+    if (this.teamRings.visible) this.updateTeamRings();
 
     // Ball: position plus rolling rotation integrated from its velocity.
     const bx = f[BALL_OFS], by = f[BALL_OFS + 1], bz = f[BALL_OFS + 2];
@@ -462,7 +513,8 @@ export class MatchView {
       let k = dc <= radius ? 0 : Math.min(1, (dc - radius) / 1);
       if (dc < radius * 0.5) {
         if (latch) this.fadeLatch.add(i);
-        set(fb, alpha * 0.4);
+        // (`alpha` is the floor: a replay's goal-line lens never takes anyone below it.)
+        set(fb, alpha);
         continue;
       }
       for (const t of sight) {
@@ -533,6 +585,29 @@ export class MatchView {
     this.markerRing.visible = mode !== 'off';
   }
 
+  /** Team rings under the outfield players: on for the broadcast shot, off for close-ups and replays. */
+  setTeamRings(on: boolean): void {
+    if (on === this.ringsOn) return;
+    this.ringsOn = on;
+    this.teamRings.visible = on;
+    if (on) this.updateTeamRings();
+  }
+
+  private updateTeamRings(): void {
+    const im = this.teamRings;
+    const f = this.frame;
+    const k = this.charK;
+    this.q.identity();
+    RING_IDX.forEach((i, n) => {
+      const o = i * PF;
+      // Shrinks away under a jump; gone for a player sent off (parked by his dugout) or faded out of a lens.
+      const s = f[o + 4] === SENT_OFF_CODE || this.players[i].opacity < 0.5 ? 0 : k * Math.max(0.5, 1 - f[o + 2] * 0.5);
+      this.m4.compose(this.v3.set(f[o], 0.03, f[o + 1]), this.q, this.s3.set(s, 1, s));
+      im.setMatrixAt(n, this.m4);
+    });
+    im.instanceMatrix.needsUpdate = true;
+  }
+
   /**
    * Night adds faint floodlight shadows (one per light tower: the corner masts, or a small ground's portable
    * lamps; all of them together darken the grass under a player by ~25% at most) and a camera-side fill on
@@ -542,6 +617,7 @@ export class MatchView {
     const night = t === 'night';
     this.towers = towers;
     setCharacterFill(night ? NIGHT_CHAR_FILL : 0);
+    setCharacterHemiFill(t === 'sunset' ? SUNSET_CHAR_HEMI : 0);
     if (night && !this.floodShadows) {
       const c = document.createElement('canvas');
       c.width = c.height = 64;
@@ -616,7 +692,12 @@ export class MatchView {
     this.nameTex.needsUpdate = true;
   }
 
-  setPower(p: number | null, x: number, z: number, y = 0): void {
+  /**
+   * Shot power bar for the shooter at (x, z) (height y), or hidden (null). Normally just over his head,
+   * where the (hidden) arrow bobs; `low` (the over-the-shoulder set-piece lens, where over his head is the
+   * goal mouth) puts it at his feet instead, a little smaller and on the lens side of his boots.
+   */
+  setPower(p: number | null, x: number, z: number, y = 0, low = false): void {
     if (p === null || p <= 0) {
       this.powerBar.visible = false;
       this.charging = false;
@@ -624,8 +705,10 @@ export class MatchView {
     }
     this.charging = true;
     this.powerBar.visible = true;
-    // Just over the shooter's head, where the (hidden) arrow bobs.
-    this.powerBar.position.set(x, this.headTop + 0.5 + y, z);
+    this.powerLow = low;
+    this.powerAt.set(x, low ? 0.12 : this.headTop + 0.5 + y, z);
+    this.powerBar.position.copy(this.powerAt);
+    this.powerBar.scale.setScalar(low ? 0.7 : 1);
     this.powerFill.scale.x = Math.max(0.02, p);
     const m = this.powerFill.material as THREE.MeshBasicMaterial;
     m.color.setHex(p < 0.6 ? 0x3aff9e : p < 0.85 ? 0xffd23a : 0xff4a3a);
@@ -633,6 +716,14 @@ export class MatchView {
 
   faceCamera(cam: THREE.Camera): void {
     this.powerBar.quaternion.copy(cam.quaternion);
+    if (this.powerLow && this.powerBar.visible) {
+      // At his feet: stepped 0.9 m towards the lens along the ground, so it sits just under his boots on
+      // screen rather than across them.
+      const dx = cam.position.x - this.powerAt.x;
+      const dz = cam.position.z - this.powerAt.z;
+      const d = Math.hypot(dx, dz) || 1;
+      this.powerBar.position.set(this.powerAt.x + (dx / d) * 0.9, this.powerAt.y, this.powerAt.z + (dz / d) * 0.9);
+    }
   }
 
   dispose(): void {

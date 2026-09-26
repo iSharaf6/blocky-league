@@ -86,6 +86,9 @@ export class Hud {
   private cmPending: { line: CommentaryLine; age: number } | null = null;
   private cmPlaceT = 0;
   private cmSlot = '';
+  /** Left edge (px) and box of the ticker as last placed. */
+  private cmX = -1;
+  private cmBox: Rect | null = null;
   private cmLastShown = -99;
   private clockS = 0;
   /** The match the session forwards events from (names for the booking chips). */
@@ -187,6 +190,17 @@ export class Hud {
       this.placeBanner();
       if (this.cmLine) this.placeTicker();
     }
+  }
+
+  /**
+   * The pre-match title card ("HOM v AWA" + club names): gone at once (a quick 0.1 s fade) when the fly-in is
+   * skipped. The session calls it when a button cuts the intro short; setLive(true) (play is on) does it too.
+   */
+  hideIntro(): void {
+    if (!this.banner.classList.contains('intro') || !this.banner.classList.contains('on')) return;
+    this.bannerTimer = 0;
+    this.banner.classList.add('skip');
+    this.banner.classList.remove('on');
   }
 
   /**
@@ -434,9 +448,11 @@ export class Hud {
 
   /**
    * Put the ticker where it covers nothing: the top band beside the score bug (landscape), or under the top
-   * HUD cluster (portrait); the lower third instead whenever the ball is up there. The goal mouth in shot is
-   * keep-clear too: at a set piece a band that would cover it is never used, and with no clear band left
-   * (portrait phones, the goal just under the top cluster) the ticker hides until there is one.
+   * HUD cluster (portrait); the lower third instead whenever the ball is up there, and the bottom corners
+   * beside the minimap as a last resort. The goal mouth in shot is always keep-clear (corners, crosses, shots:
+   * live play as much as dead balls), as are the touch buttons and the thumbstick (counted even while they
+   * are faded out for a dead ball: they come back mid-line). With no clear band left the ticker hides until
+   * there is one (only a goal celebration, where the goal mouth no longer matters, ignores the goal).
    */
   private placeTicker(): void {
     const W = window.innerWidth;
@@ -477,10 +493,10 @@ export class Hud {
     if (hint) low = Math.min(low, hint.t - 8);
     const chip = this.rectOf('.hud-chip');
     if (chip && chip.t > H * 0.5) ll = Math.max(ll, chip.r + g);
-    // The resting thumbstick on touch screens.
-    const stick = this.rectOf('#ui > .touch:not(.hidden) .touch-base');
+    // The thumbstick on touch screens (by layout, not opacity: faded out at a dead ball, back for play).
+    const stick = this.rectOf('#ui > .touch:not(.hidden) .touch-base', false);
     if (stick && stick.b > low - h - 4 && stick.l < W / 2) ll = Math.max(ll, stick.r + g);
-    const btns = this.rectOf('#ui > .touch:not(.hidden) .touch-btns');
+    const btns = this.rectOf('#ui > .touch:not(.hidden) .touch-btns', false);
     if (btns) lr = Math.min(lr, btns.l - g);
     if (lr - ll >= 220) bands.push({ k: 'low', l: ll, r: lr, t: low - h });
     else if (stick || btns) {
@@ -491,13 +507,28 @@ export class Hud {
       if (chip && chip.t > H * 0.5) t = Math.min(t, chip.t - 8);
       bands.push({ k: 'low', l: g, r: W - g, t: t - h });
     }
+    // 4) Last resort (landscape, minimap bottom centre): the bottom strip either side of the minimap, under the
+    // lower third, where a side-on broadcast shot rarely has a goal mouth.
+    if (radar && radar.t > H * 0.5 && !hint) {
+      const fl = Math.max(ll, g);
+      const fr = Math.min(lr, W - g);
+      const ft = H - Math.max(g, 12) - h;
+      if (ft > low - h + 4) {
+        if (radar.l - g - fl >= 220) bands.push({ k: 'footL', l: fl, r: radar.l - g, t: ft });
+        if (fr - (radar.r + g) >= 220) bands.push({ k: 'footR', l: radar.r + g, r: fr, t: ft });
+      }
+    }
     // Where the line would actually sit in each band: its natural width, centred (up top: after the score
     // bug), or pushed to either end of the band when that keeps it off the goal and the ball.
     this.cm.style.maxWidth = `${Math.round(W - g * 2)}px`;
     const natural = this.cm.offsetWidth;
-    const goals = this.goalRects();
+    const goals = this.celebrating() ? [] : this.goalRects();
     const ball = this.ballOnScreen();
-    const hitsGoal = (r: Rect) => goals.some((gr) => overlapArea(r, gr, 6) > 0);
+    // The touch controls: never under the caption, whichever band it is in.
+    const solid = [btns, stick].filter((q): q is Rect => !!q);
+    // `pad` px round the goal mouth: a little margin, as the broadcast camera pans the goal across the screen
+    // between two placements.
+    const covers = (r: Rect, pad = 6) => goals.some((gr) => overlapArea(r, gr, pad) > 0) || solid.some((q) => overlapArea(r, q, 4) > 0);
     const near = (r: Rect) => !!ball && distTo(ball, r) <= 80;
     const boxes = new Map<string, Rect>();
     const boxOf = (b: { k: string; l: number; r: number; t: number }): Rect => {
@@ -505,25 +536,37 @@ export class Hud {
       if (got) return got;
       const w = Math.min(natural, b.r - b.l);
       const at = (left: number): Rect => ({ l: left, r: left + w, t: b.t, b: b.t + h });
-      const opts = b.k === 'top' ? [at(b.l), at(b.r - w)] : [at(b.l + (b.r - b.l - w) / 2), at(b.l), at(b.r - w)];
-      const box = opts.find((r) => !hitsGoal(r) && !near(r)) ?? opts.find((r) => !hitsGoal(r)) ?? opts[0];
+      const opts = b.k === 'top' || b.k === 'footL' ? [at(b.l), at(b.r - w)]
+        : b.k === 'footR' ? [at(b.r - w), at(b.l)]
+          : [at(b.l + (b.r - b.l - w) / 2), at(b.l), at(b.r - w)];
+      // Where it sits now, while that stays well clear (no sliding back and forth along the band).
+      const now = b.k === this.cmSlot && this.cmX >= b.l - 1 && this.cmX + w <= b.r + 1 ? at(this.cmX) : null;
+      const box = (now && !covers(now, 16) && !near(now) ? now : null)
+        ?? opts.find((r) => !covers(r, 40) && !near(r))
+        ?? opts.find((r) => !covers(r, 14) && !near(r))
+        ?? opts.find((r) => !covers(r) && !near(r))
+        ?? opts.find((r) => !covers(r))
+        ?? opts[0];
       boxes.set(b.k, box);
       return box;
     };
-    const onGoal = (b: { k: string; l: number; r: number; t: number }) => hitsGoal(boxOf(b));
+    const onGoal = (b: { k: string; l: number; r: number; t: number }) => covers(boxOf(b));
     // No projector: in portrait set pieces the goal is somewhere up top, so stay out of the way.
     if (setPiece && !this.project && H > W) {
       this.setTickerBlocked(true);
       return;
     }
-    const usable = setPiece ? bands.filter((b) => !onGoal(b)) : bands;
+    const clear = (b: { k: string; l: number; r: number; t: number }) => (ball ? distTo(ball, boxOf(b)) : Infinity);
+    const usable = bands.filter((b) => !onGoal(b));
+    // The bottom corners only when every band above them covers the goal or sits on the ball.
+    const main = usable.filter((b) => !b.k.startsWith('foot'));
+    const pool = main.some((b) => clear(b) > 80) ? main : usable;
     // Under the cluster only when the top band is out (portrait, or the plate / the goal took it).
-    const pref = usable.filter((b) => b.k !== 'under' || !usable.some((x) => x.k === 'top'));
+    const pref = pool.filter((b) => b.k !== 'under' || !pool.some((x) => x.k === 'top'));
     if (!pref.length) {
       this.setTickerBlocked(true);
       return;
     }
-    const clear = (b: { k: string; l: number; r: number; t: number }) => (ball ? distTo(ball, boxOf(b)) : Infinity);
     // First band that keeps ~80 px clear of the ball (the players around it) and off the goal mouth, else the
     // first clear of the ball, else the farthest from it.
     let pick = pref.find((b) => clear(b) > 80 && !onGoal(b)) ?? pref.find((b) => clear(b) > 80);
@@ -544,7 +587,25 @@ export class Hud {
     this.cm.style.top = `${Math.round(pick.t)}px`;
     this.cm.dataset.slot = pick.k;
     this.cmSlot = pick.k;
+    this.cmX = Math.round(box.l);
+    this.cmBox = { l: Math.round(box.l), t: Math.round(pick.t), r: Math.round(box.l) + (box.r - box.l), b: Math.round(pick.t) + h };
     this.setTickerBlocked(false);
+  }
+
+  /**
+   * The one time the goal mouth needn't stay clear of the ticker: the celebration after a goal (the camera is
+   * on the scorer; the HUD is dead then) and half / full time. The ball going in is still kept clear.
+   */
+  private celebrating(): boolean {
+    const ph = this.m?.phase;
+    return (ph === 'goal' && this.root.classList.contains('dead')) || ph === 'halftime' || ph === 'fulltime';
+  }
+
+  /** The goal mouth has panned under the placed ticker (or within a few px of it): time to move. */
+  private tickerNearGoal(): boolean {
+    const box = this.cmBox;
+    if (!box || this.cmBlocked || !this.project || this.celebrating()) return false;
+    return this.goalRects().some((gr) => overlapArea(box, gr, 12) > 0);
   }
 
   /** Top of the hint's upper slot: under whatever hangs off the top edge across its width. */
@@ -685,6 +746,8 @@ export class Hud {
 
   /** Hide play-only widgets (radar, player chip, tips) outside live play. */
   setLive(on: boolean): void {
+    // Live play only comes after the intro fly-in: if it was skipped, its title card must not linger.
+    if (on) this.hideIntro();
     this.root.classList.toggle('dead', !on);
   }
 
@@ -693,6 +756,25 @@ export class Hud {
     if (hidden === this.radarHidden) return;
     this.radarHidden = hidden;
     this.root.classList.toggle('radar-off', hidden);
+  }
+
+  /**
+   * Cinematic shots (card close-ups): the ticker, the event flag ("FREE KICK"), the set-piece hint, the player
+   * chip, tips and the minimap fade out (0.15 s, style.css ".hud.cinematic"); the score bug, clock, booking
+   * chips, booking plate and pause button stay. Off again: they fade back (the ticker re-places first).
+   */
+  setCinematic(on: boolean): void {
+    if (on === this.root.classList.contains('cinematic')) return;
+    this.root.classList.toggle('cinematic', on);
+    if (!on && this.cmLine && this.cmTextOn) {
+      this.cmPlaceT = 0.3;
+      this.placeTicker();
+    }
+  }
+
+  /** True while a cinematic shot has the HUD stripped back (tests / debugging). */
+  get cinematic(): boolean {
+    return this.root.classList.contains('cinematic');
   }
 
   /**
@@ -826,7 +908,9 @@ export class Hud {
         this.cm.classList.remove('on');
       } else if (this.cmTextOn) {
         this.cmPlaceT -= dt;
-        if (this.cmPlaceT <= 0) {
+        // Full re-place every 0.3 s; in between, a cheap look every frame whether the camera has panned the
+        // goal mouth up to the line, which moves it at once (at most 20 times a second).
+        if (this.cmPlaceT <= 0 || (this.cmPlaceT <= 0.25 && this.tickerNearGoal())) {
           this.cmPlaceT = 0.3;
           this.placeTicker();
         }

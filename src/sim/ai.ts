@@ -1,5 +1,5 @@
 import { clamp, dist2, pointSegDist } from '../core/math';
-import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, throughSpeed } from './actions';
+import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, WALL_DIST } from './constants';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import type { Match } from './match';
@@ -778,11 +778,15 @@ function aerialOrVolley(m: Match, p: Player): void {
         m.order(p, 'header', -ad, 0, 1, -1, true, { x: gxOwn - ad * 3, z });
       } else {
         // Head it clear, out towards the wing (from out there, into touch). A corner is headed for
-        // distance instead, out of the box towards the flank but not into the stand.
-        const z = sp < 1
-          ? clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 11, -HALF_W + 4, HALF_W - 4)
-          : clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 20, -HALF_W - 3, HALF_W + 3);
-        m.order(p, 'header', ad, 0, 1, -1, true, { x: p.pos.x + ad * (sp < 1 ? 22 : 20), z });
+        // distance instead, out of the box towards the flank but not into the stand. (A header carries
+        // HEADER_MAX_D m at most, so the open-play one goes 12 m up and 16 m across: from wide, that's
+        // into touch.)
+        const zs = Math.sign(p.pos.z || 1);
+        if (sp < 1) {
+          m.order(p, 'header', ad, 0, 1, -1, true, { x: p.pos.x + ad * 22, z: clamp(p.pos.z * 0.4 + zs * 11, -HALF_W + 4, HALF_W - 4) });
+        } else {
+          m.order(p, 'header', ad, 0, 1, -1, true, { x: p.pos.x + ad * 12, z: clamp(p.pos.z + zs * 16, -HALF_W - 3, HALF_W + 3) });
+        }
       }
     } else if (rival < 2.2) {
       // Contested: nod it on to a teammate ahead.
@@ -920,6 +924,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   const inBox = Math.abs(p.pos.x - gx) < BOX_DEPTH && Math.abs(p.pos.z) < BOX_W / 2;
 
   // ---- Shoot
+  let shotChoice: Choice | null = null;
+  let shotXg = 0;
   if (dg < 36) {
     let q = shotQuality(p.pos.x, p.pos.z, ad);
     const blockers = shotBlockers(m, p);
@@ -927,6 +933,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     const k = m.keeperOf(opp);
     if (k && dist2(k.pos.x, k.pos.z, gx, 0) > 6) q *= 1.3;
     q *= 1 - pressure * 0.15;
+    shotXg = q;
     // A clean strike also earns rebounds and corners, and shooters love a sight of goal.
     // (A clean sight of goal from the edge of the box, 15-22 m out, is the one to hit.)
     const bonus = blockers < 0.5 ? (dg < 15 ? 0.035 : dg < 22 ? AI_CLEAR_SIGHT : dg < 28 ? 0.035 : 0.015) : 0;
@@ -936,13 +943,14 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     // lifted over him.
     const kd = k ? dist2(k.pos.x, k.pos.z, p.pos.x, p.pos.z) : 0;
     const rushing = !!k && dist2(k.pos.x, k.pos.z, gx, 0) > 3.8 && kd > 3 && kd < 12 && dg < 26 && k.state === 'move';
-    choices.push({
+    shotChoice = {
       s,
       run: () => {
         const o = m.order(p, 'shot', 0, 0, power, -1, false);
         if (o && rushing && m.rng.chance(AI_CHIP)) o.style = 'chip';
       },
-    });
+    };
+    choices.push(shotChoice);
   }
 
   // ---- Passes and through balls
@@ -1001,7 +1009,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         const ir = interceptRisk(m, side, p.pos.x, p.pos.z, ax, az, throughSpeed(dT));
         const pc = pWin * (1 - ir);
         const sg = early(pc * gain - (1 - pc) * lose(ax, az) * 0.6, 0.35);
-        if (!bestG || sg > bestG.s) {
+        // (A lane a defender would cut out isn't threaded at all: the pass to feet is the option there.)
+        if (ir <= THROUGH_MAX_INTERCEPT && (!bestG || sg > bestG.s)) {
           bestG = { s: sg, run: () => m.order(p, 'through', 0, 0, 0.7, t.idx, false, { x: ax, z: az }) };
         }
         // Over the top when the ground lane is shut and the runner is on the shoulder of the
@@ -1206,7 +1215,49 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       best = c;
     }
   }
+  // About to shoot with a clearly better-placed teammate free (a clear lane to him): half the time he's
+  // found instead (one striker was scoring ~40-60% of his side's goals).
+  if (best && best === shotChoice) {
+    const t = betterPlaced(m, p, shotXg);
+    if (t && m.rng.chance(AI_SQUARE_IT)) {
+      const d = dist2(p.pos.x, p.pos.z, t.pos.x, t.pos.z);
+      const lead = Math.min(0.3, d / 60);
+      m.order(p, 'pass', t.pos.x + t.vel.x * lead - p.pos.x, t.pos.z + t.vel.z * lead - p.pos.z, 0.6, t.idx, false);
+      return;
+    }
+  }
   best?.run();
+}
+
+/** A teammate needs a chance at least this much better (xG, times the shooter's) to be looked for... */
+const AI_SQUARE_XG = 1.25;
+/** ... through a lane at most this risky (interceptRisk / laneRisk) ... */
+const AI_SQUARE_LANE = 0.2;
+/** ... and then he's found this often instead of the shot. */
+const AI_SQUARE_IT = 0.5;
+
+/**
+ * The teammate (in range, onside, a clear pass away) whose chance from where he stands (shotQuality with
+ * the bodies in his way, like the shooter's own) is at least AI_SQUARE_XG x `xg`: the best such, or null.
+ */
+function betterPlaced(m: Match, p: Player, xg: number): Player | null {
+  if (xg <= 0) return null;
+  const ad = m.attackDir(p.side);
+  let best: Player | null = null;
+  let bestQ = xg * AI_SQUARE_XG;
+  for (const t of m.teamPlayers(p.side)) {
+    if (t === p || t.isKeeper || t.sentOff || t.state !== 'move' || looksOffside(m, t)) continue;
+    const d = dist2(p.pos.x, p.pos.z, t.pos.x, t.pos.z);
+    if (d < 4 || d > 24) continue;
+    const near = nearestOpp(m, p.side, t.pos.x, t.pos.z).d;
+    const tq = shotQuality(t.pos.x, t.pos.z, ad) * Math.pow(0.55, shotBlockers(m, t)) * (1 - Math.pow(clamp((3.6 - near) / 2.4, 0, 1), 1.5) * 0.15);
+    if (tq < bestQ) continue;
+    if (interceptRisk(m, p.side, p.pos.x, p.pos.z, t.pos.x, t.pos.z, passSpeed(d)) > AI_SQUARE_LANE) continue;
+    if (laneRisk(m, p.side, p.pos.x, p.pos.z, t.pos.x, t.pos.z) > AI_SQUARE_LANE + 0.15) continue;
+    bestQ = tq;
+    best = t;
+  }
+  return best;
 }
 
 // ------------------------------------------------------------------ set pieces
@@ -1488,33 +1539,64 @@ export function clearOfLens(r: { x: number; z: number }, gx: number, pt: { x: nu
 /**
  * Where a corner or wide free kick is whipped in: the zone one of the box runners is attacking
  * (corners: mostly the near- or far-post zone, ~5 m out), or the runner himself on a free kick.
- * `nearPost` picks the near-post runner (a driven delivery).
+ * `nearPost` picks the near-post runner (a driven delivery). `dir` (a human's aimed delivery): the
+ * runner whose zone lies nearest the line of the aim (the nearer one on a tie), the near-post runner
+ * when nobody's zone is within DRIVEN_AIM_LANE m of it.
  */
-export function setPieceAim(m: Match, t: Player, nearPost = false): { x: number; z: number; target: number } {
+export function setPieceAim(m: Match, t: Player, nearPost = false, dir?: { x: number; z: number }): { x: number; z: number; target: number } {
   const brain = m.brains[t.side];
   setPieceTargets(m, t.side);
   const ad = m.attackDir(t.side);
   let best = -1;
   let bs = -Infinity;
   let aim = { x: ad * (HALF_L - 6), z: 0 };
-  brain.spRunners.forEach((idx, i) => {
-    const p = m.players[idx];
-    if (p.sentOff) return;
-    const zone = brain.spZones.get(idx) ?? brain.spTargets.get(idx) ?? p.pos;
-    // (`nearPost`: a driven corner, whipped at the near-post runner.)
-    const prio = nearPost ? (i === 0 ? 9 : i === 4 ? 1 : 0) : i < 2 ? 1.6 : i === 2 ? 0.5 : 0;
-    const open = Math.min(4, nearestOpp(m, t.side, p.pos.x, p.pos.z).d);
-    const s = prio + open * 0.35 + m.rng.next() * 2.2;
-    if (s > bs) {
-      bs = s;
-      best = idx;
-      aim = { x: zone.x, z: zone.z };
-    }
-  });
+  const zoneOf = (idx: number) => brain.spZones.get(idx) ?? brain.spTargets.get(idx) ?? m.players[idx].pos;
+  const dl = dir ? Math.hypot(dir.x, dir.z) : 0;
+  if (dir && dl > 0.1) {
+    const ux = dir.x / dl;
+    const uz = dir.z / dl;
+    let bestOff = Infinity;
+    brain.spRunners.forEach((idx) => {
+      if (m.players[idx].sentOff) return;
+      const zone = zoneOf(idx);
+      const vx = zone.x - t.pos.x;
+      const vz = zone.z - t.pos.z;
+      const along = vx * ux + vz * uz;
+      if (along < 3) return;
+      const off = Math.abs(vx * uz - vz * ux) + along * 0.05;
+      if (off < bestOff) {
+        bestOff = off;
+        best = idx;
+        aim = { x: zone.x, z: zone.z };
+      }
+    });
+    if (bestOff > DRIVEN_AIM_LANE) best = -1;
+  }
+  if (best < 0) {
+    brain.spRunners.forEach((idx, i) => {
+      const p = m.players[idx];
+      if (p.sentOff) return;
+      const zone = zoneOf(idx);
+      // (`nearPost`: a driven corner, whipped at the near-post runner.)
+      const prio = nearPost ? (i === 0 ? 9 : i === 4 ? 1 : 0) : i < 2 ? 1.6 : i === 2 ? 0.5 : 0;
+      const open = Math.min(4, nearestOpp(m, t.side, p.pos.x, p.pos.z).d);
+      const s = prio + open * 0.35 + m.rng.next() * 2.2;
+      if (s > bs) {
+        bs = s;
+        best = idx;
+        aim = { x: zone.x, z: zone.z };
+      }
+    });
+  }
   // (A driven ball, whipped in flat and fast, is harder to put on a sixpence.)
-  const spread = nearPost ? 0.95 : 0.6;
+  const spread = nearPost ? DRIVEN_SPREAD : 0.6;
   return { x: aim.x + m.rng.gauss() * spread, z: aim.z + m.rng.gauss() * spread, target: best };
 }
+
+/** Error (sd, m) in where a driven set-piece delivery arrives (was 0.95: a third of them missed the runner). */
+const DRIVEN_SPREAD = 0.7;
+/** A human's aimed driven delivery goes to the runner whose zone is within this (m) of the aim line. */
+const DRIVEN_AIM_LANE = 4;
 
 /** A corner runner, once the ball is struck: time the run, then attack the assigned zone. */
 function setPieceRun(m: Match, p: Player): { x: number; z: number } | null {
