@@ -121,8 +121,8 @@ const DRIBBLE_FACE_TURN = 1.8;
  * up and slows down HUMAN_ACCEL x as hard, turns (body, and his run with the ball) HUMAN_TURN x as fast, and
  * with the stick let go he stops dead (HUMAN_STOP m/s², ~0.13 s from a sprint) rather than drifting on.
  */
-export const HUMAN_ACCEL = 1.5;
-export const HUMAN_TURN = 1.4;
+export const HUMAN_ACCEL = 2.1;
+export const HUMAN_TURN = 1.75;
 const HUMAN_STOP = 60;
 /** Close control (the human's dribbler jogging, not sprinting): he turns this much quicker again. */
 export const CLOSE_TURN = 1.2;
@@ -183,6 +183,8 @@ export class Player {
    * stick left alone (move assist, meeting a pass or a cross), which keeps an AI player's pace of reaction.
    */
   quickLegs = false;
+  /** Human strikes release locomotion shortly after contact; the pose blends back into the run. */
+  quickRecovery = false;
   /** The current 'kick' state is a quick tackle poke, not a strike (lighter braking, can chain a kick). */
   poke = false;
   /** Red-carded: off the pitch for the rest of the match, takes no further part. */
@@ -198,6 +200,8 @@ export class Player {
   aiDirZ = 0;
   runT = 0;
   running = false;
+  /** Sprint + pass sends the passer forward for a return ball. */
+  giveGoT = 0;
   /** This run has already prompted the carrier to look up (see ai.updateRun). */
   runCued = false;
   /** Seconds this player has had the ball at their feet (reset on every new control). */
@@ -318,6 +322,7 @@ export class Player {
 
   setState(s: PState): void {
     this.state = s;
+    if (s !== 'kick') this.quickRecovery = false;
     this.stateT = 0;
     this.poke = false;
     this.kickWindup = KICK_WINDUP;
@@ -338,6 +343,7 @@ export class Player {
     this.stateT += dt;
     this.kickCooldown = Math.max(0, this.kickCooldown - dt);
     this.burstT = Math.max(0, this.burstT - dt);
+    this.giveGoT = Math.max(0, this.giveGoT - dt);
     this.tackleCooldown = Math.max(0, this.tackleCooldown - dt);
     this.slowT = Math.max(0, this.slowT - dt);
     this.cutT = Math.max(0, this.cutT - dt);
@@ -353,6 +359,12 @@ export class Player {
         break;
       case 'kick':
       case 'throw': {
+        if (this.quickRecovery && this.state === 'kick' && !this.order && this.stateT >= this.kickWindup + 0.06) {
+          this.quickRecovery = false;
+          this.setState('move');
+          this.locomote(dt, dribbling, agile);
+          break;
+        }
         this.brake(dt, this.poke ? 3 : 10);
         // A longer wind-up (a human's shot, a plant step) slows the back-swing so the boot still meets the
         // ball at contact (kickT ~0.32), and the follow-through is as long as ever.

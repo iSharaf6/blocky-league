@@ -17,6 +17,7 @@ import { EdgeArrows, type EdgeMate, type EdgeRect } from '../ui/edgeArrows';
 import { Hud, hudTeam } from '../ui/hud';
 import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
+import { Trainer } from '../ui/trainer';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { playFocus } from './camFocus';
 import { contrastAwayKit } from './kitContrast';
@@ -151,6 +152,7 @@ export class MatchSession {
   readonly cam: CameraRig;
   readonly hud: Hud | null;
   readonly touch: TouchControls | null;
+  private trainer: Trainer | null = null;
   paused = false;
   onHalftime: (() => void) | null = null;
   onFinish: ((r: MatchResult) => void) | null = null;
@@ -267,6 +269,8 @@ export class MatchSession {
       );
       this.hud.onPause = () => this.requestPause();
       document.getElementById('ui')!.appendChild(this.hud.root);
+      this.trainer = new Trainer();
+      this.hud.root.appendChild(this.trainer.root);
       if (opt.humanSide === 0 || opt.humanSide === 1) {
         this.edge = new EdgeArrows(this.view.teamColor.fill, this.view.teamColor.edge);
         this.hud.root.appendChild(this.edge.root);
@@ -286,7 +290,7 @@ export class MatchSession {
     }
     writeFrame(this.match, this.cur, 0);
     this.prev.set(this.cur);
-    sfx.setCrowd(true);
+    sfx.setAmbienceActive(!this.demo);
     if (this.hud) {
       this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} · ${teams[1].name}`, 'small intro', 3.2);
       this.prevButtons = true;
@@ -317,11 +321,13 @@ export class MatchSession {
   requestPause(): void {
     if (this.demo || this.paused) return;
     this.paused = true;
+    sfx.setAmbienceActive(false);
     this.onPause?.();
   }
 
   resume(): void {
     this.paused = false;
+    sfx.setAmbienceActive(!this.demo);
   }
 
   /** Make a substitution (human manager). Returns false if not allowed. */
@@ -1087,8 +1093,9 @@ export class MatchSession {
     const r = m.restart;
     const so = m.phase === 'shootout' ? m.shootout : null;
     const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
+    const incoming = m.ball.owner < 0 && m.passTarget >= 0 && m.players[m.passTarget].side === hs && m.kickSide === hs;
     // The context the touch buttons are labelled for right now: hints name the button on screen.
-    const ctx: HintCtx = so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine ? 'attack' : 'defend';
+    const ctx: HintCtx = so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine || incoming ? 'attack' : 'defend';
     const key = (k: HintKey): string =>
       dev === 'gamepad' ? { pass: 'A', shoot: 'B', through: 'X' }[k]
         : dev === 'touch' ? TOUCH_LABELS[ctx][k === 'pass' ? 0 : k === 'shoot' ? 1 : 2]
@@ -1144,6 +1151,8 @@ export class MatchSession {
     }
     this.updatePassCharge(cinematic, dt);
     this.updateEdgeArrows(dt);
+    if (this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast' || this.cam.behindActive) this.trainer?.hide();
+    else this.trainer?.update(m, this.view.frame, this.world.camera, this.view.headTop, dev);
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
       // Off for the referee close-up too (the buttons would sit on the booked player).
@@ -1353,6 +1362,8 @@ export class MatchSession {
   private updateTutorial(dt: number, key: (k: HintKey) => string): void {
     const hud = this.hud;
     if (!hud || !this.opt.tutorial) return;
+    // The persistent trainer carries the controls beside the player; don't duplicate them across the pitch.
+    if (this.match.trainer) { hud.setTip(''); return; }
     const m = this.match;
     const t = this.tut;
     const c = this.input.read();
@@ -1372,7 +1383,7 @@ export class MatchSession {
     else if (mine && !t.passed) {
       // (On MANUAL passing nobody is ringed: the ball goes where the stick points.)
       const to = m.groundAssist === 'manual' ? 'passes where you point the stick' : 'passes to the <b>ringed</b> mate at once (point the stick to pick him)';
-      tip = `<kbd>${key('pass')}</kbd> ${to} · hold it to hit it harder · <kbd>${key('through')}</kbd> sends a runner through`;
+      tip = `<kbd>${key('pass')}</kbd> ${to}${m.quickPass ? '' : ' · hold it to hit it harder'} · <kbd>${key('through')}</kbd> sends a runner through`;
     }
     else if (mine && !t.shot) {
       tip = `Near goal? <b>Hold</b> <kbd>${key('shoot')}</kbd> and release to shoot: a tap drives it low, a long hold rises`;
@@ -1400,6 +1411,7 @@ export class MatchSession {
     setCharacterHemiFill(0);
     setCharacterWhiteBalance();
     sfx.setRain(false);
+    sfx.setAmbienceActive(false);
     this.offKey?.();
     this.offKey = null;
     this.hud?.dispose();

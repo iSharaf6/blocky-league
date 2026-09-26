@@ -615,6 +615,14 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
 function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: number; z: number; u: number } {
   const side = p.side;
   const ad = m.attackDir(side);
+  if (p.giveGoT > 0 && p !== c) {
+    let x = clamp(p.pos.x + ad * 9, -HALF_L + 3, HALF_L - 3);
+    if (m.offside && m.ball.owner >= 0) {
+      const limit = (Math.max(m.offsideLine(side), nX(m, side, m.ball.pos.x)) * HALF_L - 0.6) * ad;
+      if ((x - limit) * ad > 0) x = limit;
+    }
+    return { x, z: p.pos.z * 0.9, u: 1 };
+  }
   const b = m.ball.pos;
   const bx = nX(m, side, b.x);
   // With the law on, the line that matters is the offside line (second-last defender, or the ball

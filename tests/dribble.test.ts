@@ -296,7 +296,7 @@ describe('dribble assist: shielding and protection', () => {
     expect(won).toBeLessThanOrEqual(Math.max(3, wonOpen * 0.3));
   });
 
-  it('no steal off his first touch: for 0.3 s after he takes it, AI tackles come off half as often', () => {
+  it('a fresh receiver has a half-second to turn or pass before full tackle pressure returns', () => {
     const m = scenario(610);
     const p = m.players[9];
     place(p, 0, 0);
@@ -305,7 +305,9 @@ describe('dribble assist: shielding and protection', () => {
     p.ballT = 0.1;
     const fresh = carrierGuard(m, o, p);
     p.ballT = 1;
-    expect(fresh).toBeCloseTo(carrierGuard(m, o, p) * 0.5, 5);
+    expect(fresh).toBeLessThan(carrierGuard(m, o, p) * 0.4);
+    p.ballT = 0.45;
+    expect(carrierGuard(m, o, p)).toBeCloseTo(fresh, 5);
   });
 
   it("AI carriers aren't guarded (AI-vs-AI tackles are unchanged)", () => {

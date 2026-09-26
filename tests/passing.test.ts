@@ -15,6 +15,8 @@ import type { MatchEvent } from '../src/sim/types';
 /** Open play with the human on side 0 and everyone parked along the far touchline, out of the way. */
 function scenario(seed: number): Match {
   const m = new Match({ home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 150, difficulty: 2, humanSide: 0, seed });
+  // These scenarios exercise optional hold-to-power controls. Arcade defaults are in arcade.test.ts.
+  m.quickPass = false;
   m.phase = 'play';
   m.restart = null;
   m.phaseT = 0;

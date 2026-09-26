@@ -361,9 +361,9 @@ describe('human assists and skill moves', () => {
         const fwd = m.attackDir(0);
         m.step(DT, pad(fwd, 0));
         m.step(DT, pad(fwd, 0));
+        const k0 = m.kickId;
         for (let i = 0; i < 3; i++) m.step(DT, pad(fwd, 0, { pass: true }));
         let r = 'none';
-        const k0 = m.kickId;
         for (let i = 0; i < 200; i++) {
           m.step(DT, EMPTY_PAD);
           m.drainEvents();

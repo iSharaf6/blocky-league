@@ -56,6 +56,8 @@ function applyControls(m: Match, c: ControlSettings = controlsOf(save.settings))
   m.autoSwitch = c.autoSwitch;
   m.moveAssist = c.moveAssist;
   m.timedFinish = c.timedFinish;
+  m.trainer = c.trainer;
+  m.quickPass = c.quickPass;
 }
 
 /**
@@ -68,7 +70,8 @@ function syncControlsUi(s: MatchSession | null): void {
   const m = s.match;
   if (s.touch) {
     const pass = typeof m.passCharge === 'number' ? m.passCharge : -1;
-    const through = m.throughCharge > 0 ? Math.min(1, m.throughCharge / 0.8) : -1;
+    const lofting = m.passMode === 'through' || m.passMode === 'lob' || m.phase === 'restart';
+    const through = lofting && m.throughCharge > 0 ? Math.min(1, m.throughCharge / 0.8) : -1;
     s.touch.setCharge(pass, through);
   }
   if (s.hud && !s.paused) {

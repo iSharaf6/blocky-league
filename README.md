@@ -2,10 +2,13 @@
 
 Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Crossy-Road-style toy world, built with **TypeScript + Three.js + Vite** as a fully static build. There's no server and no accounts; progress lives in `localStorage`.
 
+**Playtest:** [Play Blocky League](https://isharaf6.github.io/blocky-league/). Pushes to `main` run the gameplay/audio checks, build the web package, and deploy it through `.github/workflows/pages.yml`.
+
 **Gameplay**
 - Quick Match against the AI with 11 hand-made clubs and 4 difficulty levels (Easy → Legend), 1.5–4 minute halves.
-- Passing, power shots, through balls, lobs and crosses, headers and first-time finishes, player switching, pressing,
+- Instant assisted passing, sprint-and-pass one-twos, power shots, through balls, lobs and crosses, headers and buffered first-time finishes, player switching, pressing,
   standing and slide tackles, and a knock-on skill move (double-tap sprint).
+- An on-pitch trainer is enabled by default, with contextual keyboard/gamepad/touch hints and a guide to the selected pass recipient. Disable it in **Pause → Settings → Controls**.
 - Keepers dive, claim crosses, rush out and distribute. Fouls, free kicks with walls, penalties and yellow cards from an on-pitch referee.
 - Corners and wide free kicks with loaded boxes, an aim arrow and a behind-the-ball camera.
 - Half-time tactics: mentality (defensive / balanced / attacking) and up to three substitutions with fresh legs.
@@ -19,9 +22,10 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 
 **Tech**
 - Every sound is synthesised live with WebAudio, so there are no audio files.
+- Quiet stereo rain patter and a subdued crowd bed; snow has no weather hiss. Ambience fades out on pause and in menus. Sound FX controls rain, and Crowd controls stadium ambience.
 - Keyboard, gamepad and touch controls; landscape and portrait framing.
 - Adaptive rendering quality (dynamic resolution, crowd density and shadow size follow the device).
-- The whole game zips to about 300 KB.
+- Portal builds zip to about 375 KB; the web build with PWA and sharing assets is about 535 KB.
 
 **Monetisation** comes from an optional portal adapter for **CrazyGames** and **Poki**: midgame ads plus an opt-in rewarded ad that doubles your coins. See [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
 
@@ -105,13 +109,16 @@ src/
 | Action | Keyboard | Gamepad |
 |---|---|---|
 | Move | WASD / arrows | left stick |
-| Pass / switch player | Space | A |
-| Shoot (hold to power) / slide tackle | K | B |
+| Instant pass / switch player | Space | A |
+| Pass and make a return run | Shift + Space | RT + A |
+| Shoot (hold to power) / tackle (tap), slide (hold) | K | B |
 | Through ball (tap) / lob-cross (hold) / press | L | X |
 | Sprint (double-tap to knock it on) | Shift | RT |
 | Pause | Esc / P | |
 
-On touch screens there's a virtual stick on the left and action buttons on the right.
+On touch screens there's a virtual stick on the left and action buttons on the right. Attacking labels stay visible while your pass is travelling.
+
+**Instant Pass** is on by default for assisted ground passes: press once and the game chooses the weight. Semi/manual passing and turning Instant Pass off retain release-to-pass and hold-for-power controls. Hold Sprint while passing to send the passer on a return run. You can queue a first-time pass or shot before the ball arrives.
 
 ## Credits and licences
 

@@ -545,12 +545,17 @@ export class Match {
   /** The shot power bar while SHOOT is held: shootCharge / SHOOT_BAR is 0..1 (full after SHOOT_FULL_T s). */
   shootCharge = 0;
   throughCharge = 0;
+  /** A tackle hold stays a defensive action even if that tackle wins possession. */
+  private defendingShotHold = false;
   goalSide: Side = 0;
   lastGoalScorer = -1;
   autoSwitch = true;
   /** Human pass assistance for ground passes and through balls (settings; see AssistLevel). */
   groundAssist: AssistLevel = 'assisted';
   throughAssist: AssistLevel = 'assisted';
+  /** Arcade controls and contextual on-pitch guidance, also applied live from Settings. */
+  quickPass = true;
+  trainer = true;
   /** After a switch (and with the stick left alone off the ball) the new man keeps making the AI's run. */
   moveAssist = true;
   /** A second SHOOT tap at contact sharpens (or, mistimed, spoils) the shot. */
@@ -812,6 +817,7 @@ export class Match {
       p.kickT = 0;
       p.wantX = p.wantZ = 0;
       p.running = false;
+      p.giveGoT = 0;
     }
     // Kicker: the forward nearest the spot stands over the ball.
     const ad = this.attackDir(side);
@@ -1212,6 +1218,7 @@ export class Match {
     }
     if (!firstTime) {
       const run = p.speed();
+      p.quickRecovery = this.isHumanControlled(p) && this.phase === 'play';
       p.setState(kind === 'throw' || (kind === 'keeper' && p.isKeeper) ? 'throw' : 'kick');
       p.kickT = 0;
       p.kickLeg = this.strikeFoot(p);
@@ -1389,6 +1396,7 @@ export class Match {
     }
     p.setState('kick');
     p.kickT = 0.32;
+    p.quickRecovery = this.isHumanControlled(p) && this.phase === 'play';
     if (reach === 'foot') p.kickLeg = this.strikeFoot(p);
     this.execute(p);
   }
@@ -1474,6 +1482,7 @@ export class Match {
     } else {
       this.passTarget = L.target;
       this.passT = 0;
+      if (this.isHumanControlled(p) && this.phase === 'play' && L.kind === 'pass' && p.sprint && !p.isKeeper) p.giveGoT = 2.4;
       if (L.target >= 0) this.stats.passes[p.side]++;
       // (The human's own ball: its receiver's first touch is kind to it, HUMAN_PASS_TRAP.)
       if (this.isHumanControlled(p)) this.humanPassKick = this.kickId;
@@ -1631,7 +1640,9 @@ export class Match {
     this.finishTick(dt);
     if (pad.shoot && !this.prev.shoot && this.finishTap()) this.finishHeld = true;
     const shootP = pad.shoot && !this.prev.shoot && !this.finishHeld;
-    const shootR = !pad.shoot && this.prev.shoot && !this.finishHeld;
+    if (shootP) this.defendingShotHold = this.phase === 'play' && this.ball.owner >= 0 && this.players[this.ball.owner].side !== hs;
+    const shootR = !pad.shoot && this.prev.shoot && !this.finishHeld && !this.defendingShotHold;
+    if (!pad.shoot) this.defendingShotHold = false;
     if (!pad.shoot) this.finishHeld = false;
     const throughP = pad.through && !this.prev.through;
     const throughR = !pad.through && this.prev.through;
@@ -1640,7 +1651,7 @@ export class Match {
     const shootPower = clamp(this.shootCharge / SHOOT_BAR, 0.15, 1);
     const throughHold = this.throughCharge;
     if (!pad.shoot && !this.prev.shoot) this.chipArmed = false;
-    this.shootCharge = pad.shoot && !this.finishHeld ? this.shootCharge + (dt * SHOOT_BAR) / SHOOT_FULL_T : 0;
+    this.shootCharge = pad.shoot && !this.finishHeld && !this.defendingShotHold ? this.shootCharge + (dt * SHOOT_BAR) / SHOOT_FULL_T : 0;
     this.throughCharge = pad.through ? this.throughCharge + dt : 0;
     if (this.phase === 'shootout') {
       this.shootoutInput(pad, shootR, shootPower, stickLen);
@@ -1788,7 +1799,7 @@ export class Match {
     p.faceTarget = null;
     // Winding up a shot he mostly plants and aims: the stick picks the corner, it doesn't carry him (he
     // used to be dragged ~4 m sideways by a stick held across the goal while charging).
-    const move = hasBall && pad.shoot ? SHOOT_CHARGE_MOVE : 1;
+    const move = hasBall && pad.shoot && !this.defendingShotHold ? SHOOT_CHARGE_MOVE : 1;
     p.wantX = pad.mx * move;
     p.wantZ = pad.mz * move;
     p.sprint = pad.sprint && move === 1;
@@ -1810,7 +1821,7 @@ export class Match {
 
     // Chip: THROUGH tapped while SHOOT is charging fires it there and then, at the charge so far (or SHOOT
     // let go with THROUGH held).
-    const chipTap = throughP && pad.shoot && this.prev.shoot;
+    const chipTap = throughP && pad.shoot && this.prev.shoot && !this.defendingShotHold;
     if (chipTap) this.chipArmed = true;
     if (hasBall && b.owner === p.idx) {
       // Who a PASS / THROUGH now would go to (the render highlights him), then the pass itself: locked onto
@@ -1851,6 +1862,14 @@ export class Match {
       const d = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
       const loose = b.owner < 0 && !b.held;
       const opp = b.owner >= 0 && this.players[b.owner].side !== side;
+      // An early shot/through press belongs to the incoming ball. Queue it while it's still travelling,
+      // instead of silently losing it outside the old four-metre first-time window.
+      const incoming = loose && this.passTarget === p.idx;
+      if (incoming && d >= 4 && (shootP || throughP)) {
+        const o = this.order(p, shootP ? 'shot' : 'through', shootP && stickLen <= 0.25 ? 0 : dirX,
+          shootP && stickLen <= 0.25 ? 0 : dirZ, shootP ? 0.65 : 0.7, -1, true);
+        if (o) o.expires = 1.4;
+      }
       if (loose && d < 4) {
         if (passP || (this.passBuffer > 0 && this.passTarget === p.idx)) {
           this.passBuffer = 0;
@@ -1972,7 +1991,7 @@ export class Match {
     if (!hp) {
       const btn = passP || this.passBuffer > 0 ? 'pass' : throughP && !pad.shoot && !this.chipArmed ? 'through' : null;
       this.passBuffer = 0;
-      if (!btn || p.state !== 'move') return false;
+      if (!btn || (p.state !== 'move' && !(p.state === 'kick' && p.poke))) return false;
       const l = stickLen > 0.25 ? stickLen : 0;
       const dirX = l ? pad.mx / l : Math.cos(p.facing);
       const dirZ = l ? pad.mz / l : Math.sin(p.facing);
@@ -2003,6 +2022,12 @@ export class Match {
       return false;
     }
     const held = hp.btn === 'pass' ? pad.pass : pad.through;
+    // The assisted arcade pass answers the press. Holding the same button never repeats it.
+    // Semi/manual keep their weight control, as does the optional classic passing setting.
+    if (this.quickPass && this.groundAssist === 'assisted' && hp.btn === 'pass' && !hp.released) {
+      hp.released = true;
+      hp.relSpeed = p.speed();
+    }
     const letGo = !hp.released && !held;
     if (!hp.released) {
       if (stickLen > 0.25) {
@@ -2059,7 +2084,7 @@ export class Match {
     // Turned right away from it: a frame or two more for the turn (the wind-up squares him up the rest of the way).
     const level = assistLevel(this, mode);
     const off = Math.abs(angleDiff(p.facing, hp.line));
-    if (off > PASS_OUTSIDE[level] && hp.wait < PASS_TURN_WAIT) return true;
+    if (!(this.quickPass && level === 'assisted' && mode === 'pass') && off > PASS_OUTSIDE[level] && hp.wait < PASS_TURN_WAIT) return true;
     // Play it: a tap at the ideal pace, a longer PASS hold above it, a lofted ball by its charge.
     const charge = mode === 'lob' ? clamp(hp.t / LOB_CHARGE_T, 0.3, 1) : mode === 'pass' && hp.t > PASS_TAP_MAX ? over : undefined;
     const power = charge ?? (mode === 'through' ? 0.7 : 0.6);
@@ -2077,7 +2102,8 @@ export class Match {
     // ('assisted': the error margin reads his body at contact, after the wind-up's turn.)
     o.bodyOff = level === 'assisted' ? undefined : off;
     // Struck at once: a short wind-up (a flick's shorter still), the swing paced to meet the ball then.
-    const windup = hp.t < PASS_FLICK && off <= FLICK_SQUARE ? HUMAN_FLICK_WINDUP : HUMAN_PASS_WINDUP;
+    const windup = this.quickPass && level === 'assisted' && mode === 'pass'
+      ? HUMAN_FLICK_WINDUP : hp.t < PASS_FLICK && off <= FLICK_SQUARE ? HUMAN_FLICK_WINDUP : HUMAN_PASS_WINDUP;
     p.kickWindup = windup;
     p.kickT = Math.max(0, 0.32 - (Math.ceil(windup / DT - 1e-6) * DT) / 0.34);
     hp.ordered = true;
@@ -4041,6 +4067,7 @@ export class Match {
     const side = -Math.sin(p.facing) * (bx - p.pos.x) + Math.cos(p.facing) * (bz - p.pos.z);
     p.setState('kick');
     p.poke = true;
+    p.quickRecovery = this.isHumanControlled(p);
     p.order = null;
     p.stateT = 0.09; // the kick state lasts 0.34 s: this leaves a 0.25 s jab
     p.kickT = 0.28;

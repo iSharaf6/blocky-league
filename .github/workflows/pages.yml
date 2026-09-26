@@ -1,0 +1,49 @@
+name: Publish playable game
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Gameplay and audio regression checks
+        run: npm test -- --maxWorkers=2 --testTimeout=120000 tests/audio.test.ts tests/arcade.test.ts tests/settings.test.ts tests/passing.test.ts tests/feel.test.ts tests/dribble.test.ts tests/tackle.test.ts tests/camera.test.ts
+      - name: Type-check and package the web game
+        run: npm run build:web
+        env:
+          SITE_URL: https://isharaf6.github.io/blocky-league
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist-web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - uses: actions/deploy-pages@v4
+        id: deployment

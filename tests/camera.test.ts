@@ -302,8 +302,8 @@ describe('broadcast camera: the inputs that used to jump are eased', { timeout: 
     expect(m.acc).toBeLessThan(MAX_ACC);
     expect(m.wobbles).toBe(0);
     expect(m.jitter).toBe(0);
-    // It does get there: the ~4.6 m lean towards the goal they were attacking (30 m out) is gone.
-    expect(s[149].q.x - s[399].q.x).toBeGreaterThan(4);
+    // It gets there, with the wider lens reaching the soft end-of-pitch limit sooner.
+    expect(s[149].q.x - s[399].q.x).toBeGreaterThan(3.5);
   });
 
   it('a switch of controlled player 25 m away eases the framing over instead of jumping', () => {
@@ -466,7 +466,7 @@ describe('broadcast camera: locked on, and wide enough to see who to pass to', {
     expect(counts.filter((n) => n >= 5).length / counts.length).toBeGreaterThan(0.65);
   });
 
-  it("the three distances: 'wide' pulls back past the old wide shot, 'normal' is it (~41 m), 'close' is round 7's", () => {
+  it('normal shows more passing options (~47 m at focus), with distinct wide and close settings', () => {
     const seen: Record<string, number> = {};
     for (const zoom of ZOOMS) {
       const { rig, cam } = newRig(LANDSCAPE, zoom);
@@ -478,9 +478,9 @@ describe('broadcast camera: locked on, and wide enough to see who to pass to', {
       seen[zoom] = (20 * 2) / (r - l);
     }
     const txt = JSON.stringify(seen);
-    // (41 m at the look point, a few metres beyond the ball: ~37.5 m on the ball's own line.)
-    expect(seen.normal, txt).toBeGreaterThan(35);
-    expect(seen.normal, txt).toBeLessThan(40);
+    // 47 m at the look point, a few metres beyond the ball: ~43.6 m on the ball's own line.
+    expect(seen.normal, txt).toBeGreaterThan(42);
+    expect(seen.normal, txt).toBeLessThan(46);
     expect(seen.wide / seen.normal, txt).toBeGreaterThan(1.1);
     expect(seen.close / seen.normal, txt).toBeLessThan(0.82);
   });

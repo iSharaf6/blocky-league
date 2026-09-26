@@ -99,6 +99,7 @@ describe('instant passing', () => {
       let sum = 0;
       for (let seed = 1; seed <= 6; seed++) {
         const { m, a } = passSetup(seed * 7, 20);
+        m.quickPass = false; // Optional hold-to-power passing still supports extra weight.
         const k = untilKick(m, (i) => pad(Math.cos(a), Math.sin(a), { pass: i < frames }));
         sum += k!.speed / 6;
       }

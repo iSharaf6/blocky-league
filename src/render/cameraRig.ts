@@ -90,11 +90,8 @@ const CUT_JUMP = 8;
 /** Top speed of the gliding cameras, m/s: faster than this reads as a whip pan. */
 const MAX_GLIDE = 30;
 /**
- * Broadcast camera distance (Settings): how much closer than the base shot (41 m of pitch across a 16:9
- * screen) each setting films. Round 9 (owner: "hard to see other players in my team to pass to"): 'normal'
- * is that base shot again (building from the back / midfield, a median 6 of the 10 team-mates on screen and
- * ~75% of the time at least 5, a player ~55 px tall at 720p; round 7's 1.3 showed a median 5, p25 3); 'wide'
- * pulls back further (48 m: median 7), 'close' is round 7's tight shot (~73 px players, median 5).
+ * Broadcast camera distance (Settings): relative to 47 m of pitch across a 16:9 screen at the focus.
+ * The normal shot shows the nearby passing options, wide pulls back further, and close favours player detail.
  * Portrait (the end-on lens) widens / narrows its field of view by the matching PORTRAIT_ZOOM factor instead.
  */
 const ZOOM_K: Record<CamZoom, number> = { wide: 0.85, normal: 1, close: 1.3 };
@@ -378,7 +375,7 @@ export class CameraRig {
   }
 
   get portrait(): boolean {
-    return this.camera.aspect < 0.85;
+    return this.camera.aspect < 1.05;
   }
 
   /** True while the over-the-shoulder set-piece camera is on air (including the post-strike hold). */
@@ -420,7 +417,7 @@ export class CameraRig {
    */
   private wideWidth(): number {
     const a = this.camera.aspect;
-    const w = a >= 1.6 ? 41 : a >= 1.25 ? 36 + (a - 1.25) * 14 : 35;
+    const w = a >= 1.6 ? 47 : a >= 1.25 ? 42 + (a - 1.25) * 14 : 40;
     const h = typeof window !== 'undefined' ? window.innerHeight : 720;
     return h < 560 ? Math.max(w, 42) : w;
   }

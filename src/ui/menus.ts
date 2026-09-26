@@ -20,6 +20,14 @@ const $ = <T extends HTMLElement>(root: ParentNode, sel: string) => root.querySe
 type ControlRow = { k: keyof ControlSettings; kind: 'level' | 'switch'; label: string; why: Record<string, string> };
 const CONTROL_ROWS: ControlRow[] = [
   {
+    k: 'trainer', kind: 'switch', label: 'ON-PITCH TRAINER',
+    why: { true: 'Controls beside your player · passing guide on the pitch', false: 'Hide the trainer; keep teammate markers' },
+  },
+  {
+    k: 'quickPass', kind: 'switch', label: 'INSTANT PASS',
+    why: { true: 'Press PASS to play it immediately · automatic weight', false: 'Release PASS to play · hold for more power' },
+  },
+  {
     k: 'groundAssist', kind: 'level', label: 'GROUND PASS',
     why: {
       assisted: 'Fixes aim and weight to the mate you point at',
@@ -204,7 +212,7 @@ const HOWTO_KEYS = `
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
-      <p><kbd>SPACE</kbd> pass to the <b>ringed</b> mate: tap = instant · hold = harder</p>
+      <p><kbd>SPACE</kbd> pass to the <b>ringed</b> mate: press = instant · aim to choose</p>
       <p><kbd>L</kbd> through ball: your runner goes · hold: lob / cross</p>
       <p><kbd>K</kbd> hold &amp; release to shoot · the keys aim while you charge</p>
       <p>Tap <kbd>K</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
@@ -227,7 +235,7 @@ const HOWTO_PAD = `
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>LEFT STICK</kbd> move</p>
-      <p><kbd>A</kbd> pass to the <b>ringed</b> mate: tap = instant · hold = harder</p>
+      <p><kbd>A</kbd> pass to the <b>ringed</b> mate: press = instant · aim to choose</p>
       <p><kbd>X</kbd> through ball: your runner goes · hold: lob / cross</p>
       <p><kbd>B</kbd> hold &amp; release to shoot · the stick aims while you charge</p>
       <p>Tap <kbd>B</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
@@ -262,7 +270,7 @@ const HOWTO_TOUCH = `
     <table class="ht-table">
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
-        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed mate: tap = instant · hold = harder</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
+        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed mate: press = instant · aim to choose</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
         <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder · the stick aims</td><td><b>TACKLE</b> tap to tackle · hold to slide</td></tr>
         <tr><td>${dot('through')}</td><td><b>THROUGH</b> your runner goes · hold: lob or cross</td><td><b>PRESS</b> hold: stay goal-side, steal loose touches</td></tr>
         <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold · double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
@@ -922,7 +930,7 @@ export class Menus {
         }),
       );
       row.querySelector('[data-t]')?.addEventListener('click', () => {
-        if (r.k === 'autoSwitch' || r.k === 'moveAssist' || r.k === 'timedFinish') s[r.k] = !controlsOf(s)[r.k];
+        if (r.kind === 'switch' && r.k !== 'groundAssist' && r.k !== 'throughAssist') s[r.k] = !controlsOf(s)[r.k];
         drawControls();
         onChange();
       });

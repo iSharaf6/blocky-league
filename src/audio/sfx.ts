@@ -1,3 +1,5 @@
+import { rainSamples } from './ambience';
+
 /**
  * Every sound is synthesised with WebAudio — no asset downloads, no licences.
  * Crowd bed + reactions, whistle, kicks, woodwork, net, UI blips and a chiptune menu loop.
@@ -15,10 +17,17 @@ export class Sfx {
   private musicTimer: number | null = null;
   private musicStep = 0;
   private nextNoteTime = 0;
-  sfxOn = true;
+  private effectsEnabled = true;
+  private crowdEnabled = true;
+  private ambienceActive = false;
+  private rainActive = false;
   musicOn = true;
-  crowdOn = true;
   private muted = false;
+
+  get sfxOn(): boolean { return this.effectsEnabled; }
+  set sfxOn(on: boolean) { this.effectsEnabled = on; this.mixAmbience(); }
+  get crowdOn(): boolean { return this.crowdEnabled; }
+  set crowdOn(on: boolean) { this.crowdEnabled = on; this.mixAmbience(); }
 
   get ready(): boolean {
     return this.ctx !== null && this.ctx.state === 'running';
@@ -57,6 +66,8 @@ export class Sfx {
         d[i] = (b0 + b1 + b2 + w * 0.12) * 0.9;
       }
       this.startCrowd();
+      this.setRain(this.rainActive);
+      this.mixAmbience();
     }
     if (this.ctx.state === 'suspended') void this.ctx.resume();
   }
@@ -65,8 +76,12 @@ export class Sfx {
     const c = this.ctx!;
     this.crowdFilter = c.createBiquadFilter();
     this.crowdFilter.type = 'bandpass';
-    this.crowdFilter.frequency.value = 650;
-    this.crowdFilter.Q.value = 0.5;
+    this.crowdFilter.frequency.value = 1050;
+    this.crowdFilter.Q.value = 0.8;
+    const rumbleCut = c.createBiquadFilter();
+    rumbleCut.type = 'highpass';
+    rumbleCut.frequency.value = 350;
+    rumbleCut.Q.value = 0.707;
     this.crowdGain = c.createGain();
     this.crowdGain.gain.value = 0;
     for (let k = 0; k < 2; k++) {
@@ -86,31 +101,36 @@ export class Sfx {
       src.connect(g).connect(this.crowdFilter);
       src.start(0, Math.random() * 2);
     }
-    this.crowdFilter.connect(this.crowdGain).connect(this.crowdBus);
+    this.crowdFilter.connect(rumbleCut).connect(this.crowdGain).connect(this.crowdBus);
   }
 
   private rainGain: GainNode | null = null;
 
   /** Soft rain bed during wet matches. */
   setRain(on: boolean): void {
+    this.rainActive = on;
     if (!this.ctx) return;
     const c = this.ctx;
-    if (!this.rainGain) {
+    if (on && !this.rainGain) {
       const src = c.createBufferSource();
-      src.buffer = this.noise;
+      const channels = rainSamples(c.sampleRate);
+      src.buffer = c.createBuffer(2, channels[0].length, c.sampleRate);
+      channels.forEach((samples, channel) => src.buffer!.getChannelData(channel).set(samples));
       src.loop = true;
       const hp = c.createBiquadFilter();
       hp.type = 'highpass';
-      hp.frequency.value = 1800;
+      hp.frequency.value = 950;
+      hp.Q.value = 0.707;
       const lp = c.createBiquadFilter();
       lp.type = 'lowpass';
-      lp.frequency.value = 7000;
+      lp.frequency.value = 4400;
+      lp.Q.value = 0.707;
       this.rainGain = c.createGain();
       this.rainGain.gain.value = 0;
-      src.connect(hp).connect(lp).connect(this.rainGain).connect(this.crowdBus);
+      src.connect(hp).connect(lp).connect(this.rainGain).connect(this.sfxBus);
       src.start();
     }
-    this.rainGain.gain.setTargetAtTime(on ? 0.16 : 0, c.currentTime, 0.8);
+    this.mixAmbience();
   }
 
   /** Portal ads / platform mute: silence everything without losing state. */
@@ -120,20 +140,29 @@ export class Sfx {
     this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.ctx.currentTime, 0.05);
   }
 
-  setCrowd(active: boolean): void {
-    if (!this.ctx) return;
+  /** Menu / pause / match transitions share one gate, so weather cannot leak between games. */
+  setAmbienceActive(active: boolean): void {
+    this.ambienceActive = active;
+    this.mixAmbience();
+  }
+
+  private mixAmbience(): void {
+    if (!this.ctx || !this.crowdGain) return;
     const t = this.ctx.currentTime;
-    const target = active && this.crowdOn ? 0.1 + this.excitement * 0.28 : 0;
-    this.crowdGain.gain.setTargetAtTime(target, t, 0.6);
+    // About 10 dB less continuous crowd wash; cheers still provide the big moments.
+    const target = this.ambienceActive && this.crowdOn ? 0.03 + this.excitement * 0.08 : 0;
+    this.crowdGain.gain.setTargetAtTime(target, t, target ? 0.6 : 0.12);
+    const rain = this.ambienceActive && this.rainActive && this.sfxOn ? 0.16 : 0;
+    this.rainGain?.gain.setTargetAtTime(rain, t, rain ? 0.8 : 0.12);
   }
 
   /** 0 calm .. 1 edge-of-seat. */
   setExcitement(x: number): void {
     if (!this.ctx) return;
-    this.excitement = x;
+    this.excitement = Math.max(0, Math.min(1, x));
     const t = this.ctx.currentTime;
-    if (this.crowdOn) this.crowdGain.gain.setTargetAtTime(0.1 + x * 0.28, t, 0.5);
-    this.crowdFilter.frequency.setTargetAtTime(560 + x * 600, t, 0.5);
+    this.mixAmbience();
+    this.crowdFilter.frequency.setTargetAtTime(950 + this.excitement * 450, t, 0.8);
   }
 
   private env(g: GainNode, t: number, a: number, peak: number, d: number): void {

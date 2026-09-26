@@ -2,7 +2,7 @@
 
 _Last checked against the portals' own documentation: **25 September 2026**. Portal rules change, so re-read the linked pages before each submission._
 
-**Status: nothing is published yet.** This repo can build and package the game for every channel below. You still have to create each account and complete each submission yourself, and none of it costs money until you choose to go mobile.
+**Playtest deployment:** [GitHub Pages](https://isharaf6.github.io/blocky-league/) is configured for this repository. `.github/workflows/pages.yml` tests and packages the web game on pushes to `main`, then deploys `dist-web`. The source repository remains private; the playable site is public. Portal submissions and monetisation are separate from this playtest deployment.
 
 **What to expect from revenue:** web-portal income comes from ads shown to players. It scales with plays × session length × ad fill, so a game with few players earns next to nothing, whatever the platform. Treat the first months as a way to learn what players do. Don't plan on it as income.
 

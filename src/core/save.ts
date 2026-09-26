@@ -24,6 +24,10 @@ export interface Settings {
   throughAssist?: AssistLevel;
   moveAssist?: boolean;
   timedFinish?: boolean;
+  /** Persistent help beside the controlled player; independent of the first-match tutorial. */
+  trainer?: boolean;
+  /** Play a ground pass on the press. Turn off for hold-to-power passing. */
+  quickPass?: boolean;
 }
 
 export type CamZoom = 'wide' | 'normal' | 'close';
@@ -39,6 +43,8 @@ export interface ControlSettings {
   autoSwitch: boolean;
   moveAssist: boolean;
   timedFinish: boolean;
+  trainer: boolean;
+  quickPass: boolean;
 }
 
 export const CONTROL_DEFAULTS: Readonly<ControlSettings> = {
@@ -47,6 +53,8 @@ export const CONTROL_DEFAULTS: Readonly<ControlSettings> = {
   autoSwitch: true,
   moveAssist: true,
   timedFinish: true,
+  trainer: true,
+  quickPass: true,
 };
 
 /** The control options in these settings, with the default for anything missing. */
@@ -57,6 +65,8 @@ export function controlsOf(s: Settings): ControlSettings {
     autoSwitch: s.autoSwitch ?? CONTROL_DEFAULTS.autoSwitch,
     moveAssist: s.moveAssist ?? CONTROL_DEFAULTS.moveAssist,
     timedFinish: s.timedFinish ?? CONTROL_DEFAULTS.timedFinish,
+    trainer: s.trainer ?? CONTROL_DEFAULTS.trainer,
+    quickPass: s.quickPass ?? CONTROL_DEFAULTS.quickPass,
   };
 }
 
@@ -70,7 +80,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (!CAM_ZOOMS.includes(s.camZoom as CamZoom)) s.camZoom = 'normal';
   if (!ASSIST_LEVELS.includes(s.groundAssist as AssistLevel)) s.groundAssist = CONTROL_DEFAULTS.groundAssist;
   if (!ASSIST_LEVELS.includes(s.throughAssist as AssistLevel)) s.throughAssist = CONTROL_DEFAULTS.throughAssist;
-  for (const k of ['autoSwitch', 'moveAssist', 'timedFinish'] as const) {
+  for (const k of ['autoSwitch', 'moveAssist', 'timedFinish', 'trainer', 'quickPass'] as const) {
     if (typeof s[k] !== 'boolean') s[k] = CONTROL_DEFAULTS[k];
   }
   return s;

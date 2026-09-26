@@ -4598,3 +4598,23 @@ button.mc-pl:active {
   .gift-days { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 8px; }
   .gift-days li { white-space: nowrap; }
 }
+/* The trainer borrows the match HUD's ink, cream and gold. It follows the player, never the ball. */
+.pitch-trainer { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
+.pitch-trainer[hidden], .pitch-trainer [hidden] { display: none !important; }
+.trainer-guide { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
+.trainer-line-shadow { stroke: #26302c; stroke-width: 4; stroke-opacity: .28; stroke-dasharray: 5 9; }
+.trainer-line { stroke: #f7ffe2; stroke-width: 2; stroke-opacity: .8; stroke-dasharray: 5 9; }
+.trainer-card { position: absolute; top: 0; left: 0; width: max-content; max-width: calc(100vw - 20px); padding: 7px 10px 8px; background: #26262eef; color: #fbfbf4; border-top: 2px solid #ffd23a; box-shadow: 2px 3px 0 #0003; }
+.trainer-title { color: #ffd23a; font: 10px 'Silkscreen', monospace; letter-spacing: .25px; margin-bottom: 5px; }
+.trainer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; font: 13px 'Lilita One', sans-serif; }
+.trainer-actions span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.trainer-actions kbd { padding: 2px 4px; background: #fbfbf4; color: #26262e; font: 10px 'Silkscreen', monospace; box-shadow: 0 2px 0 #adaeaa; }
+.trainer-detail { margin-top: 6px; color: #d1d7ce; font: 11px 'Lilita One', sans-serif; }
+.trainer-recipient { position: absolute; top: 0; left: 0; padding: 4px 6px; background: #fbfbf4; border-bottom: 2px solid #2b9d8b; color: #26262e; font: 10px 'Silkscreen', monospace; white-space: nowrap; box-shadow: 2px 2px 0 #0003; }
+@media (max-width: 600px), (max-height: 500px) {
+  .trainer-card { padding: 5px 7px 6px; max-width: 220px; }
+  .trainer-title { font-size: 9px; margin-bottom: 4px; }
+  .trainer-actions { font-size: 11px; gap: 4px 7px; }
+  .trainer-actions kbd { font-size: 9px; }
+  .trainer-detail { font-size: 10px; margin-top: 5px; }
+}

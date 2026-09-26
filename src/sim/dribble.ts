@@ -55,8 +55,8 @@ const SHIELD_TACKLE = 0.4;
 /** Just after a successful skill, tackles on him succeed this much as often. */
 const PROTECT_TACKLE = 0.15;
 /** For RECEIVE_GUARD_T s after he takes the ball, tackles on him succeed RECEIVE_GUARD as often. */
-const RECEIVE_GUARD_T = 0.3;
-const RECEIVE_GUARD = 0.5;
+const RECEIVE_GUARD_T = 0.5;
+const RECEIVE_GUARD = 0.3;
 /** Path assist: a defender square in the run within PATH_R m bends it up to PATH_BEND toward the free side. */
 export const PATH_R = 2;
 export const PATH_BEND = (20 * Math.PI) / 180;
@@ -79,7 +79,7 @@ export const PRESS_GAIN = 4;
 
 /** TACKLE: a tap this near (m, ball) is an instant lunge; from there to TAP_CLOSE he closes first. */
 export const TAP_LUNGE = 3;
-export const TAP_CLOSE = 6;
+export const TAP_CLOSE = 7;
 /** Held this long (s), TACKLE is a slide; a second press within DOUBLE_TAP s too. */
 export const SLIDE_HOLD = 0.25;
 export const DOUBLE_TAP = 0.3;
@@ -103,7 +103,7 @@ export class AssistState {
   lastCut = -9;
   lastSkill = -9;
   /** TACKLE: the press being played out (tap / hold; `born`: Match.clock when pressed), and when the last one was. */
-  tackle: { t: number; held: boolean; target: number; born: number } | null = null;
+  tackle: { t: number; held: boolean; target: number; player: number; born: number } | null = null;
   lastPress = -9;
 }
 
@@ -360,11 +360,11 @@ export interface VsHuman {
 /** The menu's difficulty levels (MatchConfig.difficulty), and vsHuman's value at each (linear between). */
 const LEVELS = [0.6, 1.8, 3, 4];
 const VS_HUMAN: Record<keyof VsHuman, number[]> = {
-  press: [0.72, 1, 1.15, 1.2],
-  tackle: [0.8, 1, 1.1, 1.2],
-  resist: [1.08, 0.85, 0.74, 0.66],
-  cut: [0.06, -0.08, -0.13, -0.17],
-  takeOn: [0.8, 1.25, 1.5, 1.7],
+  press: [0.6, 0.82, 1.1, 1.2],
+  tackle: [0.68, 0.86, 1.1, 1.2],
+  resist: [1.08, 1, 0.8, 0.7],
+  cut: [0.12, 0.05, -0.1, -0.17],
+  takeOn: [0.7, 0.95, 1.45, 1.7],
   beaten: [0.4, 0.62, 0.78, 0.85],
   auto: [0.8, 0.45, 0.4, 0.35],
   read: [0.3, 1.5, 5, 8],
@@ -390,7 +390,7 @@ export function humanCarrierTackle(skill: number, dribbling: number): number {
  */
 export function standingTackleChance(m: Match, p: Player, c: Player, behind: number, shielded: number, exposed: boolean): number {
   const edge = (p.stat.defending - c.stat.dribbling) / 100;
-  let k = 0.78 - behind * 0.34 + edge * 0.5 + (exposed ? 0.15 : 0) + (c.sprint ? 0.04 : 0);
+  let k = 0.92 - behind * 0.42 + edge * 0.5 + (exposed ? 0.15 : 0) + (c.sprint ? 0.04 : 0);
   k *= 1 - shielded * 0.35;
   // Harder sides' carriers are cuter on the ball.
   k *= vsHuman(m.aiSkill(c.side)).resist;
@@ -425,12 +425,13 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
     }
     st.lastPress = st.t;
     if (d < TAP_CLOSE) {
-      st.tackle = { t: 0, held: true, target: c.idx, born: m.clock };
+      st.tackle = { t: 0, held: true, target: c.idx, player: p.idx, born: m.clock };
       if (d < TAP_LUNGE) lunge(p, b.pos.x + b.vel.x * 0.1, b.pos.z + b.vel.z * 0.1);
       // Already in reach: no wind-up, the tackle goes in on the press.
       if (p.tackleCooldown <= 0 && dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) <= STAND_REACH) {
-        st.tackle = null;
         m.tryTackle(p, c, 1, true);
+        // A won poke ends the action. A missed poke can still become a slide if the button stays held.
+        if (m.ball.owner !== c.idx || m.phase !== 'play') st.tackle = null;
         return;
       }
     }
@@ -439,23 +440,23 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
   if (!tk) return;
   // (Nor does it outlive a stoppage: the clock moved on, or a new half started, since it was pressed.)
   const stale = m.clock < tk.born || m.clock - tk.born > CLOSE_T + 0.25;
-  if (!c || c.idx !== tk.target || p.state !== 'move' || p.sentOff || stale) {
+  if (!c || c.idx !== tk.target || p.idx !== tk.player || p.state !== 'move' || p.sentOff || stale) {
     st.tackle = null;
     return;
   }
   tk.t += dt;
   if (tk.held && !pad.shoot) tk.held = false;
-  if (tk.held && tk.t >= SLIDE_HOLD) {
-    st.tackle = null;
-    slideAt(m, p);
-    return;
-  }
   const tx = b.pos.x + b.vel.x * 0.15 - p.pos.x;
   const tz = b.pos.z + b.vel.z * 0.15 - p.pos.z;
   const tl = Math.hypot(tx, tz) || 1;
   // Pulling the stick hard away from it calls the tap off; so does running out of time.
   if ((stickLen > 0.6 && (pad.mx * tx + pad.mz * tz) / (stickLen * tl) < -0.2) || tk.t > CLOSE_T) {
     st.tackle = null;
+    return;
+  }
+  if (tk.held && tk.t >= SLIDE_HOLD) {
+    st.tackle = null;
+    slideAt(m, p);
     return;
   }
   p.wantX = tx / tl;
