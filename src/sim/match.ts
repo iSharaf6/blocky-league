@@ -45,6 +45,8 @@ export interface MatchConfig {
   sideDifficulty?: [number, number];
   /** 'classic' (default) or 'blitz' (power-up pickups; see PowerUpKind). */
   mode?: MatchMode;
+  /** The player's very first match: the kick-off waits for a button, the AI eases off in the first minute. */
+  firstMatch?: boolean;
   /** Cup tie: level at full time goes straight to a penalty shootout (no extra time). */
   knockout?: boolean;
   /** The offside law is enforced (default true). See Match.offside. */

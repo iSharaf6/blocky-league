@@ -74,6 +74,36 @@ export function teamRating(t: TeamDef): number {
 /** Human pass assistance (FIFA-style): the lock-on, power correction and error the assist applies. */
 export type AssistLevel = 'assisted' | 'semi' | 'manual';
 
+/**
+ * A Football Moment: a short scripted situation (score from a cross, 1v1 with the keeper, hold a lead…) set up
+ * on the normal sim and graded with stars. src/sim/scenario.ts applies and judges it; src/meta/moments.ts lists
+ * them; the session runs one when SessionOptions.scenario is set.
+ */
+export interface ScenarioSpec {
+  id: string;
+  title: string;
+  /** One line shown before the whistle ("Score from the cross. 20 seconds."). */
+  brief: string;
+  /** Match clock at the start (s) and how long the moment runs (s). */
+  clock: number;
+  seconds: number;
+  score: [number, number];
+  humanSide: Side;
+  difficulty?: number;
+  mode?: MatchMode;
+  /** Placements by side and lineup slot (0 = keeper); anyone not listed keeps his formation spot. */
+  players?: { side: Side; slot: number; x: number; z: number; facing?: number }[];
+  ball?: { x: number; z: number; y?: number; vx?: number; vy?: number; vz?: number };
+  /** Who starts with the ball at his feet (null: loose). */
+  owner?: { side: Side; slot: number } | null;
+  /** A restart to begin from instead of open play (a corner, a penalty…). */
+  restart?: RestartKind | null;
+  /** What wins it, judged when the time is up or the moment ends early. */
+  goal: 'score' | 'lead' | 'no-concede' | 'draw-or-better' | 'win-shootout';
+  /** Star thresholds, meaning depends on `goal` (e.g. seconds left on scoring, goals margin). */
+  stars?: [number, number, number];
+}
+
 /** Match mode: 'classic' football, or 'blitz' with power-up pickups on the pitch (see PowerUpKind). */
 export type MatchMode = 'classic' | 'blitz';
 
