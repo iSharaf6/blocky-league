@@ -1109,7 +1109,7 @@ export class MatchSession {
     } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs) {
       switch (r.kind) {
         case 'kickoff': hint = `${key('pass')} to kick off`; break;
-        case 'throwin': hint = `Aim · ${key('pass')} to throw`; break;
+        case 'throwin': hint = `Point to a teammate · ${key('pass')} to throw`; break;
         // SHOOT on a corner is a driven cross (flat and fast), not a shot. (Touch labels the through button
         // CROSS at set pieces, so the verb is "whip it in", never "CROSS to cross".)
         case 'corner': hint = `${key('pass')} short · hold ${key('through')} to whip it in · ${key('shoot')} = driven cross`; break;
@@ -1127,6 +1127,9 @@ export class MatchSession {
     if (so && soAim && so.turn === hs) {
       const t = m.players[so.taker];
       this.view.setAim(true, t.pos.x, t.pos.z, Math.atan2(so.aimZ - t.pos.z, so.goal * HALF_L - t.pos.x), 1.3);
+    } else if (!cinematic && r?.kind === 'throwin' && r.side === hs && m.phase === 'restart' && m.throwPreview) {
+      const aim = m.throwPreview;
+      this.view.setAim(true, r.x, r.z, Math.atan2(aim.z - r.z, aim.x - r.x), 1.4);
     } else if (!cinematic && r && r.side === hs && m.phase === 'restart' && r.kind !== 'kickoff') {
       const t = m.players[r.taker];
       const long = r.kind === 'corner' || r.kind === 'goalkick' ? 1.6 : r.kind === 'freekick' || r.kind === 'penalty' ? 1.3 : 1;
@@ -1252,7 +1255,7 @@ export class MatchSession {
       return;
     }
     const pass = this.mateIdx((m as { passPreview?: unknown }).passPreview);
-    const through = this.mateIdx((m as { throughPreview?: unknown }).throughPreview);
+    const through = m.phase === 'restart' && m.restart?.kind === 'throwin' ? -1 : this.mateIdx((m as { throughPreview?: unknown }).throughPreview);
     let ax = 0;
     let az = 0;
     if (through >= 0) {

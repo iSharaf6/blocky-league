@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Gameplay and audio regression checks
-        run: npm test -- --maxWorkers=2 --testTimeout=120000 tests/audio.test.ts tests/arcade.test.ts tests/settings.test.ts tests/passing.test.ts tests/feel.test.ts tests/dribble.test.ts tests/tackle.test.ts tests/camera.test.ts
+        run: npm test -- --maxWorkers=2 --testTimeout=120000 tests/audio.test.ts tests/arcade.test.ts tests/settings.test.ts tests/passing.test.ts tests/feel.test.ts tests/dribble.test.ts tests/tackle.test.ts tests/camera.test.ts tests/throwin.test.ts tests/rules.test.ts
       - name: Type-check and package the web game
         run: npm run build:web
         env:

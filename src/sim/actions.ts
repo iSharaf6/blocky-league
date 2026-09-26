@@ -190,6 +190,43 @@ const DRIVEN_HEADER = 0.65;
 
 /** Longest a throw-in (or a keeper's throw / roll) can go, m. */
 export const THROW_RANGE = 26;
+
+/** The same safe, reachable destination is used by the throw-in preview and the actual release. */
+export function throwInPlan(m: Match, p: Player, dx: number, dz: number, lockedTarget?: number): { x: number; z: number; target: number } {
+  const edge = m.restart?.kind === 'throwin' ? m.restart.z : p.pos.z;
+  const inward = -Math.sign(edge) || 1;
+  const length = Math.hypot(dx, dz) || 1;
+  // Along the line still means into the pitch. An outward stick cannot throw into the stands.
+  let ux = dx / length;
+  let uz = inward * Math.max(0.25, dz / length * inward);
+  const safeLength = Math.hypot(ux, uz);
+  ux /= safeLength; uz /= safeLength;
+  const eligible = (q: Player) => q !== p && q.side === p.side && !q.isKeeper && !q.sentOff &&
+    Math.abs(q.pos.x) < HALF_L && Math.abs(q.pos.z) < HALF_W &&
+    dist2(p.pos.x, p.pos.z, q.pos.x, q.pos.z) >= 2 && dist2(p.pos.x, p.pos.z, q.pos.x, q.pos.z) <= THROW_RANGE;
+  let target = lockedTarget ?? -1;
+  if (target >= 0 && !eligible(m.players[target])) target = -1;
+  if (lockedTarget === undefined && !(m.isHumanControlled(p) && m.groundAssist === 'manual')) {
+    let best = -Infinity;
+    for (const q of m.teamPlayers(p.side)) {
+      if (!eligible(q)) continue;
+      const d = dist2(p.pos.x, p.pos.z, q.pos.x, q.pos.z);
+      const alignment = ((q.pos.x - p.pos.x) * ux + (q.pos.z - p.pos.z) * uz) / d;
+      if (alignment < 0.35) continue;
+      const score = alignment * 5 - d * 0.045 + Math.min(6, nearestOppDist(m, q)) * 0.025;
+      if (score > best) { best = score; target = q.idx; }
+    }
+  }
+  const q = target >= 0 ? m.players[target] : null;
+  let x = clamp(q ? q.pos.x + q.vel.x * 0.18 : p.pos.x + ux * 15, -HALF_L + 2.5, HALF_L - 2.5);
+  let z = clamp(q ? q.pos.z + q.vel.z * 0.18 : p.pos.z + uz * 15, -HALF_W + 2.5, HALF_W - 2.5);
+  const d = dist2(p.pos.x, p.pos.z, x, z);
+  if (d > THROW_RANGE) {
+    x = p.pos.x + (x - p.pos.x) * THROW_RANGE / d;
+    z = p.pos.z + (z - p.pos.z) * THROW_RANGE / d;
+  }
+  return { x, z, target };
+}
 /**
  * Headed balls that aren't shots: at most HEADER_MAX_D m (a clearance aimed further drops there), at most
  * HEADER_MAX_VH m/s along the ground (they used to fly off at 50-58 m/s: a volley's clearance target
@@ -949,9 +986,21 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
   if (kind === 'pass' && m.isHumanControlled(p)) return humanPass(m, p, order, dir, m.groundAssist);
   if (kind === 'through' && m.isHumanControlled(p) && order.aimX === undefined) return humanThroughBall(m, p, order, dir);
 
-  if (kind === 'pass' || kind === 'throw' || kind === 'keeper') {
+  if (kind === 'throw') {
+    const plan = order.aimX !== undefined && order.aimZ !== undefined
+      ? { x: order.aimX, z: order.aimZ, target: order.target }
+      : throwInPlan(m, p, dir.x, dir.z, order.target >= 0 ? order.target : undefined);
+    const d = Math.max(0.1, dist2(b.x, b.z, plan.x, plan.z));
+    const flight = clamp(0.4 + d / 22, 0.55, 1.6);
+    const s = solveLob(d, flight, 0.5);
+    // Release from the hands, to the point shown when the player pressed THROW.
+    return launch((plan.x - b.x) / d * s.vh, s.vy - (b.y - BALL_R) / flight,
+      (plan.z - b.z) / d * s.vh, 0, 0, 0, plan.target, kind, 0.4);
+  }
+
+  if (kind === 'pass' || kind === 'keeper') {
     const tgt = order.target >= 0 ? order.target : pickReceiver(m, p, dir.x, dir.z, 'pass');
-    const throwIn = kind === 'throw' || kind === 'keeper';
+    const throwIn = kind === 'keeper';
     if (tgt >= 0) return passToFeet(m, p, tgt, kind);
     // Pass into space along the stick.
     const sp = throwIn ? 9 : 13;

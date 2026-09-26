@@ -2,7 +2,7 @@ import { angleDiff, clamp, dist2, pointSegDist, turnToward } from '../core/math'
 import { Rng } from '../core/rng';
 import {
   assistLevel, crossAim, crossTarget, CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, humanThroughTarget, isCrossPosition, onTarget, passAimPoint,
-  pickReceiver, resolveKick, shotQuality, stickCurl,
+  pickReceiver, resolveKick, shotQuality, stickCurl, throwInPlan,
 } from './actions';
 import { assistRun, intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { headerAtGoal, reaimShot, WILD_LIFT, type Launch } from './actions';
@@ -656,6 +656,8 @@ export class Match {
   private stepInT = 0;
   /** The default aim (radians, world facing) the current restart's taker was set up with. */
   restartAim = 0;
+  /** Landing point shown for a human throw-in, locked when the button is pressed. */
+  throwPreview: { x: number; z: number } | null = null;
 
   /**
    * Foul probabilities scale with the half length (like fatigue), so a match of any length has a
@@ -1416,6 +1418,11 @@ export class Match {
         b.pos.x = p.pos.x + Math.cos(p.facing) * 0.35;
         b.pos.z = p.pos.z + Math.sin(p.facing) * 0.35;
         b.pos.y = o.kind === 'throw' ? 2.1 : 1.5;
+        if (o.kind === 'throw' && this.restart?.kind === 'throwin') {
+          // Sideways throws used to start 25 cm outside the pitch and be called out before entering it.
+          b.pos.x = clamp(b.pos.x, -HALF_L + 0.3, HALF_L - 0.3);
+          b.pos.z = Math.sign(this.restart.z) * (HALF_W - 0.12);
+        }
       } else {
         b.pos.x = p.pos.x + Math.cos(p.facing) * 0.6;
         b.pos.z = p.pos.z + Math.sin(p.facing) * 0.6;
@@ -1662,6 +1669,7 @@ export class Match {
     // The pass preview is set again below while his man has it at his feet (updatePreview); a called run
     // lasts until the ball comes (or CALL_T).
     this.passPreview = this.throughPreview = -1;
+    this.throwPreview = null;
     this.calledT += dt;
     if (this.calledRun >= 0 && (this.calledT > CALL_T || this.phase !== 'play')) this.calledRun = -1;
 
@@ -1680,7 +1688,7 @@ export class Match {
       // sideways bends the ball without swinging the aim.
       const rotating = this.padDigital && this.phase === 'restart' && (kind === 'freekick' || kind === 'corner');
       const striking = kind === 'freekick' && (shootR || throughR || passP);
-      if (stickLen > 0.3 && kind !== 'kickoff' && this.stepIn !== t.idx && !striking) {
+      if (stickLen > 0.3 && kind !== 'kickoff' && this.stepIn !== t.idx && !striking && !(kind === 'throwin' && t.order)) {
         const want = Math.atan2(pad.mz, pad.mx);
         if (!rotating) t.facing = want;
         else {
@@ -1689,11 +1697,11 @@ export class Match {
           else if (Math.abs(off) < 2.6) t.facing = turnToward(t.facing, want, AIM_TURN * dt);
         }
       }
-      if (this.phase === 'restart' && this.phaseT < 0.35) return;
+      if (this.phase === 'restart' && this.phaseT < 0.35 && kind !== 'throwin') return;
       const useStick = stickLen > 0.3 && !rotating;
       const dx = useStick ? pad.mx : Math.cos(t.facing);
       const dz = useStick ? pad.mz : Math.sin(t.facing);
-      this.restartPreview(t, kind, pad, stickLen, dx, dz);
+      const throwAim = this.restartPreview(t, kind, pad, stickLen, dx, dz);
       // A free kick is struck where the aim arrow (the taker's facing) meets the goal line; left on
       // the default aim, he picks the side the keeper leaves open himself.
       const fkShot = (pw: number) => {
@@ -1746,7 +1754,11 @@ export class Match {
           this.order(t, 'pass', kx, kz, 0.5, -1, false);
         }
       } else if (kind === 'throwin') {
-        if (passP || throughP) this.order(t, 'throw', dx, dz, 0.5, -1, false);
+        if ((passP || throughP) && !t.order && throwAim) {
+          const aim = throwAim;
+          t.facing = Math.atan2(aim.z - t.pos.z, aim.x - t.pos.x);
+          this.order(t, 'throw', aim.x - t.pos.x, aim.z - t.pos.z, 0.5, this.passPreview, false, aim);
+        }
       } else {
         const fdx = kind === 'freekick' ? Math.cos(t.facing) : dx;
         const fdz = kind === 'freekick' ? Math.sin(t.facing) : dz;
@@ -2115,9 +2127,17 @@ export class Match {
    * pass) would find, along the same line the kick would go (the kick-off's default, a free kick's aim arrow,
    * else the stick or his facing). Nobody on a corner, a wide free kick (the delivery goes to a zone) or a penalty.
    */
-  private restartPreview(t: Player, kind: RestartKind, pad: Pad, stickLen: number, dx: number, dz: number): void {
+  private restartPreview(t: Player, kind: RestartKind, pad: Pad, stickLen: number, dx: number, dz: number): { x: number; z: number } | undefined {
     const r = this.restart;
     if (!r || kind === 'corner' || kind === 'penalty' || (this.phase === 'restart' && isCrossingRestart(this, r))) return;
+    if (kind === 'throwin') {
+      const o = t.order;
+      const plan = o?.kind === 'throw' && o.aimX !== undefined && o.aimZ !== undefined
+        ? { x: o.aimX, z: o.aimZ, target: o.target } : throwInPlan(this, t, dx, dz);
+      this.passPreview = this.throughPreview = plan.target;
+      this.throwPreview = { x: plan.x, z: plan.z };
+      return this.throwPreview;
+    }
     let px = dx;
     let pz = dz;
     if (kind === 'kickoff') {
@@ -2128,7 +2148,7 @@ export class Match {
       pz = Math.sin(t.facing);
     }
     this.passPreview = pickReceiver(this, t, px, pz, 'pass');
-    this.throughPreview = kind === 'kickoff' || kind === 'throwin' ? this.passPreview : pickReceiver(this, t, px, pz, 'lob');
+    this.throughPreview = kind === 'kickoff' ? this.passPreview : pickReceiver(this, t, px, pz, 'lob');
   }
 
   /**
