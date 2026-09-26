@@ -3,7 +3,7 @@ import type { Input } from '../core/input';
 import type { CamZoom } from '../core/save';
 import { clamp, damp } from '../core/math';
 import { CameraRig } from '../render/cameraRig';
-import { setCharacterFill, setCharacterHemiFill } from '../render/characters';
+import { setCharacterFill, setCharacterHemiFill, setCharacterWhiteBalance } from '../render/characters';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
 import { PITCH_Y, Stadium, stadiumFill } from '../render/stadium';
@@ -17,6 +17,8 @@ import { Hud, hudTeam } from '../ui/hud';
 import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
+import { playFocus } from './camFocus';
+import { contrastAwayKit } from './kitContrast';
 import { BALL_OFS, FRAME_LEN, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
 
 export interface SessionOptions extends MatchConfig {
@@ -93,6 +95,11 @@ const CARD_VICTIM_GAP = 3.8;
 const CARD_VICTIM_BACK = 4;
 /** The minimap stays off this long (s) after a set piece is taken (the delivery is still coming in). */
 const RADAR_SETPIECE_HOLD = 1.5;
+/** ...and this long after the ball or the controlled player was drawn under it (no flicker at its edge). */
+const RADAR_OCCLUDE_HOLD = 1;
+/** Margin (px) round the minimap that counts as under it, and how often (s) its rectangle is re-measured. */
+const RADAR_MARGIN = 14;
+const RADAR_RECT_S = 0.5;
 
 /**
  * On-screen labels of the touch buttons (mirrors ui/touch.ts LABELS): hints name the button the player sees.
@@ -169,12 +176,26 @@ export class MatchSession {
   private holdKick: { taker: number; x: number; z: number; far: number; struck: boolean } | null = null;
   /** The HUD is in its cinematic state (card close-up: ticker, tags and touch buttons off). */
   private cineHud = false;
+  /** Our set piece's aim (radians) as it stood when the taker stepped in to strike it (the arrow holds it). */
+  private aimFrozen: number | null = null;
+  /**
+   * The minimap's screen rectangle (re-measured every RADAR_RECT_S while shown), and how long it stays off
+   * after the ball or the controlled player was last drawn under it.
+   */
+  private radarEl: HTMLElement | null = null;
+  private radarRect: { l: number; t: number; r: number; b: number } | null = null;
+  private radarRectT = 0;
+  private radarOccT = 0;
+  private scratchV: THREE.Vector3 | null = null;
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
     this.demo = !!opt.demo;
     // Readability first: no green shirts on green grass, then re-check the clash.
     const home = grassSafeKit(opt.kits[0]);
-    opt.kits = [home, resolveKitClash(home, grassSafeKit(opt.kits[1]))];
+    const away = resolveKitClash(home, grassSafeKit(opt.kits[1]));
+    // ...and the two sides must read apart from the gantry (light against dark): see kitContrast. The side
+    // that changes strip is never the human's: you always play in your own club's colours.
+    opt.kits = opt.humanSide === 1 ? [contrastAwayKit(away, home), away] : [home, contrastAwayKit(home, away)];
     this.match = new Match(opt);
     const teams = this.match.teams;
     const level = Math.max(0, Math.min(5, Math.round(opt.stadiumLevel ?? 5)));
@@ -190,16 +211,7 @@ export class MatchSession {
       seed: this.match.rng.int(1e9),
     });
     this.view = new MatchView(teams, opt.kits, opt.humanSide);
-    const tod = opt.timeOfDay ?? 'day';
-    const wx = opt.weather ?? 'clear';
-    world.setTimeOfDay(tod, wx);
-    // Night matches: the UI can key off this (vignette, HUD tint); the 3D vignette is the stadium's own.
-    if (!this.demo) document.body.classList.toggle('night', tod === 'night');
-    this.stadium.setTimeOfDay(tod);
-    this.stadium.setWeather(wx);
-    this.view.setTimeOfDay(tod, this.stadium.lightTowers);
-    this.weather.set(wx, world.quality);
-    sfx.setRain(wx === 'rain');
+    this.applyTimeOfDay(opt.timeOfDay ?? 'day', opt.weather ?? 'clear');
     this.view.group.position.y = PITCH_Y;
     this.effects.mesh.position.y = PITCH_Y;
     world.scene.add(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
@@ -230,6 +242,22 @@ export class MatchSession {
       this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} · ${teams[1].name}`, 'small intro', 3.2);
       this.prevButtons = true;
     }
+  }
+
+  /** Light the match for a time of day and weather (sky, lights, stadium, footballers, particles, rain audio). */
+  applyTimeOfDay(tod: TimeOfDay, wx: WeatherKind): void {
+    const world = this.world;
+    world.setTimeOfDay(tod, wx);
+    // Night matches: the UI can key off this (vignette, HUD tint); the 3D vignette is the stadium's own.
+    if (!this.demo) document.body.classList.toggle('night', tod === 'night');
+    this.stadium.setTimeOfDay(tod);
+    this.stadium.setWeather(wx);
+    this.view.setTimeOfDay(tod, this.stadium.lightTowers);
+    // Sunset: the footballers keep only ~8% of the orange light's tint, so a white kit stays white.
+    if (tod === 'sunset') setCharacterWhiteBalance(world.sun.color, world.sun.intensity, world.hemi.color, world.hemi.intensity);
+    else setCharacterWhiteBalance();
+    this.weather.set(wx, world.quality);
+    sfx.setRain(wx === 'rain');
   }
 
   /** Broadcast camera distance, live (Settings changed mid-match): the camera cuts to the new framing. */
@@ -337,18 +365,17 @@ export class MatchSession {
       }
     }
 
-    // Camera.
+    // Camera: the live-play focus (ball, controlled player, possession lean, set piece; see camFocus), with
+    // the subject swapped for the celebrating scorer / the shootout winners.
     const f = this.view.frame;
-    const hs = m.cfg.humanSide;
-    const attack = hs >= 0 ? m.attackDir(hs as Side) : 1;
-    let ax = f[BALL_OFS];
-    let az = f[BALL_OFS + 2];
+    const focus = playFocus(m, f, this.view.headTop);
+    let ax = focus.ax;
+    let az = focus.az;
     let avx = 0;
     let avz = 0;
     let subject = -1;
     let group = 0;
     let groupFacing: number | undefined;
-    const act = f[BALL_OFS + 8];
     const soWinner = m.shootout && m.phase === 'fulltime' ? m.shootout.winner : -1;
     if (this.cam.mode === 'celebrate' && soWinner >= 0) {
       // Shootout won: the winners' pile-up (the sim gathers them round a hub on the halfway line).
@@ -397,30 +424,25 @@ export class MatchSession {
       avz = (sc.vel.z * 2) / n;
       subject = si;
       group = this.celebG;
-    } else if (act >= 0) {
-      ax = f[act * PF];
-      az = f[act * PF + 1];
     }
-    const owner = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
-    const lean = owner ? m.attackDir(owner.side) : 0;
     const ref = this.cam.mode === 'card' ? this.view.refState : null;
     this.trackHold();
     this.cam.update(this.paused ? 0 : dt, {
-      bx: f[BALL_OFS], by: f[BALL_OFS + 1], bz: f[BALL_OFS + 2],
-      bvx: f[BALL_OFS + 3], bvz: f[BALL_OFS + 5],
-      ax, az, avx, avz, attack, lean, subject, group, groupFacing,
-      setPiece: this.replay ? null : this.setPieceFrame(),
-      // After our set piece the over-the-shoulder shot may stay on the ball while it is live, in the net, or
-      // just gone out (the one cut is then to the next set-piece framing, not to the wide shot first).
-      hold: !this.replay && (m.phase === 'play' || m.phase === 'goal' || m.phase === 'out'),
+      ...focus,
+      ax, az, avx, avz, subject, group, groupFacing,
+      setPiece: this.replay ? null : focus.setPiece,
+      hold: !this.replay && focus.hold,
       card: ref ? { rx: ref.x, rz: ref.z, fx: ref.faceX, fz: ref.faceZ } : null,
-      tall: this.view.headTop,
     }, this.time);
     // Low cameras (over the set-piece taker's shoulder, the shootout) drop the name tag and arrow, which would
     // otherwise float over the goal mouth; the referee close-up drops the marker altogether.
     this.view.setMarkerMode(this.cam.mode === 'card' ? 'off' : this.cam.behindActive || this.cam.mode === 'penalty' ? 'ring' : 'full');
+    // The Mega Dome's arch: never for the menu orbit or the pre-match fly-in (their paths cut through it).
+    this.stadium.setArchVisible(this.cam.mode !== 'menu' && this.cam.mode !== 'intro');
     // Team rings: the broadcast shot (and the fly-in landing on it) only; never under a low or close lens.
     this.view.setTeamRings((this.cam.mode === 'broadcast' && !this.cam.behindActive) || this.cam.mode === 'intro');
+    // Team pips over the human's team-mates: the broadcast shot only.
+    this.view.setTeamPips(this.cam.mode === 'broadcast' && !this.cam.behindActive && !this.replay);
     // The referee close-up is a clean cinematic frame: the HUD drops its ticker, tags and touch buttons.
     const cine = this.cam.mode === 'card';
     if (cine !== this.cineHud) {
@@ -528,41 +550,6 @@ export class MatchSession {
       };
     });
     return out.sort((a, b) => b.rating - a.rating || b.goals - a.goals);
-  }
-
-  /** Frame the taker and where the ball is going for set pieces. */
-  private setPieceFrame(): {
-    x: number; z: number; tx: number; tz: number; behind?: boolean; goal?: boolean; pen?: boolean; taker?: number; corner?: boolean; ours?: boolean;
-  } | null {
-    const m = this.match;
-    const r = m.restart;
-    if (!r || (m.phase !== 'restart' && m.phase !== 'out')) return null;
-    if (m.phase === 'out' && m.phaseT < 0.5) return null;
-    const ad = m.attackDir(r.side);
-    const ours = r.side === m.cfg.humanSide && m.phase === 'restart';
-    // Once the ball is spotted, frame where it actually is.
-    const bx = m.phase === 'restart' ? m.ball.pos.x : r.x;
-    const bz = m.phase === 'restart' ? m.ball.pos.z : r.z;
-    switch (r.kind) {
-      case 'corner':
-        // No room behind a corner flag (boards, stands) for a lens that shows both the taker and the box:
-        // corners keep the wide set-piece shot (pulled on towards the goal, so all of it is in shot).
-        return { x: r.x, z: r.z, tx: ad * (HALF_L - 9), tz: 0, corner: true, ours: r.side === m.cfg.humanSide };
-      case 'freekick':
-      case 'penalty': {
-        const near = Math.hypot(ad * HALF_L - r.x, r.z) < 35;
-        return {
-          x: bx, z: bz, tx: ad * (HALF_L - (near ? 0 : 9)), tz: 0, behind: ours && near, goal: near, pen: r.kind === 'penalty',
-          taker: r.taker,
-        };
-      }
-      case 'throwin':
-        return { x: r.x, z: r.z, tx: r.x + ad * 8, tz: r.z * 0.55 };
-      case 'goalkick':
-        return { x: r.x, z: r.z, tx: r.x + ad * 22, tz: 0 };
-      default:
-        return null;
-    }
   }
 
   private startReplay(): void {
@@ -1005,9 +992,13 @@ export class MatchSession {
     // (Set pieces: from the whistle until the delivery has had a moment to come in.)
     const setPiece = m.phase === 'restart' || m.phase === 'out';
     this.radarHoldT = setPiece ? RADAR_SETPIECE_HOLD : Math.max(0, this.radarHoldT - dt);
+    // ...and whenever the ball or the man we control is drawn under it (a close camera distance), and through
+    // a goal celebration (it would sit on the scorer's feet).
+    this.radarOccT = this.radarOccludes(dt) ? RADAR_OCCLUDE_HOLD : Math.max(0, this.radarOccT - dt);
     hud.setRadarHidden(
       setPiece || this.radarHoldT > 0 || m.phase === 'shootout' || this.cam.behindActive ||
-      this.cam.mode === 'penalty' || this.cam.mode === 'card' || m.ball.pos.z > HALF_W * 0.45,
+      this.cam.mode === 'penalty' || this.cam.mode === 'card' || this.cam.mode === 'celebrate' || m.phase === 'goal' ||
+      m.ball.pos.z > HALF_W * 0.45 || this.radarOccT > 0,
     );
     hud.update(dt, this.view.frame);
     // The over-the-shoulder set-piece camera needs the whole lower screen for the taker: no radar / chip.
@@ -1058,8 +1049,17 @@ export class MatchSession {
     } else if (!cinematic && r && r.side === hs && m.phase === 'restart' && r.kind !== 'kickoff') {
       const t = m.players[r.taker];
       const long = r.kind === 'corner' || r.kind === 'goalkick' ? 1.6 : r.kind === 'freekick' || r.kind === 'penalty' ? 1.3 : 1;
-      this.view.setAim(true, t.pos.x, t.pos.z, t.facing, long);
-    } else this.view.setAim(false);
+      // From the ball (where the kick goes from, not the taker waiting at his run-up spot), along the aim he
+      // has set; once he steps in to strike it the aim is fixed, so the arrow no longer follows his body
+      // round on the run-up.
+      const stepping = m.stepIn === r.taker;
+      if (!stepping) this.aimFrozen = t.facing;
+      const aim = stepping ? (this.aimFrozen ??= t.facing) : t.facing;
+      this.view.setAim(true, m.ball.pos.x, m.ball.pos.z, aim, long);
+    } else {
+      this.aimFrozen = null;
+      this.view.setAim(false);
+    }
     this.updateTutorial(dt, key);
     if (m.active >= 0) {
       const p = m.players[m.active];
@@ -1068,6 +1068,7 @@ export class MatchSession {
       // Over his head is the goal mouth on the over-the-shoulder free-kick lens: the bar goes to his feet there.
       this.view.setPower(charging ? Math.min(1, m.shootCharge / 0.85) : null, p.pos.x, p.pos.z, p.y, this.cam.behindActive);
     }
+    this.updatePassCharge(cinematic);
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
       // Off for the referee close-up too (the buttons would sit on the booked player).
@@ -1077,6 +1078,66 @@ export class MatchSession {
     // Pause via keyboard / gamepad.
     const c = this.input.gamepadPause();
     if (c && !this.paused) this.requestPause();
+  }
+
+  /** Is the ball, or the controlled player (boots to head), drawn under the minimap (or within RADAR_MARGIN of it)? */
+  private radarOccludes(dt: number): boolean {
+    const hud = this.hud;
+    if (!hud || typeof window === 'undefined') return false;
+    this.radarEl ??= hud.root.querySelector<HTMLElement>('.hud-radar');
+    const el = this.radarEl;
+    if (!el) return false;
+    this.radarRectT -= dt;
+    if (this.radarRectT <= 0) {
+      // (Measured while it is shown: hidden, it has no box, and the last one stands.)
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) this.radarRect = { l: r.left, t: r.top, r: r.right, b: r.bottom };
+      this.radarRectT = RADAR_RECT_S;
+    }
+    const R = this.radarRect;
+    if (!R) return false;
+    const cam = this.world.camera;
+    const v = (this.scratchV ??= cam.position.clone());
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const under = (x: number, y: number, z: number): boolean => {
+      v.set(x, y, z).project(cam);
+      if (v.z > 1) return false;
+      const sx = ((v.x + 1) / 2) * W;
+      const sy = ((1 - v.y) / 2) * H;
+      return sx > R.l - RADAR_MARGIN && sx < R.r + RADAR_MARGIN && sy > R.t - RADAR_MARGIN && sy < R.b + RADAR_MARGIN;
+    };
+    const f = this.view.frame;
+    if (under(f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2])) return true;
+    const a = this.match.active;
+    if (a < 0 || a >= 22) return false;
+    const x = f[a * PF];
+    const z = f[a * PF + 1];
+    return under(x, 0, z) || under(x, this.view.headTop * 0.5, z) || under(x, this.view.headTop, z);
+  }
+
+  /**
+   * Pass charging (PASS held, Match.passCharge 0..1 / passAim): the teal bar at the passer's feet, and the
+   * ring and arrow on the teammate the pass is locked onto. Live play only (never over a replay or the card
+   * close-up); it all goes the frame PASS is let go (passCharge back to -1).
+   */
+  private updatePassCharge(off: boolean): void {
+    const m = this.match;
+    const hs = m.cfg.humanSide;
+    const charge = typeof m.passCharge === 'number' ? m.passCharge : -1;
+    const own = m.ball.owner;
+    const passer = own >= 0 && m.players[own].side === hs ? own : m.active;
+    if (off || this.replay || hs < 0 || !(charge >= 0) || passer < 0 || passer >= m.players.length) {
+      this.view.setPassCharge(null);
+      return;
+    }
+    const f = this.view.frame;
+    const aim = typeof m.passAim === 'number' ? m.passAim : -1;
+    const locked = aim >= 0 && aim < m.players.length && aim !== passer && m.players[aim].side === hs;
+    this.view.setPassCharge(
+      charge, f[passer * PF], f[passer * PF + 1], locked ? f[aim * PF] : null, locked ? f[aim * PF + 1] : 0, this.cam.behindActive,
+      locked ? aim : -1,
+    );
   }
 
   private updateTutorial(dt: number, key: (k: HintKey) => string): void {
@@ -1097,8 +1158,11 @@ export class MatchSession {
     const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === m.cfg.humanSide;
     let tip = '';
     if (!t.moved) tip = `Move with <kbd>${move}</kbd> · sprint with <kbd>${sprint}</kbd>`;
-    else if (mine && !t.passed) tip = `<kbd>${key('pass')}</kbd> passes where you aim · tap <kbd>${key('through')}</kbd> for a through ball`;
-    else if (mine && !t.shot) tip = `Near goal? <b>Hold</b> <kbd>${key('shoot')}</kbd> and release to shoot — longer hold, more power`;
+    else if (mine && !t.passed) tip = `Tap <kbd>${key('pass')}</kbd> to pass to the mate you point at · hold it to hit it harder · tap <kbd>${key('through')}</kbd> for a through ball`;
+    else if (mine && !t.shot) {
+      tip = `Near goal? <b>Hold</b> <kbd>${key('shoot')}</kbd> and release to shoot: a tap drives it low, a long hold rises`;
+      if (this.match.timedFinish) tip += ` · tap it again as the boot meets the ball for a perfect finish`;
+    }
     else if (mine && !t.chip) {
       // Once he has had a shot: the finishes (shown for a while on the ball, or until he tries one).
       tip = `Keeper off his line? <b>Hold</b> <kbd>${key('shoot')}</kbd> and tap <kbd>${key('through')}</kbd> to chip him · a soft shot aimed at a corner curls in`;
@@ -1119,6 +1183,7 @@ export class MatchSession {
     // The night fill is shared by every footballer drawn (menu kit previews too): off until a match sets it.
     setCharacterFill(0);
     setCharacterHemiFill(0);
+    setCharacterWhiteBalance();
     sfx.setRain(false);
     this.hud?.dispose();
     this.touch?.root.remove();

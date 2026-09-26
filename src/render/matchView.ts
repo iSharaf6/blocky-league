@@ -28,14 +28,60 @@ const RING_IDX = Array.from({ length: 22 }, (_, i) => i).filter((i) => i !== 0 &
 const NIGHT_CHAR_FILL = 0.6;
 /** Sunset: neutral sky fill on the footballers, so kits and skin stay true under the orange key. */
 const SUNSET_CHAR_HEMI = 0.35;
-/** Team ring under every outfield player: radii (m, before the draw scale) and opacity. */
+/** Team ring under every outfield player (AI v AI): radii (m, before the draw scale) and opacity. */
 const TEAM_RING_IN = 0.4;
 const TEAM_RING_OUT = 0.56;
 const TEAM_RING_ALPHA = 0.45;
+/**
+ * With a human side: his team-mates stand on a bright, thick ring in the team colour inside a white edge;
+ * the opponents on a thin, darker, fainter one. (The controlled player's yellow marker stays the strongest.)
+ */
+const OUR_RING_IN = 0.42;
+const OUR_RING_OUT = 0.64;
+const OUR_EDGE_OUT = 0.76;
+const OUR_RING_ALPHA = 0.95;
+const OUR_EDGE_ALPHA = 0.9;
+const THEIR_RING_IN = 0.44;
+const THEIR_RING_OUT = 0.54;
+const THEIR_RING_ALPHA = 0.75;
+/** Team pip over each of the human's team-mates: this far (m) over the head, drawn over everything. */
+const PIP_UP = 0.36;
 /** The referee's card (the chunky 1.4x mesh), scaled down so the close-up reads as a card, not a sign. */
 const CARD_SCALE = 0.35;
+/** Pass charging: the pass colour (teal, whitening towards full power) for the bar, recipient ring and arrow. */
+const PASS_TEAL = 0x2fe6d2;
+const PASS_LIGHT = 0x9ff7ee;
+const PASS_WHITE = 0xfbfbf4;
+/** The pass arrow: starts this far (m) out from the passer, stops this far short of the recipient, at most this long. */
+const PASS_ARROW_FROM = 0.9;
+const PASS_ARROW_SHORT = 1.1;
+const PASS_ARROW_MAX = 5.5;
 /** ...and turned this far (rad, about the raised arm) from facing the offender towards the lens side. */
 const CARD_TURN = -1.3;
+
+/**
+ * Ring / pip colours per side: `bright` (the human's team: the shirt colour, lifted and saturated so it glows
+ * on the lawn) with its `edge` (white; dark round a white kit's ring), `dim` (the opponents: the same hue,
+ * darkened) and `mid` (AI v AI: lifted to at least mid lightness).
+ */
+function teamStyles(kits: [Kit, Kit]): { bright: THREE.Color; edge: THREE.Color; dim: THREE.Color; mid: THREE.Color }[] {
+  return kits.map((k) => {
+    const hsl = { h: 0, s: 0, l: 0 };
+    new THREE.Color(k.shirt).getHSL(hsl);
+    // Whites, greys and blacks (low chroma, whatever HSL makes of an off-white) get neutral rings.
+    const r = (k.shirt >> 16) & 255, g = (k.shirt >> 8) & 255, b = k.shirt & 255;
+    const grey = Math.max(r, g, b) - Math.min(r, g, b) < 30;
+    const bright = grey
+      ? new THREE.Color().setHSL(hsl.h, 0, hsl.l > 0.6 ? 0.95 : 0.62)
+      : new THREE.Color().setHSL(hsl.h, Math.max(hsl.s, 0.6), clamp01(Math.min(0.66, Math.max(0.5, hsl.l))));
+    const light = grey && hsl.l > 0.6;
+    const edge = new THREE.Color(light ? 0x26262e : 0xffffff);
+    const dim = new THREE.Color().setHSL(hsl.h, grey ? 0 : Math.max(hsl.s, 0.45), Math.min(hsl.l, 0.2));
+    const mid = new THREE.Color(k.shirt);
+    if (hsl.l < 0.5) mid.setHSL(hsl.h, hsl.s, 0.5);
+    return { bright, edge, dim, mid };
+  });
+}
 
 /** Everything that draws a match: 22 voxel footballers, the ball, and the control marker. */
 export class MatchView {
@@ -65,12 +111,37 @@ export class MatchView {
   private charging = false;
   /** Night: four faint floodlight shadows per player, one away from each tower. */
   private floodShadows: THREE.InstancedMesh | null = null;
-  /** Team-coloured ground ring under each outfield player (instance k: outfield player RING_IDX[k]). */
-  private teamRings: THREE.InstancedMesh;
+  /**
+   * Ground rings under the outfield players: one set per style (AI v AI: one for everybody; with a human
+   * side: his team's fill and white edge, and the opponents' thin ring). `idx`: the players, by instance.
+   */
+  private ringSets: { mesh: THREE.InstancedMesh; idx: number[] }[] = [];
   private ringsOn = true;
+  /** Team pips over the human's team-mates (fill and white outline), their players and where they stand. */
+  private pipFill: THREE.InstancedMesh | null = null;
+  private pipEdge: THREE.InstancedMesh | null = null;
+  private pipIdx: number[] = [];
+  private pipsOn = false;
+  private pipColor = new THREE.Color();
+  /** The team-mate a charging pass is locked onto (his pip lights up white), -1 when none. */
+  private passAimIdx = -1;
   /** Power bar at the shooter's feet (over-the-shoulder set-piece lens) rather than over his head. */
   private powerLow = false;
   private powerAt = new THREE.Vector3();
+  /**
+   * Pass charging (PASS held): a small teal power bar at the passer's feet, a pulsing ring under the
+   * teammate the pass is locked onto and a short arrow from the passer towards him, all drawn over the players.
+   */
+  private passBar: THREE.Group;
+  private passFill: THREE.Mesh;
+  private passAt = new THREE.Vector3();
+  private passRing: THREE.Group;
+  private passArrow: THREE.Group;
+  private passShaft: THREE.Mesh;
+  private passHead: THREE.Mesh;
+  private passing = false;
+  /** Time of the last apply() (the pass ring pulses on it). */
+  private clock = 0;
   private towers: readonly { x: number; z: number; h: number }[] = FLOODLIGHT_TOWERS;
   private m4 = new THREE.Matrix4();
   private q = new THREE.Quaternion();
@@ -78,6 +149,7 @@ export class MatchView {
   private s3 = new THREE.Vector3();
   private up = new THREE.Vector3(0, 1, 0);
   private ballQuat = new THREE.Quaternion();
+  private tmpC = new THREE.Color();
   private tmpQ = new THREE.Quaternion();
   private axis = new THREE.Vector3();
   private pose: PoseInput = {
@@ -145,26 +217,65 @@ export class MatchView {
     this.ballShadow = blob;
     this.group.add(blob);
 
-    // Team rings: a flat, see-through ring in the shirt colour under every outfield player, so the two sides
-    // read at a glance (one instanced draw; lifted off the lawn and polygon-offset, so no z-fighting).
-    const ringGeo = new THREE.RingGeometry(TEAM_RING_IN, TEAM_RING_OUT, 20).rotateX(-Math.PI / 2);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: TEAM_RING_ALPHA, depthWrite: false,
-      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
-    });
-    this.teamRings = new THREE.InstancedMesh(ringGeo, ringMat, RING_IDX.length);
-    this.teamRings.frustumCulled = false;
-    this.teamRings.renderOrder = 2;
-    const rc = new THREE.Color();
-    const hsl = { h: 0, s: 0, l: 0 };
-    RING_IDX.forEach((i, k) => {
-      // Dark shirts (navy, black) would vanish into the lawn at 45%: their ring is the same hue, lifted.
-      rc.setHex(kits[i < 11 ? 0 : 1].shirt).getHSL(hsl);
-      if (hsl.l < 0.5) rc.setHSL(hsl.h, hsl.s, 0.5);
-      this.teamRings.setColorAt(k, rc);
-    });
-    if (this.teamRings.instanceColor) this.teamRings.instanceColor.needsUpdate = true;
-    this.group.add(this.teamRings);
+    // Team rings: flat, see-through rings on the lawn (instanced; lifted off the grass and polygon-offset, so
+    // no z-fighting). AI v AI: one ring style in each side's colour. With a human side his team stands out.
+    const ringSet = (inner: number, outer: number, idx: number[], color: (i: number) => THREE.Color, opacity: number, order: number) => {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+      });
+      const mesh = new THREE.InstancedMesh(new THREE.RingGeometry(inner, outer, 24).rotateX(-Math.PI / 2), mat, idx.length);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = order;
+      idx.forEach((i, k) => mesh.setColorAt(k, color(i)));
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      this.group.add(mesh);
+      this.ringSets.push({ mesh, idx });
+    };
+    const style = teamStyles(kits);
+    if (humanSide === 0 || humanSide === 1) {
+      const ours = RING_IDX.filter((i) => (i < 11 ? 0 : 1) === humanSide);
+      const theirs = RING_IDX.filter((i) => (i < 11 ? 0 : 1) !== humanSide);
+      const us = style[humanSide];
+      const them = style[humanSide === 0 ? 1 : 0];
+      // Their ring first (under), then our edge and fill on top.
+      ringSet(THEIR_RING_IN, THEIR_RING_OUT, theirs, () => them.dim, THEIR_RING_ALPHA, 2);
+      ringSet(OUR_RING_OUT - 0.02, OUR_EDGE_OUT, ours, () => us.edge, OUR_EDGE_ALPHA, 2);
+      ringSet(OUR_RING_IN, OUR_RING_OUT, ours, () => us.bright, OUR_RING_ALPHA, 3);
+      // Pips over his team-mates (keeper too): a little voxel chevron in the team colour with a white rim.
+      this.pipIdx = Array.from({ length: 11 }, (_, k) => k + (humanSide === 0 ? 0 : 11));
+      const chevron = (w: number, color: number) => {
+        const pb = new BoxBuilder();
+        pb.box(0, 0.09 * w, 0, 0.36 * w, 0.09 * w, 0.01, color);
+        pb.box(0, 0, 0, 0.24 * w, 0.09 * w, 0.01, color);
+        pb.box(0, -0.09 * w, 0, 0.12 * w, 0.09 * w, 0.01, color);
+        return pb.build();
+      };
+      const pipMat = (order: number) => {
+        const m = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, depthTest: false, depthWrite: false, fog: false });
+        return { m, order };
+      };
+      const e = pipMat(10);
+      const fl = pipMat(11);
+      this.pipEdge = new THREE.InstancedMesh(chevron(1.45, 0xffffff), e.m, 11);
+      this.pipFill = new THREE.InstancedMesh(chevron(1, 0xffffff), fl.m, 11);
+      this.pipEdge.renderOrder = e.order;
+      this.pipFill.renderOrder = fl.order;
+      for (const im of [this.pipEdge, this.pipFill]) {
+        im.frustumCulled = false;
+        im.visible = false;
+        this.group.add(im);
+      }
+      this.pipColor.copy(us.bright);
+      for (let k = 0; k < 11; k++) {
+        this.pipFill.setColorAt(k, us.bright);
+        this.pipEdge.setColorAt(k, us.edge);
+      }
+      this.pipFill.instanceColor!.needsUpdate = true;
+      this.pipEdge.instanceColor!.needsUpdate = true;
+    } else {
+      ringSet(TEAM_RING_IN, TEAM_RING_OUT, RING_IDX, (i) => style[i < 11 ? 0 : 1].mid, TEAM_RING_ALPHA, 2);
+    }
 
     // Control marker: a chunky square ring + bobbing arrow in the human's colour.
     const markColor = humanSide >= 0 ? 0xffd23a : 0xffffff;
@@ -253,11 +364,54 @@ export class MatchView {
     }
     this.powerBar.visible = false;
     this.group.add(this.powerBar);
+
+    // Pass power: the same chunky bar, smaller and teal, at the passer's feet (no sweet-spot ticks).
+    this.passBar = new THREE.Group();
+    const PB_W = 1.5;
+    const PB_H = 0.22;
+    this.passFill = flat(PB_W - 0.08, PB_H - 0.08, PASS_TEAL, 13);
+    this.passFill.geometry.translate((PB_W - 0.08) / 2, 0, 0);
+    this.passFill.position.x = -(PB_W - 0.08) / 2;
+    this.passBar.add(flat(PB_W + 0.1, PB_H + 0.1, PASS_WHITE, 11), flat(PB_W, PB_H, 0x1f2a30, 12), this.passFill);
+    this.passBar.visible = false;
+    this.group.add(this.passBar);
+    // The teammate the pass is locked onto: a bright teal ring with a white inner ring, flat on the lawn and
+    // drawn over everything (never hidden by the players around him).
+    const overlay = (color: number, opacity: number) =>
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, fog: false });
+    const ring = new THREE.Group();
+    const outer = new THREE.Mesh(new THREE.RingGeometry(0.64, 0.86, 28).rotateX(-Math.PI / 2), overlay(PASS_TEAL, 0.95));
+    const inner = new THREE.Mesh(new THREE.RingGeometry(0.46, 0.54, 28).rotateX(-Math.PI / 2), overlay(PASS_WHITE, 0.9));
+    outer.renderOrder = 9;
+    inner.renderOrder = 9;
+    ring.add(outer, inner);
+    ring.position.y = 0.05;
+    ring.visible = false;
+    this.passRing = ring;
+    this.group.add(ring);
+    // ...and a short arrow from the passer towards him: a flat shaft (scaled to length) and a chunky head.
+    this.passArrow = new THREE.Group();
+    this.passShaft = new THREE.Mesh(new THREE.BoxGeometry(1, 0.02, 0.2).translate(0.5, 0, 0), overlay(PASS_TEAL, 0.92));
+    const hb = new BoxBuilder();
+    hb.box(0.15, 0, 0, 0.3, 0.02, 0.8, PASS_TEAL);
+    hb.box(0.45, 0, 0, 0.3, 0.02, 0.5, PASS_TEAL);
+    hb.box(0.75, 0, 0, 0.3, 0.02, 0.2, PASS_WHITE);
+    this.passHead = new THREE.Mesh(
+      hb.build(),
+      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false, fog: false }),
+    );
+    this.passShaft.renderOrder = 9;
+    this.passHead.renderOrder = 9;
+    this.passArrow.add(this.passShaft, this.passHead);
+    this.passArrow.position.y = 0.06;
+    this.passArrow.visible = false;
+    this.group.add(this.passArrow);
   }
 
   /** Blend frames a→b and pose everything. */
   apply(a: Float32Array, b: Float32Array, alpha: number, time: number, dt: number): void {
     const f = this.frame;
+    this.clock = time;
     for (let i = 0; i < a.length; i++) f[i] = a[i];
     for (let i = 0; i < 22; i++) {
       const o = i * PF;
@@ -320,9 +474,11 @@ export class MatchView {
       }
       this.lastFacing[i] = f[o + 3];
       pose.turn = this.turnRate[i];
+      // (dt 0: a cut, a replay starting, players reset: the new poses are shown as they are, no cross-fade.)
+      pose.dt = dt;
       fb.pose(pose, time + i * 0.37);
     }
-    if (this.teamRings.visible) this.updateTeamRings();
+    if (this.ringsOn) this.updateTeamRings();
 
     // Ball: position plus rolling rotation integrated from its velocity.
     const bx = f[BALL_OFS], by = f[BALL_OFS + 1], bz = f[BALL_OFS + 2];
@@ -362,7 +518,8 @@ export class MatchView {
     if (this.floodShadows?.visible) this.updateFloodShadows();
     const pt = f[BALL_OFS + 10];
     const human = active >= 0 ? (active < 11 ? 0 : 1) : -1;
-    if (this.marker.visible && pt >= 0 && pt !== active && (pt < 11 ? 0 : 1) === human) {
+    // (While a pass is being charged its own lock-on ring marks the man: never two rings.)
+    if (this.marker.visible && !this.passing && pt >= 0 && pt !== active && (pt < 11 ? 0 : 1) === human) {
       this.targetRing.visible = true;
       this.targetRing.position.x = f[pt * PF];
       this.targetRing.position.z = f[pt * PF + 1];
@@ -409,7 +566,7 @@ export class MatchView {
     const pose = this.pose;
     pose.state = 0; pose.stateT = 0; pose.speed = sp; pose.runPhase = r.phase; pose.kickT = 0; pose.kickLeg = 1;
     pose.lean = Math.min(0.3, sp * 0.03); pose.diveDir = 0; pose.headerT = 0; pose.celebrate = 0; pose.y = 0;
-    pose.keeper = false; pose.hasBall = false; pose.turn = 0;
+    pose.keeper = false; pose.hasBall = false; pose.turn = 0; pose.dt = dt;
     pose.look = -wrapAngle(Math.atan2(bz - r.z, bx - r.x) - r.facing);
     pose.signal = r.signal > 0;
     pose.signalKind = r.kind === 'advantage' ? 1 : r.kind === 'card' ? 2 : 0;
@@ -589,23 +746,69 @@ export class MatchView {
   setTeamRings(on: boolean): void {
     if (on === this.ringsOn) return;
     this.ringsOn = on;
-    this.teamRings.visible = on;
+    for (const r of this.ringSets) r.mesh.visible = on;
     if (on) this.updateTeamRings();
   }
 
+  /** Team pips over the human's team-mates: the broadcast shot only (never over a close or low lens). */
+  setTeamPips(on: boolean): void {
+    this.pipsOn = on && !!this.pipFill;
+    if (this.pipFill) this.pipFill.visible = this.pipsOn;
+    if (this.pipEdge) this.pipEdge.visible = this.pipsOn;
+  }
+
   private updateTeamRings(): void {
-    const im = this.teamRings;
     const f = this.frame;
     const k = this.charK;
+    // (No team ring under the man the human controls: his yellow marker is the one ring there.)
+    const active = this.marker.visible ? f[BALL_OFS + 8] : -1;
     this.q.identity();
-    RING_IDX.forEach((i, n) => {
+    for (const { mesh, idx } of this.ringSets) {
+      idx.forEach((i, n) => {
+        const o = i * PF;
+        // Shrinks away under a jump; gone for a player sent off (parked by his dugout) or faded out of a lens.
+        const gone = i === active || f[o + 4] === SENT_OFF_CODE || this.players[i].opacity < 0.5;
+        const s = gone ? 0 : k * Math.max(0.5, 1 - f[o + 2] * 0.5);
+        this.m4.compose(this.v3.set(f[o], 0.03, f[o + 1]), this.q, this.s3.set(s, 1, s));
+        mesh.setMatrixAt(n, this.m4);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Pips over the human's team-mates, facing the lens: not over the man he controls (he has the marker), a
+   * player sent off or faded out of shot. The team-mate a charging pass is locked onto gets a white one.
+   */
+  private updateTeamPips(cam: THREE.Camera): void {
+    const fill = this.pipFill;
+    const edge = this.pipEdge;
+    if (!fill || !edge || !this.pipsOn) return;
+    const f = this.frame;
+    const active = f[BALL_OFS + 8];
+    const k = this.charK;
+    const top = this.headTop + PIP_UP * k;
+    let dirty = false;
+    this.pipIdx.forEach((i, n) => {
       const o = i * PF;
-      // Shrinks away under a jump; gone for a player sent off (parked by his dugout) or faded out of a lens.
-      const s = f[o + 4] === SENT_OFF_CODE || this.players[i].opacity < 0.5 ? 0 : k * Math.max(0.5, 1 - f[o + 2] * 0.5);
-      this.m4.compose(this.v3.set(f[o], 0.03, f[o + 1]), this.q, this.s3.set(s, 1, s));
-      im.setMatrixAt(n, this.m4);
+      const hide = i === active || f[o + 4] === SENT_OFF_CODE || this.players[i].opacity < 0.5;
+      const aimed = i === this.passAimIdx && this.passing;
+      const s = hide ? 0 : k * (aimed ? 1.3 : 1);
+      this.m4.compose(this.v3.set(f[o], top + f[o + 2], f[o + 1]), cam.quaternion, this.s3.set(s, s, s));
+      fill.setMatrixAt(n, this.m4);
+      edge.setMatrixAt(n, this.m4);
+      const want = aimed ? PASS_WHITE : -1;
+      fill.getColorAt(n, this.tmpC);
+      const cur = this.tmpC.getHex();
+      const next = want >= 0 ? want : this.pipColor.getHex();
+      if (cur !== next) {
+        fill.setColorAt(n, this.tmpC.setHex(next));
+        dirty = true;
+      }
     });
-    im.instanceMatrix.needsUpdate = true;
+    fill.instanceMatrix.needsUpdate = true;
+    edge.instanceMatrix.needsUpdate = true;
+    if (dirty) fill.instanceColor!.needsUpdate = true;
   }
 
   /**
@@ -714,8 +917,72 @@ export class MatchView {
     m.color.setHex(p < 0.6 ? 0x3aff9e : p < 0.85 ? 0xffd23a : 0xff4a3a);
   }
 
+  /**
+   * Pass charging: `p` 0..1 (null: not charging, and everything goes at once) for the passer at (x, z); the
+   * recipient he is locked onto at (rx, rz) gets the ring and the arrow (rx null: nobody locked on yet, just
+   * the bar). `low`: the over-the-shoulder set-piece lens (the bar sits a little smaller there).
+   */
+  setPassCharge(p: number | null, x = 0, z = 0, rx: number | null = null, rz = 0, low = false, aimIdx = -1): void {
+    this.passAimIdx = p === null || !(p >= 0) ? -1 : aimIdx;
+    if (p === null || !(p >= 0)) {
+      if (this.passing) {
+        this.passing = false;
+        this.passBar.visible = false;
+        this.passRing.visible = false;
+        this.passArrow.visible = false;
+      }
+      return;
+    }
+    this.passing = true;
+    this.targetRing.visible = false;
+    const k = Math.min(1, p);
+    this.passBar.visible = true;
+    this.passAt.set(x, 0.12, z);
+    this.passBar.scale.setScalar((low ? 0.7 : 0.9) * this.charK);
+    this.passFill.scale.x = Math.max(0.02, k);
+    (this.passFill.material as THREE.MeshBasicMaterial).color.setHex(k < 0.6 ? PASS_TEAL : k < 0.85 ? PASS_LIGHT : PASS_WHITE);
+    const on = rx !== null;
+    this.passRing.visible = on;
+    this.passArrow.visible = on;
+    if (!on) return;
+    // A quick, bright pulse (scale and opacity) so the eye finds him at once.
+    const pulse = 0.5 + 0.5 * Math.sin(this.clock * 11);
+    this.passRing.position.set(rx, 0.05, rz);
+    this.passRing.scale.setScalar(this.charK * (1 + pulse * 0.14));
+    for (const m of this.passRing.children) {
+      const mat = (m as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.72 + pulse * 0.26;
+    }
+    const dx = rx - x;
+    const dz = rz - z;
+    const dist = Math.hypot(dx, dz);
+    const len = Math.max(0, Math.min(PASS_ARROW_MAX, dist - PASS_ARROW_FROM - PASS_ARROW_SHORT));
+    if (len < 0.5) {
+      this.passArrow.visible = false;
+      return;
+    }
+    const ux = dx / dist;
+    const uz = dz / dist;
+    this.passArrow.position.set(x + ux * PASS_ARROW_FROM, 0.06, z + uz * PASS_ARROW_FROM);
+    this.passArrow.rotation.y = -Math.atan2(dz, dx);
+    // Shaft up to the head (1.05 m long), the head at its tip.
+    const shaft = Math.max(0.05, len - 1.05);
+    this.passShaft.scale.set(shaft, 1, 1);
+    this.passHead.position.x = shaft;
+  }
+
   faceCamera(cam: THREE.Camera): void {
     this.powerBar.quaternion.copy(cam.quaternion);
+    this.updateTeamPips(cam);
+    if (this.passBar.visible) {
+      // At his feet, stepped towards the lens along the ground so it sits just under his boots on screen.
+      this.passBar.quaternion.copy(cam.quaternion);
+      const dx = cam.position.x - this.passAt.x;
+      const dz = cam.position.z - this.passAt.z;
+      const d = Math.hypot(dx, dz) || 1;
+      const step = 0.95 * this.charK;
+      this.passBar.position.set(this.passAt.x + (dx / d) * step, this.passAt.y, this.passAt.z + (dz / d) * step);
+    }
     if (this.powerLow && this.powerBar.visible) {
       // At his feet: stepped 0.9 m towards the lens along the ground, so it sits just under his boots on
       // screen rather than across them.

@@ -21,6 +21,11 @@ export interface CamFocus {
    */
   setPiece?: {
     x: number; z: number; tx: number; tz: number; behind?: boolean; goal?: boolean; pen?: boolean; taker?: number; corner?: boolean; ours?: boolean;
+    /**
+     * Free kicks / penalties: the taker's run-up foot (Match.runUpFoot: +1 right, -1 left). He waits on the
+     * other side of the aim line from it, so the over-the-shoulder lens takes this side from the first frame.
+     */
+    foot?: number;
   } | null;
   /** Celebrate: player index of the subject (never counted as blocking the shot). */
   subject?: number;
@@ -59,9 +64,15 @@ const CARD_DEG = 115;
 const CARD_HAND = 1;
 const CARD_D = 6.4;
 const CARD_Y = 1.5;
-/** Portrait (phones held upright): the end-on lens's distance behind / above its target, and its steepest tilt. */
+/**
+ * Portrait (phones held upright): the end-on lens's distance behind / above its target, its half-angle of
+ * view at the 'wide' setting (26 degrees: ~25 m of the pitch's width across the screen at the ball, where 19
+ * showed only ~14 m and fewer than half the players), and its steepest tilt: never so steep that the bottom
+ * of the frame looks back past straight down (at most PORTRAIT_TILT_MAX).
+ */
 const PORTRAIT_BACK = 44;
 const PORTRAIT_UP = 34;
+const PORTRAIT_HALF_FOV = 26;
 const PORTRAIT_TILT_MAX = 70;
 /** Corners: how far (m) the set-piece framing is pulled from the taker / box midpoint towards the goal. */
 const CORNER_PULL = 6;
@@ -97,11 +108,89 @@ const CORNER_PEN_NDC_TOUCH = 0.34;
 const CORNER_PEN_NDC_LOW = -0.1;
 /** After a corner is struck: seconds the framing glides (speed-limited) rather than jump-cutting to the ball. */
 const CORNER_EASE_S = 1.2;
+/** Near-side corners: the taker's boots stay above this NDC height; the lens backs off up to this factor for it. */
+const CORNER_TAKER_NDC = -0.8;
+const CORNER_BACK_MAX = 2.4;
+/**
+ * A set piece taken: the framing eases from the set-piece shot into the open-play one (PIECE_OUT_W rad/s,
+ * ~1 s) instead of stepping to it at the kick. A corner holds the box framing until the delivery arrives
+ * (inside the box) or CORNER_HOLD_S has gone.
+ */
+const PIECE_OUT_W = 4.5;
+const CORNER_HOLD_S = 1.6;
 /** Goal-line replay: the lens never looks further out than this from the goal line (m). */
 const REPLAY_LOOK_MAX = 12;
 /** Post-strike hold: once the ball is past the wall the lens pushes in after it, this far at most (m), at this rate. */
 const PUSH_MAX = 6;
 const PUSH_RATE = 4;
+/**
+ * Broadcast framing inputs are eased (critically damped, so they start and stop gently) before they move the
+ * shot. The possession lean: up to LEAN_M m towards the goal being attacked, eased in / out over ~1 s
+ * (LEAN_W rad/s); a new side has to keep the ball LEAN_HOLD s before the lean swings to it, and a loose ball
+ * or a pass in flight keeps the last side's.
+ */
+const LEAN_M = 5;
+const LEAN_W = 4;
+const LEAN_HOLD = 0.35;
+/** The controlled player's pull on the framing, and how gently it follows a switch of player (rad/s). */
+const AX_K = 0.18;
+const AX_W = 2.5;
+/** Ball speed / height dolly-out and the follow rate it drives: eased at this rate (rad/s). */
+const ZOOM_W = 2.5;
+/** The controlled player's feet kept clear of the bottom HUD too: that extra pull eases at this rate (rad/s). */
+const FEET_W = 2;
+/**
+ * The broadcast lens follows its framing as a critically damped spring (FOLLOW_K x the damping rate: the
+ * same lag as a plain exponential ease, but the velocity never jumps), never faster than MAX_GLIDE and never
+ * accelerating harder than MAX_ACC (m/s^2): a big re-frame (a corner struck) is a smooth glide, not a whip.
+ */
+const FOLLOW_K = 2;
+const MAX_ACC = 110;
+/** Soft edges (m): the framing slows into its limits over this distance instead of stopping dead on them. */
+const EDGE_KNEE = 3;
+
+/** Critically damped spring on one value (exact step: stable at any frame time). Unprimed: jumps to the target. */
+class Ease {
+  x = 0;
+  v = 0;
+  private primed = false;
+
+  to(target: number, w: number, dt: number): number {
+    if (!this.primed) return this.snap(target);
+    if (dt <= 0) return this.x;
+    const x0 = this.x - target;
+    const e = Math.exp(-w * dt);
+    const k = (this.v + w * x0) * dt;
+    this.v = (this.v - w * k) * e;
+    this.x = target + (x0 + k) * e;
+    return this.x;
+  }
+
+  snap(target: number): number {
+    this.x = target;
+    this.v = 0;
+    this.primed = true;
+    return target;
+  }
+
+  /** The next to() jumps straight to its target (after a cut). */
+  reset(): void {
+    this.primed = false;
+  }
+}
+
+/**
+ * clamp() with soft ends (C1-continuous): identity until half a `knee` short of a limit, then easing to a stop
+ * half a knee past it (at the limit itself it sits ~0.1 knee inside: the framing near the limit is kept).
+ */
+function softClamp(v: number, lo: number, hi: number, knee: number): number {
+  const k = Math.max(1e-3, Math.min(knee, (hi - lo) / 2));
+  const top = hi + k / 2;
+  const bot = lo - k / 2;
+  if (v > top - k) return top - k * Math.exp(-(v - (top - k)) / k);
+  if (v < bot + k) return bot + k * Math.exp((v - (bot + k)) / k);
+  return v;
+}
 
 export class CameraRig {
   mode: CamMode = 'menu';
@@ -158,6 +247,29 @@ export class CameraRig {
   introT = 0;
   /** The last update() cut to its shot (rather than gliding): whatever depends on the framing can snap too. */
   private cutNow = true;
+  /** Broadcast lens velocity (look target, position), m/s: the spring follow's state. */
+  private velT = new THREE.Vector3();
+  private velP = new THREE.Vector3();
+  /** Eased broadcast inputs: the controlled player, the possession lean, the ball-speed dolly-out. */
+  private axE = new Ease();
+  private azE = new Ease();
+  private leanE = new Ease();
+  private zoomE = new Ease();
+  private feetE = new Ease();
+  private spE = 0;
+  private spPrimed = false;
+  /** Attacking direction of the side the lean favours (+1 / -1, 0 = nobody yet), and a challenger's claim on it. */
+  private leanSide = 0;
+  private leanCand = 0;
+  private leanCandT = 0;
+  /**
+   * The last set-piece broadcast shot (null: none to ease out of), how much of it is still in the framing
+   * (1 while the set piece is on, easing to 0 once it is taken), a corner's hold on it (s) and its goal (x).
+   */
+  private pieceShot: Shot | null = null;
+  private pieceE = new Ease();
+  private pieceHold = 0;
+  private pieceGoalX = 0;
 
   constructor(readonly camera: THREE.PerspectiveCamera) {
     this.fov = camera.fov;
@@ -170,6 +282,7 @@ export class CameraRig {
       this.snap = true;
       this.post = 0;
       this.cardSide = 0;
+      this.resetEasing();
       if (m === 'celebrate') {
         this.celebT = 0;
         this.celebFresh = true;
@@ -182,6 +295,58 @@ export class CameraRig {
     this.snap = true;
     this.celebT = 0;
     this.celebFresh = true;
+    this.resetEasing();
+  }
+
+  /** After a cut the eased framing inputs start where they want to be (no ease-in from the old shot). */
+  private resetEasing(): void {
+    this.axE.reset();
+    this.azE.reset();
+    this.leanE.reset();
+    this.zoomE.reset();
+    this.feetE.reset();
+    this.spPrimed = false;
+    this.pieceShot = null;
+    this.pieceHold = 0;
+  }
+
+  /**
+   * Set piece -> open play without a lurch: while a set piece is on, its broadcast shot is remembered; once
+   * it is taken the framing eases out of it (a corner first holds it until the delivery arrives in the box).
+   */
+  private easeFromPiece(shot: Shot, f: CamFocus, dt: number): void {
+    const piece = f.setPiece;
+    if (piece) {
+      const s = (this.pieceShot ??= { ...shot });
+      Object.assign(s, shot);
+      this.pieceE.snap(1);
+      this.pieceHold = piece.corner ? CORNER_HOLD_S : 0;
+      this.pieceGoalX = Math.sign(piece.x || 1) * HALF_L;
+      return;
+    }
+    const p = this.pieceShot;
+    if (!p) return;
+    // A delivery has arrived once it is in the box; a corner played short (still low and slow after 0.3 s)
+    // lets go at once, so the pass along the byline is followed.
+    const arrived = Math.abs(f.bx - this.pieceGoalX) < 17 && Math.abs(f.bz) < 19;
+    const short = CORNER_HOLD_S - this.pieceHold > 0.3 && f.by < 0.5 && Math.hypot(f.bvx, f.bvz) < 15;
+    let w = 1;
+    if (this.pieceHold > 0 && !arrived && !short) this.pieceHold -= dt;
+    else {
+      this.pieceHold = 0;
+      w = this.pieceE.to(0, PIECE_OUT_W, dt);
+    }
+    if (w < 0.002) {
+      this.pieceShot = null;
+      return;
+    }
+    shot.tx = lerp(shot.tx, p.tx, w);
+    shot.ty = lerp(shot.ty, p.ty, w);
+    shot.tz = lerp(shot.tz, p.tz, w);
+    shot.px = lerp(shot.px, p.px, w);
+    shot.py = lerp(shot.py, p.py, w);
+    shot.pz = lerp(shot.pz, p.pz, w);
+    shot.fov = lerp(shot.fov, p.fov, w);
   }
 
   /** Cut only if the new framing is far from the current one (> 8 m); otherwise glide to it. */
@@ -223,7 +388,10 @@ export class CameraRig {
   setZoom(z: CamZoom): void {
     if (!(z in ZOOM_K) || z === this.zoomSetting) return;
     this.zoomSetting = z;
-    if (this.mode === 'broadcast' && !this.behind) this.snap = true;
+    if (this.mode === 'broadcast' && !this.behind) {
+      this.snap = true;
+      this.resetEasing();
+    }
   }
 
   /**
@@ -244,24 +412,53 @@ export class CameraRig {
   }
 
   /** The main broadcast framing (landscape gantry or portrait end-on). Updates the look-ahead: once a frame. */
+  /**
+   * The possession lean (m along x): towards the goal the side in possession attacks, past 12 m into that
+   * half. Hysteresis: a loose ball or a pass in flight (lean 0) keeps the last side, and a new side has to
+   * hold on to it for LEAN_HOLD before the lean swings over; the shift itself eases in and out (~1 s).
+   */
+  private leanShift(f: CamFocus, dt: number): number {
+    const raw = Math.sign(f.lean ?? 0);
+    if (raw !== 0 && raw !== this.leanSide) {
+      if (raw !== this.leanCand) {
+        this.leanCand = raw;
+        this.leanCandT = 0;
+      }
+      this.leanCandT += dt;
+      if (this.leanSide === 0 || this.leanCandT >= LEAN_HOLD) {
+        this.leanSide = raw;
+        this.leanCand = 0;
+      }
+    } else if (raw === this.leanSide) this.leanCand = 0;
+    const s = this.leanSide;
+    return this.leanE.to(s === 0 ? 0 : s * LEAN_M * smoothstep(12, 34, s * f.bx), LEAN_W, dt);
+  }
+
   private broadcastShot(f: CamFocus, dt: number): { shot: Shot; rate: number } {
     const cam = this.camera;
-    const sp = Math.hypot(f.bvx, f.bvz);
+    // Every input that can jump (the ball struck, a switch of player, possession changing hands) is eased
+    // before it moves the framing: the wanted shot itself never jumps in open play.
+    const sp = Math.min(Math.hypot(f.bvx, f.bvz), 25);
+    this.spE = this.spPrimed ? damp(this.spE, sp, ZOOM_W, dt) : sp;
+    this.spPrimed = true;
     this.lead.x = damp(this.lead.x, f.bvx * 0.35, 1.4, dt);
     this.lead.y = damp(this.lead.y, f.bvz * 0.2, 1.4, dt);
+    const ax = this.axE.to(f.ax, AX_W, dt);
+    this.azE.to(f.az, AX_W, dt);
+    const lean = this.leanShift(f, dt);
     let tx: number, tz: number, px: number, py: number, pz: number, fov: number;
     if (this.portrait) {
       const ad = f.attack;
       const piece = f.setPiece;
       // The ball ~7 m short of the look target sits at ~-25% of the height, above the touch buttons.
-      let fx = f.bx * 0.85 + f.ax * 0.15 + this.lead.x + ad * 5;
+      let fx = f.bx * 0.85 + ax * 0.15 + this.lead.x + ad * 5;
       let fz = f.bz * 0.8 + this.lead.y;
       let zLim = HALF_W - 9;
-      if (piece?.corner && piece.ours === false) {
-        // Their corner: the narrow frame can't hold the flag and the goal both, so it shows the box we
-        // defend (the delivery flies into shot).
-        fx = piece.tx + ad * 4;
-        fz = piece.z * 0.15;
+      if (piece?.corner) {
+        // Corners (ours or theirs): the narrow frame can't hold the flag and the goal both, so it shows the
+        // box, the goal near the middle, turned a touch towards the flag side the delivery flies in from.
+        fx = piece.tx + ad * (piece.ours === false ? 4 : 3);
+        fz = piece.z * 0.12;
       } else if (piece) {
         // Set pieces: framed on the taker the same way, and never with him out of the narrow frame (a
         // throw-in or a corner by the touchline included).
@@ -269,8 +466,8 @@ export class CameraRig {
         fz = piece.z * 0.9 + piece.tz * 0.1;
         zLim = HALF_W - 2.5;
       }
-      tx = clamp(fx, -HALF_L + 8, HALF_L - 8);
-      tz = clamp(fz, -zLim, zLim);
+      tx = softClamp(fx, -HALF_L + 8, HALF_L - 8, EDGE_KNEE);
+      tz = softClamp(fz, -zLim, zLim, EDGE_KNEE * (2 / 3));
       this.yaw = ad > 0 ? Math.PI / 2 : -Math.PI / 2;
       // End-on, PORTRAIT_BACK m back and PORTRAIT_UP m up. Near our own goal that would put the lens behind
       // the end stand (a roofed bowl fills the frame with roof), so it never goes back past the end boards:
@@ -278,6 +475,10 @@ export class CameraRig {
       // the bottom of the frame), keeping the ball at the same height on screen. Continuous at the switch.
       const limit = HALF_L + 3;
       const uT = ad * tx;
+      // Closer settings narrow the lens (same spot, same tilt): the players drawn bigger, the ball still
+      // above the touch buttons.
+      const half = Math.atan(Math.tan(PORTRAIT_HALF_FOV * DEG) * PORTRAIT_ZOOM[this.zoomSetting]);
+      const tiltMax = Math.min(PORTRAIT_TILT_MAX * DEG, 89 * DEG - half);
       let G = PORTRAIT_BACK;
       py = PORTRAIT_UP;
       if (uT - PORTRAIT_BACK < -limit) {
@@ -285,7 +486,7 @@ export class CameraRig {
         const r = Math.max(6, uT - 7 + limit);
         const k = clamp((r0 - r) / (r0 - 6), 0, 1);
         const p0 = Math.atan2(PORTRAIT_UP, PORTRAIT_BACK);
-        const pitch = p0 + k * (PORTRAIT_TILT_MAX * DEG - p0);
+        const pitch = p0 + k * (tiltMax - p0);
         // Where the ball (7 m short of the old target) sat below the centre of the frame.
         const drop = Math.atan2(PORTRAIT_UP, r0) - p0;
         py = r * Math.tan(pitch + drop);
@@ -294,20 +495,16 @@ export class CameraRig {
       }
       px = tx - ad * G;
       pz = tz;
-      // Closer settings narrow the lens (same spot, same tilt): the players drawn bigger, the ball still
-      // above the touch buttons.
-      fov = (2 * Math.atan(Math.tan(19 * DEG) * PORTRAIT_ZOOM[this.zoomSetting])) / DEG;
+      fov = (2 * half) / DEG;
     } else {
       this.yaw = 0;
       const piece = f.setPiece;
       // Corners keep the wide shot whatever the setting: the whole box has to be in the frame.
       const W = piece?.corner ? this.wideWidth() : this.broadcastWidth();
       const small = typeof window !== 'undefined' && window.innerHeight < 420;
-      let fx = f.bx * 0.82 + f.ax * 0.18 + this.lead.x;
+      let fx = f.bx * (1 - AX_K) + ax * AX_K + this.lead.x + lean;
       // Aim a little beyond the ball so the far boards and a few stand rows frame the top.
       let fz = small ? f.bz * 0.9 : f.bz * 0.6 - 5 + this.lead.y * 0.5;
-      const lean = f.lean ?? 0;
-      if (lean !== 0) fx += lean * 5 * smoothstep(12, 34, lean * f.bx);
       if (piece) {
         // Taker and target together, but never let the taker leave the frame.
         let mx = (piece.x + piece.tx) / 2;
@@ -329,25 +526,40 @@ export class CameraRig {
         fx = clamp(mx, piece.x - 0.3 * W, piece.x + 0.3 * W);
         fz = clamp(mz, piece.z - 0.22 * W, zHi);
       }
+      // (Soft limits: the framing eases to a stop at the ends and sides instead of hitting a wall.)
       const edge = HALF_L - 0.3 * W + (piece?.corner ? CORNER_PULL : 0);
-      tx = clamp(fx, -edge, edge);
+      tx = softClamp(fx, -edge, edge, EDGE_KNEE);
       // Touch screens: the buttons own the bottom-right, so a set-piece taker is kept in the left 60% of the
       // frame (even if that shows a little of the end stand beyond the corner flag).
       if (piece && this.touchLayout) tx = Math.max(tx, Math.min(piece.x - 0.06 * W, HALF_L + 2));
-      tz = clamp(fz, -(HALF_W - 12), HALF_W - 10);
-      // Distance so W metres span the screen with a long, near-orthographic lens.
-      const zoom = 1 + clamp(f.by * 0.015 + sp * 0.003, 0, 0.1);
-      const d = (W / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2)) * cam.aspect)) * zoom;
+      tz = softClamp(fz, -(HALF_W - 12), HALF_W - 10, EDGE_KNEE * (2 / 3));
+      // Distance so W metres span the screen with a long, near-orthographic lens; it eases out a little for a
+      // ball in the air or struck hard (never a jump on the kick).
+      const zoom = this.zoomE.to(1 + clamp(f.by * 0.015 + this.spE * 0.003, 0, 0.1), ZOOM_W, dt);
+      let d = (W / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2)) * cam.aspect)) * zoom;
       const hf = THREE.MathUtils.degToRad(FOV / 2);
       // Play by the near touchline: the lens rises (a steeper look down, target and distance kept) until the
       // near stand's front-row heads drop out of the bottom band (<= 8% of the height), and only if even the
       // steepest angle can't manage that does the look target come back up the pitch; either way the ball
       // itself stays clear of the bottom HUD.
-      const bz = piece ? Math.max(piece.z, f.bz) : f.bz;
+      // The lowest point that must stay clear of the bottom HUD: the ball, and the controlled player's feet
+      // when he is anywhere near it (his pull fades out smoothly from 10 to 18 m away: a man 30 m off
+      // across the pitch never drags the ball off the top).
+      // (His extra pull is eased on its own, so a switch of player or a pass away from him never tugs the
+      // framing across and back; the ball's own limit is never eased.)
+      const near = 1 - smoothstep(10, 18, Math.hypot(ax - f.bx, this.azE.x - f.bz));
+      const extra = this.feetE.to(piece ? 0 : Math.max(0, (this.azE.x - f.bz) * near), FEET_W, dt);
+      const bz = piece ? Math.max(piece.z, f.bz) : f.bz + extra;
+      // NDC height of ground-plane point (z, y) for a lens looking at (tzz) pitched down `a`. A point behind
+      // the lens is never in shot (-Infinity: "below the frame"). (The closer settings put the lens over the
+      // near stand; measuring that point as an angle wrapped it past 90 degrees into "top of the frame", and
+      // the pitch flipped between 27 and ~38 degrees from one frame to the next.)
       const ndcAt = (tzz: number, a: number, z: number, y: number) => {
-        const cz = tzz + d * Math.cos(a);
-        const cy = d * Math.sin(a);
-        return -Math.tan(Math.atan2(cy - y, cz - z) - a) / Math.tan(hf);
+        const dz = z - (tzz + d * Math.cos(a));
+        const dy = y - d * Math.sin(a);
+        const depth = -dz * Math.cos(a) - dy * Math.sin(a);
+        if (depth < 0.5) return -Infinity;
+        return (dy * Math.cos(a) - dz * Math.sin(a)) / (depth * Math.tan(hf));
       };
       const standOk = (tzz: number, a: number) => ndcAt(tzz, a, NEAR_STAND_Z, NEAR_STAND_Y) <= NEAR_STAND_NDC;
       const ballOk = (tzz: number, a: number) => ndcAt(tzz, a, bz, 0) >= NEAR_BALL_NDC;
@@ -368,39 +580,64 @@ export class CameraRig {
       };
       if (piece?.corner) {
         // Corners: framed on the box, the penalty spot at ~46% of the height (~33% on touch layouts, so the
-        // buttons never cover the box). A near-side taker may drop out of the bottom until he strikes it
-        // (the delivery flies into shot); a far-side one is kept below the top 8% as far as the spot can
-        // come down (55%) for him.
-        tz = tzFor(0, 0, this.touchLayout ? CORNER_PEN_NDC_TOUCH : CORNER_PEN_NDC);
-        if (piece.z < 0) tz = Math.max(Math.min(tz, tzFor(piece.z, (f.tall ?? 1.9) + 0.3, 0.84)), tzFor(0, 0, CORNER_PEN_NDC_LOW));
-      } else if (!standOk(tz, a0)) {
-        if (standOk(tz, aMax)) {
-          // Smallest pitch that clears the stand (bisection keeps it continuous as the ball moves).
-          let lo = a0;
-          let hi = aMax;
-          for (let i = 0; i < 14; i++) {
-            const mid = (lo + hi) / 2;
-            if (standOk(tz, mid)) hi = mid;
-            else lo = mid;
-          }
-          a = hi;
-        } else {
-          a = aMax;
-          // Pull the target back up the pitch (never so far that the ball drops under the HUD).
-          let lo = tz - 14;
-          let hi = tz;
-          for (let i = 0; i < 14; i++) {
-            const mid = (lo + hi) / 2;
-            if (standOk(mid, a)) lo = mid;
-            else hi = mid;
-          }
-          tz = lo;
+        // buttons never cover the box). A near-side taker is kept in shot too (his boots above NDC
+        // CORNER_TAKER_NDC): the lens backs off (a wider shot) as far as that takes. A far-side one is kept
+        // below the top 8% as far as the spot can come down (55%) for him.
+        const penN = this.touchLayout ? CORNER_PEN_NDC_TOUCH : CORNER_PEN_NDC;
+        if (piece.z > 0) {
+          const d0 = d;
+          const fits = (s: number) => {
+            d = d0 * s;
+            return ndcAt(tzFor(0, 0, penN), a0, piece.z, 0) >= CORNER_TAKER_NDC;
+          };
+          if (!fits(1)) {
+            let lo = 1;
+            let hi = CORNER_BACK_MAX;
+            if (fits(hi)) {
+              for (let i = 0; i < 16; i++) {
+                const mid = (lo + hi) / 2;
+                if (fits(mid)) hi = mid;
+                else lo = mid;
+              }
+            }
+            d = d0 * hi;
+          } else d = d0;
         }
-        // The ball wins over the stand: ease the target back towards it until it clears the HUD.
-        if (!ballOk(tz, a)) {
+        tz = tzFor(0, 0, penN);
+        if (piece.z < 0) tz = Math.max(Math.min(tz, tzFor(piece.z, (f.tall ?? 1.9) + 0.3, 0.84)), tzFor(0, 0, CORNER_PEN_NDC_LOW));
+      } else {
+        if (!standOk(tz, a0)) {
+          if (standOk(tz, aMax)) {
+            // Smallest pitch that clears the stand (bisection keeps it continuous as the ball moves).
+            let lo = a0;
+            let hi = aMax;
+            for (let i = 0; i < 18; i++) {
+              const mid = (lo + hi) / 2;
+              if (standOk(tz, mid)) hi = mid;
+              else lo = mid;
+            }
+            a = hi;
+          } else {
+            a = aMax;
+            // Pull the target back up the pitch (never so far that the ball drops under the HUD). The bracket
+            // always holds the answer (the stand is out of shot well before 40 m), so it never jumps to an end.
+            let lo = tz - 40;
+            let hi = tz;
+            for (let i = 0; i < 20; i++) {
+              const mid = (lo + hi) / 2;
+              if (standOk(mid, a)) lo = mid;
+              else hi = mid;
+            }
+            tz = lo;
+          }
+        }
+        // The ball wins over the stand (and over the aim beyond it, on the closer settings): ease the target
+        // back towards it until it clears the HUD. Looking at the ball itself puts it mid-frame, so the answer
+        // is always between here and the ball.
+        if (!ballOk(tz, a) && bz > tz) {
           let lo = tz;
-          let hi = tz + 10;
-          for (let i = 0; i < 12; i++) {
+          let hi = bz;
+          for (let i = 0; i < 20; i++) {
             const mid = (lo + hi) / 2;
             if (ballOk(mid, a)) hi = mid;
             else lo = mid;
@@ -413,7 +650,7 @@ export class CameraRig {
       pz = tz + d * Math.cos(a);
       fov = FOV;
     }
-    const rate = f.setPiece ? 2.4 : 3.2 + Math.min(sp, 25) * 0.08;
+    const rate = f.setPiece ? 2.4 : 3.2 + this.spE * 0.08;
     return { shot: { tx, ty: 0, tz, px, py, pz, fov }, rate };
   }
 
@@ -470,6 +707,8 @@ export class CameraRig {
     let glide = false;
     /** A designed move (the intro fly-in, the post-strike hold): follow it exactly, no speed limit, no jump cuts. */
     let scripted = false;
+    /** The broadcast shot: followed by the spring (smooth velocity, limited acceleration). */
+    let spring = false;
     switch (this.mode) {
       case 'menu': {
         this.orbit += dt * 0.045;
@@ -552,6 +791,7 @@ export class CameraRig {
           ({ tx, ty, tz, px, py, pz, fov } = b.shot);
           rate = b.rate;
           glide = true;
+          spring = true;
           break;
         }
         // Referee close-up: the lens orbits the midpoint between the referee and the offender he faces,
@@ -645,12 +885,15 @@ export class CameraRig {
           this.postSpotZ = piece.z;
           this.postPush = 0;
           this.wasCorner = false;
+          this.pieceShot = null;
           break;
         }
         const bc = this.broadcastShot(f, dt);
+        this.easeFromPiece(bc.shot, f, dt);
         ({ tx, ty, tz, px, py, pz, fov } = bc.shot);
         rate = bc.rate;
         glide = true;
+        spring = true;
         // A corner has just been struck: the framing swings from the box to the ball (and back in to the
         // chosen camera distance) as a speed-limited glide, never a jump cut at the moment of the kick.
         const corner = !!piece?.corner && !this.portrait;
@@ -676,7 +919,9 @@ export class CameraRig {
           behind = true;
           rate = 14;
           glide = false;
+          spring = false;
           scripted = true;
+          this.pieceShot = null;
           // When it runs out, the next frame is the broadcast shot and `behind` flipping makes it a cut.
           this.post -= dt;
         }
@@ -714,7 +959,16 @@ export class CameraRig {
       this.pos.set(px, py, pz);
       this.fov = fov;
       this.snap = false;
+      this.velT.set(0, 0, 0);
+      this.velP.set(0, 0, 0);
+    } else if (spring) {
+      // The broadcast lens: a critically damped follow, speed- and acceleration-limited (see FOLLOW_K).
+      this.follow(this.target, this.velT, tx, ty, tz, rate * FOLLOW_K, dt);
+      this.follow(this.pos, this.velP, px, py, pz, rate * FOLLOW_K, dt);
+      this.fov = damp(this.fov, fov, rate, dt);
     } else {
+      this.velT.set(0, 0, 0);
+      this.velP.set(0, 0, 0);
       const ox = this.pos.x, oy = this.pos.y, oz = this.pos.z;
       const qx = this.target.x, qy = this.target.y, qz = this.target.z;
       this.target.x = damp(this.target.x, tx, rate, dt);
@@ -748,6 +1002,39 @@ export class CameraRig {
     }
     cam.lookAt(this.target);
     cam.updateProjectionMatrix();
+  }
+
+  /**
+   * One step of the broadcast follow: `x` (velocity `v`) springs towards (gx, gy, gz) at `w` rad/s, critically
+   * damped (exact step), then the change of velocity is held to MAX_ACC and the speed to MAX_GLIDE.
+   */
+  private follow(x: THREE.Vector3, v: THREE.Vector3, gx: number, gy: number, gz: number, w: number, dt: number): void {
+    if (dt <= 0) return;
+    const e = Math.exp(-w * dt);
+    const ox = x.x - gx, oy = x.y - gy, oz = x.z - gz;
+    const kx = (v.x + w * ox) * dt, ky = (v.y + w * oy) * dt, kz = (v.z + w * oz) * dt;
+    let nx = (v.x - w * kx) * e, ny = (v.y - w * ky) * e, nz = (v.z - w * kz) * e;
+    let limited = false;
+    const dv = Math.hypot(nx - v.x, ny - v.y, nz - v.z);
+    const dvMax = MAX_ACC * dt;
+    if (dv > dvMax) {
+      const k = dvMax / dv;
+      nx = v.x + (nx - v.x) * k;
+      ny = v.y + (ny - v.y) * k;
+      nz = v.z + (nz - v.z) * k;
+      limited = true;
+    }
+    const s = Math.hypot(nx, ny, nz);
+    if (s > MAX_GLIDE) {
+      const k = MAX_GLIDE / s;
+      nx *= k;
+      ny *= k;
+      nz *= k;
+      limited = true;
+    }
+    if (limited) x.set(x.x + (v.x + nx) * 0.5 * dt, x.y + (v.y + ny) * 0.5 * dt, x.z + (v.z + nz) * 0.5 * dt);
+    else x.set(gx + (ox + kx) * e, gy + (oy + ky) * e, gz + (oz + kz) * e);
+    v.set(nx, ny, nz);
   }
 
   /**
@@ -834,7 +1121,12 @@ export class CameraRig {
     let ss = piece.z * ux - piece.x * uz > 0 ? -1 : 1;
     const fr = this.players;
     const taker = piece.taker ?? -1;
-    if (fk && fr && taker >= 0) {
+    if ((fk || piece.pen) && piece.foot) {
+      // The sim stands him at his run-up spot on the -foot side of the line: the lens goes on the +foot side,
+      // right from the first frame (the drawn frame may still show him at the ball then, and a lens that
+      // picked his side and then crossed over filmed the back of his head for ~0.7 s).
+      ss = piece.foot > 0 ? 1 : -1;
+    } else if (fk && fr && taker >= 0) {
       const lat = (fr[taker * PF] - piece.x) * -uz + (fr[taker * PF + 1] - piece.z) * ux;
       if (Math.abs(lat) > 0.2) ss = lat > 0 ? -1 : 1;
     }

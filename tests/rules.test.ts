@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { crossingZ, HEADER_MAX_D, HEADER_MAX_VH, LOB_MAX_SPEED, resolveKick, stickCurl, THROW_RANGE } from '../src/sim/actions';
+import { CLEAR_MAX_SPEED, crossingZ, HEADER_MAX_D, HEADER_MAX_VH, LOB_MAX_SPEED, resolveKick, stickCurl, THROW_RANGE } from '../src/sim/actions';
 import { Ball, type BallHit } from '../src/sim/ball';
 import { BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_W, HALF_L, HALF_W, PEN_SPOT, SEP_MATE, SEP_OPP, WALL_DIST } from '../src/sim/constants';
 import { EMPTY_PAD, Match, OFFSIDE_TOL, type Pad } from '../src/sim/match';
@@ -919,7 +919,7 @@ describe('round 7: headers and long balls fly at footballing speeds', () => {
     }
   });
 
-  it('a lofted ball or a clearance leaves the foot at LOB_MAX_SPEED m/s at most: a long one is hit higher, not harder', () => {
+  it('a lofted ball (clearance) leaves the foot at LOB_MAX_SPEED (CLEAR_MAX_SPEED) m/s at most: a long one is hit higher, not harder', () => {
     for (const seed of [1, 2, 3, 4]) {
       const m = scenario(seed);
       const p = m.players[3];
@@ -928,9 +928,10 @@ describe('round 7: headers and long balls fly at footballing speeds', () => {
       giveBall(m, p);
       for (const [kind, dist] of [['lob', 30], ['lob', 45], ['lob', 60], ['clear', 45], ['clear', 70]] as const) {
         const L = resolveKick(m, p, order(kind, p.pos.x + ad * dist, 0, false));
-        expect(Math.hypot(L.vx, L.vy, L.vz)).toBeLessThanOrEqual(LOB_MAX_SPEED + 1e-6);
-        // Up to ~45 m it still gets there (the flight cap is 3.2 s, not 2.3 s).
-        if (dist <= 45) expect(carry(m.ball.pos.x, m.ball.pos.y, m.ball.pos.z, { x: L.vx, y: L.vy, z: L.vz })).toBeGreaterThan(dist - 4);
+        expect(Math.hypot(L.vx, L.vy, L.vz)).toBeLessThanOrEqual((kind === 'clear' ? CLEAR_MAX_SPEED : LOB_MAX_SPEED) + 1e-6);
+        // Up to ~45 m it still (nearly) gets there: the flight cap is 3.2 s, not 2.3 s. (Round 8: at the lower
+        // speed caps, 26 m/s rather than 30, a 45 m ball drops ~4.3 m short, so the margin is 5 m, not 4.)
+        if (dist <= 45) expect(carry(m.ball.pos.x, m.ball.pos.y, m.ball.pos.z, { x: L.vx, y: L.vy, z: L.vz })).toBeGreaterThan(dist - 5);
       }
     }
   });

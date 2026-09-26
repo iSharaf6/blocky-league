@@ -279,6 +279,7 @@ function playTie(app: AppContext, st: CupState): void {
       }
       returnToCup(app, flash);
     },
+    quitNote: "Walking off counts as a 3-0 defeat: you're out of the cup.",
     onQuit: () => {
       const cur = current();
       if (cur) {

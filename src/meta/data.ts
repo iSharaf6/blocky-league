@@ -1,6 +1,19 @@
 import { Rng, hashString } from '../core/rng';
 import { FORMATIONS } from '../sim/formations';
+import { preferredFoot, weakFootRating } from '../sim/player';
 import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDef } from '../sim/types';
+
+/**
+ * Every generated player has a stronger foot (fixed by his name, ~78% right-footed) and a weak-foot rating
+ * 1..5; the sim reads them the same way (Player.foot / Player.weakFoot). An explicit `foot` (1 right, -1
+ * left) or `weakFoot` on a PlayerDef overrides the name-based pick.
+ */
+export { preferredFoot, weakFootRating };
+
+/** 'R' or 'L', for squad screens and player cards. */
+export function footLabel(def: PlayerDef): 'R' | 'L' {
+  return preferredFoot(def) === 1 ? 'R' : 'L';
+}
 
 // Bright, toy-like kit colours in the spirit of the art direction.
 export const KIT_COLORS = {

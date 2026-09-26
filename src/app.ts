@@ -37,6 +37,8 @@ export interface MatchRequest {
   onDone: (r: MatchResult, coinsEarned: number) => void;
   /** Called if the player quits mid-match. */
   onQuit?: () => void;
+  /** What quitting costs, shown on the quit confirmation (default: the match doesn't count, no coins). */
+  quitNote?: string;
 }
 
 /** Shared services the menus and meta screens use. */

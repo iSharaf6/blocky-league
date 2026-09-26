@@ -71,6 +71,9 @@ export function teamRating(t: TeamDef): number {
   return Math.round(sum / t.players.length);
 }
 
+/** Human pass assistance (FIFA-style): the lock-on, power correction and error the assist applies. */
+export type AssistLevel = 'assisted' | 'semi' | 'manual';
+
 export type MatchEvent =
   /** A strike of the ball. `style`: a shot played as a chip or a finesse (curled, placed) one. */
   | { type: 'kick'; power: number; x: number; y: number; z: number; kind: KickKind; style?: ShotStyle }
@@ -111,6 +114,8 @@ export type MatchEvent =
    * was first to it. An indirect free kick to the other side follows (a 'restart' freekick).
    */
   | { type: 'offside'; side: Side; player: number }
+  /** Timed finishing: the human's second SHOOT tap at the moment of contact (perfect / good) or mistimed. */
+  | { type: 'timing'; player: number; grade: 'perfect' | 'good' | 'early' | 'late' }
   /**
    * The referee plays advantage after a foul on `side` (the fouled team kept or won the ball back
    * in their attacking half): no free kick; any card for the foul is shown straight away.

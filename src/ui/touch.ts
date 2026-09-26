@@ -27,6 +27,8 @@ export class TouchControls {
   private ctx: TouchContext = 'attack';
   private visible = true;
   private skipTimer = 0;
+  /** Charge drawn on PASS / THROUGH (0..1 in 1/50 steps, -1 = none): style writes only when it changes. */
+  private charge: Record<'pass' | 'through', number> = { pass: -1, through: -1 };
 
   constructor(private input: Input) {
     this.root = document.createElement('div');
@@ -54,6 +56,8 @@ export class TouchControls {
       this.base.style.left = `${e.clientX}px`;
       this.base.style.top = `${e.clientY}px`;
       this.base.classList.add('on');
+      // Once the stick has been found, the idle base stops being drawn (it only covered players).
+      this.root.classList.add('used');
       this.knob.style.transform = 'translate(-50%, -50%)';
       input.lastDevice = 'touch';
       e.preventDefault();
@@ -155,6 +159,27 @@ export class TouchControls {
 
   get isVisible(): boolean {
     return this.visible;
+  }
+
+  /**
+   * Pass charge on the buttons (called every frame): PASS and THROUGH fill from the bottom while held, 0..1
+   * (-1 = not charging). Nothing fills while defending, where those buttons are SWITCH and PRESS.
+   */
+  setCharge(pass: number, through: number): void {
+    const def = this.ctx === 'defend';
+    this.fill('pass', def ? -1 : pass);
+    this.fill('through', def ? -1 : through);
+  }
+
+  private fill(k: 'pass' | 'through', v: number): void {
+    const b = this.btns.find((x) => x.dataset.k === k);
+    // Only while the button is actually held (a charge the sim still reports after release never lingers).
+    const q = b && b.classList.contains('down') && v >= 0 ? Math.round(Math.min(1, v) * 50) / 50 : -1;
+    if (!b || q === this.charge[k]) return;
+    this.charge[k] = q;
+    b.classList.toggle('charging', q >= 0);
+    b.classList.toggle('full', q >= 1);
+    b.style.setProperty('--charge', q >= 0 ? String(q) : '0');
   }
 
   setContext(c: TouchContext): void {

@@ -3,7 +3,7 @@ import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { clearOfLens, CORNER_BOX, CORNER_ZONAL, CORNER_ZONAL_D, FK_LENS_CLEAR, FK_LENS_CONE_DEPTH } from '../src/sim/ai';
 import { Ball, type BallHit } from '../src/sim/ball';
 import { DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
-import { AIM_TURN, EMPTY_PAD, isDigitalStick, Match, type Pad } from '../src/sim/match';
+import { AIM_TURN, EMPTY_PAD, isDigitalStick, Match, SHOOT_FULL_T, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
 import type { RestartKind, Side } from '../src/sim/types';
 
@@ -26,6 +26,11 @@ function place(p: Player, x: number, z: number): void {
 }
 
 const pad = (mx: number, mz: number, extra: Partial<Pad> = {}): Pad => ({ ...EMPTY_PAD, mx, mz, ...extra });
+/**
+ * SHOOT frames for the charge these benches were written for (the bar used to fill in 0.85 s; round 8 made it
+ * SHOOT_FULL_T): `f` old frames of charge is the same power now.
+ */
+const charge = (f: number) => Math.round((f * SHOOT_FULL_T) / 0.85);
 /** (Read through a function so the compiler doesn't narrow it from an earlier assignment.) */
 const phase = (m: Match): string => m.phase;
 
@@ -61,7 +66,7 @@ function shotTrial(seed: number, dist: number, z: number, hold: number, fwd = 0,
   m.updateBallPath();
   for (let i = 0; i < 4; i++) m.step(DT, EMPTY_PAD);
   const stick = pad(ad * fwd, lat);
-  for (let i = 0; i < hold; i++) m.step(DT, { ...stick, shoot: true });
+  for (let i = 0; i < charge(hold); i++) m.step(DT, { ...stick, shoot: true });
   for (let i = 0; i < 6; i++) m.step(DT, stick);
   const g0 = m.score[0];
   let parried = false;
@@ -127,7 +132,7 @@ function fkTrial(seed: number, dist: number, z: number, plan: FkPlan, hold: numb
     m.step(DT, EMPTY_PAD);
     curlKey = -near * ad > 0 ? 'D' : 'A';
   }
-  for (let i = 0; i < hold; i++) m.step(DT, pad(0, 0, { shoot: true }));
+  for (let i = 0; i < charge(hold); i++) m.step(DT, pad(0, 0, { shoot: true }));
   m.step(DT, curlKey ? key(curlKey) : EMPTY_PAD);
   const g0 = m.score[0];
   let wall = false;
@@ -231,7 +236,7 @@ function shdTrial(seed: number, dist: number, hold: number, lat = 0): { goal: bo
   m.active = p.idx;
   for (let i = 0; i < 4; i++) m.step(DT, EMPTY_PAD);
   m.drainEvents();
-  for (let i = 0; i < hold; i++) m.step(DT, pad(0, lat, { shoot: true }));
+  for (let i = 0; i < charge(hold); i++) m.step(DT, pad(0, lat, { shoot: true }));
   let line: { z: number; y: number } | null | undefined;
   const g0 = m.score[0];
   let save = false;
@@ -372,7 +377,7 @@ function setShot(seed: number, dist: number, z: number, hold: number, fwd: numbe
       }
     }
   };
-  for (let i = 0; i < hold; i++) {
+  for (let i = 0; i < charge(hold); i++) {
     m.step(DT, { ...stick, shoot: true });
     watch();
   }
@@ -652,7 +657,7 @@ describe('keyboard set-piece aim', () => {
     const aimZ = m.aimOnGoalLine(t)!;
     expect(Math.abs(aimZ)).toBeGreaterThan(2);
     expect(Math.abs(aimZ)).toBeLessThan(GOAL_W / 2);
-    for (let i = 0; i < 36; i++) m.step(DT, pad(0, 0, { shoot: true }));
+    for (let i = 0; i < charge(36); i++) m.step(DT, pad(0, 0, { shoot: true }));
     // Release with A held: bend towards A's side.
     const Akey = pad(u.z, -u.x, { digital: true });
     m.step(DT, Akey);

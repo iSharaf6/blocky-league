@@ -30,13 +30,17 @@ function checkBands(halfLength: number, n: number): void {
   within(s.shots, 12 * k + (k < 1 ? 0.4 : 0), 22);
   within(s.onTargetPct, 40, 60);
   expect(s.longShots).toBeLessThan(s.boxShots);
-  within(s.tacklesWon, 8 * k, 20);
+  // (Round 8: with ground passes capped at 22 m/s and lofted balls at 26, ~0.4 fewer balls a match are won
+  // back in a tackle: 6.38 at 2x120 s, 7.94 at 2x150 s on these seeds, against 7.05 / 9.05 before.)
+  within(s.tacklesWon, 7.5 * k, 20);
   // Set pieces and discipline: deflections, tips and glanced clearances put it behind, defenders
   // slide in on escaping carriers (~30% of slides are mistimed into fouls), a card or two a match.
   within(s.corners, 3, 6);
   // Throw-ins: pokes and blocks out on the flank and clearances under pressure by the touchline go
   // into touch (it used to be ~3.5 a match at 2x120 s against ~14 shots).
-  within(s.throwins, 5, halfLength <= 120 ? 8 : 10);
+  // (Round 8: lofted balls capped at 26 m/s are overhit into touch less often: 4.65 a match at 2x120 s on these
+  // seeds, 5.21 before; over 256 seeds it was already 4.97 before the cap, 4.41-4.64 after.)
+  within(s.throwins, halfLength <= 120 ? 4.4 : 5, halfLength <= 120 ? 8 : 10);
   within(s.fouls, 3, 5);
   within(s.slides, 2 * k, 6);
   within(s.yellows, 0, 2);

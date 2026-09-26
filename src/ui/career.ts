@@ -372,6 +372,7 @@ function playMatchday(app: AppContext, st: CareerState): void {
       const verdict = my > their ? 'WIN' : my === their ? 'DRAW' : 'LOSS';
       returnToCareer(app, ok ? { msg: `${verdict} ${my}-${their} VS ${rival.short} · TABLE UPDATED`, kind: my > their ? 'good' : my === their ? 'info' : 'bad' } : undefined);
     },
+    quitNote: 'Walking off counts as a 3-0 defeat in the league table.',
     onQuit: () => {
       const cur = careerState(app);
       const [hg, ag] = forfeitScore(userHome);

@@ -1,5 +1,7 @@
 import { clamp, dist2 } from '../core/math';
-import { BALL_R, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, SIX_W, WALL_DIST } from './constants';
+import {
+  AIR_DRAG, BALL_R, BOUNCE, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, ROLL_A, ROLL_B, SIX_W, WALL_DIST,
+} from './constants';
 import type { Match } from './match';
 import type { Player } from './player';
 import type { Side } from './types';
@@ -40,6 +42,68 @@ const FINESSE_READ = 0.12;
 export const DIVE_TRAVEL = 1.6;
 const DIVE_SET_T = 0.45;
 const DIVE_SHUFFLE = 8;
+/**
+ * A long shot (see LONG_READ) that will take longer than this (s) to reach him: he shuffles across on his
+ * feet and dives when it's this far off (he used to dive at once and be on the floor when it got there).
+ */
+const DIVE_WAIT = 0.45;
+/** How much of a curled free kick's bend he reads when it's a long one he's read the flight of (else 0.62). */
+const FK_LONG_CURL_READ = 0.4;
+/** A shot this long (s, at its launch speed in a straight line) from reaching him is read as a long one. */
+const LONG_READ = 0.72;
+
+/**
+ * When (s from now), how high and where (z) the ball crosses the plane x = `x` on its way towards the goal
+ * of the side attacking `ad`'s opponents, flown on from where it is now with the ball's own air drag,
+ * bounces and roll (spin left out: see curlDrift). Null when it doesn't within 1.6 s.
+ */
+function flightCrossing(m: Match, x: number, ad: number): { t: number; y: number; z: number } | null {
+  const b = m.ball;
+  let px = b.pos.x;
+  let py = b.pos.y;
+  let pz = b.pos.z;
+  if ((px - x) * ad <= 0) return null;
+  let vx = b.vel.x;
+  let vy = b.vel.y;
+  let vz = b.vel.z;
+  const dt = 1 / 60;
+  for (let i = 1; i <= 96; i++) {
+    if (py <= BALL_R + 0.005 && Math.abs(vy) < 0.9) {
+      py = BALL_R;
+      vy = 0;
+      const sh = Math.hypot(vx, vz);
+      if (sh < 0.3) return null;
+      const k = Math.max(0, sh - (ROLL_A + ROLL_B * sh) * dt) / sh;
+      vx *= k;
+      vz *= k;
+    } else {
+      vy -= GRAVITY * dt;
+      const drag = AIR_DRAG * Math.hypot(vx, vy, vz) * dt;
+      vx -= vx * drag;
+      vy -= vy * drag;
+      vz -= vz * drag;
+    }
+    const ox = px;
+    const oy = py;
+    const oz = pz;
+    px += vx * dt;
+    py += vy * dt;
+    pz += vz * dt;
+    if (py < BALL_R) {
+      py = BALL_R;
+      if (vy < -1.1) {
+        vy = -vy * BOUNCE;
+        vx *= 0.86;
+        vz *= 0.86;
+      } else vy = 0;
+    }
+    if ((px - x) * ad <= 0) {
+      const f = Math.abs(px - ox) > 1e-6 ? (x - ox) / (px - ox) : 1;
+      return { t: (i - 1 + f) * dt, y: Math.max(BALL_R, oy + (py - oy) * f), z: oz + (pz - oz) * f };
+    }
+  }
+  return null;
+}
 
 /**
  * Where a player may stand while a penalty is taken: outside the penalty area and at least ten
@@ -238,11 +302,16 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
 
   // ---- Shot reading --------------------------------------------------------
   if (b.owner < 0 && !b.held && toward > 7 && m.shotClock < 1.6) {
-    const t = (k.pos.x - b.pos.x) / b.vel.x;
+    // When and where it gets to him: a straight-line read, but for a shot from range (LONG_READ s or more
+    // away) he reads the real flight (drag, dip, a skid off the turf) and has time to get across.
+    const tLine = (k.pos.x - b.pos.x) / b.vel.x;
+    const across = tLine > LONG_READ ? flightCrossing(m, k.pos.x, ad) : null;
+    const t = across?.t ?? tLine;
     if (t > 0 && t < 1.6) {
       // A curler's bend is only half read (a free kick, which he's set for, a little better).
-      const zc = b.pos.z + b.vel.z * t + curlDrift(m, t) * (m.freeKickShot() ? 0.62 : 0.5);
-      const yc = Math.max(BALL_R, b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t);
+      // (Reading the flight of a long one, he misjudges the bend a little more.)
+      const zc = (across?.z ?? b.pos.z + b.vel.z * t) + curlDrift(m, t) * (m.freeKickShot() ? (across ? FK_LONG_CURL_READ : 0.62) : 0.5);
+      const yc = across?.y ?? Math.max(BALL_R, b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t);
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
       if (onFrame) {
         // A free kick struck over the wall is seen late (the wall is in the way).
@@ -255,6 +324,17 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
           k.wantX = 0;
           k.wantZ = clamp(lateral * 3, -1, 1);
           k.sprint = false;
+          return;
+        }
+        if (m.shotClock >= reaction && across && t > DIVE_WAIT) {
+          // Time in hand (a shot from range): across on his feet first, and dive late (a keeper who went
+          // at once was on the floor, sliding past it, by the time a long one got there).
+          const tz = clamp(zc, -GOAL_W / 2 + 0.2, GOAL_W / 2 - 0.2);
+          const dz = tz - k.pos.z;
+          k.wantX = 0;
+          k.wantZ = clamp(dz * 2.5, -1, 1);
+          k.sprint = Math.abs(dz) > 0.6;
+          k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
           return;
         }
         if (m.shotClock >= reaction) {

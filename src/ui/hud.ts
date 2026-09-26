@@ -31,6 +31,10 @@ const LINE_MIN_S = 1.5;
 /** Queued lines go stale: commentary must never lag behind play. */
 const PENDING_MAX_S = 2.5;
 
+/** Timed finishing verdicts (the sim's 'timing' event), and how long one stays up (matches the CSS animation). */
+export type TimingGrade = 'perfect' | 'good' | 'early' | 'late';
+const TIMING_S = 0.8;
+
 export interface HudTeam {
   short: string;
   name: string;
@@ -73,6 +77,11 @@ export class Hud {
   private anon = 0;
   private toast: HTMLDivElement;
   private toastTimer = 0;
+  /** Timed-finish verdict over the shooter (see timing()). */
+  private timingEl: HTMLDivElement;
+  private timingT = 0;
+  private timingPlayer = -1;
+  private readonly humanSide: number;
   /** Commentary ticker. */
   private cm: HTMLDivElement;
   private cmTag: HTMLElement;
@@ -103,6 +112,9 @@ export class Hud {
   private hintHold = 0;
   /** The hint the session last asked for (it comes back when a blackout ends). */
   private hintWant = '';
+  /** A hint the player has already acted on (hidden until the session wants a different one). */
+  private hintDone = '';
+  private btnDown = false;
   /** Nowhere clear for the ticker (a set piece where every free band would cover the goal): hidden meanwhile. */
   private cmBlocked = false;
   /** The banner up now is a booking (compact plate in the top band / under the score bug). */
@@ -125,6 +137,7 @@ export class Hud {
       <button class="hud-pause" aria-label="Pause">II</button>
       <div class="hud-banner"></div>
       <div class="hud-toast"></div>
+      <div class="hud-timing" aria-live="polite"></div>
       <div class="hud-hint"></div>
       <div class="hud-tip"></div>
       <div class="hud-cm" role="status" aria-live="polite"><b class="cm-tag"></b><span class="cm-text"></span></div>
@@ -143,6 +156,8 @@ export class Hud {
     this.replay = this.root.querySelector('.hud-replay')!;
     this.radar = this.root.querySelector('.hud-radar')!;
     this.toast = this.root.querySelector('.hud-toast')!;
+    this.timingEl = this.root.querySelector('.hud-timing')!;
+    this.humanSide = humanSide;
     this.cm = this.root.querySelector('.hud-cm')!;
     this.cmTag = this.root.querySelector('.cm-tag')!;
     this.cmText = this.root.querySelector('.cm-text')!;
@@ -277,8 +292,77 @@ export class Hud {
     this.toast.style.top = `${Math.round(top)}px`;
   }
 
+  /**
+   * Timed finishing verdict: PERFECT (green), GOOD (teal), EARLY / LATE (red, tagged WILD), a chunky pixel word
+   * over the shooter's head for TIMING_S. It keeps off the goal mouth in shot, the touch controls and the top
+   * cluster: over his head, else under his feet, else top centre under the score bug (re-checked each frame,
+   * as the camera follows the ball towards goal). `player` = the shooter's index (omitted: top centre).
+   */
+  timing(grade: TimingGrade, player = -1): void {
+    const el = this.timingEl;
+    const wild = grade === 'early' || grade === 'late';
+    el.dataset.grade = grade;
+    el.innerHTML = `<b>${grade.toUpperCase()}</b>${wild ? '<em>WILD</em>' : ''}`;
+    el.setAttribute('aria-label', wild ? `${grade}: wild shot` : `${grade} timing`);
+    this.timingPlayer = player;
+    this.timingT = TIMING_S;
+    this.placeTiming();
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
+  }
+
+  /** Where the timing word goes: the first clear spot of over the shooter / under him / top centre. */
+  private placeTiming(): void {
+    const el = this.timingEl;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const w = el.offsetWidth || 160;
+    const h = el.offsetHeight || 40;
+    const g = W < 480 ? 8 : 12;
+    const box = (cx: number, t: number): Rect => {
+      const l = Math.max(g, Math.min(W - g - w, cx - w / 2));
+      const tt = Math.max(g, Math.min(H - g - h, t));
+      return { l, t: tt, r: l + w, b: tt + h };
+    };
+    const opts: Rect[] = [];
+    const f = this.lastFrame;
+    const P = this.project;
+    if (f && P && this.timingPlayer >= 0 && this.timingPlayer < 22) {
+      const o = this.timingPlayer * PF;
+      let head: { x: number; y: number } | null = null;
+      let feet: { x: number; y: number } | null = null;
+      try {
+        head = P(f[o], (f[o + 2] || 0) + 2.9, f[o + 1]);
+        feet = P(f[o], 0, f[o + 1]);
+      } catch {
+        head = feet = null;
+      }
+      if (head && head.x > 0 && head.x < W && head.y > 0 && head.y < H) opts.push(box(head.x, head.y - h - 6));
+      if (feet && feet.x > 0 && feet.x < W && feet.y > 0 && feet.y < H) opts.push(box(feet.x, feet.y + 14));
+    }
+    const topY = this.hintTopY(W / 2 - w / 2, W / 2 + w / 2);
+    opts.push(box(W / 2, topY));
+    const goals = this.goalRects();
+    const solid = [
+      '#ui > .touch:not(.hidden) .touch-btns', '#ui > .touch:not(.hidden) .touch-base', '.scorebug', '.hud-pause', '.hud-toast.on',
+      '.hud-tip.on', '.hud-hint.on', '.hud-cm.on:not(.blocked)', '.hud-radar',
+    ]
+      .map((sel) => this.rectOf(sel, false))
+      .filter((q): q is Rect => !!q);
+    const cost = (r: Rect) =>
+      goals.reduce((c, gr) => c + overlapArea(r, gr, 10) * 4, 0) + solid.reduce((c, q) => c + overlapArea(r, q, 4), 0);
+    let pick = opts.find((r) => cost(r) === 0);
+    if (!pick) pick = [...opts].sort((a, b) => cost(a) - cost(b))[0];
+    el.style.left = `${Math.round(pick.l)}px`;
+    el.style.top = `${Math.round(pick.t)}px`;
+  }
+
   setHint(text: string): void {
     this.hintWant = text;
+    // The player acted on this hint (see buttons()): it stays down until the session asks for another one.
+    if (!text) this.hintDone = '';
+    if (text && text === this.hintDone) text = '';
     if (this.hintHold > 0) text = '';
     const on = text.length > 0;
     // Off: keep the old words while it fades out (an empty box shrinking looks broken).
@@ -289,6 +373,19 @@ export class Hud {
       this.placeHint(true);
     }
     this.hint.classList.toggle('on', on);
+  }
+
+  /**
+   * The action buttons (PASS / SHOOT / THROUGH, any device), every frame. Pressing one while a set-piece hint
+   * is up means the player is taking the kick: the hint goes at once, rather than lingering through the run-up
+   * and the wait for the box runners into open play.
+   */
+  buttons(down: boolean): void {
+    if (down && !this.btnDown && this.hint.classList.contains('on') && this.hintWant) {
+      this.hintDone = this.hintWant;
+      this.setHint(this.hintWant);
+    }
+    this.btnDown = down;
   }
 
   /**
@@ -317,6 +414,12 @@ export class Hud {
   commentary(e: MatchEvent, m: Match): void {
     this.m = m;
     try {
+      // Timed finishing: the verdict on the human's second SHOOT tap (the session forwards every event here).
+      if (e.type === 'timing') {
+        const p = m.players[e.player];
+        if (!p || this.humanSide < 0 || p.side === this.humanSide) this.timing(e.grade, e.player);
+        return;
+      }
       if (e.type === 'card') {
         // Normally this runs before the session's card() call; if not, name the chip once it exists.
         const side = m.players[e.player]?.side;
@@ -341,6 +444,11 @@ export class Hud {
   }
 
   private showLine(line: CommentaryLine): void {
+    // One thing at a time: while the booking plate is up the line waits (it follows the plate).
+    if (this.bannerCard && this.bannerTimer > 0) {
+      this.cmPending = { line, age: 0 };
+      return;
+    }
     this.cmLine = line;
     this.cmAge = 0;
     this.cmLeft = line.priority >= 5 || line.tone === 'goal' ? BIG_LINE_S : LINE_S;
@@ -942,12 +1050,49 @@ export class Hud {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) this.toast.classList.remove('on');
     }
+    if (this.timingT > 0) {
+      this.timingT -= dt;
+      if (this.timingT <= 0) this.timingEl.classList.remove('on');
+      else if (this.project) {
+        // The camera follows the shot towards goal: move off the goal mouth if it pans under the word.
+        const r = this.timingEl.getBoundingClientRect();
+        const box = { l: r.left, t: r.top, r: r.right, b: r.bottom };
+        if (this.goalRects().some((gr) => overlapArea(box, gr, 6) > 0)) this.placeTiming();
+      }
+    }
     this.radarT -= dt;
     const hidden = this.radarHidden || this.root.classList.contains('dead') || this.root.classList.contains('replaying');
     if (this.radarT <= 0 && !hidden) {
       this.radarT = 1 / 20;
       this.drawRadar(frame);
+      this.fadeRadar(frame);
     }
+  }
+
+  /**
+   * The minimap nearly vanishes while the ball, our man or the team-mate his pass is locked onto is under it
+   * on screen (checked with the radar redraw, 20 times a second).
+   */
+  private fadeRadar(f: Float32Array): void {
+    const P = this.project;
+    let under = false;
+    if (P) {
+      const r = this.radar.getBoundingClientRect();
+      const pad = 14;
+      const hit = (x: number, y: number, z: number) => {
+        let p: { x: number; y: number } | null = null;
+        try {
+          p = P(x, y, z);
+        } catch {
+          p = null;
+        }
+        return !!p && p.x > r.left - pad && p.x < r.right + pad && p.y > r.top - pad && p.y < r.bottom + pad;
+      };
+      const player = (i: number) => i >= 0 && i < 22 && (hit(f[i * PF], 0.2, f[i * PF + 1]) || hit(f[i * PF], 1.6, f[i * PF + 1]));
+      const aim = this.m?.passAim ?? -1;
+      under = hit(f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2]) || player(f[BALL_OFS + 8]) || player(typeof aim === 'number' ? aim : -1);
+    }
+    if (under !== this.radar.classList.contains('under')) this.radar.classList.toggle('under', under);
   }
 
   /** Match the canvas backing store to its CSS size at devicePixelRatio, so the minimap stays crisp. */

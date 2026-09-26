@@ -1,8 +1,13 @@
 import { angleDiff, clamp, dist2, pointSegDist, turnToward } from '../core/math';
 import { Rng } from '../core/rng';
-import { CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, onTarget, pickReceiver, resolveKick, shotQuality, stickCurl } from './actions';
-import { intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
-import { Ball, type BallHit } from './ball';
+import { CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, onTarget, passAimPoint, pickReceiver, resolveKick, stickCurl } from './actions';
+import { assistRun, intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
+import { headerAtGoal, reaimShot, WILD_LIFT, type Launch } from './actions';
+import { Ball, groundPassSpeed, type BallHit } from './ball';
+import {
+  AssistState, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAP, PRESS_LEAD, pressSteal,
+  standingFoulChance, standingTackleChance, STAND_REACH, tackleClosing, vsHuman,
+} from './dribble';
 import {
   AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
   PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SIX_DEPTH, SIX_W, SPRINT_SPEED,
@@ -10,11 +15,12 @@ import {
 import { FORMATIONS, kickoffSlot, type Slot } from './formations';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick } from './keeper';
 import { FATIGUE_REF_HALF, Player, type KickOrder } from './player';
+import { STUMBLE_BUMP, STUMBLE_LOST } from './player';
 import {
   HUMAN_WINDOW, INTRO_BEAT, KICK_TIMEOUT, RESULT_BEAT, aiPenaltyAim, divePlan, keeperGuess, lineupSpot, nextTurn, penaltyLaunch,
   predictCrossing, shootoutWinner, takerOrder, type KeeperDive, type KickHow, type PenAim, type ShootoutState,
 } from './shootout';
-import type { FormationId, KickKind, MatchEvent, PlayerDef, RestartKind, ShotStyle, Side, TeamDef } from './types';
+import type { AssistLevel, FormationId, KickKind, MatchEvent, PlayerDef, RestartKind, ShotStyle, Side, TeamDef } from './types';
 
 export type Phase = 'kickoff' | 'play' | 'out' | 'restart' | 'goal' | 'halftime' | 'fulltime' | 'shootout';
 
@@ -163,10 +169,92 @@ const ZONAL_HEAD_R = 1.2;
 const ZONAL_HEAD_Y = 2.2;
 /** ... unless an attacker is within this (m) of it too: then it's a contest for the first-time contact. */
 const ZONAL_CONTEST_R = 2;
-/** How much of the stick moves the human's man while he winds up a shot with the ball at his feet. */
-const SHOOT_CHARGE_MOVE = 0.3;
+/**
+ * How much of the stick moves the human's man while he charges a shot with the ball at his feet (round 8:
+ * at 0.3 he stood planted for up to 0.85 s and two thirds of human shots were blocked or cleared).
+ */
+const SHOOT_CHARGE_MOVE = 0.6;
+/**
+ * SHOOT held this long (s) fills the power bar (it was 0.85 s). Match.shootCharge counts in SHOOT_BAR units
+ * of a full bar (shootCharge / SHOOT_BAR is the bar, 0..1, as the HUD reads it).
+ */
+export const SHOOT_FULL_T = 0.5;
+export const SHOOT_BAR = 0.85;
 /** The human's assisted receive sprints onto a pass whose meeting point is further than this (m). */
 const RECEIVE_SPRINT = 2.5;
+/**
+ * A human pass (PASS with the ball at his feet): held, it charges over PASS_CHARGE_T s (passCharge 0..1);
+ * let go sooner than PASS_TAP s and it's a tap, at the pace the assist judges.
+ */
+const PASS_CHARGE_T = 0.9;
+const PASS_TAP = 0.12;
+/** THROUGH held at least this long (s) is a lofted ball, not a through ball; its charge fills over LOB_CHARGE_T s. */
+const THROUGH_LOB_HOLD = 0.24;
+const LOB_CHARGE_T = 0.8;
+/** How much of the stick still moves him while he charges a pass and turns his body to it. */
+const PASS_CHARGE_MOVE = 0.5;
+/** The passer's body turn towards the pass line (rad/s) standing still, and the share of it lost at a sprint. */
+const PASS_TURN = 14;
+const PASS_TURN_SPRINT_LOSS = 0.55;
+/**
+ * Let go with his body still more than PASS_SQUARE_MAX (rad) off the line and the kick waits for the turn
+ * (at most PASS_TURN_WAIT s) rather than going out of the side of his foot; he keeps turning through the
+ * wind-up, so he's square to it at the strike.
+ */
+const PASS_SQUARE_MAX = Math.PI / 4;
+const PASS_TURN_WAIT = 0.15;
+/** While charging, the lock-on is picked again when the stick swings this far (rad), or every PASS_REPICK s. */
+const PASS_REPICK_ANGLE = 0.12;
+const PASS_REPICK = 0.25;
+/** PASS pressed while a pass is on its way to him is a first-time ball when it arrives (a one-two), for up to this long (s). */
+const PASS_BUFFER = 1.5;
+/**
+ * Move assist: for MOVE_ASSIST_T s after a switch, with the stick neutral (or still held the way it was at the
+ * switch) or within MOVE_ASSIST_CONE (rad) of the AI's run, the new man keeps making that run...
+ */
+const MOVE_ASSIST_T = 0.5;
+const MOVE_ASSIST_CONE = Math.PI / 3;
+/** ... and off the ball, with the stick left alone for MOVE_IDLE_T s, he follows his AI positioning at a jog. */
+const MOVE_IDLE_T = 0.4;
+/** The stick held at a switch counts as neutral (latched) until it's let go or swung more than this (rad). */
+const STICK_LATCH_TURN = Math.PI / 4;
+/**
+ * Auto switch (defending: their ball, or a loose one): at most one every AUTO_SWITCH_GAP s, to the man who
+ * gets to the ball in under AUTO_SWITCH_RATIO of the current man's time (AUTO_SWITCH_RATIO_LOOSE for a loose
+ * ball: whoever gets to where it drops first) and at least AUTO_SWITCH_MARGIN s sooner.
+ */
+const AUTO_SWITCH_GAP = 0.6;
+const AUTO_SWITCH_RATIO = 0.7;
+const AUTO_SWITCH_RATIO_LOOSE = 0.8;
+const AUTO_SWITCH_MARGIN = 0.5;
+
+/** The kick-off taker's partner stands this far (m) to his side, clear of him. */
+const KICKOFF_PARTNER_Z = 1.6;
+
+/** A human pass being charged (PASS / THROUGH held), or let go and waiting on his body turn / wind-up. */
+interface PassCharge {
+  btn: 'pass' | 'through';
+  player: number;
+  /** Seconds the button has been held. */
+  t: number;
+  /** The aim: the stick (unit) while it's pushed, else his facing when he pressed. */
+  dirX: number;
+  dirZ: number;
+  released: boolean;
+  /** Seconds since it was let go. */
+  wait: number;
+  /** The man it's locked onto (-1: none). */
+  target: number;
+  mode: 'pass' | 'through' | 'lob';
+  pickT: number;
+  pickA: number;
+  /** The pass line (world angle) his body turns to. */
+  line: number;
+  /** The kick has been ordered: he's winding up. */
+  ordered: boolean;
+  /** His speed (m/s) when he let the button go (the error margin's speed term). */
+  relSpeed: number;
+}
 /** Extra hang time (s) on a corner to the far post, so it clears the near-post crowd. */
 const FAR_POST_HANG = 0.22;
 /**
@@ -174,8 +262,13 @@ const FAR_POST_HANG = 0.22;
  * the bar; the rest are pushed back into play (it used to be ~0.75, so most long shots ended as corners).
  */
 const PARRY_TIP = 0.5;
-/** A shot struck at least this fast (m/s) into the top corner is beyond a diving keeper's full reach. */
+/** Upward pace (m/s, plus up to 1.5) of a parry spilled back into the middle. */
+const PARRY_SPILL_VY = 0.4;
+/** A shot struck at least this fast (m/s) into the top corner is beyond a diving keeper's full reach... */
 const TOP_CORNER_SPEED = 25.5;
+/** ... from TOP_CORNER_NEAR m or nearer; from TOP_CORNER_FAR m or further he has it covered as well as any. */
+const TOP_CORNER_NEAR = 16;
+const TOP_CORNER_FAR = 26;
 /** Shots from further out than this (m) are held more often (fully from 8 m further out). */
 const LONG_CATCH_FROM = 16;
 /** How much shorter a diving keeper's reach is against a fully bent free kick. */
@@ -186,6 +279,55 @@ const WALL_HEAD = 0.18;
 const WALL_CURL_DIP = 0.55;
 /** How far (m) in front of / behind his body line a diving keeper can still get a hand to the ball. */
 const DIVE_DEPTH = 0.5;
+/**
+ * A human's open-play strike: the boot meets the ball HUMAN_SHOT_WINDUP s after SHOOT is let go (an AI
+ * shot, KICK_WINDUP: 0.11 s), long enough to time timed finishing's second tap on (see FINISH_WINDOWS).
+ */
+export const HUMAN_SHOT_WINDUP = 0.15;
+/**
+ * A shot ordered at more than PLANT_SPEED m/s takes a plant step: PLANT_MIN s more wind-up (PLANT_MAX flat
+ * out) braking out of the sprint before the strike, so he doesn't snap from a dead run into a full swing.
+ */
+export const PLANT_SPEED = 6.5;
+const PLANT_MIN = 0.05;
+const PLANT_MAX = 0.08;
+/** A ball within this far (m) of the middle of his body is struck with his good foot; further out, the near one. */
+const STRONG_SIDE = 0.2;
+/**
+ * Timed finishing (Match.timedFinish): a second SHOOT tap within `perfect` s of the boot meeting the ball
+ * scales the shot's error by TIMING_ERR.perfect, within `good` s by TIMING_ERR.good; any other tap from the
+ * release until `late` s after contact is mistimed (early / late): a wild one (TIMING_ERR.early, and WILD_LIFT
+ * more height). No second tap: the shot is exactly what it would have been.
+ */
+export const FINISH_WINDOWS = { perfect: 0.05, good: 0.08, late: 0.12 };
+export const TIMING_ERR = { perfect: 0.4, good: 0.7, early: 1.9, late: 1.9 } as const;
+/**
+ * First touch (see Match.firstTouch): a moving ball comes off the receiver's body TOUCH_BASE m plus
+ * TOUCH_K x how heavy the touch is (the ball's speed relative to him, squared, his dribbling, the pressure,
+ * facing it or not). Up to TOUCH_SPILL m he has it, pushed into his stride and settled over TOUCH_T s;
+ * beyond that it's loose (at most TOUCH_MAX m away) and anyone's.
+ */
+const TOUCH_BASE = 0.22;
+const TOUCH_K = 1.1;
+export const TOUCH_SPILL = 0.95;
+const TOUCH_T = 0.22;
+const TOUCH_MAX = 3.2;
+/** A ball slower than this (m/s) relative to him is just picked up (no first touch to speak of). */
+const TOUCH_MIN_REL = 4;
+/** While a touch settles, the ball is steered with this spring (1/s; 15 once it's on his foot)... */
+const TOUCH_SPRING = 7;
+/** ... and gives up this share of the difference each step, so it doesn't stop dead on contact. */
+const TOUCH_GRIP = 0.35;
+/** The heavy-touch part for the human receiver, by Match.groundAssist, and for the AI's. */
+const TOUCH_ASSIST: Record<AssistLevel, number> = { assisted: 0.5, semi: 0.75, manual: 1 };
+const TOUCH_AI = 0.8;
+/** A keeper holding the ball stays at least this far (m) in front of his goal line. */
+const KEEPER_LINE_IN = 0.3;
+/**
+ * A human's shot that meets a defender is blocked this much less often than an AI's (round 8: two thirds of
+ * human shots in real matches were blocked or cleared; the AI picks its moments and loses ~5%).
+ */
+const HUMAN_SHOT_BLOCK = 0.45;
 /**
  * A shot or cross grazed or blocked within DEFLECT_SAFE_D m of the defender's own goal turns at least
  * DEFLECT_SAFE_TURN rad away from it and keeps DEFLECT_SAFE_PACE of its pace (own goals were ~15%).
@@ -205,6 +347,9 @@ const WING_BLOCK_TOUCH = 0.8;
 const AUTO_SUB_STAMINA = [0.55, 0.45];
 
 const otherSide = (s: Side): Side => (s === 0 ? 1 : 0);
+
+/** Timed finishing's verdict on a second SHOOT tap (the 'timing' event). */
+export type TimingGrade = Extract<MatchEvent, { type: 'timing' }>['grade'];
 
 /**
  * A formation change: which slot of `to` each slot of `from` moves to (index = old slot, value = new
@@ -323,6 +468,18 @@ export class Match {
   shotDist = 0;
   /** The last shot was a chip or a finesse one (null for a plain strike or a header). */
   shotStyle: ShotStyle | null = null;
+  /**
+   * The last shot with the foot: struck with the shooter's weaker foot, and how far off balance he was (0
+   * steady .. 1: turned right away from goal, or reeling from a challenge). For the HUD, commentary, render.
+   */
+  shotWeakFoot = false;
+  shotBalance = 0;
+  /** Timed finishing's verdict on the last shot (null: no second tap, or not a timed one). */
+  shotTiming: TimingGrade | null = null;
+  /** How far (m) the last first touch came off the receiver (over TOUCH_SPILL: a heavy one he lost). */
+  lastTouchD = 0;
+  /** The last shot was struck by the human's man. */
+  shotByHuman = false;
   /** kickId of the last shot struck straight from a direct free kick. */
   private fkShotKick = -1;
   /** Where the ball was at the start of this step (swept contact checks). */
@@ -331,11 +488,37 @@ export class Match {
   keeperHoldTime = 1.4;
   /** Human-controlled player index, -1 when nobody. */
   active = -1;
+  /** The shot power bar while SHOOT is held: shootCharge / SHOOT_BAR is 0..1 (full after SHOOT_FULL_T s). */
   shootCharge = 0;
   throughCharge = 0;
   goalSide: Side = 0;
   lastGoalScorer = -1;
   autoSwitch = true;
+  /** Human pass assistance for ground passes and through balls (settings; see AssistLevel). */
+  groundAssist: AssistLevel = 'assisted';
+  throughAssist: AssistLevel = 'assisted';
+  /** After a switch (and with the stick left alone off the ball) the new man keeps making the AI's run. */
+  moveAssist = true;
+  /** A second SHOOT tap at contact sharpens (or, mistimed, spoils) the shot. */
+  timedFinish = true;
+  /** 0..1 while the human is charging a pass (PASS held), -1 otherwise. */
+  passCharge = -1;
+  /** The teammate the charging pass is locked onto, -1 when none (render marks him). */
+  passAim = -1;
+  /**
+   * What the charging ball is while PASS / THROUGH is held (and until it's struck): a pass, a through ball
+   * (THROUGH tapped) or a lofted one (THROUGH held THROUGH_LOB_HOLD s or more); null otherwise.
+   */
+  passMode: 'pass' | 'through' | 'lob' | null = null;
+  private hp: PassCharge | null = null;
+  /** Switch tracking for move assist: the man last seen controlled, seconds since the last switch. */
+  private seenActive = -1;
+  private sinceSwitch = 99;
+  /** Seconds the stick has been left alone, and the direction it was held at the last switch (see STICK_LATCH_TURN). */
+  private stickIdle = 0;
+  private latch: { x: number; z: number } | null = null;
+  /** PASS pressed while a pass was on its way to him (see PASS_BUFFER). */
+  private passBuffer = 0;
   /** Seconds since the last possession change (drives crowd tension, auto-switch). */
   sincePossession = 0;
   possessionSide: Side | -1 = -1;
@@ -574,6 +757,13 @@ export class Match {
     kicker.pos.x = -ad * 0.62;
     kicker.pos.z = 0.05;
     kicker.facing = ad > 0 ? 0 : Math.PI;
+    // His partner on the spot stands clear of him (they were 0.92 m apart: the bodies overlapped).
+    for (const p of this.bySide[side]) {
+      if (p === kicker || p.sentOff || p.isKeeper) continue;
+      if (Math.hypot(p.pos.x - kicker.pos.x, p.pos.z - kicker.pos.z) < KICKOFF_PARTNER_Z) {
+        p.pos.z = (Math.sign(p.pos.z - kicker.pos.z) || 1) * KICKOFF_PARTNER_Z;
+      }
+    }
     this.restartAim = kicker.facing;
     this.ball.owner = kicker.idx;
     this.ball.lastTouch = kicker.idx;
@@ -817,7 +1007,6 @@ export class Match {
       this.checkPossession();
       this.checkGraze();
       this.autoTackle();
-      this.humanCuts();
       this.checkBounds();
       if (this.phase === 'play') this.updateAdvantage(dt);
       this.autoSwitchUpdate(dt);
@@ -944,15 +1133,32 @@ export class Match {
       return p.order;
     }
     if (!firstTime) {
+      const run = p.speed();
       p.setState(kind === 'throw' || (kind === 'keeper' && p.isKeeper) ? 'throw' : 'kick');
       p.kickT = 0;
-      // Strike with the foot on the ball's side.
-      const bx = this.ball.pos.x - p.pos.x;
-      const bz = this.ball.pos.z - p.pos.z;
-      const side = -Math.sin(p.facing) * bx + Math.cos(p.facing) * bz;
-      p.kickLeg = side >= 0 ? 1 : -1;
+      p.kickLeg = this.strikeFoot(p);
+      // A shot: he opens his body to the goal as he winds up (Player.kickFace).
+      if (kind === 'shot' && this.phase === 'play') p.kickFace = Math.atan2(-this.ball.pos.z * 0.5, this.attackDir(p.side) * HALF_L - this.ball.pos.x);
+      if (kind === 'shot' && this.phase === 'play' && run > PLANT_SPEED) {
+        // Out of a sprint: a plant step first, braking into the strike.
+        const k = clamp((run - PLANT_SPEED) / (SPRINT_SPEED - PLANT_SPEED), 0, 1);
+        p.plant = 0.5 + 0.5 * k;
+        p.kickWindup += PLANT_MIN + (PLANT_MAX - PLANT_MIN) * k;
+      }
     }
     return p.order;
+  }
+
+  /**
+   * The foot `p` strikes the ball with: the one on the ball's side of his body, unless it's near enough the
+   * middle for him to shape up to it with his good foot.
+   */
+  private strikeFoot(p: Player): 1 | -1 {
+    const bx = this.ball.pos.x - p.pos.x;
+    const bz = this.ball.pos.z - p.pos.z;
+    const side = -Math.sin(p.facing) * bx + Math.cos(p.facing) * bz;
+    if (Math.abs(side) < STRONG_SIDE) return p.foot;
+    return side > 0 ? 1 : -1;
   }
 
   private ballReach(p: Player): 'foot' | 'head' | null {
@@ -1023,7 +1229,8 @@ export class Match {
         if (reach) contact.push({ p, reach });
         continue;
       }
-      const windup = p.state === 'throw' ? 0.26 : KICK_WINDUP;
+      // (A kick's contact: KICK_WINDUP, longer for a human's strike or a plant step: Player.kickWindup.)
+      const windup = p.state === 'throw' ? 0.26 : p.kickWindup;
       if (this.stepIn === p.idx && p.state === 'move') continue;
       if (p.state !== 'kick' && p.state !== 'throw') {
         p.order = null;
@@ -1061,6 +1268,8 @@ export class Match {
         }
       }
     }
+    // The losers of a 50/50 are knocked off balance.
+    if (duel) for (const c of contact) if (c.p.side !== win.p.side) c.p.stumbleT = Math.max(c.p.stumbleT, STUMBLE_BUMP);
     // Aerial duel: the loser sometimes goes through the back of the winner (or pushes him).
     if (duel && win.reach === 'head' && this.phase === 'play') {
       const loser = contact.find((c) => c.p.side !== win.p.side && dist2(c.p.pos.x, c.p.pos.z, win.p.pos.x, win.p.pos.z) < 1.6);
@@ -1102,6 +1311,7 @@ export class Match {
     }
     p.setState('kick');
     p.kickT = 0.32;
+    if (reach === 'foot') p.kickLeg = this.strikeFoot(p);
     this.execute(p);
   }
 
@@ -1127,6 +1337,15 @@ export class Match {
       }
     }
     const so = this.phase === 'shootout' && this.shootout?.taker === p.idx ? this.shootout : null;
+    // Timed finishing: a second tap before the strike is judged now, at contact.
+    const timed = this.finish && this.finish.p === p.idx && this.finish.contact < 0 && o.kind === 'shot' ? this.finish : null;
+    let grade: TimingGrade | null = null;
+    if (timed && timed.tap >= 0) {
+      const off = timed.t - timed.tap;
+      grade = off <= FINISH_WINDOWS.perfect + 1e-6 ? 'perfect' : off <= FINISH_WINDOWS.good + 1e-6 ? 'good' : 'early';
+      o.finish = TIMING_ERR[grade];
+      o.wild = grade === 'early';
+    }
     const L = so?.pen ? penaltyLaunch(this, p, so.pen) : resolveKick(this, p, o);
     b.owner = -1;
     b.vel.x = L.vx;
@@ -1161,6 +1380,16 @@ export class Match {
       this.shotDist = dist2(b.pos.x, b.pos.z, this.attackDir(p.side) * HALF_L, 0);
       this.shotCurl = clamp(Math.abs(L.spinY) / CURL_SPIN, 0, 1);
       this.shotStyle = L.style ?? null;
+      this.shotWeakFoot = !!L.weak;
+      this.shotBalance = L.balance ?? 0;
+      this.shotByHuman = this.isHumanControlled(p);
+      this.shotTiming = grade;
+      if (timed) {
+        timed.contact = timed.t;
+        timed.kick = this.kickId;
+        timed.aim = L.aim ?? null;
+        if (grade) this.events.push({ type: 'timing', player: p.idx, grade });
+      }
       const rr = this.restart;
       if (this.phase === 'restart' && rr && rr.taker === p.idx && isDirectFreeKick(this, rr)) this.fkShotKick = this.kickId;
       this.passTarget = -1;
@@ -1214,6 +1443,9 @@ export class Match {
     if (dirX !== 0 || dirZ !== 0) {
       const tgt = pickReceiver(this, k, dirX, dirZ, long ? 'lob' : 'pass');
       k.setState('move');
+      // (The human's keeper turns to the man it's for first, so it leaves his hands towards him.)
+      const t = tgt >= 0 ? this.players[tgt] : null;
+      k.facing = t ? Math.atan2(t.pos.z - k.pos.z, t.pos.x - k.pos.x) : Math.atan2(dirZ, dirX);
       this.order(k, long ? 'lob' : 'keeper', dirX, dirZ, 1, tgt, false);
       return;
     }
@@ -1258,13 +1490,17 @@ export class Match {
     }
   }
 
-  /** Skill move: push the ball 5–6 m ahead and burst after it. */
+  /**
+   * Skill move: push the ball 5–6 m ahead and burst after it. (It used to leave the foot at 13-15 m/s and
+   * roll ~18 m: he only caught it ~12 m on, often after a defender had. Bent round a defender in its line.)
+   */
   knockOn(p: Player, dirX: number, dirZ: number): void {
     const b = this.ball;
     const l = Math.hypot(dirX, dirZ) || 1;
-    const ux = dirX / l;
-    const uz = dirZ / l;
-    const sp = Math.max(p.speed(), 5) + 6.5 + (p.stat.pace / 100) * 2;
+    const k = knockAssist(this, p, dirX / l, dirZ / l);
+    const ux = k.x;
+    const uz = k.z;
+    const sp = Math.max(p.speed(), 4) + 4.5 + (p.stat.pace / 100) * 1.5;
     b.owner = -1;
     b.vel.x = ux * sp;
     b.vel.z = uz * sp;
@@ -1310,21 +1546,28 @@ export class Match {
     if (hs < 0) return;
     const side = hs as Side;
     const passP = pad.pass && !this.prev.pass;
-    const shootP = pad.shoot && !this.prev.shoot;
-    const shootR = !pad.shoot && this.prev.shoot;
+    // Timed finishing: a SHOOT press while a strike is being timed is its second tap (judged, and used up:
+    // it doesn't slide, charge or strike again until it's let go).
+    this.finishTick(dt);
+    if (pad.shoot && !this.prev.shoot && this.finishTap()) this.finishHeld = true;
+    const shootP = pad.shoot && !this.prev.shoot && !this.finishHeld;
+    const shootR = !pad.shoot && this.prev.shoot && !this.finishHeld;
+    if (!pad.shoot) this.finishHeld = false;
     const throughP = pad.through && !this.prev.through;
     const throughR = !pad.through && this.prev.through;
     const stickLen = Math.hypot(pad.mx, pad.mz);
     // Charge is measured while held and read on the release frame.
-    const shootPower = clamp(this.shootCharge / 0.85, 0.15, 1);
+    const shootPower = clamp(this.shootCharge / SHOOT_BAR, 0.15, 1);
     const throughHold = this.throughCharge;
     if (!pad.shoot && !this.prev.shoot) this.chipArmed = false;
-    this.shootCharge = pad.shoot ? this.shootCharge + dt : 0;
+    this.shootCharge = pad.shoot && !this.finishHeld ? this.shootCharge + (dt * SHOOT_BAR) / SHOOT_FULL_T : 0;
     this.throughCharge = pad.through ? this.throughCharge + dt : 0;
     if (this.phase === 'shootout') {
       this.shootoutInput(pad, shootR, shootPower, stickLen);
       return;
     }
+    // A pass being charged doesn't outlive open play.
+    if (this.hp && this.phase !== 'play') this.endPass();
 
     // Set pieces we're taking.
     if ((this.phase === 'kickoff' || this.phase === 'restart') && this.restart && this.restart.side === side) {
@@ -1436,6 +1679,7 @@ export class Match {
     if (b.held && b.owner >= 0 && this.players[b.owner].side === side) {
       const k = this.players[b.owner];
       this.active = k.idx;
+      if (this.hp) this.endPass();
       const dx = stickLen > 0.3 ? pad.mx : this.attackDir(side);
       const dz = stickLen > 0.3 ? pad.mz : 0;
       if (k.stateT > 0.4) {
@@ -1451,6 +1695,7 @@ export class Match {
     if (this.active < 0) return;
     const p = this.players[this.active];
     const hasBall = b.owner === p.idx;
+    this.trackSwitch(p, pad, stickLen, hasBall, dt);
     p.faceTarget = null;
     // Winding up a shot he mostly plants and aims: the stick picks the corner, it doesn't carry him (he
     // used to be dragged ~4 m sideways by a stick held across the goal while charging).
@@ -1458,13 +1703,15 @@ export class Match {
     p.wantX = pad.mx * move;
     p.wantZ = pad.mz * move;
     p.sprint = pad.sprint && move === 1;
+    // Dribble assists: close control, skill cuts, shielding, path assist (dribble.ts).
+    if (hasBall && !b.held) humanDribble(this, p, pad, stickLen, dt);
 
     const dirX = stickLen > 0.25 ? pad.mx : Math.cos(p.facing);
     const dirZ = stickLen > 0.25 ? pad.mz : Math.sin(p.facing);
     // Double-tap sprint while dribbling: knock it past your man and chase it.
     this.humanTime += dt;
     if (pad.sprint && !this.prev.sprint) {
-      if (hasBall && this.humanTime - this.lastSprintTap < 0.3 && p.state === 'move' && !b.held) {
+      if (hasBall && this.humanTime - this.lastSprintTap < KNOCK_TAP && p.state === 'move' && !b.held) {
         this.knockOn(p, dirX, dirZ);
         this.lastSprintTap = -9;
       } else {
@@ -1477,8 +1724,10 @@ export class Match {
     const chipTap = throughP && pad.shoot && this.prev.shoot;
     if (chipTap) this.chipArmed = true;
     if (hasBall && b.owner === p.idx) {
-      if (passP) this.order(p, 'pass', dirX, dirZ, 0.6, -1, false);
-      else if (chipTap) {
+      // PASS / THROUGH: charged, with his body turned to the man it's for first (see humanPass).
+      if (this.humanPass(p, pad, stickLen, passP, throughP, shootP, dt)) {
+        // (The charge, the wait for his turn, or the wind-up: that's this frame.)
+      } else if (chipTap) {
         const o = this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0, shootPower, -1, false);
         if (o) o.style = 'chip';
       } else if (shootR) {
@@ -1496,44 +1745,64 @@ export class Match {
             o.style = 'finesse';
             o.curl = Math.sign(sz) * FINESSE_CURL;
           } else if (stickLen > 0.25) o.curl = stickCurl(pad.mz);
+          if (o.style !== 'chip') {
+            // A strike (not a chip): the boot meets it a beat later than an AI's, so the second tap can be
+            // timed (the same with timed finishing off, so no tap is exactly no tap).
+            p.kickWindup += HUMAN_SHOT_WINDUP - KICK_WINDUP;
+            this.startFinish(p);
+          }
         }
         this.chipArmed = false;
       }
-      // (A THROUGH tap during a shot's charge is the chip, not a through ball.)
-      else if (throughR && !pad.shoot && !this.chipArmed) {
-        if (throughHold < 0.24) this.order(p, 'through', dirX, dirZ, 0.7, -1, false);
-        else this.order(p, 'lob', dirX, dirZ, clamp(throughHold / 0.8, 0.3, 1), -1, false);
-      }
     } else {
+      if (this.hp) this.endPass(); // (lost it mid-charge, or it's away)
       const d = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
       const loose = b.owner < 0 && !b.held;
       const opp = b.owner >= 0 && this.players[b.owner].side !== side;
       if (loose && d < 4) {
-        if (passP) this.order(p, 'pass', dirX, dirZ, 0.6, -1, true);
-        else if (shootP) this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0, 0.8, -1, true);
-        else if (throughP) this.order(p, 'through', dirX, dirZ, 0.7, -1, true);
-        else if (this.passTarget === p.idx && !p.order) this.autoHeader(p, d);
+        if (passP || (this.passBuffer > 0 && this.passTarget === p.idx)) {
+          this.passBuffer = 0;
+          const o = this.order(p, 'pass', dirX, dirZ, 0.6, -1, true);
+          if (o) o.runSpeed = p.speed();
+        } else if (shootP) this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0, 0.8, -1, true);
+        else if (throughP) {
+          const o = this.order(p, 'through', dirX, dirZ, 0.7, -1, true);
+          if (o) o.runSpeed = p.speed();
+        } else if (this.passTarget === p.idx && !p.order) this.autoHeader(p, d);
       } else {
-        if (passP) this.switchPlayer(stickLen > 0.3 ? pad.mx : 0, stickLen > 0.3 ? pad.mz : 0);
-        else if (shootP && opp && d < 6) this.startSlide(p);
+        // A pass on its way to him: PASS now is a first-time ball when it gets there (a one-two), not a
+        // switch away from the man it's for.
+        if (passP && loose && this.passTarget === p.idx) this.passBuffer = PASS_BUFFER;
+        else if (passP) this.switchPlayer(stickLen > 0.3 ? pad.mx : 0, stickLen > 0.3 ? pad.mz : 0);
       }
-      // Hold "press" to have your player close the carrier down automatically.
+      // Move assist: the run the AI had him making, just after a switch or with the stick left alone.
+      this.moveAssistRun(p, pad, stickLen);
+      // Hold "press" to have your player close the carrier down automatically: goal-side of the ball, reading
+      // his run, facing it; an exposed touch is poked away (pressSteal).
       if (pad.through && opp && stickLen < 0.3) {
         const c = this.players[b.owner];
         const gx = -this.attackDir(side) * HALF_L;
         const ux = gx - c.pos.x;
         const uz = -c.pos.z;
         const ul = Math.hypot(ux, uz) || 1;
-        const tx = c.pos.x + (ux / ul) * 0.7 - p.pos.x;
-        const tz = c.pos.z + (uz / ul) * 0.7 - p.pos.z;
+        const tx = b.pos.x + c.vel.x * PRESS_LEAD + (ux / ul) * PRESS_GAP - p.pos.x;
+        const tz = b.pos.z + c.vel.z * PRESS_LEAD + (uz / ul) * PRESS_GAP - p.pos.z;
         const tl = Math.hypot(tx, tz) || 1;
-        p.wantX = tx / tl;
-        p.wantZ = tz / tl;
+        const f = Math.min(1, tl / 0.6);
+        p.wantX = (tx / tl) * f;
+        p.wantZ = (tz / tl) * f;
         p.sprint = tl > 2;
+        if (d < 3.5) p.faceTarget = Math.atan2(b.pos.z - p.pos.z, b.pos.x - p.pos.x);
+        pressSteal(this, p, c);
       }
+      // TACKLE (SHOOT) while they have it: tap for a standing tackle (closing first from further off), hold or
+      // double-tap for a slide (dribble.ts).
+      humanTackle(this, p, pad, shootP, stickLen, dt);
       // Assisted receive: if a pass is on its way to you and you're not steering, go meet it (at a
-      // sprint when it's a few metres off: an AI man racing for it would).
-      if (this.passTarget === p.idx && stickLen < 0.2) {
+      // sprint when it's a few metres off: an AI man racing for it would). Still holding the stick the
+      // way it was when control came to him (he just played the pass along it) isn't steering, and
+      // nor, just after the switch, is a stick roughly along the run to it.
+      if (this.passTarget === p.idx && this.receiveAssisted(p, pad, stickLen)) {
         const i = intercept(this, p);
         const tx = i.x - p.pos.x;
         const tz = i.z - p.pos.z;
@@ -1548,6 +1817,175 @@ export class Match {
   }
 
   /**
+   * PASS / THROUGH with the ball at the human's feet (open play). Pressing starts a charge (passCharge rises
+   * 0..1 over PASS_CHARGE_T s for PASS; THROUGH's bar is its hold time, see THROUGH_LOB_HOLD). While the
+   * button is held the stick picks the man it's locked onto (passAim, picked again as the stick swings) and
+   * he turns his body to him (PASS_TURN, slower at speed), slowed to PASS_CHARGE_MOVE of his pace. Let go and
+   * it's played to that man: a tap (under PASS_TAP s) at the pace the assist judges, a longer PASS hold at
+   * the charged pace (nudged by the assist level, see actions.assistPace), a THROUGH hold as a lofted ball
+   * whose charge is its carry. Let go with his body still more than PASS_SQUARE_MAX off the line and the kick
+   * waits (at most PASS_TURN_WAIT s) for the turn; through the wind-up he keeps turning to it. A PASS pressed
+   * while a pass was on its way to him (passBuffer) starts one as he takes it. True while the pass owns the
+   * frame (the charge, the wait, the wind-up).
+   */
+  private humanPass(
+    p: Player, pad: Pad, stickLen: number, passP: boolean, throughP: boolean, shootP: boolean, dt: number,
+  ): boolean {
+    let hp = this.hp;
+    if (hp && hp.player !== p.idx) {
+      this.endPass();
+      hp = null;
+    }
+    if (!hp) {
+      const btn = passP || this.passBuffer > 0 ? 'pass' : throughP && !pad.shoot && !this.chipArmed ? 'through' : null;
+      this.passBuffer = 0;
+      if (!btn || p.state !== 'move') return false;
+      const l = stickLen > 0.25 ? stickLen : 0;
+      hp = this.hp = {
+        btn, player: p.idx, t: 0,
+        dirX: l ? pad.mx / l : Math.cos(p.facing), dirZ: l ? pad.mz / l : Math.sin(p.facing),
+        released: false, wait: 0, target: -1, mode: btn, pickT: Infinity, pickA: 0, line: p.facing, ordered: false, relSpeed: 0,
+      };
+    }
+    if (hp.ordered) {
+      // Winding up: his body keeps coming round to the line.
+      if (p.order && p.state === 'kick') {
+        p.facing = turnToward(p.facing, hp.line, this.passTurnRate(p) * dt);
+        return true;
+      }
+      this.endPass();
+      return false;
+    }
+    // SHOOT pressed mid-charge: it's a shot (or, THROUGH held, a chip) instead.
+    if (shootP) {
+      this.endPass();
+      return false;
+    }
+    const held = hp.btn === 'pass' ? pad.pass : pad.through;
+    const letGo = !hp.released && !held;
+    if (!hp.released) {
+      if (stickLen > 0.25) {
+        hp.dirX = pad.mx / stickLen;
+        hp.dirZ = pad.mz / stickLen;
+      }
+      if (held) hp.t += dt;
+      else {
+        hp.released = true;
+        hp.relSpeed = p.speed();
+      }
+    } else hp.wait += dt;
+    const mode = hp.btn === 'pass' ? 'pass' : hp.t < THROUGH_LOB_HOLD ? 'through' : 'lob';
+    // The lock-on follows the stick while it's held (and on the frame it's let go).
+    hp.pickT += dt;
+    const a = Math.atan2(hp.dirZ, hp.dirX);
+    if ((!hp.released || letGo) && (mode !== hp.mode || hp.pickT >= PASS_REPICK || Math.abs(angleDiff(hp.pickA, a)) > PASS_REPICK_ANGLE)) {
+      hp.target = pickReceiver(this, p, hp.dirX, hp.dirZ, mode);
+      hp.mode = mode;
+      hp.pickT = 0;
+      hp.pickA = a;
+    }
+    const b = this.ball.pos;
+    const pt = passAimPoint(this, p, hp.target, mode, hp.dirX, hp.dirZ);
+    hp.line = Math.atan2(pt.z - b.z, pt.x - b.x);
+    this.passAim = hp.target;
+    this.passMode = mode;
+    this.passCharge = hp.btn === 'pass' && !hp.released ? clamp(hp.t / PASS_CHARGE_T, 0, 1) : -1;
+    // Square up to it, at a controlled pace (locomote holds the facing he's turned to).
+    p.facing = turnToward(p.facing, hp.line, this.passTurnRate(p) * dt);
+    p.faceTarget = p.facing;
+    p.wantX = pad.mx * PASS_CHARGE_MOVE;
+    p.wantZ = pad.mz * PASS_CHARGE_MOVE;
+    p.sprint = false;
+    if (!hp.released) return true;
+    // Still side-on to it: a few frames more for the turn (the wind-up squares him up the rest of the way).
+    if (Math.abs(angleDiff(p.facing, hp.line)) > PASS_SQUARE_MAX && hp.wait < PASS_TURN_WAIT) return true;
+    // Play it. (A through ball is always weighted by the assist; a lofted one by its charge.)
+    const charge = mode === 'lob' ? clamp(hp.t / LOB_CHARGE_T, 0.3, 1)
+      : mode === 'pass' && hp.t >= PASS_TAP ? clamp(hp.t / PASS_CHARGE_T, 0, 1) : undefined;
+    const power = charge ?? (mode === 'through' ? 0.7 : 0.6);
+    const o = this.order(p, mode, hp.dirX, hp.dirZ, power, hp.target, false);
+    if (!o) {
+      // (Not on his feet this instant: try again for a moment, then forget it.)
+      if (hp.wait > 0.4) this.endPass();
+      return true;
+    }
+    o.charge = charge;
+    o.runSpeed = hp.relSpeed;
+    o.bodyOff = Math.abs(angleDiff(p.facing, hp.line));
+    hp.ordered = true;
+    return true;
+  }
+
+  /** The pass charge is over (struck, lost, or play stopped). */
+  private endPass(): void {
+    this.hp = null;
+    this.passCharge = -1;
+    this.passAim = -1;
+    this.passMode = null;
+  }
+
+  /** How fast (rad/s) a passer turns his body to the pass line: PASS_TURN standing, less at speed. */
+  private passTurnRate(p: Player): number {
+    return PASS_TURN * (1 - PASS_TURN_SPRINT_LOSS * Math.min(1, p.speed() / SPRINT_SPEED));
+  }
+
+  /**
+   * Keep track of switches (any change of the controlled man: a pass received, a switch, a restart) for
+   * move assist: the time since, the stick held at the switch (latched until it's let go or swung, or he
+   * has the ball), how long the stick has been left alone, and a buffered PASS that no longer applies.
+   */
+  private trackSwitch(p: Player, pad: Pad, stickLen: number, hasBall: boolean, dt: number): void {
+    if (p.idx !== this.seenActive) {
+      this.seenActive = p.idx;
+      this.sinceSwitch = 0;
+      this.switchT = 0;
+      this.latch = stickLen > 0.3 ? { x: pad.mx / stickLen, z: pad.mz / stickLen } : null;
+    } else this.sinceSwitch += dt;
+    const l = this.latch;
+    if (l && (hasBall || stickLen < 0.3 || (pad.mx * l.x + pad.mz * l.z) / stickLen < Math.cos(STICK_LATCH_TURN))) this.latch = null;
+    this.stickIdle = stickLen < 0.2 ? this.stickIdle + dt : 0;
+    const b = this.ball;
+    if ((b.owner >= 0 && b.owner !== p.idx) || (this.passTarget >= 0 && this.passTarget !== p.idx)) this.passBuffer = 0;
+    else this.passBuffer = Math.max(0, this.passBuffer - dt);
+  }
+
+  /**
+   * Move assist (moveAssist) for the human's man off the ball: for MOVE_ASSIST_T s after a switch, with the
+   * stick neutral (or still latched) or within MOVE_ASSIST_CONE of it, he keeps making the run the AI had
+   * him making (ai.assistRun) instead of stopping dead; with the stick left alone for MOVE_IDLE_T s, he
+   * follows his AI positioning / marking at a jog.
+   */
+  private moveAssistRun(p: Player, pad: Pad, stickLen: number): void {
+    if (!this.moveAssist || p.state !== 'move') return;
+    const fresh = this.sinceSwitch < MOVE_ASSIST_T;
+    const idle = this.stickIdle > MOVE_IDLE_T;
+    if (!fresh && !idle) return;
+    const run = assistRun(this, p);
+    if (!run) return;
+    if (fresh) {
+      if (stickLen >= 0.2 && !this.latch) {
+        const rl = Math.hypot(run.wantX, run.wantZ);
+        if (rl < 0.05 || (pad.mx * run.wantX + pad.mz * run.wantZ) / (stickLen * rl) < Math.cos(MOVE_ASSIST_CONE)) return;
+      }
+      p.sprint = run.sprint || pad.sprint;
+    } else p.sprint = false;
+    p.wantX = run.wantX;
+    p.wantZ = run.wantZ;
+    p.faceTarget = run.face;
+  }
+
+  /** Does the assisted receive run the human's man onto a pass coming to him (see applyHuman)? */
+  private receiveAssisted(p: Player, pad: Pad, stickLen: number): boolean {
+    if (stickLen < 0.2 || this.latch) return true;
+    if (!this.moveAssist || this.sinceSwitch >= MOVE_ASSIST_T) return false;
+    const i = intercept(this, p);
+    const tx = i.x - p.pos.x;
+    const tz = i.z - p.pos.z;
+    const tl = Math.hypot(tx, tz);
+    return tl < 0.3 || (pad.mx * tx + pad.mz * tz) / (stickLen * tl) > Math.cos(MOVE_ASSIST_CONE);
+  }
+
+  /**
    * A cross or lofted pass is dropping onto the human's man and he hasn't pressed anything: he attacks it
    * anyway, the way an AI teammate would, rather than letting it sail over his head (a human-delivered
    * corner switches control to its target runner, and most of them used to go untouched). In sight of
@@ -1558,8 +1996,8 @@ export class Match {
     const b = this.ball;
     if (d > AUTO_HEADER_D || b.pos.y < 1.15 || b.pos.y > 3 || b.vel.y > 3) return;
     const ad = this.attackDir(p.side);
-    // (The same call an AI teammate makes: a sight of goal is worth a header at it.)
-    if (shotQuality(p.pos.x, p.pos.z, ad) > 0.12) {
+    // (The same call an AI teammate makes: close in, with a sight of goal, a header at it.)
+    if (headerAtGoal(this, p)) {
       this.order(p, 'header', 0, 0, 0.75, -1, true);
     } else {
       const x = clamp(p.pos.x + ad * 12, -HALF_L + 4, HALF_L - 4);
@@ -1603,25 +2041,44 @@ export class Match {
     if (hs < 0 || !this.autoSwitch) return;
     this.switchT += dt;
     const b = this.ball;
+    // Defending only: their ball (at their feet, or a pass of theirs), or a loose one. Never while ours is
+    // at our feet, in a keeper's hands, or on its way to one of ours.
+    if (b.held) return;
     if (b.owner >= 0 && this.players[b.owner].side === hs) return;
-    if (this.passTarget >= 0 && this.players[this.passTarget].side === hs) return;
-    if (this.switchT < 0.9 || this.active < 0) return;
+    if (b.owner < 0 && this.passTarget >= 0 && this.players[this.passTarget].side === hs) return;
+    if (this.switchT < AUTO_SWITCH_GAP || this.active < 0) return;
     const cur = this.players[this.active];
-    const curT = intercept(this, cur).t;
+    if (cur.sentOff) return;
+    // A man on the floor (or just gone to ground) is out of it for a moment.
+    const down = cur.state !== 'move' && cur.state !== 'kick' && cur.stateT > 0.3;
+    const ci = intercept(this, cur);
+    const curT = ci.t + (down ? 1 : 0);
     let best = -1;
     let bestT = Infinity;
     for (const p of this.bySide[hs as Side]) {
-      if (p.isKeeper || p === cur || p.sentOff) continue;
+      if (p.isKeeper || p === cur || p.sentOff || p.state !== 'move') continue;
       const t = intercept(this, p).t;
       if (t < bestT) {
         bestT = t;
         best = p.idx;
       }
     }
-    if (best >= 0 && bestT < curT * 0.55 && curT > 1.2) {
-      this.active = best;
-      this.switchT = 0;
+    const ratio = b.owner < 0 ? AUTO_SWITCH_RATIO_LOOSE : AUTO_SWITCH_RATIO;
+    if (best < 0 || bestT > curT * ratio || curT - bestT < AUTO_SWITCH_MARGIN) return;
+    // Never away from a man the stick is steering onto the ball while he's closing in on it.
+    const pad = this.prev;
+    const sl = Math.hypot(pad.mx, pad.mz);
+    if (!down && sl > 0.3) {
+      const toward = (x: number, z: number): boolean => {
+        const tx = x - cur.pos.x;
+        const tz = z - cur.pos.z;
+        const tl = Math.hypot(tx, tz);
+        return tl < 0.5 || ((pad.mx * tx + pad.mz * tz) / (sl * tl) > Math.cos(0.8) && (cur.vel.x * tx + cur.vel.z * tz) / tl > 2);
+      };
+      if (toward(ci.x, ci.z) || toward(b.pos.x, b.pos.z)) return;
     }
+    this.active = best;
+    this.switchT = 0;
   }
 
   // ---------------------------------------------------------------- set pieces
@@ -2150,6 +2607,11 @@ export class Match {
         const push = (minD - d) * 0.5;
         const nx = dx / d;
         const nz = dz / d;
+        // A proper shoulder barge (not just two bodies touching) knocks the man on the ball off balance.
+        if (a.side !== b.side && push > 0.07) {
+          const own = this.ball.owner;
+          if (own === a.idx || own === b.idx) this.players[own].stumbleT = Math.max(this.players[own].stumbleT, STUMBLE_BUMP * 0.6);
+        }
         a.pos.x -= nx * push;
         a.pos.z -= nz * push;
         b.pos.x += nx * push;
@@ -2167,6 +2629,12 @@ export class Match {
     const b = this.ball;
     if (!b.held || b.owner < 0) return;
     const k = this.players[b.owner];
+    // A keeper with the ball in his hands stays in front of his goal line (he used to drift back into the
+    // net after a catch and throw it out from in there, the ball over the line).
+    if (k.isKeeper && Math.abs(k.pos.x) > HALF_L - KEEPER_LINE_IN) {
+      k.pos.x = Math.sign(k.pos.x) * (HALF_L - KEEPER_LINE_IN);
+      if (k.vel.x * k.pos.x > 0) k.vel.x = 0;
+    }
     if (k.state === 'dive' || k.state === 'stand') {
       b.pos.x = k.pos.x + Math.cos(k.facing) * 0.3;
       b.pos.z = k.pos.z + Math.sin(k.facing) * 0.3;
@@ -2316,6 +2784,67 @@ export class Match {
     }
   }
 
+  // ---------------------------------------------------------------- timed finishing
+
+  /**
+   * The human's open-play strike being timed (Match.timedFinish): from SHOOT's release (t = 0) until
+   * FINISH_WINDOWS.late s after the boot meets the ball (`contact`, s after the release; -1 before). `tap`:
+   * when the second SHOOT tap came (-1: none yet). `aim`: the strike's aim and error, for a late tap to re-aim.
+   */
+  private finish: {
+    p: number; side: Side; t: number; contact: number; tap: number; kick: number; aim: Launch['aim'] | null;
+  } | null = null;
+  /** SHOOT went down as the timed-finish tap: not a new press (no slide, no charge, no strike) until let go. */
+  private finishHeld = false;
+
+  /** The human has just ordered a strike on SHOOT's release: time it (when timed finishing is on). */
+  private startFinish(p: Player): void {
+    this.finish = this.timedFinish
+      ? { p: p.idx, side: p.side, t: 0, contact: -1, tap: -1, kick: -1, aim: null }
+      : null;
+  }
+
+  /** The timed strike's clock: it ends when the late window closes, or the strike never comes. */
+  private finishTick(dt: number): void {
+    const f = this.finish;
+    if (!f) return;
+    f.t += dt;
+    const p = this.players[f.p];
+    const b = this.ball;
+    const gone = f.contact < 0
+      ? p.state !== 'kick' || !p.order
+      : f.t > Math.max(0.25, f.contact + FINISH_WINDOWS.late) + 1e-6 || b.owner >= 0 || b.lastTouch !== f.p || this.shotKick !== f.kick;
+    if (this.phase !== 'play' || gone) this.finish = null;
+  }
+
+  /**
+   * A SHOOT press while a strike is being timed: its second tap (true: used up here). Before the strike it's
+   * judged at contact (execute); after it, the ball is put right (or wrong) in flight now.
+   */
+  private finishTap(): boolean {
+    const f = this.finish;
+    if (!f) return false;
+    if (f.tap >= 0) return true; // one tap per strike
+    f.tap = f.t;
+    if (f.contact < 0) return true;
+    const off = f.t - f.contact;
+    const grade: TimingGrade = off <= FINISH_WINDOWS.perfect + 1e-6 ? 'perfect' : off <= FINISH_WINDOWS.good + 1e-6 ? 'good' : 'late';
+    if (f.aim) {
+      reaimShot(this, f.aim, TIMING_ERR[grade], grade === 'late' ? WILD_LIFT : 0);
+      // (It may be on target now, or not any more.)
+      const on = onTarget(this, f.side);
+      if (on !== this.shotOnTarget) {
+        this.stats.onTarget[f.side] += on ? 1 : -1;
+        this.shotOnTarget = on;
+        this.shotWasOnTarget = on;
+      }
+      this.updateBallPath();
+    }
+    this.shotTiming = grade;
+    this.events.push({ type: 'timing', player: f.p, grade });
+    return true;
+  }
+
   private dribbleControl(): void {
     const b = this.ball;
     if (b.owner < 0 || b.held) return;
@@ -2328,7 +2857,8 @@ export class Match {
     }
     const sp = p.speed();
     // Push the ball on in rhythm with the stride when running.
-    const pulse = sp > 3 ? Math.max(0, Math.sin(p.runPhase * Math.PI * 4)) * 0.16 * (sp / 8) : 0;
+    // (Close control keeps the human's jogging dribbler's touches tighter: dribble.ts closeTouch.)
+    const pulse = closeTouch(this, p, sp > 3 ? Math.max(0, Math.sin(p.runPhase * Math.PI * 4)) * 0.16 * (sp / 8) : 0);
     const fx = p.footX() + Math.cos(p.facing) * pulse;
     const fz = p.footZ() + Math.sin(p.facing) * pulse;
     const ex = fx - b.pos.x;
@@ -2337,10 +2867,112 @@ export class Match {
       b.owner = -1;
       return;
     }
-    const k = p.state === 'kick' ? 8 : 15;
-    b.vel.x = p.vel.x + ex * k;
-    b.vel.z = p.vel.z + ez * k;
+    if (p.touchT > 0 && p.state === 'move') {
+      // First touch settling (see firstTouch): the ball was pushed off his foot into his stride; he runs onto
+      // it as the offset shrinks, and it gives up its pace over a few frames instead of stopping dead.
+      const f = p.touchT / TOUCH_T;
+      const wx = p.vel.x + (ex + p.touchX * f) * TOUCH_SPRING;
+      const wz = p.vel.z + (ez + p.touchZ * f) * TOUCH_SPRING;
+      b.vel.x += (wx - b.vel.x) * TOUCH_GRIP;
+      b.vel.z += (wz - b.vel.z) * TOUCH_GRIP;
+    } else {
+      const k = p.state === 'kick' ? 8 : 15;
+      b.vel.x = p.vel.x + ex * k;
+      b.vel.z = p.vel.z + ez * k;
+    }
     if (b.pos.y <= BALL_R + 0.02) b.vel.y = 0;
+  }
+
+  /**
+   * First touch: `p` meets a moving ball (a pass, a loose ball, a clearance) coming at `rel` m/s relative to
+   * him. It comes off his body a distance set by how heavy the touch is: that speed (squared), his dribbling,
+   * how closely he's pressed, whether he's facing it, a ball off the ground, being off balance (the human's
+   * man, less of it with more pass assistance: TOUCH_ASSIST). Up to TOUCH_SPILL m it's his, pushed that far
+   * into his stride (the stick's way for the human, his run for the AI) and settled over TOUCH_T s
+   * (dribbleControl); a heavier one squirts off him loose (up to TOUCH_MAX m) for anyone to get to. The
+   * distance is kept in lastTouchD.
+   */
+  private firstTouch(p: Player, rel: number): void {
+    const b = this.ball;
+    const human = this.isHumanControlled(p);
+    const bs = Math.hypot(b.vel.x, b.vel.z);
+    const bx = bs > 0.5 ? b.vel.x / bs : Math.cos(p.facing);
+    const bz = bs > 0.5 ? b.vel.z / bs : Math.sin(p.facing);
+    // Pressure: the nearest opponent (outfield or keeper) closing him down.
+    let near = Infinity;
+    let ox = 0;
+    let oz = 0;
+    for (const o of this.bySide[otherSide(p.side)]) {
+      if (o.sentOff) continue;
+      const d = dist2(o.pos.x, o.pos.z, p.pos.x, p.pos.z);
+      if (d < near) {
+        near = d;
+        ox = (p.pos.x - o.pos.x) / Math.max(0.1, d);
+        oz = (p.pos.z - o.pos.z) / Math.max(0.1, d);
+      }
+    }
+    const press = clamp((2.6 - near) / 1.8, 0, 1);
+    // Facing the ball (1) .. his back to it (-1).
+    const faceIt = -(Math.cos(p.facing) * bx + Math.sin(p.facing) * bz);
+    const back = clamp((0.2 - faceIt) / 1.2, 0, 1);
+    const air = clamp((b.pos.y - 0.45) / 0.5, 0, 1);
+    const ctrl = p.stat.dribbling / 100;
+    let heavy = (rel / 20) ** 2 * (1.2 - ctrl) * (1 + 0.8 * press + 0.5 * back + 0.4 * air + (p.stumbleT > 0 ? 0.6 : 0)) *
+      (1.15 - this.kickSkill(p) * 0.075);
+    heavy *= human ? TOUCH_ASSIST[this.groundAssist] : TOUCH_AI;
+    const dist = Math.min(TOUCH_MAX, TOUCH_BASE + heavy * TOUCH_K * (0.6 + 0.8 * this.rng.next()));
+    this.lastTouchD = dist;
+    // Where he means to take it: the stick (the human; no stick, in front of him), else into his run, or on
+    // the way it was going, opened up towards goal and away from his marker.
+    const ad = this.attackDir(p.side);
+    const stick = human ? Math.hypot(this.prev.mx, this.prev.mz) : 0;
+    let wx: number;
+    let wz: number;
+    if (stick > 0.3) {
+      wx = this.prev.mx / stick;
+      wz = this.prev.mz / stick;
+    } else if (human) {
+      // (No stick: cushioned in front of him, the way he's facing.)
+      wx = Math.cos(p.facing);
+      wz = Math.sin(p.facing);
+    } else if (p.speed() > 2 && p.vel.x * bx + p.vel.z * bz > 0) {
+      // Running onto it: into his stride.
+      wx = p.vel.x;
+      wz = p.vel.z;
+    } else {
+      wx = bx * 0.45 + ad * 0.35 + ox * press * 0.4 + Math.cos(p.facing) * 0.2;
+      wz = bz * 0.45 + oz * press * 0.4 + Math.sin(p.facing) * 0.2;
+    }
+    const wl = Math.hypot(wx, wz);
+    if (wl < 1e-3) {
+      wx = Math.cos(p.facing);
+      wz = Math.sin(p.facing);
+    } else {
+      wx /= wl;
+      wz /= wl;
+    }
+    if (dist <= TOUCH_SPILL) {
+      this.takePossession(p);
+      if (b.owner !== p.idx) return;
+      p.touchT = TOUCH_T;
+      p.touchX = wx * dist;
+      p.touchZ = wz * dist;
+      return;
+    }
+    // A heavy touch: off his shin, mostly on the way the ball was going, and loose.
+    if (this.offsideTouch(p)) return;
+    const a = Math.atan2(bz * 0.7 + wz * 0.3, bx * 0.7 + wx * 0.3) + this.rng.gauss() * 0.45;
+    const push = groundPassSpeed(dist, 0.6);
+    b.vel.x = p.vel.x * 0.6 + Math.cos(a) * push;
+    b.vel.z = p.vel.z * 0.6 + Math.sin(a) * push;
+    b.vel.y = 0.6 + air * 1.2;
+    b.spin.x = b.spin.y = b.spin.z = 0;
+    b.lastTouch = p.idx;
+    b.lastTouchSide = p.side;
+    p.kickCooldown = 0.25;
+    // (The human's man is still the one it's for: the assisted receive goes and gets it.)
+    this.passTarget = human ? p.idx : -1;
+    this.updateBallPath();
   }
 
   private checkPossession(): void {
@@ -2378,7 +3010,7 @@ export class Match {
       best.blockKick = this.kickId;
       const def = best.stat.defending / 100;
       const shot = this.shotClock < 1.2;
-      const pBlock = shot ? 0.34 + def * 0.3 : 0.3 + def * 0.3;
+      const pBlock = (shot ? 0.34 + def * 0.3 : 0.3 + def * 0.3) * (shot && this.shotByHuman ? HUMAN_SHOT_BLOCK : 1);
       if (this.rng.chance(pBlock)) this.deflect(best, shot);
       else if (shot && !this.shotOnTarget && this.rng.chance(0.7)) this.nick(best);
       return;
@@ -2391,6 +3023,11 @@ export class Match {
         this.deflect(best, false);
         return;
       }
+    }
+    // An outfielder meeting a moving ball: a first touch (clean into his stride, or heavy and loose).
+    if (!best.isKeeper && rel >= TOUCH_MIN_REL) {
+      this.firstTouch(best, rel);
+      return;
     }
     if (rel > trap) {
       if (this.offsideTouch(best)) return;
@@ -2414,6 +3051,7 @@ export class Match {
     b.owner = p.idx;
     b.lastTouch = p.idx;
     b.lastTouchSide = p.side;
+    p.touchT = 0;
     this.passTarget = -1;
     // Take a touch and look up before the next decision (the AI times its first touch).
     p.ballT = 0;
@@ -2450,7 +3088,7 @@ export class Match {
       p.blockKick = this.kickId;
       if (cross) {
         if (this.rng.chance(0.8)) this.deflect(p, false);
-      } else if (d < BODY_BLOCK && this.rng.chance(0.7)) {
+      } else if (d < BODY_BLOCK && this.rng.chance(0.7 * (this.shotByHuman ? HUMAN_SHOT_BLOCK : 1))) {
         // Straight into a body: blocked.
         this.deflect(p, true);
       } else if (!this.shotOnTarget && this.rng.chance(0.66)) this.nick(p);
@@ -2647,6 +3285,8 @@ export class Match {
         }
         continue;
       }
+      // A ball already wholly over the line (in the net, or out) is past him.
+      if (Math.abs(b.pos.x) > HALF_L + BALL_R) continue;
       // Don't handle your own teammate's back-pass.
       if (b.lastTouchSide === s && this.shotClock > 1 && b.lastTouch !== k.idx && b.pos.y < 0.6) continue;
       const diving = k.state === 'dive';
@@ -2661,7 +3301,11 @@ export class Match {
       const shotLive = this.shotClock < 2 && this.shotSide !== s && this.shotKick === this.kickId;
       if (diving && shotLive) {
         // A rocket (not a bent one) into the top corner: fingertips at best.
-        if (this.shotSpeed >= TOP_CORNER_SPEED && this.shotCurl < 0.3 && Math.abs(b.pos.z) > GOAL_W / 2 - 1.25 && b.pos.y > 1.2) reachH *= 0.5;
+        // (From range he's seen it all the way: the fingertips-only rule fades out from TOP_CORNER_NEAR to
+        // TOP_CORNER_FAR m.)
+        if (this.shotSpeed >= TOP_CORNER_SPEED && this.shotCurl < 0.3 && Math.abs(b.pos.z) > GOAL_W / 2 - 1.25 && b.pos.y > 1.2) {
+          reachH *= 1 - 0.5 * clamp((TOP_CORNER_FAR - this.shotDist) / (TOP_CORNER_FAR - TOP_CORNER_NEAR), 0, 1);
+        }
         // A bending free kick is hard to judge: the keeper's reach is a little shorter against it.
         if (this.fkShotKick === this.shotKick) reachH *= 1 - CURL_REACH * this.shotCurl;
       }
@@ -2773,7 +3417,8 @@ export class Match {
       b.vel.x = Math.abs(b.vel.x) * 0.25 * ad + ad * 2.5;
       const spill = this.rng.chance(0.5);
       b.vel.z = b.vel.z * (spill ? 0.15 : 0.3) + (Math.sign(b.pos.z - k.pos.z) || (this.rng.chance(0.5) ? 1 : -1)) * (spill ? 1 + this.rng.next() * 2.5 : 3 + this.rng.next() * 5);
-      b.vel.y = 2 + this.rng.next() * 3.5;
+      // (A spill back into the middle is palmed down, a rebound at someone's feet; pushed out wide, it's up.)
+      b.vel.y = spill ? PARRY_SPILL_VY + this.rng.next() * 1.5 : 2 + this.rng.next() * 3.5;
       b.spin.x = b.spin.y = b.spin.z = 0;
     }
     b.lastTouch = k.idx;
@@ -2874,6 +3519,7 @@ export class Match {
           const c = this.players[prev];
           c.kickCooldown = 0.5;
           if (c.side !== p.side && dist2(c.pos.x, c.pos.z, p.pos.x, p.pos.z) < 1.5) c.setState('fallen');
+          else c.stumbleT = Math.max(c.stumbleT, STUMBLE_LOST);
         }
         this.stats.tackles[p.side]++;
         this.events.push({ type: 'tackle', by: p.idx, won: true, slide: true });
@@ -3061,12 +3707,19 @@ export class Match {
     p.step(dt, false);
   }
 
-  tryTackle(p: Player, c: Player, aggression: number): void {
+  /**
+   * A standing tackle by `p` on carrier `c`. `assisted`: the human's TACKLE tap / PRESS steal (dribble.ts): a
+   * longer lunge (STAND_REACH), its own success (standingTackleChance: high from the front or side, lower
+   * from behind) and foul (standingFoulChance: rare from the front) odds, a lighter penalty for missing.
+   * Tackles on the human's carrier go through carrierGuard (difficulty, his dribbling, shielding, a skill's
+   * protection window).
+   */
+  tryTackle(p: Player, c: Player, aggression: number, assisted = false): void {
     if (p.tackleCooldown > 0 || p.state !== 'move' || p.sentOff || c.sentOff) return;
     p.tackleCooldown = 0.55;
     const b = this.ball;
     if (b.owner !== c.idx) return;
-    if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) > 1.15) return;
+    if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) > (assisted ? STAND_REACH : 1.15)) return;
     const def = p.stat.defending / 100;
     const drib = c.stat.dribbling / 100;
     const tb = Math.atan2(b.pos.z - p.pos.z, b.pos.x - p.pos.x);
@@ -3082,20 +3735,25 @@ export class Match {
     // Coming from behind: the carrier is facing away from the tackler.
     const behind = clamp(-(Math.cos(c.facing) * tx + Math.sin(c.facing) * tz) / tl, 0, 1);
     const skill = this.isHumanControlled(p) ? 2.6 : this.aiSkill(p.side);
-    let chance = clamp(0.42 + (def - drib) * 0.6 + (c.sprint ? 0.06 : 0), 0.12, 0.75) * (0.6 + 0.4 * facing) * aggression;
-    chance *= (1 - shielded * 0.4) * (0.84 + skill * 0.06);
-    if (this.isHumanControlled(p)) chance *= 1.2;
-    if (this.isHumanControlled(c)) chance *= 0.85;
-    chance *= TACKLE_WIN;
+    let chance: number;
+    if (assisted) chance = standingTackleChance(this, p, c, behind, shielded, bl > 0.9) * aggression;
+    else {
+      chance = clamp(0.42 + (def - drib) * 0.6 + (c.sprint ? 0.06 : 0), 0.12, 0.75) * (0.6 + 0.4 * facing) * aggression;
+      chance *= (1 - shielded * 0.4) * (0.84 + skill * 0.06);
+      if (this.isHumanControlled(p)) chance *= 1.2;
+      chance *= TACKLE_WIN;
+    }
+    chance *= carrierGuard(this, p, c);
     if (this.rng.chance(chance)) {
       this.stats.tackles[p.side]++;
       this.events.push({ type: 'tackle', by: p.idx, won: true, slide: false });
       c.kickCooldown = 0.45;
+      c.stumbleT = Math.max(c.stumbleT, STUMBLE_LOST);
       this.poke(p, b.pos.x, b.pos.z);
       // On the flank a poke often just knocks it into touch (the nearer the line, the likelier).
       const wz = Math.abs(c.pos.z) - (HALF_W - WING_TOUCH);
       const touch = wz > 0 && this.rng.chance(WING_POKE_TOUCH * clamp(wz / 5, 0.35, 1));
-      if (!touch && this.rng.chance(0.35 + def * 0.3)) {
+      if (!touch && this.rng.chance((assisted ? 0.5 : 0.35) + def * 0.3)) {
         // Clean: the tackler comes away with it.
         p.kickCooldown = 0;
         b.vel.x = p.vel.x;
@@ -3125,13 +3783,16 @@ export class Match {
       p.kickCooldown = 0.12;
       this.passTarget = -1;
     } else {
-      p.tackleCooldown = 1.1;
-      p.vel.x *= 0.35;
-      p.vel.z *= 0.35;
+      p.tackleCooldown = assisted ? 0.6 : 1.1;
+      p.vel.x *= assisted ? 0.6 : 0.35;
+      p.vel.z *= assisted ? 0.6 : 0.35;
+      // He rode it, but it knocked him off his stride.
+      c.stumbleT = Math.max(c.stumbleT, STUMBLE_BUMP);
       this.events.push({ type: 'tackle', by: p.idx, won: false, slide: false });
       // Mistimed: clipping the carrier from behind or through their back is a foul.
       const inBox = inOwnBox(this, p.side, c.pos.x, c.pos.z);
-      const pFoul = (0.042 + behind * 0.18 + shielded * 0.1 + (c.speed() > 5 ? 0.04 : 0)) * (inBox ? 0.9 : 1) * this.foulScale;
+      const base = assisted ? standingFoulChance(behind, shielded) : 0.042 + behind * 0.18 + shielded * 0.1 + (c.speed() > 5 ? 0.04 : 0);
+      const pFoul = base * (inBox ? 0.9 : 1) * this.foulScale;
       if (this.rng.chance(pFoul)) {
         c.setState('fallen');
         this.foul(p, c);
@@ -3156,32 +3817,11 @@ export class Match {
 
   /** `p` has wrong-footed `o` with a feint / change of pace. */
   beatDefender(p: Player, o: Player): void {
-    o.slowT = this.isHumanControlled(o) ? 0.45 : 0.7;
+    o.slowT = this.isHumanControlled(o) ? vsHuman(this.aiSkill(p.side)).beaten : 0.7;
     o.commitT = 0;
     o.jockeyT = 0;
     o.tackleCooldown = Math.max(o.tackleCooldown, 0.6);
     this.events.push({ type: 'beat', by: p.idx, on: o.idx });
-  }
-
-  /** A human dribbler cutting sharply past a close defender can wrong-foot him too. */
-  private humanCuts(): void {
-    const hs = this.cfg.humanSide;
-    const b = this.ball;
-    if (hs < 0 || b.owner !== this.active || b.held) return;
-    const p = this.players[this.active];
-    const sp = p.speed();
-    const ang = Math.atan2(p.vel.z, p.vel.x);
-    const turn = Math.abs(angleDiff(this.cutAng, ang));
-    this.cutAng += angleDiff(this.cutAng, ang) * 0.15;
-    if (sp < 3.5 || turn < 0.9 || this.cutKick === this.kickId + p.idx * 1e5 + Math.floor(this.clock * 2)) return;
-    this.cutKick = this.kickId + p.idx * 1e5 + Math.floor(this.clock * 2);
-    for (const o of this.bySide[hs === 0 ? 1 : 0]) {
-      if (o.isKeeper || o.slowT > 0 || o.state !== 'move' || o.sentOff) continue;
-      if (dist2(o.pos.x, o.pos.z, p.pos.x, p.pos.z) > 2.6) continue;
-      const pWin = clamp(0.3 + (p.stat.dribbling - o.stat.defending) / 100 * 0.9 - (this.aiSkill(o.side) - 2) * 0.04, 0.12, 0.6);
-      if (this.rng.chance(pWin)) this.beatDefender(p, o);
-      break;
-    }
   }
 
   /** Is the ball in flight from a shot struck straight from a direct free kick? */
@@ -3201,8 +3841,11 @@ export class Match {
     return this.ball.pos.z + (fz * (ad * HALF_L - this.ball.pos.x)) / fx;
   }
 
-  private cutAng = 0;
-  private cutKick = -1;
+  /**
+   * The human's dribble / tackle assists (see dribble.ts). (Its skill cut replaces the old humanCuts check,
+   * whose smoothed turn never passed its 0.9 rad bar once the human's cut was a quick bend.)
+   */
+  readonly assist = new AssistState();
   /** The human's last stick input looked like keys / d-pad (see isDigitalStick, Pad.digital). */
   private padDigital = false;
   /** THROUGH was tapped during the current SHOOT charge: the shot will be a chip. */
@@ -3217,8 +3860,10 @@ export class Match {
     const b = this.ball;
     if (b.owner < 0 || b.held || p.sentOff) return;
     const c = this.players[b.owner];
-    if (c.side === p.side) return;
-    if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) < 1.0) this.tryTackle(p, c, 1);
+    if (c.side === p.side || tackleClosing(this)) return; // (a TACKLE tap closing in makes its own challenge)
+    // (The assisted standing tackle, less sure than one he went in for, by difficulty: dribble.ts vsHuman.auto.
+    // A bump he didn't ask for shouldn't leave him stranded or give away a free kick.)
+    if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) < 1.0) this.tryTackle(p, c, vsHuman(this.aiSkill(c.side)).auto, true);
   }
 
   // ---------------------------------------------------------------- penalty shootout

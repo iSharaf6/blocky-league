@@ -10,9 +10,14 @@ export const PF = 16;
 export const BALL_OFS = 22 * PF;
 export const FRAME_LEN = BALL_OFS + 11;
 
-/** Frame code per player state; 10 = sent off (parked by his dugout, drawn hands-on-head). */
+/**
+ * Frame code per player state; 10 = sent off (parked by his dugout, drawn hands-on-head). 11 / 12 are
+ * reserved for a sim 'stumble' and a 'plant' (the step before a strike at a sprint): the renderer already
+ * draws them (characters.PSTATE), so a sim state by either name is recorded and drawn with no other change.
+ */
 export const STATE_CODE: Record<PState, number> & Record<string, number | undefined> = {
   move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9, sentoff: 10,
+  stumble: 11, plant: 12,
 };
 export const SENT_OFF_CODE = 10;
 

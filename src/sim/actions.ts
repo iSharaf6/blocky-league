@@ -1,11 +1,12 @@
 import { angleDiff, clamp, dist2, pointSegDist } from '../core/math';
 import { Ball, groundPassSpeed, rollTime, solveLob, type BallHit } from './ball';
 import {
-  AIR_DRAG, BALL_R, BOUNCE, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SPIN_DECAY,
+  AIR_DRAG, BALL_R, BOUNCE, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SPIN_DECAY, SPRINT_SPEED,
 } from './constants';
 import type { Match } from './match';
 import type { KickOrder, Player } from './player';
-import type { KickKind, ShotStyle } from './types';
+import { STUMBLE_LOST } from './player';
+import type { AssistLevel, KickKind, ShotStyle } from './types';
 
 export interface Launch {
   vx: number;
@@ -19,6 +20,14 @@ export interface Launch {
   power: number;
   /** A shot struck as a chip or a finesse one. */
   style?: ShotStyle;
+  /** Shots with the foot: struck with his weaker foot, and how far off balance (0 steady .. 1 all over the place). */
+  weak?: boolean;
+  balance?: number;
+  /**
+   * Shots with the foot: the goal line (x) and where on it (z, m; and the height) the strike was meant for,
+   * and the error it put on top (the ball is struck at aim + err). Timed finishing's late tap re-aims from these.
+   */
+  aim?: { gx: number; z: number; errZ: number; h: number; errH: number };
 }
 
 function dirOf(p: Player, order: KickOrder): { x: number; z: number } {
@@ -64,13 +73,84 @@ const STICK_POST_AIM_CLOSE = 0.45;
 const HUMAN_FINISH = 0.8;
 /** ... and how much of the base model's extra lift (a blasted shot climbing over the bar) he gets. */
 const HUMAN_LIFT = 0.8;
-/** Shot launch speed (m/s): SHOT_SPEED_BASE + power x SHOT_SPEED_POWER x (0.78 + shooting x 0.3). */
+/**
+ * Set-piece shots (free kicks, penalties) and finesse curlers: launch speed (m/s) SHOT_SPEED_BASE + power x
+ * SHOT_SPEED_POWER x (0.78 + shooting x 0.3), tuned with the walls and keepers (finishing.test.ts).
+ */
 export const SHOT_SPEED_BASE = 19;
 export const SHOT_SPEED_POWER = 13;
-/** Beyond this distance (m) a full-power strike no longer climbs as much (so it isn't always over). */
+/** Beyond this distance (m) a full-power set-piece strike no longer climbs as much (so it isn't always over). */
 const LONG_RISE_FROM = 20;
+/**
+ * An open-play strike, the power bar (how long SHOOT was held) mapped to pace AND height. Launch speed (m/s)
+ * STRIKE_SPEED_BASE + power x STRIKE_SPEED_POWER x (0.78 + shooting x 0.3): a tap is still struck hard.
+ */
+export const STRIKE_SPEED_BASE = 20.5;
+export const STRIKE_SPEED_POWER = 10.5;
+/**
+ * Height (m) it's struck to reach at the goal line, before the error: STRIKE_TAP_H for a tap (under the
+ * grass: a low drive that skids off the turf short of the line and skims in) rising with power^STRIKE_LIFT_EXP
+ * to STRIKE_FULL_H at a full bar (a riser: into the roof of the net, or over from range).
+ */
+export const STRIKE_TAP_H = -0.55;
+export const STRIKE_FULL_H = 1.75;
+const STRIKE_LIFT_EXP = 1.7;
+/**
+ * Close in, the lift (the power part of the height, and the upward error with it) is scaled down: to
+ * STRIKE_CLOSE_LIFT of it from STRIKE_CLOSE_IN m or nearer, all of it from STRIKE_CLOSE_OUT m (a full-power
+ * shot from 8 m is a thunderbolt, not a sky-rocket).
+ */
+const STRIKE_CLOSE_IN = 5;
+const STRIKE_CLOSE_OUT = 10;
+const STRIKE_CLOSE_LIFT = 0.4;
+/**
+ * The AI picks its pace and keeps it down: an AI strike gets AI_STRIKE_LIFT of the power bar's lift (the human
+ * has the full mapping, it's his choice).
+ */
+const AI_STRIKE_LIFT = 0.8;
+/** From range the upward error grows: x (1 + STRIKE_LONG_SKY per metre beyond STRIKE_LONG_FROM), at most x 1.6. */
+const STRIKE_LONG_FROM = 18;
+const STRIKE_LONG_SKY = 0.02;
+
+/**
+ * Weak foot: a shot struck with the other foot (Player.kickLeg, chosen by the ball's side, isn't his
+ * Player.foot) has WEAK_FOOT_ERR more error and WEAK_FOOT_PACE less pace, for a weak foot rated 1-2; a 3 gets
+ * two thirds of that, a 4 a third, a two-footed 5 nothing.
+ */
+export const WEAK_FOOT_ERR = 0.35;
+export const WEAK_FOOT_PACE = 0.1;
+/**
+ * Off balance: his body turned more than OFF_TURN_FROM rad from the shot at the strike (x1.3 error from
+ * ~70 degrees, x1.8 by ~150), or still stumbling (Player.stumbleT: x1.3-1.8). OFF_BALANCE_PACE less pace.
+ */
+const OFF_TURN_FROM = 1.05;
+const OFF_TURN_70 = 1.22;
+const OFF_TURN_FULL = 2.62;
+const OFF_BALANCE_PACE = 0.15;
+/** The AI's shooters get this share of the weak-foot and off-balance penalties. */
+export const AI_SHAPE = 0.5;
+/** A mistimed second tap (timed finishing): this much more height (m) at the line. */
+export const WILD_LIFT = 0.6;
 /** How much steadier a header is than it used to be (1 = as precise as a shot with the foot). */
 const HEADER_COMPOSURE = 0.72;
+/**
+ * A headed shot's pace (m/s) is 11 + power x 8 + heading x 3, but at most HEADER_SPEED_AT + HEADER_SPEED_SLOPE
+ * x (HEADER_SPEED_FROM - distance) (and at least HEADER_SPEED_MIN): a header from 16 m is a 12 m/s nod, one from
+ * 20 m 8 m/s, while close in (8 m or nearer) it's as firm as ever. (Round 8: 12 of 25 AI headers from 20-25 m went in.)
+ */
+const HEADER_SPEED_AT = 12;
+const HEADER_SPEED_SLOPE = 0.9;
+const HEADER_SPEED_FROM = 16;
+const HEADER_SPEED_MIN = 7;
+/** A header is aimed at goal only from inside HEADER_AT_GOAL_D m with a sight of goal of at least HEADER_AT_GOAL_Q. */
+export const HEADER_AT_GOAL_D = 14;
+export const HEADER_AT_GOAL_Q = 0.3;
+
+/** Is a header at goal on for `p` from where he is (the AI's call, and the human's automatic one)? */
+export function headerAtGoal(m: Match, p: Player): boolean {
+  const ad = m.attackDir(p.side);
+  return dist2(p.pos.x, p.pos.z, ad * HALF_L, 0) < HEADER_AT_GOAL_D && shotQuality(p.pos.x, p.pos.z, ad) > HEADER_AT_GOAL_Q;
+}
 /** Headers from a corner / wide free-kick delivery (a crowded box, a marker on you) are rougher still. */
 const SET_PIECE_HEADER = 0.7;
 /** ... and a glance off one whipped in flat and fast (a driven corner) is harder to place again. */
@@ -86,22 +166,37 @@ export const THROW_RANGE = 26;
 export const HEADER_MAX_D = 20;
 export const HEADER_MAX_VH = 18;
 /**
- * Lofted balls and clearances: at most LOB_MAX_SPEED m/s off the foot, and hang times up to
- * LOB_MAX_FLIGHT s (a long ball is lofted higher rather than struck harder; the cap used to be 2.3 s).
+ * Lofted balls leave the foot at most LOB_MAX_SPEED m/s and clearances CLEAR_MAX_SPEED, with hang times up
+ * to LOB_MAX_FLIGHT s (a long ball is lofted higher rather than struck harder; the cap used to be 2.3 s).
+ * (Round 8: both were capped at 30, and the critic measured lofted balls at 24.8 m/s on average, max 29.8,
+ * clearances at 25.4: too hot to look or play right. Now lofted balls average ~23.3 m/s. A 24 cap was
+ * tried: crosses hung up that much longer were met by ~0.35 more headed goals a match at 2x150 s, and the
+ * save rate fell from ~55% to ~50%.)
  */
-export const LOB_MAX_SPEED = 30;
+export const LOB_MAX_SPEED = 26;
+export const CLEAR_MAX_SPEED = 26;
+/**
+ * A driven cross (whipped in flat and fast: a SHOOT corner, say) may still be struck up to this fast (m/s),
+ * as before: at 26-28 its pace over a hung-up one fell under 3 m/s and the set-piece balance moved.
+ */
+export const DRIVEN_MAX_SPEED = 30;
 const LOB_MAX_FLIGHT = 3.2;
+/**
+ * Ground passes and through balls leave the foot at most this fast (m/s): a pass arrives at a pace that
+ * can be taken (round 8: they reached 28.9 m/s).
+ */
+export const GROUND_MAX_SPEED = 22;
 /** A driven cross struck at power p hangs (1 + (1 - p) x this) times as long as a full-power one. */
 const DRIVEN_HANG = 0.3;
 
 /** Launch speed of a ground pass to feet over `d` metres (firmer the longer it is). */
 export function passSpeed(d: number): number {
-  return Math.min(groundPassSpeed(d, clamp(7 + d * 0.2, 8, 13)), 28);
+  return Math.min(groundPassSpeed(d, clamp(7 + d * 0.2, 8, 13)), GROUND_MAX_SPEED);
 }
 
 /** Launch speed of a through ball rolling `d` metres into space. */
 export function throughSpeed(d: number): number {
-  return Math.min(groundPassSpeed(d, 4.5), 28);
+  return Math.min(groundPassSpeed(d, 4.5), GROUND_MAX_SPEED);
 }
 
 /**
@@ -156,13 +251,32 @@ const HUMAN_CONES = [1.1, 1.45];
 /** ... and for a pass to feet with nobody open that way, the open man out to the side (never straight back). */
 const HUMAN_LAST_CONE = 2.05;
 
+/**
+ * The human's pass assistance (Match.groundAssist for PASS, Match.throughAssist for THROUGH and its lofted
+ * ball): the lock-on cone's half-angle (rad) for ground passes and through balls. 'assisted' locks on in a
+ * wide ~60 degree cone (and looks wider still for an open man, as above, out to the side if need be);
+ * 'semi' in a ~38 degree one, looking a little wider (HUMAN_CONES) only when the man there is covered, and
+ * with nobody that way it goes where the stick says; 'manual' never locks on. A lofted ball always locks on
+ * the way it did (semi-assisted), unless THROUGH is set to manual.
+ */
+export const ASSIST_CONE: Record<AssistLevel, number> = { assisted: 1.05, semi: 0.66, manual: 0 };
+
+/** The assist level that governs a human ball of this kind. */
+export function assistLevel(m: Match, mode: 'pass' | 'through' | 'lob'): AssistLevel {
+  return mode === 'pass' ? m.groundAssist : m.throughAssist;
+}
+
 /** Pick the teammate the passer is aiming at. Returns -1 when nobody is in the cone. */
 export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 'pass' | 'through' | 'lob'): number {
   const cone = mode === 'lob' ? 0.95 : 0.85;
   if (!m.isHumanControlled(p)) return scanReceivers(m, p, dx, dz, mode, cone, false).idx;
-  const first = scanReceivers(m, p, dx, dz, mode, cone, true);
+  const level = assistLevel(m, mode);
+  if (level === 'manual') return -1;
+  const semi = level === 'semi' && mode !== 'lob';
+  const first = scanReceivers(m, p, dx, dz, mode, mode === 'lob' ? cone : ASSIST_CONE[level], true);
   if (first.idx >= 0 && first.risk <= HUMAN_RISKY) return first.idx;
-  const cones = mode === 'pass' ? [...HUMAN_CONES, HUMAN_LAST_CONE] : HUMAN_CONES;
+  if (semi && first.idx < 0) return -1;
+  const cones = mode === 'pass' && !semi ? [...HUMAN_CONES, HUMAN_LAST_CONE] : HUMAN_CONES;
   let fallback = first.idx;
   for (const c of cones) {
     const wide = scanReceivers(m, p, dx, dz, mode, Math.max(cone, c), true);
@@ -386,7 +500,7 @@ export function skillErr(m: Match, p: Player): number {
  * An AI shooter's finishing error on top of skillErr: a touch steadier than before, since keepers now
  * hold more of the long shots they used to spill (the AI's goal rate was tuned against those rebounds).
  */
-const AI_FINISH = 0.88;
+const AI_FINISH = 0.8;
 function aiFinish(m: Match, p: Player): number {
   return m.isHumanControlled(p) ? 1 : AI_FINISH;
 }
@@ -406,6 +520,237 @@ function rotate(x: number, z: number, a: number): { x: number; z: number } {
   const c = Math.cos(a);
   const s = Math.sin(a);
   return { x: x * c - z * s, z: x * s + z * c };
+}
+
+// ------------------------------------------------------------------ human pass assistance
+
+/**
+ * The error margin's base spread (sd, rad) per assist level: an assisted ball is barely off, a manual one
+ * visibly less tidy. See humanPassSpread.
+ */
+export const ASSIST_SPREAD: Record<AssistLevel, number> = { assisted: 0.02, semi: 0.034, manual: 0.05 };
+/** Through balls and lofted balls spread this much more than a pass to feet. */
+const THROUGH_SPREAD = 1.3;
+const LOB_SPREAD = 1.4;
+/** A charged ground pass: PASS_CHARGE_MIN m/s with no charge up to PASS_CHARGE_MAX at a full bar. */
+export const PASS_CHARGE_MIN = 9;
+export const PASS_CHARGE_MAX = GROUND_MAX_SPEED;
+/** A manual pass tapped (no charge): a firm, standard pace along the stick. */
+const MANUAL_TAP_SPEED = 16;
+/** A manual through ball tapped rolls into space this far (m) along the stick; a charged one 10-36 m. */
+const MANUAL_THROUGH_D = 18;
+/** A charged lofted ball carries LOB_CHARGE_MIN m with the least charge, up to LOB_CHARGE_MIN + LOB_CHARGE_SPAN. */
+const LOB_CHARGE_MIN = 14;
+const LOB_CHARGE_SPAN = 34;
+/** Semi-assisted through balls go this much of the way from the runner's lead point towards the stick. */
+const SEMI_THROUGH_STICK = 0.25;
+
+/** Launch speed (m/s) of a ground pass charged to `c` (0..1). */
+export function chargedPassSpeed(c: number): number {
+  return PASS_CHARGE_MIN + clamp(c, 0, 1) * (PASS_CHARGE_MAX - PASS_CHARGE_MIN);
+}
+
+/**
+ * The pace (or carry) a human ball actually gets, from the one the assist judges ideal and the one he
+ * charged (undefined for a tap: the ideal). 'assisted': the charge only nudges it, at most 25% either way;
+ * 'semi': 60% of the way to the charge (kept within sane bounds); 'manual': the charge, full stop.
+ */
+export function assistPace(level: AssistLevel, ideal: number, charged: number | undefined, max = GROUND_MAX_SPEED): number {
+  if (charged === undefined) return Math.min(ideal, max);
+  if (level === 'assisted') return clamp(ideal + (charged - ideal) * 0.35, ideal * 0.75, Math.min(max, ideal * 1.25));
+  if (level === 'semi') return clamp(ideal + (charged - ideal) * 0.6, ideal * 0.55, Math.min(max, ideal * 1.6));
+  return Math.min(charged, max);
+}
+
+/**
+ * The error margin (sd, rad) of a human ball along `line` (world angle): the level's base spread, scaled
+ * by his passing (x 1.3 - passing x 0.6), his speed when he played it (up to x 1.5 at a sprint), how far
+ * his body was still turned off the line when he struck it (`bodyOff`, rad, when the kick was ordered;
+ * else his facing now: up to x 2.5 for a ball played blind behind his back) and how closely he's pressed.
+ */
+export function humanPassSpread(m: Match, p: Player, level: AssistLevel, line: number, speed: number, bodyOff?: number): number {
+  const off = Math.min(Math.PI, bodyOff ?? Math.abs(angleDiff(p.facing, line)));
+  const run = Math.min(speed, SPRINT_SPEED * 1.2) / SPRINT_SPEED;
+  return ASSIST_SPREAD[level] * (1.3 - (p.stat.passing / 100) * 0.6) * (1 + run * 0.5) * (1 + (off / Math.PI) * 1.5) *
+    pressureErr(m, p);
+}
+
+/**
+ * Where a human ball to `tgt` (or, with nobody locked on, along the stick) is aimed, near enough for the
+ * passer to turn his body to it while he charges: the receiver's reception point for a pass, the lead
+ * point for a through ball, where he'll be for a lofted one.
+ */
+export function passAimPoint(
+  m: Match, p: Player, tgt: number, mode: 'pass' | 'through' | 'lob', dx: number, dz: number,
+): { x: number; z: number } {
+  const b = m.ball.pos;
+  const l = Math.hypot(dx, dz) || 1;
+  if (tgt < 0) return { x: b.x + (dx / l) * 15, z: b.z + (dz / l) * 15 };
+  const r = m.players[tgt];
+  if (mode === 'through') {
+    const pt = assistLevel(m, 'through') === 'semi' ? semiThrough(m, p, r) : humanThrough(m, p, r);
+    if (pt) return pt;
+  }
+  const d = dist2(b.x, b.z, r.pos.x, r.pos.z);
+  const t = mode === 'lob' ? 0.8 + d / 30 : clamp(d / 17, 0.25, 1.6);
+  return { x: r.pos.x + r.vel.x * t * 0.85, z: r.pos.z + r.vel.z * t * 0.85 };
+}
+
+/**
+ * Nobody locked on (a manual ball, or nobody in the cone): the teammate who'll get to the ball's line
+ * first, the one it's for as far as switching and receiving go (it isn't steered to him). -1 when nobody of
+ * ours gets near it before it stops.
+ */
+function spaceReceiver(m: Match, p: Player, ux: number, uz: number, v0: number): number {
+  const b = m.ball.pos;
+  let best = -1;
+  let bestT = Infinity;
+  for (let k = 1; k <= 12; k++) {
+    const s = k * 2.5;
+    const tb = rollTime(v0, s);
+    if (!Number.isFinite(tb)) break;
+    const x = b.x + ux * s;
+    const z = b.z + uz * s;
+    for (const t of m.teamPlayers(p.side)) {
+      if (t === p || t.sentOff || t.isKeeper) continue;
+      const tt = Math.max(0, dist2(t.pos.x, t.pos.z, x, z) - 0.9) / (t.top * 0.9) + 0.25;
+      if (tt <= tb + 0.35 && tt < bestT) {
+        bestT = tt;
+        best = t.idx;
+      }
+    }
+    if (best >= 0) break;
+  }
+  return best;
+}
+
+/**
+ * The human's ground pass (PASS): locked onto `order.target` (or whoever the assist picks from the stick),
+ * to his feet or to where he'll meet it if he's moving, at the assist's pace; 'manual' (or nobody that way)
+ * along the stick at the charged pace. Then the error margin.
+ */
+function humanPass(m: Match, p: Player, order: KickOrder, dir: { x: number; z: number }, level: AssistLevel): Launch {
+  const b = m.ball.pos;
+  const speed = order.runSpeed ?? p.speed();
+  const charged = order.charge === undefined ? undefined : chargedPassSpeed(order.charge);
+  const tgt = level === 'manual' ? -1 : order.target >= 0 ? order.target : pickReceiver(m, p, dir.x, dir.z, 'pass');
+  if (tgt < 0) {
+    const sp = charged ?? MANUAL_TAP_SPEED;
+    const line = Math.atan2(dir.z, dir.x);
+    const a = line + m.rng.gauss() * humanPassSpread(m, p, level, line, speed, order.bodyOff);
+    const ux = Math.cos(a);
+    const uz = Math.sin(a);
+    return launch(ux * sp, 0, uz * sp, 0, 0, 0, spaceReceiver(m, p, ux, uz, sp), 'pass', clamp(sp / 28, 0, 1));
+  }
+  const r = m.players[tgt];
+  let tx = r.pos.x;
+  let tz = r.pos.z;
+  let sp = 12;
+  // Lead him on his run: iterate the travel time (at the pace it's actually struck).
+  for (let i = 0; i < 3; i++) {
+    const d = Math.max(1, dist2(b.x, b.z, tx, tz));
+    sp = assistPace(level, Math.min(GROUND_MAX_SPEED, passSpeed(d) * humanPassPace(d)), charged);
+    const t = Math.min(rollTime(sp, d), 3);
+    tx = r.pos.x + r.vel.x * t * 0.85;
+    tz = r.pos.z + r.vel.z * t * 0.85;
+  }
+  tx = clamp(tx, -HALF_L + 1, HALF_L - 1);
+  tz = clamp(tz, -HALF_W + 0.8, HALF_W - 0.8);
+  const line = Math.atan2(tz - b.z, tx - b.x);
+  const a = line + m.rng.gauss() * humanPassSpread(m, p, level, line, speed, order.bodyOff);
+  sp *= 1 + m.rng.gauss() * (1 - p.stat.passing / 100) * (level === 'assisted' ? 0.03 : 0.05);
+  return launch(Math.cos(a) * sp, 0, Math.sin(a) * sp, 0, 0, 0, tgt, 'pass', clamp(sp / 28, 0, 1));
+}
+
+/**
+ * Semi-assisted through ball: the destination is where runner `r`'s current run (his velocity, its angle)
+ * takes him by the time the ball gets there, a stride beyond it. Null when he isn't running, or when a
+ * defender would cut it out (see throughSpaceRisk).
+ */
+function semiThrough(m: Match, p: Player, r: Player): { x: number; z: number; risk: number } | null {
+  const b = m.ball.pos;
+  const rs = Math.hypot(r.vel.x, r.vel.z);
+  let run: { x: number; z: number; risk: number } | null = null;
+  if (rs >= 2) {
+    let tx = r.pos.x + r.vel.x;
+    let tz = r.pos.z + r.vel.z;
+    for (let i = 0; i < 3; i++) {
+      const d = Math.max(2, dist2(b.x, b.z, tx, tz));
+      // (Nobody holds a straight line for long: a lead of more than SEMI_THROUGH_T s of his run is a guess.)
+      const t = Math.min(rollTime(throughSpeed(d), d), SEMI_THROUGH_T);
+      tx = r.pos.x + r.vel.x * t + (r.vel.x / rs) * 1.5;
+      tz = r.pos.z + r.vel.z * t + (r.vel.z / rs) * 1.5;
+    }
+    const pt = { x: clamp(tx, -HALF_L + 2, HALF_L - 2), z: clamp(tz, -HALF_W + 1.5, HALF_W - 1.5) };
+    const risk = throughSpaceRisk(m, p, r, pt);
+    if (risk !== null) run = { ...pt, risk };
+  }
+  // His run's point when it's about as safe as the safest lead into the space ahead of him (humanThrough).
+  const safe = humanThrough(m, p, r);
+  return run && (!safe || run.risk <= safe.risk + SEMI_THROUGH_SLACK) ? run : safe;
+}
+
+/** Semi through balls: the most of his run (s) the destination allows for, and how much riskier than the safest lead it may be. */
+const SEMI_THROUGH_T = 1.6;
+const SEMI_THROUGH_SLACK = 0.1;
+
+/**
+ * The human's through ball (THROUGH tapped). 'assisted': into the space ahead of the man locked onto (as
+ * the round-7 assist weighs it); 'semi': where his run takes him (semiThrough), pulled a quarter of the way
+ * towards the stick; either way played to his feet when a defender would cut out any ball into the space.
+ * 'manual': along the stick, MANUAL_THROUGH_D m (a charged one 10-36 m).
+ */
+function humanThroughBall(m: Match, p: Player, order: KickOrder, dir: { x: number; z: number }): Launch {
+  const level = m.throughAssist;
+  const b = m.ball.pos;
+  const speed = order.runSpeed ?? p.speed();
+  const tgt = level === 'manual' ? -1 : order.target >= 0 ? order.target : pickReceiver(m, p, dir.x, dir.z, 'through');
+  let tx: number;
+  let tz: number;
+  if (tgt >= 0) {
+    const r = m.players[tgt];
+    const pt = level === 'semi' ? semiThrough(m, p, r) : humanThrough(m, p, r);
+    if (!pt) return humanPass(m, p, { ...order, target: tgt, charge: undefined }, dir, level);
+    tx = pt.x;
+    tz = pt.z;
+    if (level === 'semi') {
+      // Mostly where he's running, but the stick has its say (as long as that doesn't hand it to them).
+      const d0 = Math.max(2, dist2(b.x, b.z, tx, tz));
+      const a0 = Math.atan2(tz - b.z, tx - b.x);
+      const off = angleDiff(a0, Math.atan2(dir.z, dir.x));
+      if (Math.abs(off) < ASSIST_CONE.semi) {
+        const a = a0 + off * SEMI_THROUGH_STICK;
+        const q = { x: b.x + Math.cos(a) * d0, z: b.z + Math.sin(a) * d0 };
+        const risk = throughSpaceRisk(m, p, r, q);
+        if (risk !== null && risk <= pt.risk + SEMI_THROUGH_SLACK) {
+          tx = q.x;
+          tz = q.z;
+        }
+      }
+    }
+  } else {
+    const reach = level === 'manual' && order.charge !== undefined ? 10 + clamp(order.charge, 0, 1) * 26 : MANUAL_THROUGH_D;
+    tx = b.x + dir.x * reach;
+    tz = b.z + dir.z * reach;
+  }
+  tx = clamp(tx, -HALF_L + 2, HALF_L - 2);
+  tz = clamp(tz, -HALF_W + 1.5, HALF_W - 1.5);
+  const d = Math.max(2, dist2(b.x, b.z, tx, tz));
+  let v0 = throughSpeed(d);
+  if (order.charge !== undefined && tgt >= 0) v0 = assistPace(level, v0, throughSpeed(10 + clamp(order.charge, 0, 1) * 26));
+  if (tgt < 0 && level !== 'manual' && spaceBallRisk(m, p, tx, tz, v0) > THROUGH_MAX_INTERCEPT) {
+    // Nobody to run onto it, and a defender in the way or first to the space: the open man that way gets it
+    // to feet rather than the defence getting it rolled to them.
+    let alt = pickReceiver(m, p, dir.x, dir.z, 'pass');
+    if (alt < 0) alt = scanReceivers(m, p, dir.x, dir.z, 'pass', HUMAN_LAST_CONE, true).idx;
+    if (alt >= 0) return humanPass(m, p, { ...order, target: alt, charge: undefined }, dir, level === 'semi' ? 'semi' : 'assisted');
+  }
+  const line = Math.atan2(tz - b.z, tx - b.x);
+  const a = line + m.rng.gauss() * humanPassSpread(m, p, level, line, speed, order.bodyOff) * THROUGH_SPREAD;
+  const ux = Math.cos(a);
+  const uz = Math.sin(a);
+  const recv = tgt >= 0 ? tgt : spaceReceiver(m, p, ux, uz, v0);
+  return launch(ux * v0, 0, uz * v0, 0, 0, 0, recv, 'through', clamp(v0 / 28, 0, 1));
 }
 
 /** Solve the ball's launch for a kick order, from wherever the ball is right now. */
@@ -433,6 +778,9 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
   if (kind === 'shot' || (kind === 'header' && order.target < 0 && order.aimX === undefined)) {
     return resolveShot(m, p, order, kind === 'header');
   }
+
+  if (kind === 'pass' && m.isHumanControlled(p)) return humanPass(m, p, order, dir, m.groundAssist);
+  if (kind === 'through' && m.isHumanControlled(p) && order.aimX === undefined) return humanThroughBall(m, p, order, dir);
 
   if (kind === 'pass' || kind === 'throw' || kind === 'keeper') {
     const tgt = order.target >= 0 ? order.target : pickReceiver(m, p, dir.x, dir.z, 'pass');
@@ -480,19 +828,30 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
   if (kind === 'lob' || kind === 'clear' || kind === 'header') {
     let tgt = order.target;
     let tx: number, tz: number;
+    // A human's charged lofted ball (THROUGH held): the charge is its carry (and so its height), corrected
+    // towards the man it's locked onto as far as THROUGH's assist level allows.
+    const humanLob = kind === 'lob' && order.charge !== undefined && m.isHumanControlled(p);
+    const carry = humanLob ? LOB_CHARGE_MIN + clamp(order.charge ?? 0, 0, 1) * LOB_CHARGE_SPAN : 0;
     if (order.aimX !== undefined && order.aimZ !== undefined) {
       tx = order.aimX;
       tz = order.aimZ;
     } else {
       if (tgt < 0 && kind !== 'clear') tgt = pickReceiver(m, p, dir.x, dir.z, 'lob');
+      if (humanLob && m.throughAssist === 'manual') tgt = -1;
       if (tgt >= 0) {
         const r = m.players[tgt];
         const d0 = dist2(b.x, b.z, r.pos.x, r.pos.z);
         const t0 = 0.8 + d0 / 30;
         tx = r.pos.x + r.vel.x * t0 * 0.8;
         tz = r.pos.z + r.vel.z * t0 * 0.8;
+        if (humanLob) {
+          const di = Math.max(3, dist2(b.x, b.z, tx, tz));
+          const dc = assistPace(m.throughAssist, di, carry, LOB_CHARGE_MIN + LOB_CHARGE_SPAN);
+          tx = b.x + ((tx - b.x) / di) * dc;
+          tz = b.z + ((tz - b.z) / di) * dc;
+        }
       } else {
-        const reach = kind === 'clear' ? 42 : 16 + order.power * 24;
+        const reach = kind === 'clear' ? 42 : humanLob ? carry : 16 + order.power * 24;
         tx = b.x + dir.x * reach;
         tz = b.z + dir.z * reach;
       }
@@ -515,6 +874,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
         : clamp(0.75 + d / 34, 0.9, LOB_MAX_FLIGHT) + (order.hang ?? 0);
     const land = order.land ?? (kind === 'clear' ? BALL_R : order.driven ? 1.1 : 1.3);
     let s = solveLob(d, flight, land);
+    const maxSpeed = kind === 'clear' ? CLEAR_MAX_SPEED : order.driven ? DRIVEN_MAX_SPEED : LOB_MAX_SPEED;
     if (kind === 'header') {
       // A header can't be struck like a volley: longer ones are looped up rather than fired.
       while (s.vh > HEADER_MAX_VH && flight < 2) {
@@ -525,7 +885,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
     } else {
       // A long ball is hit higher, not harder (the least launch speed for a long carry is near 45 degrees;
       // a driven one only gets the few hundredths of a second of extra hang it needs).
-      while (Math.hypot(s.vh, s.vy) > LOB_MAX_SPEED && flight < LOB_MAX_FLIGHT) {
+      while (Math.hypot(s.vh, s.vy) > maxSpeed && flight < LOB_MAX_FLIGHT) {
         const f = Math.min(LOB_MAX_FLIGHT, flight + (order.driven ? 0.03 : 0.1));
         const n = solveLob(d, f, land);
         if (Math.hypot(n.vh, n.vy) >= Math.hypot(s.vh, s.vy)) break;
@@ -534,11 +894,14 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
       }
     }
     const sp0 = Math.hypot(s.vh, s.vy);
-    if (kind !== 'header' && sp0 > LOB_MAX_SPEED) {
+    if (kind !== 'header' && sp0 > maxSpeed) {
       // Nobody hits it harder than this: the longest hoofs drop short.
-      s = { vh: (s.vh * LOB_MAX_SPEED) / sp0, vy: (s.vy * LOB_MAX_SPEED) / sp0 };
+      s = { vh: (s.vh * maxSpeed) / sp0, vy: (s.vy * maxSpeed) / sp0 };
     }
-    let err = passError(p, m, kind === 'clear' ? 2.2 : 1.4);
+    let err = humanLob
+      ? m.rng.gauss() * humanPassSpread(m, p, m.throughAssist, Math.atan2(tz - b.z, tx - b.x), order.runSpeed ?? p.speed(), order.bodyOff) *
+        LOB_SPREAD
+      : passError(p, m, kind === 'clear' ? 2.2 : 1.4);
     // A scrambled clearance from inside our own box sometimes slices off behind for a corner.
     if (kind === 'clear' && Math.abs(b.x + ad * HALF_L) < 16 && m.rng.chance(0.75 * pressureErr(m, p))) {
       const toLine = -ad; // towards our own goal line
@@ -596,7 +959,7 @@ function passToFeet(m: Match, p: Player, tgt: number, kind: KickKind): Launch {
   const ex = passError(p, m, 1);
   const u = rotate((tx - b.x) / d, (tz - b.z) / d, ex);
   const pace = kind === 'pass' && m.isHumanControlled(p) ? humanPassPace(d) : 1;
-  const sp = Math.min(28, v0 * pace) * (1 + m.rng.gauss() * (1 - p.stat.passing / 100) * 0.05);
+  const sp = Math.min(GROUND_MAX_SPEED, v0 * pace) * (1 + m.rng.gauss() * (1 - p.stat.passing / 100) * 0.05);
   return launch(u.x * sp, 0, u.z * sp, 0, 0, 0, tgt, kind, clamp(sp / 28, 0, 1));
 }
 
@@ -659,20 +1022,50 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   const composure = header ? HEADER_COMPOSURE * (sp ? SET_PIECE_HEADER * (m.setPieceDriven ? DRIVEN_HEADER : 1) : 1) : 1;
   // Coming in at an angle the same miss in the air lands further along the goal line (1 / cos).
   const obl = Math.pow(clamp(Math.abs(gx - b.x) / d, 0.45, 1), 0.8);
+  // The body shape (weak foot, off balance: open play only) and a timed-finish tap scale the error.
+  const setPiece = !header && isSetPieceStrike(m, p);
+  const shape = header || setPiece ? null : strikeShape(m, p, Math.atan2(aimZ - b.z, gx - b.x));
+  const fin = clamp(order.finish ?? 1, 0.2, 3);
+  const errK = (shape?.err ?? 1) * fin;
   const errZ = (m.rng.gauss() * (SHOT_ERR_BASE + d * SHOT_ERR_DIST) * (1.3 - acc) * (0.6 + power * 0.6) * sk * press * FINISH_ERR *
-    (human ? HUMAN_FINISH : 1) * (finesse ? FINESSE_ACC : 1)) / (composure * obl);
+    (human ? HUMAN_FINISH : 1) * (finesse ? FINESSE_ACC : 1) * errK) / (composure * obl);
   const tz = aimZ + errZ;
-  // Height at the line: placed shots stay low, blasted ones climb (and can fly over). From range
-  // the climb of a full-power strike is capped, so a hit from 25 m isn't mostly over the bar.
+  // Height at the line. An open-play strike (not a curler): the power bar sets the height as well as the
+  // pace, from a tap driven low (it skims in off the turf) to a full bar rising into the roof of the net
+  // (or over it, from range); close in the lift is scaled down. Headers, free kicks, penalties and finesse
+  // shots keep the placed-low / blasted-high model they were tuned with (from range the climb of a
+  // full-power one is capped, so a hit from 25 m isn't mostly over the bar).
+  const strike = !header && !setPiece && !finesse;
   const rise = header ? 1 : clamp(1 - (d - LONG_RISE_FROM) * 0.035, 0.62, 1);
-  const skew = Math.abs(m.rng.gauss()) * (1.15 - acc) * (0.35 + power) * 2.1 * sk * press * rise * (human ? HUMAN_LIFT : 1);
-  let h = header
-    ? 0.3 + power * 0.8 + skew * 0.9 + m.rng.gauss() * 0.55
-    : 0.25 + power * power * 1.25 * rise + skew + m.rng.gauss() * 0.25;
-  if (!header && b.y > 0.7) h += b.y * 0.35; // volleys fly
-  h = Math.max(0.15, h);
+  const close = STRIKE_CLOSE_LIFT + (1 - STRIKE_CLOSE_LIFT) * clamp((d - STRIKE_CLOSE_IN) / (STRIKE_CLOSE_OUT - STRIKE_CLOSE_IN), 0, 1);
+  const sky = strike ? close * Math.min(1.6, 1 + Math.max(0, d - STRIKE_LONG_FROM) * STRIKE_LONG_SKY) : rise;
+  const skew = Math.abs(m.rng.gauss()) * (1.15 - acc) * (0.35 + power) * 2.1 * sk * press * sky * (human ? HUMAN_LIFT : 1) * errK;
+  let h: number;
+  let hAim: number;
+  if (header) {
+    h = 0.3 + power * 0.8 + skew * 0.9 + m.rng.gauss() * 0.55;
+    hAim = h;
+  } else {
+    const noise = m.rng.gauss() * 0.25;
+    hAim = strike
+      ? STRIKE_TAP_H + (STRIKE_FULL_H - STRIKE_TAP_H) * Math.pow(power, STRIKE_LIFT_EXP) * close * (human ? 1 : AI_STRIKE_LIFT)
+      : 0.25 + power * power * 1.25 * rise;
+    h = hAim + skew + noise * (strike ? fin : 1);
+  }
+  if (order.wild) h += WILD_LIFT;
+  if (!header && b.y > 0.7) {
+    h += b.y * 0.35; // volleys fly
+    hAim += b.y * 0.35;
+  }
+  h = Math.max(strike ? STRIKE_TAP_H : 0.15, h);
   // (A tapped shot still has some pace on it: an edge-of-the-box side-foot isn't a back-pass.)
-  let speed = header ? 11 + power * 8 + acc * 3 : SHOT_SPEED_BASE + power * SHOT_SPEED_POWER * (0.78 + acc * 0.3);
+  // (A header dies with distance: no more than HEADER_SPEED_AT + HEADER_SPEED_SLOPE m/s per metre inside
+  // HEADER_SPEED_FROM m, so a keeper has one from the edge of the box covered.)
+  let speed = header
+    ? Math.max(HEADER_SPEED_MIN, Math.min(11 + power * 8 + acc * 3, HEADER_SPEED_AT + HEADER_SPEED_SLOPE * (HEADER_SPEED_FROM - d)))
+    : (strike
+      ? STRIKE_SPEED_BASE + power * STRIKE_SPEED_POWER * (0.78 + acc * 0.3)
+      : SHOT_SPEED_BASE + power * SHOT_SPEED_POWER * (0.78 + acc * 0.3)) * (shape?.pace ?? 1);
   if (finesse) speed = Math.max(speed * FINESSE_PACE, FINESSE_MIN_SPEED);
   speed = Math.min(speed, 35);
   const dx = gx - b.x;
@@ -686,15 +1079,91 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   const L = launch(ux * speed, vy, uz * speed, 0, 0, 0, -1, header ? 'header' : 'shot', power);
   if (finesse) L.style = 'finesse';
   const curl = header ? 0 : clamp(order.curl ?? 0, -1, 1);
+  let bendErr = 0;
   if (Math.abs(curl) > 0.02) {
     // A bent strike: a touch less precise than a clean one, and it starts outside the target. (A
     // finesse shot's bend is the controlled kind: half the extra error.)
-    bendShot(m, L, gx, tz + m.rng.gauss() * Math.abs(curl) * CURL_ERR * (finesse ? 0.5 : 1), curl);
+    bendErr = m.rng.gauss() * Math.abs(curl) * CURL_ERR * (finesse ? 0.5 : 1) * fin;
+    bendShot(m, L, gx, tz + bendErr, curl);
   } else {
     // A little natural curl so shots don't look like laser beams.
     L.spinY = m.rng.gauss() * 1.2;
   }
+  if (shape) {
+    L.weak = shape.weak;
+    L.balance = shape.balance;
+  }
+  if (!header) L.aim = { gx, z: aimZ, errZ: errZ + bendErr, h: hAim, errH: h - hAim };
   return L;
+}
+
+/** Is `p` striking a dead ball (a free kick or a penalty he's taking)? */
+function isSetPieceStrike(m: Match, p: Player): boolean {
+  const r = m.restart;
+  return (m.phase === 'restart' || m.phase === 'shootout') && !!r && r.taker === p.idx;
+}
+
+/** How a strike is struck: see strikeShape. */
+export interface StrikeShape {
+  /** Error multiplier (1 = clean). */
+  err: number;
+  /** Pace multiplier (1 = full). */
+  pace: number;
+  /** Struck with his weaker foot. */
+  weak: boolean;
+  /** 0 steady .. 1 as far off balance as it gets. */
+  balance: number;
+}
+
+/** Error multiplier of a strike with the body turned `turn` rad away from the shot (1 = square to it). */
+export function turnPenalty(turn: number): number {
+  if (turn <= OFF_TURN_FROM) return 1;
+  if (turn < OFF_TURN_70) return 1 + (0.3 * (turn - OFF_TURN_FROM)) / (OFF_TURN_70 - OFF_TURN_FROM);
+  return 1.3 + 0.5 * clamp((turn - OFF_TURN_70) / (OFF_TURN_FULL - OFF_TURN_70), 0, 1);
+}
+
+/**
+ * The body shape of a strike along world angle `line`: his weaker foot (the one the ball's side called
+ * for isn't his good one) and being off balance (turned well away from the shot, or still stumbling from a
+ * challenge) each cost accuracy and pace. The AI's shooters get AI_SHAPE of it.
+ */
+export function strikeShape(m: Match, p: Player, line: number): StrikeShape {
+  const soft = m.isHumanControlled(p) ? 1 : AI_SHAPE;
+  const weak = p.kickLeg !== p.foot;
+  const wf = weak ? clamp((5 - p.weakFoot) / 3, 0, 1) * soft : 0;
+  const turn = turnPenalty(Math.abs(angleDiff(p.facing, line)));
+  const reel = p.stumbleT > 0 ? 1.3 + 0.5 * clamp(p.stumbleT / STUMBLE_LOST, 0, 1) : 1;
+  const off = (Math.max(turn, reel) - 1) * soft;
+  return {
+    err: (1 + WEAK_FOOT_ERR * wf) * (1 + off),
+    pace: (1 - WEAK_FOOT_PACE * wf) * (1 - OFF_BALANCE_PACE * clamp(off / 0.3, 0, 1)),
+    weak,
+    balance: clamp(off / 0.8, 0, 1),
+  };
+}
+
+/**
+ * Timed finishing, a tap just after the strike: re-aim the ball in flight so the lateral and height error
+ * the strike put on it (Launch.aim) becomes `k` times as big (0.4 perfect, 0.7 good, 1.9 late), plus
+ * `lift` m more height at the line. It turns the ball about where it is now (the bend of a curler is
+ * already on it, so it keeps it).
+ */
+export function reaimShot(m: Match, aim: NonNullable<Launch['aim']>, k: number, lift = 0): void {
+  const b = m.ball;
+  const dx = aim.gx - b.pos.x;
+  if (dx * b.vel.x <= 0 || Math.abs(dx) < 0.5) return; // there (or past it) already
+  const zOld = aim.z + aim.errZ;
+  const zNew = aim.z + aim.errZ * k;
+  const turn = Math.atan2(zNew - b.pos.z, Math.abs(dx)) - Math.atan2(zOld - b.pos.z, Math.abs(dx));
+  const a = turn * Math.sign(dx);
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const vx = b.vel.x * c - b.vel.z * s;
+  b.vel.z = b.vel.x * s + b.vel.z * c;
+  b.vel.x = vx;
+  const hs = Math.hypot(b.vel.x, b.vel.z);
+  const t = Math.abs(dx) / Math.max(1, hs * 0.9);
+  b.vel.y += (aim.errH * (k - 1) + lift) / Math.max(0.12, t);
 }
 
 /** Extra lateral error (sd, m) of a fully bent strike: judging the bend is part of the skill. */
@@ -809,14 +1278,20 @@ function resolveChip(m: Match, p: Player, order: KickOrder): Launch {
       }
     }
   }
-  // Execution: a touch of lateral and lift error (the finer the finisher, the less).
-  const sk = skillErr(m, p) * aiFinish(m, p);
+  // Execution: a touch of lateral and lift error (the finer the finisher, the less; off his weaker foot or
+  // off balance, more).
+  const shape = isSetPieceStrike(m, p) ? null : strikeShape(m, p, Math.atan2(uz, ux));
+  const sk = skillErr(m, p) * aiFinish(m, p) * (shape?.err ?? 1);
   // A chip is a delicate thing: the weight (how high, how far) is easy to get wrong.
   const u = rotate(ux, uz, m.rng.gauss() * (0.03 + (1 - acc) * 0.06) * sk);
   const vy = best.vy + m.rng.gauss() * CHIP_LIFT_ERR * (1.25 - acc) * sk;
   const vh = best.vh * (1 + m.rng.gauss() * 0.07 * sk);
   const L = launch(u.x * vh, vy, u.z * vh, 0, 0, 0, -1, 'shot', clamp(order.power, 0.2, 0.6));
   L.style = 'chip';
+  if (shape) {
+    L.weak = shape.weak;
+    L.balance = shape.balance;
+  }
   return L;
 }
 

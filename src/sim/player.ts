@@ -1,6 +1,37 @@
 import { angleDiff, clamp, turnToward, wrapAngle } from '../core/math';
-import { ACCEL, CONTROL_R, DECEL, DRIBBLE_MULT, JOG_SPEED, SPRINT_SPEED, STRIDE } from './constants';
+import { hashString } from '../core/rng';
+import { ACCEL, CONTROL_R, DECEL, DRIBBLE_MULT, JOG_SPEED, KICK_WINDUP, SPRINT_SPEED, STRIDE } from './constants';
 import type { KickKind, PlayerDef, Role, ShotStyle, Side } from './types';
+
+/**
+ * A player's stronger foot: 1 right, -1 left. An explicit `foot` on the definition wins; otherwise it's
+ * fixed by his name (about 78% of players are right-footed), so the same player always has the same foot.
+ */
+export function preferredFoot(def: PlayerDef): 1 | -1 {
+  const own = (def as { foot?: unknown }).foot;
+  if (own === 1 || own === -1) return own;
+  return hashString(`${def.name}|foot`) % 100 < 78 ? 1 : -1;
+}
+
+/**
+ * How good his other foot is, 1 (hopeless) .. 5 (two-footed). An explicit `weakFoot` on the definition
+ * wins; otherwise it's fixed by his name: 1 6%, 2 26%, 3 42%, 4 20%, 5 6%.
+ */
+export function weakFootRating(def: PlayerDef): number {
+  const own = (def as { weakFoot?: unknown }).weakFoot;
+  if (typeof own === 'number' && Number.isFinite(own)) return clamp(Math.round(own), 1, 5);
+  const h = hashString(`${def.name}|weak`) % 100;
+  return h < 6 ? 1 : h < 32 ? 2 : h < 74 ? 3 : h < 94 ? 4 : 5;
+}
+
+/** Seconds a player stays off balance after losing the ball in a challenge (a 50/50, a poke or a slide)... */
+export const STUMBLE_LOST = 0.45;
+/** ... after riding a challenge or a shoulder barge and keeping it... */
+export const STUMBLE_BUMP = 0.3;
+/** ... and after getting back up off the floor. */
+export const STUMBLE_UP = 0.25;
+/** How fast (rad/s) a shooter opens his body towards goal during the wind-up (Player.kickFace). */
+export const KICK_TURN = 9;
 
 export type PState =
   | 'move' // normal locomotion, can dribble
@@ -45,6 +76,24 @@ export interface KickOrder {
   style?: ShotStyle;
   /** Lofted balls only: extra seconds of hang time (a far-post corner is hung up over the near post). */
   hang?: number;
+  /**
+   * Shots only (timed finishing, the human's second SHOOT tap judged before the strike): the shot's error
+   * times this (0.4 perfect, 0.7 good, 1.9 mistimed), and `wild` adds the mistimed shot's extra lift.
+   */
+  finish?: number;
+  wild?: boolean;
+  /**
+   * Human passes only: the charged power (0..1) of a held PASS / THROUGH; left out for a tap (the assist
+   * judges the pace) and for every AI kick. See actions.assistPace.
+   */
+  charge?: number;
+  /** Human passes only: the passer's speed (m/s) when he let the button go (the error margin's speed term). */
+  runSpeed?: number;
+  /**
+   * Human passes only: how far (rad) his body was still turned off the pass line when the kick was ordered
+   * (the error margin's body term; he squares up the rest of the way during the wind-up).
+   */
+  bodyOff?: number;
 }
 
 /** Top speed allowed while celebrating (adrenaline: a scorer can outrun his stamina). */
@@ -67,6 +116,17 @@ export const DRIBBLE_TURN = 5.8;
 const DRIBBLE_CUT_MAX = 2.4;
 const DRIBBLE_CUT_LOSS = 0.16;
 const DRIBBLE_FACE_TURN = 1.8;
+/** Close control (the human's dribbler jogging, not sprinting): he turns this much quicker. */
+export const CLOSE_TURN = 1.4;
+/**
+ * A skill cut (see dribble.ts): for Player.cutT s the run and the body swing round this much faster again,
+ * through any angle (a cut-back too), losing only CUT_KEEP_LOSS of the usual pace loss.
+ */
+export const CUT_TURN_BOOST = 1.7;
+const CUT_KEEP_LOSS = 0.35;
+/** Wrong-footed (Player.wrongFootT): top pace and acceleration are cut to these fractions. */
+const WRONG_FOOT_PACE = 0.3;
+const WRONG_FOOT_ACCEL = 0.3;
 
 export class Player {
   pos = { x: 0, z: 0 };
@@ -139,6 +199,51 @@ export class Player {
   jockeyT = 0;
   /** Wrong-footed by a take-on: slower to react for this long. */
   slowT = 0;
+  /**
+   * Dribble assists (the human's man only; see dribble.ts). cutT: seconds left of a skill cut's burst turn.
+   * wrongFootT: this defender was wrong-footed by it and is planted the wrong way (nearly frozen).
+   * protectT: just beaten his man with a skill, the dribbler can't be tackled cleanly. shieldT: he's
+   * shielding the ball (body between it and a close defender), so tackles on him mostly fail.
+   */
+  cutT = 0;
+  wrongFootT = 0;
+  protectT = 0;
+  shieldT = 0;
+  /**
+   * Off balance, seconds left: bumped off the ball or riding a challenge, beaten to a 50/50, just back on
+   * his feet. A shot or a first touch taken meanwhile is rougher (it doesn't slow his running).
+   */
+  stumbleT = 0;
+  /**
+   * The current 'kick' state's moment of contact (s after it started): KICK_WINDUP, a little longer for a
+   * human's open-play shot (the timed-finish window) and for a plant step. kickT is paced so the swing
+   * meets the ball then, however long the wind-up.
+   */
+  kickWindup = KICK_WINDUP;
+  /** 0..1: the current kick is a plant step, braking out of a sprint before the strike (1 = flat out). */
+  plant = 0;
+  /**
+   * A shot's wind-up: the way (world angle) he opens his body to as he shapes up to strike it, at up to
+   * KICK_TURN rad/s until contact (null: he strikes it the way he's facing).
+   */
+  kickFace: number | null = null;
+  /**
+   * First touch: seconds left of the touch settling (0 = the ball is on his foot), and the offset (m, world)
+   * it was pushed to ahead of his foot; it shrinks to nothing as he runs onto it.
+   */
+  touchT = 0;
+  touchX = 0;
+  touchZ = 0;
+
+  /** His stronger foot (1 right, -1 left): see preferredFoot. */
+  get foot(): 1 | -1 {
+    return preferredFoot(this.def);
+  }
+
+  /** His weaker foot, 1 (hopeless) .. 5 (two-footed): see weakFootRating. */
+  get weakFoot(): number {
+    return weakFootRating(this.def);
+  }
 
   role: Role;
   readonly isKeeper: boolean;
@@ -195,6 +300,9 @@ export class Player {
     this.state = s;
     this.stateT = 0;
     this.poke = false;
+    this.kickWindup = KICK_WINDUP;
+    this.plant = 0;
+    this.kickFace = null;
   }
 
   canAct(): boolean {
@@ -211,20 +319,36 @@ export class Player {
     this.burstT = Math.max(0, this.burstT - dt);
     this.tackleCooldown = Math.max(0, this.tackleCooldown - dt);
     this.slowT = Math.max(0, this.slowT - dt);
+    this.cutT = Math.max(0, this.cutT - dt);
+    this.wrongFootT = Math.max(0, this.wrongFootT - dt);
+    this.protectT = Math.max(0, this.protectT - dt);
+    this.shieldT = Math.max(0, this.shieldT - dt);
+    this.stumbleT = Math.max(0, this.stumbleT - dt);
+    this.touchT = Math.max(0, this.touchT - dt);
 
     switch (this.state) {
       case 'move':
         this.locomote(dt, dribbling, agile);
         break;
       case 'kick':
-      case 'throw':
+      case 'throw': {
         this.brake(dt, this.poke ? 3 : 10);
-        this.kickT = Math.min(1, this.kickT + dt / 0.34);
-        if (this.stateT > 0.34) {
+        // A longer wind-up (a human's shot, a plant step) slows the back-swing so the boot still meets the
+        // ball at contact (kickT ~0.32), and the follow-through is as long as ever.
+        const extra = this.state === 'kick' ? Math.max(0, this.kickWindup - KICK_WINDUP) : 0;
+        const pace = extra > 0 && this.stateT <= this.kickWindup ? KICK_WINDUP / this.kickWindup : 1;
+        // Shaping up to a shot: he opens his body towards goal as he winds up (a strike on the turn with
+        // his back to goal is still off balance at contact).
+        if (this.kickFace !== null && !this.poke && this.stateT < this.kickWindup) {
+          this.facing = wrapAngle(turnToward(this.facing, this.kickFace, KICK_TURN * dt));
+        }
+        this.kickT = Math.min(1, this.kickT + (dt * pace) / 0.34);
+        if (this.stateT > 0.34 + extra) {
           this.setState('move');
           this.kickT = 0;
         }
         break;
+      }
       case 'slide':
         this.brake(dt, this.stateT < 0.35 ? 1.2 : 6);
         if (this.stateT > 0.75) this.setState('stand');
@@ -235,7 +359,11 @@ export class Player {
         break;
       case 'stand':
         this.brake(dt, 12);
-        if (this.stateT > 0.38) this.setState('move');
+        if (this.stateT > 0.38) {
+          this.setState('move');
+          // Back up, but not steady on his feet yet.
+          if (!this.isKeeper) this.stumbleT = Math.max(this.stumbleT, STUMBLE_UP);
+        }
         break;
       case 'dive':
         // At full stretch the body stops going sideways (the arms are the reach from there).
@@ -315,6 +443,7 @@ export class Player {
       if (back > 0.3) max *= 1 - 0.2 * Math.min(1, (back - 0.3) / 0.5);
     }
     if (this.slowT > 0) max *= 0.55;
+    if (this.wrongFootT > 0) max *= WRONG_FOOT_PACE;
     tx *= max;
     tz *= max;
 
@@ -322,6 +451,7 @@ export class Player {
     const sp = this.speed();
     let accel = tl > 0.05 ? ACCEL : DECEL;
     if (this.slowT > 0) accel *= 0.5;
+    if (this.wrongFootT > 0) accel *= WRONG_FOOT_ACCEL;
     let turn = 0;
     if (sp > 2 && tl > 0.05) {
       const cur = Math.atan2(this.vel.z, this.vel.x);
@@ -330,11 +460,14 @@ export class Player {
       if (turn > 1.6) accel = DECEL * 1.1;
     }
     const cut = dribbling && agile;
-    if (cut && sp > 1.5 && tl > 0.05 && turn > 0.05 && turn < DRIBBLE_CUT_MAX) {
+    // Close control (jogging with it) turns quicker; a skill cut's burst quicker again, through any angle.
+    const quick = cut ? (this.sprint ? 1 : CLOSE_TURN) * (this.cutT > 0 ? CUT_TURN_BOOST : 1) : 1;
+    if (cut && sp > 1.5 && tl > 0.05 && turn > 0.05 && (turn < DRIBBLE_CUT_MAX || this.cutT > 0)) {
       // A cut with the ball: the run bends round instead of braking through the turn.
       const cur = Math.atan2(this.vel.z, this.vel.x);
-      const a = turnToward(cur, Math.atan2(tz, tx), DRIBBLE_TURN * (this.slowT > 0 ? 0.5 : 1) * dt);
-      const want = Math.hypot(tx, tz) * (1 - DRIBBLE_CUT_LOSS * Math.min(1, turn / (Math.PI / 2)));
+      const a = turnToward(cur, Math.atan2(tz, tx), DRIBBLE_TURN * quick * (this.slowT > 0 ? 0.5 : 1) * dt);
+      const loss = DRIBBLE_CUT_LOSS * (this.cutT > 0 ? CUT_KEEP_LOSS : 1);
+      const want = Math.hypot(tx, tz) * (1 - loss * Math.min(1, turn / (Math.PI / 2)));
       const nsp = sp + clamp(want - sp, -ACCEL * dt, ACCEL * dt);
       this.vel.x = Math.cos(a) * nsp;
       this.vel.z = Math.sin(a) * nsp;
@@ -353,7 +486,7 @@ export class Player {
     }
 
     const nsp = this.speed();
-    const turnRate = dribbling ? (9 - nsp * 0.5) * (cut ? DRIBBLE_FACE_TURN : 1) : 13 - nsp * 0.7;
+    const turnRate = dribbling ? (9 - nsp * 0.5) * (cut ? DRIBBLE_FACE_TURN * quick : 1) : 13 - nsp * 0.7;
     let face: number | null = this.faceTarget;
     if (face === null && nsp > 0.35) face = Math.atan2(this.vel.z, this.vel.x);
     if (face !== null) this.facing = turnToward(this.facing, face, Math.max(4, turnRate) * dt);

@@ -87,7 +87,9 @@ export class World {
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.03;
-    this.sun.shadow.radius = 1;
+    // Crossy-crisp edges: r186's PCF spreads 5 taps over `radius` texels (plus the hardware bilinear); 0.4 keeps
+    // just enough of it to hide texel steps in the close-ups without the soft blur on the broadcast shot.
+    this.sun.shadow.radius = 0.4;
     this.setShadowSize(this.shadowSize);
     this.scene.add(this.sun, this.sun.target);
     this.fill = new THREE.DirectionalLight(0xdfe8ff, 0);

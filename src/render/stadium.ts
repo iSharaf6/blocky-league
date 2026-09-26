@@ -164,6 +164,8 @@ function snowMaterial(snow: { value: number }, snowCol: number, key: string, sat
 
 export class Stadium {
   readonly group = new THREE.Group();
+  /** The Mega Dome's arch (level 5 only), a mesh of its own so a camera can leave it out. */
+  private arch: THREE.Mesh | null = null;
   /** Pitch-level objects (lawn, lines, goals, flags), lifted by PITCH_Y. */
   readonly pitch = new THREE.Group();
   readonly crowdUniforms = { uTime: { value: 0 }, uHypeHome: { value: 0.1 }, uHypeAway: { value: 0.1 } };
@@ -885,18 +887,34 @@ export class Stadium {
     // The ring closed over the low near stand: a chunky stepped arch springing from the near corner towers
     // (DOME_ARCH m at its crown). It always stays well above the broadcast lens (which flies at ~21-38 m,
     // highest only where the arch is far off) and so above the top of its frame, which looks down.
+    // (Its own mesh: the menu orbit and the pre-match fly-in pass right through where it stands, so those
+    // cameras leave it out; see setArchVisible.)
     const az = STAND_Z + 1.5;
     const ax = xSeat + 0.6;
     const ay = (x: number) => h + (DOME_ARCH - h) * (1 - (x / ax) ** 2);
     const seg = 1.6;
+    const ab = new BoxBuilder();
     for (let x = -ax; x < ax - 1e-3; x += seg) {
       const x1 = Math.min(ax, x + seg);
       const ya = ay(x);
       const yb = ay(x1);
       const lo = Math.min(ya, yb) - 0.55;
       const hi = Math.max(ya, yb) + 0.55;
-      b.box((x + x1) / 2, (lo + hi) / 2, az, x1 - x + 0.02, hi - lo, 1.3, ARCH, { top: shade(ARCH, 1.06) });
+      ab.box((x + x1) / 2, (lo + hi) / 2, az, x1 - x + 0.02, hi - lo, 1.3, ARCH, { top: shade(ARCH, 1.06) });
     }
+    const arch = new THREE.Mesh(ab.build(), this.standMat);
+    arch.receiveShadow = true;
+    arch.castShadow = false;
+    this.arch = arch;
+    this.group.add(arch);
+  }
+
+  /**
+   * The Mega Dome's arch over the near stand: shown to the match cameras (it is always above the broadcast
+   * frame), hidden for the menu orbit and the pre-match fly-in, whose paths cut straight through it.
+   */
+  setArchVisible(on: boolean): void {
+    if (this.arch) this.arch.visible = on;
   }
 
   private buildCrowd(): void {

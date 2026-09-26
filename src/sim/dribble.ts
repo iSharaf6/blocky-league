@@ -1,0 +1,495 @@
+import { angleDiff, clamp, dist2 } from '../core/math';
+import type { Match, Pad } from './match';
+import type { Player } from './player';
+
+/**
+ * Dribble and tackle assists for the human's man (arcade-generous, DLS / FIFA-assisted feel). Everything
+ * here acts only on the human-controlled player, on defenders he beats, or on tackles against his carrier,
+ * so AI-vs-AI play never reaches it. Randomness comes from `m.rng` only.
+ *
+ * Dribbling (humanDribble, called from Match.applyHuman while he has the ball):
+ * - close control: jogging with it (no sprint) the ball sits tighter on his foot (closeTouch) and he turns
+ *   CLOSE_TURN x quicker (Player.locomote); sprinting keeps the long touches;
+ * - skill cut: a sharp stick change (over CUT_SWING within CUT_WINDOW s) is a quick burst turn (Player.cutT)
+ *   with the ball kept close; a defender within CUT_REACH m who has committed to him (closing at speed,
+ *   lunging, going in for the tackle) is wrong-footed (wrongFoot: planted the wrong way for 0.35-0.5 s), a
+ *   'beat', and the dribbler is protected from a clean tackle for PROTECT_T s; the move is a 'skill';
+ * - shielding: stick neutral (or running away from him) with a defender within SHIELD_R m, the body goes
+ *   between ball and defender (Player.shieldT) and his tackles mostly fail;
+ * - path assist: a defender square in the run within PATH_R m bends it up to PATH_BEND toward the free side.
+ *
+ * Defending (humanTackle, from applyHuman while the other side has it): SHOOT is TACKLE.
+ * - TAP within TAP_LUNGE m: an assisted standing tackle, a lunge and a poke at the ball;
+ * - TAP from TAP_LUNGE..TAP_CLOSE m: he closes at a sprint and pokes on arrival (within CLOSE_T s; pulling
+ *   the stick hard away cancels it);
+ * - HOLD (SLIDE_HOLD s) or double-tap: a slide (Match.startSlide), aimed at the ball;
+ * - PRESS (THROUGH held): a goal-side jockey PRESS_GAP m off the ball, facing it, plus pressSteal, an
+ *   automatic poke when the carrier's touch leaves the ball exposed and our man is nearer it. Running into
+ *   the carrier still tackles on its own (Match.autoTackle), a little less surely.
+ *
+ * The AI against the human (vsHuman, by difficulty): how readily it goes in on his dribbler and how often
+ * that comes off, how its carriers stand up to his tackles and take his man on, how his skill cuts fare.
+ */
+
+/** Stick swing (rad) within CUT_WINDOW s that reads as a skill cut, and how far it must be off his run. */
+export const CUT_SWING = (75 * Math.PI) / 180;
+export const CUT_WINDOW = 0.15;
+const CUT_OFF_RUN = 0.8;
+/** The cut's burst turn (s), and the least time between two cuts. */
+export const CUT_T = 0.25;
+const CUT_COOL = 0.4;
+/** Defenders within this of the dribbler can be wrong-footed by a cut. */
+export const CUT_REACH = 3;
+/** Wrong-footed: planted the wrong way this long (scaled by our dribbling against his defending). */
+export const WRONG_FOOT_MIN = 0.35;
+export const WRONG_FOOT_MAX = 0.5;
+/** After beating his man with a skill, the dribbler can't be tackled cleanly for this long. */
+export const PROTECT_T = 0.6;
+/** Shielding: a defender this close, the stick neutral or pulling away from him. */
+export const SHIELD_R = 1.6;
+/** A shielding carrier's tackles succeed this much as often (from the far side of his body). */
+const SHIELD_TACKLE = 0.4;
+/** Just after a successful skill, tackles on him succeed this much as often. */
+const PROTECT_TACKLE = 0.15;
+/** For RECEIVE_GUARD_T s after he takes the ball, tackles on him succeed RECEIVE_GUARD as often. */
+const RECEIVE_GUARD_T = 0.3;
+const RECEIVE_GUARD = 0.5;
+/** Path assist: a defender square in the run within PATH_R m bends it up to PATH_BEND toward the free side. */
+export const PATH_R = 2;
+export const PATH_BEND = (20 * Math.PI) / 180;
+const PATH_LANE = 1.1;
+/** Close control: the ball pulled this much (m) nearer his body, and the stride's push-on scaled by this. */
+const CLOSE_PULL = 0.18;
+const CLOSE_PULSE = 0.5;
+/** A 'skill' event is emitted for a cut near a defender at most this often (s). */
+const SKILL_GAP = 1.2;
+
+/** Double-tap SPRINT with the ball: the second press within this (s) knocks it on. */
+export const KNOCK_TAP = 0.35;
+/** PRESS: the jockey stands this far (m) goal-side of the ball, reading the carrier's run this far ahead (s). */
+export const PRESS_GAP = 1.6;
+export const PRESS_LEAD = 0.25;
+
+/** TACKLE: a tap this near (m, ball) lunges; from there to TAP_CLOSE he closes first. */
+export const TAP_LUNGE = 2.5;
+export const TAP_CLOSE = 6;
+/** Held this long (s), TACKLE is a slide; a second press within DOUBLE_TAP s too. */
+export const SLIDE_HOLD = 0.25;
+export const DOUBLE_TAP = 0.3;
+/** How long (s) the tap keeps closing in before it gives up. */
+export const CLOSE_T = 0.8;
+/** Foot-to-ball reach (m) of the assisted standing tackle (the AI's is 1.15). */
+export const STAND_REACH = 1.45;
+/** The lunge: at least this pace (m/s) at the ball the moment a close tap lands. */
+const LUNGE_SPEED = 6.5;
+/** PRESS auto-steal: the carrier's ball this far (m) from him, and our foot within this of it. */
+export const STEAL_EXPOSED = 0.9;
+const STEAL_REACH = 1.4;
+
+/** Per-match state of the human's dribble / tackle assists (Match.assist). */
+export class AssistState {
+  /** Seconds of human control (the assists' clock). */
+  t = 0;
+  /** Stick directions (angle, time) over the last CUT_WINDOW s while he had the ball. */
+  hist: { a: number; t: number }[] = [];
+  carrier = -1;
+  lastCut = -9;
+  lastSkill = -9;
+  /** TACKLE: the press being played out (tap / hold; `born`: Match.clock when pressed), and when the last one was. */
+  tackle: { t: number; held: boolean; target: number; born: number } | null = null;
+  lastPress = -9;
+}
+
+// ------------------------------------------------------------------ dribbling
+
+/**
+ * The human's man has the ball at his feet (called once a frame from applyHuman, after the stick has set his
+ * run): cut detection and wrong-footing, shielding, path assist. Charging a shot or a pass, it only watches.
+ */
+export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt: number): void {
+  const st = m.assist;
+  st.t += dt;
+  if (st.carrier !== p.idx) {
+    st.carrier = p.idx;
+    st.hist.length = 0;
+  }
+  if (p.state !== 'move') return;
+  const busy = pad.shoot || m.passMode !== null;
+  // ---- Skill cut. (A flick across a thumbstick passes near the middle for a frame or two: those frames
+  // are skipped, not a reset.)
+  const h = st.hist;
+  while (h.length && st.t - h[0].t > CUT_WINDOW) h.shift();
+  if (stickLen > 0.5) {
+    const a = Math.atan2(pad.mz, pad.mx);
+    let swing = 0;
+    for (const s of h) swing = Math.max(swing, Math.abs(angleDiff(s.a, a)));
+    h.push({ a, t: st.t });
+    const sp = p.speed();
+    const offRun = sp > 0.5 ? Math.abs(angleDiff(Math.atan2(p.vel.z, p.vel.x), a)) : 0;
+    if (!busy && swing > CUT_SWING && offRun > CUT_OFF_RUN && sp > 1.5 && st.t - st.lastCut > CUT_COOL) {
+      st.lastCut = st.t;
+      h.length = 0;
+      h.push({ a, t: st.t });
+      skillCut(m, p);
+    }
+  }
+  if (busy) return;
+  // ---- Shielding.
+  const o = nearestOpponent(m, p);
+  if (o && o.d < SHIELD_R) {
+    const ax = (p.pos.x - o.p.pos.x) / Math.max(0.05, o.d);
+    const az = (p.pos.z - o.p.pos.z) / Math.max(0.05, o.d);
+    const away = stickLen > 0.25 ? (pad.mx * ax + pad.mz * az) / stickLen : 1;
+    if (stickLen < 0.25 || away > 0.3) {
+      p.shieldT = 0.15;
+      // Stick neutral: turn his back on him (the ball, on his foot, goes to the far side of the body).
+      if (stickLen < 0.25) p.faceTarget = Math.atan2(az, ax);
+    }
+  }
+  // ---- Path assist.
+  if (stickLen > 0.5 && p.cutT <= 0) pathAssist(m, p, stickLen);
+}
+
+/** A skill cut: the burst turn, the 'skill', and any committed defender near enough wrong-footed. */
+function skillCut(m: Match, p: Player): void {
+  p.cutT = CUT_T;
+  let near = false;
+  let beat = false;
+  for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
+    if (o.isKeeper || o.sentOff || o.wrongFootT > 0) continue;
+    if (o.state !== 'move' && o.state !== 'slide') continue;
+    const dx = p.pos.x - o.pos.x;
+    const dz = p.pos.z - o.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > CUT_REACH + 0.5) continue;
+    near = true;
+    if (d > CUT_REACH) continue;
+    // Committed: going in for the tackle (or to ground), or closing on him at pace.
+    const closing = (o.vel.x * dx + o.vel.z * dz) / Math.max(0.1, d);
+    const committed = o.commitT > 0 || o.state === 'slide' || closing > 2 || (o.tackleCooldown <= 0 && d < 1.8);
+    const edge = (p.stat.dribbling - o.stat.defending) / 100;
+    const shift = vsHuman(m.aiSkill(o.side)).cut;
+    const pWin = committed ? clamp(0.72 + edge * 0.9 + shift, 0.45, 0.92) : clamp(0.3 + edge * 0.6 + shift, 0.12, 0.5);
+    if (m.rng.chance(pWin)) {
+      wrongFoot(m, p, o);
+      beat = true;
+    }
+  }
+  if (beat) p.protectT = PROTECT_T;
+  if (near && m.assist.t - m.assist.lastSkill > SKILL_GAP) {
+    m.assist.lastSkill = m.assist.t;
+    m.events.push({ type: 'skill', player: p.idx });
+  }
+}
+
+/** `o` is planted the wrong way by `p`'s move: nearly frozen for 0.35-0.5 s, no tackle, a 'beat'. */
+export function wrongFoot(m: Match, p: Player, o: Player, scale = 1): void {
+  const edge = (p.stat.dribbling - o.stat.defending) / 100;
+  const dur = clamp(0.42 + edge * 0.5, WRONG_FOOT_MIN, WRONG_FOOT_MAX) * scale;
+  o.wrongFootT = Math.max(o.wrongFootT, dur);
+  o.slowT = Math.max(o.slowT, dur + 0.25);
+  o.commitT = 0;
+  o.jockeyT = 0;
+  o.tackleCooldown = Math.max(o.tackleCooldown, dur + 0.3);
+  m.events.push({ type: 'beat', by: p.idx, on: o.idx });
+}
+
+function nearestOpponent(m: Match, p: Player): { p: Player; d: number } | null {
+  let best: Player | null = null;
+  let bd = Infinity;
+  for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
+    if (o.sentOff) continue;
+    const d = dist2(o.pos.x, o.pos.z, p.pos.x, p.pos.z);
+    if (d < bd) {
+      bd = d;
+      best = o;
+    }
+  }
+  return best ? { p: best, d: bd } : null;
+}
+
+/** A defender square in his run within PATH_R m: bend the run up to PATH_BEND round him, to the free side. */
+function pathAssist(m: Match, p: Player, stickLen: number): void {
+  const ux = p.wantX / stickLen;
+  const uz = p.wantZ / stickLen;
+  let block: Player | null = null;
+  let bAlong = Infinity;
+  let bLat = 0;
+  const opp = m.teamPlayers(p.side === 0 ? 1 : 0);
+  for (const o of opp) {
+    if (o.sentOff || o.isKeeper) continue;
+    const ox = o.pos.x - p.pos.x;
+    const oz = o.pos.z - p.pos.z;
+    const along = ox * ux + oz * uz;
+    const lat = -uz * ox + ux * oz;
+    if (along < 0.3 || along > PATH_R + 0.5 || Math.abs(lat) > PATH_LANE) continue;
+    if (along < bAlong) {
+      bAlong = along;
+      bLat = lat;
+      block = o;
+    }
+  }
+  if (!block) return;
+  // The free side: away from where he stands across the run (dead ahead: away from the touchline), unless
+  // another of theirs is there.
+  // (Side s turns the run towards s * (-uz, ux): towards the middle of the pitch is -sign(z * ux).)
+  let side = Math.abs(bLat) > 0.15 ? -Math.sign(bLat) : -Math.sign(p.pos.z * ux) || 1;
+  const taken = (s: number) => opp.some((q) => {
+    if (q === block || q.sentOff) return false;
+    const qx = q.pos.x - p.pos.x;
+    const qz = q.pos.z - p.pos.z;
+    const along = qx * ux + qz * uz;
+    const lat = (-uz * qx + ux * qz) * s;
+    return along > 0 && along < PATH_R + 1.5 && lat > 0.3 && lat < 2.5;
+  });
+  if (taken(side)) {
+    if (taken(-side)) return;
+    side = -side;
+  }
+  const f = clamp((PATH_R + 0.5 - bAlong) / PATH_R, 0.3, 1) * clamp(1.2 - Math.abs(bLat) / PATH_LANE, 0, 1);
+  const bend = side * PATH_BEND * f;
+  const c = Math.cos(bend);
+  const s = Math.sin(bend);
+  const wx = p.wantX;
+  const wz = p.wantZ;
+  p.wantX = wx * c - wz * s;
+  p.wantZ = wx * s + wz * c;
+}
+
+/**
+ * Close control, for Match.dribbleControl: the stride's push-on `pulse` (m ahead of his foot) for this
+ * carrier. The human's man jogging with it (not sprinting, not settling a first touch) keeps it tighter.
+ */
+export function closeTouch(m: Match, p: Player, pulse: number): number {
+  if (!m.isHumanControlled(p) || p.sprint || p.touchT > 0 || p.state !== 'move') return pulse;
+  return pulse * CLOSE_PULSE - CLOSE_PULL;
+}
+
+/**
+ * A knock-on (double-tap SPRINT): bend it round a defender standing in its line (up to ~25 degrees, to the
+ * free side), and one who has come in for it is wrong-footed now and then. Returns the direction to use.
+ */
+export function knockAssist(m: Match, p: Player, ux: number, uz: number): { x: number; z: number } {
+  if (!m.isHumanControlled(p)) return { x: ux, z: uz };
+  let best: Player | null = null;
+  let bd = Infinity;
+  let bl = 0;
+  for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
+    if (o.sentOff || o.isKeeper) continue;
+    const ox = o.pos.x - p.pos.x;
+    const oz = o.pos.z - p.pos.z;
+    const along = ox * ux + oz * uz;
+    const lat = -uz * ox + ux * oz;
+    if (along < 0.2 || along > 5 || Math.abs(lat) > 1.6) continue;
+    if (along < bd) {
+      bd = along;
+      bl = lat;
+      best = o;
+    }
+  }
+  if (!best) return { x: ux, z: uz };
+  const bend = -(Math.sign(bl) || 1) * clamp(((1.6 - Math.abs(bl)) / 1.6) * 0.45, 0.1, 0.45);
+  if (bd < 3.2) {
+    const edge = (p.stat.dribbling - best.stat.defending + p.stat.pace - best.stat.pace) / 200;
+    if (m.rng.chance(clamp(0.5 + edge + vsHuman(m.aiSkill(best.side)).cut, 0.25, 0.75))) wrongFoot(m, p, best, 0.8);
+  }
+  const c = Math.cos(bend);
+  const s = Math.sin(bend);
+  return { x: ux * c - uz * s, z: ux * s + uz * c };
+}
+
+// ------------------------------------------------------------------ tackles on the human's carrier
+
+/**
+ * Multiplier on the chance of `tackler`'s standing tackle on carrier `c` (Match.tryTackle). 1 unless `c` is
+ * the human's man: then his protection window after a skill, his shielding (from the far side of his body)
+ * and the AI's difficulty against his dribbling decide it.
+ */
+export function carrierGuard(m: Match, tackler: Player, c: Player): number {
+  if (!m.isHumanControlled(c)) return 1;
+  if (c.protectT > 0) return PROTECT_TACKLE;
+  let k = humanCarrierTackle(m.aiSkill(tackler.side), c.stat.dribbling);
+  // He's only just got it: no stealing it off his first touch.
+  if (c.ballT < RECEIVE_GUARD_T) k *= RECEIVE_GUARD;
+  if (c.shieldT > 0) {
+    // Body between ball and tackler: coming through the back of him mostly fails.
+    const b = m.ball.pos;
+    const bx = b.x - c.pos.x;
+    const bz = b.z - c.pos.z;
+    const tx = tackler.pos.x - c.pos.x;
+    const tz = tackler.pos.z - c.pos.z;
+    const cover = -(bx * tx + bz * tz) / Math.max(1e-3, Math.hypot(bx, bz) * Math.hypot(tx, tz));
+    k *= 1 - (1 - SHIELD_TACKLE) * clamp((cover + 0.3) / 0.8, 0, 1);
+  }
+  return k;
+}
+
+/**
+ * How the AI plays against the human, by its difficulty (MatchConfig.difficulty / Match.aiSkill: the menu's
+ * EASY 0.6 · NORMAL 1.8 · HARD 3 · LEGEND 4). AI-vs-AI play never uses it.
+ */
+export interface VsHuman {
+  /** How readily it goes in on the human's dribbler (commit rate, chase slides), against an AI dribbler. */
+  press: number;
+  /** Its standing tackles' success on the human's carrier, against an AI carrier (before his dribbling). */
+  tackle: number;
+  /** The human's assisted standing tackles on its carriers succeed this much as often. */
+  resist: number;
+  /** Added to the odds of a skill cut (or knock-on) wrong-footing its defenders. */
+  cut: number;
+  /** Its carriers' take-ons against the human's man succeed this much as often as against an AI defender... */
+  takeOn: number;
+  /** ... and leave him wrong-footed (Player.slowT) this long (s; an AI defender: 0.7). */
+  beaten: number;
+  /** How sure the human's automatic tackle (running into the carrier, Match.autoTackle) is, as an aggression. */
+  auto: number;
+}
+
+/** The menu's difficulty levels (MatchConfig.difficulty), and vsHuman's value at each (linear between). */
+const LEVELS = [0.6, 1.8, 3, 4];
+const VS_HUMAN: Record<keyof VsHuman, number[]> = {
+  press: [0.72, 1.05, 1.1, 1.15],
+  tackle: [0.8, 1.06, 1.1, 1.14],
+  resist: [1, 0.72, 0.64, 0.56],
+  cut: [0.06, -0.1, -0.13, -0.17],
+  takeOn: [0.8, 1.42, 1.5, 1.6],
+  beaten: [0.4, 0.72, 0.78, 0.85],
+  auto: [0.55, 0.3, 0.26, 0.22],
+};
+
+export function vsHuman(skill: number): VsHuman {
+  const s = clamp(skill, LEVELS[0], LEVELS[LEVELS.length - 1]);
+  let i = 0;
+  while (i < LEVELS.length - 2 && s > LEVELS[i + 1]) i++;
+  const f = (s - LEVELS[i]) / (LEVELS[i + 1] - LEVELS[i]);
+  const at = (k: keyof VsHuman) => VS_HUMAN[k][i] + (VS_HUMAN[k][i + 1] - VS_HUMAN[k][i]) * f;
+  return { press: at('press'), tackle: at('tackle'), resist: at('resist'), cut: at('cut'), takeOn: at('takeOn'), beaten: at('beaten'), auto: at('auto') };
+}
+
+/** How an AI tackle on the human's carrier fares against the same tackle on an AI one (vsHuman, his dribbling). */
+export function humanCarrierTackle(skill: number, dribbling: number): number {
+  return vsHuman(skill).tackle * clamp(1.15 - (dribbling / 100) * 0.35, 0.8, 1.05);
+}
+
+/**
+ * The human's assisted standing tackle (Match.tryTackle with `assisted`): high from the front or side, lower
+ * from behind; `exposed` (the carrier's touch left the ball off his foot) makes it easier. Before carrierGuard.
+ */
+export function standingTackleChance(m: Match, p: Player, c: Player, behind: number, shielded: number, exposed: boolean): number {
+  const edge = (p.stat.defending - c.stat.dribbling) / 100;
+  let k = 0.78 - behind * 0.34 + edge * 0.5 + (exposed ? 0.15 : 0) + (c.sprint ? 0.04 : 0);
+  k *= 1 - shielded * 0.35;
+  // Harder sides' carriers are cuter on the ball.
+  k *= vsHuman(m.aiSkill(c.side)).resist;
+  return clamp(k, 0.2, 0.92);
+}
+
+/** Foul chance when the assisted standing tackle misses: from the front rarely, through the back of him often. */
+export function standingFoulChance(behind: number, shielded: number): number {
+  return 0.015 + behind * 0.28 + shielded * 0.06;
+}
+
+// ------------------------------------------------------------------ the human's TACKLE button
+
+/**
+ * SHOOT while the other side has it (applyHuman's defending branch): tap / hold / double-tap as above. Takes
+ * over the man's run while a tap is closing in. `shootP`: pressed this frame.
+ */
+export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stickLen: number, dt: number): void {
+  const st = m.assist;
+  st.t += dt;
+  const b = m.ball;
+  const c = b.owner >= 0 && !b.held && m.players[b.owner].side !== p.side ? m.players[b.owner] : null;
+  if (shootP && c && p.state === 'move' && !p.sentOff) {
+    const d = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
+    if (st.t - st.lastPress < DOUBLE_TAP && d < TAP_CLOSE) {
+      st.lastPress = -9;
+      st.tackle = null;
+      slideAt(m, p);
+      return;
+    }
+    st.lastPress = st.t;
+    if (d < TAP_CLOSE) {
+      st.tackle = { t: 0, held: true, target: c.idx, born: m.clock };
+      if (d < TAP_LUNGE) lunge(p, b.pos.x + b.vel.x * 0.1, b.pos.z + b.vel.z * 0.1);
+    }
+  }
+  const tk = st.tackle;
+  if (!tk) return;
+  // (Nor does it outlive a stoppage: the clock moved on, or a new half started, since it was pressed.)
+  const stale = m.clock < tk.born || m.clock - tk.born > CLOSE_T + 0.25;
+  if (!c || c.idx !== tk.target || p.state !== 'move' || p.sentOff || stale) {
+    st.tackle = null;
+    return;
+  }
+  tk.t += dt;
+  if (tk.held && !pad.shoot) tk.held = false;
+  if (tk.held && tk.t >= SLIDE_HOLD) {
+    st.tackle = null;
+    slideAt(m, p);
+    return;
+  }
+  const tx = b.pos.x + b.vel.x * 0.15 - p.pos.x;
+  const tz = b.pos.z + b.vel.z * 0.15 - p.pos.z;
+  const tl = Math.hypot(tx, tz) || 1;
+  // Pulling the stick hard away from it calls the tap off; so does running out of time.
+  if ((stickLen > 0.6 && (pad.mx * tx + pad.mz * tz) / (stickLen * tl) < -0.2) || tk.t > CLOSE_T) {
+    st.tackle = null;
+    return;
+  }
+  p.wantX = tx / tl;
+  p.wantZ = tz / tl;
+  p.sprint = tl > 1.2;
+  p.faceTarget = Math.atan2(tz, tx);
+  if (!tk.held && p.tackleCooldown <= 0 && dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) <= STAND_REACH) {
+    st.tackle = null;
+    m.tryTackle(p, c, 1, true);
+  }
+}
+
+/**
+ * An AI carrier's take-on against `o`: how its success compares with one against an AI defender. The human's
+ * man by difficulty (vsHuman.takeOn); mid-way through a TACKLE tap he's already coming in for the ball, and the
+ * tackle mostly gets there first (it used to be skipped outright whenever the take-on came off that frame).
+ */
+export function takeOnVsHuman(m: Match, o: Player): number {
+  if (!m.isHumanControlled(o)) return 1;
+  return m.assist.tackle !== null ? TAKE_ON_LUNGING : vsHuman(m.aiSkill(o.side === 0 ? 1 : 0)).takeOn;
+}
+const TAKE_ON_LUNGING = 0.35;
+
+/** A tap is closing in on the carrier (Match.autoTackle leaves the challenge to it). */
+export function tackleClosing(m: Match): boolean {
+  return m.assist.tackle !== null && m.phase === 'play';
+}
+
+/**
+ * PRESS held (applyHuman, after the jockey has set his run): the carrier's touch has left the ball more than
+ * STEAL_EXPOSED m off his foot and our man is nearer it: poke it away (an assisted standing tackle).
+ */
+export function pressSteal(m: Match, p: Player, c: Player): void {
+  const b = m.ball.pos;
+  if (p.state !== 'move' || p.tackleCooldown > 0 || m.ball.owner !== c.idx) return;
+  const exposed = dist2(b.x, b.z, c.pos.x, c.pos.z);
+  const mine = dist2(p.footX(), p.footZ(), b.x, b.z);
+  if (exposed > STEAL_EXPOSED && mine < STEAL_REACH && mine < exposed) m.tryTackle(p, c, 1, true);
+}
+
+/** Face the ball (a beat ahead of it) and go in with a slide. */
+function slideAt(m: Match, p: Player): void {
+  const b = m.ball;
+  if (p.state !== 'move') return;
+  p.facing = Math.atan2(b.pos.z + b.vel.z * 0.22 - p.pos.z, b.pos.x + b.vel.x * 0.22 - p.pos.x);
+  m.startSlide(p);
+}
+
+/** The lunge of a close tap: straight at the ball, at LUNGE_SPEED at least. */
+function lunge(p: Player, x: number, z: number): void {
+  const dx = x - p.pos.x;
+  const dz = z - p.pos.z;
+  const d = Math.hypot(dx, dz) || 1;
+  const sp = Math.max(p.speed(), LUNGE_SPEED);
+  p.vel.x = (dx / d) * sp;
+  p.vel.z = (dz / d) * sp;
+  p.facing = Math.atan2(dz, dx);
+}

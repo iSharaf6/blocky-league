@@ -796,6 +796,60 @@ body {
   background: var(--red);
 }
 
+/* Settings: GENERAL / CONTROLS tabs; the controls rows are label, value (ASSISTED / SEMI / MANUAL or an
+   ON / OFF switch) and a line saying what that value does. */
+.set-tabs {
+  justify-self: center;
+  width: 100%;
+}
+
+.set-pane[hidden] { display: none; }
+
+/* Pause: QUIT MATCH asks first (the menu column swaps for the question). */
+.pause .menu-col[hidden],
+.quit-ask[hidden] { display: none; }
+
+.quit-ask {
+  display: grid;
+  gap: 14px;
+}
+
+.panel .quit-ask .fine.big {
+  justify-self: center;
+  margin: 0;
+  text-align: center;
+  color: var(--ink);
+}
+
+.ctl-pane {
+  display: grid;
+  gap: 12px;
+}
+
+.ctl-row {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ctl-label {
+  font: 400 16px var(--round);
+  letter-spacing: 1px;
+}
+
+.ctl-seg button { padding: 9px 2px 8px; white-space: nowrap; }
+
+/* A switch row shows its one-button toggle (label inside) here; landscape phones swap it for an ON | OFF segment. */
+.ctl-row.switch .ctl-label,
+.ctl-row.switch .ctl-seg { display: none; }
+
+.ctl-why {
+  margin: 0;
+  font: 400 14px / 1.25 var(--round);
+  letter-spacing: 0.3px;
+  color: var(--ink-2);
+}
+
 .howto {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -833,6 +887,8 @@ body {
   .ht-touch {
     grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     grid-template-areas: 'pad table' 'note table' 'fine fine';
+    /* The tall table's extra height goes under the note, not between the pad and its note. */
+    grid-template-rows: auto 1fr auto;
     align-items: start;
     column-gap: 16px;
   }
@@ -1030,6 +1086,15 @@ kbd {
   width: 18px;
   height: 20px;
   display: block;
+}
+
+/* Crests on the dark score bug get a cream rim (a dark crest such as #2a2a30 otherwise vanishes into it). */
+.sb-team .crest-svg,
+.sb-team i.crest {
+  flex: none;
+  filter:
+    drop-shadow(1.5px 0 0 var(--cream)) drop-shadow(-1.5px 0 0 var(--cream))
+    drop-shadow(0 1.5px 0 var(--cream)) drop-shadow(0 -1.5px 0 var(--cream));
 }
 
 /* Pixel crest: a shield of the two club colours. */
@@ -1267,6 +1332,77 @@ kbd {
 
 .hud.replaying .hud-toast { opacity: 0; }
 
+/* Timed finishing verdict (Hud.timing): a chunky pixel word over the shooter, 0.8 s. The HUD sets left / top
+   clear of the goal mouth in shot and the controls. PERFECT green, GOOD teal, EARLY / LATE red + a WILD tag. */
+.hud-timing {
+  --tc: var(--cream);
+  left: 50%;
+  top: 30%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform-origin: 50% 100%;
+}
+.hud-timing.on { opacity: 1; }
+.hud-timing b {
+  font: 700 clamp(26px, 2.6vw, 38px) / 1 var(--px);
+  letter-spacing: 1px;
+  color: var(--tc);
+  text-shadow:
+    0 4px 0 var(--ink), 3px 4px 0 var(--ink), -3px 4px 0 var(--ink),
+    3px 0 0 var(--ink), -3px 0 0 var(--ink), 0 -3px 0 var(--ink), 3px -3px 0 var(--ink), -3px -3px 0 var(--ink),
+    0 8px 0 rgba(0, 0, 0, 0.25);
+}
+.hud-timing em {
+  font: 700 16px / 1 var(--px);
+  font-style: normal;
+  letter-spacing: 1px;
+  color: var(--cream);
+  background: var(--red);
+  padding: 5px 7px 3px;
+  border: 2px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  transform: rotate(-5deg);
+}
+.hud-timing[data-grade='perfect'] { --tc: #6dff7e; }
+.hud-timing[data-grade='good'] { --tc: #4fe3cf; }
+.hud-timing[data-grade='early'],
+.hud-timing[data-grade='late'] { --tc: #ff6a5c; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .hud-timing.on { animation: timing-pop 0.8s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+  .hud-timing[data-grade='early'].on,
+  .hud-timing[data-grade='late'].on { animation-name: timing-wild; }
+}
+
+@keyframes timing-pop {
+  0% { opacity: 0; transform: translateY(10px) scale(0.5); }
+  18% { opacity: 1; transform: translateY(0) scale(1.12); }
+  30% { transform: scale(1); }
+  78% { opacity: 1; transform: translateY(-4px); }
+  100% { opacity: 0; transform: translateY(-14px); }
+}
+
+/* A mistimed strike shudders. */
+@keyframes timing-wild {
+  0% { opacity: 0; transform: translateY(10px) scale(0.5); }
+  16% { opacity: 1; transform: scale(1.1) rotate(-4deg); }
+  26% { transform: translateX(-5px) rotate(3deg); }
+  36% { transform: translateX(4px) rotate(-2deg); }
+  46% { transform: translateX(0) rotate(0); }
+  78% { opacity: 1; transform: translateY(-3px); }
+  100% { opacity: 0; transform: translateY(-12px); }
+}
+
+@media (max-height: 480px) {
+  .hud-timing b { font-size: 24px; }
+  .hud-timing em { font-size: 14px; padding: 4px 6px 2px; }
+}
+
 .hud-hint {
   /* Up top (clear of the score bug and its booking chips): at set pieces the taker stands mid / low in the lens. */
   top: max(16%, calc(max(12px, env(safe-area-inset-top)) + 58px));
@@ -1279,13 +1415,18 @@ kbd {
   background: rgba(38, 38, 46, 0.78);
   padding: 9px 14px 7px;
   opacity: 0;
-  transition: opacity 0.2s;
+  /* Fades in; gone at once when play resumes (or the player acts on it): it never lingers into open play. */
+  transition: none;
   text-align: center;
 }
 
-/* The tutorial tip gives way to the set-piece hint and the event flag. */
+/* One prompt at a time. Priority: a banner (goal, card, half time...) > the tutorial tip > the set-piece
+   hint; the tip also gives way to the event flag. A prompt held back comes back once the higher one goes
+   (if it is still wanted). The ticker waits out the booking plate (the plate says it all). */
 .hud:has(.hud-toast.on) .hud-tip,
-.hud:has(.hud-hint.on) .hud-tip {
+.hud:not(.dead):has(.hud-tip.on) .hud-hint.on,
+.hud:has(.hud-banner.on) .hud-hint.on,
+.hud:has(.hud-banner.on.card) .hud-cm {
   opacity: 0;
 }
 
@@ -1370,6 +1511,7 @@ kbd {
 
 .hud-hint.on {
   opacity: 1;
+  transition: opacity 0.2s;
   animation: pulse 1.4s ease-in-out infinite;
 }
 
@@ -1445,9 +1587,14 @@ kbd {
   width: clamp(110px, 12vw, 180px);
   height: auto;
   aspect-ratio: 8 / 5;
-  opacity: 0.8;
+  opacity: 0.75;
   transition: opacity 0.2s;
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* The ball, our man or his pass target is under the minimap (Hud.fadeRadar): nearly see-through. */
+.hud-radar.under {
+  opacity: 0.18;
 }
 
 @media (max-height: 419.98px) {
@@ -1576,6 +1723,12 @@ kbd {
   opacity: 1;
 }
 
+/* The idle stick is drawn only until the thumb first finds it (TouchControls adds .used): after that it
+   appears under the thumb and is gone again on release, so it never sits over players. */
+.touch.used .touch-base:not(.on) {
+  opacity: 0;
+}
+
 .touch-knob {
   position: absolute;
   left: 50%;
@@ -1615,15 +1768,36 @@ kbd {
   background: color-mix(in srgb, var(--c) 86%, transparent);
   border: 3px solid #fff;
   box-shadow: 0 5px 0 color-mix(in srgb, var(--cd) 90%, transparent), 0 8px 0 rgba(0, 0, 0, 0.16);
-  transition: transform 0.05s, box-shadow 0.05s, background 0.08s;
+  /* ~65% at rest so the players under the cluster show through; solid while pressed. */
+  opacity: 0.65;
+  transition: transform 0.05s, box-shadow 0.05s, background 0.08s, opacity 0.08s;
 }
 
 .tb span {
+  position: relative;
+  z-index: 1;
   display: block;
   margin-top: -2px;
 }
 
+/* Pass charge (TouchControls.setCharge): PASS / THROUGH fill from the bottom while held; a white rim flash
+   when it's at full power. */
+.tb::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.34) calc(var(--charge, 0) * 100%), transparent calc(var(--charge, 0) * 100%));
+  opacity: 0;
+  transition: opacity 0.1s;
+  pointer-events: none;
+}
+
+.tb.charging::before { opacity: 1; }
+.tb.charging.full { box-shadow: 0 1px 0 var(--cd), 0 3px 0 rgba(0, 0, 0, 0.16), 0 0 0 4px rgba(255, 255, 255, 0.55); }
+
 .tb.down {
+  opacity: 1;
   transform: translateY(4px) scale(0.96);
   background: var(--c);
   box-shadow: 0 1px 0 var(--cd), 0 3px 0 rgba(0, 0, 0, 0.16);
@@ -3784,6 +3958,8 @@ button.mc-pl:active {
   .stats { gap: 5px; }
   .toggles { gap: 6px; }
   .toggles button { padding-top: 10px; padding-bottom: 8px; }
+  .ctl-pane { gap: 9px; }
+  .ctl-row { gap: 4px; }
   .howto p { margin-bottom: 6px; }
   .mc-prize { gap: 6px; padding: 9px 12px; }
   .cup-hero { padding: 9px 14px; }
@@ -3868,11 +4044,35 @@ button.mc-pl:active {
   .pause .panel.narrow { width: min(560px, 94vw); }
   .pause .menu-col { grid-template-columns: 1fr 1fr; gap: 12px; }
   .pause .menu-col .btn-lg { grid-column: 1 / -1; }
+  .pause .quit-ask .menu-col .btn-lg { grid-column: auto; }
 
-  /* Settings: toggles two by two. */
+  /* Settings: toggles two by two; the controls rows two by two as well (each keeps its own one-button switch). */
   .settings .panel.narrow { width: min(560px, 94vw); }
   .toggles { grid-template-columns: 1fr 1fr; }
   .toggles button { padding: 10px 12px 8px; }
+  /* Controls: title and tabs share the top row; one row per option: its name and line on the left, the
+     value (ASSISTED | SEMI | MANUAL, or ON | OFF) on the right, so all five fit a 375 px tall screen. */
+  .settings .panel.narrow.set-panel { width: min(640px, 96vw); grid-template-columns: auto minmax(0, 1fr); column-gap: 18px; }
+  .set-panel > h2 { text-align: left; align-self: center; }
+  .set-panel > :not(h2, .set-tabs) { grid-column: 1 / -1; }
+  .set-tabs { width: min(360px, 100%); justify-self: end; }
+  .set-tabs button { padding: 7px 4px 6px; }
+  .set-pane[data-pane='general'] .toggles button { padding-top: 8px; padding-bottom: 6px; }
+  .ctl-pane { gap: 7px; }
+  .ctl-row {
+    grid-template-columns: minmax(0, 1fr) 236px;
+    grid-template-areas: 'label ctl' 'why ctl';
+    column-gap: 12px;
+    row-gap: 1px;
+    align-items: center;
+  }
+  .ctl-row .ctl-label,
+  .ctl-row.switch .ctl-label { display: block; grid-area: label; align-self: end; font-size: 15px; }
+  .ctl-row .ctl-seg,
+  .ctl-row.switch .ctl-seg { display: grid; grid-area: ctl; }
+  .ctl-row .ctl-why { grid-area: why; align-self: start; }
+  .ctl-row .ctl-tog { display: none; }
+  .ctl-seg button { padding: 7px 2px 6px; font-size: 14px; box-shadow: 0 2px 0 var(--cream-2); }
 
   /* Half / full time: tighter score + stats. */
   .final { gap: 8px; }

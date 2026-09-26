@@ -1,5 +1,5 @@
 import { sfx } from '../audio/sfx';
-import { CAM_ZOOMS, type SaveData } from '../core/save';
+import { ASSIST_LEVELS, CAM_ZOOMS, controlsOf, type AssistLevel, type ControlSettings, type SaveData } from '../core/save';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview, faceHtml, hydrateFaces } from './preview';
@@ -15,6 +15,39 @@ export const DIFF_LEVEL = [0.6, 1.8, 3, 4];
 export const HALF_OPTIONS = [1.5, 2, 3, 4];
 
 const $ = <T extends HTMLElement>(root: ParentNode, sel: string) => root.querySelector(sel) as T;
+
+/** Settings > Controls: one row per option, with a plain-English line for each value (keep them short: one line on a phone). */
+type ControlRow = { k: keyof ControlSettings; kind: 'level' | 'switch'; label: string; why: Record<string, string> };
+const CONTROL_ROWS: ControlRow[] = [
+  {
+    k: 'groundAssist', kind: 'level', label: 'GROUND PASS',
+    why: {
+      assisted: 'Fixes aim and weight to the mate you point at',
+      semi: 'Fixes a slightly-off aim; the weight is up to you',
+      manual: 'Goes exactly where you aim, as hard as you hold',
+    },
+  },
+  {
+    k: 'throughAssist', kind: 'level', label: 'THROUGH BALL',
+    why: {
+      assisted: 'Leads the runner you point at into space',
+      semi: 'Nudges it into his path when your aim is close',
+      manual: 'Goes exactly where you aim, as hard as you hold',
+    },
+  },
+  {
+    k: 'autoSwitch', kind: 'switch', label: 'AUTO SWITCH',
+    why: { true: 'Hands you the man best placed to win it back', false: 'You switch yourself: PASS / SWITCH' },
+  },
+  {
+    k: 'moveAssist', kind: 'switch', label: 'SWITCH MOVE ASSIST',
+    why: { true: 'Your new man keeps his run until you steer', false: 'Your new man waits for the stick' },
+  },
+  {
+    k: 'timedFinish', kind: 'switch', label: 'TIMED FINISHING',
+    why: { true: 'Tap SHOOT again as the foot hits it: perfect', false: 'Just hold and release: no second tap' },
+  },
+];
 
 /** Live info for the main menu tiles. */
 export interface MainInfo {
@@ -171,11 +204,11 @@ const HOWTO_KEYS = `
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
-      <p><kbd>SPACE</kbd> pass (aim with the stick)</p>
-      <p><kbd>K</kbd> hold &amp; release to shoot · the stick aims while you charge</p>
-      <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip the keeper</p>
-      <p>Soft <kbd>K</kbd> with a diagonal stick: finesse curler</p>
+      <p><kbd>SPACE</kbd> tap: pass to the mate you point at · hold: harder</p>
       <p><kbd>L</kbd> tap: through ball · hold: lob / cross</p>
+      <p><kbd>K</kbd> hold &amp; release to shoot · the keys aim while you charge</p>
+      <p>Tap <kbd>K</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
+      <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip · soft <kbd>K</kbd> on a diagonal: curler</p>
       <p><kbd>SHIFT</kbd> sprint · double-tap to knock it past a defender</p>
     </div>
     <div class="ht-col">
@@ -187,18 +220,18 @@ const HOWTO_KEYS = `
       <p><kbd>ESC</kbd> pause</p>
     </div>
   </div>
-  <p class="fine">First-time finish: press SHOOT just before a pass or cross reaches you.</p>`;
+  <p class="fine">Your player turns to face the man you pass to before he strikes it. First-time finish: press SHOOT just before the ball reaches you. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
 
 const HOWTO_PAD = `
   <div class="howto">
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>LEFT STICK</kbd> move</p>
-      <p><kbd>A</kbd> pass (aim with the stick)</p>
-      <p><kbd>B</kbd> hold &amp; release to shoot · the stick aims while you charge</p>
-      <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip the keeper</p>
-      <p>Soft <kbd>B</kbd> with a diagonal stick: finesse curler</p>
+      <p><kbd>A</kbd> tap: pass to the mate you point at · hold: harder</p>
       <p><kbd>X</kbd> tap: through ball · hold: lob / cross</p>
+      <p><kbd>B</kbd> hold &amp; release to shoot · the stick aims while you charge</p>
+      <p>Tap <kbd>B</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
+      <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip · soft <kbd>B</kbd> on a diagonal: curler</p>
       <p><kbd>RT</kbd> sprint · double-tap to knock it past</p>
     </div>
     <div class="ht-col">
@@ -210,7 +243,7 @@ const HOWTO_PAD = `
       <p><kbd>START</kbd> pause</p>
     </div>
   </div>
-  <p class="fine">First-time finish: press SHOOT just before a pass or cross reaches you.</p>`;
+  <p class="fine">Your player turns to face the man you pass to before he strikes it. First-time finish: press SHOOT just before the ball reaches you. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
 
 /** One of the in-match touch buttons, drawn small (same colours, rim and base as the real ones). */
 const touchBtn = (cls: string, label: string) => `<i class="ht-tb ${cls}"><span>${label}</span></i>`;
@@ -229,14 +262,15 @@ const HOWTO_TOUCH = `
     <table class="ht-table">
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
-        <tr><td>${dot('pass')}</td><td><b>PASS</b> where you aim</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
+        <tr><td>${dot('pass')}</td><td><b>PASS</b> tap: to the mate you point at · hold: harder</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
         <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder · the stick aims</td><td><b>TACKLE</b> slide in</td></tr>
         <tr><td>${dot('through')}</td><td><b>THROUGH</b> tap · hold for a lob or cross</td><td><b>PRESS</b> hold to close down</td></tr>
         <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold · double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
+        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>PERFECT FINISH</b> tap SHOOT again as the foot hits the ball (mistime it and it flies)</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT + tap THROUGH/CROSS · <b>CURL</b> a soft SHOOT with the stick on a diagonal</td></tr>
       </tbody>
     </table>
-    <p class="fine">The buttons relabel themselves with the play. Set pieces: <b>PASS</b> short · <b>SHOOT</b> at goal · <b>CROSS</b> hold to whip it in. Tap to skip a replay; <b>II</b> pauses.</p>
+    <p class="fine">Your player turns to face the man you pass to first. Set pieces: <b>PASS</b> short · <b>SHOOT</b> at goal · <b>CROSS</b> hold to whip it in. Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
   </div>`;
 
 export class Menus {
@@ -418,7 +452,11 @@ export class Menus {
     $(d, '[data-a=go]').addEventListener('click', () => onKickOff(home, away));
   }
 
-  pause(h: { resume: () => void; howto: () => void; quit: () => void; settings: () => void; tactics?: () => void }): void {
+  /**
+   * Pause menu. QUIT MATCH asks first: `quitNote` says what walking off costs (a forfeit defeat in the
+   * career and the cup; a friendly just doesn't count).
+   */
+  pause(h: { resume: () => void; howto: () => void; quit: () => void; settings: () => void; tactics?: () => void; quitNote?: string }): void {
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel narrow">
@@ -430,8 +468,29 @@ export class Menus {
             <button class="btn btn-white" data-a="settings">SETTINGS</button>
             <button class="btn btn-red" data-a="quit">QUIT MATCH</button>
           </div>
+          <div class="quit-ask" hidden>
+            <p class="fine big">${h.quitNote ?? "This match won't count."}</p>
+            <div class="menu-col">
+              <button class="btn btn-go btn-lg" data-a="stay">KEEP PLAYING</button>
+              <button class="btn btn-red" data-a="really">YES, QUIT</button>
+            </div>
+          </div>
         </div>
       </div>`, 'pause');
+    const main = $(d, '.panel > .menu-col');
+    const ask = $(d, '.quit-ask');
+    const title = $(d, 'h2');
+    const asking = (on: boolean) => {
+      main.hidden = on;
+      ask.hidden = !on;
+      title.textContent = on ? 'QUIT MATCH?' : 'PAUSED';
+      $<HTMLButtonElement>(d, on ? '[data-a=stay]' : '[data-a=quit]').focus();
+    };
+    $(d, '[data-a=stay]').addEventListener('click', () => asking(false));
+    $(d, '[data-a=really]').addEventListener('click', () => {
+      window.removeEventListener('keydown', key);
+      h.quit();
+    });
     $(d, '[data-a=resume]').addEventListener('click', h.resume);
     d.querySelector('[data-a=tactics]')?.addEventListener('click', () => {
       window.removeEventListener('keydown', key);
@@ -439,7 +498,7 @@ export class Menus {
     });
     $(d, '[data-a=howto]').addEventListener('click', h.howto);
     $(d, '[data-a=settings]').addEventListener('click', h.settings);
-    $(d, '[data-a=quit]').addEventListener('click', h.quit);
+    $(d, '[data-a=quit]').addEventListener('click', () => asking(true));
     const key = (e: KeyboardEvent) => {
       if (e.code === 'Escape' || e.code === 'KeyP') {
         window.removeEventListener('keydown', key);
@@ -770,32 +829,112 @@ export class Menus {
     $(d, '[data-a=next]').addEventListener('click', h.next);
   }
 
-  settings(save: SaveData, onChange: () => void, onBack: () => void): void {
+  /**
+   * Settings, in two tabs: GENERAL (sound, commentary, graphics, camera) and CONTROLS (pass assistance,
+   * switching, timed finishing; each option says in a line what it does). `tab` picks the one shown first
+   * (the pause menu opens on CONTROLS). Every change is saved and applied at once via onChange.
+   */
+  settings(save: SaveData, onChange: () => void, onBack: () => void, tab: 'general' | 'controls' = 'general'): void {
     const s = save.settings;
+    // Each row carries both forms of a switch: the one-button ON / OFF toggle (portrait: label inside it) and
+    // an ON | OFF segment (landscape phones: label and its line on the left, the value on the right). CSS
+    // shows one; both drive the same setting.
+    const ctlRow = (r: ControlRow) => {
+      const opts = r.kind === 'level' ? ASSIST_LEVELS.map((l) => [l, l.toUpperCase()]) : [['true', 'ON'], ['false', 'OFF']];
+      return `<div class="ctl-row ${r.kind}" data-c="${r.k}">
+          <span class="ctl-label" id="ctl-${r.k}">${r.label}</span>
+          <div class="seg ctl-seg" role="radiogroup" aria-labelledby="ctl-${r.k}">
+            ${opts.map(([v, t]) => `<button data-v="${v}" role="radio">${t}</button>`).join('')}
+          </div>
+          ${r.kind === 'switch' ? `<div class="toggles ctl-tog"><button data-t="${r.k}" role="switch"><span>${r.label}</span><b></b></button></div>` : ''}
+          <p class="ctl-why" aria-live="polite"></p>
+        </div>`;
+    };
     const d = this.mount(`
       <div class="panel-wrap dim">
-        <div class="panel narrow">
+        <div class="panel narrow set-panel">
           <h2>SETTINGS</h2>
-          <div class="toggles">
-            <button data-k="sfx"></button>
-            <button data-k="crowd"></button>
-            <button data-k="music"></button>
-            <button data-k="commentary"></button>
-            <button data-k="commentaryVoice"></button>
-            <button data-k="autoSwitch"></button>
-            <button data-k="quality"></button>
-            <button data-k="camZoom"></button>
+          <div class="seg set-tabs" role="tablist">
+            <button data-tab="general" role="tab">GENERAL</button>
+            <button data-tab="controls" role="tab">CONTROLS</button>
+          </div>
+          <div class="set-pane" data-pane="general" role="tabpanel">
+            <div class="toggles">
+              <button data-k="sfx"></button>
+              <button data-k="crowd"></button>
+              <button data-k="music"></button>
+              <button data-k="commentary"></button>
+              <button data-k="commentaryVoice"></button>
+              <button data-k="quality"></button>
+              <button data-k="camZoom"></button>
+            </div>
+          </div>
+          <div class="set-pane ctl-pane" data-pane="controls" role="tabpanel">
+            ${CONTROL_ROWS.map(ctlRow).join('')}
           </div>
           <div class="btn-row"><button class="btn btn-go" data-a="back">DONE</button></div>
         </div>
       </div>`, 'settings');
+    const showTab = (t: 'general' | 'controls') => {
+      d.querySelectorAll<HTMLButtonElement>('.set-tabs button').forEach((b) => {
+        const on = b.dataset.tab === t;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-selected', String(on));
+      });
+      d.querySelectorAll<HTMLElement>('.set-pane').forEach((p) => (p.hidden = p.dataset.pane !== t));
+      d.querySelector('.panel')!.scrollTop = 0;
+    };
+    d.querySelectorAll<HTMLButtonElement>('.set-tabs button').forEach((b) =>
+      b.addEventListener('click', () => showTab(b.dataset.tab as 'general' | 'controls')),
+    );
+    showTab(tab);
+    // Controls: an ASSISTED / SEMI / MANUAL row per pass type, an ON / OFF switch for the rest.
+    const drawControls = () => {
+      const c = controlsOf(s);
+      for (const r of CONTROL_ROWS) {
+        const row = $(d, `.ctl-row[data-c=${r.k}]`);
+        const v = c[r.k];
+        row.querySelectorAll<HTMLButtonElement>('.ctl-seg button').forEach((b) => {
+          const on = b.dataset.v === String(v);
+          b.classList.toggle('on', on);
+          b.setAttribute('aria-checked', String(on));
+        });
+        const t = row.querySelector<HTMLButtonElement>('[data-t]');
+        if (t) {
+          t.setAttribute('aria-checked', String(v));
+          const chip = t.querySelector('b')!;
+          chip.textContent = v ? 'ON' : 'OFF';
+          chip.classList.toggle('off', !v);
+        }
+        $(row, '.ctl-why').textContent = r.why[String(v)] ?? '';
+      }
+    };
+    for (const r of CONTROL_ROWS) {
+      const row = $(d, `.ctl-row[data-c=${r.k}]`);
+      row.querySelectorAll<HTMLButtonElement>('.ctl-seg button').forEach((b) =>
+        b.addEventListener('click', () => {
+          const v = b.dataset.v!;
+          if (r.k === 'groundAssist') s.groundAssist = v as AssistLevel;
+          else if (r.k === 'throughAssist') s.throughAssist = v as AssistLevel;
+          else s[r.k] = v === 'true';
+          drawControls();
+          onChange();
+        }),
+      );
+      row.querySelector('[data-t]')?.addEventListener('click', () => {
+        if (r.k === 'autoSwitch' || r.k === 'moveAssist' || r.k === 'timedFinish') s[r.k] = !controlsOf(s)[r.k];
+        drawControls();
+        onChange();
+      });
+    }
+    drawControls();
     const labels: Record<string, string> = {
-      sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', commentaryVoice: 'COMMENTARY VOICE', autoSwitch: 'AUTO SWITCH', quality: 'GRAPHICS',
+      sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', commentaryVoice: 'COMMENTARY VOICE', quality: 'GRAPHICS',
       camZoom: 'CAMERA',
     };
     const canSpeak = speechAvailable();
     const draw = () => {
-      d.querySelectorAll<HTMLButtonElement>('.toggles button').forEach((b) => {
+      d.querySelectorAll<HTMLButtonElement>('.toggles button[data-k]').forEach((b) => {
         const k = b.dataset.k as keyof typeof s;
         const v = s[k];
         if (k === 'commentaryVoice' && !canSpeak) {
@@ -807,7 +946,7 @@ export class Menus {
         b.innerHTML = `<span>${labels[k]}</span><b class="${v === false ? 'off' : ''}">${val}</b>`;
       });
     };
-    d.querySelectorAll<HTMLButtonElement>('.toggles button').forEach((b) =>
+    d.querySelectorAll<HTMLButtonElement>('.toggles button[data-k]').forEach((b) =>
       b.addEventListener('click', () => {
         if (b.disabled) return;
         sfx.click();

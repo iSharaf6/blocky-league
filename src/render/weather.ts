@@ -1,4 +1,12 @@
 import * as THREE from 'three';
+import { smoothstep } from '../core/math';
+
+/**
+ * Snow near the lens: a flake shrinks away inside SNOW_NEAR_FULL m of the camera (gone by SNOW_NEAR_GONE),
+ * so no giant cube ever crosses the frame (a 14 cm flake 5 m from a long lens was ~40 px, bigger than a head).
+ */
+const SNOW_NEAR_GONE = 9;
+const SNOW_NEAR_FULL = 16;
 
 export type WeatherKind = 'clear' | 'rain' | 'snow';
 
@@ -101,7 +109,8 @@ export class Weather {
       for (let i = 0; i < n; i++) {
         const o = i * 3;
         this.q.setFromEuler(this.e.set(time * 1.3 + i, time * 0.9 + i * 0.5, 0));
-        this.m4.compose(this.v.set(p[o], p[o + 1], p[o + 2]), this.q, this.s.set(1, 1, 1));
+        const k = cam ? smoothstep(SNOW_NEAR_GONE, SNOW_NEAR_FULL, Math.hypot(p[o] - cam.x, p[o + 1] - cam.y, p[o + 2] - cam.z)) : 1;
+        this.m4.compose(this.v.set(p[o], p[o + 1], p[o + 2]), this.q, this.s.set(k, k, k));
         this.snow.setMatrixAt(i, this.m4);
       }
       this.snow.instanceMatrix.needsUpdate = true;

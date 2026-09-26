@@ -1,6 +1,8 @@
 import { clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
+import { headerAtGoal } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, WALL_DIST } from './constants';
+import { takeOnVsHuman, vsHuman } from './dribble';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import type { Match } from './match';
 import type { Player } from './player';
@@ -76,21 +78,35 @@ export function intercept(m: Match, p: Player): { x: number; z: number; t: numbe
   return { x: last.x, z: last.z, t: Math.max(last.t, d / top) };
 }
 
-function moveTo(p: Player, x: number, z: number, urgency: number, faceBall?: { x: number; z: number }): void {
+/** The controls moveTo sets: the move vector, the sprint, the facing (null: along his run). */
+export interface MoveIntent {
+  wantX: number;
+  wantZ: number;
+  sprint: boolean;
+  face: number | null;
+}
+
+function moveIntent(p: Player, x: number, z: number, urgency: number, faceBall?: { x: number; z: number }): MoveIntent {
   const dx = x - p.pos.x;
   const dz = z - p.pos.z;
   const d = Math.hypot(dx, dz);
-  if (d < 0.35) {
-    p.wantX = p.wantZ = 0;
-    p.sprint = false;
-  } else {
+  const r: MoveIntent = { wantX: 0, wantZ: 0, sprint: false, face: null };
+  if (d >= 0.35) {
     const f = Math.min(1, d / 2.2);
-    p.wantX = (dx / d) * f;
-    p.wantZ = (dz / d) * f;
-    p.sprint = urgency > 0.7 || d > 9 + (1 - urgency) * 8;
+    r.wantX = (dx / d) * f;
+    r.wantZ = (dz / d) * f;
+    r.sprint = urgency > 0.7 || d > 9 + (1 - urgency) * 8;
   }
-  if (faceBall && d < 2.5) p.faceTarget = Math.atan2(faceBall.z - p.pos.z, faceBall.x - p.pos.x);
-  else p.faceTarget = null;
+  if (faceBall && d < 2.5) r.face = Math.atan2(faceBall.z - p.pos.z, faceBall.x - p.pos.x);
+  return r;
+}
+
+function moveTo(p: Player, x: number, z: number, urgency: number, faceBall?: { x: number; z: number }): void {
+  const r = moveIntent(p, x, z, urgency, faceBall);
+  p.wantX = r.wantX;
+  p.wantZ = r.wantZ;
+  p.sprint = r.sprint;
+  p.faceTarget = r.face;
 }
 
 /**
@@ -366,6 +382,13 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
       moveTo(p, t.x, t.z, t.u, ball.pos);
       continue;
     }
+    // One of our shots just saved or blocked: the men up there follow it in for the rebound.
+    if (m.shotSide === side && m.shotClock < FOLLOW_IN_T && p.role !== 'DF' && !setPieceShot(m) && dist2(p.pos.x, p.pos.z, m.attackDir(side) * HALF_L, 0) < 24) {
+      const ad = m.attackDir(side);
+      moveTo(p, ad * (HALF_L - 6.5), clamp(ball.pos.z * 0.5, -5, 5), 1, ball.pos);
+      aerialOrVolley(m, p);
+      continue;
+    }
     // Loose ball: hold the shape of whoever had it last.
     if (m.possessionSide === side) {
       const t = attackTarget(m, p, brain, p);
@@ -593,8 +616,6 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
 // ------------------------------------------------------------------ defending
 
 function defend(m: Match, p: Player, brain: TeamBrain, c: Player, dt: number): void {
-  const ad = m.attackDir(p.side);
-  const gx = -ad * HALF_L;
   const ball = m.ball.pos;
   if (brain.presser === p.idx) {
     press(m, p, c, dt, brain);
@@ -603,20 +624,32 @@ function defend(m: Match, p: Player, brain: TeamBrain, c: Player, dt: number): v
   if (brain.cover === p.idx) {
     if (m.ball.owner === c.idx) chaseSlide(m, p, c, dt);
     if (p.state !== 'move') return;
-    // Second defender: goal-side of the carrier, a few metres behind the challenge.
-    const ux = gx - c.pos.x;
-    const uz = -c.pos.z * 0.7;
-    const ul = Math.hypot(ux, uz) || 1;
-    const back = Math.min(5.5, ul * 0.5);
-    moveTo(p, c.pos.x + (ux / ul) * back + c.vel.x * 0.3, c.pos.z + (uz / ul) * back + c.vel.z * 0.3, 0.75, ball);
+    const s = coverSpot(m, p, c);
+    moveTo(p, s.x, s.z, 0.75, ball);
     return;
   }
+  const s = markSpot(m, p, brain);
+  moveTo(p, s.x, s.z, s.u, ball);
+}
+
+/** The second defender's spot: goal-side of the carrier, a few metres behind the challenge. */
+function coverSpot(m: Match, p: Player, c: Player): { x: number; z: number } {
+  const gx = -m.attackDir(p.side) * HALF_L;
+  const ux = gx - c.pos.x;
+  const uz = -c.pos.z * 0.7;
+  const ul = Math.hypot(ux, uz) || 1;
+  const back = Math.min(5.5, ul * 0.5);
+  return { x: c.pos.x + (ux / ul) * back + c.vel.x * 0.3, z: c.pos.z + (uz / ul) * back + c.vel.z * 0.3 };
+}
+
+/** Where a defender who isn't pressing or covering goes (and how urgently): his man, or his block position. */
+function markSpot(m: Match, p: Player, brain: TeamBrain): { x: number; z: number; u: number } {
+  const ad = m.attackDir(p.side);
+  const gx = -ad * HALF_L;
+  const ball = m.ball.pos;
   const home = defendHome(m, p, brain, ball.x, ball.z);
   const mark = brain.marks.get(p.idx);
-  if (mark === undefined) {
-    moveTo(p, home.x, home.z, 0.5, ball);
-    return;
-  }
+  if (mark === undefined) return { x: home.x, z: home.z, u: 0.5 };
   const o = m.players[mark];
   // Defenders watch the ball, so they pick up a run a beat late (where he was, not where he is).
   const lag = o.running ? 0.45 : 0.15;
@@ -643,7 +676,7 @@ function defend(m: Match, p: Player, brain: TeamBrain, c: Player, dt: number): v
     if ((tx - lineX) * ad > 0.8) tx = lineX + ad * 0.8;
   }
   const running = o.vel.x * -ad > 4;
-  moveTo(p, tx, tz, running ? 0.85 : 0.55, ball);
+  return { x: tx, z: tz, u: running ? 0.85 : 0.55 };
 }
 
 function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): void {
@@ -656,26 +689,33 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   const skill = m.aiSkill(p.side);
   const b = m.ball.pos;
   const hasBall = m.ball.owner === c.idx;
+  // Against the human's dribbler he jockeys more and commits less (pressVsHuman, by difficulty), and never
+  // goes in during the protection window after a skill (Player.protectT).
+  const vsHuman = m.isHumanControlled(c);
+  const hk = vsHuman ? pressVsHuman(skill) : 1;
+  const guarded = vsHuman && c.protectT > 0;
   // Jockey goal-side, then commit to a tackle now and then: more often when the ball is
   // exposed, when the carrier has their back to goal, and when a teammate is covering.
   let commit = p.commitT > 0;
   if (hasBall && d < 3.2) p.jockeyT += dt;
   if (commit) p.commitT -= dt;
-  else if (hasBall && d < 2.7 && p.tackleCooldown <= 0) {
+  else if (hasBall && d < 2.7 && p.tackleCooldown <= 0 && !guarded) {
     const exposed = dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.8 ? 2.2 : 1;
     const backToGoal = Math.cos(c.facing) * ad > 0.3 ? 1.5 : 1;
     const covered = brain.cover >= 0 ? 1.3 : 0.8;
     const box = inOwnBox(m, p.side, c.pos.x, c.pos.z) ? 0.7 : 1;
-    // Don't shadow forever: the longer we've jockeyed, the likelier we go in (~2.5/s after 1.2 s).
-    const ramp = clamp((p.jockeyT - 0.5) / 0.7, 0, 1) * 2.2;
-    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered + ramp) * box * (1 + m.mentality[p.side] * 0.25);
+    // Don't shadow forever: the longer we've jockeyed, the likelier we go in (~2.5/s after 1.2 s; against
+    // the human, later and less).
+    const ramp = vsHuman ? clamp((p.jockeyT - 0.9) / 0.9, 0, 1) * 2.2 * hk : clamp((p.jockeyT - 0.5) / 0.7, 0, 1) * 2.2;
+    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25);
     if (m.rng.chance(rate * dt)) {
       p.commitT = 0.55;
       commit = true;
     }
   }
-  // The jockeying gap is measured from the ball so the presser's foot isn't already on it.
-  const gap = commit ? 0.1 : clamp(1.95 + (c.speed() > 5 ? 0.45 : 0) - skill * 0.06, 1.6, 2.5);
+  // The jockeying gap is measured from the ball so the presser's foot isn't already on it (a little more room
+  // for the human's dribbler).
+  const gap = commit ? 0.1 : clamp(1.95 + (c.speed() > 5 ? 0.45 : 0) - skill * 0.06, 1.6, 2.5) + (vsHuman ? HUMAN_JOCKEY_ROOM : 0);
   const jx = b.x + c.vel.x * 0.28 + (ux / ul) * gap;
   const jz = b.z + c.vel.z * 0.28 + (uz / ul) * gap;
   moveTo(p, jx, jz, 1, b);
@@ -687,7 +727,8 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     m.tryTackle(p, c, aggression);
     p.commitT = 0;
     p.jockeyT = 0;
-  } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.95) {
+  } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded &&
+    dist2(b.x, b.z, c.pos.x, c.pos.z) > (vsHuman ? HUMAN_POKE_EXPOSED : 0.95)) {
     // Poke it away when the carrier's touch takes it too far from his feet.
     m.tryTackle(p, c, aggression * 1.25);
     p.jockeyT = 0;
@@ -715,6 +756,10 @@ function chaseSlide(m: Match, p: Player, c: Player, dt: number): void {
   const beaten = (c.pos.x - p.pos.x) * ad < 0.3; // he's level with us or past us, towards our goal
   let rate = SLIDE_RATE * (0.7 + m.aiSkill(p.side) * 0.15) * (beaten ? 1.2 : 0.85) * (1 + m.mentality[p.side] * 0.2);
   if (inOwnBox(m, p.side, c.pos.x, c.pos.z)) rate *= 0.6;
+  if (m.isHumanControlled(c)) {
+    if (c.protectT > 0) return;
+    rate *= pressVsHuman(m.aiSkill(p.side));
+  }
   // Only a reckless defender slides when the carrier's body is between him and the ball.
   const bx = b.pos.x + c.vel.x * 0.18;
   const bz = b.pos.z + c.vel.z * 0.18;
@@ -729,6 +774,93 @@ function chaseSlide(m: Match, p: Player, c: Player, dt: number): void {
  * that position ~12 s a match, so this lands at ~3-4 slides a match.
  */
 const SLIDE_RATE = 0.45;
+
+/**
+ * How readily the AI goes in on the human's dribbler (its commit rate, its chase slides), against an AI
+ * carrier, by difficulty: dribble.ts vsHuman (which also scales the tackle's success against him).
+ */
+export function pressVsHuman(skill: number): number {
+  return vsHuman(skill).press;
+}
+/** Extra jockeying room (m) the presser gives the human's dribbler... */
+const HUMAN_JOCKEY_ROOM = 0.25;
+/** ... and how far (m) the ball must be off his foot before it's poked away (0.95 against the AI). */
+const HUMAN_POKE_EXPOSED = 1.05;
+
+// ------------------------------------------------------------------ move assist (the human's man)
+
+/**
+ * Move assist (Match.moveAssist): the run the AI would have the human's man making off the ball right now,
+ * as the controls moveTo would set, chosen the way updateTeamAI chooses for an AI player (the loose ball if
+ * he's first to it, his set-piece run or zone, pressing / covering / marking when they have it, his
+ * support run or shape when we do). Movement only: no tackles, slides, volleys or orders. Null when there's
+ * no run to make (he has the ball, it's dead, or he isn't on his feet).
+ */
+export function assistRun(m: Match, p: Player): MoveIntent | null {
+  if (m.phase !== 'play' || p.state !== 'move' || p.sentOff || p.isKeeper) return null;
+  const side = p.side;
+  const brain = m.brains[side];
+  const ball = m.ball;
+  const owner = ball.owner >= 0 ? m.players[ball.owner] : null;
+  if (owner === p) return null;
+  const flight = m.passTarget >= 0 && !owner ? m.players[m.passTarget] : null;
+  const focus = owner ?? flight;
+  if (flight === p || (!owner && firstToBall(m, p, flight))) {
+    const i = intercept(m, p);
+    return moveIntent(p, i.x, i.z, 1, ball.pos);
+  }
+  const run = !owner ? setPieceRun(m, p) ?? setPieceZonal(m, p) : null;
+  if (run) return moveIntent(p, run.x, run.z, 1, ball.pos);
+  if (focus && focus.side !== side) {
+    if (!ball.held) {
+      // The brain leaves the press to the human's man when he's the one for it (pickPresser): jockey
+      // goal-side the way press() does, without ever committing to the tackle himself.
+      if (brain.presser === p.idx || (brain.presser < 0 && brain.chaser < 0 && brain.cover !== p.idx)) {
+        const ad = m.attackDir(side);
+        const ux = -ad * HALF_L - focus.pos.x;
+        const uz = -focus.pos.z * 0.8;
+        const ul = Math.hypot(ux, uz) || 1;
+        const gap = clamp(1.95 + (focus.speed() > 5 ? 0.45 : 0) - m.aiSkill(side) * 0.06, 1.6, 2.5);
+        const b = ball.pos;
+        const r = moveIntent(p, b.x + focus.vel.x * 0.28 + (ux / ul) * gap, b.z + focus.vel.z * 0.28 + (uz / ul) * gap, 1, b);
+        const d = dist2(p.pos.x, p.pos.z, focus.pos.x, focus.pos.z);
+        if (d < 3.2) r.face = Math.atan2(b.z - p.pos.z, b.x - p.pos.x);
+        r.sprint = d > 2.6;
+        return r;
+      }
+      if (brain.cover === p.idx) {
+        const s = coverSpot(m, p, focus);
+        return moveIntent(p, s.x, s.z, 0.75, ball.pos);
+      }
+    }
+    const s = markSpot(m, p, brain);
+    return moveIntent(p, s.x, s.z, s.u, ball.pos);
+  }
+  if (focus) {
+    const t = attackTarget(m, p, brain, focus);
+    return moveIntent(p, t.x, t.z, t.u, ball.pos);
+  }
+  if (m.possessionSide === side) {
+    const t = attackTarget(m, p, brain, p);
+    return moveIntent(p, t.x, t.z, 0.45, ball.pos);
+  }
+  const home = defendHome(m, p, brain, ball.pos.x, ball.pos.z);
+  return moveIntent(p, home.x, home.z, 0.55, ball.pos);
+}
+
+/**
+ * The loose ball is his to go for: nobody else of ours gets to it clearly sooner and, when it's a pass of
+ * theirs on its way, he gets there before their man does (the brain's chaser test).
+ */
+function firstToBall(m: Match, p: Player, flight: Player | null): boolean {
+  const mine = intercept(m, p).t;
+  if (flight && mine > intercept(m, flight).t - 0.05) return false;
+  for (const q of m.teamPlayers(p.side)) {
+    if (q === p || q.isKeeper || q.sentOff || q.state !== 'move') continue;
+    if (intercept(m, q).t < mine - 0.1) return false;
+  }
+  return true;
+}
 
 // ------------------------------------------------------------------ first-time actions
 
@@ -752,7 +884,7 @@ function aerialOrVolley(m: Match, p: Player): void {
   if (b.pos.y > 1.15 && b.pos.y < 3) {
     // From a tight angle, nod it down to a better-placed teammate instead of forcing it.
     let lay: Player | null = null;
-    if (q < 0.22 && ownGoalDist > 40) {
+    if ((q < 0.22 || !headerAtGoal(m, p)) && ownGoalDist > 40) {
       let bestQ = q + 0.12;
       for (const t of m.teamPlayers(p.side)) {
         if (t === p || t.isKeeper || t.sentOff) continue;
@@ -766,7 +898,9 @@ function aerialOrVolley(m: Match, p: Player): void {
     }
     if (lay) {
       m.order(p, 'header', lay.pos.x - p.pos.x, lay.pos.z - p.pos.z, 0.5, lay.idx, true, { x: lay.pos.x, z: lay.pos.z });
-    } else if (q > 0.12) {
+    } else if (headerAtGoal(m, p)) {
+      // (Only from close in: from further out a header is a nod the keeper has covered. It used to go for
+      // goal whenever it had a sight of it, and headers were ~40% of all shots.)
       m.order(p, 'header', 0, 0, 0.75, -1, true);
     } else if (ownGoalDist < 30 && rival < 5) {
       const gxOwn = -ad * HALF_L;
@@ -797,9 +931,13 @@ function aerialOrVolley(m: Match, p: Player): void {
   }
   // First-time finish from a low cross or cut-back: decide once per ball.
   if (p.volleyKick === m.kickId) return;
-  if (b.hspeed() > 5 && q > 0.2) {
+  // (Or a loose ball off the keeper or a defender straight after one of our shots: a rebound, hit first time.)
+  const rebound = m.shotKick === m.kickId && m.shotSide === p.side && m.shotClock < 3 && b.lastTouch !== m.shooter && !setPieceShot(m);
+  if ((b.hspeed() > 5 && q > 0.2) || (rebound && q > 0.3)) {
     p.volleyKick = m.kickId;
-    if (m.rng.chance(clamp(q * 1.1, 0.25, 0.75))) m.order(p, 'shot', 0, 0, 0.75, -1, true);
+    // (A corner or wide free kick dropping to him: as ever, the box is crowded.)
+    const sp = m.kickId === m.setPieceKick;
+    if (m.rng.chance(sp ? clamp(q * 1.1, 0.25, 0.75) : clamp(q * AI_VOLLEY, 0.3, rebound ? 0.85 : 0.8))) m.order(p, 'shot', 0, 0, 0.75, -1, true);
   } else if (ownGoalDist < 22 && rival < 2 && b.hspeed() > 4) {
     // Under pressure in our box: hack it away first time.
     p.volleyKick = m.kickId;
@@ -863,14 +1001,27 @@ function shield(m: Match, p: Player, o: Player): void {
 
 type Choice = { s: number; run: () => void };
 
+/** A first-time finish from a low cross, a cut-back or a rebound (open play) is hit with chance shotQuality x AI_VOLLEY. */
+const AI_VOLLEY = 1.6;
+/**
+ * For this long (s) after one of our shots from open play, attackers near goal follow it in for a rebound
+ * (set pieces have their own shape: see setPieceShot).
+ */
+const FOLLOW_IN_T = 1.8;
+
+/** The last shot came from a set piece: a direct free kick, or met straight from a corner / wide free kick. */
+function setPieceShot(m: Match): boolean {
+  return m.shotKick === m.wallKick || (m.setPieceKick >= 0 && m.shotKick <= m.setPieceKick + 1);
+}
+
 /** How often an AI shooter chips a keeper who has rushed out at him. */
 const AI_CHIP = 0.35;
 /** What an AI carrier knocks off a shot from beyond 22 m (work it into the box instead)... */
-const AI_LONG_SHOT_COST = 0.016;
+const AI_LONG_SHOT_COST = 0.006;
 /** ... and what a sight of goal inside the box adds to one... */
-const AI_BOX_SHOT = 0.12;
+const AI_BOX_SHOT = 0.18;
 /** ... and a clean sight of goal (nobody in the way) from the edge of the box (15-22 m out). */
-const AI_CLEAR_SIGHT = 0.1;
+const AI_CLEAR_SIGHT = 0.14;
 
 /** Lateral offsets (m) tried for a through ball, around the runner's own line. */
 const THREAD_OFFSETS = [0, -3.5, 3.5, -7, 7];
@@ -938,7 +1089,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     // (A clean sight of goal from the edge of the box, 15-22 m out, is the one to hit.)
     const bonus = blockers < 0.5 ? (dg < 15 ? 0.035 : dg < 22 ? AI_CLEAR_SIGHT : dg < 28 ? 0.035 : 0.015) : 0;
     const s = early(q * 2 + bonus + (inBox ? AI_BOX_SHOT : 0) - (dg > 22 ? AI_LONG_SHOT_COST : 0), 0.05);
-    const power = clamp(0.55 + dg / 45, 0.6, 0.97);
+    // (Harder from further out, but short of flat out: see actions.AI_STRIKE_LIFT.)
+    const power = clamp(0.55 + dg / 50, 0.6, 0.94);
     // A keeper who has come off his line (3.8+ m out, 3-12 m from the shooter): now and then it's
     // lifted over him.
     const kd = k ? dist2(k.pos.x, k.pos.z, p.pos.x, p.pos.z) : 0;
@@ -1147,8 +1299,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
             p.aiDirX = dx;
             p.aiDirZ = dz;
             p.aiT = 0.55;
-            // A human defender can read it a little better than the AI.
-            if (m.rng.chance(pWin * (m.isHumanControlled(o) ? 0.75 : 1))) {
+            // A human defender reads it differently from the AI: how well, by difficulty (dribble.ts vsHuman).
+            if (m.rng.chance(pWin * takeOnVsHuman(m, o))) {
               m.beatDefender(p, o);
             } else {
               o.commitT = 0.5; // he reads it and steps in

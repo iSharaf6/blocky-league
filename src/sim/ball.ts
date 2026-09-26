@@ -1,9 +1,18 @@
 import {
-  AIR_DRAG, BALL_R, BOUNCE, GOAL_DEPTH, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS,
+  AIR_DRAG, BALL_R, BOUNCE, GOAL_DEPTH, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, MAGNUS,
   POST_R, ROLL_A, ROLL_B, SPIN_DECAY,
 } from './constants';
 
 export interface V3 { x: number; y: number; z: number }
+
+/**
+ * The advertising boards (m): behind each goal line at |x| = BOARD_X, along each touchline at |z| = BOARD_Z,
+ * BOARD_H high (render/stadium.ts draws them there), and how much of its pace a ball keeps off them.
+ */
+export const BOARD_X = HALF_L + 4.6;
+export const BOARD_Z = HALF_W + 3.2;
+export const BOARD_H = 0.95;
+const BOARD_BOUNCE = 0.25;
 
 export type BallHit =
   | { kind: 'post'; x: number; y: number; z: number; speed: number }
@@ -103,6 +112,29 @@ export class Ball {
 
     this.collideFrame(hits);
     this.collideNet(hits);
+    this.collideBoards();
+  }
+
+  /**
+   * The advertising boards round the pitch (BOARD_X / BOARD_Z, BOARD_H high: where the stadium draws them):
+   * a ball out of play thuds into them and drops, rather than rolling on into the stand.
+   */
+  private collideBoards(): void {
+    const p = this.pos;
+    const v = this.vel;
+    if (p.y > BOARD_H + BALL_R) return;
+    const bx = BOARD_X - BALL_R;
+    const bz = BOARD_Z - BALL_R;
+    if (Math.abs(p.x) > bx && Math.abs(p.z) < BOARD_Z + 1) {
+      p.x = Math.sign(p.x) * bx;
+      if (v.x * p.x > 0) v.x = -v.x * BOARD_BOUNCE;
+      v.z *= 0.7;
+    }
+    if (Math.abs(p.z) > bz && Math.abs(p.x) < BOARD_X + 1) {
+      p.z = Math.sign(p.z) * bz;
+      if (v.z * p.z > 0) v.z = -v.z * BOARD_BOUNCE;
+      v.x *= 0.7;
+    }
   }
 
   /** Posts and crossbar as capsules; square voxel posts are drawn but round ones feel fairer. */

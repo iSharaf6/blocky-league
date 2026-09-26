@@ -548,8 +548,9 @@ describe('human assists and skill moves', () => {
         const lat = s % 2 ? 1 : -1;
         const stick = pad(ad * Math.SQRT1_2, lat * Math.SQRT1_2);
         const kid = m.kickId;
-        // Finesse: under 60% power (25 frames of charge); the same stick at 40 frames is a plain strike.
-        for (let i = 0; i < (style === 'finesse' ? 25 : 40); i++) m.step(DT, { ...stick, shoot: true });
+        // Finesse: under 60% power (15 frames of charge, the bar filling in SHOOT_FULL_T = 0.5 s); the same
+        // stick at 24 frames is a plain strike.
+        for (let i = 0; i < (style === 'finesse' ? 15 : 24); i++) m.step(DT, { ...stick, shoot: true });
         const evs: MatchEvent[] = [];
         for (let i = 0; i < 12 && m.kickId === kid; i++) {
           m.step(DT, stick);

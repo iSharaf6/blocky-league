@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp, lerp, smoothstep } from '../core/math';
+import { clamp, lerp, smoothstep, wrapAngle } from '../core/math';
 import { grassLike } from '../meta/data';
 import type { Kit, Look, PlayerDef } from '../sim/types';
 import { HAIR, SKIN, shade } from './palette';
@@ -61,6 +61,12 @@ const charFill = { value: new THREE.Color(0, 0, 0) };
  * faces keep their true colours under the orange key instead of going orange-brown. Off (black) otherwise.
  */
 const charHemi = { value: new THREE.Color(0, 0, 0) };
+/**
+ * White balance on the light the footballers (and the ball) take from the key and the sky: (1, 1, 1) by day
+ * and at night; at sunset it takes most of the orange out of it, so a white kit stays white (never peach
+ * beside a gold one) while the lawn and the stands keep the golden light. See setCharacterWhiteBalance.
+ */
+const charWB = { value: new THREE.Color(1, 1, 1) };
 
 /** Vertex-coloured Lambert (like voxelMaterial) plus the camera-side and sky character fills. */
 function makeCharMaterial(): THREE.MeshLambertMaterial {
@@ -68,8 +74,15 @@ function makeCharMaterial(): THREE.MeshLambertMaterial {
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uCharFill = charFill;
     sh.uniforms.uCharHemi = charHemi;
+    sh.uniforms.uCharWB = charWB;
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uCharFill;\nuniform vec3 uCharHemi;')
+      .replace('#include <common>', '#include <common>\nuniform vec3 uCharFill;\nuniform vec3 uCharHemi;\nuniform vec3 uCharWB;')
+      .replace(
+        '#include <aomap_fragment>',
+        `reflectedLight.directDiffuse *= uCharWB;
+        reflectedLight.indirectDiffuse *= uCharWB;
+        #include <aomap_fragment>`,
+      )
       .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
@@ -78,7 +91,7 @@ function makeCharMaterial(): THREE.MeshLambertMaterial {
         totalEmissiveRadiance += diffuseColor.rgb * uCharHemi * (0.75 + 0.25 * dot(normal, charUpV));`,
       );
   };
-  m.customProgramCacheKey = () => 'char-fill-hemi';
+  m.customProgramCacheKey = () => 'char-fill-hemi-wb';
   return m;
 }
 
@@ -89,6 +102,24 @@ export const charMaterial = makeCharMaterial();
 export function setCharacterFill(intensity: number): void {
   const k = Math.max(0, intensity) / Math.PI;
   charFill.value.setRGB(k * 0.96, k * 0.98, k * 1.06);
+}
+
+/**
+ * Character white balance for a coloured key + sky (linear colours and intensities, as on the scene's lights):
+ * the light a white shirt gets (key at ~60 degrees, the sky dome) keeps only `keep` of its tint, at the same
+ * brightness. No arguments: neutral (day, night, menus).
+ */
+export function setCharacterWhiteBalance(sun?: THREE.Color, sunI = 0, sky?: THREE.Color, skyI = 0, keep = 0.08): void {
+  if (!sun || !sky) {
+    charWB.value.setRGB(1, 1, 1);
+    return;
+  }
+  const r = sun.r * sunI * 0.5 + sky.r * skyI * 0.75;
+  const g = sun.g * sunI * 0.5 + sky.g * skyI * 0.75;
+  const b = sun.b * sunI * 0.5 + sky.b * skyI * 0.75;
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const want = (c: number) => (c > 1e-4 ? (lum + (c - lum) * keep) / c : 1);
+  charWB.value.setRGB(want(r), want(g), want(b));
 }
 
 /** Neutral sky fill on the footballers (light units like a HemisphereLight's intensity; 0 = off). */
@@ -314,15 +345,47 @@ export interface PoseInput {
   signal?: boolean;
   /** Which signal: 0 arm raised (free kick / offside), 1 advantage (both arms forward), 2 card held high. */
   signalKind?: number;
+  /**
+   * Seconds since the last pose (drives the cross-fades; 0 = a cut: the new pose is shown as it is). When
+   * absent it is taken from `time`.
+   */
+  dt?: number;
 }
 
+/**
+ * Pose codes (replay.ts STATE_CODE). 11 / 12 are reserved for the sim's stumble and plant-before-a-strike
+ * states, if and when it has them; until then a strike at a sprint gets its plant step inside 'kick'.
+ */
 export const PSTATE = {
-  move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9,
+  move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9, stumble: 11, plant: 12,
 } as const;
 
 /** Poke tackle: a short lunge at the ball (no wind-up), this long, inside the 0.34 s 'kick' state. */
 const POKE_S = 0.18;
 const KICK_S = 0.34;
+/**
+ * Pose cross-fades (s): a change of state (or of move within one: a header, a celebration style) blends
+ * the limbs from the last drawn pose instead of snapping. Quick into a strike (the swing must stay crisp),
+ * a touch longer getting up off the grass.
+ */
+const BLEND_S = 0.12;
+const BLEND_KICK_S = 0.08;
+const BLEND_FAST_S = 0.07;
+const BLEND_GETUP_S = 0.15;
+/** Entry speed (m/s) from which a strike gets a plant step (full plant at the top value). */
+const PLANT_FROM = 3.2;
+const PLANT_FULL = 6.5;
+/** Pose channels cross-faded: hip offset x / y, hip, torso and head rotations, torso breath, four limbs. */
+const POSE_N = 24;
+/** Channels that are positions or scales (the rest are angles, blended the short way round). */
+const LINEAR_CH = new Set([0, 1, 8]);
+
+function blendTime(from: number, to: number): number {
+  if (to === PSTATE.kick) return BLEND_KICK_S;
+  if (to === PSTATE.slide || to === PSTATE.dive) return BLEND_FAST_S;
+  if (to === PSTATE.stand && (from === PSTATE.slide || from === PSTATE.fallen || from === PSTATE.dive)) return BLEND_GETUP_S;
+  return BLEND_S;
+}
 
 export class Footballer {
   readonly group = new THREE.Group();
@@ -338,6 +401,21 @@ export class Footballer {
   /** Own see-through copy of the voxel material, made the first time this player is faded. */
   private fadeMat: THREE.MeshLambertMaterial | null = null;
   private alpha = 1;
+  /** Cross-fade: the pose key last drawn, the pose drawn then, the pose the fade starts from, its clock / length. */
+  private poseKey = -1;
+  private poseState = -1;
+  private readonly lastPose = new Float32Array(POSE_N);
+  private readonly fromPose = new Float32Array(POSE_N);
+  private readonly curPose = new Float32Array(POSE_N);
+  private blendT = 0;
+  private blendS = 0;
+  private lastTime = NaN;
+  /** Speed going into the current strike (a sprint gets the plant step). */
+  private kickEntry = 0;
+  /** Eased head turn towards the ball (never snaps when he gets the ball, or it passes behind him). */
+  private headYaw = 0;
+  /** Eased idle -> stride weight (a sprint start takes ~0.1 s to swing the limbs out, never one frame). */
+  private moveW = 0;
 
   constructor(readonly def: PlayerDef, kit: Kit, keeper: boolean) {
     const o = outfitFor(kit, keeper);
@@ -403,8 +481,88 @@ export class Footballer {
     (right ? this.armR : this.armL).add(obj);
   }
 
-  /** Procedural pose from the recorded sim state — identical live and in replays. */
+  /** The cross-faded channels, in POSE_N order. */
+  private readPose(out: Float32Array): void {
+    const b = this.body, t = this.torso, h = this.head;
+    out[0] = b.position.x; out[1] = b.position.y;
+    out[2] = b.rotation.x; out[3] = b.rotation.y; out[4] = b.rotation.z;
+    out[5] = t.rotation.x; out[6] = t.rotation.y; out[7] = t.rotation.z; out[8] = t.scale.y;
+    out[9] = h.rotation.x; out[10] = h.rotation.y; out[11] = h.rotation.z;
+    let k = 12;
+    for (const m of [this.armL, this.armR, this.legL, this.legR]) {
+      out[k++] = m.rotation.x;
+      out[k++] = m.rotation.y;
+      out[k++] = m.rotation.z;
+    }
+  }
+
+  private writePose(v: Float32Array): void {
+    const b = this.body, t = this.torso, h = this.head;
+    b.position.x = v[0]; b.position.y = v[1];
+    b.rotation.set(v[2], v[3], v[4]);
+    t.rotation.set(v[5], v[6], v[7]);
+    t.scale.y = v[8];
+    h.rotation.set(v[9], v[10], v[11]);
+    let k = 12;
+    for (const m of [this.armL, this.armR, this.legL, this.legR]) {
+      m.rotation.set(v[k], v[k + 1], v[k + 2]);
+      k += 3;
+    }
+  }
+
+  /**
+   * Which pose "move" is being drawn: the state, plus the variant within it that changes the limbs
+   * outright (a header, a poke, a celebration style, a referee signal). A change of key starts a cross-fade.
+   */
+  private static keyOf(p: PoseInput): number {
+    let sub = 0;
+    if (p.state === PSTATE.move || p.state === PSTATE.stand) sub = p.headerT > 0 ? 1 : 0;
+    else if (p.state === PSTATE.kick) sub = Math.abs(p.kickLeg) > 1.5 && p.headerT <= 0 ? 1 : p.headerT > 0 ? 2 : 0;
+    else if (p.state === PSTATE.celebrate) sub = p.speed < 1.2 ? 1 + Math.min(4, Math.max(0, Math.round(p.celebrate))) : 0;
+    if (p.signal) sub = 8 + (p.signalKind ?? 0);
+    return p.state * 16 + sub;
+  }
+
+  /**
+   * Procedural pose from the recorded sim state, identical live and in replays. A change of state is never a
+   * snap: the limbs cross-fade from the last drawn pose over ~0.1 s (BLEND_S), a strike taken at a sprint
+   * plants first, and the head turns towards the ball at a human rate.
+   */
   pose(p: PoseInput, time: number): void {
+    const dtIn = p.dt ?? (Number.isFinite(this.lastTime) ? time - this.lastTime : 0);
+    const dt = Math.max(0, Math.min(0.1, dtIn));
+    this.lastTime = time;
+    const key = Footballer.keyOf(p);
+    if (key !== this.poseKey) {
+      if (this.poseKey >= 0 && dt > 0) {
+        this.fromPose.set(this.lastPose);
+        this.blendT = 0;
+        this.blendS = blendTime(this.poseState, p.state);
+      } else this.blendS = 0;
+      if (p.state === PSTATE.kick && this.poseState !== PSTATE.kick) this.kickEntry = p.speed;
+      this.poseKey = key;
+      this.poseState = p.state;
+    }
+    if (dt <= 0 && dtIn <= 0 && p.dt !== undefined) this.blendS = 0;
+    this.poseRaw(p, time, dt);
+    if (this.blendS > 0) {
+      this.blendT += dt;
+      const w = smoothstep(0, this.blendS, this.blendT);
+      if (w >= 1) this.blendS = 0;
+      else {
+        const c = this.curPose;
+        const f0 = this.fromPose;
+        this.readPose(c);
+        for (let i = 0; i < POSE_N; i++) {
+          c[i] = LINEAR_CH.has(i) ? f0[i] + (c[i] - f0[i]) * w : f0[i] + wrapAngle(c[i] - f0[i]) * w;
+        }
+        this.writePose(c);
+      }
+    }
+    this.readPose(this.lastPose);
+  }
+
+  private poseRaw(p: PoseInput, time: number, dt: number): void {
     const body = this.body;
     const torso = this.torso;
     const head = this.head;
@@ -427,33 +585,53 @@ export class Footballer {
     const swing = Math.sin(ph);
 
     const locomotion = () => {
-      const amp = 0.25 + run * 0.75;
-      if (p.speed > 0.25) {
-        lL.rotation.z = swing * amp;
-        lR.rotation.z = -swing * amp;
-        aL.rotation.z = -swing * amp * 0.85;
-        aR.rotation.z = swing * amp * 0.85;
-        aL.rotation.x = -0.12;
-        aR.rotation.x = 0.12;
-        // Toy hop on every step.
-        body.position.y = HIP_Y + Math.abs(Math.cos(ph)) * 0.06 * (0.4 + run);
-        torso.rotation.z = -p.lean - run * 0.1;
-        head.rotation.z = run * 0.08;
-      } else {
-        const br = Math.sin(time * 2.4 + p.runPhase * 9);
-        torso.scale.y = 1 + br * 0.012;
-        aL.rotation.x = -0.08 - br * 0.02;
-        aR.rotation.x = 0.08 + br * 0.02;
-        if (p.keeper) {
-          // Set position: knees bent, gloves ready.
-          body.position.y = HIP_Y - 0.045;
-          torso.rotation.z = -0.18;
-          aL.rotation.set(-0.5, 0, 0.9);
-          aR.rotation.set(0.5, 0, 0.9);
-          lL.rotation.set(0.14, 0, 0.12);
-          lR.rotation.set(-0.14, 0, 0.12);
-        }
+      // Idle and running blend continuously with speed (no snap from the stand to the stride at a threshold),
+      // eased over time too: the sim gets a man from a standstill to a run in a few frames.
+      const mvWant = smoothstep(0.08, 0.7, p.speed);
+      this.moveW = dt > 0 ? this.moveW + (mvWant - this.moveW) * Math.min(1, dt * 14) : mvWant;
+      const mv = this.moveW;
+      const iw = 1 - mv;
+      const amp = (0.25 + run * 0.75) * mv;
+      lL.rotation.z = swing * amp;
+      lR.rotation.z = -swing * amp;
+      aL.rotation.z = -swing * amp * 0.85;
+      aR.rotation.z = swing * amp * 0.85;
+      // Toy hop on every step.
+      body.position.y = HIP_Y + Math.abs(Math.cos(ph)) * 0.06 * (0.4 + run) * mv;
+      torso.rotation.z = (-p.lean - run * 0.1) * mv;
+      head.rotation.z = run * 0.08;
+      const br = Math.sin(time * 2.4 + p.runPhase * 9);
+      torso.scale.y = 1 + br * 0.012 * iw;
+      aL.rotation.x = lerp(-0.12, -0.08 - br * 0.02, iw);
+      aR.rotation.x = lerp(0.12, 0.08 + br * 0.02, iw);
+      if (p.keeper && iw > 0) {
+        // Set position: knees bent, gloves ready.
+        body.position.y -= 0.045 * iw;
+        torso.rotation.z += -0.18 * iw;
+        aL.rotation.x = lerp(aL.rotation.x, -0.5, iw);
+        aL.rotation.z = lerp(aL.rotation.z, 0.9, iw);
+        aR.rotation.x = lerp(aR.rotation.x, 0.5, iw);
+        aR.rotation.z = lerp(aR.rotation.z, 0.9, iw);
+        lL.rotation.x = 0.14 * iw;
+        lL.rotation.z = lerp(lL.rotation.z, 0.12, iw);
+        lR.rotation.x = -0.14 * iw;
+        lR.rotation.z = lerp(lR.rotation.z, 0.12, iw);
       }
+    };
+
+    /**
+     * A braking plant step (0..1): the standing leg reaching ahead, hips sinking, torso back, arms out;
+     * `kickLeg` (the sim's own plant state only) also trails the kicking leg, ready to swing.
+     */
+    const plantStep = (w: number, plant: THREE.Mesh, kickLeg: THREE.Mesh | null) => {
+      if (w <= 0) return;
+      plant.rotation.z = lerp(plant.rotation.z, 0.42, w);
+      if (kickLeg) kickLeg.rotation.z = lerp(kickLeg.rotation.z, -0.45, w * 0.7);
+      body.position.y -= 0.04 * w;
+      torso.rotation.z += 0.16 * w;
+      head.rotation.z -= 0.1 * w;
+      aL.rotation.x -= 0.35 * w;
+      aR.rotation.x += 0.35 * w;
     };
 
     switch (p.state) {
@@ -498,7 +676,10 @@ export class Footballer {
           body.position.y = lerp(body.position.y, HIP_Y - 0.06, e);
           break;
         }
-        const kick = t < 0.22 ? lerp(0, -1.05, t / 0.22) : t < 0.45 ? lerp(-1.05, 1.45, (t - 0.22) / 0.23) : lerp(1.45, 0, (t - 0.45) / 0.55);
+        // Taken at speed: a bigger back-swing over a planted standing leg, then the strike.
+        const fast = smoothstep(PLANT_FROM, PLANT_FULL, this.kickEntry);
+        const back = -1.05 * (1 + 0.2 * fast);
+        const kick = t < 0.22 ? lerp(0, back, t / 0.22) : t < 0.45 ? lerp(back, 1.45, (t - 0.22) / 0.23) : lerp(1.45, 0, (t - 0.45) / 0.55);
         kickLeg.rotation.z = kick;
         plant.rotation.z = -0.15;
         const open = Math.sin(clamp(t, 0, 1) * Math.PI);
@@ -512,7 +693,27 @@ export class Footballer {
           head.rotation.z = -h * 0.5;
           torso.rotation.z = -0.3 * h;
           kickLeg.rotation.z = 0.2;
-        }
+        } else plantStep(fast * (1 - smoothstep(0.18, 0.42, t)), plant, null);
+        break;
+      }
+      case PSTATE.plant: {
+        // (Sim plant state, when it has one: braking into the strike that follows.)
+        locomotion();
+        const right = p.kickLeg >= 0;
+        plantStep(smoothstep(0, 0.12, p.stateT), right ? lL : lR, right ? lR : lL);
+        break;
+      }
+      case PSTATE.stumble: {
+        // (Sim stumble state, when it has one: pitched forward, arms thrown out, feet scrambling.)
+        locomotion();
+        const k = Math.sin(clamp(p.stateT / 0.6, 0, 1) * Math.PI);
+        torso.rotation.z -= 0.45 * k;
+        head.rotation.z += 0.3 * k;
+        aL.rotation.set(-0.9 * k, 0, 1.2 * k + Math.sin(time * 17) * 0.25 * k);
+        aR.rotation.set(0.9 * k, 0, 1.2 * k + Math.sin(time * 17 + 1.7) * 0.25 * k);
+        lL.rotation.z += Math.sin(p.stateT * 16) * 0.35 * k;
+        lR.rotation.z -= Math.sin(p.stateT * 16) * 0.35 * k;
+        body.position.y -= 0.05 * k;
         break;
       }
       case PSTATE.throw: {
@@ -563,9 +764,6 @@ export class Footballer {
         break;
       }
       case PSTATE.hold: {
-        aL.rotation.set(-0.25, 0, 1.25);
-        aR.rotation.set(0.25, 0, 1.25);
-        torso.rotation.z = -0.05;
         locomotion();
         aL.rotation.set(-0.25, 0, 1.25);
         aR.rotation.set(0.25, 0, 1.25);
@@ -617,6 +815,10 @@ export class Footballer {
         aR.rotation.set(0.95, 0, 2.55);
         break;
       }
+      default:
+        // A state this build doesn't know yet (a newer sim): at least keep him running, never frozen stiff.
+        locomotion();
+        break;
     }
     if (p.signal) {
       const kind = p.signalKind ?? 0;
@@ -637,12 +839,15 @@ export class Footballer {
         head.rotation.z = 0.1;
       }
     }
-    // Heads follow the ball; bodies bank into turns.
-    if (p.state === PSTATE.move || p.state === PSTATE.hold || p.state === PSTATE.stand) {
-      const lookAmt = p.hasBall ? 0.35 : 0.85;
-      head.rotation.y = clamp(p.look, -1.2, 1.2) * lookAmt;
+    // Heads follow the ball (eased: no snap when he gets the ball or it passes behind him); bodies bank
+    // into turns (faded in with speed, never switched on).
+    const upright = p.state === PSTATE.move || p.state === PSTATE.hold || p.state === PSTATE.stand;
+    const want = upright ? clamp(p.look, -1.2, 1.2) * (p.hasBall ? 0.35 : 0.85) : 0;
+    this.headYaw = dt > 0 ? this.headYaw + (want - this.headYaw) * Math.min(1, dt * 12) : want;
+    head.rotation.y = this.headYaw;
+    if (upright) {
       torso.rotation.y += clamp(p.look, -1, 1) * 0.12;
-      if (p.speed > 1.5) body.rotation.x = clamp(-p.turn * 0.045 * run, -0.3, 0.3);
+      body.rotation.x = clamp(-p.turn * 0.045 * run, -0.3, 0.3) * smoothstep(1, 2, p.speed);
     }
   }
 

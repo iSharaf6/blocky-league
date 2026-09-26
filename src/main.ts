@@ -6,7 +6,7 @@ import { Vector3 } from 'three';
 import type { AppContext, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
 import { Input } from './core/input';
-import { loadSave, writeSave, type CamZoom } from './core/save';
+import { CONTROL_DEFAULTS, controlsOf, loadSave, writeSave, type CamZoom, type ControlSettings } from './core/save';
 import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
@@ -46,6 +46,37 @@ function applyCamZoom(s: MatchSession | null): void {
   (s as { setCamZoom?: (z: CamZoom) => void } | null)?.setCamZoom?.(camZoom());
 }
 
+/**
+ * Settings > Controls onto a match: pass assistance (ground / through), auto switch, switch move assist and
+ * timed finishing. The sim reads them every tick, so a change from the pause menu applies at once.
+ */
+function applyControls(m: Match, c: ControlSettings = controlsOf(save.settings)): void {
+  m.groundAssist = c.groundAssist;
+  m.throughAssist = c.throughAssist;
+  m.autoSwitch = c.autoSwitch;
+  m.moveAssist = c.moveAssist;
+  m.timedFinish = c.timedFinish;
+}
+
+/**
+ * Per-frame control feedback for the match UI: the touch PASS / THROUGH buttons fill up while the pass is
+ * charged (PASS: the sim's passCharge, 0..1 while held with the ball; THROUGH: its hold time against the
+ * 0.8 s full-power lob), and the HUD drops a set-piece hint the moment an action button is pressed.
+ */
+function syncControlsUi(s: MatchSession | null): void {
+  if (!s) return;
+  const m = s.match;
+  if (s.touch) {
+    const pass = typeof m.passCharge === 'number' ? m.passCharge : -1;
+    const through = m.throughCharge > 0 ? Math.min(1, m.throughCharge / 0.8) : -1;
+    s.touch.setCharge(pass, through);
+  }
+  if (s.hud && !s.paused) {
+    const c = input.read();
+    s.hud.buttons(c.pass || c.shoot || c.through);
+  }
+}
+
 function applySettings(): void {
   const s = save.settings;
   sfx.sfxOn = s.sfx;
@@ -54,7 +85,7 @@ function applySettings(): void {
   if (s.music && !session) sfx.startMusic();
   world.setQuality(s.quality);
   if (session) {
-    session.match.autoSwitch = s.autoSwitch;
+    applyControls(session.match);
     session.hud?.setCommentary(s.commentary, s.commentaryVoice);
     applyCamZoom(session);
   }
@@ -84,6 +115,8 @@ function startDemo(): void {
     kits: [home.kit, resolveKitClash(home.kit, away.kit)], attendance: 0.8, demo: true, timeOfDay: 'day',
     camZoom: camZoom(),
   });
+  // Nobody plays the menu demo: it stays on the default controls whatever the player picked.
+  applyControls(demo.match, CONTROL_DEFAULTS);
 }
 
 const app: AppContext = {
@@ -259,7 +292,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     tutorial: !save.seenTutorial,
     camZoom: camZoom(),
   });
-  session.match.autoSwitch = save.settings.autoSwitch;
+  applyControls(session.match);
   session.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
   session.hud?.setProjector(project);
   const s = session;
@@ -277,6 +310,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     stopSpeech();
     const pauseMenu = (): void =>
       menus.pause({
+        quitNote: req.quitNote ?? "This match won't count and you won't earn any coins.",
         tactics: () => tacticsMenu(pauseMenu),
         resume: () => {
           menus.close();
@@ -284,7 +318,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
           ads.gameplayStart();
         },
         howto: () => menus.howTo(pauseMenu, input.lastDevice),
-        settings: () => menus.settings(save, applySettings, pauseMenu),
+        // Mid-match, the options that matter are the controls: open on that tab.
+        settings: () => menus.settings(save, applySettings, pauseMenu, 'controls'),
         quit: () => {
           menus.close();
           endMatch();
@@ -361,6 +396,7 @@ function frame(now: number): void {
   last = now;
   canvasRect = canvas.getBoundingClientRect();
   (session ?? demo)?.update(dt);
+  syncControlsUi(session);
   world.render();
   world.adapt(dt);
   requestAnimationFrame(frame);
@@ -408,6 +444,7 @@ if (import.meta.env.DEV) {
     /** Advance the game by n frames even when the pane is hidden (rAF paused). */
     step(n: number, dt = 1 / 60) {
       for (let i = 0; i < n; i++) (session ?? demo)?.update(dt);
+      syncControlsUi(session);
       world.render();
     },
     key(code: string, down: boolean) {
