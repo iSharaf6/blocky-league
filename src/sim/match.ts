@@ -1715,7 +1715,8 @@ export class Match {
     const throughR = !pad.through && this.prev.through;
     const stickLen = Math.hypot(pad.mx, pad.mz);
     // Charge is measured while held and read on the release frame.
-    const shootPower = clamp(this.shootCharge / SHOOT_BAR, 0.15, 1);
+    // A tap is a proper driven shot (round 9's critic: 12 m taps went in 1/6 at a 0.15 floor); a hold adds pace and lift.
+    const shootPower = clamp(this.shootCharge / SHOOT_BAR, 0.45, 1);
     const throughHold = this.throughCharge;
     if (!pad.shoot && !this.prev.shoot) this.chipArmed = false;
     this.shootCharge = pad.shoot && !this.finishHeld && !this.defendingShotHold ? this.shootCharge + (dt * SHOOT_BAR) / SHOOT_FULL_T : 0;
@@ -4210,7 +4211,9 @@ export class Match {
     o.slowT = this.isHumanControlled(o) ? vsHuman(this.aiSkill(p.side)).beaten : 0.7;
     o.commitT = 0;
     o.jockeyT = 0;
-    o.tackleCooldown = Math.max(o.tackleCooldown, 0.6);
+    // The human's own man keeps his tackle: a take-on used to lock his TACKLE press out for 0.6 s on the very
+    // frame he pressed it (the render still lunged, so he saw a whiff he never had a chance in).
+    o.tackleCooldown = Math.max(o.tackleCooldown, this.cfg.humanSide === o.side && o.idx === this.active ? 0.15 : 0.6);
     this.events.push({ type: 'beat', by: p.idx, on: o.idx });
   }
 

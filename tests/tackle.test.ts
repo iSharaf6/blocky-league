@@ -223,7 +223,9 @@ describe('TACKLE: hold or double-tap to slide', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`human slide from 4 m at a carrier crossing: won ${won}/${N}, fouls ${fouls}, travelled up to ${far.toFixed(1)} m`);
-    expect(won).toBeGreaterThanOrEqual(N * 0.7);
+    // Forgiving, not a sure thing: round 9's 1.2 m reach took the ball 19/21 from 3-5.5 m and made every other
+    // challenge pointless, so the slide now lands ~60% of the time from 4 m.
+    expect(won).toBeGreaterThanOrEqual(N * 0.55);
     expect(fouls).toBeLessThanOrEqual(N * 0.1);
     expect(far).toBeGreaterThan(3.5);
   });

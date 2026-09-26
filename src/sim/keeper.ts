@@ -62,7 +62,8 @@ const FK_LONG_CURL_READ = 0.4;
 /** A shot this long (s, at its launch speed in a straight line) from reaching him is read as a long one... */
 const LONG_READ = 0.72;
 /** ... and one struck from this far out (m) is a long one for its whole flight (Match.shotDist). */
-const LONG_SHOT_D = 17;
+// (Round 9 read everything from 17 m for its whole flight and screamers died: 0 of ~150 on-target from 26 m+.)
+const LONG_SHOT_D = 24;
 /**
  * He reads a shot for this long (s) after it was struck: the whole flight of one from near halfway (2-3 s).
  * (Round 9: it was 1.6 s, and flightCrossing looked 1.6 s ahead: a shot from 40-55 m was read as a straight

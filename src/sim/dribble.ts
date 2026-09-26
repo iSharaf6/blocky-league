@@ -600,7 +600,8 @@ function escaping(p: Player, c: Player, bx: number, bz: number): boolean {
  */
 export const HUMAN_SLIDE_BOOST = 3.5 * TEMPO;
 export const HUMAN_SLIDE_MIN = 6.5 * TEMPO;
-export const HUMAN_SLIDE_REACH = 1.2;
+// (1.2 made the sprint-tap slide take the ball 19 times in 21 from 3-5.5 m: an exploit. ~60% now.)
+export const HUMAN_SLIDE_REACH = 1.05;
 export const HUMAN_SLIDE_T = 0.65;
 export const HUMAN_SLIDE_BEHIND = 0.6;
 
