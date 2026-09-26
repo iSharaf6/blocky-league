@@ -361,6 +361,28 @@ export const PSTATE = {
 } as const;
 
 /**
+ * Celebration styles (frame channel 13, PoseInput.celebrate). 0-3 are the sim's scorer styles (arms-up hop,
+ * cradle, sit-down, spin) and 4-5 the mob's arms-up hop; from `knee` up they are the choreographed iconic
+ * moves (render/celebration.ts writes them), which read the move's clock in stateT and its 0..1 progress (the
+ * slide, the flip's turn, the drop, the leap) or bank (the aeroplane, right positive) in kickT.
+ */
+export const CELEB = { armsUp: 4, knee: 5, shush: 6, plane: 7, robot: 8, flip: 9, crouch: 10, flat: 11, dive: 12, clap: 13 } as const;
+
+/**
+ * The robot, a pose a beat (all right angles, read from the front): arm L (x, z), arm R (x, z), body yaw,
+ * head tilt (roll), leg L out, leg R out, torso pitch, torso roll. Arms: x +-1.55 straight out to the side; "up" is a
+ * diagonal (z 2.6 with the raised arm swung outward), since an arm straight up hides behind the big head.
+ */
+const ROBOT: readonly (readonly number[])[] = [
+  [-0.7, 2.6, -1.55, 0, 0, 0.45, 0, 0, 0, 0.22],
+  [1.55, 0, 0.7, 2.6, 0, -0.45, 0, 0, 0, -0.22],
+  [1.55, 0, -1.55, 0, 0.55, 0, 0.45, 0, 0, 0],
+  [-0.7, 2.6, 0.7, 2.6, 0, 0, 0, 0, -0.35, 0],
+  [1.55, 0, -1.55, 0, -0.55, 0, 0, -0.45, 0, 0],
+  [-0.7, 2.6, 0, 0.1, 0, 0.45, 0, 0, 0.12, -0.22],
+];
+
+/**
  * Standing tackle: the sim's poke enters the 0.34 s 'kick' state at kickT 0.28 (replay.ts LUNGE_KICK_T0), so
  * the lunge runs over the last 0.72 of kickT (~0.25 s): a deep step at the ball, the leading leg out low,
  * torso forward and arms flung out, there on the very frame of the press (BLEND_POKE_S is the only ease-in),
@@ -565,7 +587,11 @@ export class Footballer {
     let sub = 0;
     if (p.state === PSTATE.move || p.state === PSTATE.stand) sub = p.headerT > 0 ? 1 : 0;
     else if (p.state === PSTATE.kick) sub = Math.abs(p.kickLeg) > 1.5 && p.headerT <= 0 ? 1 : p.headerT > 0 ? 2 : 0;
-    else if (p.state === PSTATE.celebrate) sub = p.speed < 1.2 ? 1 + Math.min(4, Math.max(0, Math.round(p.celebrate))) : 0;
+    else if (p.state === PSTATE.celebrate) {
+      const st = Math.round(p.celebrate);
+      // The iconic styles (CELEB.knee and up) own their locomotion: one key whatever the speed.
+      sub = st >= CELEB.knee ? Math.min(15, 1 + st) : p.speed < 1.2 ? 1 + Math.max(0, st) : 0;
+    }
     if (p.signal) sub = 8 + (p.signalKind ?? 0);
     return p.state * 16 + sub;
   }
@@ -835,6 +861,11 @@ export class Footballer {
         break;
       }
       case PSTATE.celebrate: {
+        const st = Math.round(p.celebrate);
+        if (st >= CELEB.knee) {
+          this.iconic(st, p, time, locomotion);
+          break;
+        }
         locomotion();
         const style = p.celebrate;
         const hop = Math.abs(Math.sin(time * 7 + p.runPhase * 3));
@@ -913,6 +944,131 @@ export class Footballer {
     if (upright) {
       torso.rotation.y += clamp(p.look, -1, 1) * 0.12;
       body.rotation.x = clamp(-p.turn * 0.045 * run, -0.3, 0.3) * smoothstep(1, 2, p.speed);
+    }
+  }
+
+  /**
+   * The iconic celebrations (CELEB.knee and up; see render/celebration.ts for who does what when). Model
+   * axes: +x forward, +y up, the left arm at -z. Euler order is Z (lift forward / up), then Y, then X (swing
+   * sideways): a hanging arm swings outward with +x on the left and -x on the right; a raised one the other way.
+   */
+  private iconic(st: number, p: PoseInput, time: number, locomotion: () => void): void {
+    const body = this.body, torso = this.torso, head = this.head;
+    const aL = this.armL, aR = this.armR, lL = this.legL, lR = this.legR;
+    const t = p.stateT;
+    const x = p.kickT;
+    switch (st) {
+      case CELEB.knee: {
+        // Onto one knee over the first third of the slide, pitched back, the leading leg out along the grass,
+        // arms flung wide; as the slide dies (progress past 1) the arms sweep up.
+        const s = clamp(x * 3.5, 0, 1);
+        const up = clamp((x - 1) * 2.5, 0, 1);
+        body.position.y = HIP_Y - 0.2 * s;
+        body.rotation.z = 0.5 * s;
+        lR.rotation.z = 1.2 * s;
+        lL.rotation.z = -1.35 * s;
+        lL.rotation.x = 0.3 * s;
+        aL.rotation.set(lerp(1.5, -0.4, up) * s, 0, lerp(0.6, 2.75, up) * s);
+        aR.rotation.set(lerp(-1.5, 0.4, up) * s, 0, lerp(0.6, 2.75, up) * s);
+        head.rotation.z = 0.3 * s;
+        torso.rotation.z = 0.12 * s;
+        break;
+      }
+      case CELEB.shush: {
+        // Finger to the lips, the other arm out to the crowd, a slow walk.
+        locomotion();
+        aR.rotation.set(-0.9, 0, 2.2);
+        aL.rotation.set(1.3, 0, 0.5);
+        head.rotation.z = -0.1;
+        torso.rotation.z = -0.04;
+        break;
+      }
+      case CELEB.plane: {
+        // Aeroplane: running with the arms out, banked into the turn (kickT -1..1, right positive).
+        locomotion();
+        aL.rotation.set(1.5, 0, 0.35);
+        aR.rotation.set(-1.5, 0, 0.35);
+        torso.rotation.x = x * 0.6;
+        torso.rotation.z = -0.25;
+        head.rotation.x = -x * 0.3;
+        break;
+      }
+      case CELEB.robot: {
+        // Stiff poses snapped every 0.25 s: no cross-fade within the key, which is the point.
+        const beat = Math.floor(t / 0.25);
+        const R = ROBOT[((beat % ROBOT.length) + ROBOT.length) % ROBOT.length];
+        aL.rotation.set(R[0], 0, R[1]);
+        aR.rotation.set(R[2], 0, R[3]);
+        body.rotation.y = R[4];
+        head.rotation.x = R[5];
+        lL.rotation.x = R[6];
+        lR.rotation.x = R[7];
+        torso.rotation.z = R[8];
+        torso.rotation.x = R[9];
+        break;
+      }
+      case CELEB.flip: {
+        // Backflip: a full turn backwards about the hips over the jump (kickT 0..1), eased so the tuck at the
+        // top is the fast part; the arms swing up on take-off and hug the knees in the tuck.
+        const u = clamp(x, 0, 1);
+        const tuck = Math.sin(Math.PI * u);
+        body.rotation.z = Math.PI * 2 * (0.5 - 0.5 * Math.cos(Math.PI * u));
+        lL.rotation.z = lR.rotation.z = 1.6 * tuck;
+        torso.rotation.z = -0.55 * tuck;
+        head.rotation.z = -0.3 * tuck;
+        const armZ = lerp(2.7, 1.3, tuck);
+        aL.rotation.set(-0.2 * (1 - tuck), 0, armZ);
+        aR.rotation.set(0.2 * (1 - tuck), 0, armZ);
+        break;
+      }
+      case CELEB.crouch: {
+        // A deep crouch (kickT 0 deep .. 1 standing): the wind-up before the flip and the stuck landing.
+        const c = 1 - clamp(x, 0, 1);
+        body.position.y = HIP_Y - 0.2 * c;
+        lL.rotation.set(0.3 * c, 0, 0.4 * c);
+        lR.rotation.set(-0.3 * c, 0, -0.3 * c);
+        torso.rotation.z = -0.5 * c;
+        head.rotation.z = 0.35 * c;
+        aL.rotation.set(0.9 * c, 0, -0.9 * c);
+        aR.rotation.set(-0.9 * c, 0, -0.9 * c);
+        break;
+      }
+      case CELEB.flat: {
+        // Flat on his back (kickT 0..1 is the drop), arms spread past his head, waiting for the pile.
+        const d = clamp(x, 0, 1);
+        body.rotation.z = 1.55 * d;
+        body.position.y = HIP_Y - (HIP_Y - 0.16) * d;
+        aL.rotation.set(-0.7 * d, 0, 2.5 * d);
+        aR.rotation.set(0.7 * d, 0, 2.5 * d);
+        lL.rotation.set(0.25 * d, 0, 0.15 * d);
+        lR.rotation.set(-0.25 * d, 0, 0);
+        head.rotation.z = -0.2 * d;
+        break;
+      }
+      case CELEB.dive: {
+        // Superman onto the pile: laid out face down (kickT 0..1 is the leap), arms reaching, head up.
+        const d = clamp(x, 0, 1);
+        body.rotation.z = lerp(-0.6, -1.5, d);
+        body.position.y = lerp(HIP_Y - 0.05, 0.2, d);
+        aL.rotation.set(-0.15, 0, lerp(2.6, 1.7, d));
+        aR.rotation.set(0.15, 0, lerp(2.6, 1.7, d));
+        lL.rotation.z = -0.25 * d + Math.sin(time * 6) * 0.1 * d;
+        lR.rotation.z = -0.1 * d;
+        head.rotation.z = 0.4 * d;
+        torso.rotation.z = 0.1 * d;
+        break;
+      }
+      case CELEB.clap:
+      default: {
+        // Applause from the ones hanging back: hands meeting in front (a yaw brings them together), a bob.
+        locomotion();
+        const c = 0.5 + 0.5 * Math.sin(t * 16 + p.runPhase * 5);
+        aL.rotation.set(0, -0.25 - 0.5 * c, 1.4);
+        aR.rotation.set(0, 0.25 + 0.5 * c, 1.4);
+        body.position.y -= 0.02 * c;
+        head.rotation.z = 0.06;
+        break;
+      }
     }
   }
 

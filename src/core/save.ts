@@ -194,26 +194,64 @@ export function normalizeProgress(raw: unknown): Progress {
   };
 }
 
+/** A stored save (any build's) made whole over this build's defaults: see loadSave and importSave. */
+function mergeSave(d: Partial<SaveData>): SaveData {
+  const base = defaultSave();
+  // Saves from before the camera / assist settings (or with values this build doesn't know) get the defaults.
+  const settings = normalizeSettings(d.settings);
+  return {
+    ...base,
+    ...d,
+    settings,
+    record: { ...base.record, ...(d.record ?? {}) },
+    // Saves from before the cup existed (or a blob that isn't an object) start with no cup.
+    cup: typeof d.cup === 'object' ? d.cup : null,
+    // Saves from before progression start at level 1 with no streak; a damaged blob does too.
+    progress: normalizeProgress(d.progress),
+  } as SaveData;
+}
+
 export function loadSave(): SaveData {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultSave();
-    const d = JSON.parse(raw) as Partial<SaveData>;
-    const base = defaultSave();
-    // Saves from before the camera / assist settings (or with values this build doesn't know) get the defaults.
-    const settings = normalizeSettings(d.settings);
-    return {
-      ...base,
-      ...d,
-      settings,
-      record: { ...base.record, ...(d.record ?? {}) },
-      // Saves from before the cup existed (or a blob that isn't an object) start with no cup.
-      cup: typeof d.cup === 'object' ? d.cup : null,
-      // Saves from before progression start at level 1 with no streak; a damaged blob does too.
-      progress: normalizeProgress(d.progress),
-    } as SaveData;
+    return mergeSave(JSON.parse(raw) as Partial<SaveData>);
   } catch {
     return defaultSave();
+  }
+}
+
+/** The save as a file (Settings > Backup > EXPORT): plain JSON, the same shape as the stored one. */
+export function exportSave(d: SaveData): string {
+  return JSON.stringify(d, null, 2);
+}
+
+/**
+ * A save read back from an exported file (or a cloud copy): null unless it is recognisably a Blocky League
+ * save (version 1 with coins and settings); otherwise made whole like a stored one, with the numbers that
+ * index things clamped to sane values. Never throws.
+ */
+export function importSave(raw: unknown): SaveData | null {
+  try {
+    const src = typeof raw === 'string' ? (JSON.parse(raw) as unknown) : raw;
+    if (!src || typeof src !== 'object' || Array.isArray(src)) return null;
+    const d = src as Partial<SaveData>;
+    if (d.version !== 1 || typeof d.coins !== 'number' || !d.settings || typeof d.settings !== 'object') return null;
+    const base = defaultSave();
+    const s = mergeSave(d);
+    s.coins = num(d.coins, base.coins);
+    s.clubIdx = num(d.clubIdx, base.clubIdx);
+    s.opponentIdx = num(d.opponentIdx, base.opponentIdx);
+    s.seenTutorial = d.seenTutorial === true;
+    s.career = d.career && typeof d.career === 'object' ? d.career : null;
+    const r = s.record;
+    for (const k of ['played', 'won', 'drawn', 'lost', 'goalsFor', 'goalsAgainst'] as const) r[k] = num(r[k]);
+    const g = d.gift;
+    s.gift = g && typeof g === 'object' && typeof g.last === 'string' ? { last: g.last, streak: num(g.streak, 1) } : undefined;
+    s.updatedAt = typeof d.updatedAt === 'string' ? d.updatedAt : new Date().toISOString();
+    return s;
+  } catch {
+    return null;
   }
 }
 
@@ -430,13 +468,35 @@ export function xpAt(level: number): number {
   return t;
 }
 
-/** The next thing XP earns (the first ball look above the current level) and the XP still needed; null past the last. */
-export function nextUnlock(xp: number): { id: BallSkinId; name: string; level: number; xpLeft: number } | null {
+export type UnlockKind = 'ball' | 'celebration';
+
+export interface NextUnlock {
+  kind: UnlockKind;
+  id: BallSkinId | CelebrationId;
+  /** "Retro ball", "Knee slide celebration". */
+  name: string;
+  level: number;
+  xpLeft: number;
+}
+
+/** Everything on the level ladder (ball looks and celebrations), by the level that earns it. */
+export function unlockLadder(): NextUnlock[] {
+  const balls: NextUnlock[] = BALL_SKIN_IDS.map((id) => ({ kind: 'ball', id, name: `${BALL_SKIN_NAMES[id]} ball`, level: BALL_SKIN_LEVEL[id], xpLeft: 0 }));
+  const celebs: NextUnlock[] = CELEBRATION_IDS.map((id) => ({
+    kind: 'celebration', id, name: `${CELEBRATION_NAMES[id]} celebration`, level: CELEBRATION_LEVEL[id], xpLeft: 0,
+  }));
+  // Same level: the ball first (it is the one seen every match).
+  return [...balls, ...celebs].sort((a, b) => a.level - b.level || (a.kind === b.kind ? 0 : a.kind === 'ball' ? -1 : 1));
+}
+
+/**
+ * The next thing XP earns, ball look or celebration, whichever comes at the lower level (the earliest next
+ * level wins), and the XP still needed; null once the whole ladder is climbed.
+ */
+export function nextUnlock(xp: number): NextUnlock | null {
   const lv = levelOf(xp).level;
-  const next = BALL_SKIN_IDS.filter((id) => BALL_SKIN_LEVEL[id] > lv).sort((a, b) => BALL_SKIN_LEVEL[a] - BALL_SKIN_LEVEL[b])[0];
-  if (!next) return null;
-  const level = BALL_SKIN_LEVEL[next];
-  return { id: next, name: `${BALL_SKIN_NAMES[next]} ball`, level, xpLeft: Math.max(0, xpAt(level) - xp) };
+  const next = unlockLadder().find((u) => u.level > lv);
+  return next ? { ...next, xpLeft: Math.max(0, xpAt(next.level) - xp) } : null;
 }
 
 /**

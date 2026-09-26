@@ -1,5 +1,10 @@
 import { sfx } from '../audio/sfx';
-import { ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData, BALL_SKIN_IDS, BALL_SKIN_LEVEL, BALL_SKIN_NAMES, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, type BallSkinId } from '../core/save';
+import {
+  ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData, BALL_SKIN_IDS,
+  BALL_SKIN_LEVEL, BALL_SKIN_NAMES, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, type BallSkinId, CELEBRATION_IDS, CELEBRATION_LEVEL,
+  CELEBRATION_NAMES, celebrationUnlocked, type CelebrationId, exportSave, importSave } from '../core/save';
+import { APP_VERSION, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
+import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview, faceHtml, hydrateFaces } from './preview';
@@ -21,11 +26,11 @@ type ControlRow = { k: keyof ControlSettings; kind: 'level' | 'switch'; label: s
 const CONTROL_ROWS: ControlRow[] = [
   {
     k: 'trainer', kind: 'switch', label: 'ON-PITCH TRAINER',
-    why: { true: 'Controls beside your player · passing guide on the pitch', false: 'Hide the trainer; keep teammate markers' },
+    why: { true: `Controls beside your player${sep()}passing guide on the pitch`, false: 'Hide the trainer; keep teammate markers' },
   },
   {
     k: 'quickPass', kind: 'switch', label: 'INSTANT PASS',
-    why: { true: 'Press PASS to play it immediately · automatic weight', false: 'Release PASS to play · hold for more power' },
+    why: { true: `Press PASS to play it immediately${sep()}automatic weight`, false: `Release PASS to play${sep()}hold for more power` },
   },
   {
     k: 'groundAssist', kind: 'level', label: 'GROUND PASS',
@@ -60,6 +65,8 @@ const CONTROL_ROWS: ControlRow[] = [
 /** Live info for the main menu tiles. */
 export interface MainInfo {
   captain?: { def: PlayerDef; kit: Kit; club: string; ovr: number };
+  /** What PLAY NOW starts ("ARS v CHE · NORMAL") and what QUICK MATCH offers. Plain " · " here: the menu draws the dividers. */
+  playNow?: string;
   quick?: string;
   career?: string;
   club?: string;
@@ -73,6 +80,8 @@ export interface MainInfo {
   streak?: number;
   /** The next thing XP earns, for the badge (null: everything earned). */
   unlock?: { name: string; level: number; xpLeft: number } | null;
+  /** Signed-in name for the ACCOUNT button (cloud saves), if any. */
+  account?: string;
 }
 
 /** What the full-time screen shows for progression (stars, XP, streak, challenges done this match). */
@@ -238,18 +247,18 @@ const HOWTO_KEYS = `
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
-      <p><kbd>SPACE</kbd> pass to the <b>ringed</b> mate: press = instant · aim to choose</p>
-      <p><kbd>L</kbd> through ball: your runner goes · hold: lob / cross</p>
-      <p><kbd>K</kbd> hold &amp; release to shoot · the keys aim while you charge</p>
+      <p><kbd>SPACE</kbd> pass to the <b>ringed</b> mate: press = instant${sep()}aim to choose</p>
+      <p><kbd>L</kbd> through ball: your runner goes${sep()}hold: lob / cross</p>
+      <p><kbd>K</kbd> hold &amp; release to shoot${sep()}the keys aim while you charge</p>
       <p>Tap <kbd>K</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
-      <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip · soft <kbd>K</kbd> on a diagonal: curler</p>
-      <p><kbd>SHIFT</kbd> sprint · double-tap to knock it past a defender</p>
+      <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip${sep()}soft <kbd>K</kbd> on a diagonal: curler</p>
+      <p><kbd>SHIFT</kbd> sprint${sep()}double-tap to knock it past a defender</p>
       <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; <kbd>K</kbd> to head at goal</p>
     </div>
     <div class="ht-col">
       <h3>DEFEND</h3>
       <p><kbd>SPACE</kbd> switch player</p>
-      <p><kbd>K</kbd> tap: standing tackle · tap while sprinting or hold briefly: slide</p>
+      <p><kbd>K</kbd> tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</p>
       <p><kbd>L</kbd> hold to press: he stays goal-side and steals loose touches</p>
       <p>Flick the stick sharply while dribbling to cut past a defender</p>
       <p><kbd>ESC</kbd> pause</p>
@@ -262,18 +271,18 @@ const HOWTO_PAD = `
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>LEFT STICK</kbd> move</p>
-      <p><kbd>A</kbd> pass to the <b>ringed</b> mate: press = instant · aim to choose</p>
-      <p><kbd>X</kbd> through ball: your runner goes · hold: lob / cross</p>
-      <p><kbd>B</kbd> hold &amp; release to shoot · the stick aims while you charge</p>
+      <p><kbd>A</kbd> pass to the <b>ringed</b> mate: press = instant${sep()}aim to choose</p>
+      <p><kbd>X</kbd> through ball: your runner goes${sep()}hold: lob / cross</p>
+      <p><kbd>B</kbd> hold &amp; release to shoot${sep()}the stick aims while you charge</p>
       <p>Tap <kbd>B</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
-      <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip · soft <kbd>B</kbd> on a diagonal: curler</p>
-      <p><kbd>RT</kbd> sprint · double-tap to knock it past</p>
+      <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip${sep()}soft <kbd>B</kbd> on a diagonal: curler</p>
+      <p><kbd>RT</kbd> sprint${sep()}double-tap to knock it past</p>
       <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; <kbd>B</kbd> to head at goal</p>
     </div>
     <div class="ht-col">
       <h3>DEFEND</h3>
       <p><kbd>A</kbd> switch player</p>
-      <p><kbd>B</kbd> tap: standing tackle · tap while sprinting or hold briefly: slide</p>
+      <p><kbd>B</kbd> tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</p>
       <p><kbd>X</kbd> hold to press: he stays goal-side and steals loose touches</p>
       <p>Flick the stick sharply while dribbling to cut past a defender</p>
       <p><kbd>START</kbd> pause</p>
@@ -298,16 +307,16 @@ const HOWTO_TOUCH = `
     <table class="ht-table">
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
-        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed mate: press = instant · aim to choose</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
-        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder · the stick aims</td><td><b>TACKLE</b> tap: standing tackle · tap while sprinting or hold briefly: slide</td></tr>
-        <tr><td>${dot('through')}</td><td><b>THROUGH</b> your runner goes · hold: lob or cross</td><td><b>PRESS</b> hold: stay goal-side, steal loose touches</td></tr>
-        <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold · double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
+        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed mate: press = instant${sep()}aim to choose</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
+        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder${sep()}the stick aims</td><td><b>TACKLE</b> tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</td></tr>
+        <tr><td>${dot('through')}</td><td><b>THROUGH</b> your runner goes${sep()}hold: lob or cross</td><td><b>PRESS</b> hold: stay goal-side, steal loose touches</td></tr>
+        <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold${sep()}double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>PERFECT FINISH</b> tap SHOOT again as the foot hits the ball (mistime it and it flies)</td></tr>
-        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT + tap THROUGH/CROSS · <b>CURL</b> a soft SHOOT with the stick on a diagonal</td></tr>
+        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT + tap THROUGH/CROSS${sep()}<b>CURL</b> a soft SHOOT with the stick on a diagonal</td></tr>
         <tr class="ht-finish"><td>${dot('through')}</td><td colspan="2"><b>CROSSES</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; SHOOT to head at goal</td></tr>
       </tbody>
     </table>
-    <p class="fine">The <b>ringed</b> team-mate is who PASS goes to: point the stick to pick another (edge arrows show mates out of shot). Set pieces: <b>PASS</b> short · <b>SHOOT</b> at goal · <b>CROSS</b> hold to whip it in. Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
+    <p class="fine">The <b>ringed</b> team-mate is who PASS goes to: point the stick to pick another (edge arrows show mates out of shot). Set pieces: <b>PASS</b> short${sep()}<b>SHOOT</b> at goal${sep()}<b>CROSS</b> hold to whip it in. Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
   </div>`;
 
 /** Blitz mode, under every How to Play tab: the pickups and the button that uses them. `use` names that button. */
@@ -359,8 +368,9 @@ export class Menus {
     const d = this.mount(`
       <div class="title-wrap">
         <h1 class="logo"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
+        ${creditHtml()}
         <button class="btn btn-go btn-xl pulse" data-a="start">TAP TO PLAY</button>
-        <p class="fine">Keyboard · Gamepad · Touch</p>
+        <p class="fine">Keyboard${sep()}Gamepad${sep()}Touch</p>
       </div>`, 'title');
     const go = () => {
       window.removeEventListener('keydown', key);
@@ -373,9 +383,17 @@ export class Menus {
     $(d, '[data-a=start]').addEventListener('click', go);
   }
 
+  /**
+   * The main menu. PLAY NOW (when `h.playNow` is given) is the wide first tile: straight into a match, no
+   * setup; QUICK MATCH keeps the setup screen. ACCOUNT (cloud saves) shows beside the coins when `h.account`
+   * is given.
+   */
   main(
     save: SaveData,
-    h: { quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void; gift?: () => void; blitz?: () => void },
+    h: {
+      quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void;
+      gift?: () => void; blitz?: () => void; playNow?: () => void; account?: () => void;
+    },
     info?: MainInfo,
   ): void {
     const r = save.record;
@@ -392,12 +410,16 @@ export class Menus {
           }).join('')}</ul>
         </div>`
       : '';
+    const wdl = `W ${r.won}${sep()}D ${r.drawn}${sep()}L ${r.lost}${sep()}${r.goalsFor} GOALS`;
     const badge = lv
-      ? `<span class="record-chip lvl" title="${lv.into} / ${lv.need} XP to the next level"><b>LV ${lv.level} · ${lv.title.toUpperCase()}${info?.streak && info.streak >= 2 ? ` · 🔥${info.streak}` : ''}</b><span>W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()} · ${info.unlock.xpLeft} XP</small>` : ''}</span>`
-      : `<span class="record-chip">W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span>`;
+      ? `<span class="record-chip lvl" title="${lv.into} / ${lv.need} XP to the next level"><b>LV ${lv.level}${sep()}${lv.title.toUpperCase()}${info?.streak && info.streak >= 2 ? `${sep()}🔥${info.streak}` : ''}</b><span>${wdl}</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()}${sep()}${info.unlock.xpLeft} XP</small>` : ''}</span>`
+      : `<span class="record-chip">${wdl}</span>`;
+    // A tile's subtitle: dividers in the tile, plain " / " in its tooltip.
+    const sub = (s?: string) => (s ? `<small title="${escHtml(sepText(s))}">${seps(escHtml(s))}</small>` : '');
     const d = this.mount(`
       <div class="topbar">
         ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">🎁 DAILY GIFT <b>+${info.gift.amount}</b></button>` : ''}
+        ${h.account ? `<button class="btn btn-white acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
         <div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>
       </div>
       <div class="main-wrap ${info?.captain ? 'with-captain' : ''}">
@@ -405,12 +427,13 @@ export class Menus {
         <div class="main-col">
         <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
         <div class="tiles">
-          <button class="btn btn-go tile" data-a="quick">${pixelIcon('ball', '#fff', 6)}<span>QUICK MATCH</span>${info?.quick ? `<small title="${info.quick}">${info.quick}</small>` : ''}</button>
-          <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${info?.career ? `<small title="${info.career}">${info.career}</small>` : ''}</button>
-          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${info?.club ? `<small title="${info.club}">${info.club}</small>` : ''}</button>
+          ${h.playNow ? `<button class="btn btn-go tile tile-wide" data-a="playnow">${pixelIcon('ball', '#fff', 6)}<span>PLAY NOW</span>${sub(info?.playNow)}</button>` : ''}
+          <button class="btn ${h.playNow ? 'btn-white' : 'btn-go'} tile" data-a="quick">${pixelIcon('ball', h.playNow ? '#26262e' : '#fff', 6)}<span>QUICK MATCH</span>${sub(info?.quick)}</button>
+          <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${sub(info?.career)}</button>
+          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${sub(info?.club)}</button>
           <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
           <button class="btn btn-purple tile tile-side" data-a="blitz"><i class="picon bolt" aria-hidden="true">⚡</i><span>BLITZ</span><small>POWER-UPS</small></button>
-          <button class="btn btn-red tile tile-side" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${info?.cup ? `<small title="${info.cup}">${info.cup}</small>` : ''}</button>
+          <button class="btn btn-red tile tile-side" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${sub(info?.cup)}</button>
         </div>
         ${daily}
         <div class="main-foot">
@@ -426,6 +449,8 @@ export class Menus {
       else cap.remove();
     }
     d.querySelector('[data-a=gift]')?.addEventListener('click', () => h.gift?.());
+    d.querySelector('[data-a=playnow]')?.addEventListener('click', () => h.playNow?.());
+    d.querySelector('[data-a=account]')?.addEventListener('click', () => h.account?.());
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
     $(d, '[data-a=career]').addEventListener('click', h.career);
     $(d, '[data-a=cup]').addEventListener('click', h.cup);
@@ -477,7 +502,7 @@ export class Menus {
         </div>
         <b class="tp-name">${crestSvg(c.name, c.short, c.kit, 2)}${c.name}</b>
         <span class="tp-stars">${stars(ovr)}</span>
-        <span class="tp-meta">OVR ${ovr} · ${c.formation}</span>`;
+        <span class="tp-meta">OVR ${ovr}${sep()}<span class="fm">${c.formation}</span></span>`;
       const cv = el.querySelector<HTMLCanvasElement>('.tp-3d');
       if (cv) {
         const team = makeTeam(c);
@@ -636,7 +661,7 @@ export class Menus {
       m.goals.filter((g) => g.side === side).map((g) => `<li>${g.name}${g.own ? ' (OG)' : ''} ${g.minute}'</li>`).join('');
     return `<div class="final">
       <div class="f-team">${crestSvg(m.teams[0].name, m.teams[0].short, m.teams[0].kit, 4)}<b style="border-bottom:5px solid ${cssHex(kits[0].shirt)}">${m.teams[0].short}</b><ul>${scorers(0)}</ul></div>
-      <div class="f-score">${m.score[0]}<span>-</span>${m.score[1]}</div>
+      <div class="f-score">${scoreHtml(m.score[0], m.score[1])}</div>
       <div class="f-team">${crestSvg(m.teams[1].name, m.teams[1].short, m.teams[1].kit, 4)}<b style="border-bottom:5px solid ${cssHex(kits[1].shirt)}">${m.teams[1].short}</b><ul>${scorers(1)}</ul></div>
     </div>`;
   }
@@ -860,7 +885,7 @@ export class Menus {
     const motmHtml = motm
       ? `<div class="motm">
           <div class="motm-card" style="--k:${cssHex(kits[motm.side].shirt)}">${face(motm, 'xl')}<span>MAN OF THE MATCH</span><b>${motm.name}</b><em>${motm.rating.toFixed(1)}</em>
-          ${motm.goals ? `<small>${motm.goals} goal${motm.goals > 1 ? 's' : ''}${motm.assists ? ` · ${motm.assists} assist${motm.assists > 1 ? 's' : ''}` : ''}</small>` : motm.assists ? `<small>${motm.assists} assist${motm.assists > 1 ? 's' : ''}</small>` : ''}</div>
+          ${motm.goals ? `<small>${motm.goals} goal${motm.goals > 1 ? 's' : ''}${motm.assists ? `${sep()}${motm.assists} assist${motm.assists > 1 ? 's' : ''}` : ''}</small>` : motm.assists ? `<small>${motm.assists} assist${motm.assists > 1 ? 's' : ''}</small>` : ''}</div>
           <ul class="ratings">${mine.map((r) => `<li>${face(r, 'sm')}<span>${r.name}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>
         </div>`
       : '';
@@ -872,7 +897,7 @@ export class Menus {
     const verdict = res > 0 ? 'YOU WIN!' : res === 0 ? 'DRAW' : 'YOU LOSE';
     const cls = res > 0 ? 'win' : res === 0 ? 'draw' : 'lose';
     const pens = so
-      ? `<p class="ft-pens">${m.teams[so.winner as 0 | 1].short} WIN ${so.kicks[so.winner as 0 | 1].filter(Boolean).length}-${so.kicks[so.winner === 0 ? 1 : 0].filter(Boolean).length} ON PENALTIES</p>`
+      ? `<p class="ft-pens">${m.teams[so.winner as 0 | 1].short} WIN ${so.kicks[so.winner as 0 | 1].filter(Boolean).length}${SCORE_SEP_HTML}${so.kicks[so.winner === 0 ? 1 : 0].filter(Boolean).length} ON PENALTIES</p>`
       : '';
     // Progression: stars, the XP bar (counts up after the coins), the streak chip and any challenges done.
     const lv0 = prog ? levelOf(prog.xpFrom) : null;
@@ -883,7 +908,7 @@ export class Menus {
             <div class="ft-xp-h"><b class="ft-lv">LV ${lv0.level}</b><span class="ft-title">${levelTitle(lv0.level).toUpperCase()}</span><em class="ft-xp-n">+0 XP</em></div>
             <div class="ft-xp-bar"><i style="width:${Math.round((lv0.into / lv0.need) * 100)}%"></i></div>
             <div class="ft-levelup" aria-live="polite"></div>
-            ${(() => { const nu = nextUnlock(prog.xpTo); return nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b> · LV ${nu.level} · ${nu.xpLeft} XP</div>` : ''; })()}
+            ${(() => { const nu = nextUnlock(prog.xpTo); return nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''; })()}
           </div>
           ${prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">🔥 ${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : ''}
           ${prog.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : ''}
@@ -969,7 +994,7 @@ export class Menus {
           level = lv.level;
           lvEl.textContent = `LV ${lv.level}`;
           titleEl.textContent = levelTitle(lv.level).toUpperCase();
-          up.innerHTML = `<b>LEVEL UP!</b><span>LV ${lv.level} · ${levelTitle(lv.level).toUpperCase()}</span>`;
+          up.innerHTML = `<b>LEVEL UP!</b><span>LV ${lv.level}${sep()}${levelTitle(lv.level).toUpperCase()}</span>`;
           up.classList.remove('on');
           void up.offsetWidth;
           up.classList.add('on');
@@ -982,11 +1007,15 @@ export class Menus {
   }
 
   /**
-   * Settings, in two tabs: GENERAL (sound, commentary, graphics, camera) and CONTROLS (pass assistance,
-   * switching, timed finishing; each option says in a line what it does). `tab` picks the one shown first
-   * (the pause menu opens on CONTROLS). Every change is saved and applied at once via onChange.
+   * Settings, in two tabs: GENERAL (sound, commentary, graphics, camera, the ball look and celebration earned
+   * by levelling up, and BACKUP when `opts.backup` is given: the main menu offers it, the pause menu not) and
+   * CONTROLS (pass assistance, switching, timed finishing; each option says in a line what it does). `tab`
+   * picks the one shown first (the pause menu opens on CONTROLS). Every change is saved and applied at once
+   * via onChange.
    */
-  settings(save: SaveData, onChange: () => void, onBack: () => void, tab: 'general' | 'controls' = 'general'): void {
+  settings(
+    save: SaveData, onChange: () => void, onBack: () => void, tab: 'general' | 'controls' = 'general', opts: { backup?: () => void } = {},
+  ): void {
     const s = save.settings;
     // Each row carries both forms of a switch: the one-button ON / OFF toggle (portrait: label inside it) and
     // an ON | OFF segment (landscape phones: label and its line on the left, the value on the right). CSS
@@ -1020,7 +1049,10 @@ export class Menus {
               <button data-k="quality"></button>
               <button data-k="camZoom"></button>
               <button data-k="ballSkin"></button>
+              <button data-k="celebration"></button>
+              ${opts.backup ? '<button data-a="backup" aria-label="Backup: export or import your save"><span>BACKUP</span><b class="link">EXPORT / IMPORT</b></button>' : ''}
             </div>
+            <p class="set-about">${lynxSvg(1, STUDIO_BLUE, '#fff', 'lynx sm')}<span>Blocky League v${APP_VERSION} by ${STUDIO}</span></p>
           </div>
           <div class="set-pane ctl-pane" data-pane="controls" role="tabpanel">
             ${CONTROL_ROWS.map(ctlRow).join('')}
@@ -1059,7 +1091,8 @@ export class Menus {
           chip.textContent = v ? 'ON' : 'OFF';
           chip.classList.toggle('off', !v);
         }
-        $(row, '.ctl-why').textContent = r.why[String(v)] ?? '';
+        // Static copy with divider elements in it (see CONTROL_ROWS): markup, not text.
+        $(row, '.ctl-why').innerHTML = r.why[String(v)] ?? '';
       }
     };
     for (const r of CONTROL_ROWS) {
@@ -1083,7 +1116,7 @@ export class Menus {
     drawControls();
     const labels: Record<string, string> = {
       sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', commentaryVoice: 'COMMENTARY VOICE', quality: 'GRAPHICS',
-      camZoom: 'CAMERA', ballSkin: 'BALL',
+      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION',
     };
     const canSpeak = speechAvailable();
     const draw = () => {
@@ -1100,7 +1133,15 @@ export class Menus {
           const lvl = levelOf(save.progress.xp).level;
           const id = (s.ballSkin ?? 'classic') as BallSkinId;
           const locked = BALL_SKIN_IDS.find((x) => !skinUnlocked(x, lvl));
-          b.innerHTML = `<span>${labels[k]}</span><b>${BALL_SKIN_NAMES[id].toUpperCase()}${locked ? `<small class="lock"> · 🔒 ${BALL_SKIN_NAMES[locked].toUpperCase()} LV${BALL_SKIN_LEVEL[locked]}</small>` : ''}</b>`;
+          b.innerHTML = `<span>${labels[k]}</span><b>${BALL_SKIN_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}🔒 ${BALL_SKIN_NAMES[locked].toUpperCase()} LV${BALL_SKIN_LEVEL[locked]}</small>` : ''}</b>`;
+          return;
+        }
+        if (k === 'celebration') {
+          // The goal celebration, and the next one still to earn (levels: see CELEBRATION_LEVEL).
+          const lvl = levelOf(save.progress.xp).level;
+          const id = (s.celebration ?? 'classic') as CelebrationId;
+          const locked = CELEBRATION_IDS.find((x) => !celebrationUnlocked(x, lvl));
+          b.innerHTML = `<span>${labels[k]}</span><b>${CELEBRATION_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}🔒 ${CELEBRATION_NAMES[locked].toUpperCase()} LV${CELEBRATION_LEVEL[locked]}</small>` : ''}</b>`;
           return;
         }
         const val = k === 'quality' ? String(v).toUpperCase() : k === 'camZoom' ? (s.camZoom ?? 'normal').toUpperCase() : v ? 'ON' : 'OFF';
@@ -1121,13 +1162,111 @@ export class Menus {
           const open = BALL_SKIN_IDS.filter((x) => skinUnlocked(x, lvl));
           const cur = open.indexOf((s.ballSkin ?? 'classic') as BallSkinId);
           s.ballSkin = open[(cur + 1) % open.length];
+        } else if (k === 'celebration') {
+          // Cycle through the celebrations this level has earned.
+          const lvl = levelOf(save.progress.xp).level;
+          const open = CELEBRATION_IDS.filter((x) => celebrationUnlocked(x, lvl));
+          const cur = open.indexOf((s.celebration ?? 'classic') as CelebrationId);
+          s.celebration = open[(cur + 1) % open.length];
         } else (s as unknown as Record<string, boolean>)[k] = !s[k];
         draw();
         onChange();
       }),
     );
     draw();
+    d.querySelector('[data-a=backup]')?.addEventListener('click', () => opts.backup?.());
     $(d, '[data-a=back]').addEventListener('click', onBack);
+  }
+
+  /**
+   * Settings > BACKUP: the save as a file, so progress survives a cleared browser and can move between
+   * devices. EXPORT downloads blocky-league-save.json; IMPORT reads one back, checks it really is a Blocky
+   * League save (importSave), shows what it holds beside the current one and, on REPLACE, hands it to
+   * `h.onImport` (main.ts swaps the running save, stores it and redraws the menu). Local only: it works the
+   * same on the portal builds.
+   */
+  backup(save: SaveData, h: { onImport: (d: SaveData) => void; back: () => void }): void {
+    const line = (d: SaveData) => {
+      const lv = levelOf(d.progress.xp);
+      const when = d.updatedAt ? new Date(d.updatedAt) : null;
+      const date = when && !Number.isNaN(when.getTime()) ? `${sep()}${when.toLocaleDateString()}` : '';
+      return `<b>LV ${lv.level}</b> ${levelTitle(lv.level).toUpperCase()}${sep()}${d.coins.toLocaleString()} COINS${sep()}${d.record.played} MATCHES${date}`;
+    };
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel narrow bk-panel">
+          <h2>BACKUP</h2>
+          <p class="fine big">Your progress lives in this browser. Export a copy to keep it safe or carry it to another device; import one to restore it.</p>
+          <div class="bk-card"><span>THIS SAVE</span><em>${line(save)}</em></div>
+          <div class="menu-col bk-main">
+            <button class="btn btn-go" data-a="export">EXPORT SAVE</button>
+            <button class="btn btn-blue" data-a="import">IMPORT SAVE</button>
+            <input type="file" accept=".json,application/json" hidden aria-label="Save file">
+          </div>
+          <div class="bk-confirm" hidden>
+            <div class="bk-card"><span>FROM THE FILE</span><em class="bk-in"></em></div>
+            <p class="fine big">Replace your save with this one? The current one is gone unless you exported it.</p>
+            <div class="menu-col">
+              <button class="btn btn-red" data-a="replace">REPLACE MY SAVE</button>
+              <button class="btn btn-white" data-a="keep">KEEP MINE</button>
+            </div>
+          </div>
+          <p class="bk-msg fine" role="status" aria-live="polite"></p>
+          <div class="btn-row"><button class="btn btn-white" data-a="back">BACK</button></div>
+        </div>
+      </div>`, 'backup');
+    const msgEl = $(d, '.bk-msg');
+    const msg = (text: string, kind: 'good' | 'bad' | '' = '') => {
+      msgEl.textContent = text;
+      msgEl.className = `bk-msg fine ${kind}`;
+    };
+    const main = $(d, '.bk-main');
+    const confirm = $(d, '.bk-confirm');
+    let pending: SaveData | null = null;
+    const asking = (d2: SaveData | null) => {
+      pending = d2;
+      main.hidden = !!d2;
+      confirm.hidden = !d2;
+      if (d2) $(d, '.bk-in').innerHTML = line(d2);
+    };
+    $(d, '[data-a=export]').addEventListener('click', () => {
+      try {
+        const url = URL.createObjectURL(new Blob([exportSave(save)], { type: 'application/json' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'blocky-league-save.json';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+        msg('SAVED AS blocky-league-save.json', 'good');
+      } catch {
+        msg("This browser wouldn't save the file.", 'bad');
+      }
+    });
+    const file = $<HTMLInputElement>(d, 'input[type=file]');
+    $(d, '[data-a=import]').addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      const f = file.files?.[0];
+      file.value = '';
+      if (!f) return;
+      f.text().then((txt) => {
+        const got = importSave(txt);
+        if (!got) return msg('NOT A BLOCKY LEAGUE SAVE FILE', 'bad');
+        msg('');
+        asking(got);
+      }).catch(() => msg("Couldn't read that file.", 'bad'));
+    });
+    $(d, '[data-a=keep]').addEventListener('click', () => asking(null));
+    $(d, '[data-a=replace]').addEventListener('click', () => {
+      if (!pending) return;
+      const got = pending;
+      asking(null);
+      sfx.coin();
+      h.onImport(got);
+    });
+    $(d, '[data-a=back]').addEventListener('click', h.back);
   }
 
   /**

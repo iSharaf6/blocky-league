@@ -4,7 +4,7 @@ import {
   assistLevel, crossAim, crossTarget, CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, humanThroughTarget, isCrossPosition, onTarget, passAimPoint,
   pickReceiver, resolveKick, shotQuality, stickCurl, throwInPlan,
 } from './actions';
-import { assistRun, intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
+import { assistRun, intercept, isCrossingRestart, makeBrain, meetSpot, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { headerAtGoal, pickReceiver as pickPassMate, reaimShot, WILD_LIFT, type Launch } from './actions';
 import { Ball, groundPassSpeed, type BallHit } from './ball';
 import { blitzClear, blitzGoal, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, megaHands } from './blitz';
@@ -221,6 +221,37 @@ export const SHOOT_BAR = 0.85;
  */
 const RECEIVE_SPRINT = 1.2;
 const RECEIVE_MARKED = 3.5;
+/**
+ * ... to a point on the ball's line he can reach this long (s) before the ball (receivePoint): he's set and
+ * square to it as it comes, rather than meeting it head-on at 20 m/s and missing it (round 10, the owner's
+ * winger: 5 of 29 passes out to the wing rolled into touch off exactly that).
+ */
+const RECEIVE_EARLY = 0.3;
+/**
+ * ... unless one of theirs can reach the ball's line within RECEIVE_CONTEST s of it reaching that point: then
+ * it's a race, at the ball along its line (RACE_EAGER s ahead of the earliest point he can just reach when he's
+ * on the line, within RACE_ONLINE m of it), the way a marker on his back is beaten to it. (Waiting for it lost
+ * a race a man 4 m behind him in the lane won; racing ahead of the point from the side went past the ball:
+ * 6% more of the human's THROUGH presses to the other side in tests/human.test.ts.)
+ */
+const RECEIVE_CONTEST = 0.5;
+const RACE_EAGER = 0.25;
+const RACE_ONLINE = 1.5;
+/**
+ * The set spot: he eases in over RECEIVE_EASE m and sprints to it only from more than RECEIVE_SET_SPRINT m
+ * (a sprint to a spot 2.4 m off overshot it by 1.2 m and the ball went by), and it stays his spot while he's
+ * within RECEIVE_HOLD m of it.
+ */
+const RECEIVE_EASE = 2;
+const RECEIVE_SET_SPRINT = 3;
+const RECEIVE_HOLD = 2;
+/**
+ * A teammate standing in the lane of the human's pass to someone else lets it run past him (a dummy) for this
+ * long (s) after the strike, while the man it's for is set for it uncontested. (Round 10: 6 of 52 of the
+ * owner's balls out to the wing were taken by a man of ours a few metres from the passer, and the winger never
+ * saw them. Letting contested balls run too sent 2% more of the human's through-ball presses to the other side.)
+ */
+const DUMMY_T = 0.5;
 /**
  * The human's own pass is met cleanly by the man it's for: its first touch is judged as if it came in no faster
  * than this (m/s, relative to him): the arcade zip of humanGroundSpeed doesn't bounce off his shins.
@@ -585,6 +616,10 @@ export class Match {
   /** Where the ball was at the start of this step (swept contact checks). */
   private readonly ballPrev = { x: 0, y: 0, z: 0 };
   ballPath: { t: number; x: number; y: number; z: number }[] = [];
+  /** The kick ballPath was last predicted for as a flight (no owner); -1 while it's the carrier's line. */
+  private pathKick = -1;
+  /** The human's man's committed meeting point for the ground pass on its way to him (receivePoint). */
+  private meet: { kick: number; player: number; x: number; z: number; race: boolean } | null = null;
   keeperHoldTime = 1.4;
   /** Human-controlled player index, -1 when nobody. */
   active = -1;
@@ -1214,6 +1249,7 @@ export class Match {
     const path = this.ballPath;
     path.length = 0;
     const b = this.ball;
+    this.pathKick = b.owner >= 0 ? -1 : this.kickId;
     if (b.owner >= 0) {
       const o = this.players[b.owner];
       for (let i = 1; i <= 16; i++) {
@@ -1992,18 +2028,21 @@ export class Match {
       // control came to him (he just played the pass along it) isn't steering, and nor, just after the
       // switch, is a stick roughly along the run to it.
       if (this.passTarget === p.idx && this.receiveAssisted(p, pad, stickLen)) {
-        const i = intercept(this, p);
+        // (A ball in the air, a cross or a corner, he attacks as he always did: his aerial duels are as they were.)
+        const ground = this.kickKind === 'pass' || this.kickKind === 'through';
+        const i = this.receivePoint(p);
+        // A spot he's to be set on before the ball comes (not a race for it): he eases in and stops on it.
+        const set = ground && this.meet !== null && !this.meet.race;
         const tx = i.x - p.pos.x;
         const tz = i.z - p.pos.z;
         const tl = Math.hypot(tx, tz);
-        // (A ball in the air, a cross or a corner, he attacks as he always did: his aerial duels are as they were.)
-        const ground = this.kickKind === 'pass' || this.kickKind === 'through';
         if (tl > 0.3) {
-          const ease = ground ? 0.8 : 2;
+          const ease = set ? RECEIVE_EASE : ground ? 0.8 : 2;
           p.wantX = (tx / tl) * Math.min(1, tl / ease);
           p.wantZ = (tz / tl) * Math.min(1, tl / ease);
-          if (ground ? tl > RECEIVE_SPRINT || this.oppWithin(p.side, i.x, i.z, RECEIVE_MARKED) : tl > 2.5) p.sprint = true;
-        }
+          if (set) p.sprint = tl > RECEIVE_SET_SPRINT;
+          else if (ground ? tl > RECEIVE_SPRINT || this.oppWithin(p.side, i.x, i.z, RECEIVE_MARKED) : tl > 2.5) p.sprint = true;
+        } else if (set) p.sprint = false;
         // Square to a ball coming at him as he meets it (not one he's running onto).
         if (ground && tl < 1.5 && b.vel.x * (p.pos.x - b.pos.x) + b.vel.z * (p.pos.z - b.pos.z) > 0) {
           p.faceTarget = Math.atan2(b.pos.z - p.pos.z, b.pos.x - p.pos.x);
@@ -2294,11 +2333,83 @@ export class Match {
     p.faceTarget = run.face;
   }
 
+  /**
+   * Where the human's man meets the ground pass on its way to him: committed once the ball is away (ai.meetSpot,
+   * RECEIVE_EARLY s to spare, so he's there and set on its line before it arrives), held while he can still
+   * make it (or he's on it and it's nearly there), else picked again; the earliest point he can reach at all
+   * when nothing gives him that time (intercept, as before). A ball in the air: intercept.
+   */
+  private receivePoint(p: Player): { x: number; z: number } {
+    const kick = this.kickId;
+    const ground = this.kickKind === 'pass' || this.kickKind === 'through';
+    if (!ground || this.pathKick !== kick) {
+      this.meet = null;
+      return intercept(this, p);
+    }
+    let mt = this.meet;
+    if (mt && (mt.kick !== kick || mt.player !== p.idx)) mt = this.meet = null;
+    if (mt?.race) return this.racePoint(p);
+    if (mt) {
+      let near = Infinity;
+      let tb = 0;
+      for (const s of this.ballPath) {
+        const d = dist2(s.x, s.z, mt.x, mt.z);
+        if (d < near) {
+          near = d;
+          tb = s.t;
+        }
+      }
+      const dp = dist2(p.pos.x, p.pos.z, mt.x, mt.z);
+      const need = Math.max(0, dp - 0.55) / (p.top * 0.92) + 0.12;
+      // (On it, or a step off it: it's still the spot, a step to the line beats a chase to where it goes out.)
+      if (near < 1.2 && (need <= tb || dp < RECEIVE_HOLD)) {
+        if (!this.contested(p, tb)) return mt;
+      }
+    }
+    const s = meetSpot(this, p, RECEIVE_EARLY);
+    if (s && !this.contested(p, s.t)) {
+      this.meet = { kick, player: p.idx, x: s.x, z: s.z, race: false };
+      return s;
+    }
+    // A man of theirs can get to the ball's line before it gets to him: a race for it, all the way.
+    this.meet = { kick, player: p.idx, x: 0, z: 0, race: true };
+    return this.racePoint(p);
+  }
+
+  /** Can any opponent reach the ball's line within RECEIVE_CONTEST s of the ball reaching his spot at `t`? */
+  private contested(p: Player, t: number): boolean {
+    for (const o of this.bySide[otherSide(p.side)]) {
+      if (o.sentOff || o.state !== 'move') continue;
+      if (intercept(this, o).t < t + RECEIVE_CONTEST) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The race for a contested ball: the earliest point on its line he can just reach (intercept); on its line
+   * already (within RACE_ONLINE m, the ball coming at him), the point RACE_EAGER s ahead of that instead. Late
+   * there is no harm head-on, the ball comes on to him along the line; from the side it would have gone by.
+   */
+  private racePoint(p: Player): { x: number; z: number } {
+    const i = intercept(this, p);
+    const b = this.ball;
+    const bs = b.hspeed();
+    if (bs < 1) return i;
+    const rx = p.pos.x - b.pos.x;
+    const rz = p.pos.z - b.pos.z;
+    const along = (rx * b.vel.x + rz * b.vel.z) / bs;
+    const lat = Math.abs(rx * b.vel.z - rz * b.vel.x) / bs;
+    if (along <= 0 || lat > RACE_ONLINE) return i;
+    const t = Math.max(0.1, i.t - RACE_EAGER);
+    for (const s of this.ballPath) if (s.t >= t - 1e-6 && s.y <= 2.1) return { x: s.x, z: s.z };
+    return i;
+  }
+
   /** Does the assisted receive run the human's man onto a pass coming to him (see applyHuman)? */
   private receiveAssisted(p: Player, pad: Pad, stickLen: number): boolean {
     if (stickLen < 0.2 || this.latch) return true;
     if (!this.moveAssist || this.sinceSwitch >= MOVE_ASSIST_T) return false;
-    const i = intercept(this, p);
+    const i = this.receivePoint(p);
     const tx = i.x - p.pos.x;
     const tz = i.z - p.pos.z;
     const tl = Math.hypot(tx, tz);
@@ -3351,11 +3462,17 @@ export class Match {
     const fresh = this.kickId > 0 &&
       (dist2(this.kickX, this.kickZ, b.pos.x, b.pos.z) < 3.8 || this.shotClock < 1.2);
     const wallLive = this.wallKick === this.kickId && this.sinceKick < 0.9;
+    // The human's pass to a man beyond a teammate, with that man set for it and nobody of theirs near its
+    // line (receivePoint): the teammate lets it run (a dummy) for DUMMY_T s. A contested ball he takes.
+    const mt = this.meet;
+    const dummy = this.humanPassKick === this.kickId && this.passTarget >= 0 && this.sinceKick < DUMMY_T &&
+      mt !== null && mt.kick === this.kickId && mt.player === this.passTarget && !mt.race;
     for (const p of this.players) {
       if (p.state !== 'move' || p.kickCooldown > 0 || p.sentOff) continue;
       if (p.order?.firstTime) continue;
       if (p.blockKick === this.kickId) continue;
       if (wallLive && this.wall.includes(p.idx)) continue;
+      if (dummy && p.side === this.kickSide && p.idx !== this.passTarget && !p.isKeeper) continue;
       if (fresh && p.side !== this.kickSide && hs > 4) {
         const fx = p.footX() - b.pos.x;
         const fz = p.footZ() - b.pos.z;

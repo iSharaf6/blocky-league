@@ -9,6 +9,7 @@ import {
   type CareerState, type Fixture,
 } from '../src/meta/career';
 import { dedupeSurnames, KIT_COLORS, makePlayer, makeTeam, PRESET_CLUBS, randomClubSeed, surnameOf, uniqueName } from '../src/meta/data';
+import { defaultMarket, playerValue, quickSaleValue } from '../src/meta/market';
 import { Rng } from '../src/core/rng';
 import { FORMATIONS } from '../src/sim/formations';
 import { overall, type Kit } from '../src/sim/types';
@@ -279,7 +280,10 @@ describe('matchday flow', () => {
     const me = leagueTable(st).find((r) => r.id === YOU)!;
     expect(me).toMatchObject({ P: 1, W: 1, GF: 2, GA: 1, PTS: 3 });
     expect(leagueTable(st).every((r) => r.P === 1)).toBe(true);
+    // Free agents stay on the market for two to four weeks, so the list has turned over after four.
+    for (let i = 0; i < 3; i++) playMine(st, wallet, 1, 1);
     expect(st.market.map((p) => p.id)).not.toEqual(market0);
+    expect(st.market.map((p) => p.id).some((id) => market0.includes(id))).toBe(false);
   });
 
   it('refuses stale or repeated results', () => {
@@ -352,7 +356,7 @@ describe('promotion and relegation', () => {
 });
 
 describe('transfers', () => {
-  it('lists 6 players rated around the division level at round(ovr²·0.9/10)·10', () => {
+  it('lists 4 free agents rated around the division level at round(ovr²·0.25/10)·10', () => {
     for (let div = 1; div <= 6; div++) {
       const st = freshCareer(31, div);
       for (let md = 0; md < 5; md++) {
@@ -366,7 +370,7 @@ describe('transfers', () => {
     }
   });
 
-  it('buying needs enough coins and a squad under 22', () => {
+  it('buying a free agent needs enough coins and a squad under SQUAD_MAX', () => {
     const st = freshCareer(4);
     const price = playerPrice(st.market[0]);
     expect(canBuy(st, price - 1, 0)).toEqual({ ok: false, reason: 'no-coins' });
@@ -387,7 +391,7 @@ describe('transfers', () => {
     expect(canBuy(st, rich.coins, 42)).toEqual({ ok: false, reason: 'not-found' });
   });
 
-  it('selling pays 45%, keeps 14 players and at least one keeper', () => {
+  it('a quick sale pays 45% of value, keeps 14 players and at least one keeper', () => {
     const st = freshCareer(4);
     const club = st.club!;
     const gk = club.squad.find((p) => p.role === 'GK')!;
@@ -396,7 +400,9 @@ describe('transfers', () => {
     const wallet = { coins: 0 };
     const r = sellPlayer(st, wallet, starter.id);
     expect(r).toEqual({ ok: true, delta: sellValue(starter) });
-    expect(sellValue(starter)).toBe(Math.round((playerPrice(starter) * 0.45) / 10) * 10);
+    expect(sellValue(starter)).toBe(quickSaleValue(starter));
+    expect(sellValue(starter)).toBe(Math.round((playerValue(starter) * 0.45) / 10) * 10);
+    expect(playerValue(starter)).toBeGreaterThan(playerPrice(starter) * 0.5);
     expect(wallet.coins).toBe(sellValue(starter));
     expect(club.squad).toHaveLength(15);
     expect(club.squad.some((p) => p.id === starter.id)).toBe(false);
@@ -451,7 +457,7 @@ describe('save migration', () => {
   it('turns a null career into safe defaults', () => {
     const st = migrateCareer(null, 1234);
     expect(st).toEqual({
-      version: CAREER_VERSION, seed: 1234, club: null, season: null, summary: null, market: [], marketKey: '', stadium: 0, history: [], notice: null,
+      version: CAREER_VERSION, seed: 1234, club: null, season: null, summary: null, market: [], marketKey: '', tm: defaultMarket(), stadium: 0, history: [], notice: null,
     });
   });
 

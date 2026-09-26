@@ -1,8 +1,8 @@
 import { angleDiff, clamp, dist2, pointSegDist } from '../core/math';
 import { Ball, groundPassSpeed, rollTime, solveLob, type BallHit } from './ball';
 import {
-  AIR_DRAG, BALL_R, BOUNCE, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SPIN_DECAY, SPRINT_SPEED,
-  TEMPO,
+  AIR_DRAG, BALL_R, BOUNCE, BOX_W, DECEL, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SPIN_DECAY,
+  SPRINT_SPEED, TEMPO,
 } from './constants';
 import type { Match } from './match';
 import type { KickOrder, Player } from './player';
@@ -421,14 +421,18 @@ export function laneRace(m: Match, side: number, ax: number, az: number, bx: num
 
 /**
  * Where a through ball to runner `r` is played: into the space ahead of him along his run, biased
- * towards goal, `lead` m on (6 m plus a bit for his pace unless given).
+ * towards goal, `lead` m on (6 m plus a bit for his pace unless given). `wide` (the human's ball, and the
+ * run his THROUGH press calls): a man within WING_LEAD_IN m of a touchline is led down the line, never
+ * out towards it (the owner: a winger's ball led diagonally rolled into touch, or was clamped onto the
+ * line where the full-back stood).
  */
-export function throughLead(m: Match, r: Player, lead?: number): { x: number; z: number } {
+export function throughLead(m: Match, r: Player, lead?: number, wide = false): { x: number; z: number } {
   const ad = m.attackDir(r.side);
   const rs = Math.hypot(r.vel.x, r.vel.z);
   let rx = rs > 1.5 ? r.vel.x / rs : ad;
-  const rz = rs > 1.5 ? r.vel.z / rs : 0;
+  let rz = rs > 1.5 ? r.vel.z / rs : 0;
   rx = rx * 0.6 + ad * 0.4;
+  if (wide && Math.abs(r.pos.z) > HALF_W - WING_LEAD_IN && rz * Math.sign(r.pos.z) > 0) rz = 0;
   const rl = Math.hypot(rx, rz) || 1;
   const l = lead ?? 6 + rs * 0.7;
   return {
@@ -436,6 +440,8 @@ export function throughLead(m: Match, r: Player, lead?: number): { x: number; z:
     z: clamp(r.pos.z + (rz / rl) * l, -HALF_W + 1.5, HALF_W - 1.5),
   };
 }
+/** A runner this close (m) to a touchline gets a human's through ball straight down the line (throughLead). */
+const WING_LEAD_IN = 9;
 
 /**
  * A human's through ball to `t`: the rolling ball's lane to the space ahead of him, and the race for
@@ -484,7 +490,7 @@ function humanThrough(m: Match, p: Player, t: Player): { x: number; z: number; r
   const rs = Math.hypot(t.vel.x, t.vel.z);
   let best: { x: number; z: number; risk: number } | null = null;
   for (const l of HUMAN_THROUGH_LEADS) {
-    const pt = throughLead(m, t, l + rs * 0.7);
+    const pt = throughLead(m, t, l + rs * 0.7, true);
     const risk = throughSpaceRisk(m, p, t, pt);
     if (risk === null) continue;
     if (!best || risk < best.risk - 0.05) best = { ...pt, risk };
@@ -753,23 +759,84 @@ function humanPass(m: Match, p: Player, order: KickOrder, dir: { x: number; z: n
     return launch(ux * sp, 0, uz * sp, 0, 0, 0, spaceReceiver(m, p, ux, uz, sp), 'pass', clamp(sp / 28, 0, 1));
   }
   const r = m.players[tgt];
-  let tx = r.pos.x;
-  let tz = r.pos.z;
-  let sp = HUMAN_GROUND_MIN;
-  // Lead him on his run: iterate the travel time (at the pace it's actually struck).
-  for (let i = 0; i < 3; i++) {
-    const d = Math.max(1, dist2(b.x, b.z, tx, tz));
-    sp = overhitPace(humanGroundSpeed(d), over);
-    const t = Math.min(rollTime(sp, d), 3);
-    tx = r.pos.x + r.vel.x * t * 0.85;
-    tz = r.pos.z + r.vel.z * t * 0.85;
-  }
-  tx = clamp(tx, -HALF_L + 1, HALF_L - 1);
-  tz = clamp(tz, -HALF_W + 0.8, HALF_W - 0.8);
+  const lead = humanLead(m, p, r, over);
+  const tx = lead.x;
+  const tz = lead.z;
+  let sp = lead.sp;
   const line = Math.atan2(tz - b.z, tx - b.x);
   const a = line + m.rng.gauss() * humanPassSpread(m, p, level, line, speed, order.bodyOff);
   sp *= 1 + m.rng.gauss() * (1 - p.stat.passing / 100) * (level === 'assisted' ? 0.03 : 0.05);
   return launch(Math.cos(a) * sp, 0, Math.sin(a) * sp, 0, 0, 0, tgt, 'pass', clamp(sp / 28, 0, 1));
+}
+
+/**
+ * Shares of the receiver's run a human's pass may be led by (HUMAN_LEADS: of where he'd be when the ball
+ * arrives), the time to spare he needs at the point (LEAD_EARLY s: he's set on the ball's line when it comes,
+ * see Match.receivePoint), how far inside a touchline the point is kept (LEAD_IN m; it was 0.8, and a ball led
+ * out towards the line rolled into touch when the winger wasn't square to it) and the most an open man's
+ * lead may be cut out (LEAD_RISKY, the lane models' risk).
+ */
+const HUMAN_LEADS = [1, 0.7, 0.45, 0.25, 0.1, 0];
+const LEAD_EARLY = 0.25;
+export const LEAD_IN = 1.5;
+const LEAD_RISKY = 0.45;
+/** A receiver whose run is more than this (cosine) towards the ball is checking to it: no lead. */
+const LEAD_CHECKING = 0.3;
+
+/**
+ * Where a human's pass to `r` is aimed, and how hard: into his run as far as is safe. For each share of his
+ * run (HUMAN_LEADS) the point is where he'd be when the ball arrives, at the pace it's struck over that
+ * distance (solved three times over), kept LEAD_IN m inside the touchline. It's safe when he can be there
+ * LEAD_EARLY s before the ball (his run yields to the reception: a man sprinting away from a ball to his feet
+ * has to stop and come back, DECEL) and the lane to it is no worse than the one to his feet (interceptRisk,
+ * laneRace: the full-back ahead of a winger, say) and under LEAD_RISKY. The longest safe lead is played;
+ * with none safe, the least risky one he can reach. (Round 10: every pass led him 0.85 of the way, which put
+ * a sprinting winger's ball at the full-back's feet, 1-of-48 completed in tests/wing.test.ts.)
+ */
+function humanLead(m: Match, p: Player, r: Player, over: number | undefined): { x: number; z: number; sp: number } {
+  const b = m.ball.pos;
+  const rs = Math.hypot(r.vel.x, r.vel.z);
+  const top = r.top * 0.92;
+  // A man coming to the ball (checking towards it: the run the press called) is played to feet, not led on.
+  const db = dist2(b.x, b.z, r.pos.x, r.pos.z) || 1;
+  const toBall = rs > 0.5 ? (r.vel.x * (b.x - r.pos.x) + r.vel.z * (b.z - r.pos.z)) / (rs * db) : 0;
+  const opts: { x: number; z: number; sp: number; risk: number; late: number }[] = [];
+  for (const f of HUMAN_LEADS) {
+    if (f > 0 && (rs < 1.5 || toBall > LEAD_CHECKING)) continue;
+    let tx = r.pos.x;
+    let tz = r.pos.z;
+    let sp = HUMAN_GROUND_MIN;
+    let t = 0;
+    for (let i = 0; i < 3; i++) {
+      const d = Math.max(1, dist2(b.x, b.z, tx, tz));
+      sp = overhitPace(humanGroundSpeed(d), over);
+      t = Math.min(rollTime(sp, d), 3);
+      tx = clamp(r.pos.x + r.vel.x * t * f, -HALF_L + 1, HALF_L - 1);
+      tz = clamp(r.pos.z + r.vel.z * t * f, -HALF_W + LEAD_IN, HALF_W - LEAD_IN);
+    }
+    // His time to the point: a run at it, or a stop and a step back when he's going the other way.
+    const dx = tx - r.pos.x;
+    const dz = tz - r.pos.z;
+    const dd = Math.hypot(dx, dz);
+    const away = dd > 0.1 ? -(r.vel.x * dx + r.vel.z * dz) / dd : rs;
+    let tr = 0.12;
+    if (away > 0) tr += away / DECEL + Math.max(0, dd + (away * away) / (2 * DECEL) - 0.55) / top;
+    else tr += Math.max(0, dd - 0.55) / top;
+    const late = Math.max(0, tr + LEAD_EARLY - t);
+    const risk = Math.max(
+      laneRisk(m, p.side, b.x, b.z, tx, tz) * 0.8,
+      interceptRisk(m, p.side, b.x, b.z, tx, tz, sp),
+      laneRace(m, p.side, b.x, b.z, tx, tz, sp),
+    );
+    opts.push({ x: tx, z: tz, sp, risk, late });
+  }
+  // The longest lead that's safe, and no riskier than his feet...
+  const feetRisk = opts[opts.length - 1].risk;
+  for (const o of opts) if (o.late <= 0 && o.risk <= Math.min(LEAD_RISKY, feetRisk + 0.1)) return o;
+  // ... else the least risky point he can reach (a late one only when nothing else is left).
+  let best = opts[0];
+  for (const o of opts) if (o.late < best.late - 1e-6 || (o.late <= best.late + 1e-6 && o.risk < best.risk)) best = o;
+  return best;
 }
 
 /**
@@ -782,14 +849,16 @@ function semiThrough(m: Match, p: Player, r: Player): { x: number; z: number; ri
   const rs = Math.hypot(r.vel.x, r.vel.z);
   let run: { x: number; z: number; risk: number } | null = null;
   if (rs >= 2) {
+    // (A wide man drifting out is led down the line, not into touch: throughLead's `wide`.)
+    const vz = Math.abs(r.pos.z) > HALF_W - WING_LEAD_IN && r.vel.z * Math.sign(r.pos.z) > 0 ? 0 : r.vel.z;
     let tx = r.pos.x + r.vel.x;
-    let tz = r.pos.z + r.vel.z;
+    let tz = r.pos.z + vz;
     for (let i = 0; i < 3; i++) {
       const d = Math.max(2, dist2(b.x, b.z, tx, tz));
       // (Nobody holds a straight line for long: a lead of more than SEMI_THROUGH_T s of his run is a guess.)
       const t = Math.min(rollTime(throughSpeed(d), d), SEMI_THROUGH_T);
       tx = r.pos.x + r.vel.x * t + (r.vel.x / rs) * 1.5;
-      tz = r.pos.z + r.vel.z * t + (r.vel.z / rs) * 1.5;
+      tz = r.pos.z + vz * t + (vz / rs) * 1.5;
     }
     const pt = { x: clamp(tx, -HALF_L + 2, HALF_L - 2), z: clamp(tz, -HALF_W + 1.5, HALF_W - 1.5) };
     const risk = throughSpaceRisk(m, p, r, pt);

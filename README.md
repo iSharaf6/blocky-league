@@ -1,6 +1,8 @@
 # Blocky League
 
-Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Crossy-Road-style toy world, built with **TypeScript + Three.js + Vite** as a fully static build. There's no server and no accounts; progress lives in `localStorage`.
+by Calynx · Islam Sharaf
+
+Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Crossy-Road-style toy world, built with **TypeScript + Three.js + Vite** as a fully static build. Progress lives in `localStorage` (Settings › Backup exports and imports it as a file); signing in is optional, for cloud saves (Supabase, see [`docs/CLOUD.md`](docs/CLOUD.md)), and the ACCOUNT button only appears in builds with a backend configured.
 
 **Playtest:** [Play Blocky League](https://isharaf6.github.io/blocky-league/). Pushes to `main` run the gameplay/audio checks, build the web package, and deploy it through `.github/workflows/pages.yml`.
 
@@ -134,4 +136,4 @@ The OFL and MIT licences require their notices to accompany redistributed copies
 
 **Game code licence:** the repository doesn't yet include a `LICENSE` file, so all rights are reserved by the author by default. Add one before open-sourcing. Portal and store agreements (CrazyGames, Poki, app stores) need you to own, or have the rights to, everything in the build, and the dependencies above permit that.
 
-Privacy: see [`public/privacy.html`](public/privacy.html). The game stores progress only in the browser's `localStorage`, has no accounts and no analytics of its own, and portal SDKs process data under their own policies.
+Privacy: see [`public/privacy.html`](public/privacy.html). The game stores progress in the browser's `localStorage`; if a player chooses to sign in, the save JSON alone is also kept in the cloud, only while signed in (what the sign-in itself stores is listed in [`docs/CLOUD.md`](docs/CLOUD.md)). No analytics of its own; portal SDKs process data under their own policies.

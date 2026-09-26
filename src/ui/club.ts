@@ -14,6 +14,9 @@ import {
 } from '../meta/career';
 import { NAME_DISALLOWED, cleanName, fallbackShort, isNameAllowed, nameProblem } from '../core/names';
 import { KIT_COLORS } from '../meta/data';
+import { SHORTLIST_MAX } from '../meta/market';
+import { openMarket } from './market';
+import { sep } from './text';
 import { cssHex } from '../render/palette';
 import { STADIUM_LEVELS } from '../render/stadium';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
@@ -180,6 +183,12 @@ export function failText(reason: TxFail): string {
     case 'maxed': return 'ALREADY MAXED';
     case 'not-found': return 'PLAYER NOT AVAILABLE';
     case 'no-club': return 'CREATE A CLUB FIRST';
+    case 'window-closed': return 'TRANSFER WINDOW CLOSED';
+    case 'wages': return 'OVER THE WAGE BUDGET';
+    case 'pending': return 'ALREADY IN TALKS';
+    case 'bad-amount': return 'OFFER 60% TO 110% OF ASKING';
+    case 'shortlist-full': return `SHORTLIST FULL (${SHORTLIST_MAX} MAX)`;
+    case 'expired': return 'THAT DEAL HAS GONE';
   }
 }
 
@@ -332,7 +341,8 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
 
 // ------------------------------------------------------------------ club hub
 
-export type ClubTab = 'squad' | 'train' | 'kit' | 'stadium';
+/** 'market' opens the transfer market screen (ui/market.ts) with BACK returning to the club hub. */
+export type ClubTab = 'squad' | 'train' | 'kit' | 'stadium' | 'market';
 
 export interface ClubOpts {
   tab?: ClubTab;
@@ -353,10 +363,15 @@ export function openClub(app: AppContext, opts: ClubOpts = {}): void {
     clubCreate(app, () => openClub(app, opts), back);
     return;
   }
-  clubHub(app, st, st.club, opts.tab ?? 'squad', back, opts.backLabel ?? 'MENU');
+  const backLabel = opts.backLabel ?? 'MENU';
+  if (opts.tab === 'market') {
+    openMarket(app, { backLabel, onBack: () => clubHub(app, st, st.club!, 'squad', back, backLabel) });
+    return;
+  }
+  clubHub(app, st, st.club, opts.tab ?? 'squad', back, backLabel);
 }
 
-const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['train', 'TRAIN'], ['kit', 'KIT'], ['stadium', 'STADIUM']];
+const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['train', 'TRAIN'], ['market', 'MARKET'], ['kit', 'KIT'], ['stadium', 'STADIUM']];
 
 function lastName(name: string): string {
   const parts = name.split(' ');
@@ -420,7 +435,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       </div>
       <h3 class="mc-h">STARTING XI</h3>
       <div class="mc-list">${club.squad.slice(0, 11).map((p, i) => playerRow(p, i, 'pick', i === sel)).join('')}</div>
-      <h3 class="mc-h">BENCH · ${club.squad.length - 11}</h3>
+      <h3 class="mc-h">BENCH${sep()}${club.squad.length - 11}</h3>
       <div class="mc-list">${club.squad.slice(11).map((p, i) => playerRow(p, i + 11, 'pick', i + 11 === sel)).join('')}</div>`;
   };
 
@@ -437,7 +452,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
         <span><i class="nm-full">${STAT_NAME[k]}</i><i class="nm-short">${STAT_SHORT[k]}</i></span>
         <div class="mc-meter"><i style="width:${v}%"></i></div>
         <b>${v}</b>
-        <button class="btn btn-go mc-trainbtn ${poor ? 'poor' : ''}" data-a="train" data-k="${k}" ${maxed ? 'disabled' : ''}>${maxed ? 'MAX' : `+${TRAIN_STEP} · ${fmt(cost)}`}</button>
+        <button class="btn btn-go mc-trainbtn ${poor ? 'poor' : ''}" data-a="train" data-k="${k}" ${maxed ? 'disabled' : ''}>${maxed ? 'MAX' : `+${TRAIN_STEP}${sep()}${fmt(cost)}`}</button>
       </div>`;
     }).join('');
     return `<div class="mc-tcard">
@@ -460,7 +475,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           <label class="mc-field"><span>CLUB NAME</span><input data-in="cname" maxlength="18" value="${esc(club.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
           <label class="mc-field mc-short"><span>SHORT</span><input data-in="cshort" maxlength="3" value="${esc(club.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
         </div>
-        <h3 class="mc-h">KIT · CHANGES SAVE AUTOMATICALLY</h3>
+        <h3 class="mc-h">KIT${sep()}CHANGES SAVE AUTOMATICALLY</h3>
         ${kitEditorHtml(club.kit, part.v)}
       </div>
     </div>`;
@@ -503,7 +518,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
         </div>
       </div>
       <p class="mc-hint">A bigger ground packs in more fans and pays more coins for every home match.</p>
-      <div class="btn-row"><button class="btn btn-go btn-lg ${app.save.coins < cost ? 'poor' : ''}" data-a="upgrade" ${maxed ? 'disabled' : ''}>${maxed ? 'FULLY UPGRADED' : `UPGRADE · ${fmt(cost)}`}</button></div>`;
+      <div class="btn-row"><button class="btn btn-go btn-lg ${app.save.coins < cost ? 'poor' : ''}" data-a="upgrade" ${maxed ? 'disabled' : ''}>${maxed ? 'FULLY UPGRADED' : `UPGRADE${sep()}${fmt(cost)}`}</button></div>`;
   };
 
   /** After a render: point the previews at the fresh canvases (or free them off the STADIUM tab). */
@@ -525,7 +540,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       `${topBar(backLabel, 'MY CLUB', esc(club.name.toUpperCase()), app.save.coins)}
       <div class="mc-clubbar">
         ${shirtArt(club.kit, 4)}
-        <div class="mc-clubtxt"><b>${esc(club.name)}</b><span>${esc(club.short)} · ${club.formation} · ${club.squad.length} PLAYERS · ${STADIUM_NAMES[st.stadium]}</span></div>
+        <div class="mc-clubtxt"><b>${esc(club.name)}</b><span>${esc(club.short)}${sep()}${club.formation}${sep()}${club.squad.length} PLAYERS${sep()}${STADIUM_NAMES[st.stadium]}</span></div>
         <div class="mc-ovrbox"><small>OVR</small><b>${clubRating(club)}</b></div>
       </div>
       <div class="seg mc-tabs">${TABS.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}</button>`).join('')}</div>
@@ -533,7 +548,12 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       {
         back,
         tab: (el) => {
-          tab = el.dataset.v as ClubTab;
+          const next = el.dataset.v as ClubTab;
+          if (next === 'market') {
+            openMarket(app, { backLabel: 'CLUB', onBack: () => clubHub(app, st, club, tab, back, backLabel) });
+            return;
+          }
+          tab = next;
           sel = -1;
           scr.panel.scrollTop = 0;
           draw();
@@ -589,7 +609,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           sfx.coin();
           draw();
           const now = overall(p);
-          scr.toast(`${STAT_SHORT[k]} ${was} → ${p.stats[k]}${now !== ovr ? ` · OVR ${ovr} → ${now}` : ''}`, 'good');
+          scr.toast(`${STAT_SHORT[k]} ${was} → ${p.stats[k]}${now !== ovr ? ` / OVR ${ovr} → ${now}` : ''}`, 'good');
         },
         ...kitHandlers(club.kit, part, () => {
           app.persist();

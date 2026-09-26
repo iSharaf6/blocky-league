@@ -1,9 +1,10 @@
 import { sfx } from '../audio/sfx';
 import type { Input } from '../core/input';
-import type { CamZoom } from '../core/save';
+import { CELEBRATION_IDS, type CamZoom, type CelebrationId } from '../core/save';
 import { clamp, damp, smoothstep } from '../core/math';
 import { BlitzFx, POWER_COLOR, POWER_LIGHT } from '../render/blitz';
 import { CameraRig } from '../render/cameraRig';
+import { AI_CELEBRATIONS, type CelebCue } from '../render/celebration';
 import { setCharacterFill, setCharacterHemiFill, setCharacterWhiteBalance } from '../render/characters';
 import { Effects } from '../render/effects';
 import { MatchView } from '../render/matchView';
@@ -335,6 +336,7 @@ export class MatchSession {
     this.cam.touchLayout = !this.demo && isTouchDevice();
     this.cam.setZoom(opt.camZoom ?? 'normal');
     this.view.setBallSkin(opt.ballSkin);
+    this.view.celeb.onCue = (c) => this.celebCue(c);
     this.cam.setMode(this.demo ? 'menu' : 'intro');
     if (!this.demo && !opt.skipIntro) this.introLeft = INTRO_S;
     if (!this.demo) {
@@ -597,8 +599,12 @@ export class MatchSession {
       this.celebG = damp(this.celebG, Math.min(3.5, g), 2.5, this.paused ? 0 : dt);
       ax = cx;
       az = cz;
-      avx = (sc.vel.x * 2) / n;
-      avz = (sc.vel.z * 2) / n;
+      // (A choreographed celebration draws the scorer somewhere the sim isn't running him: lead by what is drawn.)
+      const rig = this.view.celeb;
+      avx = ((rig.active ? rig.heroVx : sc.vel.x) * 2) / n;
+      avz = ((rig.active ? rig.heroVz : sc.vel.z) * 2) / n;
+      // (A move that wants a particular angle, e.g. the backflip in profile, tells the camera its "front".)
+      if (rig.active && rig.camFacing !== undefined) groupFacing = rig.camFacing;
       subject = si;
       group = this.celebG;
     }
@@ -644,18 +650,24 @@ export class MatchSession {
     const m = this.match;
     if (m.phase === 'goal') {
       if (this.demo) {
-        if (m.phaseT > 3.2) m.resumeAfterGoal();
+        if (m.phaseT > Math.max(3.2, this.view.celeb.holdS)) {
+          this.view.celeb.end();
+          m.resumeAfterGoal();
+        }
         return;
       }
       // A beat on the wide shot (the ball in the net), then cut to the scorer and his team-mates.
       if (!this.replay && !this.replayDone && this.cam.mode !== 'celebrate' && m.phaseT > GOAL_WIDE_S) this.cam.setMode('celebrate');
       // The replay rolls for a goal worth seeing again; a plain one goes straight from the celebration to the
       // kick-off (round 9's critic: every goal replayed cost 8.5 s, ~7% of a two-minute half).
-      if (m.phaseT > (this.replayWanted ? REPLAY_AT : NO_REPLAY_AT) && !this.replayDone) {
+      // (An iconic celebration holds the replay / kick-off until its moment has landed: celeb.holdS.)
+      const at = Math.max(this.replayWanted ? REPLAY_AT : NO_REPLAY_AT, this.view.celeb.holdS);
+      if (m.phaseT > at && !this.replayDone) {
         if (this.replayWanted) this.startReplay();
         else this.replayDone = true;
       } else if (this.replayDone) {
         this.replayDone = false;
+        this.view.celeb.end();
         m.resumeAfterGoal();
         this.cam.setMode('broadcast');
         this.view.setMarkerVisible(m.cfg.humanSide >= 0);
@@ -733,7 +745,59 @@ export class MatchSession {
     return out.sort((a, b) => b.rating - a.rating || b.goals - a.goals);
   }
 
+  /**
+   * Hand the scoring side's celebration to the choreography rig (render/celebration.ts): the human's chosen
+   * move (SessionOptions.celebration), a random one of the AI's for the other side. 'classic' (and an unknown
+   * id) leaves the sim's own celebration to run.
+   */
+  private startCelebration(side: Side): void {
+    const m = this.match;
+    const rig = this.view.celeb;
+    rig.end();
+    if (m.phase !== 'goal' || m.celebHero < 0) return;
+    const chosen = this.opt.celebration;
+    const mine = side === m.cfg.humanSide && chosen && (CELEBRATION_IDS as readonly string[]).includes(chosen) ? (chosen as CelebrationId) : null;
+    const id = mine ?? AI_CELEBRATIONS[Math.floor(Math.random() * AI_CELEBRATIONS.length)];
+    if (id === 'classic') return;
+    const hero = m.players[m.celebHero];
+    const cast = m.teamPlayers(side)
+      .filter((p) => !p.isKeeper && !isSentOff(p) && p.state === 'celebrate')
+      .map((p) => ({ idx: p.idx, x: p.pos.x, z: p.pos.z, facing: p.facing, vx: p.vel.x, vz: p.vel.z, runPhase: p.runPhase }));
+    rig.begin(id, hero.idx, cast, Math.sign(hero.pos.x) || 1);
+  }
+
+  /** The choreography's moments: grass off the knee slide, the flip's whoosh, the landing's dust, the pile's thuds and roar. */
+  private celebCue(c: CelebCue): void {
+    const fx = this.effects;
+    switch (c.kind) {
+      case 'spray':
+        fx.dust(c.x - c.ux * 0.4, c.z - c.uz * 0.4, 1, 0.7, -c.ux * 1.4, -c.uz * 1.4, 0.1);
+        if (Math.random() < 0.6) fx.grass(c.x - c.ux * 0.3, c.z - c.uz * 0.3, 2, 0.7);
+        break;
+      case 'whoosh':
+        sfx.whoosh();
+        fx.dust(c.x, c.z, 5, 0.5);
+        break;
+      case 'land':
+        fx.dust(c.x, c.z, 9, 0.8);
+        fx.grass(c.x, c.z, 4, 0.5);
+        sfx.flop();
+        break;
+      case 'thud':
+        fx.dust(c.x, c.z, 7, 0.7);
+        sfx.flop();
+        break;
+      case 'roar':
+        sfx.cheer(1.6);
+        this.goalHypeT = Math.max(this.goalHypeT, 4);
+        break;
+      default:
+        break;
+    }
+  }
+
   private startReplay(): void {
+    this.view.celeb.end();
     const lead = Math.round(REPLAY_LEAD_S * 60);
     const tail = Math.round(REPLAY_TAIL_S * 60);
     const since = this.recorded - this.goalFrame;
@@ -877,6 +941,7 @@ export class MatchSession {
           this.cam.kick(SHAKE_GOAL);
           this.view.setMarkerVisible(false);
           this.celebG = 0;
+          this.startCelebration(side);
           void s;
           break;
         }

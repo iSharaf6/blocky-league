@@ -7,7 +7,12 @@ import { safeName, safeShort } from '../core/names';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, teamRating } from '../sim/types';
 import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDef } from '../sim/types';
-import { KIT_COLORS, dedupeSurnames, makePlayer, makeTeam, randomClubSeed, resolveKitClash, surnameOf } from './data';
+import { KIT_COLORS, dedupeSurnames, makePlayer, makeTeam, randomClubSeed, resolveKitClash } from './data';
+// Runtime import cycle (market.ts imports this file): only ever used inside functions, never at module top level.
+import {
+  MORALE_DIP, ageSquad, canBid, clearMarket, defaultMarket, marketTick, placeBid, quickSaleValue, syncLegacyMarket,
+  type Bid, type Listing, type MarketState, type NewsKind,
+} from './market';
 
 export const CAREER_VERSION = 1 as const;
 export const TOP_DIVISION = 1;
@@ -15,8 +20,9 @@ export const BOTTOM_DIVISION = 6;
 export const CLUBS_PER_DIVISION = 8;
 export const MATCHDAYS = CLUBS_PER_DIVISION - 1;
 export const SQUAD_MIN = 14;
-export const SQUAD_MAX = 22;
-export const MARKET_SIZE = 6;
+export const SQUAD_MAX = 23;
+/** Free agents on the market at any time (the legacy `state.market` view; see meta/market.ts FREE_AGENTS). */
+export const MARKET_SIZE = 4;
 export const STADIUM_MAX = 5;
 export const STAT_CAP = 99;
 export const TRAIN_STEP = 2;
@@ -76,6 +82,10 @@ export interface LeagueClub {
   formation: FormationId;
   level: number;
   rating: number;
+  /** Ids of generated players sold on the transfer market (no longer in the squad). */
+  out?: string[];
+  /** Players signed on the transfer market (added to the generated squad). */
+  in?: PlayerDef[];
 }
 
 export interface Fixture {
@@ -129,9 +139,12 @@ export interface CareerState {
   season: SeasonState | null;
   /** Set when a season has just finished (prize already paid) until the player starts the next one. */
   summary: SeasonSummary | null;
+  /** Legacy view for the career hub: the free agents on the market (a projection of `tm`, kept in sync). */
   market: PlayerDef[];
   /** `${season}:${matchday}` the market was generated for. */
   marketKey: string;
+  /** The transfer market (meta/market.ts): listings, offers, sales, shortlist, news. */
+  tm: MarketState;
   stadium: number;
   history: HistoryEntry[];
   /** One-shot message shown on the career hub (e.g. forfeit after quitting). */
@@ -142,7 +155,9 @@ export interface Wallet {
   coins: number;
 }
 
-export type TxFail = 'no-club' | 'not-found' | 'no-coins' | 'squad-full' | 'min-squad' | 'last-gk' | 'maxed';
+export type TxFail =
+  | 'no-club' | 'not-found' | 'no-coins' | 'squad-full' | 'min-squad' | 'last-gk' | 'maxed'
+  | 'window-closed' | 'wages' | 'pending' | 'bad-amount' | 'shortlist-full' | 'expired';
 export type TxResult = { ok: true; delta: number } | { ok: false; reason: TxFail };
 
 export interface TableRow {
@@ -309,18 +324,46 @@ function bestIndex(pool: PlayerDef[], ok: (p: PlayerDef) => boolean): number {
 
 const ROLE_ORDER: Record<Role, number> = { GK: 0, DF: 1, MF: 2, FW: 3 };
 
-/** Best XI for the formation (matching roles first, strongest overall), bench sorted by role then overall. */
-export function autoPick(club: ClubState): void {
-  const pool = [...club.squad];
+/** Best XI for the formation (matching roles first, strongest overall) and the rest sorted by role then overall. */
+export function pickXI(squad: PlayerDef[], formation: FormationId): { xi: PlayerDef[]; rest: PlayerDef[] } {
+  const pool = [...squad];
   const xi: PlayerDef[] = [];
-  for (const slot of FORMATIONS[club.formation]) {
+  for (const slot of FORMATIONS[formation]) {
+    if (!pool.length) break;
     let i = bestIndex(pool, (p) => p.role === slot.role);
     if (i < 0) i = bestIndex(pool, (p) => slot.role === 'GK' || p.role !== 'GK');
     if (i < 0) i = 0;
     xi.push(pool.splice(i, 1)[0]);
   }
   pool.sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || overall(b) - overall(a));
-  club.squad = [...xi, ...pool];
+  return { xi, rest: pool };
+}
+
+/** Best XI for the formation (matching roles first, strongest overall), bench sorted by role then overall. */
+export function autoPick(club: ClubState): void {
+  const { xi, rest } = pickXI(club.squad, club.formation);
+  club.squad = [...xi, ...rest];
+}
+
+/**
+ * Take the player at `idx` out of the squad; a starter's slot goes to the best bench player for it (the
+ * player is returned, not deleted elsewhere).
+ */
+export function removeFromSquad(club: ClubState, idx: number): PlayerDef | null {
+  const p = club.squad[idx];
+  if (!p) return null;
+  if (idx < 11 && club.squad.length > 11) {
+    const role = FORMATIONS[club.formation][idx].role;
+    const bench = club.squad.slice(11);
+    let j = bestIndex(bench, (q) => q.role === role);
+    if (j < 0) j = bestIndex(bench, (q) => role === 'GK' || q.role !== 'GK');
+    if (j < 0) j = 0;
+    club.squad[idx] = bench[j];
+    club.squad.splice(11 + j, 1);
+  } else {
+    club.squad.splice(idx, 1);
+  }
+  return p;
 }
 
 /** XI slot indices whose player's role doesn't match the formation slot. */
@@ -343,7 +386,7 @@ export function setFormation(club: ClubState, f: FormationId): void {
   if (FORMATIONS[f]) club.formation = f;
 }
 
-function clonePlayer(p: PlayerDef): PlayerDef {
+export function clonePlayer(p: PlayerDef): PlayerDef {
   return { ...p, stats: { ...p.stats }, look: { ...p.look } };
 }
 
@@ -392,6 +435,7 @@ export function defaultCareer(seed: number): CareerState {
     summary: null,
     market: [],
     marketKey: '',
+    tm: defaultMarket(),
     stadium: 0,
     history: [],
     notice: null,
@@ -450,6 +494,8 @@ export function newSeason(state: CareerState, division: number, number: number):
   const season: SeasonState = { number, division: div, seed, rivals, fixtures, matchday: 0 };
   state.season = season;
   state.summary = null;
+  // A fresh market for the season (any offer still live is refunded through tm.owed).
+  clearMarket(state);
   refreshMarket(state);
   return season;
 }
@@ -519,7 +565,7 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
   simulateMatchday(state, md);
   season.matchday++;
   if (season.matchday >= MATCHDAYS) finishSeason(state, wallet);
-  else refreshMarket(state);
+  else refreshMarket(state, wallet);
   return true;
 }
 
@@ -609,14 +655,15 @@ export function finishSeason(state: CareerState, wallet: Wallet): SeasonSummary 
   };
   state.summary = summary;
   state.history = [...state.history, { season: season.number, division: season.division, position, outcome }].slice(-30);
-  state.market = [];
-  state.marketKey = '';
+  clearMarket(state, wallet);
   return summary;
 }
 
 export function startNextSeason(state: CareerState): SeasonState | null {
   const s = state.summary;
   if (!s) return null;
+  // A year passes: the young grow into their potential, the old fade, contracts tick down.
+  if (state.club) ageSquad(state.club);
   return newSeason(state, s.nextDivision, s.season + 1);
 }
 
@@ -629,6 +676,14 @@ export function nextMatch(state: CareerState): NextMatch | null {
   const rival = season.rivals.find((r) => r.id === (userHome ? fixture.away : fixture.home));
   if (!rival) return null;
   const you = clubTeam(club);
+  // Players you have put up for sale have their mind elsewhere (a small stat dip until unlisted or sold).
+  const listed = new Set(state.tm.sales.map((s) => s.playerId));
+  if (listed.size) {
+    for (const p of [...you.players, ...(you.bench ?? [])]) {
+      if (!listed.has(p.id)) continue;
+      for (const k of STAT_KEYS) p.stats[k] = Math.max(1, p.stats[k] - MORALE_DIP);
+    }
+  }
   const them = rivalTeam(rival);
   // No surname twice in the fixture: the rival's clashing players get another (deterministic) name.
   dedupeSurnames(you, them);
@@ -637,8 +692,28 @@ export function nextMatch(state: CareerState): NextMatch | null {
   return { md: season.matchday, fixture, userHome, rival, home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)] };
 }
 
-export function rivalTeam(r: LeagueClub): TeamDef {
+function rivalBase(r: LeagueClub): TeamDef {
   return makeTeam({ name: r.name, short: r.short, kit: r.kit, formation: r.formation, level: r.level }, r.id);
+}
+
+/** Everyone a rival has right now: its generated squad minus the players it sold, plus the ones it signed. */
+export function rivalSquad(r: LeagueClub): PlayerDef[] {
+  const base = rivalBase(r);
+  const out = new Set(r.out ?? []);
+  const own = [...base.players, ...(base.bench ?? [])].filter((p) => !out.has(p.id));
+  return [...own, ...(r.in ?? []).map(clonePlayer)];
+}
+
+/** Match-ready rival: the generated squad, or (after transfers) the best XI of what it has now. */
+export function rivalTeam(r: LeagueClub): TeamDef {
+  const base = rivalBase(r);
+  if (!r.out?.length && !r.in?.length) return base;
+  const { xi, rest } = pickXI(rivalSquad(r), r.formation);
+  return { ...base, players: xi, bench: rest.slice(0, 7) };
+}
+
+export function rivalRating(r: LeagueClub): number {
+  return teamRating(rivalTeam(r));
 }
 
 // ------------------------------------------------------------------ match economy
@@ -689,14 +764,17 @@ export function matchReward(division: number, stadium: number, my: number, their
 }
 
 // ------------------------------------------------------------------ transfers
+// The market itself (listings, offers, sales, AI trades, scouting) lives in meta/market.ts; what's here is the
+// price scale, the legacy free-agent view used by the career hub, and the instant quick sale.
 
 /** About three or four wins' pay for a squad-level signing (a 50-rated player costs ~630). */
 export function playerPrice(p: PlayerDef): number {
   return round10(overall(p) ** 2 * 0.25);
 }
 
+/** What a quick sale pays now: 45% of the player's value (rating price by age and contract, market.ts). */
 export function sellValue(p: PlayerDef): number {
-  return round10(playerPrice(p) * 0.45);
+  return quickSaleValue(p);
 }
 
 /**
@@ -707,7 +785,7 @@ export function divisionPlayerOverall(division: number, role: Role): number {
   return divisionLevel(division) + ROLE_OVR_OFFSET[role];
 }
 
-function tuneToOverall(p: PlayerDef, target: number): void {
+export function tuneToOverall(p: PlayerDef, target: number): void {
   for (let pass = 0; pass < 3; pass++) {
     const d = target - overall(p);
     if (d === 0) return;
@@ -715,46 +793,39 @@ function tuneToOverall(p: PlayerDef, target: number): void {
   }
 }
 
-/** Regenerate the 6-player market if it was built for a different season/matchday. */
-export function refreshMarket(state: CareerState): void {
-  const s = state.season;
-  if (!s || state.summary) return;
-  const key = `${s.number}:${s.matchday}`;
-  if (state.marketKey === key) return;
-  const rng = new Rng(hashString(`${state.seed}|market|${key}`));
-  const lvl = divisionLevel(s.division);
-  const roles: Role[] = [rng.chance(0.5) ? 'GK' : 'DF', 'DF', 'MF', 'MF', 'FW', rng.pick<Role>(['DF', 'MF', 'FW'])];
-  // Nobody on the market shares a surname with the squad (or with another market player).
-  const names = new Set<string>((state.club?.squad ?? []).map((p) => surnameOf(p.name)));
-  state.market = shuffle(rng, roles).slice(0, MARKET_SIZE).map((role, i) => {
-    const target = clamp(divisionPlayerOverall(s.division, role) + rng.int(11) - 5, 20, 95);
-    const p = makePlayer(rng, role, lvl + rng.int(11) - 5, 0, `m${s.number}-${s.matchday}-${i}`, names);
-    tuneToOverall(p, target);
-    return p;
-  });
-  state.marketKey = key;
+/**
+ * Bring the transfer market up to the current matchday (market.ts marketTick: answers to your offers, AI
+ * offers and trades, new listings) and refresh the legacy free-agent view. Pass the wallet when you have it
+ * so refunds land at once (otherwise they wait in tm.owed).
+ */
+export function refreshMarket(state: CareerState, wallet?: Wallet): void {
+  if (!state.season || state.summary) return;
+  marketTick(state, wallet);
+  if (state.marketKey !== state.tm.key) syncLegacyMarket(state);
 }
 
-export function canBuy(state: CareerState, coins: number, idx: number): TxResult {
-  const club = state.club;
-  if (!club) return fail('no-club');
+/** The listing behind a legacy `state.market` entry (a free agent). */
+function legacyListing(state: CareerState, idx: number): Listing | undefined {
   const p = state.market[idx];
-  if (!p) return fail('not-found');
-  if (club.squad.length >= SQUAD_MAX) return fail('squad-full');
-  const price = playerPrice(p);
-  if (coins < price) return fail('no-coins');
-  return { ok: true, delta: -price };
+  return p ? state.tm.listings.find((l) => !l.club && l.player.id === p.id) : undefined;
+}
+
+/** Legacy instant buy (career hub): a free agent at his asking price, under the market's window/wage/squad rules. */
+export function canBuy(state: CareerState, coins: number, idx: number): TxResult {
+  if (!state.club) return fail('no-club');
+  const l = legacyListing(state, idx);
+  if (!l) return fail('not-found');
+  const check = canBid(state, coins, l.id, l.asking);
+  return check.ok ? { ok: true, delta: -l.asking } : fail(check.reason);
 }
 
 export function buyPlayer(state: CareerState, wallet: Wallet, idx: number): TxResult & { player?: PlayerDef } {
   const check = canBuy(state, wallet.coins, idx);
-  const club = state.club;
-  if (!check.ok || !club) return check;
-  const [bought] = state.market.splice(idx, 1);
-  wallet.coins += check.delta;
-  const player: PlayerDef = { ...clonePlayer(bought), id: `c${club.nextId++}`, number: freeNumber(club.squad, bought.role) };
-  club.squad.push(player);
-  return { ok: true, delta: check.delta, player };
+  if (!check.ok) return check;
+  const l = legacyListing(state, idx)!;
+  const r = placeBid(state, wallet, l.id, l.asking);
+  if (!r.ok) return fail(r.reason);
+  return { ok: true, delta: check.delta, player: r.player };
 }
 
 export function canSell(state: CareerState, playerId: string): TxResult {
@@ -767,23 +838,13 @@ export function canSell(state: CareerState, playerId: string): TxResult {
   return { ok: true, delta: sellValue(p) };
 }
 
-/** Sell a player for 45% of his price; a starter is replaced by the best bench player for that slot. */
+/** Quick sale: 45% of the player's value at once; a starter is replaced by the best bench player for that slot. */
 export function sellPlayer(state: CareerState, wallet: Wallet, playerId: string): TxResult {
   const check = canSell(state, playerId);
   const club = state.club;
   if (!check.ok || !club) return check;
-  const idx = club.squad.findIndex((x) => x.id === playerId);
-  if (idx < 11) {
-    const role = FORMATIONS[club.formation][idx].role;
-    const bench = club.squad.slice(11);
-    let j = bestIndex(bench, (p) => p.role === role);
-    if (j < 0) j = bestIndex(bench, (p) => role === 'GK' || p.role !== 'GK');
-    if (j < 0) j = 0;
-    club.squad[idx] = bench[j];
-    club.squad.splice(11 + j, 1);
-  } else {
-    club.squad.splice(idx, 1);
-  }
+  removeFromSquad(club, club.squad.findIndex((x) => x.id === playerId));
+  state.tm.sales = state.tm.sales.filter((s) => s.playerId !== playerId);
   wallet.coins += check.delta;
   return check;
 }
@@ -836,7 +897,7 @@ function readPlayer(v: unknown): PlayerDef | null {
     stats[k] = clamp(Math.round(s), 1, STAT_CAP);
   }
   const look = isObj(v.look) ? v.look : {};
-  return {
+  const p: PlayerDef & { age?: number; potential?: number; contract?: number } = {
     id: v.id,
     name: v.name.slice(0, 24),
     number: int(v.number, 0, 99, 0),
@@ -850,6 +911,11 @@ function readPlayer(v: unknown): PlayerDef | null {
       boots: int(look.boots, 0, 0xffffff, 0x2a2a30),
     },
   };
+  // Career meta (market.ts): only when the save has them, so older players keep deriving theirs.
+  if (isNum(v.age)) p.age = int(v.age, 16, 40, 25);
+  if (isNum(v.potential)) p.potential = int(v.potential, 0, 5, 0);
+  if (isNum(v.contract)) p.contract = int(v.contract, 1, 4, 1);
+  return p;
 }
 
 function readPlayers(v: unknown): PlayerDef[] {
@@ -886,7 +952,7 @@ function readLeagueClub(v: unknown): LeagueClub | null {
   const kit = readKit(v.kit);
   const formation = readFormation(v.formation);
   if (!kit || !formation || !isNum(v.level)) return null;
-  return {
+  const c: LeagueClub = {
     id: v.id,
     name: v.name,
     short: v.short,
@@ -895,6 +961,9 @@ function readLeagueClub(v: unknown): LeagueClub | null {
     level: clamp(Math.round(v.level), 1, 99),
     rating: int(v.rating, 1, 99, clamp(Math.round(v.level), 1, 99)),
   };
+  if (Array.isArray(v.out)) c.out = v.out.filter(isStr).slice(0, 40);
+  if (Array.isArray(v.in)) c.in = readPlayers(v.in).slice(0, 12);
+  return c;
 }
 
 function readFixture(v: unknown, ids: Set<string>): Fixture | null {
@@ -970,9 +1039,101 @@ function readHistory(v: unknown): HistoryEntry[] {
     .slice(-30);
 }
 
+const BID_STATUS = ['pending', 'countered'];
+const NEWS_KINDS = ['good', 'bad', 'info'];
+
+function readListing(v: unknown, ids: Set<string>): Listing | null {
+  if (!isObj(v) || !isStr(v.id) || ids.has(v.id)) return null;
+  const player = readPlayer(v.player);
+  if (!player || !isNum(v.asking)) return null;
+  ids.add(v.id);
+  return {
+    id: v.id,
+    player,
+    club: isStr(v.club) ? v.club : null,
+    clubName: isStr(v.clubName) ? v.clubName.slice(0, 40) : '',
+    asking: int(v.asking, 0, 1e9, 0),
+    wage: int(v.wage, 0, 1e6, 0),
+    age: int(v.age, 16, 40, 25),
+    contract: int(v.contract, 1, 4, 1),
+    form: int(v.form, -2, 2, 0),
+    hot: v.hot === true,
+    youth: v.youth === true,
+    scouted: v.scouted === true,
+    potential: int(v.potential, 0, 5, 0),
+    arrived: int(v.arrived, 0, MATCHDAYS, 0),
+    leaves: int(v.leaves, 0, MATCHDAYS + 4, 0),
+  };
+}
+
+/** The market blob; anything off is dropped (escrowed coins of a dropped offer go to `owed`). */
+function readMarket(v: unknown, live: boolean): MarketState {
+  const tm = defaultMarket();
+  if (!isObj(v)) return tm;
+  tm.owed = int(v.owed, 0, 1e9, 0);
+  tm.nextId = int(v.nextId, 1, 1e9, 1);
+  tm.news = Array.isArray(v.news)
+    ? v.news
+        .filter((n): n is Obj => isObj(n) && isStr(n.text) && NEWS_KINDS.includes(n.kind as string))
+        .slice(0, 12)
+        .map((n) => ({ season: int(n.season, 0, 1e6, 0), week: int(n.week, 0, MATCHDAYS, 0), text: (n.text as string).slice(0, 160), kind: n.kind as NewsKind }))
+    : [];
+  if (!live) return tm;
+  tm.key = isStr(v.key) ? v.key : '';
+  const ids = new Set<string>();
+  if (Array.isArray(v.listings)) {
+    for (const x of v.listings.slice(0, 24)) {
+      const l = readListing(x, ids);
+      if (l) tm.listings.push(l);
+    }
+  }
+  if (Array.isArray(v.bids)) {
+    for (const x of v.bids) {
+      if (!isObj(x) || !isStr(x.id) || !isStr(x.listingId) || !isNum(x.amount)) continue;
+      const player = readPlayer(x.player);
+      const amount = int(x.amount, 0, 1e9, 0);
+      if (!player || !ids.has(x.listingId) || tm.bids.some((b) => b.listingId === x.listingId)) {
+        tm.owed += amount;
+        continue;
+      }
+      tm.bids.push({
+        id: x.id,
+        listingId: x.listingId,
+        amount,
+        week: int(x.week, 0, MATCHDAYS, 0),
+        status: BID_STATUS.includes(x.status as string) ? (x.status as Bid['status']) : 'pending',
+        counter: int(x.counter, 0, 1e9, 0),
+        player,
+        clubName: isStr(x.clubName) ? x.clubName.slice(0, 40) : '',
+      });
+    }
+  }
+  if (Array.isArray(v.sales)) {
+    for (const x of v.sales) {
+      if (!isObj(x) || !isStr(x.playerId) || tm.sales.some((s) => s.playerId === x.playerId)) continue;
+      const offers = Array.isArray(x.offers)
+        ? x.offers
+            .filter((o): o is Obj => isObj(o) && isStr(o.id) && isStr(o.club) && isNum(o.amount))
+            .map((o) => ({
+              id: o.id as string,
+              club: o.club as string,
+              clubName: isStr(o.clubName) ? o.clubName.slice(0, 40) : '',
+              amount: int(o.amount, 0, 1e9, 0),
+              week: int(o.week, 0, MATCHDAYS, 0),
+              expires: int(o.expires, 0, MATCHDAYS + 4, 0),
+            }))
+        : [];
+      tm.sales.push({ playerId: x.playerId, week: int(x.week, 0, MATCHDAYS, 0), offers });
+    }
+  }
+  if (Array.isArray(v.shortlist)) tm.shortlist = [...new Set(v.shortlist.filter((s): s is string => isStr(s) && ids.has(s)))].slice(0, 5);
+  return tm;
+}
+
 /**
  * Turn whatever is in SaveData.career (null on a fresh save, or an older/corrupt blob) into a valid
- * CareerState. Invalid parts fall back to safe defaults instead of throwing.
+ * CareerState. Invalid parts fall back to safe defaults instead of throwing. A save from before the transfer
+ * market (no `tm`) gets an empty market that fills on the next refreshMarket.
  */
 export function migrateCareer(raw: unknown, freshSeed: number): CareerState {
   const base = defaultCareer(freshSeed);
@@ -980,16 +1141,23 @@ export function migrateCareer(raw: unknown, freshSeed: number): CareerState {
   const club = readClub(raw.club);
   const season = club ? readSeason(raw.season) : null;
   const summary = season ? readSummary(raw.summary) : null;
-  return {
+  const live = !!season && !summary;
+  const tm = readMarket(raw.tm, live);
+  // Own players a sale record points at must exist.
+  if (club) tm.sales = tm.sales.filter((s) => club.squad.some((p) => p.id === s.playerId));
+  const st: CareerState = {
     version: CAREER_VERSION,
     seed: isNum(raw.seed) ? raw.seed >>> 0 : base.seed,
     club,
     season,
     summary,
-    market: season && !summary ? readPlayers(raw.market).slice(0, MARKET_SIZE) : [],
-    marketKey: season && !summary && isStr(raw.marketKey) ? raw.marketKey : '',
+    market: [],
+    marketKey: '',
+    tm,
     stadium: int(raw.stadium, 0, STADIUM_MAX, 0),
     history: readHistory(raw.history),
     notice: isStr(raw.notice) ? raw.notice.slice(0, 200) : null,
   };
+  if (live) syncLegacyMarket(st);
+  return st;
 }

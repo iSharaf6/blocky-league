@@ -18,6 +18,7 @@ import { formatBytes, verifyZip, zipDirectory } from './lib.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 const ZIP_BUDGET = 5 * 1024 * 1024;
+const CLOUD_ENV = [process.env.VITE_SUPABASE_URL ?? '', process.env.VITE_SUPABASE_ANON_KEY ?? '']; // web build only (src/platform/cloud.ts)
 
 const VARIANTS = {
   // Own site. Keeps the PWA bits (manifest, icons, service worker, og image, privacy page).
@@ -93,6 +94,7 @@ async function buildVariant(variant) {
 
   // Vite exposes VITE_* vars from process.env to import.meta.env; ads.ts reads VITE_PORTAL.
   process.env.VITE_PORTAL = cfg.portal;
+  [process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY] = cfg.webOnly ? CLOUD_ENV : ['', '']; // cloud saves never ship in portal / itch zips
   await build({
     root: ROOT,
     mode: 'production',

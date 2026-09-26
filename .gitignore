@@ -13,3 +13,5 @@ android/app/build/
 build/
 dist-*/
 release/
+.env.local
+.env.*.local

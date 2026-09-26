@@ -1,0 +1,305 @@
+/* Account / cloud-sync panel (src/ui/account.ts). Builds on .screen / .panel / .btn from style.css. */
+
+.ac-panel {
+  gap: 14px;
+}
+
+.ac-lead {
+  text-align: center;
+  margin: 0 auto;
+}
+
+.ac-note {
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0.5px;
+}
+
+.ac-providers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.ac-providers .btn,
+.ac-panel > .btn {
+  width: 100%;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.btn-ink {
+  --c: var(--ink);
+  --d: #0d0d12;
+  --t: var(--cream);
+}
+
+/* The "G" mark: a white block, not Google's logo. */
+.ac-g {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: -4px 8px -2px 0;
+  background: #fff;
+  color: var(--blue);
+  border: 2px solid var(--ink);
+  font: 700 15px / 1 var(--round);
+  font-style: normal;
+  vertical-align: middle;
+}
+
+.ac-field {
+  display: grid;
+  gap: 8px;
+}
+
+.ac-field label {
+  font: 700 12px var(--px);
+  letter-spacing: 1px;
+  color: var(--blue-d);
+}
+
+.ac-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px 12px;
+  border: 4px solid var(--ink);
+  border-radius: 0;
+  background: #fff;
+  color: var(--ink);
+  font: 400 18px var(--round);
+  letter-spacing: 0.5px;
+  box-shadow: inset 0 4px 0 rgba(38, 38, 46, 0.08);
+}
+
+.ac-input:focus-visible {
+  outline: 4px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.ac-input.bad {
+  border-color: var(--red);
+  animation: ac-shake 0.3s;
+}
+
+@keyframes ac-shake {
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+.ac-field-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ac-field-row .btn {
+  flex: 1 1 120px;
+}
+
+.ac-who {
+  display: grid;
+  gap: 4px;
+  text-align: center;
+}
+
+.ac-who b {
+  font: 700 clamp(17px, 2vw, 22px) / 1.2 var(--px);
+  letter-spacing: 1px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.ac-who span {
+  font: 400 15px var(--round);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.ac-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(38, 38, 46, 0.06);
+  font: 400 15px var(--round);
+  color: var(--ink-2);
+}
+
+.ac-status i {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: var(--go);
+  box-shadow: 0 2px 0 var(--go-d);
+}
+
+.ac-status.busy i {
+  background: var(--yellow);
+  box-shadow: 0 2px 0 var(--yellow-d);
+  animation: ac-blink 0.8s steps(2) infinite;
+}
+
+.ac-status.off i {
+  background: #b9b5aa;
+  box-shadow: 0 2px 0 #8a877e;
+}
+
+.ac-status.bad i {
+  background: var(--red);
+  box-shadow: 0 2px 0 var(--red-d);
+}
+
+@keyframes ac-blink {
+  to { opacity: 0.3; }
+}
+
+.ac-actions {
+  gap: 12px;
+}
+
+.ac-confirm {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 3px dashed var(--red);
+  background: rgba(236, 74, 62, 0.08);
+}
+
+.ac-confirm.calm {
+  border-color: var(--blue);
+  background: rgba(47, 123, 232, 0.08);
+}
+
+.ac-confirm .fine {
+  margin: 0;
+}
+
+/* which save? */
+
+.ac-choice-panel {
+  width: min(640px, 94vw);
+}
+
+.ac-choice {
+  display: grid;
+  gap: 14px;
+}
+
+.ac-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 4px solid var(--ink);
+  background: #fff;
+  box-shadow: 0 6px 0 var(--ink);
+}
+
+.ac-card h3 {
+  margin: 0;
+}
+
+.ac-card ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: 400 15px / 1.4 var(--round);
+  color: var(--ink-2);
+}
+
+.ac-card ul b {
+  color: var(--ink);
+}
+
+.ac-card small {
+  font: 400 12px var(--round);
+  color: var(--ink-2);
+  opacity: 0.8;
+}
+
+.ac-card .btn {
+  width: 100%;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+@media (min-width: 560px) {
+  .ac-choice {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Phones on their side (667 x 375): tighter rows, actions two abreast; the panel scrolls, BACK stays pinned. */
+@media (max-height: 480px) {
+  .ac-panel {
+    gap: 10px;
+    width: min(520px, 94vw);
+  }
+
+  .ac-panel .ac-actions {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .ac-panel .btn:not(.btn-ghost) {
+    font-size: 14px;
+    padding: 12px 10px 10px;
+  }
+
+  .ac-lead {
+    font-size: 15px;
+  }
+
+  .ac-card ul {
+    font-size: 13px;
+  }
+}
+
+/* toast */
+
+.cloud-toast {
+  position: fixed;
+  top: max(18px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 40;
+  max-width: calc(100vw - 32px);
+  padding: 11px 16px 9px;
+  transform: translate(-50%, -24px) scale(0.92);
+  opacity: 0;
+  pointer-events: none;
+  font: 400 clamp(16px, 1.6vw, 19px) / 1.2 var(--round);
+  letter-spacing: 1px;
+  text-align: center;
+  color: var(--ink);
+  background: var(--yellow);
+  box-shadow: 0 5px 0 var(--yellow-d), 0 9px 0 rgba(0, 0, 0, 0.2);
+  transition: opacity 0.2s, transform 0.25s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.cloud-toast.on {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.cloud-toast.good {
+  background: var(--go);
+  color: #fff;
+  box-shadow: 0 5px 0 var(--go-d), 0 9px 0 rgba(0, 0, 0, 0.2);
+}
+
+.cloud-toast.bad {
+  background: var(--red);
+  color: #fff;
+  box-shadow: 0 5px 0 var(--red-d), 0 9px 0 rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ac-status.busy i,
+  .ac-input.bad {
+    animation: none;
+  }
+}

@@ -15,6 +15,8 @@
   --grass: #94cc4f;
   --px: 'Silkscreen', 'Courier New', monospace;
   --round: 'Lilita One', 'Arial Rounded MT Bold', system-ui, sans-serif;
+  /* Calynx, the studio (src/ui/brand.ts). */
+  --studio: #2230d6;
   color-scheme: light;
 }
 
@@ -58,6 +60,8 @@ body {
 
 /* ---------------------------------------------------------------- boot */
 
+/* The studio splash: the Calynx lynx and wordmark (pixel SVGs in index.html, no font needed) on white, the
+   ball hopping underneath while the game loads. Shown for at least 0.8 s (main.ts), then fades to the title. */
 #boot {
   position: fixed;
   inset: 0;
@@ -65,8 +69,8 @@ body {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 18px;
-  background: var(--sky);
+  gap: 34px;
+  background: #fff;
   transition: opacity 0.5s ease 0.1s, visibility 0s linear 0.6s;
 }
 
@@ -75,21 +79,25 @@ body {
   visibility: hidden;
 }
 
-#boot p {
-  font: 700 18px var(--px);
-  letter-spacing: 4px;
-  color: var(--cream);
-  text-shadow: 0 3px 0 var(--ink);
-  margin: 0;
+.boot-brand {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  animation: fade 0.5s ease both;
+}
+
+.boot-brand .lynx {
+  filter: drop-shadow(0 5px 0 rgba(34, 48, 214, 0.18));
 }
 
 .boot-ball {
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   background:
-    linear-gradient(var(--ink), var(--ink)) 15px 15px / 14px 14px no-repeat,
-    var(--cream);
-  box-shadow: 0 6px 0 var(--ink);
+    linear-gradient(var(--studio), var(--studio)) 11px 11px / 10px 10px no-repeat,
+    #fff;
+  border: 3px solid var(--studio);
+  box-shadow: 0 5px 0 var(--studio);
   animation: hop 0.55s cubic-bezier(0.3, 0, 0.7, 1) infinite alternate;
 }
 
@@ -4959,3 +4967,126 @@ button.mc-pl:active {
 .ft-next b { color: #e0b23a; }
 .record-chip.lvl .lvl-next { display: block; font: 14px/1.2 'Lilita One', sans-serif; opacity: 0.85; }
 .toggles button b small.lock { font: 14px/1 'Lilita One', sans-serif; opacity: 0.7; }
+
+/* ---------------------------------------------------------------- dividers (src/ui/text.ts)
+   Facts are split with an element, never a glyph: the pixel font has no middle dot (the browser drew a fat
+   fallback bullet in its place) and its hyphen is a clunky bar. A thin bar in the text colour by default; a
+   pixel square wherever the text is in the pixel font; a wide red square between the two numbers of a score. */
+.sep { display: inline-block; width: 2px; height: 0.62em; background: currentColor; opacity: 0.45; margin: 0 0.4em; vertical-align: -0.02em; }
+.btn .sep, .panel h3 .sep, .hud-hint .sep, .hud-toast .sep, .coins .sep, .mc-wdl .sep, .bn-title .sep, .mc-result b .sep,
+.trainer-recipient .sep, .captain-tag span .sep, .daily-n .sep, .mc-ovr .sep, .mc-side b .sep { width: 3px; height: 3px; opacity: 0.75; margin: 0 0.45em; vertical-align: 0.28em; }
+.tile small .sep, .btn small .sep { width: 2px; height: 0.62em; opacity: 0.45; margin: 0 0.45em; vertical-align: -0.02em; }
+.mc-wdl .sep { margin: 0; opacity: 0.5; }
+/* (The divider hangs from the baseline, so it never grows a line box; the squares sit mid x-height.) */
+.sep.score { width: 0.16em; height: 0.16em; min-width: 4px; min-height: 4px; opacity: 1; background: var(--red); margin: 0 0.45em; vertical-align: 0.22em; }
+.sb-score .sep.score { width: 5px; height: 5px; margin: 0; align-self: center; }
+.f-score .sep.score { width: 0.14em; height: 0.14em; margin: 0 0.3em; vertical-align: 0.3em; }
+.bn-sub .sep.score { background: var(--yellow); margin: 0 0.5em; }
+/* Formations ("4-4-2") keep their digits and hyphens, in the rounded font: the pixel font's hyphen is a bar. */
+.fm { font-family: var(--round); }
+
+/* ---------------------------------------------------------------- Calynx (src/ui/brand.ts) */
+.credit {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: -6px 0 0;
+  font: 400 15px / 1 var(--round);
+  font-variant-caps: small-caps;
+  letter-spacing: 3px;
+  color: var(--cream);
+  text-shadow: 0 2px 0 var(--ink);
+  animation: fade 0.6s ease 0.5s both;
+}
+.credit .lynx { filter: drop-shadow(0 2px 0 var(--ink)); }
+.set-about {
+  margin: 12px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font: 400 14px / 1 var(--round);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+  opacity: 0.85;
+}
+
+/* ---------------------------------------------------------------- PLAY NOW: one wide tile at the top of the grid */
+.tile.tile-wide {
+  grid-column: 1 / -1;
+  aspect-ratio: auto;
+  grid-template-columns: auto minmax(0, auto);
+  justify-content: center;
+  align-items: center;
+  column-gap: 16px;
+  row-gap: 4px;
+  min-height: 72px;
+  padding: 12px 18px 10px;
+  font-size: clamp(18px, 2vw, 22px);
+}
+.tile.tile-wide .picon { grid-row: 1 / span 2; }
+.tile.tile-wide > span,
+.tile.tile-wide small { justify-self: start; margin: 0; }
+@media (max-height: 520px) {
+  .tile.tile-wide { min-height: 56px; padding: 8px 16px 7px; font-size: 17px; }
+}
+.topbar .acct { min-height: 42px; padding: 10px 14px 9px; font: 400 17px / 1 var(--round); letter-spacing: 0.5px; }
+
+/* ---------------------------------------------------------------- Settings > BACKUP (export / import the save) */
+.toggles b.link { background: var(--blue); }
+.bk-card {
+  display: grid;
+  gap: 5px;
+  padding: 10px 14px 9px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--cream-2);
+  font: 400 15px / 1.3 var(--round);
+  letter-spacing: 0.5px;
+  color: var(--ink-2);
+  text-align: left;
+}
+.bk-card > span { font: 700 14px var(--px); color: var(--blue-d); letter-spacing: 1px; }
+.bk-card b { font: 700 16px var(--px); color: var(--ink); }
+.bk-card em { font-style: normal; }
+.bk-panel .menu-col { width: 100%; }
+.bk-confirm { display: grid; gap: 12px; }
+.bk-msg { min-height: 1.2em; }
+.bk-msg.good { color: var(--go-d); }
+.bk-msg.bad { color: var(--red-d); }
+.bk-main[hidden],
+.bk-confirm[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- main menu: fitting the fold
+   The column is centred while it fits; once it is taller than the screen it starts at the top and the screen
+   scrolls (never a column cut off at both ends, as flex centring would do). */
+.screen.main { align-items: flex-start; overflow-y: auto; overflow-x: hidden; }
+.screen.main > .main-wrap { margin-top: auto; margin-bottom: auto; }
+
+/* Short, wide windows (a 1280×720 laptop or stream): four tile columns, as on landscape phones, so the whole
+   column sits above the fold (PLAY NOW added a row; at HEAD the badge already ended 9 px under it). */
+@media (max-height: 820px) and (min-height: 451px) and (min-width: 900px) {
+  .screen.main { padding-top: max(52px, env(safe-area-inset-top)); }
+  .main-col { gap: 12px; }
+  .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); width: min(640px, 94vw); gap: 12px; }
+  .tile:not(.tile-side):not(.tile-wide) { aspect-ratio: auto; min-height: 0; gap: 8px; padding: 12px 8px 10px; }
+  .tile.tile-side { grid-column: span 2; }
+  .tile.tile-wide { min-height: 60px; padding: 8px 16px 7px; }
+  .daily { width: min(640px, 94vw); }
+}
+
+/* Phone-height screens (a 375 px tall landscape phone, a 667 px tall portrait one): the menu logo goes (the
+   title screen and splash carry the branding) so PLAY NOW and the tiles fit above the fold. */
+@media (max-height: 400px), (max-width: 480px) and (max-height: 700px) {
+  .screen.main .logo.small { display: none; }
+  .main-foot { gap: 10px; }
+  .tile.tile-wide { min-height: 48px; padding: 6px 14px 5px; font-size: 17px; }
+  .tile.tile-wide .picon { width: 36px; height: 36px; }
+}
+/* Landscape phones: the footer is one row (HOW TO PLAY beside a two-column badge) and the gaps are tighter. */
+@media (max-height: 400px) {
+  .main-col { gap: 6px; }
+  .main-foot { flex-wrap: nowrap; }
+  .record-chip.lvl { flex: 1 1 0; min-width: 0; grid-auto-flow: row; grid-template-columns: 1fr 1fr; gap: 2px 10px; }
+  .record-chip.lvl .lvl-next { grid-column: 1 / -1; }
+}

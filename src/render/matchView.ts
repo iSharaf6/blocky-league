@@ -3,6 +3,7 @@ import { lerp, wrapAngle } from '../core/math';
 import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, PlayerDef, TeamDef } from '../sim/types';
+import { CelebrationRig } from './celebration';
 import { CHAR_H, Footballer, PSTATE, ballSkinOf, buildBallGeometry, charMaterial, screenCharK, setCharacterFill, setCharacterHemiFill, type PoseInput } from './characters';
 import { FLOODLIGHT_TOWERS } from './stadium';
 import { BoxBuilder } from './voxel';
@@ -18,6 +19,8 @@ export type RefSignal = 'arm' | 'advantage' | 'card';
 
 export const CARD_YELLOW = 0xffd43b;
 export const CARD_RED = 0xe03131;
+/** The man in the middle (the studio's founder takes the whistle): the HUD / commentary name him by this. */
+export const REFEREE_NAME = 'I. Sharaf';
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -101,6 +104,10 @@ function teamStyles(kits: [Kit, Kit]): { bright: THREE.Color; edge: THREE.Color;
 /** Everything that draws a match: 22 voxel footballers, the ball, and the control marker. */
 export class MatchView {
   readonly group = new THREE.Group();
+  /** Iconic goal celebrations: overrides the scoring side's drawn frame while the goal phase lasts. */
+  readonly celeb = new CelebrationRig();
+  /** Where the lens was last frame (faceCamera): the choreography lines its rows up square to it. */
+  private camPos = new THREE.Vector3(0, 30, 60);
   readonly players: Footballer[] = [];
   readonly ball: THREE.Mesh;
   private ballShadow: THREE.Mesh;
@@ -210,10 +217,11 @@ export class MatchView {
     }
     this.frame = new Float32Array(FRAME_LEN);
     const refKit: Kit = { shirt: 0x2a2a30, shirt2: 0xffd23a, pattern: 'plain', shorts: 0x2a2a30, socks: 0x2a2a30, gk: 0x2a2a30 };
+    // Bald, full beard, tanned: unmistakable from the gantry (the one look nobody in the squads gets).
     const refDef: PlayerDef = {
-      id: 'ref', name: 'Referee', number: -1, role: 'MF',
+      id: 'ref', name: REFEREE_NAME, number: -1, role: 'MF',
       stats: { pace: 70, shooting: 1, passing: 1, dribbling: 1, defending: 1, keeping: 1, stamina: 90 },
-      look: { skin: 2, hair: 1, hairColor: 6, beard: 0, boots: 0x2a2a30 },
+      look: { skin: 3, hair: 5, hairColor: 0, beard: 2, boots: 0x2a2a30 },
     };
     this.referee = new Footballer(refDef, refKit, false);
     this.group.add(this.referee.group);
@@ -473,6 +481,9 @@ export class MatchView {
       f[o + 7] = 0;
       if (f[o + 4] !== SENT_OFF_CODE && f[o + 4] !== PSTATE.dejected) f[o + 4] = PSTATE.move;
     }
+
+    // The choreographed celebration takes over the scoring side's positions and poses (nothing in a replay).
+    this.celeb.apply(f, dt, this.camPos.x, this.camPos.z);
 
     const pose = this.pose;
     this.charK = screenCharK();
@@ -1150,6 +1161,7 @@ export class MatchView {
   }
 
   faceCamera(cam: THREE.Camera): void {
+    this.camPos.copy(cam.position);
     this.powerBar.quaternion.copy(cam.quaternion);
     this.updateTeamPips(cam);
     if (this.passBar.visible) {

@@ -30,6 +30,11 @@ export interface BotOptions {
   press?: boolean;
   /** Double-tap SPRINT knock-ons now and then (default true). */
   knockOns?: boolean;
+  /**
+   * Plays it out to the wings the way the owner does (default false): a man within 8 m of a touchline, 10-32 m
+   * away, is passed to whenever he's not marked tight (within 1.2 m), whoever else is on.
+   */
+  wing?: boolean;
 }
 
 export interface BotTally {
@@ -104,7 +109,7 @@ export class HumanBot {
 
   constructor(seed: number, opts: BotOptions = {}) {
     this.s = (Math.imul(seed + 17, 2654435761) >>> 0) || 1;
-    this.o = { cuts: true, tackles: true, press: true, knockOns: true, ...opts };
+    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, ...opts };
   }
 
   private rnd(): number {
@@ -376,13 +381,14 @@ export class HumanBot {
     for (const t of m.teamPlayers(HS)) {
       if (t === c || t.isKeeper || t.sentOff) continue;
       const d = Math.hypot(t.pos.x - c.pos.x, t.pos.z - c.pos.z);
-      if (d < 7 || d > 30) continue;
+      const wing = this.o.wing && Math.abs(t.pos.z) >= HALF_W - 8 && d >= 10 && d <= 32;
+      if (!wing && (d < 7 || d > 30)) continue;
       let mark = Infinity;
       for (const o of m.teamPlayers(1)) if (!o.sentOff) mark = Math.min(mark, Math.hypot(o.pos.x - t.pos.x, o.pos.z - t.pos.z));
-      if (mark < 2) continue;
+      if (mark < (wing ? 1.2 : 2)) continue;
       const lane = laneClear(m, c.pos.x, c.pos.z, t.pos.x, t.pos.z, 1.4);
       const fwd = ((t.pos.x - c.pos.x) * ad) / 10;
-      const s = fwd * 1.2 + Math.min(mark, 7) * 0.35 + (lane ? 0.8 : -1.2) + this.rnd() * 2 - d * 0.03;
+      const s = fwd * 1.2 + Math.min(mark, 7) * 0.35 + (lane ? 0.8 : -1.2) + this.rnd() * 2 - d * 0.03 + (wing ? 3 : 0);
       if (s > bs) {
         bs = s;
         best = t;

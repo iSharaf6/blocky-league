@@ -4,6 +4,7 @@ import { BALL_OFS, PF } from '../game/replay';
 import { HALF_L } from '../sim/constants';
 import { PITCH_Y } from '../render/stadium';
 import type { Match } from '../sim/match';
+import { escHtml, sep, sepsOfText } from './text';
 
 type Device = 'keyboard' | 'gamepad' | 'touch';
 export interface TrainerCue {
@@ -107,7 +108,8 @@ export class Trainer {
         item.append(cap, document.createTextNode(label));
         return item;
       }));
-      this.detail.textContent = cue.detail;
+      // Two facts in one line ("Hold L to cross · SHIFT sprint") are split with the divider element.
+      this.detail.innerHTML = sepsOfText(cue.detail);
     }
     // Place above the head, unless that puts the card within 120 px of the ball (it used to sit on the carrier,
     // and on a pickup he was running for): then it goes to the side of the screen away from the ball, just
@@ -145,7 +147,7 @@ export class Trainer {
     if (this.target !== idx || this.recipient.dataset.device !== device) {
       this.target = idx;
       this.recipient.dataset.device = device;
-      this.recipient.textContent = `${device === 'gamepad' ? 'A' : device === 'touch' ? 'PASS' : 'SPACE'} · ${m.players[idx].def.number}`;
+      this.recipient.innerHTML = `${device === 'gamepad' ? 'A' : device === 'touch' ? 'PASS' : 'SPACE'}${sep()}${escHtml(String(m.players[idx].def.number))}`;
     }
   }
 }

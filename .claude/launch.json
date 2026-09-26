@@ -37,6 +37,14 @@
         "--strictPort"
       ],
       "port": 4190
+    },
+    {
+      "name": "blocky-cloud",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "/private/tmp/claude-501/-Users-IslamSharaf-1-iCloud-Drive--Archive----1-Desktop-stickmanFootball/4521b77d-7cd9-4740-9066-eab719d1b492/scratchpad/cloud-dev.mjs"
+      ],
+      "port": 4192
     }
   ]
 }

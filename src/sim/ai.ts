@@ -78,6 +78,26 @@ export function intercept(m: Match, p: Player): { x: number; z: number; t: numbe
   return { x: last.x, z: last.z, t: Math.max(last.t, d / top) };
 }
 
+/**
+ * Where the human side's man meets a ground pass played to him (Match.receivePoint): the first point of the
+ * ball's path he can reach `early` s before the ball does, so he's set on its line and square to it as it
+ * comes. (intercept, the earliest point he can just reach, slid towards him every frame and ran him head-on
+ * into a ball arriving at 17-20 m/s: the meeting was a collision at 20+ m/s relative, his foot missed the
+ * control window and the ball rolled on into touch: the owner's winger who "struggles to or doesn't at all
+ * receive the ball".) Null when no point gives him that time.
+ */
+export function meetSpot(m: Match, p: Player, early: number): { x: number; z: number; t: number } | null {
+  const path = m.ballPath;
+  const top = p.top * 0.92;
+  for (let i = 0; i < path.length; i++) {
+    const s = path[i];
+    if (s.y > 2.1) continue;
+    const d = Math.max(0, dist2(p.pos.x, p.pos.z, s.x, s.z) - 0.55);
+    if (d / top + 0.12 + early <= s.t) return { x: s.x, z: s.z, t: s.t };
+  }
+  return null;
+}
+
 /** The controls moveTo sets: the move vector, the sprint, the facing (null: along his run). */
 export interface MoveIntent {
   wantX: number;
@@ -542,7 +562,7 @@ function calledSpot(m: Match, p: Player, c: Player): { x: number; z: number } | 
   }
   if (m.calledMode !== 'through') return null;
   const ad = m.attackDir(p.side);
-  const pt = throughLead(m, p, CALLED_RUN);
+  const pt = throughLead(m, p, CALLED_RUN, true);
   if (m.offside) {
     const lim = (Math.max(m.offsideLine(p.side), nX(m, p.side, m.ball.pos.x)) * HALF_L - 0.5) * ad;
     if ((pt.x - lim) * ad > 0) {

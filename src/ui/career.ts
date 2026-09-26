@@ -18,6 +18,7 @@ import {
   type ToastKind,
 } from './club';
 import { DIFFICULTIES, shirtArt } from './menus';
+import { sep } from './text';
 import { faceHtml, hydrateFaces } from './preview';
 
 type HubTab = 'table' | 'fixtures' | 'market';
@@ -127,7 +128,7 @@ function fixturesHtml(season: SeasonState, info: Map<string, LeagueClub>, mdView
     .map((f) => {
       const home = f.home === YOU;
       const opp = info.get(home ? f.away : f.home);
-      let res = '<i class="mc-wdl">–</i>';
+      let res = `<i class="mc-wdl">${sep()}</i>`;
       if (f.hg !== null && f.ag !== null) {
         const my = home ? f.hg : f.ag;
         const their = home ? f.ag : f.hg;
@@ -182,13 +183,13 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
           return `<div class="mc-card">
             <div class="mc-cardtop">${faceHtml(p, club.kit, 'md')}${roleBadge(p.role)}<b>${esc(p.name)}</b>${ovrBadge(overall(p))}</div>
             <div class="mc-bars">${bars}</div>
-            <button class="btn ${armed ? 'btn-yellow' : 'btn-go'} ${check.ok ? '' : 'poor'}" data-a="buy" data-i="${i}">${armed ? `CONFIRM · ${fmt(price)}` : `BUY · ${fmt(price)}`}</button>
+            <button class="btn ${armed ? 'btn-yellow' : 'btn-go'} ${check.ok ? '' : 'poor'}" data-a="buy" data-i="${i}">${armed ? `CONFIRM${sep()}${fmt(price)}` : `BUY${sep()}${fmt(price)}`}</button>
             ${check.ok ? '' : `<small class="mc-why">${failText(check.reason)}</small>`}
           </div>`;
         })
         .join('');
       return `${head}
-        <p class="mc-hint">Six new players arrive every matchday, rated around ${esc(DIVISION_NAMES[season.division])} level.</p>
+        <p class="mc-hint">Free agents rated around ${esc(DIVISION_NAMES[season.division])} level sign at once. The full market (club players, offers, scouting, the transfer window) is under MARKET.</p>
         ${cards ? `<div class="mc-cards">${cards}</div>` : '<p class="mc-empty">You signed everyone on the list. New faces arrive after the next matchday.</p>'}`;
     }
     const rows = club.squad
@@ -202,7 +203,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
           ${faceHtml(p, club.kit)}
           <span class="mc-num">${p.number}</span>
           ${roleBadge(p.role)}
-          <span class="mc-pname"><b>${esc(p.name)}</b><small>OVR ${overall(p)} · ${keyStatsText(p)}</small></span>
+          <span class="mc-pname"><b>${esc(p.name)}</b><small>OVR ${overall(p)}${sep()}${keyStatsText(p)}</small></span>
           <button class="btn ${armed ? 'btn-yellow' : 'btn-red'} mc-sellbtn" data-a="sell" data-id="${esc(p.id)}" ${check.ok ? '' : 'disabled'}>${check.ok ? (armed ? `SURE? +${fmt(value)}` : `SELL +${fmt(value)}`) : p.role === 'GK' ? 'LAST GK' : 'MIN 14'}</button>
         </div>`;
       })
@@ -227,7 +228,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
       const side = (kit: typeof youKit, short: string, name: string, meta: string) =>
         `<div class="mc-side">${shirtArt(kit, 6)}<b>${esc(short)}</b><small>${esc(name)}</small><em>${meta}</em></div>`;
       // League position only means something once a ball has been kicked.
-      const place = (p: number) => (season.matchday > 0 ? ` · ${ordinal(p)}` : '');
+      const place = (p: number) => (season.matchday > 0 ? `${sep()}${ordinal(p)}` : '');
       const you = side(youKit, club.short, club.name, `OVR ${clubRating(club)}${place(pos)}`);
       const them = side(themKit, nm.rival.short, nm.rival.name, `OVR ${nm.rival.rating}${place(rivalPos)}`);
       next = `<section class="mc-next">
@@ -238,19 +239,20 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
         </div>
         <div class="mc-vs">${nm.userHome ? you : them}<div class="mc-vsx">VS</div>${nm.userHome ? them : you}</div>
         <button class="btn btn-go btn-lg mc-play" data-a="play">PLAY MATCHDAY ${nm.md + 1}</button>
-        <p class="mc-pay">WIN +${fmt(pay.win)} · DRAW +${fmt(pay.draw)} · LOSS +${fmt(pay.loss)} · +${pay.goal} PER GOAL · AI ${DIFFICULTIES[matchDifficulty(season.division)]}</p>
+        <p class="mc-pay">WIN +${fmt(pay.win)}${sep()}DRAW +${fmt(pay.draw)}${sep()}LOSS +${fmt(pay.loss)}${sep()}+${pay.goal} PER GOAL${sep()}AI ${DIFFICULTIES[matchDifficulty(season.division)]}</p>
       </section>`;
     }
     const body = tab === 'table' ? tableHtml(table, info, season.division) : tab === 'fixtures' ? fixturesHtml(season, info, mdView) : marketHtml();
     const tabs: [HubTab, string][] = [['table', 'TABLE'], ['fixtures', 'FIXTURES'], ['market', 'TRANSFERS']];
     scr.render(
-      `${topBar('MENU', 'CAREER', `SEASON ${season.number} · ${DIVISION_NAMES[season.division]}`, app.save.coins)}
+      `${topBar('MENU', 'CAREER', `SEASON ${season.number}${sep()}${DIVISION_NAMES[season.division]}`, app.save.coins)}
       ${st.notice ? `<div class="mc-notice"><p>${esc(st.notice)}</p><button class="btn btn-white" data-a="dismiss">OK</button></div>` : ''}
       ${next}
       <div class="mc-quick">
         <button class="btn btn-yellow" data-a="squad">SQUAD</button>
         <button class="btn btn-white" data-a="train">TRAINING</button>
-        <button class="btn btn-white" data-a="stadium">STADIUM<span class="mc-lv"> · LV ${st.stadium}</span></button>
+        <button class="btn btn-white" data-a="stadium">STADIUM<span class="mc-lv">${sep()}LV ${st.stadium}</span></button>
+        <button class="btn btn-white" data-a="market">MARKET</button>
       </div>
       <div class="seg mc-tabs">${tabs.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}</button>`).join('')}</div>
       ${body}`,
@@ -265,6 +267,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
         squad: () => openClub(app, { tab: 'squad', backLabel: 'CAREER', onBack: () => openCareer(app) }),
         train: () => openClub(app, { tab: 'train', backLabel: 'CAREER', onBack: () => openCareer(app) }),
         stadium: () => openClub(app, { tab: 'stadium', backLabel: 'CAREER', onBack: () => openCareer(app) }),
+        market: () => openClub(app, { tab: 'market', backLabel: 'CAREER', onBack: () => openCareer(app) }),
         tab: (el) => {
           tab = el.dataset.v as HubTab;
           confirm = '';
@@ -306,7 +309,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
           app.persist();
           sfx.coin();
           draw();
-          scr.toast(r.player ? `SIGNED ${r.player.name.toUpperCase()} · #${r.player.number}` : 'SIGNED!', 'good');
+          scr.toast(r.player ? `SIGNED ${r.player.name.toUpperCase()} / #${r.player.number}` : 'SIGNED!', 'good');
         },
         sell: (el) => {
           const id = el.dataset.id ?? '';
@@ -325,7 +328,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
           app.persist();
           sfx.coin();
           draw();
-          scr.toast(`SOLD ${p ? p.name.toUpperCase() : 'PLAYER'} · +${fmt(r.delta)}`, 'good');
+          scr.toast(`SOLD ${p ? p.name.toUpperCase() : 'PLAYER'} / +${fmt(r.delta)}`, 'good');
         },
       },
     );
@@ -370,7 +373,8 @@ function playMatchday(app: AppContext, st: CareerState): void {
       const my = userHome ? hg : ag;
       const their = userHome ? ag : hg;
       const verdict = my > their ? 'WIN' : my === their ? 'DRAW' : 'LOSS';
-      returnToCareer(app, ok ? { msg: `${verdict} ${my}-${their} VS ${rival.short} · TABLE UPDATED`, kind: my > their ? 'good' : my === their ? 'info' : 'bad' } : undefined);
+      // A plain-text toast: the score reads "2:1" (no dash: see ui/text.ts) and facts are split with a slash.
+      returnToCareer(app, ok ? { msg: `${verdict} ${my}:${their} VS ${rival.short} / TABLE UPDATED`, kind: my > their ? 'good' : my === their ? 'info' : 'bad' } : undefined);
     },
     quitNote: 'Walking off counts as a 3-0 defeat in the league table.',
     onQuit: () => {
@@ -410,7 +414,7 @@ function seasonSummary(app: AppContext, st: CareerState): void {
   const past = st.history
     .slice(-5)
     .reverse()
-    .map((h) => `<span class="mc-hist ${h.outcome}">S${h.season} · DIV ${h.division} · ${ordinal(h.position)}</span>`)
+    .map((h) => `<span class="mc-hist ${h.outcome}">S${h.season}${sep()}DIV ${h.division}${sep()}${ordinal(h.position)}</span>`)
     .join('');
   scr.render(
     `${topBar('MENU', `SEASON ${sum.season}`, 'FINAL WHISTLE', app.save.coins)}
@@ -429,7 +433,7 @@ function seasonSummary(app: AppContext, st: CareerState): void {
       next: () => {
         const s = startNextSeason(st);
         app.persist();
-        openCareer(app, s ? { msg: `SEASON ${s.number} · ${DIVISION_NAMES[s.division]}`, kind: 'info' } : undefined);
+        openCareer(app, s ? { msg: `SEASON ${s.number} / ${DIVISION_NAMES[s.division]}`, kind: 'info' } : undefined);
       },
     },
   );

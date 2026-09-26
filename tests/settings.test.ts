@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CONTROL_DEFAULTS, controlsOf, defaultSave, loadSave, normalizeSettings } from '../src/core/save';
+import { CONTROL_DEFAULTS, controlsOf, defaultSave, exportSave, importSave, loadSave, normalizeSettings } from '../src/core/save';
 
 const KEY = 'blocky-league-save-v1';
 
@@ -72,5 +72,55 @@ describe('settings: controls', () => {
     stubStorage(saved);
     expect(controlsOf(loadSave().settings)).toMatchObject({ trainer: false, quickPass: false });
     expect(normalizeSettings({ trainer: 'false', quickPass: 0 })).toMatchObject({ trainer: true, quickPass: true });
+  });
+});
+
+describe('save backup (Settings > BACKUP)', () => {
+  it('an exported save imports back whole, with the settings and progress it had', () => {
+    const s = defaultSave();
+    s.coins = 4321;
+    s.record.played = 12;
+    s.settings.difficulty = 2;
+    s.settings.ballSkin = 'retro';
+    s.settings.celebration = 'knee';
+    s.progress.xp = 555;
+    s.career = { club: { name: 'Test FC' } };
+    const back = importSave(exportSave(s))!;
+    expect(back).not.toBeNull();
+    expect(back.coins).toBe(4321);
+    expect(back.record.played).toBe(12);
+    expect(back.settings.difficulty).toBe(2);
+    expect(back.settings.ballSkin).toBe('retro');
+    expect(back.settings.celebration).toBe('knee');
+    expect(back.progress.xp).toBe(555);
+    expect(back.career).toEqual({ club: { name: 'Test FC' } });
+    expect(back.updatedAt).toBe(s.updatedAt);
+  });
+
+  it('refuses anything that is not a Blocky League save, without throwing', () => {
+    expect(importSave('not json')).toBeNull();
+    expect(importSave('[1,2,3]')).toBeNull();
+    expect(importSave({ hello: 'world' })).toBeNull();
+    expect(importSave({ version: 2, coins: 1, settings: {} })).toBeNull();
+    expect(importSave({ version: 1, coins: 'lots', settings: {} })).toBeNull();
+    expect(importSave({ version: 1, coins: 10 })).toBeNull();
+    expect(importSave(null)).toBeNull();
+  });
+
+  it('a save from an older build, or a hand-edited one, is made whole: defaults fill the gaps and bad values are dropped', () => {
+    const got = importSave({ version: 1, coins: -5, clubIdx: 'x', settings: { camZoom: 'huge', ballSkin: 'diamond', lastMode: 'turbo' }, record: { played: 3 }, gift: { last: '2026-09-20', streak: 2 } })!;
+    expect(got).not.toBeNull();
+    expect(got.coins).toBe(500);
+    expect(got.clubIdx).toBe(defaultSave().clubIdx);
+    expect(got.settings.camZoom).toBe('normal');
+    expect(got.settings.ballSkin).toBeUndefined();
+    expect(got.settings.lastMode).toBe('classic');
+    expect(got.settings.sfx).toBe(true);
+    expect(got.record).toEqual({ played: 3, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 });
+    expect(got.progress.xp).toBe(0);
+    expect(got.gift).toEqual({ last: '2026-09-20', streak: 2 });
+    expect(got.cup).toBeNull();
+    expect(got.career).toBeNull();
+    expect(typeof got.updatedAt).toBe('string');
   });
 });

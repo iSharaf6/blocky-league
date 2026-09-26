@@ -5,6 +5,7 @@ import type { Kit, MatchEvent, PowerUpKind, TeamDef } from '../sim/types';
 import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
 import { Commentator, POWER_INFO, pitchNames, speak, stopSpeech, surname, type CommentaryLine } from './commentary';
+import { scoreHtml, seps, sepsOfText } from './text';
 
 /** How long (s) each power-up runs once used, for the slot's countdown ring when the sim doesn't say. */
 export const POWER_SECONDS: Record<PowerUpKind, number> = { turbo: 6, mega: 8, freeze: 5, magnet: 6, shield: 6, golden: 20 };
@@ -117,6 +118,8 @@ export class Hud {
   private hintHold = 0;
   /** The hint the session last asked for (it comes back when a blackout ends). */
   private hintWant = '';
+  /** The words in the hint box now (its HTML has dividers in place of the " · " the session writes). */
+  private hintText = '';
   /** A hint the player has already acted on (hidden until the session wants a different one). */
   private hintDone = '';
   private btnDown = false;
@@ -148,7 +151,7 @@ export class Hud {
     this.root.innerHTML = `
       <div class="scorebug">
         <div class="sb-team">${h.kit ? crestSvg(h.name, h.short, h.kit, 2) : `<i class="crest" style="--a:${cssHex(h.color)};--b:${cssHex(h.color2)}"></i>`}<b>${h.short}</b></div>
-        <div class="sb-score">0<span>-</span>0</div>
+        <div class="sb-score">${scoreHtml(0, 0)}</div>
         <div class="sb-team"><b>${a.short}</b>${a.kit ? crestSvg(a.name, a.short, a.kit, 2) : `<i class="crest" style="--a:${cssHex(a.color)};--b:${cssHex(a.color2)}"></i>`}</div>
         <div class="sb-clock">00:00</div>
         <div class="sb-cards h"></div>
@@ -204,7 +207,7 @@ export class Hud {
   }
 
   setScore(h: number, a: number): void {
-    this.score.innerHTML = `${h}<span>-</span>${a}`;
+    this.score.innerHTML = scoreHtml(h, a);
     this.score.classList.remove('pop');
     void this.score.offsetWidth;
     this.score.classList.add('pop');
@@ -220,13 +223,15 @@ export class Hud {
   /**
    * Big chunky centre text. Bookings (kind "card") and power-up calls (kind "power") are a compact plate up
    * top instead (see placeBanner); the power plate also keeps off the goal mouth in shot.
+   * The subtitle is formatted (see ui/text.ts): a score written "1 - 0" gets the score divider, and facts
+   * split with " · " get the divider element, so the session can keep writing them the plain way.
    */
   show(title: string, sub = '', kind = '', seconds = 2.2): void {
     this.bannerCard = /(^|\s)card(\s|$)/.test(kind);
     this.bannerPower = /(^|\s)power(\s|$)/.test(kind);
     this.banner.className = `hud-banner on ${kind}${this.bannerCard || this.bannerPower ? ' plate' : ''}`;
     const letters = [...title].map((ch, i) => `<i style="animation-delay:${i * 45}ms">${ch === ' ' ? '&nbsp;' : ch}</i>`).join('');
-    this.banner.innerHTML = `<div class="bn-title">${letters}</div>${sub ? `<div class="bn-sub">${sub}</div>` : ''}`;
+    this.banner.innerHTML = `<div class="bn-title">${letters}</div>${sub ? `<div class="bn-sub">${seps(sub)}</div>` : ''}`;
     this.bannerTimer = seconds;
     const st = this.banner.style;
     st.left = st.top = st.width = '';
@@ -403,7 +408,8 @@ export class Hud {
    * shootout tracker), at the top edge where it never covers players in the box.
    */
   toastMsg(text: string, seconds = 1.4): void {
-    this.toast.textContent = text;
+    // Plain words from the session ("SUB · X ON · Y OFF"): escaped, the separators drawn as dividers.
+    this.toast.innerHTML = sepsOfText(text);
     this.placeToast();
     this.toast.classList.remove('on');
     void this.toast.offsetWidth;
@@ -503,7 +509,10 @@ export class Hud {
     if (this.hintHold > 0) text = '';
     const on = text.length > 0;
     // Off: keep the old words while it fades out (an empty box shrinking looks broken).
-    if (on && this.hint.textContent !== text) this.hint.textContent = text;
+    if (on && this.hintText !== text) {
+      this.hintText = text;
+      this.hint.innerHTML = sepsOfText(text);
+    }
     if (on && !this.hint.classList.contains('on')) {
       // Decide the slot before it fades in, so it never flashes over the taker or the goal first.
       this.hintT = 0;
@@ -1132,7 +1141,7 @@ export class Hud {
   setTip(html: string): void {
     if (this.tip.dataset.t === html) return;
     this.tip.dataset.t = html;
-    this.tip.innerHTML = html;
+    this.tip.innerHTML = seps(html);
     this.tip.classList.toggle('on', html.length > 0);
   }
 

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CHALLENGE_POOL, LEVEL_TITLES, MAX_LEVEL, advanceDaily, dailyChallenges, dailyFor, defaultProgress, defaultSave, levelOf, levelTitle,
-  loadSave, matchStars, matchXp, nextStreak, normalizeProgress, normalizeSettings, streakMult, xpToNext, type MatchSummary, BALL_SKIN_LEVEL, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, xpAt } from '../src/core/save';
+  loadSave, matchStars, matchXp, nextStreak, normalizeProgress, normalizeSettings, streakMult, xpToNext, type MatchSummary, BALL_SKIN_LEVEL, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, xpAt,
+  CELEBRATION_IDS, CELEBRATION_LEVEL, celebrationUnlocked, unlockLadder } from '../src/core/save';
 
 const KEY = 'blocky-league-save-v1';
 
@@ -204,14 +205,37 @@ describe('unlock ladder (earned only)', () => {
     expect(xpAt(2)).toBe(xpToNext(1));
     expect(xpAt(4)).toBe(xpToNext(1) + xpToNext(2) + xpToNext(3));
   });
-  it('nextUnlock names the first look above the level and counts the XP left, then runs out', () => {
+  it('celebrations open by level, the classic one always', () => {
+    expect(celebrationUnlocked('classic', 1)).toBe(true);
+    expect(celebrationUnlocked('knee', CELEBRATION_LEVEL.knee - 1)).toBe(false);
+    expect(celebrationUnlocked('knee', CELEBRATION_LEVEL.knee)).toBe(true);
+    expect(celebrationUnlocked('pile', CELEBRATION_LEVEL.pile - 1)).toBe(false);
+    for (const id of CELEBRATION_IDS) expect(CELEBRATION_LEVEL[id]).toBeGreaterThanOrEqual(1);
+  });
+  it('the ladder holds every ball look and celebration in level order, balls first on a shared level', () => {
+    const ladder = unlockLadder();
+    expect(ladder.length).toBe(6 + CELEBRATION_IDS.length);
+    for (let i = 1; i < ladder.length; i++) expect(ladder[i].level).toBeGreaterThanOrEqual(ladder[i - 1].level);
+    expect(ladder[0]).toMatchObject({ kind: 'ball', id: 'classic', level: 1 });
+    expect(ladder[1]).toMatchObject({ kind: 'celebration', id: 'classic', level: 1 });
+    expect(ladder.find((u) => u.id === 'knee')?.name).toBe('Knee slide celebration');
+    expect(ladder.find((u) => u.id === 'retro')?.name).toBe('Retro ball');
+  });
+  it('nextUnlock names whichever of the two ladders comes first above the level, counts the XP left, then runs out', () => {
+    // Level 1: the retro ball (level 2) comes before the knee slide (level 3).
     const n0 = nextUnlock(0)!;
-    expect(n0.id).toBe('retro');
+    expect(n0).toMatchObject({ kind: 'ball', id: 'retro', level: BALL_SKIN_LEVEL.retro });
     expect(n0.xpLeft).toBe(xpAt(BALL_SKIN_LEVEL.retro));
+    // At level 2 the knee slide (3) is nearer than the blaze ball (4): the earliest next level wins.
     const atRetro = nextUnlock(xpAt(BALL_SKIN_LEVEL.retro))!;
-    expect(atRetro.id).toBe('blaze');
-    expect(atRetro.xpLeft).toBe(xpAt(BALL_SKIN_LEVEL.blaze) - xpAt(BALL_SKIN_LEVEL.retro));
-    expect(nextUnlock(xpAt(BALL_SKIN_LEVEL.gold))).toBeNull();
+    expect(atRetro).toMatchObject({ kind: 'celebration', id: 'knee', level: CELEBRATION_LEVEL.knee });
+    expect(atRetro.xpLeft).toBe(xpAt(CELEBRATION_LEVEL.knee) - xpAt(BALL_SKIN_LEVEL.retro));
+    const atKnee = nextUnlock(xpAt(CELEBRATION_LEVEL.knee))!;
+    expect(atKnee).toMatchObject({ kind: 'ball', id: 'blaze' });
+    // Past the gold ball there are still celebrations to earn; past the last of everything, nothing.
+    expect(nextUnlock(xpAt(BALL_SKIN_LEVEL.gold))?.kind).toBe('celebration');
+    const top = Math.max(...Object.values(BALL_SKIN_LEVEL), ...Object.values(CELEBRATION_LEVEL));
+    expect(nextUnlock(xpAt(top))).toBeNull();
   });
   it('LEGEND opens at the star count', () => {
     expect(legendUnlocked({ stars: LEGEND_STARS - 1 })).toBe(false);

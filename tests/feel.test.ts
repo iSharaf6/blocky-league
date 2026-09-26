@@ -134,7 +134,9 @@ describe('instant passing', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`15 m pass, strike -> at his feet: ${t.toFixed(2)} s`);
-    expect(t).toBeLessThanOrEqual(0.56);
+    // (0.53 s through round 9. Round 10: the receiver sets himself on the ball's line with 0.3 s to spare
+    // (Match.receivePoint) rather than charging head-on at it, so it reaches him ~0.04 s later: 0.57 s.)
+    expect(t).toBeLessThanOrEqual(0.6);
   });
 });
 

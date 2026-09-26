@@ -14,6 +14,7 @@ import { cssHex } from '../render/palette';
 import { goalsOf } from '../sim/shootout';
 import { closeMeta, esc, fmt, mountMeta, topBar, type ToastKind } from './club';
 import { DIFFICULTIES, pixelIcon, shirtArt, stars } from './menus';
+import { sep } from './text';
 
 interface Flash {
   msg: string;
@@ -69,7 +70,7 @@ function cupEntry(app: AppContext): void {
     const total = ROUND_PRIZE.reduce((a, b) => a + Math.round(b * mult), 0) + Math.round(TROPHY_PRIZE * mult);
     const lines = ROUND_SHORT.map((r, i) => `<div><span>WIN THE ${r}</span><b><i></i>+${fmt(ROUND_PRIZE[i] * mult)}</b></div>`).join('');
     scr.render(
-      `${topBar('MENU', 'BLOCKY CUP', 'KNOCKOUT · 8 CLUBS · 3 ROUNDS', app.save.coins)}
+      `${topBar('MENU', 'BLOCKY CUP', `KNOCKOUT${sep()}8 CLUBS${sep()}3 ROUNDS`, app.save.coins)}
       <section class="cup-hero">
         <div class="cup-hero-icon">${pixelIcon('trophy', '#ffd23a', 8)}</div>
         <p>Win three ties to lift the cup. Level after full time? Straight to penalties.</p>
@@ -84,7 +85,7 @@ function cupEntry(app: AppContext): void {
           </div>
           <b class="tp-name">${esc(c.name)}</b>
           <span class="tp-stars">${stars(clubRating(club))}</span>
-          <span class="tp-meta">OVR ${clubRating(club)} · ${c.formation}</span>
+          <span class="tp-meta">OVR ${clubRating(club)}${sep()}<span class="fm">${c.formation}</span></span>
         </div>
         <div class="mc-prize">${lines}
           <div><span>LIFT THE TROPHY</span><b><i></i>+${fmt(TROPHY_PRIZE * mult)}</b></div>
@@ -159,7 +160,7 @@ function cupHub(app: AppContext, st: CupState, flash?: Flash): void {
   let confirmQuit = false;
   const draw = () => {
     const ut = userTie(st);
-    const sub = st.status === 'won' ? 'CHAMPIONS' : st.status === 'out' ? 'KNOCKED OUT' : `${DIFFICULTIES[st.difficulty]} · ${ROUND_NAMES[st.round]}`;
+    const sub = st.status === 'won' ? 'CHAMPIONS' : st.status === 'out' ? 'KNOCKED OUT' : `${DIFFICULTIES[st.difficulty]}${sep()}${ROUND_NAMES[st.round]}`;
     let card: string;
     if (ut) {
       const side = (club: number) => {
@@ -173,7 +174,7 @@ function cupHub(app: AppContext, st: CupState, flash?: Flash): void {
         </div>
         <div class="mc-vs">${side(st.clubs[st.user])}<div class="mc-vsx">VS</div>${side(st.clubs[ut.rival])}</div>
         <button class="btn btn-go btn-lg mc-play" data-a="play">PLAY ${ROUND_NAMES[st.round]}</button>
-        <p class="mc-pay">LEVEL AT FULL TIME = PENALTIES · LOSE AND YOU'RE OUT</p>
+        <p class="mc-pay">LEVEL AT FULL TIME = PENALTIES${sep()}LOSE AND YOU'RE OUT</p>
       </section>`;
     } else if (st.status === 'won') {
       card = `<div class="mc-result champ cup-result">${pixelIcon('trophy', '#26262e', 7)}<b>CHAMPIONS!</b>

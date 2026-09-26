@@ -8,7 +8,8 @@ import { sfx } from './audio/sfx';
 import { Input } from './core/input';
 import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
-  streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock, skinUnlocked, type BallSkinId } from './core/save';
+  streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock, skinUnlocked, type BallSkinId, celebrationUnlocked,
+  type CelebrationId, type SaveData } from './core/save';
 import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
@@ -17,16 +18,21 @@ import { World, type TimeOfDay } from './render/world';
 import { BOX_DEPTH, BOX_W, HALF_L } from './sim/constants';
 import type { Match } from './sim/match';
 import type { FormationId, KickKind, MatchEvent, MatchMode, Side } from './sim/types';
-import { DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
+import { DIFFICULTIES, DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
 import { DIVISION_NAMES, clubRating, migrateCareer, nextMatch } from './meta/career';
 import { ROUND_NAMES, clubRating as presetRating, migrateCup } from './meta/cup';
 import { overall } from './sim/types';
 import { openCareer } from './ui/career';
 import { openCup } from './ui/cup';
-import { openClub } from './ui/club';
+import { closeMeta, openClub } from './ui/club';
 import { stopSpeech } from './ui/commentary';
 import type { Projector } from './ui/hud';
+import { installSepGuard } from './ui/text';
+import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
 
+/** When the script started: the studio splash stays up at least SPLASH_MS from here. */
+const bootAt = performance.now();
+const SPLASH_MS = 800;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const world = new World(canvas);
 const input = new Input();
@@ -34,9 +40,30 @@ const menus = new Menus();
 const save = loadSave();
 let session: MatchSession | null = null;
 let demo: MatchSession | null = null;
+/** The main menu (or a screen off it) is up, as opposed to the title screen or a match. */
+let atMenu = false;
 
 function persist(): void {
   writeSave(save);
+}
+
+/**
+ * Replace the running save with another (a file the player imported, or the cloud copy): every module holds
+ * the one `save` object, so its contents are swapped in place. Then it is stored, the settings applied, and
+ * the menu redrawn if one is up (a match in progress carries on and sees the new save at full time).
+ */
+function reload(d: SaveData): void {
+  const n = PRESET_CLUBS.length;
+  const idx = (i: number, dflt: number) => (Number.isInteger(i) && i >= 0 && i < n ? i : dflt);
+  for (const k of Object.keys(save)) delete (save as unknown as Record<string, unknown>)[k];
+  Object.assign(save, d);
+  save.clubIdx = idx(save.clubIdx, 5);
+  save.opponentIdx = idx(save.opponentIdx, save.clubIdx === 6 ? 5 : 6);
+  applySettings();
+  if (atMenu && !session) {
+    closeMeta();
+    mainMenu();
+  }
 }
 
 /** The match camera distance from Settings (older saves: normal). */
@@ -44,12 +71,19 @@ function camZoom(): CamZoom {
   return save.settings.camZoom ?? 'normal';
 }
 
-/** Live camera-distance change (Settings opened from the pause menu). Optional: older sessions lack it. */
 /** The ball look to play with: the chosen one if this level has earned it, else the classic ball. */
 function equippedSkin(): string | undefined {
   const id = save.settings.ballSkin as BallSkinId | undefined;
   return id && skinUnlocked(id, levelOf(save.progress.xp).level) ? id : undefined;
 }
+
+/** The goal celebration to play: the chosen one if this level has earned it, else the classic one. */
+function equippedCelebration(): string | undefined {
+  const id = save.settings.celebration as CelebrationId | undefined;
+  return id && celebrationUnlocked(id, levelOf(save.progress.xp).level) ? id : undefined;
+}
+
+/** Live camera-distance change (Settings opened from the pause menu). Optional: older sessions lack it. */
 
 function applyCamZoom(s: MatchSession | null): void {
   (s as { setCamZoom?: (z: CamZoom) => void } | null)?.setCamZoom?.(camZoom());
@@ -154,6 +188,7 @@ function applySettings(): void {
     session.hud?.setCommentary(s.commentary, s.commentaryVoice);
     applyCamZoom(session);
     (session as { setBallSkin?: (id?: string) => void }).setBallSkin?.(equippedSkin());
+    (session as { setCelebration?: (id?: string) => void }).setCelebration?.(equippedCelebration());
   }
   persist();
 }
@@ -211,7 +246,13 @@ function mainInfo(): MainInfo {
   const info: MainInfo = {};
   const q = PRESET_CLUBS[save.clubIdx];
   const o = PRESET_CLUBS[save.opponentIdx];
-  if (q && o) info.quick = `${q.short} v ${o.short}`;
+  if (q) {
+    const p = playNowPlan();
+    info.playNow = `${q.short} v ${PRESET_CLUBS[p.rival].short} · ${DIFFICULTIES[p.difficulty]}`;
+  }
+  if (q && o) info.quick = 'PICK TEAMS · RULES';
+  const user = cloudUser();
+  if (user) info.account = user.name;
   try {
     const career = save.career ? migrateCareer(save.career, 1) : null;
     const club = career?.club ?? null;
@@ -252,10 +293,15 @@ function mainInfo(): MainInfo {
 }
 
 function mainMenu(): void {
+  atMenu = true;
   if (!demo) startDemo();
   if (save.settings.music) sfx.startMusic();
   const info = mainInfo();
+  const backup = (): void => menus.backup(save, { onImport: reload, back: () => settings() });
+  const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', { backup });
   menus.main(save, {
+    playNow: () => playNow(),
+    account: cloudAvailable() ? () => openAccount({ save, persist, reload }, mainMenu) : undefined,
     gift: () => {
       const g = giftToday();
       if (!g) return mainMenu();
@@ -276,9 +322,58 @@ function mainMenu(): void {
     career: () => openCareer(app),
     cup: () => openCup(app),
     club: () => openClub(app),
-    settings: () => menus.settings(save, applySettings, mainMenu),
+    settings,
     howto: () => menus.howTo(mainMenu, input.lastDevice),
   }, info);
+}
+
+/** The preset club whose squad rating is closest to `mine`'s (a fair game): a tie goes to the next one along. */
+function similarRival(mine: number): number {
+  const n = PRESET_CLUBS.length;
+  const r0 = presetRating(mine);
+  let best = (mine + 1) % n;
+  let gap = Infinity;
+  for (let k = 1; k < n; k++) {
+    const i = (mine + k) % n;
+    const g = Math.abs(presetRating(i) - r0);
+    if (g < gap) {
+      gap = g;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * What PLAY NOW starts: your club against the closest-rated rival, classic rules; a new player gets Normal
+ * and 1.5-minute halves, a returning one the difficulty and half length they set in Quick Match.
+ */
+function playNowPlan(): { home: number; rival: number; difficulty: number; halfMinutes: number } {
+  const home = PRESET_CLUBS[save.clubIdx] ? save.clubIdx : 0;
+  const fresh = save.record.played === 0;
+  return { home, rival: similarRival(home), difficulty: fresh ? 1 : save.settings.difficulty, halfMinutes: fresh ? 1.5 : save.settings.halfMinutes };
+}
+
+/** PLAY NOW: straight into a match, no setup screen and no fly-in. Title → PLAY NOW → kick-off is two taps. */
+function playNow(): void {
+  const p = playNowPlan();
+  const home = makeTeam(PRESET_CLUBS[p.home]);
+  const away = makeTeam(PRESET_CLUBS[p.rival]);
+  startMatch({
+    home, away,
+    kits: [home.kit, resolveKitClash(home.kit, away.kit)],
+    humanSide: 0,
+    difficulty: p.difficulty,
+    halfMinutes: p.halfMinutes,
+    attendance: 0.9,
+    stadiumLevel: 5,
+    mode: 'classic',
+    skipIntro: true,
+    rematch: true,
+    reward: (r) => standardReward(r, p.difficulty),
+    onDone: () => mainMenu(),
+    onQuit: () => mainMenu(),
+  });
 }
 
 /** Standard coin payout, scaled by difficulty. */
@@ -350,6 +445,7 @@ function recordResult(r: MatchResult): void {
 let matchesPlayed = 0;
 
 async function startMatch(req: MatchRequest): Promise<void> {
+  atMenu = false;
   menus.close();
   sfx.stopMusic();
   // Portal interstitial at the natural break before a new kick-off (never on the first match).
@@ -376,6 +472,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     tutorial: !save.seenTutorial,
     camZoom: camZoom(),
     ballSkin: equippedSkin(),
+    celebration: equippedCelebration(),
   });
   applyControls(session.match);
   session.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
@@ -530,8 +627,14 @@ function frame(now: number): void {
 async function boot(): Promise<void> {
   world.setQuality(save.settings.quality);
   ads.onMute = (m) => sfx.setMuted(m);
-  // Never let a slow or blocked portal SDK hold the title screen hostage.
-  await Promise.all([Promise.race([ads.init(), new Promise<void>((r) => setTimeout(r, 3000))]), document.fonts?.ready]);
+  // Every screen's text goes through the divider guard (see ui/text.ts): no glyph the fonts lack.
+  installSepGuard(menus.root);
+  // Never let a slow or blocked portal SDK hold the title screen hostage; the studio splash gets its moment.
+  await Promise.all([
+    Promise.race([ads.init(), new Promise<void>((r) => setTimeout(r, 3000))]),
+    document.fonts?.ready,
+    new Promise<void>((r) => setTimeout(r, Math.max(0, SPLASH_MS - (performance.now() - bootAt)))),
+  ]);
   startDemo();
   requestAnimationFrame(frame);
   document.getElementById('boot')?.classList.add('gone');
@@ -553,6 +656,8 @@ async function boot(): Promise<void> {
     applySettings();
     mainMenu();
   });
+  // Cloud saves (a no-op until a backend is configured): pull the newer copy, then keep pushing changes.
+  void cloudBoot({ save, persist, reload });
 }
 
 if (import.meta.env.DEV) {

@@ -376,6 +376,23 @@ export class Sfx {
     this.noiseBurst(t + 0.02, 0.14, 'lowpass', 500, 0.5, 0.25);
   }
 
+  /** A backflip: a quick swept whoosh of air. */
+  whoosh(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    const n = this.noiseBurst(t, 0.34, 'bandpass', 600, 1.1, 0.24, this.sfxBus, 0.06);
+    n.f.frequency.exponentialRampToValueAtTime(2400, t + 0.16);
+    n.f.frequency.exponentialRampToValueAtTime(500, t + 0.34);
+  }
+
+  /** A body landing on the pile: a soft, low flop (no crack: nobody got tackled). */
+  flop(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    this.tone(t, 'sine', 120, 45, 0.14, 0.4);
+    this.noiseBurst(t + 0.01, 0.12, 'lowpass', 420, 0.6, 0.22);
+  }
+
   /** Missed him: a soft scuff of boot on grass. */
   scuff(): void {
     if (!this.ready || !this.sfxOn) return;

@@ -10,6 +10,10 @@ Copy for CrazyGames, Poki, GameDistribution, itch.io and your own site. Paste as
 
 **Blocky League**
 
+## Developer
+
+**Calynx** (Islam Sharaf). Use "Calynx" in the developer / studio field; the game's name and short name stay "Blocky League" (the PWA manifest keeps them too). Credit line for pages that want one: _Blocky League, a Calynx game, by Islam Sharaf._
+
 ## Tagline
 
 Portal "short description" or "subtitle" fields.

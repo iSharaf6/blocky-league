@@ -125,6 +125,25 @@ const STAND_X = HALF_L + 6.2;
 const STEP_D = 0.86;
 const STEP_H = 0.56;
 const BANNER_X = [-30, -4, 22, 42];
+/** Ad boards: pixels per word on the texture, metres per word on the board. */
+const BOARD_SEG_PX = 384;
+const BOARD_WORD_M = 10;
+/** Calynx (the studio): its blue, and its lynx head (the wordmark's x: tufted ears, the muzzle to the right). */
+export const CALYNX_BLUE = 0x2230d6;
+const LYNX = [
+  '..#.....#...',
+  '..#.....#...',
+  '.###...###..',
+  '.#########..',
+  '###########.',
+  '######.#####',
+  '############',
+  '###########.',
+  '.#########..',
+  '.########...',
+  '#.######....',
+  '...#.#......',
+];
 /** The playing surface is a raised lawn; players, ball and goals sit on top of it. */
 export const PITCH_Y = 0.12;
 
@@ -160,6 +179,14 @@ function snowMaterial(snow: { value: number }, snowCol: number, key: string, sat
   };
   m.customProgramCacheKey = () => `snow-${key}`;
   return m;
+}
+
+/** The lynx head, `px` canvas pixels a cell, its top-left at (x, y). */
+function drawLynx(g: CanvasRenderingContext2D, x: number, y: number, px: number, color: string): void {
+  g.fillStyle = color;
+  LYNX.forEach((row, r) => {
+    for (let c = 0; c < row.length; c++) if (row[c] === '#') g.fillRect(x + c * px, y + r * px, px, px);
+  });
 }
 
 export class Stadium {
@@ -455,10 +482,10 @@ export class Stadium {
 
   private makeBoardTexture(words: string[], bgs: number[], fgs?: string[]): THREE.CanvasTexture {
     const c = document.createElement('canvas');
-    c.width = 2048;
+    c.width = BOARD_SEG_PX * words.length;
     c.height = 64;
     const g = c.getContext('2d')!;
-    const segW = c.width / words.length;
+    const segW = BOARD_SEG_PX;
     words.forEach((w, i) => {
       const bg = bgs[i % bgs.length];
       g.fillStyle = cssHex(bg);
@@ -466,19 +493,24 @@ export class Stadium {
       // Chunky pixel stripe at the edges like LED panels.
       g.fillStyle = 'rgba(0,0,0,0.18)';
       g.fillRect(i * segW, 56, segW, 8);
+      // The studio board: its blue on white, the lynx head to the right of the wordmark.
+      const brand = w === 'CALYNX';
       const light = ((bg >> 16) & 255) * 0.3 + ((bg >> 8) & 255) * 0.59 + (bg & 255) * 0.11 > 170;
-      g.fillStyle = fgs ? fgs[i % fgs.length] : light ? '#26262e' : '#fbfbf4';
+      g.fillStyle = fgs ? fgs[i % fgs.length] : brand ? cssHex(CALYNX_BLUE) : light ? '#26262e' : '#fbfbf4';
       let size = 42;
       g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
-      const wMax = segW * 0.86;
-      const tw = g.measureText(w).width;
+      const glyph = brand ? 48 + 12 : 0;
+      const wMax = segW * 0.86 - glyph;
+      let tw = g.measureText(w).width;
       if (tw > wMax) {
         size = Math.floor(size * (wMax / tw));
         g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
+        tw = g.measureText(w).width;
       }
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(w, i * segW + segW / 2, 32);
+      g.fillText(w, i * segW + segW / 2 - glyph / 2, 32);
+      if (brand) drawLynx(g, i * segW + segW / 2 + tw / 2 - glyph / 2 + 12, 8, 4, cssHex(CALYNX_BLUE));
     });
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -489,14 +521,14 @@ export class Stadium {
   }
 
   private buildBoards(): void {
-    const words = ['BLOCKY LEAGUE', 'CUBE COLA', 'HOP HOP', 'VOXEL BANK', 'CHUNKY BOOTS', 'PIXEL AIR'];
-    const bgs = [0x2f6fe0, 0xe8443a, 0xffd23a, 0x2fae5a, 0xff8a2b, 0x8a55d8];
+    const words = ['BLOCKY LEAGUE', 'CALYNX', 'CUBE COLA', 'HOP HOP', 'VOXEL BANK', 'CHUNKY BOOTS', 'PIXEL AIR'];
+    const bgs = [0x2f6fe0, 0xfbfbf4, 0xe8443a, 0xffd23a, 0x2fae5a, 0xff8a2b, 0x8a55d8];
     const frame = new BoxBuilder();
     const h = 0.95;
     const add = (cx: number, cz: number, len: number, rot: number) => {
       frame.box(cx, h / 2, cz, len, h, 0.22, 0x2a2a30, { rotY: rot });
       const tex = this.makeBoardTexture(words, bgs);
-      tex.repeat.x = len / 60;
+      tex.repeat.x = len / (BOARD_WORD_M * words.length);
       const mat = new THREE.MeshBasicMaterial({ map: tex });
       const face = new THREE.Mesh(new THREE.PlaneGeometry(len, h * 0.86), mat);
       face.position.set(cx, h / 2, cz);
@@ -759,9 +791,9 @@ export class Stadium {
     const t2 = farRows.filter((r) => r.tier === 2)[0];
     // Small main stand: no upper tier, no roof gantry (the floodlights come with the big stand).
     if (!t2) return;
-    const words = ['BLOCKY LEAGUE', 'CUBE COLA', 'HOP HOP', 'VOXEL BANK', 'CHUNKY BOOTS', 'PIXEL AIR'];
-    const ribbon = this.makeBoardTexture(words, [0x26262e, 0x2f6fe0, 0x26262e, 0xe8443a, 0x26262e, 0x2fae5a]);
-    ribbon.repeat.x = (HALF_L * 2 + 10) / 60;
+    const words = ['BLOCKY LEAGUE', 'CUBE COLA', 'CALYNX', 'HOP HOP', 'VOXEL BANK', 'CHUNKY BOOTS', 'PIXEL AIR'];
+    const ribbon = this.makeBoardTexture(words, [0x26262e, 0x2f6fe0, 0xfbfbf4, 0x26262e, 0xe8443a, 0x26262e, 0x2fae5a]);
+    ribbon.repeat.x = (HALF_L * 2 + 10) / (BOARD_WORD_M * words.length);
     const rib = new THREE.Mesh(new THREE.PlaneGeometry(HALF_L * 2 + 10, 0.7), new THREE.MeshBasicMaterial({ map: ribbon }));
     const cd = farRows.filter((r) => r.tier === 1).length * STEP_D;
     rib.position.set(0, t2.h - 0.9, -(STAND_Z + cd + 1.55) + 0.17);
@@ -1455,6 +1487,24 @@ export class Stadium {
         b.box(cx + 3.5, 0.9, z0 + 0.6, 0.2, 1.8, 1.3, shade(col, 0.75));
         b.box(cx, 1.85, z0 + 0.55, 7.4, 0.1, 1.5, 0xbfe6f5, { top: 0xd6f0fa });
         b.box(cx, 0.25, z0 + 0.8, 6.6, 0.5, 0.5, 0xf6f4ec);
+        // The studio's pennant on the roof corner nearest the halfway line: a swallow-tailed flag in its blue,
+        // the lynx in white at the hoist; it flutters with the corner flags.
+        const px = cx - sx * 3.4;
+        const pz = z0 + 0.12;
+        b.box(px, 2.5, pz, 0.07, 1.3, 0.07, 0xf6f4ec);
+        b.box(px, 3.2, pz, 0.13, 0.13, 0.13, 0xffd23a);
+        const pb = new BoxBuilder();
+        for (let k = 0; k < 6; k++) pb.box(0.17 + k * 0.14, -0.03 * k, 0, 0.14, 0.46 - k * 0.06, 0.03, CALYNX_BLUE);
+        // (The lynx pokes through both faces: seen from the pitch and from the stand.)
+        pb.box(0.24, -0.02, 0, 0.2, 0.18, 0.05, 0xfbfbf4);
+        pb.box(0.17, 0.1, 0, 0.05, 0.08, 0.05, 0xfbfbf4);
+        pb.box(0.29, 0.1, 0, 0.05, 0.08, 0.05, 0xfbfbf4);
+        pb.box(0.36, -0.05, 0, 0.06, 0.07, 0.05, 0xfbfbf4);
+        const pm = new THREE.Mesh(pb.build(), voxelMaterial);
+        pm.position.set(px, 3.0, pz);
+        pm.castShadow = true;
+        this.group.add(pm);
+        this.flags.push(pm);
       } else {
         // A slatted wooden bench on two trestles, a kit bag and a water crate beside it.
         b.box(cx, 0.46, z0 + 0.8, 6.6, 0.1, 0.5, 0xb07a48, { top: 0xc48c56 });
@@ -1517,7 +1567,8 @@ export class Stadium {
     const texts: [string, number, number][] = [
       [`${short} ${short} ${short}!`, home, 0xfbfbf4],
       ['BLOCK PARTY', 0xfbfbf4, home],
-      ['ONE CLUB · ONE DREAM', shade(home, 0.75), 0xffd23a],
+      // The named stand (the studio's founder), in the studio's blue with its lynx.
+      ['SHARAF STAND', CALYNX_BLUE, 0xfbfbf4],
       [`${awayName.split(' ')[0].toUpperCase()} AWAY DAY`, away, 0xfbfbf4],
     ];
     const places: [number, number][] = BANNER_X.map((x, i) => [x, i] as [number, number]).filter(([x]) => this.bannerX.includes(x));
@@ -1532,16 +1583,19 @@ export class Stadium {
       g.fillStyle = cssHex(fg);
       g.fillRect(0, 0, 512, 8);
       g.fillRect(0, 88, 512, 8);
+      const lynx = bg === CALYNX_BLUE ? 60 + 14 : 0;
       let size = 52;
       g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
-      const w = g.measureText(text).width;
-      if (w > 470) {
-        size = Math.floor(size * (470 / w));
+      let w = g.measureText(text).width;
+      if (w > 470 - lynx) {
+        size = Math.floor(size * ((470 - lynx) / w));
         g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
+        w = g.measureText(text).width;
       }
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(text, 256, 50);
+      g.fillText(text, 256 + lynx / 2, 50);
+      if (lynx) drawLynx(g, 256 + lynx / 2 - w / 2 - lynx, 18, 5, cssHex(fg));
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
       const bm = new THREE.MeshLambertMaterial({ map: tex });
