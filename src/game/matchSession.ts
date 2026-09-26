@@ -40,6 +40,8 @@ export interface SessionOptions extends MatchConfig {
   camZoom?: CamZoom;
   /** Unlockable ball look (progression); undefined = the classic ball. */
   ballSkin?: string;
+  /** The human side's goal celebration (progression; CelebrationId); undefined = classic. */
+  celebration?: string;
 }
 
 export interface PlayerRating {

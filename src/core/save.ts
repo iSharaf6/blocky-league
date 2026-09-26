@@ -22,6 +22,8 @@ export interface Settings {
   camZoom?: CamZoom;
   /** Chosen unlockable ball look (progression); undefined = classic. */
   ballSkin?: string;
+  /** Chosen goal celebration (progression; see CELEBRATION_IDS); undefined = classic. */
+  celebration?: string;
   /** Pass assistance (default ground 'assisted', through 'assisted'), switch move assist and timed finishing (default on). */
   groundAssist?: AssistLevel;
   throughAssist?: AssistLevel;
@@ -85,6 +87,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (!CAM_ZOOMS.includes(s.camZoom as CamZoom)) s.camZoom = 'normal';
   if (s.lastMode !== 'classic' && s.lastMode !== 'blitz') s.lastMode = 'classic';
   if (s.ballSkin !== undefined && !(BALL_SKIN_IDS as readonly string[]).includes(s.ballSkin)) s.ballSkin = undefined;
+  if (s.celebration !== undefined && !(CELEBRATION_IDS as readonly string[]).includes(s.celebration)) s.celebration = undefined;
   if (!ASSIST_LEVELS.includes(s.groundAssist as AssistLevel)) s.groundAssist = CONTROL_DEFAULTS.groundAssist;
   if (!ASSIST_LEVELS.includes(s.throughAssist as AssistLevel)) s.throughAssist = CONTROL_DEFAULTS.throughAssist;
   for (const k of ['autoSwitch', 'moveAssist', 'timedFinish', 'trainer', 'quickPass'] as const) {
@@ -434,4 +437,18 @@ export function nextUnlock(xp: number): { id: BallSkinId; name: string; level: n
   if (!next) return null;
   const level = BALL_SKIN_LEVEL[next];
   return { id: next, name: `${BALL_SKIN_NAMES[next]} ball`, level, xpLeft: Math.max(0, xpAt(level) - xp) };
+}
+
+/**
+ * Goal celebrations (src/render/characters + game/matchSession choreograph them) and the level that earns each;
+ * 'classic' (arms up, mobbed by team-mates) is always there.
+ */
+export const CELEBRATION_IDS = ['classic', 'knee', 'shush', 'plane', 'robot', 'backflip', 'pile'] as const;
+export type CelebrationId = (typeof CELEBRATION_IDS)[number];
+export const CELEBRATION_LEVEL: { readonly [k in CelebrationId]: number } = { classic: 1, knee: 3, shush: 5, plane: 7, robot: 9, backflip: 11, pile: 14 };
+export const CELEBRATION_NAMES: { readonly [k in CelebrationId]: string } = {
+  classic: 'Classic', knee: 'Knee slide', shush: 'Shush', plane: 'Aeroplane', robot: 'Robot', backflip: 'Backflip', pile: 'Pile-on',
+};
+export function celebrationUnlocked(id: CelebrationId, level: number): boolean {
+  return level >= CELEBRATION_LEVEL[id];
 }
