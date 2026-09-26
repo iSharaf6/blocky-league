@@ -3,13 +3,24 @@
  * here; the rest of the sim only calls in through a handful of one-line hooks, each guarded by the mode
  * (classic matches never reach this file, so they stay bit-identical):
  *
- *   Match.step            -> blitzStep      (pickups, collection, timers, uses, Player.boost)
+ *   Match.step            -> blitzStep      (pickups, collection, timers, uses, Player.boost, the brace)
  *   Match.endHalf         -> blitzClear     (a held power-up and any effect end with the half)
+ *   Match.goal            -> blitzGoal      (golden: the scoring side's goal counts double)
  *   Match.tryTackle       -> blitzTackle    (shield / freeze: the challenge bounces off; magnet: cleaner contact)
  *   Match.startSlide      -> blitzNoSlide   (a frozen man can't go to ground; nobody slides a shielded carrier)
- *   Match.checkKeeperHands-> megaHands      (a mega shot knocks the keeper back and is never held)
- *   actions.resolveKick   -> megaLaunch     (the armed side's next open-play shot is a rocket)
+ *   Match.checkKeeperHands-> megaHands      (a mega shot knocks the keeper back and is never held; a brace parries)
+ *   keeper.ts dive        -> blitzDive      (a frozen keeper's dive is FREEZE_DIVE of its pace and reach)
+ *   actions.resolveKick   -> megaLaunch     (the armed side's next open-play shot is a rocket, after the telegraph)
  *   Player.locomote / controlRadius read Player.boost (TURBO_PACE, FREEZE_PACE, MAGNET_CONTROL_R).
+ *
+ * For the render / HUD:
+ *   - PowerUp.t is seconds since the cube became collectable: it starts at -MATERIALISE (the powerupSpawn event
+ *     fires at once, so the cube can pop in), nobody can take it while t < 0, and it fades at PICKUP_LIFE.
+ *   - Match.goldenSide is the side whose next goal counts double (-1: none): gild the ball, show "x2".
+ *   - Player.boost === 'mega' from the press: the ball is red-hot for MEGA_TELEGRAPH s before the rocket can be
+ *     struck (a shot inside the telegraph is an ordinary one and leaves the mega armed).
+ *   - The human's keeper braces for a rocket while the human holds TACKLE (SHOOT) off the ball: half the
+ *     knock-back and he can parry it. AI keepers brace by their keeping (AI_BRACE).
  *
  * Fairness: nothing here touches a penalty, a free kick strike or a shootout (mega only fires in open play);
  * timers only run while the ball is live (phase 'play'); freeze slows men, never a ball in flight; a held
@@ -25,52 +36,74 @@ import type { PowerUp, PowerUpKind, Side } from './types';
 // ------------------------------------------------------------------ tunables
 
 /** Seconds of open play between pickups (the first of each half comes sooner: FIRST_SPAWN). */
-export const SPAWN_MIN = 12;
-export const SPAWN_MAX = 20;
-export const FIRST_SPAWN: readonly [number, number] = [6, 10];
-/** A pickup lies there this long (s) before it fades. */
+export const SPAWN_MIN = 6;
+export const SPAWN_MAX = 10;
+export const FIRST_SPAWN: readonly [number, number] = [3, 6];
+/** A cube materialises for this long (s) after it appears before anyone can take it (PowerUp.t < 0). */
+export const MATERIALISE = 2;
+/** Then it lies there this long (s) before it fades. */
 export const PICKUP_LIFE = 8;
 /** Never more than this many on the pitch. */
-export const MAX_PICKUPS = 2;
+export const MAX_PICKUPS = 3;
 /** Run within this (m) of a pickup to take it. */
-export const PICKUP_R = 0.9;
-/** A pickup appears this far (m) from the ball: never on top of the play, never across the whole pitch. */
-export const SPAWN_BALL_MIN = 12;
-export const SPAWN_BALL_MAX = 34;
+export const PICKUP_R = 1.2;
+/**
+ * Where a cube appears: with the ball at someone's feet, SPAWN_AHEAD m ahead of it the way his side attacks
+ * and within SPAWN_LANE m of its line (in the play, where the man on the ball and the man closing him down
+ * both run); with the ball loose (or nowhere ahead is clear, up against the goal line), SPAWN_LOOSE m from it
+ * in any direction.
+ */
+export const SPAWN_AHEAD: readonly [number, number] = [6, 16];
+export const SPAWN_LANE = 5;
+export const SPAWN_LOOSE: readonly [number, number] = [4, 10];
 /** ... this far inside the lines, and clear of both six-yard boxes by SIX_MARGIN. */
 export const SPAWN_MARGIN = 4;
 export const SIX_MARGIN = 1.5;
 /** Kinds are drawn with these weights. */
 export const KIND_WEIGHTS: readonly (readonly [PowerUpKind, number])[] = [
-  ['turbo', 30], ['mega', 20], ['freeze', 15], ['magnet', 20], ['shield', 15],
+  ['turbo', 30], ['mega', 20], ['freeze', 15], ['magnet', 20], ['shield', 15], ['golden', 10],
 ];
 /** How long (s) each effect lasts once used (mega: the window for the rocket shot; it ends at the strike). */
-export const DURATION: Readonly<Record<PowerUpKind, number>> = { turbo: 4, mega: 6, freeze: 3, magnet: 5, shield: 4 };
+export const DURATION: Readonly<Record<PowerUpKind, number>> = { turbo: 4, mega: 6, freeze: 3, magnet: 5, shield: 4, golden: 20 };
 /** Turbo: the whole side's top speed and acceleration. */
 export const TURBO_PACE = 1.3;
 export const TURBO_ACCEL = 1.3;
-/** Freeze: the other side's top speed and acceleration (keeper too), and they can't tackle. */
+/** Freeze: the other side's top speed and acceleration (keeper too), and they can't tackle... */
 export const FREEZE_PACE = 0.45;
 export const FREEZE_ACCEL = 0.45;
+/** ... and their keeper's dive is this much of its pace and reach. */
+export const FREEZE_DIVE = 0.6;
 /** Mega: the shot's pace, how much of its error is kept, and from how close (m) an on-target one is unsavable. */
 export const MEGA_PACE = 1.5;
 export const MEGA_ERR = 0.5;
-export const MEGA_UNSAVABLE_D = 18;
+export const MEGA_UNSAVABLE_D = 12;
+/** Mega: the ball is red-hot this long (s) after the press before the rocket can be struck. */
+export const MEGA_TELEGRAPH = 1;
 /** Mega: the keeper is knocked back at this speed (m/s; on the floor he brakes at 5/s, so ~2 m)... */
 export const MEGA_KNOCK = 10;
 /** ... and the ball keeps this much of its pace through his hands. */
 export const MEGA_THROUGH = 0.85;
+/** A braced keeper takes this much of the knock-back, and gets a hand to it from any distance. */
+export const MEGA_BRACE_KNOCK = 0.5;
+/** An AI keeper braces with this chance: AI_BRACE[0] + keeping (0..1) x AI_BRACE[1]. */
+export const AI_BRACE: readonly [number, number] = [0.3, 0.35];
 /** Magnet: the side's control radius (m; normally CONTROL_R + dribbling x 0.18, 0.78..0.96)... */
 export const MAGNET_CONTROL_R = 1.3;
 /** ... and this share of tackles on its carrier don't get clean contact. */
-export const MAGNET_GUARD = 0.5;
-/** An AI side holds an item at least this long (s) before using it, and never longer than AI_HOLD_MAX. */
+export const MAGNET_GUARD = 0.25;
+/**
+ * An AI side holds an item at least this long (s) before using it, goes for any loose fit past AI_HOLD_MAX,
+ * uses it whatever the situation past AI_HOLD_CAP, and uses whatever it holds inside the last AI_ENDGAME s of
+ * a half (a held item is lost at the whistle).
+ */
 export const AI_HOLD_MIN = 0.6;
-export const AI_HOLD_MAX = 20;
+export const AI_HOLD_MAX = 12;
+export const AI_HOLD_CAP = 30;
+export const AI_ENDGAME = 15;
 /** A challenge that bounces off a shielded carrier leaves the tackler off balance this long (s). */
 export const BOUNCE_STUMBLE = 0.45;
 
-const KINDS: readonly PowerUpKind[] = ['turbo', 'mega', 'freeze', 'magnet', 'shield'];
+const KINDS: readonly PowerUpKind[] = ['turbo', 'mega', 'freeze', 'magnet', 'shield', 'golden'];
 
 // ------------------------------------------------------------------ state
 
@@ -90,12 +123,14 @@ export interface BlitzState {
   half: number;
   /** Seconds (of play) each AI side has held its current item. */
   aiHold: [number, number];
+  /** The human is holding TACKLE off the ball this step: his keeper braces for a rocket. */
+  brace: boolean;
 }
 
 const STATES = new WeakMap<Match, BlitzState>();
 
 function timers(v = 0): Timers {
-  return { turbo: v, mega: v, freeze: v, magnet: v, shield: v };
+  return { turbo: v, mega: v, freeze: v, magnet: v, shield: v, golden: v };
 }
 
 /** The mode's state for this match (made on first use). */
@@ -104,7 +139,7 @@ export function blitzState(m: Match): BlitzState {
   if (!s) {
     s = {
       spawnT: m.rng.range(FIRST_SPAWN[0], FIRST_SPAWN[1]), nextId: 1, fx: [timers(), timers()], user: [timers(-1), timers(-1)],
-      megaKick: [-1, -1], prevPower: false, half: m.half, aiHold: [0, 0],
+      megaKick: [-1, -1], prevPower: false, half: m.half, aiHold: [0, 0], brace: false,
     };
     STATES.set(m, s);
   }
@@ -116,6 +151,13 @@ export function effectLeft(m: Match, side: Side, kind: PowerUpKind): number {
   return STATES.get(m)?.fx[side][kind] ?? 0;
 }
 
+/** Whether `p` may take a cube: a side holding an item uses it first, except the human's own man (his choice). */
+function canTake(m: Match, p: Player): boolean {
+  if (p.sentOff) return false;
+  if (!m.heldPower[p.side]) return true;
+  return p.side === m.cfg.humanSide && p.idx === m.active;
+}
+
 // ------------------------------------------------------------------ the step
 
 /** Called from Match.step every fixed step (before the AI and the human's input are applied). */
@@ -123,6 +165,9 @@ export function blitzStep(m: Match, dt: number, pad: Pad): void {
   const s = blitzState(m);
   const press = !!pad.power && !s.prevPower;
   s.prevPower = !!pad.power;
+  const hs = m.cfg.humanSide;
+  const b = m.ball;
+  s.brace = hs >= 0 && !!pad.shoot && !(b.owner >= 0 && m.players[b.owner].side === hs);
   if (m.half !== s.half) {
     blitzClear(m);
     s.half = m.half;
@@ -134,10 +179,11 @@ export function blitzStep(m: Match, dt: number, pad: Pad): void {
   // Dead ball: pickups lie where they are, timers wait, nothing can be used.
   if (m.phase !== 'play') return;
 
-  // Pickups age, fade, and go to whoever runs over them (his side holds it; a second one replaces the first).
+  // Pickups materialise, age, fade, and go to whoever runs over them (his side holds it).
   for (let i = m.powerups.length - 1; i >= 0; i--) {
     const pu = m.powerups[i];
     pu.t += dt;
+    if (pu.t < 0) continue;
     if (pu.t > PICKUP_LIFE) {
       m.powerups.splice(i, 1);
       continue;
@@ -145,7 +191,7 @@ export function blitzStep(m: Match, dt: number, pad: Pad): void {
     let taker: Player | null = null;
     let best = PICKUP_R;
     for (const p of m.players) {
-      if (p.sentOff) continue;
+      if (!canTake(m, p)) continue;
       const d = dist2(p.pos.x, p.pos.z, pu.x, pu.z);
       if (d < best) {
         best = d;
@@ -166,7 +212,7 @@ export function blitzStep(m: Match, dt: number, pad: Pad): void {
     const spot = spawnSpot(m);
     if (spot) {
       const kind = drawKind(m);
-      m.powerups.push({ id: s.nextId++, kind, x: spot.x, z: spot.z, t: 0 });
+      m.powerups.push({ id: s.nextId++, kind, x: spot.x, z: spot.z, t: -MATERIALISE });
       m.events.push({ type: 'powerupSpawn', id: s.nextId - 1, kind, x: spot.x, z: spot.z });
       s.spawnT = m.rng.range(SPAWN_MIN, SPAWN_MAX);
     } else s.spawnT = 0.5; // nowhere clear right now: look again shortly
@@ -181,12 +227,12 @@ export function blitzStep(m: Match, dt: number, pad: Pad): void {
       if (nt <= 0) {
         s.fx[side][kind] = 0;
         m.events.push({ type: 'powerupEnd', kind, player: s.user[side][kind], side });
+        if (kind === 'golden') syncGolden(m, s);
       } else s.fx[side][kind] = nt;
     }
   }
 
   // Uses: the human's press; the AI sides by policy.
-  const hs = m.cfg.humanSide;
   if (press && hs >= 0) usePower(m, hs as Side, sideUser(m, hs as Side));
   for (const side of [0, 1] as Side[]) {
     if (side === hs) continue;
@@ -217,6 +263,7 @@ export function blitzClear(m: Match): void {
       s.fx[side][kind] = 0;
     }
   }
+  m.goldenSide = -1;
   if (any) s.spawnT = m.rng.range(FIRST_SPAWN[0], FIRST_SPAWN[1]);
   applyBoosts(m, s);
 }
@@ -234,8 +281,29 @@ export function usePower(m: Match, side: Side, player: number): boolean {
   s.user[side][kind] = player;
   s.aiHold[side] = 0;
   m.events.push({ type: 'powerupUsed', kind, player, side });
+  if (kind === 'golden') m.goldenSide = side;
   applyBoosts(m, s);
   return true;
+}
+
+/**
+ * Match.goal, once `side`'s goal is on the board: with its golden active the goal counts double (one more on
+ * the score, still one 'goal' event) and the golden ends.
+ */
+export function blitzGoal(m: Match, side: Side): void {
+  const s = STATES.get(m);
+  if (!s || s.fx[side].golden <= 0) return;
+  m.score[side]++;
+  s.fx[side].golden = 0;
+  m.events.push({ type: 'powerupEnd', kind: 'golden', player: s.user[side].golden, side });
+  syncGolden(m, s);
+}
+
+/** Match.goldenSide from the timers (with both sides golden at once, a rarity, the one armed last shows). */
+function syncGolden(m: Match, s: BlitzState): void {
+  const g = m.goldenSide;
+  if (g !== -1 && s.fx[g].golden > 0) return;
+  m.goldenSide = s.fx[0].golden > 0 ? 0 : s.fx[1].golden > 0 ? 1 : -1;
 }
 
 /** The man a use is credited to: the side's carrier, else the human's man, else its nearest to the ball. */
@@ -248,7 +316,8 @@ function sideUser(m: Match, side: Side): number {
 
 /**
  * Player.boost / boostT for the render: one effect shows on a man at a time. Being frozen (the other side's
- * freeze) shows over anything his own side is running; then shield, turbo, mega, magnet.
+ * freeze) shows over anything his own side is running; then shield, turbo, mega, magnet. (Golden is the
+ * ball's, not a man's: Match.goldenSide.)
  */
 function applyBoosts(m: Match, s: BlitzState): void {
   for (const p of m.players) {
@@ -293,20 +362,38 @@ export function inSixYardBox(x: number, z: number): boolean {
   return Math.abs(x) > HALF_L - SIX_DEPTH - SIX_MARGIN && Math.abs(z) < SIX_W / 2 + SIX_MARGIN;
 }
 
-/** Somewhere a pickup may lie right now (see the SPAWN_* tunables), or null when nowhere was found. */
+/** Somewhere a pickup may lie right now: inside the margins, out of the six-yard boxes, clear of the ball and other cubes. */
 export function spawnOk(m: Match, x: number, z: number): boolean {
   if (Math.abs(x) > HALF_L - SPAWN_MARGIN || Math.abs(z) > HALF_W - SPAWN_MARGIN) return false;
   if (inSixYardBox(x, z)) return false;
-  const d = dist2(x, z, m.ball.pos.x, m.ball.pos.z);
-  if (d < SPAWN_BALL_MIN || d > SPAWN_BALL_MAX) return false;
+  if (dist2(x, z, m.ball.pos.x, m.ball.pos.z) < 3) return false;
   for (const pu of m.powerups) if (dist2(x, z, pu.x, pu.z) < 4) return false;
   return true;
 }
 
+/** The side a cube is placed for: the ball's owner's, else whoever touched it last (-1: nobody yet). */
+function playSide(m: Match): Side | -1 {
+  const b = m.ball;
+  return b.owner >= 0 ? m.players[b.owner].side : b.lastTouchSide;
+}
+
+/** Where the next cube goes (see SPAWN_AHEAD / SPAWN_LANE / SPAWN_LOOSE), or null when nowhere was clear. */
 function spawnSpot(m: Match): { x: number; z: number } | null {
-  for (let i = 0; i < 24; i++) {
-    const x = m.rng.range(-(HALF_L - SPAWN_MARGIN), HALF_L - SPAWN_MARGIN);
-    const z = m.rng.range(-(HALF_W - SPAWN_MARGIN), HALF_W - SPAWN_MARGIN);
+  const b = m.ball.pos;
+  const side = playSide(m);
+  if (m.ball.owner >= 0 && side !== -1) {
+    const ad = m.attackDir(side);
+    for (let i = 0; i < 16; i++) {
+      const x = b.x + ad * m.rng.range(SPAWN_AHEAD[0], SPAWN_AHEAD[1]);
+      const z = b.z + m.rng.range(-SPAWN_LANE, SPAWN_LANE);
+      if (spawnOk(m, x, z)) return { x, z };
+    }
+  }
+  for (let i = 0; i < 16; i++) {
+    const a = m.rng.next() * Math.PI * 2;
+    const r = m.rng.range(SPAWN_LOOSE[0], SPAWN_LOOSE[1]);
+    const x = b.x + Math.cos(a) * r;
+    const z = b.z + Math.sin(a) * r;
     if (spawnOk(m, x, z)) return { x, z };
   }
   return null;
@@ -353,11 +440,15 @@ function spaceAhead(m: Match, c: Player): number {
 }
 
 /**
- * When an AI side uses what it holds: turbo chasing or dribbling into space, mega with a shot on within 24 m,
- * freeze with the opponents attacking near its box, magnet receiving / dribbling under pressure, shield
- * dribbling under pressure. Held past AI_HOLD_MAX s, it goes on the next loose fit.
+ * When an AI side uses what it holds: turbo chasing or dribbling into space; mega with a shot on within 26 m
+ * (the telegraph passes while he closes in); freeze with the opponents attacking near its box, or its own
+ * carrier pressed in their half; magnet only on the attack (receiving / dribbling under pressure outside its
+ * own third: near its own box a magnet carrier being pressed just lost the ball where it hurt); shield
+ * dribbling under pressure; golden with its carrier in their half. Held past AI_HOLD_MAX s it goes on the next
+ * loose fit, past AI_HOLD_CAP or inside the last AI_ENDGAME s of a half it goes whatever is happening.
  */
-function aiWants(m: Match, side: Side, kind: PowerUpKind, held: number): boolean {
+export function aiWants(m: Match, side: Side, kind: PowerUpKind, held: number): boolean {
+  if (held > AI_HOLD_CAP || m.clock > m.cfg.halfLength - AI_ENDGAME) return true;
   const b = m.ball;
   const c = b.owner >= 0 && !b.held ? m.players[b.owner] : null;
   const we = c !== null && c.side === side;
@@ -383,20 +474,27 @@ function aiWants(m: Match, side: Side, kind: PowerUpKind, held: number): boolean
       const d = dist2(c.pos.x, c.pos.z, gx, 0);
       if (late) return d < 30;
       const toGoal = Math.atan2(-c.pos.z, gx - c.pos.x);
-      return d < 24 && Math.abs(c.pos.z) < BOX_W / 2 + 3 && Math.cos(c.facing - toGoal) > 0.2;
+      return d < 26 && Math.abs(c.pos.z) < BOX_W / 2 + 3 && Math.cos(c.facing - toGoal) > 0.2;
     }
     case 'freeze': {
-      if (!they || !c) return false;
-      const d = dist2(c.pos.x, c.pos.z, -ad * HALF_L, 0);
-      return d < (late ? 40 : BOX_DEPTH + 10);
+      if (they && c) {
+        const d = dist2(c.pos.x, c.pos.z, -ad * HALF_L, 0);
+        return d < (late ? 40 : BOX_DEPTH + 10);
+      }
+      if (we && c && !c.isKeeper && c.pos.x * ad > 0) return late || nearestDist(m, opp, c.pos.x, c.pos.z) < 4;
+      return false;
     }
     case 'magnet': {
-      if (we && c) return late || nearestDist(m, opp, c.pos.x, c.pos.z) < 2.5;
+      const attacking = (p: Player) => p.pos.x * ad > -HALF_L / 3;
+      if (we && c) return attacking(c) && (late || nearestDist(m, opp, c.pos.x, c.pos.z) < 2.5);
       const t = m.passTarget >= 0 ? m.players[m.passTarget] : null;
-      return t !== null && t.side === side && nearestDist(m, opp, t.pos.x, t.pos.z) < 3;
+      return t !== null && t.side === side && attacking(t) && nearestDist(m, opp, t.pos.x, t.pos.z) < 3;
     }
     case 'shield':
       return we && c !== null && !c.isKeeper && (late || nearestDist(m, opp, c.pos.x, c.pos.z) < 2.5);
+    case 'golden':
+      // Worth most with an attack on: our carrier in their half, or held too long.
+      return late || (we && c !== null && c.pos.x * ad > 0);
   }
 }
 
@@ -437,14 +535,24 @@ export function blitzNoSlide(m: Match, p: Player): boolean {
   return b.owner >= 0 && !b.held && m.players[b.owner].side === opp && s.fx[opp].shield > 0;
 }
 
+/** keeper.ts, as keeper `k` sets his dive: frozen, it's FREEZE_DIVE of its pace and reach. */
+export function blitzDive(m: Match, k: Player): void {
+  const s = STATES.get(m);
+  if (!s || s.fx[k.side === 0 ? 1 : 0].freeze <= 0) return;
+  k.vel.z *= FREEZE_DIVE;
+  k.diveTravel *= FREEZE_DIVE;
+}
+
 /**
- * actions.resolveKick: the armed side's open-play shot (not a chip, never a set piece) becomes a rocket:
+ * actions.resolveKick: the armed side's open-play shot (not a chip, never a set piece, not inside the
+ * MEGA_TELEGRAPH s after the press: that one is an ordinary shot and the mega stays armed) becomes a rocket:
  * MEGA_PACE the pace, flat (re-solved to cross the line at its intended height, kept under the bar), with
  * MEGA_ERR of its error and half its curl. The launch is changed in place; mega ends here.
  */
 export function megaLaunch(m: Match, p: Player, L: Launch): void {
   const s = STATES.get(m);
   if (!s || L.kind !== 'shot' || L.style === 'chip' || m.phase !== 'play' || s.fx[p.side].mega <= 0) return;
+  if (DURATION.mega - s.fx[p.side].mega < MEGA_TELEGRAPH) return;
   const b = m.ball.pos;
   L.vx *= MEGA_PACE;
   L.vz *= MEGA_PACE;
@@ -473,7 +581,8 @@ export function megaLaunch(m: Match, p: Player, L: Launch): void {
  * Match.checkKeeperHands, with keeper `k` on the ball: true when it was the other side's live mega shot and this
  * settled it. He's knocked back along its line (MEGA_KNOCK); on target from inside MEGA_UNSAVABLE_D m it goes
  * through his hands (MEGA_THROUGH of its pace, still the shooter's ball); from further out he gets a hand to it
- * (a parry out, up and away), never a catch.
+ * (a parry out, up and away), never a catch. Braced (the human holding TACKLE off the ball, or an AI keeper by
+ * his keeping) he takes MEGA_BRACE_KNOCK of the knock and parries it from any distance.
  */
 export function megaHands(m: Match, k: Player, onFrame: boolean): boolean {
   const s = STATES.get(m);
@@ -482,12 +591,14 @@ export function megaHands(m: Match, k: Player, onFrame: boolean): boolean {
   if (m.shotKick !== m.kickId || m.shotSide !== side || s.megaKick[side] !== m.shotKick || m.shotClock > 2) return false;
   const b = m.ball;
   const hs = b.hspeed() || 1;
+  const braced = k.side === m.cfg.humanSide ? s.brace : m.rng.chance(AI_BRACE[0] + (k.stat.keeping / 100) * AI_BRACE[1]);
+  const knock = MEGA_KNOCK * (braced ? MEGA_BRACE_KNOCK : 1);
   k.setState('fallen');
-  k.vel.x = (b.vel.x / hs) * MEGA_KNOCK;
-  k.vel.z = (b.vel.z / hs) * MEGA_KNOCK;
+  k.vel.x = (b.vel.x / hs) * knock;
+  k.vel.z = (b.vel.z / hs) * knock;
   k.claiming = false;
   k.kickCooldown = 0.6;
-  if (onFrame && m.shotDist <= MEGA_UNSAVABLE_D) {
+  if (onFrame && !braced && m.shotDist <= MEGA_UNSAVABLE_D) {
     b.vel.x *= MEGA_THROUGH;
     b.vel.y *= MEGA_THROUGH;
     b.vel.z *= MEGA_THROUGH;
@@ -509,25 +620,27 @@ export function megaHands(m: Match, k: Player, onFrame: boolean): boolean {
   return true;
 }
 
-/** How far (m) a free man goes out of his way for a cube; less once his side already holds one. */
+/** How far (m) a free man goes out of his way for a cube. */
 export const SEEK_R = 11;
-export const SEEK_HELD_R = 5;
 
 /**
  * After the team AI and the human have set their runs: one free man per side goes for the nearest cube in
  * reach (never the human's controlled man, a keeper, the ball carrier, a man with a kick to make, or anyone
- * inside 6 m of the ball, who is in the play). Without this a side could go a whole match without a pickup,
- * since cubes spawn away from the ball; with it, cubes are contested and the mode feels alive.
+ * inside 6 m of the ball, who is in the play). A side holding an item doesn't go for another (it uses what it
+ * has first), and the human's teammates leave a cube alone while his controlled man is within SEEK_R of it:
+ * the cubes near the play are his to take. The other side still contests them.
  */
 export function blitzSeek(m: Match): void {
   if (m.phase !== 'play' || m.powerups.length === 0) return;
   const hs = m.cfg.humanSide;
+  const active = hs >= 0 && m.active >= 0 ? m.players[m.active] : null;
   for (const side of [0, 1] as Side[]) {
-    const reach = m.heldPower[side] ? SEEK_HELD_R : SEEK_R;
+    if (m.heldPower[side]) continue;
     let best: Player | null = null;
-    let bestD = reach;
+    let bestD = SEEK_R;
     let target: PowerUp | null = null;
     for (const pu of m.powerups) {
+      if (side === hs && active && dist2(active.pos.x, active.pos.z, pu.x, pu.z) <= SEEK_R) continue;
       for (const p of m.players) {
         if (p.side !== side || p.isKeeper || p.sentOff || p.state !== 'move' || p.order) continue;
         if (side === hs && p.idx === m.active) continue;

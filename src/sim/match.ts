@@ -7,7 +7,7 @@ import {
 import { assistRun, intercept, isCrossingRestart, makeBrain, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
 import { headerAtGoal, pickReceiver as pickPassMate, reaimShot, WILD_LIFT, type Launch } from './actions';
 import { Ball, groundPassSpeed, type BallHit } from './ball';
-import { blitzClear, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, megaHands } from './blitz';
+import { blitzClear, blitzGoal, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, megaHands } from './blitz';
 import {
   AssistState, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAIN, PRESS_GAP, PRESS_LEAD, pressSteal,
   standingFoulChance, standingTackleChance, STAND_REACH, tackleClosing, vsHuman, HUMAN_SLIDE_BOOST, HUMAN_SLIDE_MIN,
@@ -619,6 +619,8 @@ export class Match {
   /** Blitz mode: pickups on the pitch, and the power-up each side is holding (null = none). Render/HUD read these. */
   powerups: PowerUp[] = [];
   heldPower: [PowerUpKind | null, PowerUpKind | null] = [null, null];
+  /** Blitz mode: the side whose next goal counts double (a golden cube in play), -1 when none. */
+  goldenSide: Side | -1 = -1;
   /**
    * The teammate a PASS / THROUGH press has just locked onto (-1: none): he makes his move before the ball
    * comes (ai.ts: checks towards the ball for a pass, starts his sprint in behind for a through ball).
@@ -2757,6 +2759,7 @@ export class Match {
 
   private goal(side: Side): void {
     this.score[side]++;
+    if (this.cfg.mode === 'blitz') blitzGoal(this, side);
     let scorer = this.ball.lastTouch >= 0 ? this.players[this.ball.lastTouch] : this.bySide[side][10];
     // An on-target shot that goes in off a save, a block or a deflection is the shooter's goal, not
     // an own goal (as long as nobody has struck the ball since).

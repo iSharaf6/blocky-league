@@ -3,6 +3,7 @@ import {
   AIR_DRAG, BALL_R, BOUNCE, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SIX_W, TEMPO,
   WALL_DIST,
 } from './constants';
+import { blitzDive } from './blitz';
 import type { Match } from './match';
 import type { Player } from './player';
 import type { Side } from './types';
@@ -405,6 +406,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
           k.y = 0.01;
           // +1 = dive to the keeper's own right (facing +x, right is +z).
           k.diveDir = Math.sign(lateral) * (Math.cos(k.facing) >= 0 ? 1 : -1);
+          if (m.cfg.mode === 'blitz') blitzDive(m, k); // a frozen keeper's dive is slower and shorter
           return;
         }
         // Still reacting: set the feet.

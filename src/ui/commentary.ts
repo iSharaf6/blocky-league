@@ -15,6 +15,7 @@ export const POWER_INFO: Record<PowerUpKind, { name: string; banner: string; ico
   freeze: { name: 'freeze', banner: 'FREEZE!', icon: '❄️', color: '#5cc8f5' },
   magnet: { name: 'magnet', banner: 'MAGNET!', icon: '🧲', color: '#ffd23a' },
   shield: { name: 'shield', banner: 'SHIELD!', icon: '🛡️', color: '#c69cff' },
+  golden: { name: 'golden goal', banner: 'GOLDEN GOAL! ×2', icon: '⭐', color: '#ffd166' },
 };
 
 /** 5 = goals, reds, penalties, half / full time · 4 = saves, woodwork, bookings · 3 = chances, flags, subs · 2 = fouls, corners · 1 = colour. */

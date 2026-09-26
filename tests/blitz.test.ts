@@ -118,7 +118,7 @@ describe('blitz mode: pickups', () => {
       expect(B.inSixYardBox(s.x, s.z)).toBe(false);
       expect(Math.abs(s.x)).toBeLessThanOrEqual(HALF_L - B.SPAWN_MARGIN + 1e-9);
       expect(Math.abs(s.z)).toBeLessThanOrEqual(HALF_W - B.SPAWN_MARGIN + 1e-9);
-      expect(s.ballD).toBeGreaterThanOrEqual(B.SPAWN_BALL_MIN - 0.7);
+      expect(s.ballD).toBeGreaterThanOrEqual(Math.min(B.SPAWN_AHEAD[0], B.SPAWN_LOOSE[0]) - 0.7);
     }
     for (let i = 1; i < r.spawns.length; i++) {
       const prev = r.spawns[i - 1];
@@ -132,12 +132,18 @@ describe('blitz mode: pickups', () => {
     expect(new Set(r.spawns.map((s) => s.id)).size).toBe(r.spawns.length);
   }, 30_000);
 
-  it('goes to the side of the man who runs over it (replacing one already held)', () => {
+  it('goes to the side of the man who runs over it (a side already holding one uses it first)', () => {
     const m = mk({ mode: 'blitz' }, 3);
     toPlay(m);
     const k = m.keeperOf(0)!;
     m.heldPower[0] = 'turbo';
     m.powerups.push({ id: 999, kind: 'shield', x: k.pos.x + 0.3, z: k.pos.z, t: 0 });
+    m.step(DT, EMPTY_PAD);
+    // Holding turbo, his side leaves the cube where it is (an AI side uses what it has first).
+    expect(m.drainEvents().some((e) => e.type === 'powerupTaken')).toBe(false);
+    expect(m.heldPower[0]).toBe('turbo');
+    expect(m.powerups.some((p) => p.id === 999)).toBe(true);
+    m.heldPower[0] = null;
     m.step(DT, EMPTY_PAD);
     const taken = m.drainEvents().find((e) => e.type === 'powerupTaken');
     expect(taken).toEqual({ type: 'powerupTaken', id: 999, kind: 'shield', player: k.idx, side: 0 });
@@ -314,6 +320,12 @@ describe('blitz mode: effects', () => {
     m.heldPower[0] = 'mega';
     B.usePower(m, 0, p.idx);
     expect(p.boost).toBe('mega');
+    // The telegraph: for MEGA_TELEGRAPH s after the press the ball is red-hot but a shot is still an ordinary one.
+    const Lt = launch();
+    B.megaLaunch(m, p, Lt);
+    expect(Lt).toEqual(launch());
+    for (let i = 0; i < Math.ceil(B.MEGA_TELEGRAPH / DT) + 1; i++) B.blitzStep(m, DT, EMPTY_PAD);
+    expect(p.boost).toBe('mega');
     // A free kick (dead ball) is never a rocket.
     m.phase = 'restart';
     const L1 = launch();
@@ -379,6 +391,8 @@ describe('blitz mode: effects', () => {
     m2.ball.pos.y = 0.22;
     m2.heldPower[0] = 'mega';
     B.usePower(m2, 0, s2.idx);
+    // (Past the telegraph: the rocket is live.)
+    for (let i = 0; i < Math.ceil(B.MEGA_TELEGRAPH / DT) + 1; i++) B.blitzStep(m2, DT, EMPTY_PAD);
     expect(m2.order(s2, 'shot', ad2, 0, 0.9, -1, false)).not.toBeNull();
     let speed = 0;
     for (let i = 0; i < 30 && speed === 0; i++) {
@@ -394,6 +408,8 @@ describe('blitz mode: effects', () => {
     const setup = (shotDist: number) => {
       const m = mk({ mode: 'blitz' }, 4);
       toPlay(m);
+      // The keeper's side is the human's: he braces only while TACKLE is held (no AI brace roll).
+      (m.cfg as { humanSide: Side | -1 }).humanSide = 1;
       const k = m.keeperOf(1)!;
       const ad = m.attackDir(0);
       const s = B.blitzState(m);
@@ -443,6 +459,14 @@ describe('blitz mode: effects', () => {
     expect(B.megaHands(c.m, c.k, true)).toBe(false);
     expect(c.k.state).toBe('move');
     expect(c.m.ball.vel.x).toBe(c.ad * 30);
+
+    // Braced (the human holding TACKLE off the ball): half the knock-back, and a parry even from close in.
+    const d = setup(12);
+    B.blitzState(d.m).brace = true;
+    expect(B.megaHands(d.m, d.k, true)).toBe(true);
+    expect(Math.hypot(d.k.vel.x, d.k.vel.z)).toBeCloseTo(B.MEGA_KNOCK * B.MEGA_BRACE_KNOCK, 5);
+    expect(Math.sign(d.m.ball.vel.x)).toBe(-d.ad);
+    expect(d.m.stats.saves[1]).toBe(1);
   });
 
   it('timers wait while the ball is dead, and nothing can be used then', () => {

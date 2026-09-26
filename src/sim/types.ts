@@ -80,9 +80,10 @@ export type MatchMode = 'classic' | 'blitz';
 /**
  * Blitz power-ups. turbo: a burst of pace; mega: the next shot is a rocket that knocks the keeper back;
  * freeze: the other side is slowed for a few seconds; magnet: the ball sticks to your feet and passes
- * find you; shield: your carrier can't be tackled for a few seconds.
+ * find you; shield: your carrier can't be tackled for a few seconds; golden: your side's next goal within
+ * GOLDEN_S counts double.
  */
-export type PowerUpKind = 'turbo' | 'mega' | 'freeze' | 'magnet' | 'shield';
+export type PowerUpKind = 'turbo' | 'mega' | 'freeze' | 'magnet' | 'shield' | 'golden';
 
 /** A pickup lying on the pitch (blitz mode). `t` is seconds since it spawned. */
 export interface PowerUp {

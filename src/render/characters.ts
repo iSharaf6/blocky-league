@@ -418,8 +418,9 @@ export class Footballer {
   /** Own see-through copy of the voxel material, made the first time this player is faded. */
   private fadeMat: THREE.MeshLambertMaterial | null = null;
   private alpha = 1;
-  /** Blitz tint (see setTint) and this player's own tinted copy of the material, made on first use. */
+  /** Blitz tint (see setTint), its glow, and this player's own tinted copy of the material, made on first use. */
   private tint: number | null = null;
+  private tintGlow = 0;
   private tintMat: THREE.MeshLambertMaterial | null = null;
   /** Cross-fade: the pose key last drawn, the pose drawn then, the pose the fade starts from, its clock / length. */
   private poseKey = -1;
@@ -500,9 +501,10 @@ export class Footballer {
    * Colour cast over the whole figure (blitz: an ice-blue tint on a frozen side), null for none. Below 1
    * opacity the tint is dropped (the fade material takes over); back to solid the tint comes back.
    */
-  setTint(color: number | null): void {
-    if (color === this.tint) return;
+  setTint(color: number | null, glow = 0): void {
+    if (color === this.tint && glow === this.tintGlow) return;
     this.tint = color;
+    this.tintGlow = glow;
     this.applyMaterial();
   }
 
@@ -513,6 +515,8 @@ export class Footballer {
     else if (this.tint !== null) {
       if (!this.tintMat) this.tintMat = makeCharMaterial();
       this.tintMat.color.setHex(this.tint);
+      // (A cold glow with the ice tint: a frozen man reads blue whatever his kit, even in his own shadow.)
+      this.tintMat.emissive.setHex(this.tintGlow);
       mat = this.tintMat;
     }
     for (const m of [this.torso, this.head, this.armL, this.armR, this.legL, this.legR]) m.material = mat;
@@ -919,8 +923,33 @@ export class Footballer {
   }
 }
 
-/** Voxel ball: a 7³ sphere with dark pentagon patches. */
-export function buildBallGeometry(radius: number): THREE.BufferGeometry {
+/**
+ * Ball skins (progression unlocks; SessionOptions.ballSkin): the base colour, the patch colour and how big
+ * the patches are (the dot-product threshold: lower = bigger). 'classic' is the white ball with dark pentagons.
+ */
+export const BALL_SKINS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold'] as const;
+export type BallSkin = (typeof BALL_SKINS)[number];
+const BALL_LOOK: Record<BallSkin, { base: number; patch: number; size: number }> = {
+  classic: { base: 0xfbfbf6, patch: 0x26262e, size: 0.9 },
+  // Telstar: bigger black hexes on white.
+  retro: { base: 0xffffff, patch: 0x111114, size: 0.8 },
+  blaze: { base: 0xff7a1a, patch: 0xd8241a, size: 0.86 },
+  ice: { base: 0xf2fbff, patch: 0x3aa0ff, size: 0.88 },
+  neon: { base: 0x4bff6a, patch: 0x17301c, size: 0.86 },
+  gold: { base: 0xffc23a, patch: 0x8a5a00, size: 0.88 },
+};
+/** A known skin id (anything else, undefined included, is the classic ball). */
+export function ballSkinOf(id: string | undefined): BallSkin {
+  return (BALL_SKINS as readonly string[]).includes(id ?? '') ? (id as BallSkin) : 'classic';
+}
+const ballGeoCache = new Map<string, THREE.BufferGeometry>();
+
+/** Voxel ball: an 8³ sphere with patches (a skin's colours; cached per radius and skin). */
+export function buildBallGeometry(radius: number, skin: BallSkin = 'classic'): THREE.BufferGeometry {
+  const key = `${radius}:${skin}`;
+  const cached = ballGeoCache.get(key);
+  if (cached) return cached;
+  const look = BALL_LOOK[skin];
   const n = 8;
   const g = new VoxelGrid(n, n, n);
   const c = (n - 1) / 2;
@@ -940,13 +969,15 @@ export function buildBallGeometry(radius: number): THREE.BufferGeometry {
         const dx = x - c, dy = y - c, dz = z - c;
         const d = Math.hypot(dx, dy, dz);
         if (d > r - 0.05) continue;
-        let col = 0xfbfbf6;
+        let col = look.base;
         const l = d || 1;
         for (const v of ico) {
-          if ((dx * v[0] + dy * v[1] + dz * v[2]) / l > 0.9) col = 0x26262e;
+          if ((dx * v[0] + dy * v[1] + dz * v[2]) / l > look.size) col = look.patch;
         }
         g.set(x, y, z, col);
       }
   const s = (radius * 2) / n;
-  return meshVoxels(g, { scale: s, pivot: [n / 2, n / 2, n / 2], faceTint: true });
+  const geo = meshVoxels(g, { scale: s, pivot: [n / 2, n / 2, n / 2], faceTint: true });
+  ballGeoCache.set(key, geo);
+  return geo;
 }

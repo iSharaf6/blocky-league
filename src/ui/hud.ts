@@ -7,7 +7,7 @@ import { cssHex } from '../render/palette';
 import { Commentator, POWER_INFO, pitchNames, speak, stopSpeech, surname, type CommentaryLine } from './commentary';
 
 /** How long (s) each power-up runs once used, for the slot's countdown ring when the sim doesn't say. */
-export const POWER_SECONDS: Record<PowerUpKind, number> = { turbo: 6, mega: 8, freeze: 5, magnet: 6, shield: 6 };
+export const POWER_SECONDS: Record<PowerUpKind, number> = { turbo: 6, mega: 8, freeze: 5, magnet: 6, shield: 6, golden: 20 };
 /** Seconds a power-up banner ("TURBO!") stays up. */
 const POWER_BANNER_S = 1.3;
 

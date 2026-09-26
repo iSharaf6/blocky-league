@@ -36,6 +36,8 @@ export interface SessionOptions extends MatchConfig {
   tutorial?: boolean;
   /** Broadcast camera distance (default 'normal'). */
   camZoom?: CamZoom;
+  /** Unlockable ball look (progression); undefined = the classic ball. */
+  ballSkin?: string;
 }
 
 export interface PlayerRating {

@@ -20,6 +20,8 @@ export interface Settings {
   commentaryVoice: boolean;
   /** Match camera distance (default 'normal'; older saves lack it). */
   camZoom?: CamZoom;
+  /** Chosen unlockable ball look (progression); undefined = classic. */
+  ballSkin?: string;
   /** Pass assistance (default ground 'assisted', through 'assisted'), switch move assist and timed finishing (default on). */
   groundAssist?: AssistLevel;
   throughAssist?: AssistLevel;
