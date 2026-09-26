@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { CamZoom } from '../src/core/save';
 import { playFocus } from '../src/game/camFocus';
 import { KIT_MIN_DL, contrastAwayKit, kitLightnessGap, readKit, readsApart } from '../src/game/kitContrast';
-import { BALL_OFS, FRAME_LEN, writeFrame } from '../src/game/replay';
+import { PRESENTATION } from '../src/game/matchSession';
+import { BALL_OFS, FRAME_LEN, LUNGE_KICK_T0, LUNGE_S, LUNGE_STATE_T0, PF, STATE_CODE, writeFrame } from '../src/game/replay';
 import { grassLike, grassSafeKit, makeTeam, PRESET_CLUBS, resolveKitClash } from '../src/meta/data';
 import { CameraRig, type CamFocus } from '../src/render/cameraRig';
 import { ResolutionGovernor } from '../src/render/world';
@@ -680,6 +681,112 @@ describe('footballer poses cross-fade between states (render)', { timeout: 60_00
     // HEAD 2889c15: 0.73 rad in one frame into a kick from a jog (the strike's own swing peaks ~0.55).
     expect(spike([{ state: PSTATE.move, dur: 0.4, speed: () => 4 }, { state: PSTATE.kick, dur: 0.34, speed: () => 3, kick: true }, { state: PSTATE.move, dur: 0.4, speed: () => 4 }])).toBeLessThan(0.5);
     expect(spike([{ state: PSTATE.move, dur: 0.5, speed: () => 8 }, { state: PSTATE.kick, dur: 0.34, speed: (t) => 8 - t * 10, kick: true }, { state: PSTATE.move, dur: 0.5, speed: () => 4 }])).toBeLessThan(0.5);
+  });
+});
+
+describe('action readability: tackles, slides, dives, pace (render / session)', () => {
+  const kit = { shirt: 0xe0b23a, shirt2: 0x222222, pattern: 'plain' as const, shorts: 0x222222, socks: 0xe0b23a, gk: 0xff8a2b };
+  const parts = (fb: Footballer) => fb as unknown as Record<'body' | 'torso' | 'head' | 'armL' | 'armR' | 'legL' | 'legR', THREE.Object3D>;
+  const input = (state: number, st: number, speed: number, phase: number, dt: number, extra: Partial<PoseInput> = {}): PoseInput => ({
+    state, stateT: st, speed, runPhase: phase, kickT: 0, kickLeg: 1,
+    lean: 0.1, diveDir: 1, headerT: 0, celebrate: 0, y: 0, keeper: false, hasBall: false, look: 0.2, turn: 0, dt, ...extra,
+  });
+
+  it("a TACKLE press is baked into the frame as the sim's own poke: live and replays lunge alike", () => {
+    // Owner: "there is no animation for standing tackle whatsoever". The sim's 'tackleTry' fires before any
+    // contact; the session writes the lunge into the frame for LUNGE_S, so a missed tackle lunges too.
+    const m = newMatch(11, 0);
+    for (let i = 0; i < 30; i++) m.step(DT, EMPTY_PAD);
+    const f = new Float32Array(FRAME_LEN);
+    const lunge = new Float32Array(22).fill(-1);
+    const leg = new Float32Array(22).fill(1);
+    const p = m.players.find((q) => q.state === 'move' && !q.isKeeper)!;
+    lunge[p.idx] = 0.05;
+    leg[p.idx] = -1;
+    writeFrame(m, f, 1, lunge, leg);
+    const o = p.idx * PF;
+    expect(f[o + 4]).toBe(STATE_CODE.kick);
+    expect(f[o + 9]).toBe(-2);
+    expect(f[o + 5]).toBeCloseTo(LUNGE_STATE_T0 + 0.05, 5);
+    expect(f[o + 8]).toBeCloseTo(LUNGE_KICK_T0 + 0.05 / 0.34, 5);
+    // Everyone else untouched; and the lunge is over after LUNGE_S.
+    for (const q of m.players) if (q.idx !== p.idx) expect(f[q.idx * PF + 4]).toBe(STATE_CODE[q.state] ?? 0);
+    lunge[p.idx] = LUNGE_S + 0.01;
+    writeFrame(m, f, 1, lunge, leg);
+    expect(f[o + 4]).toBe(STATE_CODE.move);
+    // The sim's own poke (a won tackle) is written the same way; a plain strike keeps its foot code.
+    p.setState('kick');
+    p.poke = true;
+    p.kickLeg = 1;
+    writeFrame(m, f, 1);
+    expect(f[o + 9]).toBe(2);
+    p.poke = false;
+    writeFrame(m, f, 1);
+    expect(f[o + 9]).toBe(1);
+  });
+
+  it('the standing tackle is a real lunge, all there within two frames of the press', () => {
+    // HEAD 15ab47a: the poke was a 0.9 rad jab eased in over 0.06 s (a leg twitch nobody saw).
+    const def = makeTeam(PRESET_CLUBS[5]).players[3];
+    const fb = new Footballer(def, kit, false);
+    let t = 0;
+    let phase = 0;
+    for (let f = 0; f < 24; f++) {
+      phase = (phase + 5 / 60 / 2.1) % 1;
+      fb.pose(input(PSTATE.move, f / 60, 5, phase, 1 / 60), t);
+      t += 1 / 60;
+    }
+    const legs: number[] = [];
+    const hips: number[] = [];
+    const torso: number[] = [];
+    for (let f = 0; f < 15; f++) {
+      const st = LUNGE_STATE_T0 + f / 60;
+      fb.pose(input(PSTATE.kick, st, 4, phase, 1 / 60, { kickT: LUNGE_KICK_T0 + (f / 60) / 0.34, kickLeg: 2 }), t);
+      t += 1 / 60;
+      const q = parts(fb);
+      legs.push(q.legR.rotation.z);
+      hips.push(q.body.position.y);
+      torso.push(q.torso.rotation.z);
+    }
+    // Frame 1 already most of the way (the blend is all but a snap), frame 2 there: the leading leg out low
+    // (> 1.2 rad), the hips dropped > 12 cm, the torso pitched forward.
+    expect(legs[0], legs.join(' ')).toBeGreaterThan(0.9);
+    expect(legs[1], legs.join(' ')).toBeGreaterThan(1.2);
+    expect(hips[1], hips.join(' ')).toBeLessThan(5 * 0.075 - 0.12);
+    expect(torso[1], torso.join(' ')).toBeLessThan(-0.5);
+    // Held through the middle of the lunge, back out by its end.
+    expect(legs[6]).toBeGreaterThan(1.2);
+    expect(legs[14]).toBeLessThan(0.5);
+  });
+
+  it('a slide is laid out long and low, and a keeper dives at full stretch', () => {
+    const def = makeTeam(PRESET_CLUBS[5]).players[3];
+    const fb = new Footballer(def, kit, false);
+    fb.pose(input(PSTATE.slide, 0.3, 6, 0.2, 0), 1);
+    let q = parts(fb);
+    expect(q.legR.rotation.z).toBeGreaterThan(1);
+    expect(q.body.rotation.z).toBeGreaterThan(1.1);
+    expect(q.body.position.y).toBeLessThan(0.16);
+    const gk = new Footballer(makeTeam(PRESET_CLUBS[5]).players[0], kit, true);
+    gk.pose(input(PSTATE.dive, 0.3, 4, 0, 0, { keeper: true, diveDir: 1 }), 1);
+    q = parts(gk);
+    expect(Math.abs(q.body.rotation.x)).toBeGreaterThan(1.4);
+    expect(q.armL.rotation.z).toBeGreaterThan(2.9);
+    expect(Math.abs(q.legL.rotation.x - q.legR.rotation.x)).toBeGreaterThan(0.6);
+  });
+
+  it('presentation dead time is short: intro <= 2.5 s, replay <= 6 s and rolling within 3 s of the goal', () => {
+    // HEAD 15ab47a: a 3.4 s fly-in, the replay at 3.6 s, then ~10 s of replay (3.3 s lead, 1.3 s tail, 0.36x
+    // slow-mo from 1.6 s out): ~13.7 s a goal before the kick-off framing. Now ~2.6 + 5.6 s.
+    const P = PRESENTATION;
+    expect(P.introS).toBeLessThanOrEqual(2.5);
+    expect(P.replayAtS).toBeLessThanOrEqual(3);
+    expect(P.goalWideS).toBeLessThan(1);
+    const replayWall = (P.replayLeadS - P.slowFromS) / P.buildRate + (P.slowFromS + P.replayTailS) / P.slowRate;
+    expect(replayWall).toBeLessThanOrEqual(6);
+    expect(P.halftimeHoldS).toBeLessThanOrEqual(1.2);
+    expect(P.hitStopTackle).toBe(2);
+    expect(P.hitStopGoal).toBe(3);
   });
 });
 

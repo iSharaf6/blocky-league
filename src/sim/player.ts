@@ -1,7 +1,8 @@
 import { angleDiff, clamp, turnToward, wrapAngle } from '../core/math';
 import { hashString } from '../core/rng';
-import { ACCEL, CONTROL_R, DECEL, DRIBBLE_MULT, JOG_SPEED, KICK_WINDUP, SPRINT_SPEED, STRIDE } from './constants';
-import type { KickKind, PlayerDef, Role, ShotStyle, Side } from './types';
+import { ACCEL, CONTROL_R, DECEL, DRIBBLE_MULT, JOG_SPEED, KICK_WINDUP, SPRINT_SPEED, STRIDE, TEMPO } from './constants';
+import { FREEZE_ACCEL, FREEZE_PACE, MAGNET_CONTROL_R, TURBO_ACCEL, TURBO_PACE } from './blitz';
+import type { PowerUpKind, KickKind, PlayerDef, Role, ShotStyle, Side } from './types';
 
 /**
  * A player's stronger foot: 1 right, -1 left. An explicit `foot` on the definition wins; otherwise it's
@@ -99,9 +100,9 @@ export interface KickOrder {
 /** Top speed allowed while celebrating (adrenaline: a scorer can outrun his stamina). */
 export const CELEBRATE_SPRINT = 9;
 
-/** Stamina per second at the reference half length (2 minutes); see Player.fatigue. */
-const SPRINT_DRAIN = 0.017;
-const JOG_DRAIN = 0.0036;
+/** Stamina per second at the reference half length (2 minutes); see Player.fatigue. (A faster game, TEMPO, is that much more physical.) */
+const SPRINT_DRAIN = 0.017 * TEMPO;
+const JOG_DRAIN = 0.0036 * TEMPO;
 const RECOVERY = 0.008;
 /** Half length (s) the stamina rates are tuned for. */
 export const FATIGUE_REF_HALF = 120;
@@ -112,7 +113,7 @@ export const FATIGUE_REF_HALF = 120;
  * foot) turns DRIBBLE_FACE_TURN times faster so it keeps up. (AI carriers steer smoothly and keep the
  * velocity-blend turn.)
  */
-export const DRIBBLE_TURN = 5.8;
+export const DRIBBLE_TURN = 5.8 * TEMPO;
 const DRIBBLE_CUT_MAX = 2.4;
 const DRIBBLE_CUT_LOSS = 0.16;
 const DRIBBLE_FACE_TURN = 1.8;
@@ -123,7 +124,7 @@ const DRIBBLE_FACE_TURN = 1.8;
  */
 export const HUMAN_ACCEL = 2.1;
 export const HUMAN_TURN = 1.75;
-const HUMAN_STOP = 60;
+const HUMAN_STOP = 60 * TEMPO;
 /** Close control (the human's dribbler jogging, not sprinting): he turns this much quicker again. */
 export const CLOSE_TURN = 1.2;
 /**
@@ -187,6 +188,9 @@ export class Player {
   quickRecovery = false;
   /** The current 'kick' state is a quick tackle poke, not a strike (lighter braking, can chain a kick). */
   poke = false;
+  /** Blitz mode: the power-up acting on this player right now (null = none) and seconds left on it. */
+  boost: PowerUpKind | null = null;
+  boostT = 0;
   /** Red-carded: off the pitch for the rest of the match, takes no further part. */
   sentOff = false;
   /** Stamina drain multiplier, set by the match so fatigue builds over a match of any length. */
@@ -309,10 +313,11 @@ export class Player {
 
   footReach(): number {
     const sp = Math.sqrt(this.vel.x * this.vel.x + this.vel.z * this.vel.z);
-    return 0.52 + Math.min(sp, 8) * 0.045;
+    return 0.52 + Math.min(sp / TEMPO, 8) * 0.045;
   }
 
   controlRadius(): number {
+    if (this.boost === 'magnet') return MAGNET_CONTROL_R;
     return CONTROL_R + (this.stat.dribbling / 100) * 0.18;
   }
 
@@ -482,6 +487,7 @@ export class Player {
     }
     if (this.slowT > 0) max *= 0.55;
     if (this.wrongFootT > 0) max *= WRONG_FOOT_PACE;
+    if (this.boost === 'turbo') max *= TURBO_PACE; else if (this.boost === 'freeze') max *= FREEZE_PACE;
     tx *= max;
     tz *= max;
 
@@ -490,6 +496,7 @@ export class Player {
     let accel = tl > 0.05 ? ACCEL : DECEL;
     if (this.slowT > 0) accel *= 0.5;
     if (this.wrongFootT > 0) accel *= WRONG_FOOT_ACCEL;
+    if (this.boost === 'turbo') accel *= TURBO_ACCEL; else if (this.boost === 'freeze') accel *= FREEZE_ACCEL;
     let turn = 0;
     if (sp > 2 && tl > 0.05) {
       const cur = Math.atan2(this.vel.z, this.vel.x);
@@ -527,7 +534,10 @@ export class Player {
     }
 
     const nsp = this.speed();
-    const turnRate = (dribbling ? (9 - nsp * 0.5) * (cut ? DRIBBLE_FACE_TURN : 1) : 13 - nsp * 0.7) * quick;
+    // (The body turn scales with the tempo, its speed term read in round-8 units, so a faster runner turns as
+    // sharply through a corner as he did at the old pace.)
+    const nT = nsp / TEMPO;
+    const turnRate = (dribbling ? (9 - nT * 0.5) * (cut ? DRIBBLE_FACE_TURN : 1) : 13 - nT * 0.7) * TEMPO * quick;
     let face: number | null = this.faceTarget;
     if (face === null && nsp > 0.35) face = Math.atan2(this.vel.z, this.vel.x);
     if (face !== null) this.facing = turnToward(this.facing, face, Math.max(4, turnRate) * dt);

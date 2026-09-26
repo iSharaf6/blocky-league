@@ -62,26 +62,30 @@ describe('dribble assist: close control', () => {
         m.step(DT, pad(1, 0, { sprint }));
         sum += Math.hypot(m.ball.pos.x - p.pos.x, m.ball.pos.z - p.pos.z);
       }
-      // A 90-degree turn from there.
+      // A 90-degree turn from there (how far round the run is after 3 frames, and when it's round).
       let t = -1;
+      let turned = 0;
       for (let i = 0; i < 60 && t < 0; i++) {
         m.step(DT, pad(0, 1, { sprint }));
+        if (i === 2) turned = Math.atan2(p.vel.z, p.vel.x);
         if (Math.atan2(p.vel.z, p.vel.x) > Math.PI / 2 - 0.17) t = (i + 1) * DT;
       }
-      return { avg: sum / 60, t, kept: m.ball.owner === p.idx };
+      return { avg: sum / 60, t, turned, kept: m.ball.owner === p.idx };
     };
     const jog = gap(false);
     const run = gap(true);
     // eslint-disable-next-line no-console
-    console.log(`ball off the body: jogging ${jog.avg.toFixed(2)} m, sprinting ${run.avg.toFixed(2)} m; 90-degree turn ${jog.t.toFixed(2)} s vs ${run.t.toFixed(2)} s`);
+    console.log(`ball off the body: jogging ${jog.avg.toFixed(2)} m, sprinting ${run.avg.toFixed(2)} m; 90-degree turn ${jog.t.toFixed(2)} s vs ${run.t.toFixed(2)} s (after 3 frames: ${((jog.turned * 180) / Math.PI).toFixed(0)} vs ${((run.turned * 180) / Math.PI).toFixed(0)} degrees)`);
     expect(jog.avg).toBeLessThan(0.75);
     expect(jog.avg).toBeLessThan(run.avg - 0.1);
     expect(jog.t).toBeGreaterThan(0);
-    expect(jog.t).toBeLessThan(run.t);
+    // (Round 9's tempo has both round inside ~5 frames; the jog is still further round at any moment.)
+    expect(jog.t).toBeLessThanOrEqual(run.t);
+    expect(jog.turned).toBeGreaterThan(run.turned + 0.05);
     expect(jog.kept && run.kept).toBe(true);
   });
 
-  it('is the human dribbler only: an AI carrier keeps the old touch', () => {
+  it('is the human dribbler only: an AI carrier keeps the old touch (tighter only with the human\'s man on him, by difficulty)', () => {
     const m = scenario(4);
     const p = m.players[20];
     place(p, 10, 0);
@@ -91,6 +95,14 @@ describe('dribble assist: close control', () => {
     place(h, -10, 0);
     giveBall(m, h);
     expect(closeTouch(m, h, 0.1)).toBeLessThan(0.1);
+    // The human's man closing on an AI carrier: the carrier keeps it tighter (vsHuman.tight, 0 on EASY).
+    giveBall(m, p);
+    m.active = h.idx;
+    place(h, 12, 0.5);
+    expect(closeTouch(m, p, 0.1)).toBeLessThan(0.1);
+    expect(closeTouch(m, p, 0.1)).toBeCloseTo(0.1 * (1 - vsHuman(1.8).tight), 5);
+    place(h, 20, 0);
+    expect(closeTouch(m, p, 0.1)).toBe(0.1);
   });
 });
 
@@ -405,9 +417,11 @@ describe('the AI against the human dribbler, by difficulty', () => {
       expect(lv[i].resist).toBeLessThan(lv[i - 1].resist);
       expect(lv[i].cut).toBeLessThan(lv[i - 1].cut);
     }
-    // EASY goes in less often than the AI does on an AI dribbler, NORMAL no more often (and at every level it
-    // ramps up later against the human, gives him more room and never goes in straight after a skill: ai.press).
+    // EASY goes in less often than the AI does on an AI dribbler (and at every level it ramps up later against
+    // the human, gives him more room and never goes in straight after a skill: ai.press). Round 9: NORMAL goes in
+    // more than on an AI dribbler (the bot won 87% at NORMAL with it at 0.82: balance wants goals at both ends).
     expect(lv[0].press).toBeLessThan(1);
-    expect(lv[1].press).toBeLessThanOrEqual(1);
+    expect(lv[1].press).toBeGreaterThan(1);
+    expect(lv[1].press).toBeLessThanOrEqual(1.7);
   });
 });

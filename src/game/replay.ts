@@ -26,8 +26,21 @@ export function isSentOff(p: Match['players'][number]): boolean {
   return (p.state as string) === 'sentoff' || ('sentOff' in p && !!(p as { sentOff?: boolean }).sentOff);
 }
 
-/** Snapshot the sim into a flat float array (what the renderer and replays consume). */
-export function writeFrame(m: Match, out: Float32Array, time: number): void {
+/**
+ * A standing-tackle lunge (the sim's poke: a 'kick' state entered at stateT 0.09 / kickT 0.28, so it lasts
+ * LUNGE_S of the 0.34 s state). The session bakes the same lunge into a frame on a TACKLE press (the
+ * 'tackleTry' event, before any contact), so a lost tackle still lunges, live and in replays alike.
+ */
+export const LUNGE_S = 0.25;
+export const LUNGE_STATE_T0 = 0.09;
+export const LUNGE_KICK_T0 = 0.28;
+
+/**
+ * Snapshot the sim into a flat float array (what the renderer and replays consume). `lunge` (per player,
+ * seconds since his TACKLE press, < 0 = none): a man still running is written as a poke 'kick' for LUNGE_S,
+ * the leg picked towards the ball (`lungeLeg`, +-1), exactly as the sim's own won-tackle poke is.
+ */
+export function writeFrame(m: Match, out: Float32Array, time: number, lunge?: Float32Array, lungeLeg?: Float32Array): void {
   for (const p of m.players) {
     const o = p.idx * PF;
     out[o] = p.pos.x;
@@ -41,6 +54,13 @@ export function writeFrame(m: Match, out: Float32Array, time: number): void {
     out[o + 8] = p.kickT;
     // A poke tackle is a 'kick' state too: flag it in the foot channel (the renderer draws a lunge).
     out[o + 9] = p.state === 'kick' && p.poke ? p.kickLeg * 2 : p.kickLeg;
+    const lt = lunge ? lunge[p.idx] : -1;
+    if (lt >= 0 && lt < LUNGE_S && p.state === 'move' && !isSentOff(p)) {
+      out[o + 4] = STATE_CODE.kick;
+      out[o + 5] = LUNGE_STATE_T0 + lt;
+      out[o + 8] = Math.min(1, LUNGE_KICK_T0 + lt / 0.34);
+      out[o + 9] = (lungeLeg && lungeLeg[p.idx] < 0 ? -1 : 1) * 2;
+    }
     out[o + 10] = p.lean;
     out[o + 11] = p.diveDir;
     out[o + 12] = p.headerT;
@@ -72,8 +92,8 @@ export class ReplayBuffer {
     this.frames = Array.from({ length: capacity }, () => new Float32Array(FRAME_LEN));
   }
 
-  push(m: Match, time: number): void {
-    writeFrame(m, this.frames[this.head], time);
+  push(m: Match, time: number, lunge?: Float32Array, lungeLeg?: Float32Array): void {
+    writeFrame(m, this.frames[this.head], time, lunge, lungeLeg);
     this.head = (this.head + 1) % this.capacity;
     this.count = Math.min(this.count + 1, this.capacity);
   }

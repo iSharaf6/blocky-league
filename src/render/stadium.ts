@@ -1566,6 +1566,13 @@ export class Stadium {
     this.group.add(this.flashes);
   }
 
+  /** A goal: `n` camera flashes pop round the ground at once (on top of the hype-driven ones). */
+  flashBurst(n: number): void {
+    const total = this.flashSpots.length;
+    if (!total) return;
+    for (let k = 0; k < n; k++) this.flashLife[Math.floor(Math.random() * total)] = 0.05 + Math.random() * 0.06;
+  }
+
   /** Camera flashes pop around the ground when the crowd is up. */
   private updateFlashes(dt: number): void {
     const n = this.flashSpots.length;

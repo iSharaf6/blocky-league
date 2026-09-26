@@ -1,7 +1,7 @@
 import type { SaveData } from './core/save';
 import type { MatchResult } from './game/matchSession';
 import type { TimeOfDay } from './render/world';
-import type { Kit, Side, TeamDef } from './sim/types';
+import type { Kit, MatchMode, Side, TeamDef } from './sim/types';
 import type { Menus } from './ui/menus';
 
 /** What a result screen shows for coins earned. */
@@ -29,6 +29,8 @@ export interface MatchRequest {
   weather?: 'clear' | 'rain' | 'snow';
   /** Cup tie: level at full time goes to a penalty shootout. */
   knockout?: boolean;
+  /** 'classic' (default) or 'blitz' power-up mode. */
+  mode?: MatchMode;
   /** Compute the coins for this result (called once at full time). */
   reward: (r: MatchResult) => Reward;
   /** Label for the full-time continue button. */

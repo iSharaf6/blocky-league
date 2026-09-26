@@ -258,7 +258,8 @@ describe('substitutions and mentality', () => {
 
   it('mentality changes how often a side creates chances', () => {
     let shots = [0, 0];
-    for (const seed of [1, 2, 3, 4, 5, 6]) {
+    // (Twelve halves, not six: one half's shots swing by +-3 with the seed, and round 9's tempo reshuffled them.)
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
       for (const [k, ment] of [[0, -1], [1, 1]] as const) {
         const m = match(seed);
         m.mentality[0] = ment;

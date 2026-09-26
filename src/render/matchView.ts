@@ -191,6 +191,9 @@ export class MatchView {
   private pinned: { i: number; x: number; z: number; facing: number }[] = [];
   /** The ball kept out of a low close-up it would sit right in front of (the card shot). */
   private ballHidden = false;
+  /** Blitz mega ball (see setBallHot) and its material, made on first use. */
+  private ballHot = false;
+  private hotMat: THREE.MeshBasicMaterial | null = null;
   /** Players faded out of a latched close-up (see fadeNearLens). */
   private fadeLatch = new Set<number>();
   private turnRate = new Float32Array(22);
@@ -650,6 +653,19 @@ export class MatchView {
     const r = this.ref;
     this.pinned = this.pinned.filter((p) => p.i !== i);
     this.pinned.push({ i, x, z, facing: Math.atan2(r.z - z, r.x - x) });
+  }
+
+  /** Blitz mega ball: red-hot (its own unlit red-orange material) or back to the normal ball. */
+  setBallHot(on: boolean): void {
+    if (on === this.ballHot) return;
+    this.ballHot = on;
+    if (on && !this.hotMat) this.hotMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xff4a1a });
+    this.ball.material = on ? this.hotMat! : charMaterial;
+  }
+
+  /** Blitz: a colour cast over player `i` (an ice-blue tint on a frozen side), null for none. */
+  tintPlayer(i: number, color: number | null): void {
+    this.players[i]?.setTint(color);
   }
 
   /** Keep the ball out of shot (a low close-up it would sit right in front of), or show it again. */

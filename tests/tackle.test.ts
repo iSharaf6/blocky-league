@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { DT, HALF_W } from '../src/sim/constants';
-import { CLOSE_T, pressSteal, SLIDE_HOLD, standingFoulChance } from '../src/sim/dribble';
+import { AUTO_SLIDE_AWAY, CLOSE_T, pressSteal, SLIDE_HOLD, standingFoulChance } from '../src/sim/dribble';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
 import type { MatchEvent } from '../src/sim/types';
@@ -239,7 +239,8 @@ describe('TACKLE: hold or double-tap to slide', () => {
 
   it('a second tap within 0.3 s: a slide at once', () => {
     for (let s = 0; s < 6; s++) {
-      const { m, p } = duel(7000 + s, 3.6, -1, -1, 1);
+      // (5 m off: the first tap's closing run hasn't reached him by the second tap.)
+      const { m, p } = duel(7000 + s, 5, -1, -1, 1);
       let slideAt = -1;
       for (let i = 0; i < 20; i++) {
         m.step(DT, pad(0, 0, { shoot: i < 3 || (i >= 7 && i < 10) }));
@@ -256,6 +257,93 @@ describe('TACKLE: hold or double-tap to slide', () => {
       const { m, p } = duel(8000 + s, 2, -1, -1);
       expect(play(m, p, 40, tap).slide).toBe(false);
     }
+  });
+
+  it('a tap with SPRINT held: a slide at once (the ball not already in reach)', () => {
+    let slid = 0;
+    const N = 10;
+    for (let s = 0; s < N; s++) {
+      const { m, p } = duel(8100 + s, 4, -1, -1, 1);
+      let at = -1;
+      for (let i = 0; i < 20; i++) {
+        m.step(DT, pad(1, 0, { sprint: true, shoot: i < 3 }));
+        m.drainEvents();
+        if (p.state === 'slide' && at < 0) at = i;
+      }
+      if (at === 0) slid++;
+    }
+    expect(slid).toBe(N);
+  });
+
+  it('a tap at a carrier 2.5-5 m off who is getting away: the assist slides (a standing reach could not get there)', () => {
+    let slid = 0;
+    let stood = 0;
+    const N = 10;
+    for (let s = 0; s < N; s++) {
+      // He runs away from us along +x at 5 m/s from 3.5 m; we tap.
+      const { m, p } = duel(8200 + s, 3.5, -1, 1, 5);
+      const r = play(m, p, 6, tap);
+      if (r.slide) slid++;
+      // Running at us instead: a standing tackle (closing in, or already made).
+      const { m: m2, p: p2 } = duel(8300 + s, 3.5, -1, -1, 5);
+      const r2 = play(m2, p2, 6, tap);
+      if (!r2.slide && (m2.assist.tackle || r2.tried)) stood++;
+    }
+    expect(AUTO_SLIDE_AWAY).toBeLessThan(5);
+    expect(slid).toBe(N);
+    expect(stood).toBe(N);
+  });
+});
+
+describe('TACKLE: readable', () => {
+  it("every committed press is a 'tackleTry' (lunge or slide) before any outcome, so the render can animate a miss", () => {
+    // A tap in reach, a tap closing from 4.5 m, a double-tap slide.
+    const near = duel(8400, 2, -1, -1, 2);
+    const nr = play(near.m, near.p, 10, tap);
+    const tries = nr.evs.filter((e) => e.type === 'tackleTry' && e.by === near.p.idx);
+    expect(tries.length).toBe(1);
+    expect(tries[0].type === 'tackleTry' && tries[0].slide).toBe(false);
+    expect(nr.evs.findIndex((e) => e.type === 'tackleTry')).toBeLessThanOrEqual(nr.evs.findIndex((e) => e.type === 'tackle'));
+    const far = duel(8401, 4.5, -1, -1, 1);
+    const fr = play(far.m, far.p, 10, tap);
+    expect(fr.evs.some((e) => e.type === 'tackleTry' && e.by === far.p.idx && !e.slide)).toBe(true);
+    const dbl = duel(8402, 5, -1, -1, 1);
+    const dr = play(dbl.m, dbl.p, 20, (i) => pad(0, 0, { shoot: i < 3 || (i >= 7 && i < 10) }));
+    expect(dr.evs.some((e) => e.type === 'tackleTry' && e.by === dbl.p.idx && e.slide)).toBe(true);
+  });
+
+  it('the standing tackle shows: a 0.2-0.3 s jab of the boot (kick state, poke) whether it wins or misses, then he is back on the move', () => {
+    let shown = 0;
+    let missesShown = 0;
+    let misses = 0;
+    let latency: number[] = [];
+    const N = 40;
+    for (let s = 0; s < N; s++) {
+      const { m, p } = duel(8500 + s, 2.5, -1, -1, 2);
+      let pokeFrames = 0;
+      let first = -1;
+      let won = false;
+      for (let i = 0; i < 45; i++) {
+        m.step(DT, tap(i));
+        for (const e of m.drainEvents()) if (e.type === 'tackle' && e.by === p.idx && !e.slide && e.won) won = true;
+        if (p.state === 'kick' && p.poke) {
+          if (first < 0) first = i;
+          pokeFrames++;
+        }
+      }
+      if (pokeFrames >= 12 && pokeFrames <= 20) shown++;
+      if (first >= 0) latency.push(first);
+      if (!won) {
+        misses++;
+        if (pokeFrames >= 12) missesShown++;
+      }
+      expect(p.state === 'move' || p.state === 'kick').toBe(true);
+    }
+    // eslint-disable-next-line no-console
+    console.log(`standing tackle shown ${shown}/${N} (misses shown ${missesShown}/${misses}); tap -> jab latency avg ${(latency.reduce((a, b) => a + b, 0) / Math.max(1, latency.length)).toFixed(1)} frames, max ${Math.max(...latency)}`);
+    expect(shown).toBeGreaterThanOrEqual(N * 0.9);
+    expect(missesShown).toBe(misses);
+    expect(Math.max(...latency) * DT).toBeLessThanOrEqual(0.15);
   });
 });
 

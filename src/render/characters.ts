@@ -360,9 +360,14 @@ export const PSTATE = {
   move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9, stumble: 11, plant: 12,
 } as const;
 
-/** Poke tackle: a short lunge at the ball (no wind-up), this long, inside the 0.34 s 'kick' state. */
-const POKE_S = 0.18;
-const KICK_S = 0.34;
+/**
+ * Standing tackle: the sim's poke enters the 0.34 s 'kick' state at kickT 0.28 (replay.ts LUNGE_KICK_T0), so
+ * the lunge runs over the last 0.72 of kickT (~0.25 s): a deep step at the ball, the leading leg out low,
+ * torso forward and arms flung out, there on the very frame of the press (BLEND_POKE_S is the only ease-in),
+ * held for POKE_HOLD of it, then back into the stride.
+ */
+const POKE_T0 = 0.28;
+const POKE_HOLD = 0.5;
 /**
  * Pose cross-fades (s): a change of state (or of move within one: a header, a celebration style) blends
  * the limbs from the last drawn pose instead of snapping, a touch longer getting up off the grass. The
@@ -373,6 +378,8 @@ const KICK_S = 0.34;
  */
 const BLEND_S = 0.12;
 const BLEND_KICK_S = 0.06;
+/** A standing tackle must read the frame it is pressed: the lunge pose is all but snapped to (~80% on frame 1). */
+const BLEND_POKE_S = 0.03;
 const BLEND_FAST_S = 0.06;
 const BLEND_GETUP_S = 0.15;
 /** Entry speed (m/s) from which a strike gets a plant step (full plant at the top value). */
@@ -411,6 +418,9 @@ export class Footballer {
   /** Own see-through copy of the voxel material, made the first time this player is faded. */
   private fadeMat: THREE.MeshLambertMaterial | null = null;
   private alpha = 1;
+  /** Blitz tint (see setTint) and this player's own tinted copy of the material, made on first use. */
+  private tint: number | null = null;
+  private tintMat: THREE.MeshLambertMaterial | null = null;
   /** Cross-fade: the pose key last drawn, the pose drawn then, the pose the fade starts from, its clock / length. */
   private poseKey = -1;
   private poseState = -1;
@@ -483,7 +493,28 @@ export class Footballer {
       this.fadeMat.transparent = true;
     }
     if (this.fadeMat) this.fadeMat.opacity = this.alpha;
-    const mat = faded ? this.fadeMat! : charMaterial;
+    this.applyMaterial();
+  }
+
+  /**
+   * Colour cast over the whole figure (blitz: an ice-blue tint on a frozen side), null for none. Below 1
+   * opacity the tint is dropped (the fade material takes over); back to solid the tint comes back.
+   */
+  setTint(color: number | null): void {
+    if (color === this.tint) return;
+    this.tint = color;
+    this.applyMaterial();
+  }
+
+  private applyMaterial(): void {
+    const faded = this.alpha < 1;
+    let mat: THREE.MeshLambertMaterial = charMaterial;
+    if (faded) mat = this.fadeMat!;
+    else if (this.tint !== null) {
+      if (!this.tintMat) this.tintMat = makeCharMaterial();
+      this.tintMat.color.setHex(this.tint);
+      mat = this.tintMat;
+    }
     for (const m of [this.torso, this.head, this.armL, this.armR, this.legL, this.legR]) m.material = mat;
   }
 
@@ -550,7 +581,8 @@ export class Footballer {
         this.fromPose.set(this.lastPose);
         this.blendT = 0;
         this.blendAction = isAction(key);
-        this.blendS = this.blendAction && p.state !== PSTATE.slide && p.state !== PSTATE.dive ? BLEND_KICK_S : blendTime(this.poseState, p.state);
+        const poke = p.state === PSTATE.kick && (key & 15) === 1;
+        this.blendS = poke ? BLEND_POKE_S : this.blendAction && p.state !== PSTATE.slide && p.state !== PSTATE.dive ? BLEND_KICK_S : blendTime(this.poseState, p.state);
       } else this.blendS = 0;
       if (p.state === PSTATE.kick && this.poseState !== PSTATE.kick) this.kickEntry = p.speed;
       this.poseKey = key;
@@ -672,22 +704,25 @@ export class Footballer {
         const kickLeg = right ? lR : lL;
         const plant = right ? lL : lR;
         if (Math.abs(p.kickLeg) > 1.5 && p.headerT <= 0) {
-          // Poke tackle: straight out of the stride, a quick lunge with the leg stretched at the ball
-          // (no back-swing), then back to the run.
+          // Standing tackle: straight out of the stride into a deep lunge at the ball, the leading leg
+          // stretched out low, the standing leg bent back under him, hips dropped, torso pitched forward and
+          // both arms flung wide for balance; held, then back into the run (see POKE_HIT / POKE_HOLD).
           locomotion();
-          const tl = clamp((t * KICK_S) / POKE_S, 0, 1);
-          const e = tl < 0.35 ? smoothstep(0, 0.35, tl) : 1 - smoothstep(0.35, 1, tl);
-          kickLeg.rotation.z = lerp(kickLeg.rotation.z, 0.9, e);
-          plant.rotation.z = lerp(plant.rotation.z, -0.3, e);
-          torso.rotation.z = lerp(torso.rotation.z, -0.35, e);
-          torso.rotation.y = -Math.sign(p.kickLeg) * 0.18 * e;
-          head.rotation.z = 0.2 * e;
-          (right ? aL : aR).rotation.z = lerp((right ? aL : aR).rotation.z, 0.7, e);
-          (right ? aR : aL).rotation.z = lerp((right ? aR : aL).rotation.z, -0.5, e);
-          aL.rotation.x = lerp(aL.rotation.x, -0.55, e);
-          aR.rotation.x = lerp(aR.rotation.x, 0.55, e);
-          body.position.x = 0.1 * e;
-          body.position.y = lerp(body.position.y, HIP_Y - 0.06, e);
+          const u = clamp((t - POKE_T0) / (1 - POKE_T0), 0, 1);
+          const e = u < POKE_HOLD ? 1 : 1 - smoothstep(POKE_HOLD, 1, u);
+          kickLeg.rotation.z = lerp(kickLeg.rotation.z, 1.4, e);
+          kickLeg.rotation.x = lerp(kickLeg.rotation.x, -Math.sign(p.kickLeg) * 0.2, e);
+          plant.rotation.z = lerp(plant.rotation.z, -1.0, e);
+          torso.rotation.z = lerp(torso.rotation.z, -0.8, e);
+          torso.rotation.y = -Math.sign(p.kickLeg) * 0.3 * e;
+          head.rotation.z = 0.5 * e;
+          (right ? aL : aR).rotation.z = lerp((right ? aL : aR).rotation.z, 1.2, e);
+          (right ? aR : aL).rotation.z = lerp((right ? aR : aL).rotation.z, -1.0, e);
+          aL.rotation.x = lerp(aL.rotation.x, -1.3, e);
+          aR.rotation.x = lerp(aR.rotation.x, 1.3, e);
+          // The step itself: the whole body driven half a metre at the ball, hips dropped to a crouch.
+          body.position.x = 0.5 * e;
+          body.position.y = lerp(body.position.y, HIP_Y - 0.2, e);
           break;
         }
         // Taken at speed: a bigger back-swing over a planted standing leg, then the strike.
@@ -741,13 +776,21 @@ export class Footballer {
         break;
       }
       case PSTATE.slide: {
-        const t = clamp(p.stateT / 0.2, 0, 1);
-        body.rotation.z = 1.05 * t;
-        body.position.y = HIP_Y - (HIP_Y - 0.165) * t;
-        lR.rotation.z = 0.35;
-        lL.rotation.z = -0.75;
-        aL.rotation.x = -1.2;
-        aR.rotation.z = -1.1;
+        // Down fast (0.14 s), laid right back on one hip, the leading leg straight out along the grass at the
+        // ball, the other tucked under, the top arm thrown up and the ground arm braced: a real slide.
+        const t = clamp(p.stateT / 0.14, 0, 1);
+        body.rotation.z = 1.2 * t;
+        body.position.y = HIP_Y - (HIP_Y - 0.15) * t;
+        lR.rotation.z = lerp(0.2, 1.05, t);
+        lR.rotation.x = 0.12 * t;
+        lL.rotation.z = lerp(-0.2, -0.95, t);
+        lL.rotation.x = -0.35 * t;
+        aL.rotation.x = -1.35 * t;
+        aL.rotation.z = 1.9 * t;
+        aR.rotation.z = -1.2 * t;
+        aR.rotation.x = 0.3 * t;
+        torso.rotation.y = -0.2 * t;
+        head.rotation.z = 0.35 * t;
         break;
       }
       case PSTATE.fallen: {
@@ -765,16 +808,20 @@ export class Footballer {
         // Land, then roll back up to a crouch before the stand-up state takes over.
         const up = clamp((p.stateT - 0.85) / 0.35, 0, 1);
         const lay = t * (1 - up * up * (3 - 2 * up));
-        body.rotation.x = p.diveDir * 1.35 * lay;
+        // Full stretch: laid right over into the dive, both arms reaching past the head, the legs scissored
+        // (the trailing leg kicked up behind), the body stretched a touch longer: a keeper at full length.
+        body.rotation.x = p.diveDir * 1.5 * lay;
         body.position.y = HIP_Y - 0.05 * t - lay * 0.1 - up * 0.09;
-        aL.rotation.z = 2.9 * lay + up * 0.9;
-        aR.rotation.z = 2.9 * lay + up * 0.9;
-        aL.rotation.x = -0.25;
-        aR.rotation.x = 0.25;
-        lL.rotation.x = -0.2 * p.diveDir * lay;
-        lR.rotation.x = 0.2 * p.diveDir * lay;
-        lL.rotation.z = up * 0.9;
-        lR.rotation.z = -up * 0.3;
+        aL.rotation.z = 3.05 * lay + up * 0.9;
+        aR.rotation.z = 3.05 * lay + up * 0.9;
+        aL.rotation.x = -0.12 - 0.2 * lay;
+        aR.rotation.x = 0.12 + 0.2 * lay;
+        lL.rotation.x = -0.45 * p.diveDir * lay;
+        lR.rotation.x = 0.45 * p.diveDir * lay;
+        lL.rotation.z = up * 0.9 - 0.35 * lay;
+        lR.rotation.z = -up * 0.3 + 0.55 * lay;
+        torso.scale.y = 1 + 0.06 * lay;
+        head.rotation.z = -0.2 * lay;
         break;
       }
       case PSTATE.hold: {
@@ -868,6 +915,7 @@ export class Footballer {
   dispose(): void {
     this.group.removeFromParent();
     this.fadeMat?.dispose();
+    this.tintMat?.dispose();
   }
 }
 

@@ -3,6 +3,7 @@
  * Everything persists in SaveData.career as a versioned CareerState; coins live in the shared wallet (SaveData.coins).
  */
 import { Rng, hashString } from '../core/rng';
+import { safeName, safeShort } from '../core/names';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, teamRating } from '../sim/types';
 import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDef } from '../sim/types';
@@ -203,11 +204,13 @@ export function divisionLevel(d: number): number {
 export const NAME_BAD = /[^\p{L}\p{N} .'&-]/gu;
 
 export function sanitizeName(s: string): string {
-  return s.replace(NAME_BAD, '').replace(/\s+/g, ' ').trim().slice(0, 18);
+  // Allowed characters, collapsed whitespace, 18 max; '' when the name is on the blocklist (core/names.ts).
+  return safeName(s, { max: 18 });
 }
 
 export function sanitizeShort(s: string): string {
-  return s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
+  // Three upper-case letters / digits; '' when what they spell is blocked.
+  return safeShort(s);
 }
 
 /** "Pixel Park FC" -> "PIX". Falls back to initials, then pads with X. */

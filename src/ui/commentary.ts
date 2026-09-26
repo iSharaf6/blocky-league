@@ -6,7 +6,16 @@
 import { GOAL_H, HALF_L } from '../sim/constants';
 import type { Match } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
-import type { MatchEvent, ShotStyle, Side, TeamDef } from '../sim/types';
+import type { MatchEvent, PowerUpKind, ShotStyle, Side, TeamDef } from '../sim/types';
+
+/** Blitz power-ups as the commentator, the HUD slot and the banners name them. */
+export const POWER_INFO: Record<PowerUpKind, { name: string; banner: string; icon: string; color: string }> = {
+  turbo: { name: 'turbo', banner: 'TURBO!', icon: '⚡', color: '#3aff9e' },
+  mega: { name: 'mega shot', banner: 'MEGA SHOT!', icon: '💥', color: '#ff6a3a' },
+  freeze: { name: 'freeze', banner: 'FREEZE!', icon: '❄️', color: '#5cc8f5' },
+  magnet: { name: 'magnet', banner: 'MAGNET!', icon: '🧲', color: '#ffd23a' },
+  shield: { name: 'shield', banner: 'SHIELD!', icon: '🛡️', color: '#c69cff' },
+};
 
 /** 5 = goals, reds, penalties, half / full time · 4 = saves, woodwork, bookings · 3 = chances, flags, subs · 2 = fouls, corners · 1 = colour. */
 export type Priority = 1 | 2 | 3 | 4 | 5;
@@ -142,6 +151,16 @@ const T = {
   claim: ['{k} comes and claims it.', 'Good take from {k}.'],
   punch: ['{k} punches clear.', '{k} comes out and punches it away.'],
   tackle: ['Great tackle from {p}!', '{p} slides in and wins it cleanly.'],
+  tackleClean: ['Won it clean! {p}.', '{p} wins it cleanly.', 'Perfectly timed by {p}!', '{p} nicks it off his toes.'],
+  tackleTry: ['Crunching tackle from {p}!', '{p} flies in!', '{p} goes to ground!', 'Big challenge from {p}!'],
+  // Blitz power-ups.
+  powerTaken: ['{p} grabs a {pu}!', '{t} pick up a {pu}!', '{p} has a {pu} in his pocket!'],
+  powerTurbo: ['TURBO! {p} is off like a rocket!', 'Turbo boost! Nobody is catching {p}!'],
+  powerMega: ['MEGA SHOT loaded! {p} is winding up!', 'Mega shot armed for {p}. Keeper, beware!'],
+  powerFreeze: ['FREEZE! {t} stop {o} in their tracks!', 'Frozen solid! {o} can barely move!'],
+  powerMagnet: ['MAGNET! The ball is glued to {p}!', 'Magnet on! Everything finds {p}!'],
+  powerShield: ['SHIELD! Nobody is getting the ball off {p}!', '{p} is untouchable with the shield up!'],
+  powerEnd: ['The {pu} wears off for {t}.', "{t}'s {pu} is spent."],
   longShot: ['{p} tries his luck from distance...', '{p} shoots from way out...'],
   // Chips and finesse finishes (the kick event's style).
   chipTry: ['{p} tries the chip...', 'Cheeky! {p} goes for the chip...', '{p} dinks it towards goal...'],
@@ -507,10 +526,30 @@ export class Commentator {
         return k ? L(this.pick(e.caught ? 'claim' : 'punch', { ...v, k: this.sn(k.def.name) }), 1, k.side) : null;
       }
       case 'tackle': {
-        if (!e.won || !e.slide) return null;
+        if (!e.won) return null;
         const p = m.players[e.by];
-        return p ? L(this.pick('tackle', { ...v, p: this.sn(p.def.name) }), 1, p.side) : null;
+        return p ? L(this.pick(e.slide ? 'tackle' : 'tackleClean', { ...v, p: this.sn(p.def.name) }), 1, p.side) : null;
       }
+      case 'tackleTry': {
+        if (!e.slide) return null;
+        const p = m.players[e.by];
+        return p ? L(this.pick('tackleTry', { ...v, p: this.sn(p.def.name) }), 1, p.side) : null;
+      }
+      case 'powerupSpawn':
+        return null;
+      case 'powerupTaken': {
+        const p = m.players[e.player];
+        const pv = { ...v, p: p ? this.sn(p.def.name) : 'someone', t: clubCall(m.teams[e.side]), pu: POWER_INFO[e.kind].name };
+        return L(this.pick('powerTaken', pv), 2, e.side, 'big');
+      }
+      case 'powerupUsed': {
+        const p = m.players[e.player];
+        const pv = { ...v, p: p ? this.sn(p.def.name) : 'someone', t: clubCall(m.teams[e.side]), o: clubCall(m.teams[other(e.side)]) };
+        const cat = e.kind === 'turbo' ? 'powerTurbo' : e.kind === 'mega' ? 'powerMega' : e.kind === 'freeze' ? 'powerFreeze' : e.kind === 'magnet' ? 'powerMagnet' : 'powerShield';
+        return L(this.pick(cat, pv), 3, e.side, 'big');
+      }
+      case 'powerupEnd':
+        return L(this.pick('powerEnd', { ...v, t: clubCall(m.teams[e.side]), pu: POWER_INFO[e.kind].name }), 1, e.side);
       case 'kick': {
         const style = e.style;
         if ((style === 'chip' || style === 'finesse') && !shootout && m.ball.lastTouch >= 0 && this.penFor < 0) {

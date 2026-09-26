@@ -1,6 +1,7 @@
 import { clamp, dist2 } from '../core/math';
 import {
-  AIR_DRAG, BALL_R, BOUNCE, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, ROLL_A, ROLL_B, SIX_W, WALL_DIST,
+  AIR_DRAG, BALL_R, BOUNCE, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SIX_W, TEMPO,
+  WALL_DIST,
 } from './constants';
 import type { Match } from './match';
 import type { Player } from './player';
@@ -8,7 +9,11 @@ import type { Side } from './types';
 
 type RestartLike = { kind: string; side: Side; x: number; z: number };
 
-/** Lateral dive pace scale (how far across goal a keeper gets in time). */
+/**
+ * Lateral dive pace scale (how far across goal a keeper gets in time). (Round 9: shots are SHOT_TEMPO faster
+ * and his base reaction that much quicker; the dive itself isn't, so a well-struck one beats him a little
+ * more often: goals at both ends.)
+ */
 const DIVE_PACE = 0.72;
 /** How far (m) towards his near post a keeper shades when the ball is out at a tight angle. */
 const NEAR_POST_SHADE = 0.8;
@@ -22,16 +27,20 @@ const CROSS_STANCE_OUT = 0.9;
 const CROSS_STANCE_Z = 0.7;
 /** Direct free kick: how far across towards the open side the keeper stands (1 = the middle of the gap). */
 const FK_KEEPER_SHADE = 0.2;
-/** A keeper's reaction time to a shot (s) is this less 0.2 x his keeping (so ~0.19 s for a good one). */
+/**
+ * A keeper's reaction time to a shot (s) is this less 0.2 x his keeping (so ~0.19 s for a good one), the lot
+ * over SHOT_TEMPO (shots are that much faster; he reads them that much sooner).
+ */
 const KEEPER_REACT = 0.33;
 /** Extra reaction time (s) to a free kick struck over the wall. */
 const FK_UNSIGHTED = 0.05;
 /**
  * Extra reaction time (s) to a finesse shot struck from outside the line of the near post: it starts
  * out wide of the far post and bends back in, so the keeper reads it late. (With the round-7 finesse
- * pace / placement, ~38% of 18 m angled far-post curlers go in against a set keeper: finishing.test.ts.)
+ * pace / placement, ~38% of 18 m angled far-post curlers go in against a set keeper: finishing.test.ts.
+ * Round 9: 0.12 -> 0.14, his base reaction being SHOT_TEMPO quicker; the curler stays a ~30% chance.)
  */
-const FINESSE_READ = 0.12;
+const FINESSE_READ = 0.14;
 /**
  * How far (m) a diving keeper's body travels sideways at most (plus a little for a great keeper); his
  * reach does the rest. So a shot placed right inside the post from the edge of the box is beyond him
@@ -49,15 +58,40 @@ const DIVE_SHUFFLE = 8;
 const DIVE_WAIT = 0.45;
 /** How much of a curled free kick's bend he reads when it's a long one he's read the flight of (else 0.62). */
 const FK_LONG_CURL_READ = 0.4;
-/** A shot this long (s, at its launch speed in a straight line) from reaching him is read as a long one. */
+/** A shot this long (s, at its launch speed in a straight line) from reaching him is read as a long one... */
 const LONG_READ = 0.72;
+/** ... and one struck from this far out (m) is a long one for its whole flight (Match.shotDist). */
+const LONG_SHOT_D = 17;
+/**
+ * He reads a shot for this long (s) after it was struck: the whole flight of one from near halfway (2-3 s).
+ * (Round 9: it was 1.6 s, and flightCrossing looked 1.6 s ahead: a shot from 40-55 m was read as a straight
+ * line, or not at all once it was mid-flight, and he never committed to it.)
+ */
+const SHOT_READ_T = 4;
+/**
+ * A ball crossing higher than this (m) needs a leap: he waits until DIVE_WAIT_HIGH s before it arrives so his
+ * hands are at the top of the jump as it gets there (he used to go at once and be back on the floor).
+ */
+const HIGH_DIVE_Y = 1.9;
+const DIVE_WAIT_HIGH = 0.42;
+/**
+ * Straight at him (within 0.55 m) and under STAND_CATCH_Y m he stays on his feet and catches it, going up for
+ * one over STAND_REACH_Y m: JUMP_VY m/s straight up (apex ~0.56 m at 0.25 s), JUMP_LEAD s before it arrives.
+ */
+const STAND_CATCH_Y = 2.9;
+const STAND_REACH_Y = 2.2;
+const JUMP_VY = 4.5;
+const JUMP_LEAD = 0.28;
+/** A dropper (DROPPER_DIP m lower at the line than where he stands) has him back-pedal to DROPPER_LINE m off his line. */
+const DROPPER_LINE = 0.4;
+const DROPPER_DIP = 0.3;
 
 /**
  * When (s from now), how high and where (z) the ball crosses the plane x = `x` on its way towards the goal
  * of the side attacking `ad`'s opponents, flown on from where it is now with the ball's own air drag,
- * bounces and roll (spin left out: see curlDrift). Null when it doesn't within 1.6 s.
+ * bounces and roll (spin left out: see curlDrift). Null when it doesn't within SHOT_READ_T s.
  */
-function flightCrossing(m: Match, x: number, ad: number): { t: number; y: number; z: number } | null {
+export function flightCrossing(m: Match, x: number, ad: number): { t: number; y: number; z: number } | null {
   const b = m.ball;
   let px = b.pos.x;
   let py = b.pos.y;
@@ -67,7 +101,8 @@ function flightCrossing(m: Match, x: number, ad: number): { t: number; y: number
   let vy = b.vel.y;
   let vz = b.vel.z;
   const dt = 1 / 60;
-  for (let i = 1; i <= 96; i++) {
+  const n = Math.round(SHOT_READ_T / dt);
+  for (let i = 1; i <= n; i++) {
     if (py <= BALL_R + 0.005 && Math.abs(vy) < 0.9) {
       py = BALL_R;
       vy = 0;
@@ -233,7 +268,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
     k.facing = ad > 0 ? 0 : Math.PI;
     // Human keepers wait for input (handled by the match); AI keepers distribute.
     if (!m.isHumanControlled(k) && k.stateT > m.keeperHoldTime) m.keeperDistribute(k);
-    else if (m.isHumanControlled(k) && k.stateT > 4) m.keeperDistribute(k);
+    else if (m.isHumanControlled(k) && k.stateT > 3) m.keeperDistribute(k);
     return;
   }
   if (k.state !== 'move') return;
@@ -264,7 +299,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
     }
     return;
   }
-  k.aiT = 0.35 + m.rng.next() * 0.4;
+  k.aiT = (0.35 + m.rng.next() * 0.4) / TEMPO;
 
   // ---- A chip: back-pedal under it and go up for it (a dive would have him on the floor when it drops).
   const toward = b.vel.x * -ad; // positive when heading to our goal
@@ -301,34 +336,53 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   }
 
   // ---- Shot reading --------------------------------------------------------
-  if (b.owner < 0 && !b.held && toward > 7 && m.shotClock < 1.6) {
-    // When and where it gets to him: a straight-line read, but for a shot from range (LONG_READ s or more
-    // away) he reads the real flight (drag, dip, a skid off the turf) and has time to get across.
+  if (b.owner < 0 && !b.held && toward > 7 && m.shotClock < SHOT_READ_T) {
+    // When and where it gets to him: the real flight (drag, dip, a skid off the turf, a bounce), read for the
+    // whole of it; a straight line only when the flight doesn't cross his line.
     const tLine = (k.pos.x - b.pos.x) / b.vel.x;
-    const across = tLine > LONG_READ ? flightCrossing(m, k.pos.x, ad) : null;
+    const across = flightCrossing(m, k.pos.x, ad);
     const t = across?.t ?? tLine;
-    if (t > 0 && t < 1.6) {
+    if (t > 0 && t < SHOT_READ_T) {
+      // A long one (struck from LONG_SHOT_D m or more, or still LONG_READ s away): he has time to get across on
+      // his feet first, and misjudges a curler's bend a little more.
+      const long = m.shotKick === m.kickId ? m.shotDist >= LONG_SHOT_D : tLine > LONG_READ;
       // A curler's bend is only half read (a free kick, which he's set for, a little better).
-      // (Reading the flight of a long one, he misjudges the bend a little more.)
-      const zc = (across?.z ?? b.pos.z + b.vel.z * t) + curlDrift(m, t) * (m.freeKickShot() ? (across ? FK_LONG_CURL_READ : 0.62) : 0.5);
+      const zc = (across?.z ?? b.pos.z + b.vel.z * t) + curlDrift(m, t) * (m.freeKickShot() ? (long ? FK_LONG_CURL_READ : 0.62) : 0.5);
       const yc = across?.y ?? Math.max(BALL_R, b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t);
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
       if (onFrame) {
         // A free kick struck over the wall is seen late (the wall is in the way).
         const finesse = m.shotStyle === 'finesse' && m.shotKick === m.kickId && Math.abs(m.kickZ) > GOAL_W / 2;
-        const reaction = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) + (m.freeKickShot() ? FK_UNSIGHTED : 0) +
+        // (The base reaction rides on the shot tempo; the wall's and the curler's late read don't.)
+        const reaction = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) / SHOT_TEMPO + (m.freeKickShot() ? FK_UNSIGHTED : 0) +
           (finesse ? FINESSE_READ : 0);
         const lateral = zc - k.pos.z;
-        if (Math.abs(lateral) < 0.55 && yc < 1.9) {
-          // Straight at them: shuffle and let the catch check do the work.
+        const high = yc > HIGH_DIVE_Y;
+        // A dropper (a floated long shot coming down steeply: over his head where he stands, under the bar at
+        // the line): back onto his line first, where it's lower, then go up for it.
+        const atLine = high ? flightCrossing(m, gx + ad * DROPPER_LINE, ad) : null;
+        if (atLine && atLine.y < yc - DROPPER_DIP && Math.abs(k.pos.x - gx) > DROPPER_LINE + 0.3 && t > 0.15 && m.shotClock >= reaction) {
+          moveTo(k, gx + ad * DROPPER_LINE, clamp(atLine.z, -GOAL_W / 2 + 0.2, GOAL_W / 2 - 0.2), true);
+          k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
+          return;
+        }
+        if (Math.abs(lateral) < 0.55 && yc < STAND_CATCH_Y) {
+          // Straight at them: shuffle and let the catch check do the work; one over his standing reach he goes up
+          // for, timed so his hands are at the top as it arrives.
           k.wantX = 0;
           k.wantZ = clamp(lateral * 3, -1, 1);
           k.sprint = false;
+          k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
+          if (yc > STAND_REACH_Y && k.y === 0 && t <= JUMP_LEAD && m.shotClock >= reaction) {
+            k.vy = JUMP_VY;
+            k.y = 0.01;
+          }
           return;
         }
-        if (m.shotClock >= reaction && across && t > DIVE_WAIT) {
-          // Time in hand (a shot from range): across on his feet first, and dive late (a keeper who went
-          // at once was on the floor, sliding past it, by the time a long one got there).
+        if (m.shotClock >= reaction && (long || high) && t > (high ? DIVE_WAIT_HIGH : DIVE_WAIT)) {
+          // Time in hand (a shot from range, or a high one): across to where it will cross on his feet first, and
+          // dive late (a keeper who went at once was on the floor, sliding past it, by the time a long one got
+          // there; for a high one the leap is timed to peak as it arrives).
           const tz = clamp(zc, -GOAL_W / 2 + 0.2, GOAL_W / 2 - 0.2);
           const dz = tz - k.pos.z;
           k.wantX = 0;

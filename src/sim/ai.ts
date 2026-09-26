@@ -1,7 +1,7 @@
 import { clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
 import { headerAtGoal, throughLead } from './actions';
-import { ACCEL, BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, WALL_DIST } from './constants';
+import { ACCEL, BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
 import { readsHuman, takeOnVsHuman, vsHuman } from './dribble';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import type { Match } from './match';
@@ -321,7 +321,7 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
   brain.think -= dt;
   if (brain.think <= 0) {
     assignRoles(m, side, brain);
-    brain.think = 0.12;
+    brain.think = 0.12 / TEMPO;
   }
   const ball = m.ball;
   const owner = ball.owner >= 0 ? m.players[ball.owner] : null;
@@ -1135,8 +1135,9 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     else dribble(m, p, p.aiDirX, p.aiDirZ);
     return;
   }
-  p.aiT = firstTouch ? 0.32 + m.rng.next() * 0.3 - skill * 0.03 : 0.24 + m.rng.next() * 0.2 - skill * 0.015;
-  if (firstTouch) p.holdT = 1.1 + m.rng.next() * 1.5;
+  // (Think times and the hold ride on the tempo: the AI carrier looks up and moves it on that much sooner.)
+  p.aiT = (firstTouch ? 0.32 + m.rng.next() * 0.3 - skill * 0.03 : 0.24 + m.rng.next() * 0.2 - skill * 0.015) / TEMPO;
+  if (firstTouch) p.holdT = (1.1 + m.rng.next() * 1.5) / TEMPO;
 
   const team = m.teamPlayers(side);
   const choices: Choice[] = [];
@@ -1329,7 +1330,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   // ---- Shield it under tight pressure (buys a second, not a lifetime).
   if (near.o && near.d < 2.2) {
     const o = near.o;
-    const hold = clamp(1 - p.ballT / 2, 0, 1);
+    const hold = clamp(1 - (p.ballT * TEMPO) / 2, 0, 1);
     const pRet = clamp(0.5 + (p.stat.dribbling / 100) * 0.3 - (near.d < 1 ? 0.1 : 0), 0.35, 0.85) * (0.55 + 0.45 * hold);
     const s = pRet * here - (1 - pRet) * loseHere;
     choices.push({
@@ -1377,7 +1378,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
             p.aiMode = 'dribble';
             p.aiDirX = dx;
             p.aiDirZ = dz;
-            p.aiT = 0.55;
+            p.aiT = 0.55 / TEMPO;
             // A human defender reads it differently from the AI: how well, by difficulty (dribble.ts vsHuman).
             if (m.rng.chance(pWin * takeOnVsHuman(m, o))) {
               m.beatDefender(p, o);

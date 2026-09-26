@@ -29,6 +29,18 @@ export const BOUNCE = 0.56;
 export const MAGNUS = 0.022;
 export const SPIN_DECAY = 0.7;
 
+/**
+ * Arcade tempo (round 9, the owner: "the gameplay is very very slow"). Everything that sets the pace of a
+ * match scales by it: the players' jog / sprint / acceleration and how fast they turn (player.ts), the pace
+ * of ground passes (actions.ts), the AI's think times and how long it holds the ball (ai.ts), the dead-ball
+ * waits and the keeper's hold (match.ts). 1 is the round-8 game; the human's relative edge (HUMAN_ACCEL,
+ * HUMAN_TURN in player.ts) rides on top of it. Tune it here; the AI-vs-AI bands in tests/metrics.test.ts
+ * are retuned to it.
+ */
+export const TEMPO = 1.15;
+/** Shots scale by less than the players (the keeper's reaction isn't scaled): half the tempo's step. */
+export const SHOT_TEMPO = 1 + (TEMPO - 1) * 0.5;
+
 // Players
 export const PLAYER_R = 0.42;
 /** Body separation between opponents (the voxel models are ~1 m across) and between teammates. */
@@ -36,10 +48,10 @@ export const SEP_OPP = 1.05;
 export const SEP_MATE = 0.9;
 /** Wall distance for free kicks (ten yards). */
 export const WALL_DIST = 9.15;
-export const JOG_SPEED = 5.6;
-export const SPRINT_SPEED = 8.0;
-export const ACCEL = 17;
-export const DECEL = 22;
+export const JOG_SPEED = 5.6 * TEMPO;
+export const SPRINT_SPEED = 8.0 * TEMPO;
+export const ACCEL = 17 * TEMPO;
+export const DECEL = 22 * TEMPO;
 export const DRIBBLE_MULT = 0.9;
 export const CONTROL_R = 0.78;
 export const KICK_WINDUP = 0.11;

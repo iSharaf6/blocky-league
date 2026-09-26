@@ -1,11 +1,13 @@
 import { angleDiff, clamp, dist2, pointSegDist } from '../core/math';
 import { Ball, groundPassSpeed, rollTime, solveLob, type BallHit } from './ball';
 import {
-  AIR_DRAG, BALL_R, BOUNCE, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SPIN_DECAY, SPRINT_SPEED,
+  AIR_DRAG, BALL_R, BOUNCE, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SPIN_DECAY, SPRINT_SPEED,
+  TEMPO,
 } from './constants';
 import type { Match } from './match';
 import type { KickOrder, Player } from './player';
 import { STUMBLE_LOST } from './player';
+import { megaLaunch } from './blitz';
 import type { AssistLevel, KickKind, ShotStyle } from './types';
 
 export interface Launch {
@@ -117,8 +119,8 @@ const LONG_RISE_FROM = 20;
  * An open-play strike, the power bar (how long SHOOT was held) mapped to pace AND height. Launch speed (m/s)
  * STRIKE_SPEED_BASE + power x STRIKE_SPEED_POWER x (0.78 + shooting x 0.3): a tap is still struck hard.
  */
-export const STRIKE_SPEED_BASE = 20.5;
-export const STRIKE_SPEED_POWER = 10.5;
+export const STRIKE_SPEED_BASE = 20.5 * SHOT_TEMPO;
+export const STRIKE_SPEED_POWER = 10.5 * SHOT_TEMPO;
 /**
  * Height (m) it's struck to reach at the goal line, before the error: STRIKE_TAP_H for a tap (under the
  * grass: a low drive that skids off the turf short of the line and skims in) rising with power^STRIKE_LIFT_EXP
@@ -254,19 +256,28 @@ const LOB_MAX_FLIGHT = 3.2;
  * Ground passes and through balls leave the foot at most this fast (m/s): a pass arrives at a pace that
  * can be taken (round 8: they reached 28.9 m/s).
  */
-export const GROUND_MAX_SPEED = 22;
+export const GROUND_MAX_SPEED = 22 * TEMPO;
 /** A driven cross struck at power p hangs (1 + (1 - p) x this) times as long as a full-power one. */
 const DRIVEN_HANG = 0.3;
 
 /** Launch speed of a ground pass to feet over `d` metres (firmer the longer it is). */
 export function passSpeed(d: number): number {
-  return Math.min(groundPassSpeed(d, clamp(7 + d * 0.2, 8, 13)), GROUND_MAX_SPEED);
+  return Math.min(groundPassSpeed(d, clamp(7 + d * 0.2, 8, 13) * TEMPO), GROUND_MAX_SPEED);
 }
 
 /** Launch speed of a through ball rolling `d` metres into space. */
 export function throughSpeed(d: number): number {
-  return Math.min(groundPassSpeed(d, 4.5), GROUND_MAX_SPEED);
+  return Math.min(groundPassSpeed(d, 4.5 * TEMPO), GROUND_MAX_SPEED);
 }
+
+/**
+ * How long (s) the pass-risk models give an opponent to react before he sets off for a ball: cutting out a
+ * lane (interceptRisk), racing the receiver to it (laneRace), a ball into space. The AI thinks TEMPO times
+ * faster (ai.ts), so these ride on it too: the assist doesn't underrate a lane that closes that much sooner.
+ */
+const AI_REACT_LANE = 0.32 / TEMPO;
+const AI_REACT_RACE = 0.3 / TEMPO;
+const AI_REACT_SPACE = 0.25 / TEMPO;
 
 /**
  * Chance an opponent cuts out a ground ball struck at `v0` from A to B: for each opponent,
@@ -295,7 +306,7 @@ export function interceptRisk(m: Match, side: number, ax: number, az: number, bx
     } else {
       // Only one defender reacts to a pass, and not instantly (calibrated against match outcomes).
       const tb = Math.min(rollTime(v0, s), 4);
-      const to = (lat - reach) / (o.top * 0.85) + 0.32;
+      const to = (lat - reach) / (o.top * 0.85) + AI_REACT_LANE;
       r = clamp(0.4 + (tb - to) * 1.6, 0, 1);
     }
     if (along > len * 0.92) r *= 0.75; // at the end it's a duel with the receiver
@@ -399,7 +410,7 @@ export function laneRace(m: Match, side: number, ax: number, az: number, bx: num
     const tb = rollTime(v0, len * f) + KICK_WINDUP;
     for (const o of m.players) {
       if (o.side === side || o.sentOff) continue;
-      const to = Math.max(0, dist2(o.pos.x, o.pos.z, px, pz) - (o.isKeeper ? 1.1 : 0.95)) / (o.top * 0.9) + 0.3;
+      const to = Math.max(0, dist2(o.pos.x, o.pos.z, px, pz) - (o.isKeeper ? 1.1 : 0.95)) / (o.top * 0.9) + AI_REACT_RACE;
       let r = clamp(0.5 + (tb - to) * 1.4, 0, 1);
       if (f > 0.9) r *= 0.75; // at the end it's a duel with the receiver
       if (r > risk) risk = r;
@@ -459,7 +470,7 @@ function spaceBallRisk(m: Match, p: Player, x: number, z: number, v0: number): n
     if (q === p || q.sentOff || (q.isKeeper && q.side === p.side)) continue;
     const reach = Math.max(0, dist2(q.pos.x, q.pos.z, x, z) - 1);
     if (q.side === p.side) tUs = Math.min(tUs, reach / (q.top * 0.95) + 0.3);
-    else tThem = Math.min(tThem, reach / (q.top * 0.9) + 0.25);
+    else tThem = Math.min(tThem, reach / (q.top * 0.9) + AI_REACT_SPACE);
   }
   const race = clamp(0.5 + (Math.max(tUs, tBall) - tThem) * 0.9, 0, 1);
   return Math.max(ir, race);
@@ -496,7 +507,7 @@ function throughSpaceRisk(m: Match, p: Player, t: Player, pt: { x: number; z: nu
   let tThem = Infinity;
   for (const o of m.players) {
     if (o.side === p.side || o.sentOff) continue;
-    tThem = Math.min(tThem, Math.max(0, dist2(o.pos.x, o.pos.z, pt.x, pt.z) - 1) / (o.top * 0.9) + 0.25);
+    tThem = Math.min(tThem, Math.max(0, dist2(o.pos.x, o.pos.z, pt.x, pt.z) - 1) / (o.top * 0.9) + AI_REACT_SPACE);
   }
   const race = clamp(0.5 + (Math.max(tMe, tBall) - tThem) * 0.9, 0, 1);
   const lane = Math.max(
@@ -616,6 +627,8 @@ const LOB_SPREAD = 1.4;
  * The human's ground pass zips to feet (arcade, Mario Strikers): the ideal pace is HUMAN_GROUND_MIN m/s over
  * a few metres, HUMAN_GROUND_SLOPE m/s more for every metre beyond 4 m, at most HUMAN_GROUND_MAX (a 15 m ball
  * leaves at ~24 m/s and is at his feet in about half a second). The AI keeps passSpeed (GROUND_MAX_SPEED).
+ * (Round 9: NOT scaled by TEMPO. At 18-31 m/s the ball beat its own receiver: the marker took it before his
+ * first touch, and the human's forward passes fell from ~80% completed to ~66% (tests/human.test.ts pb2).)
  */
 export const HUMAN_GROUND_MIN = 16;
 export const HUMAN_GROUND_MAX = 27;
@@ -630,13 +643,13 @@ export function humanGroundSpeed(d: number): number {
  * HUMAN_CHARGED_MAX m/s.
  */
 const HUMAN_OVERHIT = 0.4;
-export const HUMAN_CHARGED_MAX = 31;
+export const HUMAN_CHARGED_MAX = 31 * TEMPO;
 export function overhitPace(ideal: number, over: number | undefined): number {
   if (over === undefined || !(over > 0)) return ideal;
   return Math.max(ideal, Math.min(HUMAN_CHARGED_MAX, ideal * (1 + clamp(over, 0, 1) * HUMAN_OVERHIT)));
 }
 /** A manual pass tapped (no charge): a firm, standard pace along the stick. */
-const MANUAL_TAP_SPEED = 19;
+const MANUAL_TAP_SPEED = 19 * TEMPO;
 /** A manual through ball tapped rolls into space this far (m) along the stick; a charged one 10-36 m. */
 const MANUAL_THROUGH_D = 18;
 /** A charged lofted ball carries LOB_CHARGE_MIN m with the least charge, up to LOB_CHARGE_MIN + LOB_CHARGE_SPAN. */
@@ -709,7 +722,7 @@ function spaceReceiver(m: Match, p: Player, ux: number, uz: number, v0: number):
     const z = b.z + uz * s;
     for (const t of m.teamPlayers(p.side)) {
       if (t === p || t.sentOff || t.isKeeper) continue;
-      const tt = Math.max(0, dist2(t.pos.x, t.pos.z, x, z) - 0.9) / (t.top * 0.9) + 0.25;
+      const tt = Math.max(0, dist2(t.pos.x, t.pos.z, x, z) - 0.9) / (t.top * 0.9) + AI_REACT_SPACE;
       if (tt <= tb + 0.35 && tt < bestT) {
         bestT = tt;
         best = t.idx;
@@ -960,6 +973,7 @@ export function crossTarget(m: Match, p: Player, dx: number, dz: number, prefer 
 /** Solve the ball's launch for a kick order, from wherever the ball is right now. */
 export function resolveKick(m: Match, p: Player, order: KickOrder): Launch {
   const L = resolveKickRaw(m, p, order);
+  if (m.cfg.mode === 'blitz') megaLaunch(m, p, L);
   // Keeper distribution tops out around 30 m/s (no 90-metre punts).
   if (p.isKeeper && L.kind !== 'shot') {
     const sp = Math.hypot(L.vx, L.vy, L.vz);

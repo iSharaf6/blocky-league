@@ -578,8 +578,10 @@ describe('offside', () => {
     let got = false;
     for (let i = 0; i < 60 * 4 && m.phase === 'play' && !got; i++) {
       m.step(DT, EMPTY_PAD);
-      seen.push(...m.drainEvents());
-      got = m.ball.owner === fw.idx;
+      const evs = m.drainEvents();
+      seen.push(...evs);
+      // (He plays on: takes it, or hits it first time; at round 9's pass pace he often volleys a pass from 30 m.)
+      got = m.ball.owner === fw.idx || (m.ball.lastTouch === fw.idx && evs.some((e) => e.type === 'kick'));
     }
     return { m, fw, seen, got };
   }

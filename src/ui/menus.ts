@@ -1,5 +1,5 @@
 import { sfx } from '../audio/sfx';
-import { ASSIST_LEVELS, CAM_ZOOMS, controlsOf, type AssistLevel, type ControlSettings, type SaveData } from '../core/save';
+import { ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData } from '../core/save';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview, faceHtml, hydrateFaces } from './preview';
@@ -8,7 +8,7 @@ import { speechAvailable } from './commentary';
 import { cssHex, shade } from '../render/palette';
 import { FORMATIONS, FORMATION_IDS, type Slot } from '../sim/formations';
 import type { Match } from '../sim/match';
-import { overall, type FormationId, type Kit, type PlayerDef } from '../sim/types';
+import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef } from '../sim/types';
 
 export const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD', 'LEGEND'];
 export const DIFF_LEVEL = [0.6, 1.8, 3, 4];
@@ -65,7 +65,31 @@ export interface MainInfo {
   club?: string;
   cup?: string;
   gift?: { amount: number; streak: number };
+  /** Level badge: level, title and progress into the level. */
+  level?: { level: number; title: string; into: number; need: number };
+  /** Today's challenges card. */
+  daily?: { list: readonly Challenge[]; progress: readonly number[]; claimed: readonly boolean[]; fresh: boolean };
+  /** Current win streak (shown on the level badge from 2). */
+  streak?: number;
 }
+
+/** What the full-time screen shows for progression (stars, XP, streak, challenges done this match). */
+export interface FtProgress {
+  stars: 1 | 2 | 3;
+  /** Total XP before and after this match. */
+  xpFrom: number;
+  xpTo: number;
+  /** Win streak after this match (0 = none) and the coins multiplier it gave. */
+  streak: number;
+  mult: number;
+  /** Challenges completed by this match (their coins are already in the total). */
+  done: readonly { text: string; coins: number }[];
+}
+
+export const MODE_WHY: Record<MatchMode, string> = {
+  classic: 'Pure football: no pickups, just you and the ball.',
+  blitz: 'Grab power-ups on the pitch: turbo, mega shot, freeze, magnet, shield.',
+};
 
 /** Pixel-art shirt drawn as a CSS grid, so kit previews match the voxel look. */
 export function shirtArt(kit: Kit, size = 8): string {
@@ -218,11 +242,12 @@ const HOWTO_KEYS = `
       <p>Tap <kbd>K</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
       <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip · soft <kbd>K</kbd> on a diagonal: curler</p>
       <p><kbd>SHIFT</kbd> sprint · double-tap to knock it past a defender</p>
+      <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; <kbd>K</kbd> to head at goal</p>
     </div>
     <div class="ht-col">
       <h3>DEFEND</h3>
       <p><kbd>SPACE</kbd> switch player</p>
-      <p><kbd>K</kbd> tap: tackle · hold: slide</p>
+      <p><kbd>K</kbd> tap: standing tackle · tap while sprinting or hold briefly: slide</p>
       <p><kbd>L</kbd> hold to press: he stays goal-side and steals loose touches</p>
       <p>Flick the stick sharply while dribbling to cut past a defender</p>
       <p><kbd>ESC</kbd> pause</p>
@@ -241,11 +266,12 @@ const HOWTO_PAD = `
       <p>Tap <kbd>B</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
       <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip · soft <kbd>B</kbd> on a diagonal: curler</p>
       <p><kbd>RT</kbd> sprint · double-tap to knock it past</p>
+      <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; <kbd>B</kbd> to head at goal</p>
     </div>
     <div class="ht-col">
       <h3>DEFEND</h3>
       <p><kbd>A</kbd> switch player</p>
-      <p><kbd>B</kbd> tap: tackle · hold: slide</p>
+      <p><kbd>B</kbd> tap: standing tackle · tap while sprinting or hold briefly: slide</p>
       <p><kbd>X</kbd> hold to press: he stays goal-side and steals loose touches</p>
       <p>Flick the stick sharply while dribbling to cut past a defender</p>
       <p><kbd>START</kbd> pause</p>
@@ -271,14 +297,29 @@ const HOWTO_TOUCH = `
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
         <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed mate: press = instant · aim to choose</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
-        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder · the stick aims</td><td><b>TACKLE</b> tap to tackle · hold to slide</td></tr>
+        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder · the stick aims</td><td><b>TACKLE</b> tap: standing tackle · tap while sprinting or hold briefly: slide</td></tr>
         <tr><td>${dot('through')}</td><td><b>THROUGH</b> your runner goes · hold: lob or cross</td><td><b>PRESS</b> hold: stay goal-side, steal loose touches</td></tr>
         <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold · double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>PERFECT FINISH</b> tap SHOOT again as the foot hits the ball (mistime it and it flies)</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT + tap THROUGH/CROSS · <b>CURL</b> a soft SHOOT with the stick on a diagonal</td></tr>
+        <tr class="ht-finish"><td>${dot('through')}</td><td colspan="2"><b>CROSSES</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; SHOOT to head at goal</td></tr>
       </tbody>
     </table>
     <p class="fine">The <b>ringed</b> team-mate is who PASS goes to: point the stick to pick another (edge arrows show mates out of shot). Set pieces: <b>PASS</b> short · <b>SHOOT</b> at goal · <b>CROSS</b> hold to whip it in. Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
+  </div>`;
+
+/** Blitz mode, under every How to Play tab: the pickups and the button that uses them. `use` names that button. */
+const howtoBlitz = (use: string) => `
+  <div class="ht-blitz">
+    <h3>⚡ BLITZ MODE</h3>
+    <p>Quick Match › MODE › BLITZ. Run over the glowing pickups on the pitch, then press ${use} to use the one you hold (one at a time, and it shows by the score):</p>
+    <ul class="ht-pw">
+      <li><i>⚡</i><b>TURBO</b><span>a burst of pace</span></li>
+      <li><i>💥</i><b>MEGA SHOT</b><span>your next shot is a rocket</span></li>
+      <li><i>❄️</i><b>FREEZE</b><span>the other side slows for a few seconds</span></li>
+      <li><i>🧲</i><b>MAGNET</b><span>the ball sticks to your feet</span></li>
+      <li><i>🛡️</i><b>SHIELD</b><span>nobody can tackle you</span></li>
+    </ul>
   </div>`;
 
 export class Menus {
@@ -332,10 +373,26 @@ export class Menus {
 
   main(
     save: SaveData,
-    h: { quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void; gift?: () => void },
+    h: { quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void; gift?: () => void; blitz?: () => void },
     info?: MainInfo,
   ): void {
     const r = save.record;
+    const lv = info?.level;
+    const dl = info?.daily;
+    const dailyDone = dl ? dl.claimed.filter(Boolean).length : 0;
+    const daily = dl
+      ? `<div class="daily ${dl.fresh ? 'fresh' : ''}" aria-label="Daily challenges">
+          <div class="daily-h"><b>DAILY CHALLENGES</b>${dl.fresh ? '<em class="daily-new">NEW DAY</em>' : ''}<span class="daily-n">${dailyDone}/3</span></div>
+          <ul class="daily-list">${dl.list.slice(0, 3).map((c, i) => {
+            const p = Math.min(c.goal, dl.progress[i] ?? 0);
+            const done = !!dl.claimed[i];
+            return `<li class="${done ? 'done' : ''}"><span class="dc-text">${c.text}</span><span class="dc-bar"><i style="width:${Math.round((p / c.goal) * 100)}%"></i></span><b class="dc-n">${done ? '✓' : `${p}/${c.goal}`}</b><em class="dc-coins">+${c.coins}</em></li>`;
+          }).join('')}</ul>
+        </div>`
+      : '';
+    const badge = lv
+      ? `<span class="record-chip lvl" title="${lv.into} / ${lv.need} XP to the next level"><b>LV ${lv.level} · ${lv.title.toUpperCase()}${info?.streak && info.streak >= 2 ? ` · 🔥${info.streak}` : ''}</b><span>W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i></span>`
+      : `<span class="record-chip">W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span>`;
     const d = this.mount(`
       <div class="topbar">
         ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">🎁 DAILY GIFT <b>+${info.gift.amount}</b></button>` : ''}
@@ -350,11 +407,13 @@ export class Menus {
           <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${info?.career ? `<small title="${info.career}">${info.career}</small>` : ''}</button>
           <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${info?.club ? `<small title="${info.club}">${info.club}</small>` : ''}</button>
           <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
-          <button class="btn btn-red tile tile-wide" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${info?.cup ? `<small title="${info.cup}">${info.cup}</small>` : ''}</button>
+          <button class="btn btn-purple tile tile-side" data-a="blitz"><i class="picon bolt" aria-hidden="true">⚡</i><span>BLITZ</span><small>POWER-UPS</small></button>
+          <button class="btn btn-red tile tile-side" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${info?.cup ? `<small title="${info.cup}">${info.cup}</small>` : ''}</button>
         </div>
+        ${daily}
         <div class="main-foot">
           <button class="btn btn-ghost" data-a="howto">HOW TO PLAY</button>
-          <span class="record-chip">W ${r.won} · D ${r.drawn} · L ${r.lost} · ${r.goalsFor} GOALS</span>
+          ${badge}
         </div>
         </div>
       </div>`, 'main');
@@ -368,14 +427,17 @@ export class Menus {
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
     $(d, '[data-a=career]').addEventListener('click', h.career);
     $(d, '[data-a=cup]').addEventListener('click', h.cup);
+    $(d, '[data-a=blitz]').addEventListener('click', () => (h.blitz ?? h.quick)());
     $(d, '[data-a=club]').addEventListener('click', h.club);
     $(d, '[data-a=settings]').addEventListener('click', h.settings);
     $(d, '[data-a=howto]').addEventListener('click', h.howto);
   }
 
-  quickMatch(save: SaveData, onBack: () => void, onKickOff: (home: number, away: number) => void): void {
+  quickMatch(save: SaveData, onBack: () => void, onKickOff: (home: number, away: number, mode: MatchMode) => void, mode?: MatchMode): void {
     let home = save.clubIdx;
     let away = save.opponentIdx === home ? (home + 1) % PRESET_CLUBS.length : save.opponentIdx;
+    const modes: MatchMode[] = ['classic', 'blitz'];
+    let cur: MatchMode = mode ?? (save.settings.lastMode === 'blitz' ? 'blitz' : 'classic');
     const d = this.mount(`
       <div class="panel-wrap">
         <div class="panel qm">
@@ -385,6 +447,8 @@ export class Menus {
             <div class="vs">VS</div>
             <div class="team-pick" data-side="away"></div>
           </div>
+          <div class="opt-row mode-row"><label>MODE</label><div class="seg seg-mode" data-o="mode"></div></div>
+          <p class="qm-why" aria-live="polite"></p>
           <div class="opt-row"><label>DIFFICULTY</label><div class="seg" data-o="diff"></div></div>
           <div class="opt-row"><label>HALF LENGTH</label><div class="seg" data-o="len"></div></div>
           <div class="opt-row"><label>KICK-OFF</label><div class="seg" data-o="tod"></div></div>
@@ -435,7 +499,7 @@ export class Menus {
     };
     render('home');
     render('away');
-    const seg = (key: 'diff' | 'len' | 'tod' | 'wx', labels: string[], get: () => number, set: (i: number) => void) => {
+    const seg = (key: 'mode' | 'diff' | 'len' | 'tod' | 'wx', labels: string[], get: () => number, set: (i: number) => void) => {
       const el = $(d, `[data-o=${key}]`);
       const draw = () => {
         el.innerHTML = labels.map((l, i) => `<button class="${i === get() ? 'on' : ''}" data-i="${i}">${l}</button>`).join('');
@@ -449,6 +513,17 @@ export class Menus {
       };
       draw();
     };
+    const why = $(d, '.qm-why');
+    const drawWhy = () => {
+      why.textContent = MODE_WHY[cur];
+      d.classList.toggle('blitz', cur === 'blitz');
+    };
+    seg('mode', ['CLASSIC', 'BLITZ ⚡'], () => modes.indexOf(cur), (i) => {
+      cur = modes[i];
+      save.settings.lastMode = cur;
+      drawWhy();
+    });
+    drawWhy();
     seg('diff', DIFFICULTIES, () => save.settings.difficulty, (i) => (save.settings.difficulty = i));
     seg('len', HALF_OPTIONS.map((m) => `${m} MIN`), () => Math.max(0, HALF_OPTIONS.indexOf(save.settings.halfMinutes)), (i) => (save.settings.halfMinutes = HALF_OPTIONS[i]));
     const tods = ['day', 'sunset', 'night', 'random'] as const;
@@ -456,7 +531,7 @@ export class Menus {
     const wxs = ['clear', 'rain', 'snow', 'random'] as const;
     seg('wx', ['CLEAR', 'RAIN', 'SNOW', 'RANDOM'], () => Math.max(0, wxs.indexOf(save.settings.weather)), (i) => (save.settings.weather = wxs[i]));
     $(d, '[data-a=back]').addEventListener('click', onBack);
-    $(d, '[data-a=go]').addEventListener('click', () => onKickOff(home, away));
+    $(d, '[data-a=go]').addEventListener('click', () => onKickOff(home, away, cur));
   }
 
   /**
@@ -764,6 +839,7 @@ export class Menus {
     m: Match, kits: [Kit, Kit], humanSide: number, reward: { coins: number; label: string }, canDouble: boolean,
     h: { double: () => Promise<boolean>; next: () => void; nextLabel?: string },
     ratings?: { idx: number; name: string; side: number; rating: number; goals: number; assists: number }[],
+    prog?: FtProgress,
   ): void {
     const motm = ratings?.[0];
     const mine = ratings?.filter((r) => r.side === humanSide).slice(0, 3) ?? [];
@@ -790,11 +866,26 @@ export class Menus {
     const pens = so
       ? `<p class="ft-pens">${m.teams[so.winner as 0 | 1].short} WIN ${so.kicks[so.winner as 0 | 1].filter(Boolean).length}-${so.kicks[so.winner === 0 ? 1 : 0].filter(Boolean).length} ON PENALTIES</p>`
       : '';
+    // Progression: stars, the XP bar (counts up after the coins), the streak chip and any challenges done.
+    const lv0 = prog ? levelOf(prog.xpFrom) : null;
+    const progHtml = prog && lv0
+      ? `<div class="ft-prog">
+          <div class="ft-stars" role="img" aria-label="${prog.stars} of 3 stars">${[1, 2, 3].map((i) => `<i class="${i <= prog.stars ? 'lit' : ''}" style="--i:${i}">★</i>`).join('')}</div>
+          <div class="ft-xp">
+            <div class="ft-xp-h"><b class="ft-lv">LV ${lv0.level}</b><span class="ft-title">${levelTitle(lv0.level).toUpperCase()}</span><em class="ft-xp-n">+0 XP</em></div>
+            <div class="ft-xp-bar"><i style="width:${Math.round((lv0.into / lv0.need) * 100)}%"></i></div>
+            <div class="ft-levelup" aria-live="polite"></div>
+          </div>
+          ${prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">🔥 ${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : ''}
+          ${prog.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : ''}
+        </div>`
+      : '';
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel">
           <h2 class="verdict ${cls}">${verdict}</h2>
           ${this.scoreHeader(m, kits)}${pens}
+          ${progHtml}
           ${motmHtml}
           ${this.statsTable(m, kits)}
           <div class="btn-row ft-foot">
@@ -820,6 +911,7 @@ export class Menus {
     };
     hydrateFaces(d);
     setTimeout(() => count(reward.coins), 350);
+    if (prog) this.playProgress(d, prog);
     const dbl = d.querySelector<HTMLButtonElement>('[data-a=double]');
     const nextBtn = $<HTMLButtonElement>(d, '[data-a=next]');
     dbl?.addEventListener('click', async () => {
@@ -834,6 +926,48 @@ export class Menus {
       }
     });
     $(d, '[data-a=next]').addEventListener('click', h.next);
+  }
+
+  /** Full time: the stars pop in one by one, then the XP bar counts up (a level-up splashes and the bar starts over). */
+  private playProgress(d: HTMLElement, prog: FtProgress): void {
+    const stars = d.querySelectorAll<HTMLElement>('.ft-stars i.lit');
+    stars.forEach((el, i) => setTimeout(() => {
+      el.classList.add('on');
+      sfx.click();
+    }, 600 + i * 320));
+    const bar = d.querySelector<HTMLElement>('.ft-xp-bar i');
+    const lvEl = d.querySelector<HTMLElement>('.ft-lv');
+    const titleEl = d.querySelector<HTMLElement>('.ft-title');
+    const nEl = d.querySelector<HTMLElement>('.ft-xp-n');
+    const up = d.querySelector<HTMLElement>('.ft-levelup');
+    if (!bar || !lvEl || !titleEl || !nEl || !up) return;
+    const gain = Math.max(0, prog.xpTo - prog.xpFrom);
+    let level = levelOf(prog.xpFrom).level;
+    const start = 1300 + stars.length * 320;
+    const dur = 900 + Math.min(900, gain * 3);
+    setTimeout(() => {
+      const t0 = performance.now();
+      const tick = () => {
+        if (!d.isConnected) return;
+        const k = Math.min(1, (performance.now() - t0) / dur);
+        const xp = prog.xpFrom + gain * (1 - Math.pow(1 - k, 3));
+        const lv = levelOf(xp);
+        nEl.textContent = `+${Math.round(xp - prog.xpFrom)} XP`;
+        bar.style.width = `${Math.round((lv.into / lv.need) * 100)}%`;
+        if (lv.level !== level) {
+          level = lv.level;
+          lvEl.textContent = `LV ${lv.level}`;
+          titleEl.textContent = levelTitle(lv.level).toUpperCase();
+          up.innerHTML = `<b>LEVEL UP!</b><span>LV ${lv.level} · ${levelTitle(lv.level).toUpperCase()}</span>`;
+          up.classList.remove('on');
+          void up.offsetWidth;
+          up.classList.add('on');
+          sfx.coin();
+        }
+        if (k < 1) requestAnimationFrame(tick);
+      };
+      tick();
+    }, start);
   }
 
   /**
@@ -995,7 +1129,8 @@ export class Menus {
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       });
-      body.innerHTML = dev === 'touch' ? HOWTO_TOUCH : dev === 'gamepad' ? HOWTO_PAD : HOWTO_KEYS;
+      body.innerHTML = (dev === 'touch' ? HOWTO_TOUCH : dev === 'gamepad' ? HOWTO_PAD : HOWTO_KEYS)
+        + howtoBlitz(dev === 'touch' ? 'the <b>⚡</b> button' : dev === 'gamepad' ? '<kbd>Y</kbd>' : '<kbd>E</kbd>');
     };
     d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) =>
       b.addEventListener('click', () => {

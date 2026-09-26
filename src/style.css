@@ -145,6 +145,7 @@ body {
 .btn-yellow { --c: var(--yellow); --d: var(--yellow-d); }
 .btn-red { --c: var(--red); --d: var(--red-d); --t: #fff; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
 .btn-white { --c: var(--cream); --d: #b9b5aa; }
+.btn-purple { --c: #8a5cf6; --d: #5b36b8; --t: #fff; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
 .btn-ghost {
   --c: rgba(38, 38, 46, 0.55);
   --d: rgba(38, 38, 46, 0.8);
@@ -3517,9 +3518,8 @@ button.mc-pl:active {
 
 /* ===== cup + shootout ===== */
 
-/* Main menu: the cup gets a wide tile under the 2x2 grid (icon left, title over subtitle). */
-.tile.tile-wide {
-  grid-column: 1 / -1;
+/* Main menu: BLITZ and the cup share a row of sideways tiles under the 2x2 grid (icon left, title over subtitle). */
+.tile.tile-side {
   aspect-ratio: auto;
   grid-template-columns: auto minmax(0, auto);
   justify-content: center;
@@ -3530,9 +3530,9 @@ button.mc-pl:active {
   padding: 12px 16px 10px;
 }
 
-.tile.tile-wide .picon { grid-row: 1 / span 2; }
-.tile.tile-wide > span,
-.tile.tile-wide small { justify-self: start; margin: 0; }
+.tile.tile-side .picon { grid-row: 1 / span 2; }
+.tile.tile-side > span,
+.tile.tile-side small { justify-self: start; margin: 0; }
 
 /* Short desktop windows: keep the logo clear of the gift / coins bar. */
 @media (max-height: 820px) and (min-height: 451px) {
@@ -3541,7 +3541,7 @@ button.mc-pl:active {
   .main-col { gap: 16px; }
 }
 
-.tile.tile-wide .picon {
+.tile.tile-side .picon {
   animation: cup-bob 2.2s ease-in-out infinite;
 }
 
@@ -3551,7 +3551,7 @@ button.mc-pl:active {
 }
 
 @media (max-height: 520px) {
-  .tile.tile-wide { min-height: 42px; padding: 8px 12px 6px; }
+  .tile.tile-side { min-height: 42px; padding: 8px 12px 6px; }
 }
 
 /* Shootout tracker: inside .hud (absolutely placed), tucked under the scorebug. */
@@ -3974,12 +3974,14 @@ button.mc-pl:active {
 
   .panel.mc .mc-title h2 { font-size: 18px; letter-spacing: 1px; }
 
-  /* Main menu tiles: rounded labels so QUICK MATCH fits one line, subtitles stay on theirs. */
-  .tile { aspect-ratio: auto; min-height: 128px; gap: 8px; padding: 14px 8px 12px; font: 400 19px / 1.05 var(--round); letter-spacing: 0.5px; }
-  .tile .picon { width: 48px; height: 48px; }
+  /* Main menu tiles: rounded labels so QUICK MATCH fits one line, subtitles stay on theirs (a little
+     shorter than before: the daily challenges card sits under the grid). */
+  .tile { aspect-ratio: auto; min-height: 106px; gap: 6px; padding: 10px 8px 8px; font: 400 19px / 1.05 var(--round); letter-spacing: 0.5px; }
+  .tile .picon { width: 40px; height: 40px; }
+  .main-col { gap: 12px; }
   .tile small { margin-top: -3px; }
-  .tile.tile-wide { row-gap: 2px; }
-  .tile.tile-wide .picon { width: 40px; height: 40px; }
+  .tile.tile-side { row-gap: 2px; }
+  .tile.tile-side .picon { width: 40px; height: 40px; }
 
   /* Portrait: the kit preview sits on top, the pickers underneath. */
   .tp-body {
@@ -4070,9 +4072,9 @@ button.mc-pl:active {
   .tile { aspect-ratio: auto; gap: 6px; padding: 10px 8px 9px; min-height: 0; font: 400 16px / 1.05 var(--round); letter-spacing: 0.5px; }
   .tile .picon { width: 30px; height: 30px; }
   .tile small { font-size: 14px; margin-top: -2px; }
-  /* Row two: the wide cup tile and a slim settings tile, both laid out sideways. */
-  .tile.tile-wide { grid-column: 1 / span 2; grid-row: 2; min-height: 48px; padding: 7px 12px 6px; column-gap: 10px; row-gap: 1px; }
-  .tile.tile-wide .picon { width: 26px; height: 26px; }
+  /* Row two: BLITZ, the cup and a slim settings tile, all laid out sideways. */
+  .tile.tile-side { grid-row: 2; min-height: 48px; padding: 7px 10px 6px; column-gap: 8px; row-gap: 1px; }
+  .tile.tile-side .picon { width: 26px; height: 26px; }
   .tile[data-a='settings'] { grid-column: 3; grid-row: 2; grid-auto-flow: column; justify-content: center; align-items: center; gap: 8px; min-height: 48px; padding: 8px 8px 7px; }
   .tile[data-a='settings'] .picon { width: 22px; height: 22px; }
   .main-foot { justify-content: flex-start; gap: 10px; }
@@ -4617,4 +4619,337 @@ button.mc-pl:active {
   .trainer-actions { font-size: 11px; gap: 4px 7px; }
   .trainer-actions kbd { font-size: 9px; }
   .trainer-detail { font-size: 10px; margin-top: 5px; }
+}
+
+
+/* ===== blitz mode, progression, name filter (round 9) ===== */
+
+/* BLITZ tile: a text bolt where the others have a pixel icon. */
+.tile .picon.bolt {
+  font: 400 44px / 1 var(--round);
+  font-style: normal;
+  width: auto;
+  height: 44px;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.22));
+  animation: bolt-flash 2.6s ease-in-out infinite;
+}
+@keyframes bolt-flash {
+  0%, 74%, 100% { transform: scale(1); }
+  82% { transform: scale(1.25) rotate(-8deg); }
+  90% { transform: scale(1); }
+}
+.btn-purple.tile small { color: #f1e8ff; }
+
+/* Level badge (with the record and a slim XP bar), in the main-menu footer. */
+.record-chip.lvl {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  padding: 7px 12px 8px;
+  min-width: 0;
+}
+.record-chip.lvl b { font: 400 15px var(--round); color: var(--yellow); letter-spacing: 1px; }
+.record-chip.lvl > span { font: 400 14px var(--round); letter-spacing: 0.5px; opacity: 0.9; }
+.record-chip.lvl .lvl-bar { display: block; height: 5px; background: rgba(255, 255, 255, 0.18); }
+.record-chip.lvl .lvl-bar u { display: block; height: 100%; background: var(--yellow); text-decoration: none; }
+
+/* Daily challenges card. */
+.daily {
+  width: min(380px, 88vw);
+  background: rgba(38, 38, 46, 0.82);
+  color: var(--cream);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.3);
+  padding: 8px 12px 9px;
+  display: grid;
+  gap: 5px;
+}
+.daily-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 400 15px var(--round);
+  letter-spacing: 1px;
+}
+.daily-h b { font-weight: 400; color: var(--yellow); }
+.daily-n { margin-left: auto; font: 700 16px var(--px); color: var(--cream); }
+.daily-new {
+  font: 400 14px var(--round);
+  font-style: normal;
+  color: var(--ink);
+  background: var(--go);
+  padding: 2px 7px 1px;
+  letter-spacing: 1px;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.daily-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.daily-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px 38px auto;
+  align-items: center;
+  gap: 8px;
+  font: 400 14px / 1.15 var(--round);
+  letter-spacing: 0.3px;
+}
+.dc-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dc-bar { display: block; height: 8px; background: rgba(255, 255, 255, 0.16); box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.3); }
+.dc-bar i { display: block; height: 100%; background: var(--go); transition: width 0.4s; }
+.dc-n { font: 700 14px var(--px); text-align: right; }
+.dc-coins { font: 400 14px var(--round); font-style: normal; color: var(--yellow); }
+.daily-list li.done { opacity: 0.72; }
+.daily-list li.done .dc-bar i { background: var(--yellow); }
+.daily-list li.done .dc-n { color: var(--go); }
+
+/* Quick Match: the MODE row explains itself in a line; the BLITZ pick tints the KICK OFF button. */
+.qm .mode-row { grid-template-columns: 150px 1fr; }
+.qm .seg-mode { grid-auto-columns: 1fr; }
+.qm .seg-mode button:nth-child(2).on { background: #5b36b8; color: #fff; }
+/* The MODE row and its line add a row: the panel's rows sit a little closer so it still fits 720 px tall. */
+.panel.qm { gap: 12px; }
+.qm-why {
+  margin: -6px 0 0;
+  font: 400 14px / 1.2 var(--round);
+  color: var(--ink-2);
+  letter-spacing: 0.3px;
+  min-height: 1.2em;
+}
+.qm-screen.blitz .panel.qm [data-a='go'] { --c: #8a5cf6; --d: #5b36b8; }
+
+/* Full time: stars, XP bar, streak, challenges done. */
+.ft-prog {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  background: #fff;
+  border: 3px solid var(--cream-2);
+  padding: 10px 14px 12px;
+}
+.ft-stars { display: flex; gap: 6px; font: 400 40px / 1 var(--round); color: #d9d5c8; }
+.ft-stars i { font-style: normal; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.12); transform: scale(0.85); }
+.ft-stars i.lit.on { color: var(--yellow); text-shadow: 0 3px 0 var(--yellow-d); animation: star-pop 0.5s cubic-bezier(0.2, 2, 0.4, 1) both; }
+@keyframes star-pop {
+  from { transform: scale(0.3) rotate(-30deg); opacity: 0; }
+  60% { transform: scale(1.35) rotate(6deg); opacity: 1; }
+  to { transform: scale(1) rotate(0); }
+}
+.ft-xp { width: min(420px, 100%); display: grid; gap: 5px; position: relative; }
+.ft-xp-h { display: flex; align-items: baseline; gap: 8px; font: 400 15px var(--round); letter-spacing: 1px; }
+.ft-xp-h b { font: 700 18px var(--px); color: var(--ink); flex: none; white-space: nowrap; }
+.ft-xp-h .ft-title { color: var(--ink-2); flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ft-xp-h em { margin-left: auto; font: 700 16px var(--px); font-style: normal; color: var(--blue-d); flex: none; white-space: nowrap; }
+.ft-xp-bar { height: 14px; background: var(--cream-2); border: 3px solid var(--ink); box-shadow: inset 0 3px 0 rgba(0, 0, 0, 0.08); }
+.ft-xp-bar i { display: block; height: 100%; background: linear-gradient(var(--blue), var(--blue-d)); transition: width 0.08s linear; }
+.ft-levelup {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.6);
+  opacity: 0;
+  pointer-events: none;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 8px 16px 7px;
+  background: var(--yellow);
+  color: var(--ink);
+  box-shadow: 0 5px 0 var(--yellow-d), 0 9px 0 rgba(0, 0, 0, 0.2);
+  font: 400 15px var(--round);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  z-index: 2;
+}
+.ft-levelup b { font: 700 20px var(--px); }
+.ft-levelup.on { animation: levelup 2.4s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+@keyframes levelup {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  12%, 80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -70%) scale(0.9); }
+}
+.ft-streak {
+  font: 400 16px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink);
+  background: var(--yellow);
+  padding: 6px 12px 5px;
+  box-shadow: 0 4px 0 var(--yellow-d);
+}
+.ft-streak b { font: 700 16px var(--px); margin-left: 4px; }
+.ft-daily { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; width: min(420px, 100%); }
+.ft-daily li { display: flex; justify-content: space-between; gap: 10px; font: 400 15px var(--round); color: var(--go-d); }
+.ft-daily li b { font: 700 15px var(--px); color: var(--yellow-d); }
+
+/* HUD: the power-up slot under the score bug (blitz only). */
+.hud-power {
+  position: absolute;
+  top: calc(max(12px, env(safe-area-inset-top)) + 56px);
+  left: max(12px, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  background: rgba(38, 38, 46, 0.82);
+  color: var(--cream);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  --pw: rgba(255, 255, 255, 0.35);
+  transition: opacity 0.2s;
+}
+.hud-power[hidden] { display: none; }
+.hud.dead .hud-power, .hud.replaying .hud-power, .hud.cinematic .hud-power { opacity: 0; }
+.pw-slot { position: relative; width: 40px; height: 40px; display: grid; place-items: center; }
+.pw-ico { font: 400 22px / 1 var(--round); font-style: normal; filter: grayscale(1); opacity: 0.5; }
+.hud-power.has .pw-ico, .hud-power.active .pw-ico { filter: none; opacity: 1; }
+.pw-ring { position: absolute; inset: 0; width: 40px; height: 40px; transform: rotate(-90deg); }
+.pw-ring circle { fill: none; stroke-width: 4; }
+.pw-ring-bg { stroke: rgba(255, 255, 255, 0.18); }
+.pw-ring-fg { stroke: var(--pw); stroke-linecap: butt; transition: stroke-dashoffset 0.1s linear; }
+.hud-power.has .pw-ring-fg { stroke-dashoffset: 0 !important; opacity: 0.9; }
+.pw-text { display: grid; gap: 2px; }
+.pw-name { font: 400 14px / 1 var(--round); letter-spacing: 1px; }
+.hud-power.has .pw-name, .hud-power.active .pw-name { color: var(--pw); }
+.pw-key {
+  justify-self: start;
+  font: 700 16px / 1 var(--px);
+  color: var(--ink);
+  background: var(--cream);
+  padding: 2px 5px 1px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+}
+.pw-key[hidden] { display: none; }
+.hud-power.got { animation: pw-got 0.5s cubic-bezier(0.2, 2, 0.4, 1); }
+@keyframes pw-got {
+  35% { transform: scale(1.14); background: var(--pw); color: var(--ink); }
+}
+.hud-power.has .pw-slot { animation: pw-pulse 1.2s ease-in-out infinite; }
+@keyframes pw-pulse { 50% { transform: scale(1.1); } }
+
+/* Power-up call: the compact plate (top band / under the cluster, off the goal mouth), tinted per power-up. */
+.hud-banner.power {
+  inset: auto;
+  top: calc(max(12px, env(safe-area-inset-top)) + 64px);
+  left: 12px;
+  width: calc(100vw - 24px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+}
+.hud-banner.power .bn-title { font-size: clamp(26px, 3.4vw, 46px); }
+.hud-banner.power .bn-title i {
+  color: var(--pw, var(--yellow));
+  text-shadow:
+    0 4px 0 var(--ink), 3px 4px 0 var(--ink), -3px 4px 0 var(--ink),
+    3px 0 0 var(--ink), -3px 0 0 var(--ink), 0 -3px 0 var(--ink), 3px -3px 0 var(--ink), -3px -3px 0 var(--ink),
+    0 8px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* Touch: the ⚡ button, blitz only, lit while a power-up is held. */
+.tb-power {
+  --c: #8a5cf6;
+  --cd: #5b36b8;
+  display: none;
+  right: 40px;
+  bottom: 196px;
+  width: 64px;
+  height: 64px;
+  font-size: 26px;
+}
+.touch.blitz .tb-power { display: block; }
+.tb-power:not(.has) { opacity: 0.35; filter: grayscale(0.6); }
+.tb-power.has { opacity: 0.9; animation: pw-pulse 1.2s ease-in-out infinite; }
+@media (max-width: 720px), (max-height: 480px) {
+  .tb-power { right: 34px; bottom: 184px; width: 56px; height: 56px; font-size: 22px; }
+}
+
+/* Name fields: a blocked name turns red, says why and shakes (no shake with reduced motion: see the global rule). */
+.mc-field { position: relative; }
+.mc-why {
+  display: none;
+  font: 400 14px var(--round);
+  font-style: normal;
+  color: var(--red-d);
+  letter-spacing: 0.5px;
+}
+.mc-field.blocked .mc-why { display: block; }
+.mc-field.shake input { animation: field-shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+@keyframes field-shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(4px); }
+  30%, 50%, 70% { transform: translateX(-6px); }
+  40%, 60% { transform: translateX(6px); }
+}
+
+/* How to play: the Blitz section. */
+.ht-blitz { margin-top: 6px; padding: 10px 12px 8px; background: #fff; border: 3px solid var(--cream-2); }
+.ht-blitz h3 { margin: 0 0 6px; font: 400 16px var(--round); letter-spacing: 1px; color: #5b36b8; }
+.ht-blitz p { margin: 0 0 6px; font: 400 15px / 1.3 var(--round); }
+.ht-pw { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 3px 14px; }
+.ht-pw li { display: flex; align-items: baseline; gap: 6px; font: 400 15px / 1.3 var(--round); }
+.ht-pw li i { font-style: normal; width: 22px; text-align: center; }
+.ht-pw li b { color: var(--ink); letter-spacing: 0.5px; }
+.ht-pw li span { color: var(--ink-2); }
+
+/* Landscape phones: the challenges card is one row of three; the level badge reads on one line. */
+@media (max-height: 450px) {
+  .daily { width: 100%; padding: 6px 10px 7px; gap: 4px; }
+  .daily-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 12px; }
+  .daily-list li { grid-template-columns: minmax(0, 1fr) 30px; grid-template-areas: 'text n' 'bar bar'; gap: 2px 6px; }
+  .daily-list li .dc-text { grid-area: text; }
+  .daily-list li .dc-bar { grid-area: bar; height: 6px; }
+  .daily-list li .dc-n { grid-area: n; }
+  .daily-list li .dc-coins { display: none; }
+  .record-chip.lvl { grid-auto-flow: column; align-items: center; gap: 10px; padding: 6px 10px 7px; }
+  .record-chip.lvl .lvl-bar { display: none; }
+  .main-col { gap: 8px; }
+  .tile { padding: 8px 8px 7px; }
+  .tile .picon.bolt { font-size: 28px; height: 28px; }
+  /* Quick Match: the MODE line's explanation sits under the title, beside the pickers; rows a touch tighter. */
+  .qm .mode-row { grid-template-columns: 1fr; }
+  .panel.qm { row-gap: 4px; padding-top: 7px; }
+  .panel.qm .qm-why { grid-column: 1; grid-row: 2; margin: 0; align-self: start; }
+  .panel.qm .vs-row { grid-row: 3 / span 6; }
+  .panel.qm .opt-row { gap: 2px; }
+  .panel.qm .opt-row label { line-height: 1; }
+  .panel.qm .seg button { padding: 4px 2px 3px; }
+  .panel.qm > .btn-row:last-child { padding-top: 6px; padding-bottom: 6px; }
+  /* Daily strip: two columns so no challenge text is cut; the tiles above give up a few px for it. */
+  .daily-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tile { gap: 4px; padding: 6px 8px 5px; }
+  .tile .picon { width: 24px; height: 24px; }
+  .ft-prog { padding: 8px 12px 9px; gap: 6px; }
+  .ft-stars { font-size: 30px; }
+  .hud-power { top: calc(max(12px, env(safe-area-inset-top)) + 40px); padding: 3px 8px 3px 3px; gap: 6px; }
+  .pw-slot, .pw-ring { width: 34px; height: 34px; }
+  .pw-ico { font-size: 18px; }
+}
+@media (max-width: 480px) {
+  .tile .picon.bolt { font-size: 36px; height: 36px; }
+  /* Narrow portrait: the two sideways tiles (BLITZ, cup) keep their subtitle on one line. */
+  .tile.tile-side { column-gap: 8px; padding: 10px 10px 9px; font-size: 16px; min-height: 60px; }
+  .tile.tile-side .picon { width: 26px; height: 26px; }
+  .tile.tile-side .picon.bolt { font-size: 26px; height: 26px; }
+  /* Narrow portrait: the challenge text gets the room (coins show at full time); tighter Quick Match rows. */
+  .daily-list li { grid-template-columns: minmax(0, 1fr) 64px 38px; gap: 6px; }
+  .daily-list li .dc-coins { display: none; }
+  .panel.qm { gap: 10px; }
+  .qm .opt-row { gap: 4px; }
+  .qm .seg button { padding: 8px 2px 7px; font-size: 14px; }
+  .hud-power { top: calc(max(12px, env(safe-area-inset-top)) + 40px); padding: 3px 8px 3px 3px; gap: 6px; }
+  .pw-slot, .pw-ring { width: 34px; height: 34px; }
+  .pw-ico { font-size: 18px; }
+  .main-foot .btn-ghost { padding: 10px 12px 9px; font-size: 15px; }
+}
+@media (max-height: 520px) {
+  .tile.tile-side { min-height: 42px; padding: 8px 12px 6px; }
+}
+
+/* Desktop windows up to 820 px tall: squarer tiles leave room for the challenges card (phones keep theirs). */
+@media (max-height: 820px) and (min-height: 451px) and (min-width: 481px) {
+  .tile:not(.tile-side) { aspect-ratio: 1.4; }
+  .tile.tile-side { min-height: 56px; padding: 8px 14px 7px; }
+  .main-wrap { gap: 18px; }
+  .main-col { gap: 14px; }
+  .daily { padding: 6px 12px 7px; gap: 4px; }
+  /* Quick Match: one row more (MODE) than before, so slightly smaller kit previews and gaps keep it at 720. */
+  .panel.qm { gap: 10px; }
+  .qm .tp-3d { width: clamp(90px, 10vw, 120px); }
+  .qm-why { margin-top: -8px; }
 }

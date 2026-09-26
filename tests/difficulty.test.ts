@@ -7,7 +7,8 @@ import { botSeries, fmtBot } from './humanBot';
  * defenders who close, shoots from inside ~18 m with a clear lane, taps TACKLE near the carrier, holds PRESS)
  * over whole 2x2-minute matches between equal-rated sides. The menu's levels are MatchConfig.difficulty
  * EASY 0.6 · NORMAL 1.8 · HARD 3 · LEGEND 4; the AI's play against the human scales by dribble.ts vsHuman.
- * (Small samples here, to keep the suite quick: the bands are loose. The full measurement is N=40-60 a level.)
+ * (Small samples here, to keep the suite quick: the bands are loose. The full measurement is N=40-60 a level:
+ * round 9 targets the bot at NORMAL W 50-60% / L 15-25% with goals at both ends, HARD ~40/30/30, LEGEND hard.)
  */
 describe('difficulty against a realistic human', () => {
   it('EASY is clearly winnable, LEGEND clearly harder, and the dribble / tackle assists work over whole matches', () => {
@@ -38,6 +39,7 @@ describe('difficulty against a realistic human', () => {
       expect(b.cut).toBeLessThan(a.cut);
       expect(b.auto).toBeLessThan(a.auto);
       expect(b.read).toBeGreaterThan(a.read);
+      expect(b.tight).toBeGreaterThan(a.tight);
     }
     // Off the ends of the menu it holds at the nearest level.
     expect(vsHuman(-1)).toEqual(e);

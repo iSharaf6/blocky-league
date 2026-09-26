@@ -107,12 +107,14 @@ describe('instant passing', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`15 m pass launch speed by press length: ${Object.entries(speeds).map(([f, v]) => `${f}f ${v.toFixed(1)} m/s`).join(', ')} (ideal at 15 m: ${humanGroundSpeed(15).toFixed(1)})`);
-    // (The man it's for steps towards the ball on the press, so the pass is a little shorter the longer the tap.)
-    expect(speeds[9]).toBeGreaterThan(speeds[2] * 0.9);
-    expect(speeds[18]).toBeGreaterThan(speeds[2] * 0.85);
+    // (The man it's for steps towards the ball on the press, so the pass is a little shorter the longer the tap;
+    // at round 9's tempo he steps in that much quicker: it was 0.9 / 0.85.)
+    expect(speeds[9]).toBeGreaterThan(speeds[2] * 0.85);
+    expect(speeds[18]).toBeGreaterThan(speeds[2] * 0.8);
     expect(speeds[9]).toBeGreaterThan(19);
-    // A real hold (0.75 s) is charged above the ideal.
-    expect(speeds[45]).toBeGreaterThan(speeds[18] * 1.1);
+    // A real hold (0.75 s) is charged above the ideal. (Round 9's tempo: the man it's for steps in that much
+    // quicker over the hold, so the charged ball is to a nearer man; it was 1.1.)
+    expect(speeds[45]).toBeGreaterThan(speeds[18] * 1.05);
   });
 
   it('a 15 m pass is at his feet in about half a second', () => {

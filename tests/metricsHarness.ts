@@ -62,6 +62,13 @@ export interface MatchMetrics {
   scorers: Record<string, number>;
   /** Every second-half substitution: side, minute, whether it was that side's first change of the match. */
   subLog: { side: Side; minute: number; first: boolean }[];
+  /** Seconds the ball was in open play, dead (out / restart / kick-off) and in the goal celebration. */
+  liveT: number;
+  deadT: number;
+  goalT: number;
+  /** Shots from 25 m or more, and how many of them went in. */
+  long25: number;
+  long25Goals: number;
 }
 
 const PASS_KINDS = new Set(['pass', 'through', 'lob', 'throw', 'keeper']);
@@ -82,15 +89,16 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     penalties: 0, fouls: 0, yellows: 0, reds: 0, saves: 0, maxStall: 0, finalThird: [0, 0], crosses: 0, headers: 0, blocks: 0,
     rawPasses: 0, shotOut: {}, byKind: {}, runs: 0, overlaps: 0, beats: 0, claims: 0,
     ownGoals: 0, offsides: 0, advantages: 0, lateSubs: 0, subs: [0, 0], minStamina: 1,
-    lostByKind: {}, kickSpeed: {}, scorers: {}, subLog: [],
+    lostByKind: {}, kickSpeed: {}, scorers: {}, subLog: [], liveT: 0, deadT: 0, goalT: 0, long25: 0, long25Goals: 0,
   };
   const wasRunning = new Set<number>();
   const lastOverlap: [number, number] = [-1, -1];
   // Shot being tracked until something resolves it.
-  let shot: { side: Side } | null = null;
+  let shot: { side: Side; d: number } | null = null;
   const shotDone = (k: string) => {
     if (!shot) return;
     r.shotOut[k] = (r.shotOut[k] ?? 0) + 1;
+    if (k === 'goal' && shot.d >= 25) r.long25Goals++;
     shot = null;
   };
   let steps = 0;
@@ -123,6 +131,10 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     const shotsBefore = m.stats.shots[0] + m.stats.shots[1];
     m.step(DT, EMPTY_PAD);
     steps++;
+    const ph = m.phase as string;
+    if (ph === 'play') r.liveT += DT;
+    else if (ph === 'out' || ph === 'restart' || ph === 'kickoff') r.deadT += DT;
+    else if (ph === 'goal') r.goalT += DT;
     const b = m.ball;
     for (const e of m.drainEvents()) {
       switch (e.type) {
@@ -225,9 +237,10 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
         const d = Math.hypot(gx - b.pos.x, b.pos.z);
         if (inBox) r.boxShots++;
         if (d > 22) r.longShots++;
+        if (d >= 25) r.long25++;
         if (b.pos.y > 1) r.headerShots++;
         shotDone('unresolved');
-        shot = { side: k.side };
+        shot = { side: k.side, d };
       }
       shotsSeen = shotsNow;
     }
@@ -371,6 +384,13 @@ export interface Summary {
   topScorerPct: number;
   /** Minutes of each side's first change of the match when it came in the second half (the forced one). */
   firstLateSubMinutes: number[];
+  /** Open-play seconds a match, dead-ball seconds (out / restart / kick-off), and live as a share (%) of both plus the goal celebrations. */
+  liveT: number;
+  deadT: number;
+  livePct: number;
+  /** Shots from 25 m or more a match, and the share (%) of them that went in. */
+  long25: number;
+  long25GoalPct: number;
 }
 
 export function summarise(list: MatchMetrics[]): Summary {
@@ -462,6 +482,11 @@ export function summarise(list: MatchMetrics[]): Summary {
       return (top / Math.max(1, tot)) * 100;
     })(),
     firstLateSubMinutes: list.flatMap((r) => r.subLog.filter((x) => x.first).map((x) => x.minute)),
+    liveT: avg((r) => r.liveT),
+    deadT: avg((r) => r.deadT),
+    livePct: (sum((r) => r.liveT) / Math.max(1, sum((r) => r.liveT + r.deadT + r.goalT))) * 100,
+    long25: avg((r) => r.long25),
+    long25GoalPct: (sum((r) => r.long25Goals) / Math.max(1, sum((r) => r.long25))) * 100,
     passKinds: (() => {
       const agg: Record<string, [number, number]> = {};
       for (const r of list) {

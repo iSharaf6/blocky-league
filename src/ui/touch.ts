@@ -10,6 +10,9 @@ const LABELS: Record<TouchContext, [string, string, string]> = {
 
 type BtnKey = 'pass' | 'shoot' | 'through' | 'sprint';
 
+/** How long (ms) a ⚡ tap stays down at least, so a tap shorter than a frame still reaches the sim as a press. */
+const POWER_TAP_MS = 70;
+
 /**
  * Floating thumbstick on the left half, chunky action buttons on the right.
  *
@@ -31,6 +34,10 @@ export class TouchControls {
   private charge: Record<'pass' | 'through', number> = { pass: -1, through: -1 };
   /** Called the moment a button goes down (the session latches it: a tap shorter than a frame still counts). */
   onPress: ((k: BtnKey) => void) | null = null;
+  /** Called the moment the ⚡ (power-up) button goes down; input.touch.power stays true for at least POWER_TAP_MS. */
+  onPower: (() => void) | null = null;
+  private powerTimer = 0;
+  private powerHeld = false;
 
   constructor(private input: Input) {
     this.root = document.createElement('div');
@@ -43,6 +50,7 @@ export class TouchControls {
         <button class="tb tb-shoot" data-k="shoot"><span>SHOOT</span></button>
         <button class="tb tb-pass" data-k="pass"><span>PASS</span></button>
         <button class="tb tb-sprint" data-k="sprint"><span>SPRINT</span></button>
+        <button class="tb tb-power" data-k="power" aria-label="Use power-up"><span>⚡</span></button>
       </div>
       <div class="touch-skip" aria-hidden="true"></div>`;
     this.base = this.root.querySelector('.touch-base')!;
@@ -95,7 +103,35 @@ export class TouchControls {
     zone.addEventListener('pointercancel', up);
     zone.addEventListener('lostpointercapture', up);
 
-    this.root.querySelectorAll<HTMLButtonElement>('.tb').forEach((b) => {
+    // ⚡ (blitz only, see setBlitz): a press, latched for a few frames; release waits for the finger and the latch.
+    const pw = this.root.querySelector<HTMLButtonElement>('.tb-power')!;
+    const powerUp = () => {
+      this.powerHeld = false;
+      if (this.powerTimer) return;
+      t.power = false;
+      pw.classList.remove('down');
+    };
+    pw.addEventListener('pointerdown', (e) => {
+      pw.setPointerCapture(e.pointerId);
+      this.powerHeld = true;
+      t.power = true;
+      pw.classList.add('down');
+      this.onPower?.();
+      input.lastDevice = 'touch';
+      navigator.vibrate?.(8);
+      window.clearTimeout(this.powerTimer);
+      this.powerTimer = window.setTimeout(() => {
+        this.powerTimer = 0;
+        if (!this.powerHeld) powerUp();
+      }, POWER_TAP_MS);
+      e.preventDefault();
+    });
+    pw.addEventListener('pointerup', powerUp);
+    pw.addEventListener('pointercancel', powerUp);
+    pw.addEventListener('lostpointercapture', powerUp);
+    pw.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    this.root.querySelectorAll<HTMLButtonElement>('.tb:not(.tb-power)').forEach((b) => {
       this.btns.push(b);
       const k = b.dataset.k as BtnKey;
       const set = (v: boolean) => {
@@ -138,8 +174,12 @@ export class TouchControls {
   /** Drop every held button and the stick (the overlay is going away mid-press). */
   private releaseAll(): void {
     const t = this.input.touch;
-    t.pass = t.shoot = t.through = t.sprint = false;
+    t.pass = t.shoot = t.through = t.sprint = t.power = false;
+    window.clearTimeout(this.powerTimer);
+    this.powerTimer = 0;
+    this.powerHeld = false;
     this.btns.forEach((b) => b.classList.remove('down'));
+    this.root.querySelector('.tb-power')?.classList.remove('down');
     if (this.stickId !== null) this.releaseStick();
   }
 
@@ -162,6 +202,20 @@ export class TouchControls {
 
   get isVisible(): boolean {
     return this.visible;
+  }
+
+  /** Blitz mode shows the ⚡ button (it is hidden in classic football). */
+  setBlitz(on: boolean): void {
+    this.root.classList.toggle('blitz', on);
+    if (!on) this.setPowerHeld(null);
+  }
+
+  /** The power-up in hand (blitz): the ⚡ button lights up and names it; null greys it out. */
+  setPowerHeld(kind: string | null): void {
+    const pw = this.root.querySelector<HTMLButtonElement>('.tb-power');
+    if (!pw) return;
+    pw.classList.toggle('has', !!kind);
+    pw.dataset.kind = kind ?? '';
   }
 
   /**

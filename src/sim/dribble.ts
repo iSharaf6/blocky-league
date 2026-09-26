@@ -1,4 +1,5 @@
 import { angleDiff, clamp, dist2 } from '../core/math';
+import { TEMPO } from './constants';
 import type { Match, Pad } from './match';
 import type { Player } from './player';
 
@@ -24,8 +25,10 @@ import type { Player } from './player';
  * - TAP within TAP_LUNGE m: an instant lunge at the ball (LUNGE_SPEED) and the poke the moment it's in reach;
  * - TAP from TAP_LUNGE..TAP_CLOSE m: he closes at a sprint and pokes on arrival (within CLOSE_T s; pulling
  *   the stick hard away cancels it);
- * - HOLD (SLIDE_HOLD s, the ball not yet in reach when pressed) or double-tap: a slide (Match.startSlide),
- *   aimed where the ball will be, the human's long forgiving one;
+ * - HOLD (SLIDE_HOLD s, the ball not yet in reach when pressed), double-tap, a TAP with SPRINT held, or a TAP
+ *   with the carrier AUTO_SLIDE_MIN..MAX m off and getting away (moving away or across faster than a standing
+ *   reach can follow): a slide (Match.startSlide), aimed where the ball will be, the human's long forgiving one;
+ * - every committed press (the lunge / closing run, or the slide) is a 'tackleTry' event (render / HUD);
  * - PRESS (THROUGH held): a goal-side jockey PRESS_GAP m off the ball, facing it, plus pressSteal, an
  *   automatic poke when the carrier's touch leaves the ball exposed and our man is nearer it. Running into
  *   the carrier still tackles on its own (Match.autoTackle), a little less surely.
@@ -80,15 +83,24 @@ export const PRESS_GAIN = 4;
 /** TACKLE: a tap this near (m, ball) is an instant lunge; from there to TAP_CLOSE he closes first. */
 export const TAP_LUNGE = 3;
 export const TAP_CLOSE = 7;
-/** Held this long (s), TACKLE is a slide; a second press within DOUBLE_TAP s too. */
-export const SLIDE_HOLD = 0.25;
+/**
+ * Held this long (s), TACKLE is a slide; a second press within DOUBLE_TAP s too. (Round 9: 0.25 -> 0.14, "having
+ * to hold would take too long"; a tap with SPRINT held slides at once, and so does a tap at a carrier
+ * AUTO_SLIDE_MIN..AUTO_SLIDE_MAX m off who's moving away faster than AUTO_SLIDE_AWAY m/s or across faster
+ * than AUTO_SLIDE_ACROSS: the assist picks the slide when a standing reach can't get there.)
+ */
+export const SLIDE_HOLD = 0.14;
 export const DOUBLE_TAP = 0.3;
+export const AUTO_SLIDE_MIN = 2.5;
+export const AUTO_SLIDE_MAX = 5;
+export const AUTO_SLIDE_AWAY = 1.5;
+export const AUTO_SLIDE_ACROSS = 3;
 /** How long (s) the tap keeps closing in before it gives up. */
 export const CLOSE_T = 0.8;
 /** Foot-to-ball reach (m) of the assisted standing tackle (the AI's is 1.15): it goes in the moment it's in reach. */
-export const STAND_REACH = 1.6;
+export const STAND_REACH = 1.9;
 /** The lunge: at least this pace (m/s) at the ball the moment a close tap lands. */
-const LUNGE_SPEED = 9;
+const LUNGE_SPEED = 9 * TEMPO;
 /** PRESS auto-steal: the carrier's ball this far (m) from him, and our foot within this of it. */
 export const STEAL_EXPOSED = 0.9;
 const STEAL_REACH = 1.4;
@@ -271,7 +283,16 @@ function pathAssist(m: Match, p: Player, stickLen: number): void {
  * carrier. The human's man jogging with it (not sprinting, not settling a first touch) keeps it tighter.
  */
 export function closeTouch(m: Match, p: Player, pulse: number): number {
-  if (!m.isHumanControlled(p) || p.sprint || p.touchT > 0 || p.state !== 'move') return pulse;
+  if (!m.isHumanControlled(p)) {
+    // An AI carrier with the human's man closing: the harder sides keep it tighter (vsHuman.tight).
+    const hs = m.cfg.humanSide;
+    if (hs >= 0 && p.side !== hs && m.active >= 0 && pulse > 0) {
+      const h = m.players[m.active];
+      if (h.side === hs && dist2(h.pos.x, h.pos.z, p.pos.x, p.pos.z) < TIGHT_R) return pulse * (1 - vsHuman(m.aiSkill(p.side)).tight);
+    }
+    return pulse;
+  }
+  if (p.sprint || p.touchT > 0 || p.state !== 'move') return pulse;
   return pulse * CLOSE_PULSE - CLOSE_PULL;
 }
 
@@ -355,20 +376,35 @@ export interface VsHuman {
   auto: number;
   /** How quickly (per s) its carrier reads the human's man coming in for it and moves the ball on (readsHuman). */
   read: number;
+  /**
+   * How much tighter (0..1: share of the stride's push-on taken off) its carriers keep the ball with the human's man
+   * within TIGHT_R m (closeTouch): fewer exposed touches for his PRESS steal and his taps to poke away.
+   */
+  tight: number;
 }
 
 /** The menu's difficulty levels (MatchConfig.difficulty), and vsHuman's value at each (linear between). */
 const LEVELS = [0.6, 1.8, 3, 4];
+/*
+ * Round 9 (the owner: "balanced ... addictive"): measured against tests/humanBot.ts over N=40 matches a level at
+ * 2x120 s. Round 8's table had the bot winning 87% at NORMAL with 0.25 goals against a match (the AI got 1.2 shots:
+ * his man alone ended half its possessions). Now NORMAL ~W55 D25 L20 with ~0.8 against, HARD ~40/22/38 with ~1.0
+ * against, LEGEND ~22/22/56, EASY still every match. (tests/difficulty.test.ts; the full runs are in the round's
+ * report.)
+ */
 const VS_HUMAN: Record<keyof VsHuman, number[]> = {
-  press: [0.6, 0.82, 1.1, 1.2],
-  tackle: [0.68, 0.86, 1.1, 1.2],
-  resist: [1.08, 1, 0.8, 0.7],
-  cut: [0.12, 0.05, -0.1, -0.17],
-  takeOn: [0.7, 0.95, 1.45, 1.7],
-  beaten: [0.4, 0.62, 0.78, 0.85],
-  auto: [0.8, 0.45, 0.4, 0.35],
-  read: [0.3, 1.5, 5, 8],
+  press: [0.6, 1.57, 1.65, 1.8],
+  tackle: [0.68, 1.67, 1.75, 1.9],
+  resist: [1.08, 0.56, 0.5, 0.42],
+  cut: [0.12, -0.1, -0.3, -0.4],
+  takeOn: [0.7, 2.45, 2.6, 2.9],
+  beaten: [0.4, 1.0, 1.05, 1.15],
+  auto: [0.8, 0.26, 0.24, 0.2],
+  read: [0.3, 10.5, 12, 15],
+  tight: [0, 0.64, 0.68, 0.75],
 };
+/** The human's man this near (m) an AI carrier: the carrier keeps it tighter (vsHuman.tight). */
+const TIGHT_R = 3.5;
 
 export function vsHuman(skill: number): VsHuman {
   const s = clamp(skill, LEVELS[0], LEVELS[LEVELS.length - 1]);
@@ -376,7 +412,10 @@ export function vsHuman(skill: number): VsHuman {
   while (i < LEVELS.length - 2 && s > LEVELS[i + 1]) i++;
   const f = (s - LEVELS[i]) / (LEVELS[i + 1] - LEVELS[i]);
   const at = (k: keyof VsHuman) => VS_HUMAN[k][i] + (VS_HUMAN[k][i + 1] - VS_HUMAN[k][i]) * f;
-  return { press: at('press'), tackle: at('tackle'), resist: at('resist'), cut: at('cut'), takeOn: at('takeOn'), beaten: at('beaten'), auto: at('auto'), read: at('read') };
+  return {
+    press: at('press'), tackle: at('tackle'), resist: at('resist'), cut: at('cut'), takeOn: at('takeOn'), beaten: at('beaten'), auto: at('auto'),
+    read: at('read'), tight: at('tight'),
+  };
 }
 
 /** How an AI tackle on the human's carrier fares against the same tackle on an AI one (vsHuman, his dribbling). */
@@ -392,8 +431,10 @@ export function standingTackleChance(m: Match, p: Player, c: Player, behind: num
   const edge = (p.stat.defending - c.stat.dribbling) / 100;
   let k = 0.92 - behind * 0.42 + edge * 0.5 + (exposed ? 0.15 : 0) + (c.sprint ? 0.04 : 0);
   k *= 1 - shielded * 0.35;
-  // Harder sides' carriers are cuter on the ball.
-  k *= vsHuman(m.aiSkill(c.side)).resist;
+  // Harder sides' carriers are cuter on the ball (resist); a touch that's left the ball exposed is only half as
+  // well protected (they already keep it tighter under his press: vsHuman.tight).
+  const resist = vsHuman(m.aiSkill(c.side)).resist;
+  k *= exposed ? 1 - (1 - resist) * 0.5 : resist;
   return clamp(k, 0.2, 0.92);
 }
 
@@ -415,7 +456,8 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
   p.quickLegs = stickLen > 0.2 || pad.through;
   const b = m.ball;
   const c = b.owner >= 0 && !b.held && m.players[b.owner].side !== p.side ? m.players[b.owner] : null;
-  if (shootP && c && p.state === 'move' && !p.sentOff) {
+  // (A second tap straight after a missed lunge: the slide is the second effort, out of the jab.)
+  if (shootP && c && (p.state === 'move' || (p.state === 'kick' && p.poke)) && !p.sentOff) {
     const d = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
     if (st.t - st.lastPress < DOUBLE_TAP && d < TAP_CLOSE) {
       st.lastPress = -9;
@@ -424,23 +466,34 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
       return;
     }
     st.lastPress = st.t;
-    if (d < TAP_CLOSE) {
-      st.tackle = { t: 0, held: true, target: c.idx, player: p.idx, born: m.clock };
-      if (d < TAP_LUNGE) lunge(p, b.pos.x + b.vel.x * 0.1, b.pos.z + b.vel.z * 0.1);
+    if (d < TAP_CLOSE && p.state === 'move') {
       // Already in reach: no wind-up, the tackle goes in on the press.
       if (p.tackleCooldown <= 0 && dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) <= STAND_REACH) {
+        st.tackle = { t: 0, held: true, target: c.idx, player: p.idx, born: m.clock };
+        m.events.push({ type: 'tackleTry', by: p.idx, slide: false });
         m.tryTackle(p, c, 1, true);
         // A won poke ends the action. A missed poke can still become a slide if the button stays held.
         if (m.ball.owner !== c.idx || m.phase !== 'play') st.tackle = null;
         return;
       }
+      // SPRINT held, or the carrier getting away from a standing reach: the slide, at once.
+      if (pad.sprint || (d >= AUTO_SLIDE_MIN && d <= AUTO_SLIDE_MAX && escaping(p, c, b.pos.x, b.pos.z))) {
+        st.tackle = null;
+        slideAt(m, p);
+        return;
+      }
+      st.tackle = { t: 0, held: true, target: c.idx, player: p.idx, born: m.clock };
+      m.events.push({ type: 'tackleTry', by: p.idx, slide: false });
+      if (d < TAP_LUNGE) lunge(p, b.pos.x + b.vel.x * 0.1, b.pos.z + b.vel.z * 0.1);
     }
   }
   const tk = st.tackle;
   if (!tk) return;
   // (Nor does it outlive a stoppage: the clock moved on, or a new half started, since it was pressed.)
   const stale = m.clock < tk.born || m.clock - tk.born > CLOSE_T + 0.25;
-  if (!c || c.idx !== tk.target || p.idx !== tk.player || p.state !== 'move' || p.sentOff || stale) {
+  // (A missed lunge's jab, Player.poke, doesn't end it: the button still held turns it into the slide.)
+  const upright = p.state === 'move' || (p.state === 'kick' && p.poke);
+  if (!c || c.idx !== tk.target || p.idx !== tk.player || !upright || p.sentOff || stale) {
     st.tackle = null;
     return;
   }
@@ -510,16 +563,32 @@ export function pressSteal(m: Match, p: Player, c: Player): void {
   if (p.state !== 'move' || p.tackleCooldown > 0 || m.ball.owner !== c.idx) return;
   const exposed = dist2(b.x, b.z, c.pos.x, c.pos.z);
   const mine = dist2(p.footX(), p.footZ(), b.x, b.z);
-  if (exposed > STEAL_EXPOSED && mine < STEAL_REACH && mine < exposed) m.tryTackle(p, c, 1, true);
+  if (exposed > STEAL_EXPOSED && mine < STEAL_REACH && mine < exposed) m.tryTackle(p, c, 1, true, false);
 }
 
 /** Face where the ball will be when he gets there, and go in with a slide (the human's long one). */
 function slideAt(m: Match, p: Player): void {
   const b = m.ball;
+  if (p.sentOff) return;
+  if (p.state === 'kick' && p.poke) p.setState('move');
   if (p.state !== 'move') return;
   const lead = clamp(dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z) / 9, 0.1, 0.45);
   p.facing = Math.atan2(b.pos.z + b.vel.z * lead - p.pos.z, b.pos.x + b.vel.x * lead - p.pos.x);
+  m.events.push({ type: 'tackleTry', by: p.idx, slide: true });
   m.startSlide(p);
+}
+
+/**
+ * Is carrier `c` getting away from `p` (a standing reach can't follow): moving away from him along the line to
+ * the ball faster than AUTO_SLIDE_AWAY m/s, or across it faster than AUTO_SLIDE_ACROSS?
+ */
+function escaping(p: Player, c: Player, bx: number, bz: number): boolean {
+  const ux = bx - p.pos.x;
+  const uz = bz - p.pos.z;
+  const ul = Math.hypot(ux, uz) || 1;
+  const away = (c.vel.x * ux + c.vel.z * uz) / ul;
+  const across = Math.abs(-uz * c.vel.x + ux * c.vel.z) / ul;
+  return away > AUTO_SLIDE_AWAY || across > AUTO_SLIDE_ACROSS;
 }
 
 /**
@@ -529,8 +598,8 @@ function slideAt(m: Match, p: Player): void {
  * goes through the back of the man (the carrier facing away, `behind` over HUMAN_SLIDE_BEHIND) or misses the
  * ball and takes him.
  */
-export const HUMAN_SLIDE_BOOST = 3.5;
-export const HUMAN_SLIDE_MIN = 6.5;
+export const HUMAN_SLIDE_BOOST = 3.5 * TEMPO;
+export const HUMAN_SLIDE_MIN = 6.5 * TEMPO;
 export const HUMAN_SLIDE_REACH = 1.2;
 export const HUMAN_SLIDE_T = 0.65;
 export const HUMAN_SLIDE_BEHIND = 0.6;

@@ -346,6 +346,122 @@ export class Sfx {
     this.noiseBurst(t, 0.06, 'bandpass', 900, 1, 0.2);
   }
 
+  /** "SAVE!": a bright two-note flash on top of the glove thump (a real stop, not a routine catch). */
+  saveFlash(caught: boolean): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    this.tone(t, 'square', 880, 880, 0.06, 0.07);
+    this.tone(t + 0.07, 'square', caught ? 1319 : 1175, caught ? 1319 : 1175, 0.16, 0.08);
+    this.noiseBurst(t, 0.12, 'highpass', 2600, 0.7, 0.14, this.sfxBus, 0.01);
+  }
+
+  // ------------------------------------------------------------------ tackles
+
+  /** A TACKLE press: the lunge itself, a quick whip of air (a slide gets a longer, lower swish). */
+  whip(slide = false): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    const n = this.noiseBurst(t, slide ? 0.22 : 0.09, 'bandpass', slide ? 900 : 2200, 1.4, slide ? 0.22 : 0.26, this.sfxBus, 0.008);
+    n.f.frequency.exponentialRampToValueAtTime(slide ? 400 : 700, t + (slide ? 0.24 : 0.1));
+    if (!slide) this.tone(t, 'sine', 320, 90, 0.07, 0.12);
+  }
+
+  /** WON IT: a fat thump with a bright crack on top. */
+  thump(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    this.tone(t, 'sine', 150, 40, 0.16, 0.6);
+    this.tone(t, 'triangle', 620, 180, 0.05, 0.18);
+    this.noiseBurst(t, 0.05, 'highpass', 1500, 0.7, 0.3);
+    this.noiseBurst(t + 0.02, 0.14, 'lowpass', 500, 0.5, 0.25);
+  }
+
+  /** Missed him: a soft scuff of boot on grass. */
+  scuff(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    const n = this.noiseBurst(t, 0.13, 'bandpass', 1300, 0.9, 0.14, this.sfxBus, 0.015);
+    n.f.frequency.exponentialRampToValueAtTime(500, t + 0.14);
+  }
+
+  // ------------------------------------------------------------------ blitz power-ups
+
+  /** A pickup collected: a quick rising arpeggio. */
+  powerup(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    const notes = [659, 880, 1109, 1319];
+    notes.forEach((f, i) => this.tone(t + i * 0.055, 'square', f, f, 0.09, 0.07));
+    this.tone(t + 0.22, 'triangle', 1319, 1760, 0.18, 0.08);
+  }
+
+  /** A power-up fired: each kind has its own voice. */
+  powerUse(kind: string): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    switch (kind) {
+      case 'turbo': {
+        // A rev and a whoosh.
+        this.tone(t, 'sawtooth', 120, 720, 0.35, 0.12);
+        const n = this.noiseBurst(t + 0.05, 0.4, 'bandpass', 600, 1.2, 0.2, this.sfxBus, 0.06);
+        n.f.frequency.exponentialRampToValueAtTime(2600, t + 0.45);
+        break;
+      }
+      case 'mega': {
+        // Ignition: a low boom under a rising roar.
+        this.tone(t, 'sine', 90, 30, 0.35, 0.55);
+        const n = this.noiseBurst(t, 0.5, 'lowpass', 400, 0.7, 0.35, this.sfxBus, 0.02);
+        n.f.frequency.exponentialRampToValueAtTime(2200, t + 0.5);
+        this.tone(t + 0.05, 'sawtooth', 160, 420, 0.4, 0.08);
+        break;
+      }
+      case 'freeze': {
+        // A glassy descending shimmer.
+        [1976, 1568, 1319, 988].forEach((f, i) => this.tone(t + i * 0.07, 'sine', f, f * 0.98, 0.3, 0.09));
+        const n = this.noiseBurst(t, 0.6, 'highpass', 5000, 0.7, 0.08, this.sfxBus, 0.05);
+        n.f.frequency.exponentialRampToValueAtTime(9000, t + 0.6);
+        break;
+      }
+      case 'magnet': {
+        // An electric hum with a crackle.
+        this.tone(t, 'square', 55, 110, 0.5, 0.09);
+        this.tone(t, 'sawtooth', 220, 440, 0.45, 0.05);
+        for (let i = 0; i < 6; i++) this.noiseBurst(t + 0.04 + i * 0.07, 0.02, 'highpass', 3000, 1, 0.1);
+        break;
+      }
+      default: {
+        // Shield: a warm bubble popping up.
+        this.tone(t, 'sine', 330, 660, 0.2, 0.14);
+        this.tone(t + 0.08, 'triangle', 660, 990, 0.3, 0.1);
+        this.noiseBurst(t, 0.12, 'bandpass', 1800, 2, 0.06, this.sfxBus, 0.02);
+        break;
+      }
+    }
+  }
+
+  /** A pickup landing on the pitch: a soft two-note blip (the eye goes to the pop). */
+  spawnBlip(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    this.tone(t, 'triangle', 784, 784, 0.06, 0.05);
+    this.tone(t + 0.07, 'triangle', 1175, 1175, 0.12, 0.05);
+  }
+
+  /** A power-up wearing off: a short falling blip. */
+  powerEnd(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    this.tone(t, 'square', 660, 330, 0.16, 0.06);
+  }
+
+  /** The shield took a tackle: a bright bonk. */
+  shieldHit(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    this.tone(t, 'triangle', 520, 260, 0.14, 0.2);
+    this.noiseBurst(t, 0.04, 'bandpass', 2000, 1.5, 0.12);
+  }
+
   // ------------------------------------------------------------------ chiptune menu loop
 
   startMusic(): void {

@@ -2,6 +2,7 @@ import { sfx } from '../audio/sfx';
 import type { Input } from '../core/input';
 import type { CamZoom } from '../core/save';
 import { clamp, damp, smoothstep } from '../core/math';
+import { BlitzFx, POWER_COLOR, POWER_LIGHT } from '../render/blitz';
 import { CameraRig } from '../render/cameraRig';
 import { setCharacterFill, setCharacterHemiFill, setCharacterWhiteBalance } from '../render/characters';
 import { Effects } from '../render/effects';
@@ -12,7 +13,7 @@ import type { TimeOfDay, World } from '../render/world';
 import { DT, HALF_L, HALF_W } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
-import type { Kit, MatchEvent, RestartKind, Side } from '../sim/types';
+import type { Kit, MatchEvent, PowerUpKind, RestartKind, Side } from '../sim/types';
 import { EdgeArrows, type EdgeMate, type EdgeRect } from '../ui/edgeArrows';
 import { Hud, hudTeam } from '../ui/hud';
 import { ShootoutHud } from '../ui/shootoutHud';
@@ -21,7 +22,7 @@ import { Trainer } from '../ui/trainer';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { playFocus } from './camFocus';
 import { contrastAwayKit } from './kitContrast';
-import { BALL_OFS, FRAME_LEN, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
+import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
 
 export interface SessionOptions extends MatchConfig {
   kits: [Kit, Kit];
@@ -66,9 +67,42 @@ interface Tally {
 }
 
 /** Seconds on the wide shot after a goal (the ball in the net) before cutting to the scorer. */
-const GOAL_WIDE_S = 0.9;
-/** The replay rolls once the celebration has had its moment (players have reached the corner flag). */
-const REPLAY_AT = 3.6;
+const GOAL_WIDE_S = 0.7;
+/** The replay rolls once the celebration has had its moment (the scorer has been mobbed). */
+const REPLAY_AT = 2.6;
+/**
+ * Presentation pace (owner playtest: "the gameplay is very very slow"): the pre-match fly-in, the replay's
+ * lead-in before the goal and tail after it (s of match time), the build-up's playback rate and the slow-mo
+ * finish's (from REPLAY_SLOW_FROM s before the goal: ~5.5 s of replay in all, always skippable), and the
+ * holds at half time and full time before the menus come up.
+ */
+const INTRO_S = 2.4;
+const REPLAY_LEAD_S = 2.4;
+const REPLAY_TAIL_S = 0.9;
+const REPLAY_BUILD_RATE = 0.85;
+const REPLAY_SLOW_RATE = 0.5;
+const REPLAY_SLOW_FROM = 1.2;
+const HALFTIME_HOLD_S = 1.0;
+const FULLTIME_HOLD_S = 1.8;
+const SHOOTOUT_HOLD_S = 3.4;
+/**
+ * Hit-stop (frames the drawn frame and the sim hold still, the camera punch and the burst landing on the
+ * frozen picture) on a won tackle and on a goal; the camera punch (m: ~3 px at broadcast distance) and the
+ * goal's shake (~8 px, decaying).
+ */
+const HIT_STOP_TACKLE = 2;
+const HIT_STOP_GOAL = 3;
+const PUNCH_TACKLE = 0.09;
+const SHAKE_GOAL = 0.27;
+/** A 'tackle' outcome within this long (s) of a 'tackleTry' from the same man is the same attempt. */
+const TACKLE_TRY_S = 0.15;
+/** Pace readability: speed lines and dust from this speed (m/s); the ball trails from this speed. */
+const SPRINT_FX_MS = 7;
+const BALL_TRAIL_MS = 18;
+/** Blitz: the mega ball stays a fireball this long (s) after it leaves the shooter's foot; a freeze's fallback length. */
+const MEGA_FLY_S = 1.5;
+const FREEZE_MAX_S = 6;
+const FREEZE_TINT = 0x9fdcff;
 /** Referee close-up when a card is shown at a stoppage. */
 const CARD_CAM_S = 1.8;
 
@@ -138,6 +172,13 @@ const TOUCH_LABELS = {
 } as const;
 type HintCtx = keyof typeof TOUCH_LABELS;
 type HintKey = 'pass' | 'shoot' | 'through';
+
+/** The presentation pace, for tests (seconds; see INTRO_S and friends). */
+export const PRESENTATION = {
+  introS: INTRO_S, goalWideS: GOAL_WIDE_S, replayAtS: REPLAY_AT, replayLeadS: REPLAY_LEAD_S, replayTailS: REPLAY_TAIL_S,
+  buildRate: REPLAY_BUILD_RATE, slowRate: REPLAY_SLOW_RATE, slowFromS: REPLAY_SLOW_FROM, halftimeHoldS: HALFTIME_HOLD_S,
+  fulltimeHoldS: FULLTIME_HOLD_S, hitStopTackle: HIT_STOP_TACKLE, hitStopGoal: HIT_STOP_GOAL,
+} as const;
 
 const RESTART_LABEL: Record<RestartKind, string> = {
   kickoff: 'KICK OFF', throwin: 'THROW-IN', corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!',
@@ -220,7 +261,7 @@ export class MatchSession {
    * one-step press, never lost. Cleared whenever the sim isn't stepping (intro, replay, pause), so a press
    * that skipped a replay never fires a pass at the restart.
    */
-  private latch = { pass: false, shoot: false, through: false };
+  private latch = { pass: false, shoot: false, through: false, power: false };
   private offKey: (() => void) | null = null;
   /** Off-screen team-mate arrows (see EDGE_FADE_S), their eased opacity, and the HUD boxes they keep off. */
   private edge: EdgeArrows | null = null;
@@ -228,6 +269,27 @@ export class MatchSession {
   private edgeAvoid: EdgeRect[] = [];
   private edgeAvoidT = 0;
   private edgeMates: EdgeMate[] = [];
+  /** Hit-stop frames left (see HIT_STOP_TACKLE). */
+  private hitStop = 0;
+  /**
+   * Standing-tackle lunges baked into the frames (replay.ts writeFrame): per player, seconds since his TACKLE
+   * press (< 0: none) and the leg he lunges with; and when his last attempt was seen (TACKLE_TRY_S).
+   */
+  private lunge = new Float32Array(22).fill(-1);
+  private lungeLeg = new Float32Array(22).fill(1);
+  private tryAt = new Float32Array(22).fill(-1e9);
+  /** Per player: the pose state drawn last frame (dust on a dive / a fall) and a particle-rate accumulator. */
+  private lastState = new Float32Array(22).fill(-1);
+  private fxAcc = new Float32Array(22);
+  private ballFxAcc = 0;
+  /** Blitz visuals (made on the first frame of a blitz match; never otherwise). */
+  private blitz: BlitzFx | null = null;
+  /** Blitz: which side is frozen by a freeze event (and its fallback timer), the mega ball in flight, the last hot state. */
+  private frozenSide = -1;
+  private frozenT = 0;
+  private megaFlyT = 0;
+  private megaHot = false;
+  private frozen = new Uint8Array(22);
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
     this.demo = !!opt.demo;
@@ -261,7 +323,7 @@ export class MatchSession {
     this.cam.touchLayout = !this.demo && isTouchDevice();
     this.cam.setZoom(opt.camZoom ?? 'normal');
     this.cam.setMode(this.demo ? 'menu' : 'intro');
-    if (!this.demo) this.introLeft = 3.4;
+    if (!this.demo) this.introLeft = INTRO_S;
     if (!this.demo) {
       this.hud = new Hud(
         [hudTeam(teams[0], opt.kits[0].shirt, opt.kits[0].shirt2), hudTeam(teams[1], opt.kits[1].shirt, opt.kits[1].shirt2)],
@@ -292,7 +354,7 @@ export class MatchSession {
     this.prev.set(this.cur);
     sfx.setAmbienceActive(!this.demo);
     if (this.hud) {
-      this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} · ${teams[1].name}`, 'small intro', 3.2);
+      this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} · ${teams[1].name}`, 'small intro', INTRO_S - 0.2);
       this.prevButtons = true;
     }
   }
@@ -369,23 +431,26 @@ export class MatchSession {
       mx: w.x, mz: w.z, sprint: c.sprint, pass: c.pass || l.pass, shoot: c.shoot || l.shoot, through: c.through || l.through,
       // Keys give 8-way digital input: the sim turns set-piece aim gradually for those.
       digital: this.input.lastDevice === 'keyboard',
+      // Blitz: use the held power-up (keyboard E / pad Y / the touch button, once the input maps it).
+      power: ((c as { power?: boolean }).power ?? false) || l.power,
     };
     this.clearLatch();
     return pad;
   }
 
   /** Note whichever action buttons are down right now (called on every key-down). */
-  private latchPresses(c: { pass: boolean; shoot: boolean; through: boolean }): void {
+  private latchPresses(c: { pass: boolean; shoot: boolean; through: boolean; power?: boolean }): void {
     if (this.demo || this.paused) return;
     const l = this.latch;
     l.pass ||= c.pass;
     l.shoot ||= c.shoot;
     l.through ||= c.through;
+    l.power ||= c.power ?? false;
   }
 
   private clearLatch(): void {
     const l = this.latch;
-    l.pass = l.shoot = l.through = false;
+    l.pass = l.shoot = l.through = l.power = false;
   }
 
   update(realDt: number): void {
@@ -395,11 +460,16 @@ export class MatchSession {
 
     // (A press only carries over to the next live step: nothing latched while the sim isn't stepping.)
     if (this.paused || this.introLeft > 0 || this.replay) this.clearLatch();
+    let held = false;
     if (this.paused) {
       // Frozen: live play, a replay or the pre-match fly-in all wait for the pause menu.
+    } else if (this.hitStop > 0) {
+      // Hit-stop: the drawn frame, the sim and the particles hold for a frame or two (the punch lands on it).
+      this.hitStop--;
+      held = true;
     } else if (this.introLeft > 0) {
       this.introLeft -= dt;
-      this.cam.introT = Math.min(1, 1 - this.introLeft / 3.4);
+      this.cam.introT = Math.min(1, 1 - this.introLeft / INTRO_S);
       const c = this.input.read();
       const btn = c.pass || c.shoot || c.through;
       if (btn && !this.prevButtons) this.introLeft = 0;
@@ -419,17 +489,26 @@ export class MatchSession {
         const pad = this.buildPad();
         this.prev.set(this.cur);
         m.step(DT, pad);
-        writeFrame(m, this.cur, this.time);
-        this.buffer.push(m, this.time);
-        this.recorded++;
+        // (Events first: a TACKLE press this step is baked into this very frame as the lunge.)
         this.handleEvents(m.drainEvents());
+        for (let i = 0; i < 22; i++) if (this.lunge[i] >= 0 && (this.lunge[i] += DT) >= LUNGE_S) this.lunge[i] = -1;
+        writeFrame(m, this.cur, this.time, this.lunge, this.lungeLeg);
+        this.buffer.push(m, this.time, this.lunge, this.lungeLeg);
+        this.recorded++;
         this.acc -= DT;
         steps++;
+        if (this.hitStop > 0) {
+          // Freeze on the impact frame: whatever was left over is dropped, never caught up after the hold.
+          this.acc = 0;
+          break;
+        }
       }
       if (steps === 6) this.acc = 0;
       // (See PHASE_WANT: at about the step rate, keep the drawn frame close to the newest step.)
-      if (dt > DT * 0.8 && dt < DT * 2.5) this.acc += clamp(PHASE_WANT * DT - this.acc, -PHASE_NUDGE * DT, PHASE_NUDGE * DT);
-      this.view.apply(this.prev, this.cur, clamp(this.acc / DT, 0, 1), this.time, dt);
+      if (dt > DT * 0.8 && dt < DT * 2.5 && this.hitStop <= 0) this.acc += clamp(PHASE_WANT * DT - this.acc, -PHASE_NUDGE * DT, PHASE_NUDGE * DT);
+      this.view.apply(this.prev, this.cur, this.hitStop > 0 ? 1 : clamp(this.acc / DT, 0, 1), this.time, dt);
+      this.updateFrameFx(dt);
+      this.updateBlitz(dt);
       this.flow();
       if (this.cardT > 0) {
         this.cardT -= dt;
@@ -536,7 +615,7 @@ export class MatchSession {
     this.view.faceCamera(this.world.camera);
     this.view.updateReferee(this.paused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
-    this.effects.update(dt);
+    this.effects.update(held || this.paused ? 0 : dt);
     this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time, this.world.camera.position);
     this.updateAtmosphere(dt);
     this.updateHud(dt);
@@ -562,13 +641,13 @@ export class MatchSession {
         this.resetView();
       }
     }
-    if (m.phase === 'halftime' && !this.halftimeFired && m.phaseT > 1.6) {
+    if (m.phase === 'halftime' && !this.halftimeFired && m.phaseT > HALFTIME_HOLD_S) {
       this.halftimeFired = true;
       if (this.demo) m.continueSecondHalf();
       else this.onHalftime?.();
     }
     if (m.phase === 'shootout' && !this.so && this.hud) this.startShootoutView();
-    if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > (m.shootout ? 4.2 : 2.4)) {
+    if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > (m.shootout ? SHOOTOUT_HOLD_S : FULLTIME_HOLD_S)) {
       this.finishFired = true;
       if (this.demo) return;
       this.onFinish?.({
@@ -633,16 +712,18 @@ export class MatchSession {
   }
 
   private startReplay(): void {
-    const lead = 3.3 * 60;
-    const tail = 1.3 * 60;
+    const lead = Math.round(REPLAY_LEAD_S * 60);
+    const tail = Math.round(REPLAY_TAIL_S * 60);
     const since = this.recorded - this.goalFrame;
     const frames = this.buffer.snapshot(Math.min(this.buffer.count, since + lead));
     const cut = Math.max(2, frames.length - since + tail);
     this.replay = frames.slice(0, Math.min(frames.length, cut));
     this.replayGoalIdx = Math.max(0, this.replay.length - tail);
     this.replayT = 0;
-    // No confetti / grass flecks from the live celebration drifting over the replayed build-up.
+    // No confetti / grass flecks from the live celebration drifting over the replayed build-up; no pickups
+    // either (the replay frames don't carry them; they come back with live play).
     this.effects.clear();
+    if (this.blitz) this.blitz.group.visible = false;
     this.cam.replayAngle = Math.floor(Math.random() * 2);
     this.cam.replayGoalSign = this.match.attackDir(this.match.goalSide);
     // Goal-line camera goes across the mouth from where the ball crossed (or from the shooter if dead centre).
@@ -663,18 +744,18 @@ export class MatchSession {
   private stepReplay(dt: number): void {
     const frames = this.replay!;
     const idx = this.replayT * 60;
-    // Two shots like TV: the move in real-ish time, then the finish from the goal line in slow-mo: from ~1.6 s
-    // before the goal, but never while the ball is still more than REPLAY_GOAL_NEAR m out (a long-range
-    // strike is seen struck on the wide shot, then arriving on the goal-line one).
+    // Two shots like TV: the move in real-ish time, then the finish from the goal line in slow-mo: from
+    // REPLAY_SLOW_FROM s before the goal, but never while the ball is still more than REPLAY_GOAL_NEAR m out
+    // (a long-range strike is seen struck on the wide shot, then arriving on the goal-line one).
     const at = frames[Math.min(frames.length - 1, Math.floor(idx))];
     const finish = this.cam.replayShot === 'goal' || idx >= this.replayGoalIdx - 20 ||
-      (idx >= this.replayGoalIdx - 95 && !this.replayBallFar(at));
+      (idx >= this.replayGoalIdx - REPLAY_SLOW_FROM * 60 && !this.replayBallFar(at));
     if (finish && this.cam.replayShot === 'build') {
       this.cam.replayShot = 'goal';
       this.cam.cut();
     }
     const near = finish;
-    this.replayT += dt * (near ? 0.36 : 0.85);
+    this.replayT += dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE);
     const i = Math.floor(idx);
     const c = this.input.read();
     const btn = c.pass || c.shoot || c.through;
@@ -688,7 +769,8 @@ export class MatchSession {
       this.flow();
       return;
     }
-    this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * (near ? 0.36 : 0.85));
+    this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE));
+    this.updateFrameFx(dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE));
   }
 
   /** Is the ball in this replay frame still more than REPLAY_GOAL_NEAR m from the goal it went into? */
@@ -747,9 +829,15 @@ export class MatchSession {
           this.goalHypeT = 5;
           const cols = [this.opt.kits[side].shirt, this.opt.kits[side].shirt2, 0xffd23a, 0xfbfbf4];
           const gx = Math.sign(m.ball.pos.x) * HALF_L;
-          this.effects.burst(gx, 1.5, m.ball.pos.z, cols, 60, 9);
-          this.effects.confetti(gx * 0.7, 0, cols, 260, 60);
-          this.cam.kick(0.25);
+          // Juice: a hold on the impact frame, a decaying shake, the net rippling, a fat burst in the scorer's
+          // colours out of the goal mouth, confetti from the roof and the ground and the whole bowl flashing.
+          this.hitStop = HIT_STOP_GOAL;
+          this.effects.burst(gx, 1.5, m.ball.pos.z, cols, 90, 13, 2.4);
+          this.effects.burst(gx - Math.sign(gx) * 2, 0.3, m.ball.pos.z, cols, 50, 9, 2);
+          this.effects.confetti(gx * 0.7, 0, cols, 320, 60);
+          this.stadium.punchNet(gx, Math.max(0.6, Math.min(2, m.ball.pos.y)), m.ball.pos.z, 24);
+          this.stadium.flashBurst(60);
+          this.cam.kick(SHAKE_GOAL);
           this.view.setMarkerVisible(false);
           this.celebG = 0;
           void s;
@@ -763,22 +851,54 @@ export class MatchSession {
           this.hud?.toastMsg('OFF THE WOODWORK!');
           this.cam.kick(0.08);
           break;
-        case 'save':
+        case 'save': {
           this.tally[e.keeper].saves++;
           sfx.save();
+          const k = m.players[e.keeper];
+          this.effects.dust(k.pos.x, k.pos.z, 8, 0.7);
           if (m.shotClock < 2) {
             this.hud?.toastMsg(e.caught ? 'GREAT SAVE!' : 'PARRIED!');
+            sfx.saveFlash(e.caught);
             sfx.cheer(0.6);
           }
           break;
-        case 'tackle':
+        }
+        case 'tackleTry':
+          this.tackleAttempt(e.by, e.slide);
+          break;
+        case 'tackle': {
+          const p = m.players[e.by];
+          // (The sim fires a lost slide as the slide starts, before any contact: that is the attempt itself.
+          // A standing tackle with no 'tackleTry' before it, older sims, lunges from here.)
+          const fresh = this.time - this.tryAt[e.by] < TACKLE_TRY_S;
+          if (!fresh) this.tackleAttempt(e.by, e.slide);
+          if (e.slide && !e.won) break;
           if (e.won) {
             this.tally[e.by].tackles++;
-            const p = m.players[e.by];
-            this.effects.grass(p.pos.x, p.pos.z, e.slide ? 12 : 4, e.slide ? 0.8 : 0.3);
-            if (e.slide) sfx.kick(0.3);
+            // WON IT: the picture holds on the impact, the camera punches, a burst in his colours at the ball.
+            this.hitStop = HIT_STOP_TACKLE;
+            this.cam.kick(PUNCH_TACKLE);
+            const kit = this.opt.kits[p.side];
+            const b = m.ball.pos;
+            this.effects.burst(b.x, Math.max(0.25, b.y), b.z, [kit.shirt, kit.shirt2, 0xfbfbf4], 30, 7, 1.6);
+            this.effects.dust(b.x, b.z, 8, 0.9, p.vel.x * 0.3, p.vel.z * 0.3);
+            this.effects.grass(p.pos.x, p.pos.z, e.slide ? 12 : 6, e.slide ? 0.8 : 0.5);
+            sfx.thump();
+          } else {
+            // Missed: a scuff of boot on grass. In blitz, a challenge that bounced off a shielded carrier (or
+            // was thrown by a frozen tackler) bonks off the bubble instead.
+            const c = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
+            const bounced = m.cfg.mode === 'blitz' && !e.slide && ((c && c.side !== p.side && c.boost === 'shield') || p.boost === 'freeze');
+            if (bounced) {
+              const kind: PowerUpKind = c && c.boost === 'shield' && p.boost !== 'freeze' ? 'shield' : 'freeze';
+              const at = kind === 'shield' && c ? c.pos : p.pos;
+              this.effects.burst(at.x, 0.9, at.z, [POWER_COLOR[kind], POWER_LIGHT[kind], 0xfbfbf4], 22, 6, 1.4);
+              sfx.shieldHit();
+            } else sfx.scuff();
+            this.effects.dust(p.footX(), p.footZ(), 3, 0.35);
           }
           break;
+        }
         case 'bounce':
           sfx.bounce(e.speed);
           break;
@@ -888,11 +1008,244 @@ export class MatchSession {
           } else if (t === 'advantage') {
             this.hud?.toastMsg('ADVANTAGE', 1.4);
             this.view.refSignal(1.6, 'advantage');
-          }
+          } else if (t === 'powerupTaken' || t === 'powerupUsed' || t === 'powerupEnd') {
+            this.powerEvent(e as { type: string; kind: PowerUpKind; player: number; side: Side; id?: number });
+          } else if (t === 'powerupSpawn' && m.cfg.mode === 'blitz') sfx.spawnBlip();
           break;
         }
       }
     }
+  }
+
+  /**
+   * A TACKLE press (the sim's 'tackleTry', before any contact): a standing tackle lunges at once (baked into
+   * the frames: replay.ts writeFrame, so replays lunge too), with a puff of dust at the boot and a whip of
+   * air; a slide gets a bigger cloud and a longer swish.
+   */
+  private tackleAttempt(by: number, slide: boolean): void {
+    const m = this.match;
+    const p = m.players[by];
+    if (!p) return;
+    this.tryAt[by] = this.time;
+    const b = m.ball.pos;
+    if (!slide) {
+      // Lunge with the leg nearer the ball (the sim's own poke picks it the same way).
+      const side = -Math.sin(p.facing) * (b.x - p.pos.x) + Math.cos(p.facing) * (b.z - p.pos.z);
+      this.lungeLeg[by] = side >= 0 ? 1 : -1;
+      this.lunge[by] = 0;
+      // A puff at the planted boot and a scuff of turf: the press reads even from the gantry.
+      this.effects.dust(p.pos.x, p.pos.z, 12, 0.9, Math.cos(p.facing) * 1.2, Math.sin(p.facing) * 1.2);
+      this.effects.grass(p.pos.x, p.pos.z, 4, 0.6);
+    } else {
+      this.effects.dust(p.pos.x, p.pos.z, 14, 1, p.vel.x * 0.3, p.vel.z * 0.3);
+      this.effects.grass(p.pos.x, p.pos.z, 6, 0.6);
+    }
+    sfx.whip(slide);
+  }
+
+  /**
+   * Frame-driven action readability, live and in replays (it all comes off the drawn frame, so a replayed
+   * slide leaves the same dust): a slide's long dust trail and grass flecks, dust when a keeper hits the deck
+   * (or anyone goes down), speed lines and dust off sprinting boots, and the ball's trail when it is really
+   * moving (a mega ball's fire, in blitz).
+   */
+  private updateFrameFx(dt: number): void {
+    if (dt <= 0) return;
+    const f = this.view.frame;
+    const fx = this.effects;
+    const k = this.view.headTop / 1.94;
+    for (let i = 0; i < 22; i++) {
+      const o = i * PF;
+      const state = f[o + 4];
+      const x = f[o];
+      const z = f[o + 1];
+      const facing = f[o + 3];
+      const ux = Math.cos(facing);
+      const uz = Math.sin(facing);
+      const speed = f[o + 7];
+      const prev = this.lastState[i];
+      this.lastState[i] = state;
+      if (state !== prev && (state === STATE_CODE.dive || state === STATE_CODE.fallen || state === STATE_CODE.stumble)) {
+        // A keeper hitting the deck (a dive, a mega ball knocking him back) throws up the most.
+        const keeper = i === 0 || i === 11;
+        fx.dust(x, z, state === STATE_CODE.dive || keeper ? 12 : 7, keeper ? 1 : 0.8, -ux * 0.5, -uz * 0.5);
+        if (state === STATE_CODE.dive || keeper) fx.grass(x, z, 4, 0.5);
+      }
+      if (state === STATE_CODE.slide && f[o + 5] < 0.9) {
+        // A long trail of dust and turf off the hip, back along the path.
+        this.fxAcc[i] += dt * (24 + speed * 3);
+        while (this.fxAcc[i] >= 1) {
+          this.fxAcc[i] -= 1;
+          fx.dust(x - ux * 0.4, z - uz * 0.4, 1, 0.5 + speed * 0.05, -ux * 1.2, -uz * 1.2, 0.1);
+          if (Math.random() < 0.3) fx.grass(x - ux * 0.3, z - uz * 0.3, 1, 0.5);
+        }
+        continue;
+      }
+      const turbo = this.blitz !== null && !this.replay && this.match.players[i]?.boost === 'turbo';
+      const fast = speed > SPRINT_FX_MS || (turbo && speed > 3);
+      if (!fast) {
+        this.fxAcc[i] = 0;
+        continue;
+      }
+      // Speed lines and dust off the boots: subtle white streaks trailing back, a puff every few frames.
+      this.fxAcc[i] += dt * (turbo ? 40 : 22);
+      while (this.fxAcc[i] >= 1) {
+        this.fxAcc[i] -= 1;
+        const sway = (Math.random() - 0.5) * 0.5 * k;
+        const col = turbo ? (Math.random() < 0.5 ? POWER_COLOR.turbo : POWER_LIGHT.turbo) : 0xf4f4ea;
+        fx.streak(x - ux * 0.6 - uz * sway, 0.14 + Math.random() * 0.5 * k, z - uz * 0.6 + ux * sway, facing, 0.5 + Math.random() * 0.5, 0.045, col, 0.14, -ux * 3, -uz * 3);
+        if (Math.random() < (turbo ? 0.6 : 0.4)) fx.dust(x - ux * 0.35, z - uz * 0.35, 1, 0.3, -ux, -uz, 0.05);
+        if (turbo && Math.random() < 0.5) fx.sparks(x - ux * 0.3, 0.3 * k, z - uz * 0.3, [POWER_COLOR.turbo, POWER_LIGHT.turbo], 1, 3, 0.2, 2);
+      }
+    }
+    // The ball: a short white trail at real pace; a fireball when it is the mega ball.
+    const bx = f[BALL_OFS], by = f[BALL_OFS + 1], bz = f[BALL_OFS + 2];
+    const bvx = f[BALL_OFS + 3], bvy = f[BALL_OFS + 4], bvz = f[BALL_OFS + 5];
+    const bs = Math.hypot(bvx, bvy, bvz);
+    const hot = this.megaHot && !this.replay;
+    if (bs > BALL_TRAIL_MS || (hot && bs > 2)) {
+      this.ballFxAcc += dt * (hot ? 90 : 60);
+      while (this.ballFxAcc >= 1) {
+        this.ballFxAcc -= 1;
+        // Placed back along the path, so the trail starts at the ball rather than inside it.
+        const back = Math.random() * 0.5;
+        const px = bx - (bvx / bs) * back, py = Math.max(0.1, by - (bvy / bs) * back), pz = bz - (bvz / bs) * back;
+        if (hot) fx.fire(px, py, pz, 2, -bvx * 0.04, 0, -bvz * 0.04);
+        else fx.spawn(px, py, pz, 0, 0, 0, 0xffffff, 0.09 + Math.min(0.06, (bs - BALL_TRAIL_MS) * 0.004), 0.16, 0, 0);
+      }
+    } else this.ballFxAcc = 0;
+  }
+
+  /** Blitz power-up events: the pickup's burst, each power's own voice and burst, and the side-wide effects. */
+  private powerEvent(e: { type: string; kind: PowerUpKind; player: number; side: Side; id?: number }): void {
+    const m = this.match;
+    if (m.cfg.mode !== 'blitz') return;
+    const fx = this.effects;
+    const cols = [POWER_COLOR[e.kind], POWER_LIGHT[e.kind], 0xfbfbf4];
+    const p = m.players[e.player];
+    if (e.type === 'powerupTaken') {
+      const at = (e.id !== undefined && this.blitz?.at(e.id)) || (p ? { x: p.pos.x, z: p.pos.z } : null);
+      if (e.id !== undefined) this.blitz?.take(e.id);
+      if (at) {
+        fx.burst(at.x, 0.6, at.z, cols, 40, 8);
+        fx.sparks(at.x, 0.6, at.z, cols, 16, 6, 0.4, 4);
+      }
+      sfx.powerup();
+    } else if (e.type === 'powerupUsed') {
+      sfx.powerUse(e.kind);
+      if (p) {
+        fx.burst(p.pos.x, 0.8, p.pos.z, cols, 36, 7);
+        if (e.kind === 'freeze') fx.frost(p.pos.x, 0.5, p.pos.z, 30);
+      }
+      if (e.kind === 'freeze') {
+        this.frozenSide = e.side === 0 ? 1 : 0;
+        this.frozenT = FREEZE_MAX_S;
+        this.cam.kick(0.06);
+      }
+      if (e.kind === 'mega') this.cam.kick(0.05);
+    } else if (e.type === 'powerupEnd') {
+      sfx.powerEnd();
+      if (e.kind === 'freeze') this.frozenSide = -1;
+      // The mega ball has just been struck: it flies as a fireball for a moment.
+      if (e.kind === 'mega' && this.megaHot) this.megaFlyT = MEGA_FLY_S;
+    }
+  }
+
+  /**
+   * Blitz visuals every live frame (a classic match never makes them): the pickups from Match.powerups, the
+   * held item over the controlled player, and each power's effect on the players it acts on (Player.boost):
+   * turbo trails (updateFrameFx) and a glow under the whole side, a shield bubble, magnet sparks between ball
+   * and boot, an ice tint plus frost on the frozen side, the mega ball red-hot with a fireball tail.
+   */
+  private updateBlitz(dt: number): void {
+    const m = this.match;
+    if (m.cfg.mode !== 'blitz') return;
+    if (!this.blitz) {
+      this.blitz = new BlitzFx();
+      this.view.group.add(this.blitz.group);
+    }
+    const bz = this.blitz;
+    const f = this.view.frame;
+    const k = this.view.headTop / 1.94;
+    const time = this.time;
+    bz.group.visible = !this.replay;
+    bz.sync(m.powerups ?? [], dt, time, k);
+    // The held item over the man we control (the broadcast shot only).
+    const hs = m.cfg.humanSide;
+    const held = hs === 0 || hs === 1 ? m.heldPower?.[hs] ?? null : null;
+    const a = m.active;
+    if (held && a >= 0 && a < 22 && this.cam.mode === 'broadcast' && !this.cam.behindActive) {
+      bz.setHeld(held, f[a * PF], this.view.headTop + f[a * PF + 2], f[a * PF + 1], time, k);
+    } else bz.setHeld(null, 0, 0, 0, time);
+    // Per-player effects.
+    this.frozenT = Math.max(0, this.frozenT - dt);
+    if (this.frozenT <= 0) this.frozenSide = -1;
+    const turboSide = [false, false];
+    const frozenSide = [this.frozenSide === 0, this.frozenSide === 1];
+    let hot = false;
+    const ball = m.ball;
+    const bxp = f[BALL_OFS], byp = f[BALL_OFS + 1], bzp = f[BALL_OFS + 2];
+    bz.beginBubbles();
+    // (The sim sets Player.boost on a whole side: the bubble goes round that side's carrier alone, and the
+    // magnet's sparks between the ball and the boot of the one man on it or nearest it.)
+    const magnetMan: [number, number] = [-1, -1];
+    const magnetD: [number, number] = [Infinity, Infinity];
+    for (const p of m.players) {
+      if (p.boost !== 'magnet') continue;
+      const d = ball.owner === p.idx ? -1 : Math.hypot(f[p.idx * PF] - bxp, f[p.idx * PF + 1] - bzp);
+      if (d < magnetD[p.side]) {
+        magnetD[p.side] = d;
+        magnetMan[p.side] = p.idx;
+      }
+    }
+    for (const p of m.players) {
+      const i = p.idx;
+      const o = i * PF;
+      const boost = p.boost ?? null;
+      const x = f[o], z = f[o + 1], y = f[o + 2];
+      const frozen = boost === 'freeze' || this.frozenSide === p.side;
+      const want = frozen && !isSentOff(p) ? 1 : 0;
+      if (want !== this.frozen[i]) {
+        this.frozen[i] = want;
+        this.view.tintPlayer(i, want ? FREEZE_TINT : null);
+      }
+      if (want) {
+        frozenSide[p.side] = true;
+        this.fxAcc[i] += dt * 5;
+        if (this.fxAcc[i] >= 1) {
+          this.fxAcc[i] -= 1;
+          this.effects.frost(x, y + 0.2, z, 1);
+        }
+      }
+      if (!boost) continue;
+      if (boost === 'turbo') turboSide[p.side] = true;
+      else if (boost === 'shield') {
+        if (ball.owner === i) bz.bubble(i, x, y + this.view.headTop * 0.52, z, time, k);
+      } else if (boost === 'magnet') {
+        const dx = bxp - x, dz = bzp - z;
+        const d = Math.hypot(dx, dz);
+        if (magnetMan[p.side] === i && d < 3.2) {
+          this.fxAcc[i] += dt * 28;
+          while (this.fxAcc[i] >= 1) {
+            this.fxAcc[i] -= 1;
+            const u = Math.random();
+            this.effects.sparks(x + dx * u, 0.1 + Math.random() * 0.3 + byp * u, z + dz * u, [POWER_COLOR.magnet, POWER_LIGHT.magnet, 0xffffff], 1, 2.5, 0.22, 1);
+          }
+        }
+      } else if (boost === 'mega' && ball.owner === i) hot = true;
+    }
+    bz.endBubbles();
+    // The mega ball: red-hot at the shooter's feet, a fireball for MEGA_FLY_S after it leaves them.
+    if (!hot && this.megaHot && this.megaFlyT <= 0 && Math.hypot(ball.vel.x, ball.vel.z) > 10) this.megaFlyT = MEGA_FLY_S;
+    this.megaFlyT = Math.max(0, this.megaFlyT - dt);
+    this.megaHot = hot || this.megaFlyT > 0;
+    this.view.setBallHot(this.megaHot);
+    if (hot) this.effects.fire(bxp, byp + 0.1, bzp, 1);
+    for (const side of [0, 1] as const) {
+      const kind: PowerUpKind | null = turboSide[side] ? 'turbo' : frozenSide[side] ? 'freeze' : null;
+      if (bz.sideGlows[side] !== kind) bz.setSideGlow(side, kind);
+    }
+    bz.updateSideGlow(f, PF, k, time);
   }
 
   /**
@@ -1417,6 +1770,8 @@ export class MatchSession {
     sfx.setAmbienceActive(false);
     this.offKey?.();
     this.offKey = null;
+    this.blitz?.dispose();
+    this.blitz = null;
     this.hud?.dispose();
     this.touch?.root.remove();
     this.input.touch.enabled = false;

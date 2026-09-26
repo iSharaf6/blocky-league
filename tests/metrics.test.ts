@@ -26,6 +26,8 @@ function checkBands(halfLength: number, n: number): void {
   const s = summarise(list);
   // eslint-disable-next-line no-console
   console.log(`metrics at 2x${halfLength}s over ${s.n} seeds\n${fmt(s)}\nscores ${list.map((r) => r.score.join('-')).join(' ')}`);
+  // (Round 9's tempo: ~3.05 goals and ~15.6 shots a match at 2x120 s, from 2.7 / 14.1: quicker restarts, the
+  // AI moving it on sooner, strikes SHOT_TEMPO faster against an unscaled dive.)
   within(s.goals, 2.5, 4.5);
   within(s.shots, 12 * k + (k < 1 ? 0.4 : 0), 22);
   within(s.onTargetPct, 40, 60);
@@ -56,8 +58,10 @@ function checkBands(halfLength: number, n: number): void {
   expect(s.zeroFinalThird).toBeLessThanOrEqual(Math.max(1, Math.round(s.n / 50)));
   expect(s.crosses).toBeGreaterThan(3 * k);
   expect(s.headerShots).toBeGreaterThan(1);
-  // Offside is enforced but rare: the AI holds its runs on the line (DLS: an offside or so a match).
-  within(s.offsides, 0.4, 1.5);
+  // Offside is enforced but rare: the AI holds its runs on the line (DLS: an offside or so a match). (Round 9's
+  // tempo: runs in behind arrive that much sooner, ~1.2 a match at 2x120 s and ~1.65 at 2x150 s; a volume count,
+  // so the band scales with playing time like the shots. It was 0.4-1.5 flat.)
+  within(s.offsides, 0.4 * k, 1.9 * k);
   // Parries and deflections off an on-target shot are the shooter's goals, not own goals (was ~14%). Round 7:
   // a shot going wide that grazed a defender used to be turned back in when it was on the other side of the
   // pitch from its line (~5-6% of goals were own goals, ~15% in the critic's sample); now ~0.5% (real: 3-5%).
@@ -88,8 +92,16 @@ function checkBands(halfLength: number, n: number): void {
   // 1.2 s x ~170 touches > ~255 s of play), so we favour tempo (no more ping-pong) and keep
   // passing purposeful. These floors guard against regressions back to either extreme.
   within(s.passCmpPerTeam, 42 * k, 130);
-  within(s.carrierAvg, 1.05, 2.5);
+  // (Round 9: the AI carrier's think time and hold ride on constants.TEMPO, so he moves it on ~13% sooner:
+  // 1.09 s at 2x120 s on these seeds, against 1.2 before. The floor was 1.05.)
+  within(s.carrierAvg, 0.95, 2.5);
   expect(s.passPct).toBeGreaterThan(75);
+  // Round 9 (the owner: "very very slow"): the ball is in open play at least 78% of the time, counting the dead
+  // ball and the goal celebrations (~83% now: shorter waits at restarts and kick-offs, keepers who hold it less).
+  expect(s.livePct).toBeGreaterThanOrEqual(78);
+  // The keeper reads a long shot for its whole flight (keeper.ts SHOT_READ_T): from 25 m and further the AI
+  // converts ~1% (it was ~5%, and a floated one from near halfway used to sail in over a keeper who never dived).
+  expect(s.long25GoalPct).toBeLessThanOrEqual(3);
 }
 
 describe('match feel metrics (AI vs AI, difficulty 2, half-time AI subs)', () => {

@@ -6,6 +6,8 @@ export interface Controls {
   pass: boolean;
   shoot: boolean;
   through: boolean;
+  /** Blitz mode: use the held power-up (a press; nothing outside blitz). */
+  power: boolean;
 }
 
 export interface TouchState extends Controls {
@@ -23,10 +25,12 @@ const PASS_KEYS = ['Space', 'KeyJ', 'KeyZ'];
 const SHOOT_KEYS = ['KeyK', 'KeyX'];
 const THROUGH_KEYS = ['KeyL', 'KeyC'];
 const SPRINT_KEYS = ['ShiftLeft', 'ShiftRight', 'KeyI'];
+/** Power-up (blitz): E beside WASD, O beside IJKL (J is already PASS in that cluster). */
+const POWER_KEYS = ['KeyE', 'KeyO'];
 
 export class Input {
   private keys = new Set<string>();
-  readonly touch: TouchState = { enabled: false, sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false };
+  readonly touch: TouchState = { enabled: false, sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false, power: false };
   private listeners: ((code: string) => void)[] = [];
   lastDevice: 'keyboard' | 'touch' | 'gamepad' =
     typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 'touch' : 'keyboard';
@@ -75,6 +79,7 @@ export class Input {
       pass: this.any(PASS_KEYS),
       shoot: this.any(SHOOT_KEYS),
       through: this.any(THROUGH_KEYS),
+      power: this.any(POWER_KEYS),
     };
     // Gamepad
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -90,10 +95,12 @@ export class Input {
         this.lastDevice = 'gamepad';
       }
       const b = (i: number) => !!gp.buttons[i]?.pressed;
-      if (b(0) || b(1) || b(2) || b(5) || b(7)) this.lastDevice = 'gamepad';
+      if (b(0) || b(1) || b(2) || b(3) || b(5) || b(7)) this.lastDevice = 'gamepad';
       out.pass ||= b(0);
       out.shoot ||= b(1);
-      out.through ||= b(2) || b(3);
+      out.through ||= b(2);
+      // Y / triangle: the held power-up (blitz mode).
+      out.power ||= b(3);
       out.sprint ||= b(5) || b(7) || (gp.buttons[7]?.value ?? 0) > 0.3;
       if (b(12)) out.sy = 1;
       if (b(13)) out.sy = -1;
@@ -110,6 +117,7 @@ export class Input {
       out.shoot ||= t.shoot;
       out.through ||= t.through;
       out.sprint ||= t.sprint;
+      out.power ||= t.power;
     }
     return out;
   }

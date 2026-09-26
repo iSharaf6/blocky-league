@@ -6,14 +6,18 @@ import { Vector3 } from 'three';
 import type { AppContext, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
 import { Input } from './core/input';
-import { CONTROL_DEFAULTS, controlsOf, loadSave, writeSave, type CamZoom, type ControlSettings } from './core/save';
+import {
+  CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
+  streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary,
+} from './core/save';
 import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
+import { BOX_DEPTH, BOX_W, HALF_L } from './sim/constants';
 import type { Match } from './sim/match';
-import type { FormationId, Side } from './sim/types';
+import type { FormationId, KickKind, MatchEvent, MatchMode, Side } from './sim/types';
 import { DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
 import { DIVISION_NAMES, clubRating, migrateCareer, nextMatch } from './meta/career';
 import { ROUND_NAMES, clubRating as presetRating, migrateCup } from './meta/cup';
@@ -77,6 +81,59 @@ function syncControlsUi(s: MatchSession | null): void {
   if (s.hud && !s.paused) {
     const c = input.read();
     s.hud.buttons(c.pass || c.shoot || c.through);
+  }
+  // Blitz: the HUD slot (and the touch ⚡ button) follow the power-up the human side holds.
+  const hs = m.cfg.humanSide;
+  if (s.hud && (hs === 0 || hs === 1) && m.cfg.mode === 'blitz') {
+    const held = m.heldPower?.[hs] ?? null;
+    s.hud.setHeldPower(held);
+    s.hud.setPowerDevice(input.lastDevice);
+    s.touch?.setPowerHeld(held);
+  }
+}
+
+/** What the human side did this match, counted from events: headers, goals from outside the box, tackles won, skill moves, pickups. */
+interface Tally {
+  headers: number;
+  longGoals: number;
+  tacklesWon: number;
+  skills: number;
+  powerups: number;
+  lastShot: { player: number; kind: KickKind; x: number; z: number; at: number } | null;
+}
+
+const newTally = (): Tally => ({ headers: 0, longGoals: 0, tacklesWon: 0, skills: 0, powerups: 0, lastShot: null });
+
+/** Match seconds over both halves. */
+const matchAt = (m: Match) => (m.half - 1) * m.cfg.halfLength + m.clock;
+
+function track(t: Tally, e: MatchEvent, m: Match, hs: Side): void {
+  switch (e.type) {
+    case 'kick':
+      if (e.kind === 'shot' || e.kind === 'header') t.lastShot = { player: m.ball.lastTouch, kind: e.kind, x: e.x, z: e.z, at: matchAt(m) };
+      break;
+    case 'goal': {
+      if (e.side !== hs || e.own) break;
+      const ls = t.lastShot;
+      if (!ls || ls.player !== e.scorer || matchAt(m) - ls.at > 6) break;
+      if (ls.kind === 'header') t.headers++;
+      else if (HALF_L - m.attackDir(hs) * ls.x > BOX_DEPTH + 0.5 || Math.abs(ls.z) > BOX_W / 2 + 0.5) t.longGoals++;
+      break;
+    }
+    case 'tackle':
+      if (e.won && m.players[e.by]?.side === hs) t.tacklesWon++;
+      break;
+    case 'skill':
+      if (m.players[e.player]?.side === hs) t.skills++;
+      break;
+    case 'beat':
+      if (m.players[e.by]?.side === hs) t.skills++;
+      break;
+    case 'powerupTaken':
+      if (e.side === hs) t.powerups++;
+      break;
+    default:
+      break;
   }
 }
 
@@ -175,6 +232,15 @@ function mainInfo(): MainInfo {
   }
   const gift = giftToday();
   if (gift) info.gift = gift;
+  // Progression: the level badge and today's challenges (rolled over to a new day here, and saved if so).
+  const p = save.progress;
+  const lv = levelOf(p.xp);
+  info.level = { level: lv.level, title: levelTitle(lv.level), into: lv.into, need: lv.need };
+  const dayBefore = p.daily.day;
+  const daily = dailyFor(p, localDay());
+  if (daily.day !== dayBefore) persist();
+  info.daily = { list: dailyChallenges(daily.day), progress: daily.progress, claimed: daily.claimed, fresh: daily.fresh };
+  info.streak = p.streak;
   return info;
 }
 
@@ -198,7 +264,8 @@ function mainMenu(): void {
         back: mainMenu,
       });
     },
-    quick: quickMatch,
+    quick: () => quickMatch(),
+    blitz: () => quickMatch('blitz'),
     career: () => openCareer(app),
     cup: () => openCup(app),
     club: () => openClub(app),
@@ -217,10 +284,12 @@ export function standardReward(r: MatchResult, difficulty: number): { coins: num
   return { coins: Math.round((base + my * 20) * mult), label: my > their ? 'WIN BONUS' : 'MATCH FEE' };
 }
 
-function quickMatch(): void {
-  menus.quickMatch(save, mainMenu, (h, a) => {
+/** Quick Match. `mode` preselects CLASSIC / BLITZ (the BLITZ tile); otherwise the last one played. */
+function quickMatch(mode?: MatchMode): void {
+  menus.quickMatch(save, mainMenu, (h, a, m) => {
     save.clubIdx = h;
     save.opponentIdx = a;
+    save.settings.lastMode = m;
     persist();
     const home = makeTeam(PRESET_CLUBS[h]);
     const away = makeTeam(PRESET_CLUBS[a]);
@@ -233,11 +302,12 @@ function quickMatch(): void {
       halfMinutes: save.settings.halfMinutes,
       attendance: 0.9,
       stadiumLevel: 5,
+      mode: m,
       reward: (r) => standardReward(r, difficulty),
       onDone: () => mainMenu(),
       onQuit: () => mainMenu(),
     });
-  });
+  }, mode);
 }
 
 function pickTime(): TimeOfDay {
@@ -291,6 +361,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     timeOfDay: req.timeOfDay ?? pickTime(),
     weather: req.weather ?? pickWeather(),
     knockout: req.knockout,
+    // Career and the cup stay classic; Quick Match passes the mode the player picked.
+    mode: req.mode ?? 'classic',
     stadiumLevel: Math.max(0, Math.min(5, Math.round(req.stadiumLevel ?? 5))),
     tutorial: !save.seenTutorial,
     camZoom: camZoom(),
@@ -298,6 +370,13 @@ async function startMatch(req: MatchRequest): Promise<void> {
   applyControls(session.match);
   session.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
   session.hud?.setProjector(project);
+  const blitz = req.mode === 'blitz';
+  session.hud?.setBlitz(blitz);
+  session.touch?.setBlitz(blitz);
+  // Count what the human does (headers, long-range goals, tackles, skills, pickups) for XP and the daily challenges.
+  const tally = newTally();
+  const hs: Side = humanSide === 1 ? 1 : 0;
+  if (session.hud) session.hud.onEvent = (e, m) => track(tally, e, m, hs);
   const s = session;
   ads.gameplayStart();
   const tacticsMenu = (back: () => void) =>
@@ -346,9 +425,32 @@ async function startMatch(req: MatchRequest): Promise<void> {
     matchesPlayed++;
     recordResult(r);
     save.seenTutorial = true;
-    const reward = req.reward(r);
-    let earned = reward.coins;
-    save.coins += reward.coins;
+    // Progression: the win streak boosts the coins (×1.1 a win, up to ×2); XP, stars and today's challenges.
+    const my = r.score[hs];
+    const their = r.score[hs === 0 ? 1 : 0];
+    const won = r.winner === hs;
+    const drawn = r.winner === undefined && my === their;
+    const p = save.progress;
+    p.streak = nextStreak(p.streak, won, drawn);
+    p.bestStreak = Math.max(p.bestStreak, p.streak);
+    const mult = won ? streakMult(p.streak) : 1;
+    const base = req.reward(r);
+    const reward = { coins: Math.round(base.coins * mult), label: base.label };
+    const summary: MatchSummary = {
+      won, drawn, goals: my, conceded: their,
+      assists: (r.ratings ?? []).filter((x) => x.side === hs).reduce((n, x) => n + x.assists, 0),
+      tacklesWon: tally.tacklesWon, passes: r.match.stats.passes[hs], skills: tally.skills, headers: tally.headers,
+      longGoals: tally.longGoals, powerups: tally.powerups, motm: r.ratings?.[0]?.side === hs, blitz, difficulty: req.difficulty,
+    };
+    const xpFrom = p.xp;
+    p.xp += matchXp(summary);
+    const stars = matchStars(summary);
+    p.stars += stars;
+    const daily = dailyFor(p, localDay());
+    const done = advanceDaily(daily, dailyChallenges(daily.day), summary);
+    const bonus = done.reduce((n, x) => n + x.challenge.coins, 0);
+    let earned = reward.coins + bonus;
+    save.coins += earned;
     persist();
     let doubled = false;
     menus.fulltime(r.match, kits, humanSide, reward, ads.rewardedAvailable && reward.coins > 0, {
@@ -369,7 +471,9 @@ async function startMatch(req: MatchRequest): Promise<void> {
         endMatch();
         req.onDone(r, earned);
       },
-    }, r.ratings);
+    }, r.ratings, {
+      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: done.map((x) => ({ text: x.challenge.text, coins: x.challenge.coins })),
+    });
   };
   window.addEventListener('keydown', pauseKey);
 }
@@ -423,6 +527,7 @@ async function boot(): Promise<void> {
     startMatch({
       home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)], humanSide: 0,
       difficulty: save.settings.difficulty, halfMinutes: save.settings.halfMinutes, attendance: 0.9, stadiumLevel: 5,
+      mode: params.has('blitz') ? 'blitz' : 'classic',
       reward: (r) => standardReward(r, save.settings.difficulty), onDone: () => mainMenu(),
     });
     return;

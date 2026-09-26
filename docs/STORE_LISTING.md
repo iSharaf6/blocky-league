@@ -33,6 +33,10 @@ _(153 chars)_
 >
 > Every goal gets a celebration and an instant replay. The stadium fills with a roaring voxel crowd, and matches are played in daylight, at sunset or under the floodlights. Win matches to earn coins. You can double your prize by watching an optional ad on supported sites.
 >
+> **Blitz mode** turns a quick match into a power-up scrap: grab the glowing pickups for a turbo burst, a mega shot, a freeze, a magnet or a shield, and use them at the right moment. Classic mode stays pure football.
+>
+> Every match earns XP: level up from Sunday Leaguer to Blocky Legend, collect match stars, keep a win streak going for bigger coin rewards, and beat three fresh daily challenges every day. Everything is earned by playing: there is nothing to buy.
+>
 > **[career build]** Start your own club at the bottom of six divisions, set your formation, train your squad, sign players from the transfer market and grow your stadium on the way to the top.
 >
 > Controls work on keyboard, gamepad and touch screens, and your progress is saved in your browser.
@@ -41,15 +45,15 @@ _(153 chars)_
 
 **Description:**
 
-> Chunky voxel football in your browser. Pick one of eleven clubs and take on the AI on four difficulty levels, from Easy to Legend. Thread passes, power up screamers, float crosses and time first-time volleys, then switch players and slide-tackle to win it back. Every goal gets a celebration and an instant replay, in front of a roaring voxel crowd by day, at sunset or under the floodlights. Earn coins for every match.
+> Chunky voxel football in your browser. Pick one of eleven clubs and take on the AI on four difficulty levels, from Easy to Legend. Thread passes, power up screamers, float crosses and time first-time volleys, then switch players and slide-tackle to win it back. Blitz mode adds power-ups: turbo, mega shot, freeze, magnet and shield. Level up, keep a win streak going and beat three daily challenges. Every goal gets a celebration and an instant replay.
 
-_(420 chars)_
+_(455 chars)_
 
 **Instructions:**
 
-> Move with WASD or the arrow keys. Space passes (aim with the stick), hold and release K to shoot, tap L for a through ball or hold L to lob or cross, and hold Shift to sprint. Defending: Space switches player, K slide-tackles, hold L to press. Esc pauses. Gamepad: A pass, B shoot, X through ball, RT sprint. Touch: stick on the left, buttons on the right.
+> Move with WASD or the arrow keys. Space passes (aim with the stick), hold and release K to shoot, tap L for a through ball or hold L to lob or cross, and hold Shift to sprint. Defending: Space switches player, K tackles (hold or tap while sprinting to slide), hold L to press. E uses a Blitz power-up. Esc pauses. Gamepad: A pass, B shoot, X through ball, Y power-up, RT sprint. Touch: stick on the left, buttons on the right.
 
-_(356 chars)_
+_(417 chars)_
 
 **Genres (1–2):** Sports, Arcade · **Tags (1–5):** football, soccer, 3d, sports, arcade
 
@@ -66,11 +70,12 @@ KEYBOARD
   Shoot .............. Hold & release K
   Through ball ....... Tap L   ·   Lob / cross: hold L
   Sprint ............. Shift
-  Defend ............. Space switch player · K slide tackle · hold L press
+  Defend ............. Space switch player · K tackle (tap while sprinting or hold: slide) · hold L press
+  Power-up (Blitz) ... E
   Pause .............. Esc / P
 
-GAMEPAD   A pass · B shoot · X through ball · RT sprint
-TOUCH     Virtual stick on the left, action buttons on the right
+GAMEPAD   A pass · B shoot · X through ball · Y power-up · RT sprint
+TOUCH     Virtual stick on the left, action buttons on the right (⚡ in Blitz)
 TIP       Press SHOOT just before a pass or cross reaches you for a first-time finish
 ```
 
@@ -89,7 +94,7 @@ Each portal has its own taxonomy, so pick from their list when you submit. These
 | GameDistribution | Sports, Arcade | football, soccer, 3d, sports, arcade |
 | itch.io | Genre: Sports · Made with: Three.js | football, soccer, voxel, low-poly, 3d, arcade, browser, singleplayer |
 
-**Age / content:** no violence beyond slide tackles, no chat, no user-generated content, no purchases. Suitable for all ages. This meets CrazyGames' PEGI-12 requirement.
+**Age / content:** no violence beyond slide tackles, no chat, no purchases. The only text a player can type is a club name and a three-letter code, both run through a profanity filter and never shown to other players. Progression (XP, levels, stars, streaks, daily challenges) is earned by playing only. Suitable for all ages. This meets CrazyGames' PEGI-12 requirement.
 
 ---
 

@@ -1,10 +1,15 @@
 import { BALL_OFS, PF } from '../game/replay';
 import { BOX_DEPTH, BOX_W, CENTER_R, GOAL_DEPTH, GOAL_H, GOAL_W, HALF_L, HALF_W } from '../sim/constants';
 import type { Match } from '../sim/match';
-import type { Kit, MatchEvent, TeamDef } from '../sim/types';
+import type { Kit, MatchEvent, PowerUpKind, TeamDef } from '../sim/types';
 import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
-import { Commentator, pitchNames, speak, stopSpeech, surname, type CommentaryLine } from './commentary';
+import { Commentator, POWER_INFO, pitchNames, speak, stopSpeech, surname, type CommentaryLine } from './commentary';
+
+/** How long (s) each power-up runs once used, for the slot's countdown ring when the sim doesn't say. */
+export const POWER_SECONDS: Record<PowerUpKind, number> = { turbo: 6, mega: 8, freeze: 5, magnet: 6, shield: 6 };
+/** Seconds a power-up banner ("TURBO!") stays up. */
+const POWER_BANNER_S = 1.3;
 
 /** Screen position (CSS px, viewport origin) of a world point, or null when it is behind the camera. */
 export type Projector = (x: number, y: number, z: number) => { x: number; y: number } | null;
@@ -119,6 +124,21 @@ export class Hud {
   private cmBlocked = false;
   /** The banner up now is a booking (compact plate in the top band / under the score bug). */
   private bannerCard = false;
+  /** The banner up now is a power-up call ("TURBO!"): the same plate, kept off the goal mouth. */
+  private bannerPower = false;
+  private bannerPlaceT = 0;
+  /** Blitz: the power-up slot under the score bug. */
+  private power: HTMLDivElement;
+  private powerIcon: HTMLElement;
+  private powerName: HTMLElement;
+  private powerKey: HTMLElement;
+  private powerRing: SVGCircleElement;
+  private powerKind: PowerUpKind | null = null;
+  private powerActive: { kind: PowerUpKind; left: number; total: number } | null = null;
+  private powerDevice: 'keyboard' | 'touch' | 'gamepad' = 'keyboard';
+  private powerPlaceT = 0;
+  /** Every match event, before the commentary (main.ts counts goals, headers, tackles ... for XP and challenges). */
+  onEvent: ((e: MatchEvent, m: Match) => void) | null = null;
   onPause: (() => void) | null = null;
 
   constructor(teams: [HudTeam, HudTeam], humanSide: number) {
@@ -135,6 +155,10 @@ export class Hud {
         <div class="sb-cards a"></div>
       </div>
       <button class="hud-pause" aria-label="Pause">II</button>
+      <div class="hud-power" role="status" aria-live="polite" hidden>
+        <span class="pw-slot"><i class="pw-ico"></i><svg class="pw-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="pw-ring-bg" cx="20" cy="20" r="17"/><circle class="pw-ring-fg" cx="20" cy="20" r="17"/></svg></span>
+        <span class="pw-text"><b class="pw-name">NO POWER-UP</b><kbd class="pw-key">E</kbd></span>
+      </div>
       <div class="hud-banner"></div>
       <div class="hud-toast"></div>
       <div class="hud-timing" aria-live="polite"></div>
@@ -157,6 +181,11 @@ export class Hud {
     this.radar = this.root.querySelector('.hud-radar')!;
     this.toast = this.root.querySelector('.hud-toast')!;
     this.timingEl = this.root.querySelector('.hud-timing')!;
+    this.power = this.root.querySelector('.hud-power')!;
+    this.powerIcon = this.root.querySelector('.pw-ico')!;
+    this.powerName = this.root.querySelector('.pw-name')!;
+    this.powerKey = this.root.querySelector('.pw-key')!;
+    this.powerRing = this.root.querySelector('.pw-ring-fg')!;
     this.humanSide = humanSide;
     this.cm = this.root.querySelector('.hud-cm')!;
     this.cmTag = this.root.querySelector('.cm-tag')!;
@@ -188,13 +217,17 @@ export class Hud {
     this.clock.innerHTML = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}${extra ? `<em>+${extra}</em>` : ''}`;
   }
 
-  /** Big chunky centre text. Bookings (kind "card") are a compact plate up top instead (see placeBanner). */
+  /**
+   * Big chunky centre text. Bookings (kind "card") and power-up calls (kind "power") are a compact plate up
+   * top instead (see placeBanner); the power plate also keeps off the goal mouth in shot.
+   */
   show(title: string, sub = '', kind = '', seconds = 2.2): void {
-    this.banner.className = `hud-banner on ${kind}`;
+    this.bannerCard = /(^|\s)card(\s|$)/.test(kind);
+    this.bannerPower = /(^|\s)power(\s|$)/.test(kind);
+    this.banner.className = `hud-banner on ${kind}${this.bannerCard || this.bannerPower ? ' plate' : ''}`;
     const letters = [...title].map((ch, i) => `<i style="animation-delay:${i * 45}ms">${ch === ' ' ? '&nbsp;' : ch}</i>`).join('');
     this.banner.innerHTML = `<div class="bn-title">${letters}</div>${sub ? `<div class="bn-sub">${sub}</div>` : ''}`;
     this.bannerTimer = seconds;
-    this.bannerCard = /(^|\s)card(\s|$)/.test(kind);
     const st = this.banner.style;
     st.left = st.top = st.width = '';
     if (this.bannerCard) {
@@ -202,9 +235,96 @@ export class Hud {
       this.toast.classList.remove('on');
       this.toastTimer = 0;
       this.suppressHints(seconds);
+    }
+    if (this.bannerCard || this.bannerPower) {
+      this.bannerPlaceT = 0.25;
       this.placeBanner();
       if (this.cmLine) this.placeTicker();
     }
+  }
+
+  // ---------------------------------------------------------------- blitz: the power-up slot
+
+  /** Blitz mode shows the power-up slot under the score bug; classic football hides it. */
+  setBlitz(on: boolean): void {
+    this.power.hidden = !on;
+    this.root.classList.toggle('blitz', on);
+    if (!on) {
+      this.powerKind = null;
+      this.powerActive = null;
+    }
+    this.drawPower();
+  }
+
+  /** The device in hand: the slot's key hint reads E (keyboard), Y (gamepad) or ⚡ (the touch button). */
+  setPowerDevice(dev: 'keyboard' | 'touch' | 'gamepad'): void {
+    if (dev === this.powerDevice) return;
+    this.powerDevice = dev;
+    this.drawPower();
+  }
+
+  /** The power-up the human side holds (Match.heldPower, every frame). A new one pulses the slot. */
+  setHeldPower(kind: PowerUpKind | null): void {
+    if (kind === this.powerKind) return;
+    this.powerKind = kind;
+    this.drawPower();
+    if (kind) {
+      this.power.classList.remove('got');
+      void this.power.offsetWidth;
+      this.power.classList.add('got');
+    }
+  }
+
+  /** The human side used a power-up: banner, and the slot counts it down (the sim's duration, or POWER_SECONDS). */
+  powerUsed(kind: PowerUpKind, seconds = POWER_SECONDS[kind]): void {
+    const total = Math.max(0.5, seconds);
+    this.powerActive = { kind, left: total, total };
+    this.powerKind = null;
+    this.drawPower();
+    this.show(POWER_INFO[kind].banner, '', 'power small', POWER_BANNER_S);
+    this.banner.style.setProperty('--pw', POWER_INFO[kind].color);
+  }
+
+  /** The active power-up wore off (the sim's powerupEnd; the ring would run out on its own otherwise). */
+  powerEnded(): void {
+    if (!this.powerActive) return;
+    this.powerActive = null;
+    this.drawPower();
+  }
+
+  /** What the slot shows and the countdown left (tests / debugging). */
+  get powerState(): { held: PowerUpKind | null; active: PowerUpKind | null; left: number } {
+    return { held: this.powerKind, active: this.powerActive?.kind ?? null, left: this.powerActive?.left ?? 0 };
+  }
+
+  /** The slot hangs under the score bug (whose height changes with booking chips and the clock row wrapping). */
+  private placePower(): void {
+    if (this.power.hidden) return;
+    const sb = this.rectOf('.scorebug', false);
+    if (!sb) return;
+    const top = `${Math.round(sb.b + 6)}px`;
+    if (this.power.style.top !== top) this.power.style.top = top;
+  }
+
+  private drawPower(): void {
+    this.placePower();
+    const el = this.power;
+    const a = this.powerActive;
+    const kind = a?.kind ?? this.powerKind;
+    const info = kind ? POWER_INFO[kind] : null;
+    el.classList.toggle('on', !el.hidden);
+    el.classList.toggle('has', !!this.powerKind && !a);
+    el.classList.toggle('active', !!a);
+    el.dataset.kind = kind ?? '';
+    el.style.setProperty('--pw', info?.color ?? 'rgba(255,255,255,0.35)');
+    this.powerIcon.textContent = info?.icon ?? '';
+    this.powerName.textContent = a ? info!.name.toUpperCase() : info ? info.name.toUpperCase() : 'NO POWER-UP';
+    this.powerKey.textContent = this.powerDevice === 'gamepad' ? 'Y' : this.powerDevice === 'touch' ? '⚡' : 'E';
+    this.powerKey.hidden = !this.powerKind || !!a;
+    const ring = this.powerRing;
+    const C = 2 * Math.PI * 17;
+    ring.style.strokeDasharray = `${C}`;
+    ring.style.strokeDashoffset = `${a ? C * (1 - Math.max(0, Math.min(1, a.left / a.total))) : C}`;
   }
 
   /**
@@ -219,12 +339,13 @@ export class Hud {
   }
 
   /**
-   * Booking plate: in the top band beside the score bug when it fits there (landscape), else right under the
-   * top cluster, centred (portrait). Either way the top ~20% of the screen, never across the players the
-   * card close-up frames in the middle of the lens.
+   * Booking / power-up plate: in the top band beside the score bug when it fits there (landscape), else right
+   * under the top cluster, centred (portrait). Either way the top ~20% of the screen, never across the players
+   * the card close-up frames in the middle of the lens. A power-up plate also takes whichever of the two
+   * keeps off the goal mouth in shot (a corner, a shot on the way).
    */
   private placeBanner(): void {
-    if (!this.bannerCard) return;
+    if (!this.bannerCard && !this.bannerPower) return;
     const b = this.banner;
     const st = b.style;
     const W = window.innerWidth;
@@ -233,16 +354,26 @@ export class Hud {
     const sb = this.rectOf('.scorebug', false);
     if (!sb) return;
     const pause = this.rectOf('.hud-pause', false);
+    type Cand = { l: number; w: number; t: number };
+    const apply = (c: Cand) => {
+      st.left = `${Math.round(c.l)}px`;
+      st.width = `${Math.round(c.w)}px`;
+      st.top = `${Math.round(c.t)}px`;
+    };
+    const rectAfter = (c: Cand): Rect => {
+      apply(c);
+      return { l: c.l, t: c.t, r: c.l + c.w, b: c.t + b.offsetHeight };
+    };
+    const cands: { c: Cand; r: Rect }[] = [];
     const bl = sb.r + g;
     const br = (pause ? pause.l : W) - g;
     if (br - bl >= 300) {
-      st.left = `${Math.round(bl)}px`;
-      st.width = `${Math.round(br - bl)}px`;
-      st.top = `${Math.round(sb.t)}px`;
-      if (b.offsetHeight <= Math.max(H * 0.2 - sb.t, 64)) return;
+      const c = { l: bl, w: br - bl, t: sb.t };
+      const r = rectAfter(c);
+      if (r.b - r.t <= Math.max(H * 0.2 - sb.t, 64)) cands.push({ c, r });
     }
     let top = sb.b;
-    for (const sel of ['.so-track', '.hud-toast.on']) {
+    for (const sel of ['.so-track', '.hud-toast.on', '.hud-power.on']) {
       const r = this.rectOf(sel, false);
       if (r && r.t < H * 0.4) top = Math.max(top, r.b);
     }
@@ -253,14 +384,18 @@ export class Hud {
       if (radar.l > W / 2 && radar.l - 8 - g >= 240) right = radar.l - 8;
       else top = Math.max(top, radar.b);
     }
-    st.left = `${g}px`;
-    st.width = `${Math.round(right - g)}px`;
-    st.top = `${Math.round(top + 8)}px`;
+    const under = { l: g, w: right - g, t: top + 8 };
+    cands.push({ c: under, r: rectAfter(under) });
+    // Bookings: the first that fits (as before). Power-ups: the first clear of the goal mouth, else the least over it.
+    const goals = this.bannerPower ? this.goalRects() : [];
+    const cost = (r: Rect) => goals.reduce((c, gr) => c + overlapArea(r, gr, 10), 0);
+    const pick = cands.find((x) => cost(x.r) === 0) ?? [...cands].sort((a, c) => cost(a.r) - cost(c.r))[0];
+    apply(pick.c);
   }
 
-  /** The booking plate's box while it is up (the ticker keeps clear of it). */
+  /** The booking / power-up plate's box while it is up (the ticker keeps clear of it). */
   private cardBannerRect(): Rect | null {
-    return this.bannerCard && this.bannerTimer > 0 ? this.rectOf('.hud-banner.card', false) : null;
+    return (this.bannerCard || this.bannerPower) && this.bannerTimer > 0 ? this.rectOf('.hud-banner.plate', false) : null;
   }
 
   /**
@@ -283,6 +418,8 @@ export class Hud {
     let top = sb.b;
     const so = this.rectOf('.so-track', false);
     if (so) top = Math.max(top, so.b);
+    const pw = this.rectOf('.hud-power.on', false);
+    if (pw) top = Math.max(top, pw.b);
     top += 8;
     const w = this.toast.offsetWidth;
     const h = this.toast.offsetHeight;
@@ -414,6 +551,19 @@ export class Hud {
   commentary(e: MatchEvent, m: Match): void {
     this.m = m;
     try {
+      this.onEvent?.(e, m);
+    } catch {
+      // A counting hook must never break the match loop.
+    }
+    try {
+      // Blitz: the slot follows the human side's pickups (Match.heldPower is synced every frame as well).
+      if (e.type === 'powerupTaken' || e.type === 'powerupUsed' || e.type === 'powerupEnd') {
+        if (this.humanSide >= 0 && e.side === this.humanSide) {
+          if (e.type === 'powerupTaken') this.setHeldPower(e.kind);
+          else if (e.type === 'powerupUsed') this.powerUsed(e.kind, this.powerSeconds(m, e.kind));
+          else this.powerEnded();
+        }
+      }
       // Timed finishing: the verdict on the human's second SHOOT tap (the session forwards every event here).
       if (e.type === 'timing') {
         const p = m.players[e.player];
@@ -436,6 +586,13 @@ export class Hud {
     } catch {
       // Commentary must never break the match loop.
     }
+  }
+
+  /** How long the sim says a power-up runs (Match.powerSeconds / POWER_DURATION, if it has them), else POWER_SECONDS. */
+  private powerSeconds(m: Match, kind: PowerUpKind): number {
+    const x = m as unknown as { powerSeconds?: Partial<Record<PowerUpKind, number>>; POWER_DURATION?: Partial<Record<PowerUpKind, number>> };
+    const v = x.powerSeconds?.[kind] ?? x.POWER_DURATION?.[kind];
+    return typeof v === 'number' && v > 0 ? v : POWER_SECONDS[kind];
   }
 
   /** The line on the ticker right now (tests / debugging). */
@@ -580,7 +737,7 @@ export class Hud {
     // 2) Under the top cluster (score bug + chips, shootout tracker, flag, radar in portrait, hint, tip, plate).
     const setPiece = this.setPiece();
     let under = sb.b;
-    for (const sel of ['.so-track', '.hud-toast.on', '.hud-hint.on:not(.low)', '.hud-tip.on', '.hud-radar', '.hud-banner.on.goal .bn-sub']) {
+    for (const sel of ['.so-track', '.hud-toast.on', '.hud-power.on', '.hud-hint.on:not(.low)', '.hud-tip.on', '.hud-radar', '.hud-banner.on.goal .bn-sub']) {
       // By class, not opacity: a widget fading in counts at once, and the minimap counts even while faded
       // out (it comes back mid-line) except at a dead ball, where it stays off until the kick is taken.
       // display:none (the shootout's minimap) never counts.
@@ -724,7 +881,7 @@ export class Hud {
     const take = (q: Rect | null) => {
       if (q && q.t < H * 0.4 && q.r > l && q.l < r) y = Math.max(y, q.b);
     };
-    for (const sel of ['.scorebug', '.so-track', '.hud-toast.on', '.hud-pause']) take(this.rectOf(sel, false));
+    for (const sel of ['.scorebug', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause']) take(this.rectOf(sel, false));
     // The minimap only while it shows (it is off for set pieces).
     if (!this.radarHidden && !this.root.classList.contains('dead')) take(this.rectOf('.hud-radar'));
     // Landscape: a little lower than the top row, which belongs to the ticker and the event flag.
@@ -1045,6 +1202,27 @@ export class Hud {
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.banner.classList.remove('on');
+      else if (this.bannerPower && this.project) {
+        // The camera pans: keep the power-up plate off the goal mouth (checked a few times a second).
+        this.bannerPlaceT -= dt;
+        if (this.bannerPlaceT <= 0) {
+          this.bannerPlaceT = 0.25;
+          const r = this.banner.getBoundingClientRect();
+          const box = { l: r.left, t: r.top, r: r.right, b: r.bottom };
+          if (this.goalRects().some((gr) => overlapArea(box, gr, 6) > 0)) this.placeBanner();
+        }
+      }
+    }
+    if (this.powerActive) {
+      this.powerActive.left -= dt;
+      if (this.powerActive.left <= 0) this.powerActive = null;
+      this.drawPower();
+    } else if (!this.power.hidden) {
+      this.powerPlaceT -= dt;
+      if (this.powerPlaceT <= 0) {
+        this.powerPlaceT = 0.5;
+        this.placePower();
+      }
     }
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;

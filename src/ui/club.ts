@@ -6,11 +6,12 @@ import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
 import { Rng } from '../core/rng';
 import {
-  KEY_STATS, NAME_BAD, PATTERNS, SQUAD_MAX, STADIUM_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_STEP,
-  autoPick, clubRating, createClub, deriveShort, keeperColor, lineupIssues, matchAttendance, migrateCareer, randomKit,
+  KEY_STATS, PATTERNS, SQUAD_MAX, STADIUM_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_STEP,
+  autoPick, clubRating, createClub, keeperColor, lineupIssues, matchAttendance, migrateCareer, randomKit,
   sanitizeName, sanitizeShort, setFormation, stadiumUpgradeCost, swapPlayers, trainPlayer, trainingCost, upgradeStadium,
   type CareerState, type ClubState, type TxFail,
 } from '../meta/career';
+import { NAME_DISALLOWED, cleanName, fallbackShort, isNameAllowed, nameProblem } from '../core/names';
 import { KIT_COLORS } from '../meta/data';
 import { cssHex } from '../render/palette';
 import { STADIUM_LEVELS } from '../render/stadium';
@@ -20,6 +21,31 @@ import { pitchLayout, shirtArt } from './menus';
 import { StadiumPreview, faceHtml, hydrateFaces, stadiumIsoSvg } from './preview';
 
 // ------------------------------------------------------------------ shared screen kit
+
+/**
+ * Live verdict on a name field: red when it can't be used; "Pick another name" (and a shake, unless the
+ * player prefers reduced motion) when it is on the blocklist. The message sits in the field's .mc-why.
+ */
+export function markField(input: HTMLElement | null, problem: '' | 'short' | 'blocked', why = 'Pick another name'): void {
+  if (!input) return;
+  const wrap = input.closest<HTMLElement>('.mc-field') ?? input;
+  input.classList.toggle('bad', problem !== '');
+  const was = wrap.classList.contains('blocked');
+  wrap.classList.toggle('blocked', problem === 'blocked');
+  const em = wrap.querySelector('.mc-why');
+  if (em) em.textContent = problem === 'blocked' ? why : '';
+  if (problem === 'blocked' && !was) {
+    wrap.classList.remove('shake');
+    void wrap.offsetWidth;
+    wrap.classList.add('shake');
+  }
+}
+
+/** Why a typed short code can't be used: three letters or digits that aren't a blocked word. */
+export function shortProblem(code: string): '' | 'short' | 'blocked' {
+  if (code.length && !isNameAllowed(code)) return 'blocked';
+  return code.length === 3 ? '' : 'short';
+}
 
 export type Handlers = Record<string, (el: HTMLElement) => void>;
 export type InputHandlers = Record<string, (el: HTMLInputElement) => void>;
@@ -230,7 +256,7 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
   const name0 = SUGGESTED[Math.floor(Math.random() * SUGGESTED.length)];
   const d = {
     name: name0,
-    short: deriveShort(name0),
+    short: fallbackShort(name0),
     shortEdited: false,
     kit: randomKit(new Rng((Math.random() * 2 ** 32) >>> 0)),
     formation: '4-4-2' as FormationId,
@@ -239,11 +265,11 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
   const valid = () => sanitizeName(d.name).length >= 2 && sanitizeShort(d.short).length === 3;
   const update = () => {
     const pv = scr.panel.querySelector('.mc-preview');
-    if (pv) pv.innerHTML = previewHtml(d.kit, sanitizeName(d.name), d.short);
+    if (pv) pv.innerHTML = previewHtml(d.kit, sanitizeName(d.name) || cleanName(d.name), d.short);
     const btn = scr.panel.querySelector<HTMLButtonElement>('[data-a=create]');
     if (btn) btn.disabled = !valid();
-    scr.panel.querySelector('[data-in=name]')?.classList.toggle('bad', sanitizeName(d.name).length < 2);
-    scr.panel.querySelector('[data-in=short]')?.classList.toggle('bad', d.short.length !== 3);
+    markField(scr.panel.querySelector('[data-in=name]'), nameProblem(d.name));
+    markField(scr.panel.querySelector('[data-in=short]'), shortProblem(d.short), 'Pick another code');
   };
   const draw = () =>
     scr.render(
@@ -252,8 +278,8 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
         <div class="mc-preview">${previewHtml(d.kit, sanitizeName(d.name), d.short)}</div>
         <div class="mc-form">
           <div class="mc-fields">
-            <label class="mc-field"><span>CLUB NAME</span><input data-in="name" maxlength="18" value="${esc(d.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"></label>
-            <label class="mc-field mc-short"><span>SHORT</span><input data-in="short" maxlength="3" value="${esc(d.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"></label>
+            <label class="mc-field"><span>CLUB NAME</span><input data-in="name" maxlength="18" value="${esc(d.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
+            <label class="mc-field mc-short"><span>SHORT</span><input data-in="short" maxlength="3" value="${esc(d.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
           </div>
           <h3 class="mc-h">KIT</h3>
           ${kitEditorHtml(d.kit, part.v)}
@@ -280,18 +306,19 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
       },
       {
         name: (el) => {
-          const v = el.value.replace(NAME_BAD, '');
+          const v = el.value.replace(NAME_DISALLOWED, '');
           if (v !== el.value) el.value = v;
           d.name = v;
           if (!d.shortEdited) {
-            d.short = deriveShort(sanitizeName(v));
+            // The code comes from the name; a blocked one (or a blocked name) falls back to letters that pass.
+            d.short = fallbackShort(cleanName(v));
             const s = scr.panel.querySelector<HTMLInputElement>('[data-in=short]');
             if (s) s.value = d.short;
           }
           update();
         },
         short: (el) => {
-          const v = sanitizeShort(el.value);
+          const v = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
           if (v !== el.value) el.value = v;
           d.short = v;
           d.shortEdited = true;
@@ -429,8 +456,8 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       <div class="mc-preview">${previewHtml(club.kit, club.name, club.short)}</div>
       <div class="mc-form">
         <div class="mc-fields">
-          <label class="mc-field"><span>CLUB NAME</span><input data-in="cname" maxlength="18" value="${esc(club.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"></label>
-          <label class="mc-field mc-short"><span>SHORT</span><input data-in="cshort" maxlength="3" value="${esc(club.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"></label>
+          <label class="mc-field"><span>CLUB NAME</span><input data-in="cname" maxlength="18" value="${esc(club.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
+          <label class="mc-field mc-short"><span>SHORT</span><input data-in="cshort" maxlength="3" value="${esc(club.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
         </div>
         <h3 class="mc-h">KIT · CHANGES SAVE AUTOMATICALLY</h3>
         ${kitEditorHtml(club.kit, part.v)}
@@ -581,11 +608,11 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       },
       {
         cname: (el) => {
-          const v = el.value.replace(NAME_BAD, '');
+          const v = el.value.replace(NAME_DISALLOWED, '');
           if (v !== el.value) el.value = v;
-          const ok = sanitizeName(v).length >= 2;
-          el.classList.toggle('bad', !ok);
-          if (!ok) return;
+          const problem = nameProblem(v);
+          markField(el, problem);
+          if (problem) return;
           club.name = sanitizeName(v);
           app.persist();
           const kp = scr.panel.querySelector('.mc-preview');
@@ -594,10 +621,11 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           if (bar) bar.textContent = club.name;
         },
         cshort: (el) => {
-          const v = sanitizeShort(el.value);
+          const v = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
           if (v !== el.value) el.value = v;
-          el.classList.toggle('bad', v.length !== 3);
-          if (v.length !== 3) return;
+          const problem = shortProblem(v);
+          markField(el, problem, 'Pick another code');
+          if (problem) return;
           club.short = v;
           app.persist();
           const kp = scr.panel.querySelector('.mc-preview');

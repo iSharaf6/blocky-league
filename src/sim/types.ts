@@ -74,6 +74,25 @@ export function teamRating(t: TeamDef): number {
 /** Human pass assistance (FIFA-style): the lock-on, power correction and error the assist applies. */
 export type AssistLevel = 'assisted' | 'semi' | 'manual';
 
+/** Match mode: 'classic' football, or 'blitz' with power-up pickups on the pitch (see PowerUpKind). */
+export type MatchMode = 'classic' | 'blitz';
+
+/**
+ * Blitz power-ups. turbo: a burst of pace; mega: the next shot is a rocket that knocks the keeper back;
+ * freeze: the other side is slowed for a few seconds; magnet: the ball sticks to your feet and passes
+ * find you; shield: your carrier can't be tackled for a few seconds.
+ */
+export type PowerUpKind = 'turbo' | 'mega' | 'freeze' | 'magnet' | 'shield';
+
+/** A pickup lying on the pitch (blitz mode). `t` is seconds since it spawned. */
+export interface PowerUp {
+  id: number;
+  kind: PowerUpKind;
+  x: number;
+  z: number;
+  t: number;
+}
+
 export type MatchEvent =
   /** A strike of the ball. `style`: a shot played as a chip or a finesse (curled, placed) one. */
   | { type: 'kick'; power: number; x: number; y: number; z: number; kind: KickKind; style?: ShotStyle }
@@ -82,6 +101,8 @@ export type MatchEvent =
   | { type: 'post'; x: number; y: number; z: number; speed: number }
   | { type: 'save'; keeper: number; caught: boolean }
   | { type: 'tackle'; by: number; won: boolean; slide: boolean }
+  /** A TACKLE press committed to a lunge or slide (fires on the attempt, before any contact; render/HUD react). */
+  | { type: 'tackleTry'; by: number; slide: boolean }
   | { type: 'bounce'; speed: number }
   | { type: 'net'; x: number; y: number; z: number; speed: number }
   | { type: 'ooh' }
@@ -116,6 +137,11 @@ export type MatchEvent =
   | { type: 'offside'; side: Side; player: number }
   /** Timed finishing: the human's second SHOOT tap at the moment of contact (perfect / good) or mistimed. */
   | { type: 'timing'; player: number; grade: 'perfect' | 'good' | 'early' | 'late' }
+  /** Blitz mode: a pickup appeared / was collected / was activated / wore off. */
+  | { type: 'powerupSpawn'; id: number; kind: PowerUpKind; x: number; z: number }
+  | { type: 'powerupTaken'; id: number; kind: PowerUpKind; player: number; side: Side }
+  | { type: 'powerupUsed'; kind: PowerUpKind; player: number; side: Side }
+  | { type: 'powerupEnd'; kind: PowerUpKind; player: number; side: Side }
   /**
    * The referee plays advantage after a foul on `side` (the fouled team kept or won the ball back
    * in their attacking half): no free kick; any card for the foul is shown straight away.
