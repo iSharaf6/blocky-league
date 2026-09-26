@@ -74,6 +74,8 @@ interface Tally {
 const GOAL_WIDE_S = 0.7;
 /** The replay rolls once the celebration has had its moment (the scorer has been mobbed). */
 const REPLAY_AT = 2.6;
+/** A goal that gets no replay (an ordinary tap-in by either side): the celebration runs this long, then the kick-off. */
+const NO_REPLAY_AT = 3.4;
 /**
  * Presentation pace (owner playtest: "the gameplay is very very slow"): the pre-match fly-in, the replay's
  * lead-in before the goal and tail after it (s of match time), the build-up's playback rate and the slow-mo
@@ -214,6 +216,10 @@ export class MatchSession {
   private replayT = 0;
   private replayGoalIdx = 0;
   private replayDone = false;
+  /** Whether the goal just scored gets the automatic replay (see the 'goal' case: only ones worth watching again). */
+  private replayWanted = true;
+  private goldenGoalArmed = false;
+  private megaShotT = -9;
   private halftimeFired = false;
   private finishFired = false;
   private lastMinute = -1;
@@ -635,8 +641,12 @@ export class MatchSession {
       }
       // A beat on the wide shot (the ball in the net), then cut to the scorer and his team-mates.
       if (!this.replay && !this.replayDone && this.cam.mode !== 'celebrate' && m.phaseT > GOAL_WIDE_S) this.cam.setMode('celebrate');
-      if (m.phaseT > REPLAY_AT && !this.replayDone) this.startReplay();
-      else if (this.replayDone) {
+      // The replay rolls for a goal worth seeing again; a plain one goes straight from the celebration to the
+      // kick-off (round 9's critic: every goal replayed cost 8.5 s, ~7% of a two-minute half).
+      if (m.phaseT > (this.replayWanted ? REPLAY_AT : NO_REPLAY_AT) && !this.replayDone) {
+        if (this.replayWanted) this.startReplay();
+        else this.replayDone = true;
+      } else if (this.replayDone) {
         this.replayDone = false;
         m.resumeAfterGoal();
         this.cam.setMode('broadcast');
@@ -788,6 +798,11 @@ export class MatchSession {
     for (const e of events) {
       // Every event goes to the commentary ticker too.
       this.hud?.commentary(e, m);
+      if (e.type === 'powerupEnd') {
+        // (Both fire before the goal event they belong to: golden at the score, mega at the strike.)
+        if (e.kind === 'golden') this.goldenGoalArmed = true;
+        if (e.kind === 'mega') this.megaShotT = this.time;
+      }
       switch (e.type) {
         case 'kick': {
           sfx.kick(e.power, e.kind === 'header');
@@ -821,6 +836,13 @@ export class MatchSession {
           }
           this.lastPasser = [-1, -1];
           this.replayDone = false;
+          // Worth a replay: the human's side (or nobody's, in an AI match) scoring from range, with the head, a
+          // chip or a curler, a golden or mega goal, or any own goal. A tap-in gets the celebration only.
+          const human = m.cfg.humanSide;
+          const special = e.own || m.shotDist >= 16 || m.kickKind === 'header' || m.shotStyle === 'chip' || m.shotStyle === 'finesse' ||
+            this.goldenGoalArmed || this.time - this.megaShotT < 3;
+          this.replayWanted = (human < 0 || e.side === human || e.own) && special;
+          this.goldenGoalArmed = false;
           sfx.goal();
           const side = e.side;
           const s = m.teams[side];
