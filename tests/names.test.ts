@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NAME_MAX, cleanName, fallbackShort, isNameAllowed, nameProblem, safeName, safeShort } from '../src/core/names';
+import { NAME_MAX, cleanName, fallbackShort, isNameAllowed, isPairAllowed, nameProblem, safeName, safeShort } from '../src/core/names';
 import { sanitizeName, sanitizeShort } from '../src/meta/career';
 
 // A handful of blocked words, enough to exercise every disguise; the list itself lives in src/core/names.ts.
@@ -118,5 +118,47 @@ describe('name filter: characters and length', () => {
     expect(fallbackShort('Cum Laude')).not.toBe('CUM');
     expect(fallbackShort('Ab')).toBe('ABX');
     expect(fallbackShort('')).toBe('XXX');
+  });
+});
+
+// Round-9 critic leaks (measured with generated variants of the list, counts only): look-alike letters from
+// other scripts, every letter doubled, a stray letter inside a longer word, and a word split across the club
+// name and its short code.
+const CYR: Record<string, string> = { a: 'а', e: 'е', o: 'о', p: 'р', c: 'с', y: 'у', x: 'х', k: 'к', m: 'м', t: 'т', i: 'і', s: 'ѕ' };
+const homoglyph = (w: string) => [...w].map((c) => CYR[c] ?? c).join('');
+const greek = (w: string) => [...w].map((c) => ({ a: 'α', e: 'ε', o: 'ο', i: 'ι', k: 'κ', t: 'τ', u: 'υ', n: 'η', v: 'ν' } as Record<string, string>)[c] ?? c).join('');
+const doubled = (w: string) => [...w].map((c) => c + c).join('');
+const stray = (w: string) => w.slice(0, 2) + 'x' + w.slice(2);
+
+describe('look-alike letters, doubled letters, stray letters, split codes', () => {
+  it('a blocked word spelt with Cyrillic or Greek look-alikes is still blocked', () => {
+    for (const w of BAD_ANYWHERE) {
+      expect(isNameAllowed(homoglyph(w))).toBe(false);
+      expect(isNameAllowed(greek(w))).toBe(false);
+      expect(isNameAllowed(`${homoglyph(w).toUpperCase()} Town`)).toBe(false);
+    }
+  });
+  it('every letter doubled is still blocked', () => {
+    for (const w of [...BAD_ANYWHERE, ...BAD_WHOLE]) expect(isNameAllowed(doubled(w))).toBe(false);
+  });
+  it('one stray letter inside a longer blocked word is still blocked', () => {
+    for (const w of BAD_ANYWHERE) if (w.length >= 5) expect(isNameAllowed(stray(w))).toBe(false);
+  });
+  it('a word split across the club name and the short code is blocked as a pair, either way round', () => {
+    for (const w of BAD_ANYWHERE) {
+      if (w.length < 5) continue;
+      const name = w.slice(0, -3);
+      const short = w.slice(-3).toUpperCase();
+      expect(isPairAllowed(name, short)).toBe(false);
+      expect(isPairAllowed(w.slice(3), w.slice(0, 3).toUpperCase())).toBe(false);
+    }
+    expect(isPairAllowed('Rovers', 'ROV')).toBe(true);
+    expect(isPairAllowed('Scunthorpe United', 'SCU')).toBe(true);
+    expect(isPairAllowed('Count Athletic', 'CNT')).toBe(true);
+  });
+  it('ordinary names in other scripts and everyday doubled letters still pass', () => {
+    for (const n of ['Спартак', 'Ολυμπιακός', 'Assist FC', 'Class Rovers', 'Sussex Town', 'Cummins XI', 'Hoopers', 'Boston Wanderers', 'Cockerel Bay']) {
+      expect(isNameAllowed(n)).toBe(true);
+    }
   });
 });

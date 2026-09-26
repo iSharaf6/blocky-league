@@ -35,6 +35,10 @@ export interface MatchRequest {
   reward: (r: MatchResult) => Reward;
   /** Label for the full-time continue button. */
   nextLabel?: string;
+  /** Offer REMATCH on the full-time screen (quick matches): the same request again, intro skipped. */
+  rematch?: boolean;
+  /** Straight to the kick-off, no fly-in title (a rematch). */
+  skipIntro?: boolean;
   /** Called after the player leaves the full-time screen (not called if they quit mid-match). */
   onDone: (r: MatchResult, coinsEarned: number) => void;
   /** Called if the player quits mid-match. */

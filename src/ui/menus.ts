@@ -837,7 +837,7 @@ export class Menus {
 
   fulltime(
     m: Match, kits: [Kit, Kit], humanSide: number, reward: { coins: number; label: string }, canDouble: boolean,
-    h: { double: () => Promise<boolean>; next: () => void; nextLabel?: string },
+    h: { double: () => Promise<boolean>; next: () => void; nextLabel?: string; rematch?: () => void },
     ratings?: { idx: number; name: string; side: number; rating: number; goals: number; assists: number }[],
     prog?: FtProgress,
   ): void {
@@ -891,6 +891,7 @@ export class Menus {
           <div class="btn-row ft-foot">
             <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
             ${canDouble ? '<button class="btn btn-yellow" data-a="double">🎬 2× COINS</button>' : ''}
+            ${h.rematch ? '<button class="btn btn-white btn-lg" data-a="rematch">⟳ REMATCH</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="next">${h.nextLabel ?? 'CONTINUE'}</button>
           </div>
         </div>
@@ -926,6 +927,7 @@ export class Menus {
       }
     });
     $(d, '[data-a=next]').addEventListener('click', h.next);
+    if (h.rematch) d.querySelector('[data-a=rematch]')?.addEventListener('click', h.rematch);
   }
 
   /** Full time: the stars pop in one by one, then the XP bar counts up (a level-up splashes and the bar starts over). */

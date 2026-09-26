@@ -303,6 +303,7 @@ function quickMatch(mode?: MatchMode): void {
       attendance: 0.9,
       stadiumLevel: 5,
       mode: m,
+      rematch: true,
       reward: (r) => standardReward(r, difficulty),
       onDone: () => mainMenu(),
       onQuit: () => mainMenu(),
@@ -363,6 +364,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     knockout: req.knockout,
     // Career and the cup stay classic; Quick Match passes the mode the player picked.
     mode: req.mode ?? 'classic',
+    skipIntro: req.skipIntro,
     stadiumLevel: Math.max(0, Math.min(5, Math.round(req.stadiumLevel ?? 5))),
     tutorial: !save.seenTutorial,
     camZoom: camZoom(),
@@ -471,6 +473,12 @@ async function startMatch(req: MatchRequest): Promise<void> {
         endMatch();
         req.onDone(r, earned);
       },
+      // One more: the same fixture and settings, straight to the kick-off (the coins above are already banked).
+      rematch: req.rematch ? () => {
+        menus.close();
+        endMatch();
+        void startMatch({ ...req, skipIntro: true });
+      } : undefined,
     }, r.ratings, {
       stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: done.map((x) => ({ text: x.challenge.text, coins: x.challenge.coins })),
     });

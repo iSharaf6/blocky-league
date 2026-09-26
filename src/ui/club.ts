@@ -1,3 +1,4 @@
+import { isPairAllowed } from '../core/names';
 /**
  * My Club screens (club creation, squad, training, kit, stadium) plus the small screen kit shared with the
  * career UI. Screens mount into the menus root alongside (never on top of) Menus' own screens.
@@ -262,7 +263,7 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
     formation: '4-4-2' as FormationId,
   };
   const part = { v: 'shirt' as KitPart };
-  const valid = () => sanitizeName(d.name).length >= 2 && sanitizeShort(d.short).length === 3;
+  const valid = () => sanitizeName(d.name).length >= 2 && sanitizeShort(d.short).length === 3 && isPairAllowed(d.name, d.short);
   const update = () => {
     const pv = scr.panel.querySelector('.mc-preview');
     if (pv) pv.innerHTML = previewHtml(d.kit, sanitizeName(d.name) || cleanName(d.name), d.short);

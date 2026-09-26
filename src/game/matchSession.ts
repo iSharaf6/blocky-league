@@ -34,6 +34,8 @@ export interface SessionOptions extends MatchConfig {
   stadiumLevel?: number;
   /** Show first-match control tips. */
   tutorial?: boolean;
+  /** No fly-in intro: straight to the kick-off framing (a rematch). */
+  skipIntro?: boolean;
   /** Broadcast camera distance (default 'normal'). */
   camZoom?: CamZoom;
   /** Unlockable ball look (progression); undefined = the classic ball. */
@@ -325,7 +327,7 @@ export class MatchSession {
     this.cam.touchLayout = !this.demo && isTouchDevice();
     this.cam.setZoom(opt.camZoom ?? 'normal');
     this.cam.setMode(this.demo ? 'menu' : 'intro');
-    if (!this.demo) this.introLeft = INTRO_S;
+    if (!this.demo && !opt.skipIntro) this.introLeft = INTRO_S;
     if (!this.demo) {
       this.hud = new Hud(
         [hudTeam(teams[0], opt.kits[0].shirt, opt.kits[0].shirt2), hudTeam(teams[1], opt.kits[1].shirt, opt.kits[1].shirt2)],

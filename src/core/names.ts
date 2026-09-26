@@ -65,11 +65,25 @@ const LEET: Record<string, string> = {
   '(': 'c', '<': 'c', '¢': 'c', 'ß': 'ss', '9': 'g', '8': 'b',
 };
 
-/** Lowercase, accents stripped, leetspeak undone, every non-letter turned into a space. */
+/**
+ * Letters from other scripts that look like Latin ones (Cyrillic а е о р с у х к м т н в і ј ѕ ԁ ԛ ԝ, Greek
+ * α β ε ι κ ν ο ρ τ υ χ γ η μ ...): folded to the Latin letter before the scan, so a blocked word can't be
+ * spelt with look-alikes (NFKD leaves these alone). Whole names in those scripts still read as their own
+ * letters where nothing looks alike.
+ */
+const CONFUSABLES: Record<string, string> = {
+  а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', к: 'k', м: 'm', т: 't', н: 'h', в: 'b', і: 'i', ј: 'j',
+  ѕ: 's', ԁ: 'd', ԛ: 'q', ԝ: 'w', ғ: 'f', ԍ: 'g', һ: 'h', ո: 'n', ս: 'u', ց: 'g', ӏ: 'l', ь: 'b', ъ: 'b', з: '3',
+  α: 'a', β: 'b', ε: 'e', ι: 'i', κ: 'k', ν: 'v', ο: 'o', ρ: 'p', τ: 't', υ: 'u', χ: 'x', γ: 'y', η: 'n', μ: 'u',
+  ϲ: 'c', ϳ: 'j', ѡ: 'w', ꞵ: 'b', ᴀ: 'a', ᴄ: 'c', ᴇ: 'e', ᴋ: 'k', ᴍ: 'm', ᴏ: 'o', ᴘ: 'p', ᴛ: 't', ᴜ: 'u', ᴠ: 'v',
+};
+
+/** Lowercase, accents stripped, look-alike letters folded, leetspeak undone, every non-letter turned into a space. */
 function normalise(raw: string): string {
   const lower = raw.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
   let out = '';
-  for (const ch of lower) {
+  for (const ch0 of lower) {
+    const ch = CONFUSABLES[ch0] ?? ch0;
     const l = LEET[ch];
     if (l !== undefined) out += l;
     else if (/\p{L}/u.test(ch)) out += ch;
@@ -78,11 +92,19 @@ function normalise(raw: string): string {
   return out.replace(/\s+/g, ' ').trim();
 }
 
-/** Runs of three or more of the same letter shortened to one, or to two ("fuuuck", "niggger"). */
+/**
+ * Runs of the same letter shortened: three or more to one or to two ("fuuuck", "niggger"), and every double to
+ * one ("ffuucckk": doubling each letter got 98% of the list past the old scan).
+ */
 function squeezed(s: string): string[] {
   const one = s.replace(/(.)\1{2,}/g, '$1');
   const two = s.replace(/(.)\1{2,}/g, '$1$1');
-  return one === s ? [s] : two === one ? [s, one] : [s, one, two];
+  const single = s.replace(/(.)\1+/g, '$1');
+  // Every run halved ("aassss" -> "ass": a word with a double letter of its own, then doubled letter by letter).
+  const halved = s.replace(/(.)\1+/g, (run, c: string) => (run.length % 2 === 0 ? c.repeat(run.length / 2) : run));
+  const out = [s];
+  for (const v of [one, two, single, halved]) if (!out.includes(v)) out.push(v);
+  return out;
 }
 
 const ALLOW_SORTED = [...ALLOW].sort((a, b) => b.length - a.length);
@@ -93,6 +115,14 @@ function scanAnywhere(joined: string): boolean {
   for (const a of ALLOW_SORTED) if (s.includes(a)) s = s.split(a).join(' ');
   s = s.replace(/\s+/g, '');
   for (const v of squeezed(s)) for (const w of ANYWHERE) if (v.includes(w)) return true;
+  // One stray letter pushed into a longer blocked word ("fuxcker"): each single deletion of a short name is
+  // scanned too, against the words of five letters or more (four-letter ones would trip on "count" and the like).
+  if (s.length <= 24) {
+    for (let i = 0; i < s.length; i++) {
+      const v = s.slice(0, i) + s.slice(i + 1);
+      for (const w of ANYWHERE) if (w.length >= 5 && v.includes(w)) return true;
+    }
+  }
   return false;
 }
 
@@ -141,6 +171,14 @@ export function nameProblem(raw: string, min = 2): '' | 'short' | 'blocked' {
   const c = cleanName(raw);
   if (!isNameAllowed(c) || !isNameAllowed(raw)) return 'blocked';
   return c.length < min ? 'short' : '';
+}
+
+/**
+ * A club name and its short code read together on the score bug and the table, so a blocked word split across
+ * the two ("Fu" + "CK") is blocked as a pair, either way round.
+ */
+export function isPairAllowed(name: string, short: string): boolean {
+  return isNameAllowed(name) && isNameAllowed(short) && isNameAllowed(name + short) && isNameAllowed(short + name);
 }
 
 /** Short code: up to three letters / digits, upper case, or '' when what they spell is blocked. */
