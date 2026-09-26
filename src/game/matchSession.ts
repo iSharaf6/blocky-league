@@ -848,6 +848,7 @@ export class MatchSession {
           const special = e.own || m.shotDist >= 16 || m.kickKind === 'header' || m.shotStyle === 'chip' || m.shotStyle === 'finesse' ||
             this.goldenGoalArmed || this.time - this.megaShotT < 3;
           this.replayWanted = (human < 0 || e.side === human || e.own) && special;
+          const golden = this.goldenGoalArmed;
           this.goldenGoalArmed = false;
           sfx.goal();
           const side = e.side;
@@ -855,11 +856,12 @@ export class MatchSession {
           const scorer = m.players[e.scorer];
           const g = m.goals[m.goals.length - 1];
           const who = e.own ? `${scorer.def.name} (OG)` : scorer.def.name;
-          this.hud?.show('GOAL!', `${who} ${g.minute}'`, side === m.cfg.humanSide || m.cfg.humanSide < 0 ? 'goal' : 'goal against', 3.2);
+          this.hud?.show(golden ? 'GOAL! ×2' : 'GOAL!', `${who} ${g.minute}'`, side === m.cfg.humanSide || m.cfg.humanSide < 0 ? 'goal' : 'goal against', 3.2);
           this.hud?.setScore(m.score[0], m.score[1]);
           this.stadium.setScore(m.score[0], m.score[1], `${m.minute()}'`);
           this.goalHypeT = 5;
-          const cols = [this.opt.kits[side].shirt, this.opt.kits[side].shirt2, 0xffd23a, 0xfbfbf4];
+          // A golden goal (Blitz: it counts double) celebrates in gold, with an extra shower over the goal mouth.
+          const cols = golden ? [0xffd23a, 0xffb300, 0xfff0b0, 0xfbfbf4] : [this.opt.kits[side].shirt, this.opt.kits[side].shirt2, 0xffd23a, 0xfbfbf4];
           const gx = Math.sign(m.ball.pos.x) * HALF_L;
           // Juice: a hold on the impact frame, a decaying shake, the net rippling, a fat burst in the scorer's
           // colours out of the goal mouth, confetti from the roof and the ground and the whole bowl flashing.
@@ -868,7 +870,8 @@ export class MatchSession {
           this.effects.burst(gx - Math.sign(gx) * 2, 0.3, m.ball.pos.z, cols, 50, 9, 2);
           this.effects.confetti(gx * 0.7, 0, cols, 320, 60);
           this.stadium.punchNet(gx, Math.max(0.6, Math.min(2, m.ball.pos.y)), m.ball.pos.z, 24);
-          this.stadium.flashBurst(60);
+          this.stadium.flashBurst(golden ? 90 : 60);
+          if (golden) this.effects.burst(gx - Math.sign(gx) * 3, 2.4, m.ball.pos.z, [0xffd23a, 0xfff0b0, 0xffb300], 70, 11, 3);
           this.cam.kick(SHAKE_GOAL);
           this.view.setMarkerVisible(false);
           this.celebG = 0;

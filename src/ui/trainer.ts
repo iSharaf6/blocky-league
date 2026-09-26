@@ -109,10 +109,17 @@ export class Trainer {
       }));
       this.detail.textContent = cue.detail;
     }
-    // Place above the head. Never cover the boots/ball, score, or the bottom touch controls.
+    // Place above the head, unless that puts the card within 120 px of the ball (it used to sit on the carrier,
+    // and on a pickup he was running for): then it goes to the side of the screen away from the ball, just
+    // under the HUD, off the play. Never the score, or the bottom touch controls.
     const cw = this.card.offsetWidth, ch = this.card.offsetHeight;
-    const x = clamp(at.x - cw / 2, 10, w - cw - 10);
-    const y = at.y - ch - 22;
+    let x = clamp(at.x - cw / 2, 10, w - cw - 10);
+    let y = at.y - ch - 22;
+    const ball = project(frame[BALL_OFS], 0.14, frame[BALL_OFS + 2]);
+    if (ball.visible && ball.x > x - 120 && ball.x < x + cw + 120 && ball.y > y - 120 && ball.y < y + ch + 120) {
+      x = ball.x > w / 2 ? 12 : w - cw - 12;
+      y = 80;
+    }
     // Visibility keeps its dimensions measurable near the score bug; display:none would alternate
     // between a zero-height and full-height card every frame at that boundary.
     const cardVisible = y >= 66;
