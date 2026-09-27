@@ -92,6 +92,10 @@ export class SimPeer {
   private acc = 0;
   /** This peer's frame length (ms): the two needn't run at the same rate. */
   frameMs: number;
+  /** Follow the engine's time sync (Lockstep.pace); off, a faster side keeps running into the slower one's pads. */
+  usePace = true;
+  /** How fast its game clock runs against real time (below 1: a machine that can't keep up). */
+  rate = 1;
 
   constructor(tx: Transport, readonly side: Side, setup: MatchSetup, net: NetSim, opts: Partial<LockstepOptions> = {}, frameMs = 1000 / 60) {
     this.m = new Match(setupConfig(setup, side));
@@ -108,7 +112,7 @@ export class SimPeer {
   /** One display frame of `ms`: what MatchSession.update does with a lockstep driver. */
   frame(ms: number): void {
     this.lock.update();
-    this.acc += (ms / 1000) * this.lock.pace();
+    this.acc += (ms / 1000) * this.rate * (this.usePace ? this.lock.pace() : 1);
     let steps = 0;
     while (this.acc >= DT && steps < 6) {
       const pads = this.lock.next(() => this.pad.pad());

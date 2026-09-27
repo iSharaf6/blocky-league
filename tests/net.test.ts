@@ -3,6 +3,7 @@ import { stateHash } from '../src/net/hash';
 import { DT } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import { decodeInput, encodeInput, quantizePad, DELAY_MAX, DELAY_MIN, HASH_EVERY, TIMEOUT_MS } from '../src/net/lockstep';
+import { buildSdp, codeToSdp, parseSdp, sdpToCode } from '../src/net/sdpCode';
 import { HumanBot } from './humanBot';
 import { FuzzPad, netConfig, runToEnd, stoppages } from './netHarness';
 import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
@@ -232,6 +233,34 @@ describe('lockstep engine', () => {
     expect(a.lock.stalls + b.lock.stalls).toBeLessThan(200);
   }, 60_000);
 
+  it("a side whose game runs slow (90% speed) is the time sync's to absorb, not a reason for a longer delay", () => {
+    const run = (sync: boolean) => {
+      const net = new NetSim({ loss: 0, latency: [2, 6], seed: 12 });
+      const [ta, tb] = net.pair();
+      const setup = testSetup({ seed: 123, halfMinutes: 0.5 });
+      const a = new SimPeer(ta, 0, setup, net);
+      const b = new SimPeer(tb, 1, setup, net, {}, 20);
+      b.rate = 0.9;
+      a.usePace = sync;
+      runPeers(net, a, b);
+      // (Identical tick by tick; one may have stood at full time a little longer when the run stopped.)
+      expect(agree(a, b)).toBeGreaterThan(60 * 60);
+      expect(a.m.phase).toBe('fulltime');
+      expect([...a.m.score]).toEqual([...b.m.score]);
+      return { a, b };
+    };
+    // With the time sync, the full-speed side eases to the other's pace: few waits, and the delay stays short.
+    const synced = run(true);
+    expect(synced.a.lock.stalls + synced.b.lock.stalls).toBeLessThan(60);
+    for (const p of [synced.a, synced.b]) expect(p.lock.delay).toBeLessThanOrEqual(4);
+    // Without it, the full-speed side keeps running into the slow one's pads; those waits aren't the network's,
+    // and the delay still stays short.
+    const raw = run(false);
+    expect(raw.a.lock.stalls).toBeGreaterThan(500);
+    expect(raw.a.lock.lateStalls).toBeLessThan(raw.a.lock.stalls * 0.1);
+    for (const p of [raw.a, raw.b]) expect(p.lock.delay).toBeLessThanOrEqual(4);
+  }, 60_000);
+
   it('detects a desync when a pad is corrupted in flight (and both sides stop)', () => {
     const net = new NetSim({ loss: 0.05, latency: [10, 40], seed: 3 });
     const [ta, tb] = net.pair();
@@ -358,5 +387,69 @@ describe('lockstep engine', () => {
     expect(Math.abs(Math.hypot(d.mx, d.mz) - 1)).toBeLessThan(0.02);
     // 15 bytes of header and 3 a pad.
     expect(encodeInput({ epoch: 0, first: 0, ack: 0, tick: 0, pads: pads.slice(0, 8) }).byteLength).toBe(39);
+  });
+});
+
+describe('offer / answer codes (manual WebRTC signalling)', () => {
+  const FP = Array.from({ length: 32 }, (_, i) => ((i * 37 + 11) & 0xff).toString(16).padStart(2, '0').toUpperCase()).join(':');
+  // Shaped like what Chrome and Firefox produce for a data-channel-only offer (ICE gathered in full).
+  const CHROME = [
+    'v=0', 'o=- 4611731400430051336 2 IN IP4 127.0.0.1', 's=-', 't=0 0', 'a=group:BUNDLE 0', 'a=extmap-allow-mixed', 'a=msid-semantic: WMS',
+    'm=application 54321 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 203.0.113.7',
+    'a=candidate:2999745851 1 udp 2122260223 3b0c5f2a-1b2c-4d5e-8f90-a1b2c3d4e5f6.local 54321 typ host generation 0 network-id 1 network-cost 10',
+    'a=candidate:842163049 1 udp 1686052607 203.0.113.7 54321 typ srflx raddr 0.0.0.0 rport 0 generation 0 network-id 1 network-cost 10',
+    'a=candidate:1510613869 1 tcp 1518280447 3b0c5f2a-1b2c-4d5e-8f90-a1b2c3d4e5f6.local 9 typ host tcptype active generation 0',
+    'a=ice-ufrag:Ab3d', 'a=ice-pwd:0123456789abcdefghijklmn', 'a=ice-options:trickle', `a=fingerprint:sha-256 ${FP}`, 'a=setup:actpass',
+    'a=mid:0', 'a=sctp-port:5000', 'a=max-message-size:262144', '',
+  ].join('\r\n');
+  const FIREFOX = [
+    'v=0', 'o=mozilla...THIS_IS_SDPARTA-99.0 7070718913612410224 0 IN IP4 0.0.0.0', 's=-', 't=0 0', 'a=sendrecv',
+    `a=fingerprint:sha-256 ${FP}`, 'a=group:BUNDLE 0', 'a=ice-options:trickle', 'a=msid-semantic:WMS *',
+    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0',
+    'a=candidate:0 1 UDP 2122252543 192.168.1.20 61234 typ host',
+    'a=candidate:1 1 UDP 1686052863 198.51.100.4 61234 typ srflx raddr 192.168.1.20 rport 61234',
+    'a=candidate:2 1 UDP 2122187007 2001:db8::1:2 61235 typ host',
+    'a=candidate:3 1 TCP 2105524479 192.168.1.20 9 typ host tcptype active', 'a=sendrecv', 'a=end-of-candidates',
+    'a=ice-pwd:0f1e2d3c4b5a69788796a5b4c3d2e1f0', 'a=ice-ufrag:9a8b7c6d', 'a=mid:0', 'a=setup:active', 'a=sctp-port:5000',
+    'a=max-message-size:1073741823', '',
+  ].join('\r\n');
+
+  it('squeezes a description into a short code and back, keeping what the other side needs', async () => {
+    for (const [sdp, kind] of [[CHROME, 'offer'], [FIREFOX, 'answer']] as const) {
+      const code = await sdpToCode(sdp, kind);
+      expect(code[0]).toBe('1');
+      expect(code).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(code.length).toBeLessThan(170);
+      const back = await codeToSdp(code);
+      expect(back.kind).toBe(kind);
+      // What it rebuilt parses to the same essentials (UDP candidates only; TCP ones are dropped).
+      const a = parseSdp(sdp, kind)!;
+      const b = parseSdp(back.sdp, kind)!;
+      expect({ ...b, fingerprint: [...b.fingerprint] }).toEqual({ ...a, fingerprint: [...a.fingerprint] });
+      expect(a.candidates.every((c) => c.port > 0)).toBe(true);
+      expect(back.sdp).toContain('m=application 9 UDP/DTLS/SCTP webrtc-datachannel');
+    }
+    const ff = parseSdp(FIREFOX, 'answer')!;
+    expect(ff.candidates.map((c) => c.address)).toEqual(['192.168.1.20', '198.51.100.4', '2001:db8:0:0:0:0:1:2']);
+    expect(ff.setup).toBe('active');
+  });
+
+  it('falls back to the whole description (deflated) when the short form cannot carry it', async () => {
+    const odd = CHROME.replace('a=fingerprint:sha-256', 'a=fingerprint:sha-384').replace('a=mid:0', 'a=mid:data');
+    const code = await sdpToCode(odd, 'offer');
+    expect(code[0]).toBe('2');
+    expect(await codeToSdp(code)).toEqual({ kind: 'offer', sdp: odd });
+    // A rebuilt description is a valid minimal one in its own right.
+    expect(parseSdp(buildSdp(parseSdp(CHROME, 'offer')!), 'offer')).not.toBeNull();
+  });
+
+  it('rejects a code that was cut short or mistyped, with a message a player can act on', async () => {
+    const code = await sdpToCode(CHROME, 'offer');
+    await expect(codeToSdp(code.slice(0, -6))).rejects.toThrow(/incomplete or mistyped/);
+    const typo = code.slice(0, 20) + (code[20] === 'A' ? 'B' : 'A') + code.slice(21);
+    await expect(codeToSdp(typo)).rejects.toThrow(/incomplete or mistyped/);
+    await expect(codeToSdp('hello there')).rejects.toThrow(/doesn't look like/);
+    // Whitespace from a chat app's line wrapping is fine.
+    expect((await codeToSdp(code.slice(0, 30) + '\n  ' + code.slice(30))).kind).toBe('offer');
   });
 });

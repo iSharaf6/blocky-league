@@ -46,8 +46,14 @@ export const PAUSED_TIMEOUT_MS = 45_000;
 /** How often the delay is looked at again, and how many looks in a row must find it too long to lower it. */
 const ADAPT_MS = 1000;
 const LOWER_AFTER = 3;
-/** Stalled ticks in one ADAPT_MS window that raise the delay whatever the round trip says. */
+/** Late stalls (see Lockstep.lateStalls) in one ADAPT_MS window that raise the delay whatever the round trip says. */
 const STALL_RAISE = 6;
+/** A stall with this side more than this many ticks ahead is the time sync's business (see lateStalls). */
+const AHEAD_SYNC = 1.5;
+/** Time sync: full speed up to PACE_FROM ticks ahead, then PACE_GAIN slower a tick, down to PACE_MIN. */
+const PACE_FROM = 0.25;
+const PACE_GAIN = 0.15;
+const PACE_MIN = 0.75;
 const PKT_INPUT = 0xb1;
 const HEADER = 15;
 
@@ -166,8 +172,14 @@ export class Lockstep {
   /** Pads that arrived for a tick already covered (duplicates from the redundancy), and packets taken in. */
   dupes = 0;
   packets = 0;
-  /** Ticks the sim wanted to step but the other side's pad wasn't here yet. */
+  /** Ticks the sim wanted to step but the other side's pad wasn't here yet... */
   stalls = 0;
+  /**
+   * ... and those of them a longer delay would have saved: this side wasn't clearly ahead of the other (then the
+   * network, or the other side's coarse frames, held the pad up). A side that is ahead, of a machine that runs
+   * slow, is the time sync's to fix, not the delay's.
+   */
+  lateStalls = 0;
   /** The desync, when there was one. */
   desyncAt: { tick: number; local: number; remote: number } | null = null;
 
@@ -247,6 +259,7 @@ export class Lockstep {
     const mine = this.local.get(t);
     if (!theirs || !mine) {
       this.stalls++;
+      if (this.packets === 0 || this.ahead() < AHEAD_SYNC) this.lateStalls++;
       return null;
     }
     this.remote.delete(t);
@@ -287,12 +300,19 @@ export class Lockstep {
    */
   pace(): number {
     if (this.status !== 'play' || this.paused || this.packets === 0) return 1;
-    // Where the other side is now: its tick in its last packet, plus the time that packet took and has been here
-    // (a stalled side isn't moving, so not more than a few ticks' worth of that).
+    const ahead = this.ahead();
+    // Proportional: PACE_GAIN slower per tick ahead past PACE_FROM (a side a delay's worth ahead would wait on
+    // every pad), never below PACE_MIN.
+    return ahead <= PACE_FROM ? 1 : Math.max(PACE_MIN, 1 - PACE_GAIN * (ahead - PACE_FROM));
+  }
+
+  /**
+   * Ticks this side is ahead of the other now: the other's tick in its last packet, plus the time that packet
+   * took and has been here (a stalled side isn't moving, so not more than a few ticks' worth of that).
+   */
+  private ahead(): number {
     const since = Math.min(this.now() - this.peerTickAt, 100);
-    const peerNow = this.peerTick + (Math.max(0, this.rtt) / 2 + since) / TICK_MS;
-    const ahead = this.tick - peerNow;
-    return ahead > 3 ? 0.9 : ahead > 1.5 ? 0.97 : 1;
+    return this.tick - (this.peerTick + (Math.max(0, this.rtt) / 2 + since) / TICK_MS);
   }
 
   /** How many ticks this side is ahead of the other, by the last word from it (debug HUD). */
@@ -439,8 +459,8 @@ export class Lockstep {
 
   private adapt(now: number): void {
     this.adaptAt = now + ADAPT_MS;
-    const stalled = this.stalls - this.stallsAtAdapt;
-    this.stallsAtAdapt = this.stalls;
+    const stalled = this.lateStalls - this.stallsAtAdapt;
+    this.stallsAtAdapt = this.lateStalls;
     if (this.rtt < 0) return;
     // The other side's pad for tick t leaves it `delay` ticks before t: it needs to cross in less than that,
     // with room for the jitter.
