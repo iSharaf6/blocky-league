@@ -121,6 +121,11 @@ export interface SaveData {
   gift?: { last: string; streak: number };
   /** XP, level, win streak, match stars and the day's challenges (older saves lack it: see normalizeProgress). */
   progress: Progress;
+  /**
+   * Football Moments: best stars (0..3) by moment id (src/meta/moments.ts). Optional in the type (older saves lack
+   * it) but always an object once loaded, so screens can read `save.moments![id]` and write through recordMoment.
+   */
+  moments?: { [id: string]: number };
   updatedAt: string;
 }
 
@@ -162,6 +167,7 @@ export function defaultSave(): SaveData {
     cup: null,
     seenTutorial: false,
     progress: defaultProgress(),
+    moments: {},
     updatedAt: new Date().toISOString(),
   };
 }
@@ -208,7 +214,48 @@ function mergeSave(d: Partial<SaveData>): SaveData {
     cup: typeof d.cup === 'object' ? d.cup : null,
     // Saves from before progression start at level 1 with no streak; a damaged blob does too.
     progress: normalizeProgress(d.progress),
+    // Saves from before Football Moments (or a damaged blob) have no stars yet.
+    moments: normalizeMoments(d.moments),
   } as SaveData;
+}
+
+// ------------------------------------------------------------------ Football Moments (best stars by id)
+
+/** Moment stars as stored by any build made whole: an object of id -> 0..3 (anything else is dropped). */
+export function normalizeMoments(raw: unknown): { [id: string]: number } {
+  const out: { [id: string]: number } = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [id, v] of Object.entries(raw as { [k: string]: unknown })) {
+    if (!id || typeof v !== 'number' || !Number.isFinite(v)) continue;
+    out[id] = Math.max(0, Math.min(3, Math.floor(v)));
+  }
+  return out;
+}
+
+/** Best stars earned on a moment so far (0 = never completed). */
+export function momentStars(d: Pick<SaveData, 'moments'>, id: string): number {
+  return d.moments?.[id] ?? 0;
+}
+
+/** Keep a moment's result if it beats the best so far. Returns true when the best improved. */
+export function recordMoment(d: Pick<SaveData, 'moments'>, id: string, stars: number): boolean {
+  const s = Math.max(0, Math.min(3, Math.floor(stars)));
+  d.moments ??= {};
+  if (s <= (d.moments[id] ?? 0) && id in d.moments) return false;
+  d.moments[id] = Math.max(s, d.moments[id] ?? 0);
+  return true;
+}
+
+/** XP for one attempt at a moment: 30 for the try, 25 a star (no coins: moments pay in XP only). */
+export function momentXp(stars: number): number {
+  return 30 + 25 * Math.max(0, Math.min(3, Math.floor(stars)));
+}
+
+/** Stars collected over every moment (for the menu tile). */
+export function momentStarsTotal(d: Pick<SaveData, 'moments'>): number {
+  let n = 0;
+  for (const v of Object.values(d.moments ?? {})) n += v;
+  return n;
 }
 
 export function loadSave(): SaveData {
@@ -248,6 +295,7 @@ export function importSave(raw: unknown): SaveData | null {
     for (const k of ['played', 'won', 'drawn', 'lost', 'goalsFor', 'goalsAgainst'] as const) r[k] = num(r[k]);
     const g = d.gift;
     s.gift = g && typeof g === 'object' && typeof g.last === 'string' ? { last: g.last, streak: num(g.streak, 1) } : undefined;
+    s.moments = normalizeMoments(d.moments);
     s.updatedAt = typeof d.updatedAt === 'string' ? d.updatedAt : new Date().toISOString();
     return s;
   } catch {

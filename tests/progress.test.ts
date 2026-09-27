@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CHALLENGE_POOL, LEVEL_TITLES, MAX_LEVEL, advanceDaily, dailyChallenges, dailyFor, defaultProgress, defaultSave, levelOf, levelTitle,
   loadSave, matchStars, matchXp, nextStreak, normalizeProgress, normalizeSettings, streakMult, xpToNext, type MatchSummary, BALL_SKIN_LEVEL, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, xpAt,
-  CELEBRATION_IDS, CELEBRATION_LEVEL, celebrationUnlocked, unlockLadder } from '../src/core/save';
+  CELEBRATION_IDS, CELEBRATION_LEVEL, celebrationUnlocked, unlockLadder, momentStars, momentStarsTotal, momentXp, normalizeMoments, recordMoment } from '../src/core/save';
 
 const KEY = 'blocky-league-save-v1';
 
@@ -240,5 +240,46 @@ describe('unlock ladder (earned only)', () => {
   it('LEGEND opens at the star count', () => {
     expect(legendUnlocked({ stars: LEGEND_STARS - 1 })).toBe(false);
     expect(legendUnlocked({ stars: LEGEND_STARS })).toBe(true);
+  });
+});
+
+describe('football moments (best stars by id)', () => {
+  it('a new save has no moment stars; recordMoment keeps only the best and says when it improved', () => {
+    const d = defaultSave();
+    expect(d.moments).toEqual({});
+    expect(momentStars(d, 'cross')).toBe(0);
+    expect(recordMoment(d, 'cross', 2)).toBe(true);
+    expect(recordMoment(d, 'cross', 1)).toBe(false);
+    expect(recordMoment(d, 'cross', 2)).toBe(false);
+    expect(recordMoment(d, 'cross', 3)).toBe(true);
+    expect(momentStars(d, 'cross')).toBe(3);
+    // A failed attempt (0 stars) is still remembered as tried.
+    expect(recordMoment(d, 'onevone', 0)).toBe(true);
+    expect(d.moments).toEqual({ cross: 3, onevone: 0 });
+    expect(momentStarsTotal(d)).toBe(3);
+  });
+
+  it('pays XP for the try and per star, never coins: 30, 55, 80, 105', () => {
+    expect([0, 1, 2, 3].map(momentXp)).toEqual([30, 55, 80, 105]);
+    expect(momentXp(9)).toBe(105);
+    expect(momentXp(-2)).toBe(30);
+  });
+
+  it('normalizeMoments keeps sane stars, clamps to 0..3 and drops anything else', () => {
+    expect(normalizeMoments(undefined)).toEqual({});
+    expect(normalizeMoments('x')).toEqual({});
+    expect(normalizeMoments([1, 2])).toEqual({});
+    expect(normalizeMoments({ a: 2, b: 7, c: -1, d: 1.9, e: 'two', f: NaN, '': 3 })).toEqual({ a: 2, b: 3, c: 0, d: 1 });
+  });
+
+  it('an old save without moments loads with an empty ladder; damaged stars are dropped, good ones kept', () => {
+    const old = defaultSave() as unknown as Record<string, unknown>;
+    delete old.moments;
+    stubStorage(old);
+    expect(loadSave().moments).toEqual({});
+    const s2 = defaultSave();
+    s2.moments = { cross: 2, bad: 'no' as unknown as number };
+    stubStorage(s2);
+    expect(loadSave().moments).toEqual({ cross: 2 });
   });
 });

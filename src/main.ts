@@ -9,7 +9,7 @@ import { Input } from './core/input';
 import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock, skinUnlocked, type BallSkinId, celebrationUnlocked,
-  type CelebrationId, type SaveData } from './core/save';
+  type CelebrationId, type SaveData, momentStarsTotal, momentXp, recordMoment } from './core/save';
 import { MatchSession, type MatchResult } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
@@ -27,7 +27,9 @@ import { openCup } from './ui/cup';
 import { closeMeta, openClub } from './ui/club';
 import { stopSpeech } from './ui/commentary';
 import type { Projector } from './ui/hud';
+import { openMoments } from './ui/moments';
 import { installSepGuard } from './ui/text';
+import { Trainer } from './ui/trainer';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
 
 /** When the script started: the studio splash stays up at least SPLASH_MS from here. */
@@ -36,6 +38,8 @@ const SPLASH_MS = 800;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const world = new World(canvas);
 const input = new Input();
+// The trainer's first-match teaching steps watch the stick and PASS through the live input (see ui/trainer.ts).
+Trainer.input = input;
 const menus = new Menus();
 const save = loadSave();
 let session: MatchSession | null = null;
@@ -251,6 +255,8 @@ function mainInfo(): MainInfo {
     info.playNow = `${q.short} v ${PRESET_CLUBS[p.rival].short} · ${DIFFICULTIES[p.difficulty]}`;
   }
   if (q && o) info.quick = 'PICK TEAMS · RULES';
+  const moStars = momentStarsTotal(save);
+  info.moments = moStars ? `SHORT CHALLENGES · ★ ${moStars}` : 'SHORT CHALLENGES';
   const user = cloudUser();
   if (user) info.account = user.name;
   try {
@@ -319,6 +325,8 @@ function mainMenu(): void {
     },
     quick: () => quickMatch(),
     blitz: () => quickMatch('blitz'),
+    moments: () => openMoments(app, mainMenu),
+    unlocks: () => menus.unlocks(save, mainMenu),
     career: () => openCareer(app),
     cup: () => openCup(app),
     club: () => openClub(app),
@@ -354,7 +362,14 @@ function playNowPlan(): { home: number; rival: number; difficulty: number; halfM
   return { home, rival: similarRival(home), difficulty: fresh ? 1 : save.settings.difficulty, halfMinutes: fresh ? 1.5 : save.settings.halfMinutes };
 }
 
-/** PLAY NOW: straight into a match, no setup screen and no fly-in. Title → PLAY NOW → kick-off is two taps. */
+/** Matches played on this save so far (a moment is not a match). */
+const played = (): number => save.record.played;
+
+/**
+ * PLAY NOW: straight into a match, no setup screen and no fly-in. Title → PLAY NOW → kick-off is two taps. On a
+ * fresh save it is the first match: the session waits for a button at kick-off, the AI eases off and the
+ * trainer teaches MOVE and PASS (MatchRequest.firstMatch).
+ */
 function playNow(): void {
   const p = playNowPlan();
   const home = makeTeam(PRESET_CLUBS[p.home]);
@@ -368,6 +383,7 @@ function playNow(): void {
     attendance: 0.9,
     stadiumLevel: 5,
     mode: 'classic',
+    firstMatch: played() === 0,
     skipIntro: true,
     rematch: true,
     reward: (r) => standardReward(r, p.difficulty),
@@ -453,6 +469,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
   demo?.dispose();
   demo = null;
   const { kits, humanSide } = req;
+  // A new player's first three matches are played in daylight and clear weather (no snow on a first kick-off).
+  const early = played() < 3;
   session = new MatchSession(world, input, {
     home: req.home,
     away: req.away,
@@ -462,11 +480,13 @@ async function startMatch(req: MatchRequest): Promise<void> {
     humanSide,
     attendance: req.attendance,
     seed: Math.floor(Math.random() * 1e9),
-    timeOfDay: req.timeOfDay ?? pickTime(),
-    weather: req.weather ?? pickWeather(),
+    timeOfDay: req.timeOfDay ?? (early ? 'day' : pickTime()),
+    weather: req.weather ?? (early ? 'clear' : pickWeather()),
     knockout: req.knockout,
     // Career and the cup stay classic; Quick Match passes the mode the player picked.
     mode: req.mode ?? 'classic',
+    firstMatch: !!req.firstMatch && played() === 0,
+    scenario: req.scenario,
     skipIntro: req.skipIntro,
     stadiumLevel: Math.max(0, Math.min(5, Math.round(req.stadiumLevel ?? 5))),
     tutorial: !save.seenTutorial,
@@ -530,6 +550,28 @@ async function startMatch(req: MatchRequest): Promise<void> {
   s.onFinish = (r) => {
     ads.gameplayStop();
     matchesPlayed++;
+    if (r.scenarioOutcome && req.scenario) {
+      // A Football Moment: not a match (no record, coins, streak or challenges); XP for the try and the stars,
+      // the best stars kept by moment id. RETRY runs the same request again, NEXT MOMENT hands back to the list.
+      const o = r.scenarioOutcome;
+      const p = save.progress;
+      const xpFrom = p.xp;
+      p.xp += momentXp(o.stars);
+      recordMoment(save, req.scenario.id, o.stars);
+      persist();
+      const leave = (then: () => void) => {
+        menus.close();
+        endMatch();
+        then();
+      };
+      menus.momentResult(req.scenario, o, { from: xpFrom, to: p.xp }, {
+        retry: () => leave(() => void startMatch({ ...req, skipIntro: true })),
+        next: () => leave(() => req.onDone(r, 0)),
+        nextLabel: req.nextLabel,
+        menu: () => leave(() => mainMenu()),
+      });
+      return;
+    }
     recordResult(r);
     save.seenTutorial = true;
     // Progression: the win streak boosts the coins (×1.1 a win, up to ×2); XP, stars and today's challenges.

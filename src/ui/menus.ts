@@ -2,7 +2,7 @@ import { sfx } from '../audio/sfx';
 import {
   ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData, BALL_SKIN_IDS,
   BALL_SKIN_LEVEL, BALL_SKIN_NAMES, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, type BallSkinId, CELEBRATION_IDS, CELEBRATION_LEVEL,
-  CELEBRATION_NAMES, celebrationUnlocked, type CelebrationId, exportSave, importSave } from '../core/save';
+  CELEBRATION_NAMES, celebrationUnlocked, type CelebrationId, exportSave, importSave, unlockLadder, xpAt } from '../core/save';
 import { APP_VERSION, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
 import { clubRating as presetRating } from '../meta/cup';
@@ -13,9 +13,13 @@ import { speechAvailable } from './commentary';
 import { cssHex, shade } from '../render/palette';
 import { FORMATIONS, FORMATION_IDS, type Slot } from '../sim/formations';
 import type { Match } from '../sim/match';
-import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef } from '../sim/types';
+import type { ScenarioOutcome } from '../sim/scenario';
+import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef, type ScenarioSpec } from '../sim/types';
 
 export const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD', 'LEGEND'];
+
+/** Icon tint for each ball look on the unlock ladder (the real skins are voxel textures: render/characters). */
+const BALL_TINT: Partial<Record<BallSkinId, string>> = { classic: '#fbfbf4', retro: '#f2c14e', blaze: '#ff7a2f', ice: '#8fe3ff', neon: '#b8ff3c', gold: '#ffd23a' };
 export const DIFF_LEVEL = [0.6, 1.8, 3, 4];
 export const HALF_OPTIONS = [1.5, 2, 3, 4];
 
@@ -82,11 +86,14 @@ export interface MainInfo {
   unlock?: { name: string; level: number; xpLeft: number } | null;
   /** Signed-in name for the ACCOUNT button (cloud saves), if any. */
   account?: string;
+  /** MOMENTS tile subtitle ("SHORT CHALLENGES · ★ 4"). Plain " · ": the menu draws the dividers. */
+  moments?: string;
 }
 
 /** What the full-time screen shows for progression (stars, XP, streak, challenges done this match). */
 export interface FtProgress {
-  stars: 1 | 2 | 3;
+  /** Stars this match / moment earned (0 only for a failed moment). */
+  stars: 0 | 1 | 2 | 3;
   /** Total XP before and after this match. */
   xpFrom: number;
   xpTo: number;
@@ -157,6 +164,10 @@ const ICONS: Record<string, string[]> = {
   gear: [
     '....XX....', '.X.XXXX.X.', '..XXXXXX..', '.XXX..XXX.', 'XXX....XXX',
     'XXX....XXX', '.XXX..XXX.', '..XXXXXX..', '.X.XXXX.X.', '....XX....',
+  ],
+  star: [
+    '....XX....', '....XX....', '...XXXX...', 'XXXXXXXXXX', '.XXXXXXXX.',
+    '..XXXXXX..', '..XXXXXX..', '.XXX..XXX.', 'XX......XX', 'X........X',
   ],
 };
 
@@ -385,14 +396,15 @@ export class Menus {
 
   /**
    * The main menu. PLAY NOW (when `h.playNow` is given) is the wide first tile: straight into a match, no
-   * setup; QUICK MATCH keeps the setup screen. ACCOUNT (cloud saves) shows beside the coins when `h.account`
-   * is given.
+   * setup; MOMENTS (when `h.moments` is given) the wide tile after it (short challenges); QUICK MATCH keeps the
+   * setup screen. ACCOUNT (cloud saves) shows beside the coins when `h.account` is given. The level badge opens
+   * the whole unlock ladder when `h.unlocks` is given.
    */
   main(
     save: SaveData,
     h: {
       quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void;
-      gift?: () => void; blitz?: () => void; playNow?: () => void; account?: () => void;
+      gift?: () => void; blitz?: () => void; playNow?: () => void; account?: () => void; moments?: () => void; unlocks?: () => void;
     },
     info?: MainInfo,
   ): void {
@@ -411,23 +423,32 @@ export class Menus {
         </div>`
       : '';
     const wdl = `W ${r.won}${sep()}D ${r.drawn}${sep()}L ${r.lost}${sep()}${r.goalsFor} GOALS`;
+    // The level badge is a button when the ladder screen is offered: the whole list of unlocks sits behind it.
+    const badgeBody = lv
+      ? `<b>LV ${lv.level}${sep()}${lv.title.toUpperCase()}${info?.streak && info.streak >= 2 ? `${sep()}🔥${info.streak}` : ''}${h.unlocks ? '<u class="chev" aria-hidden="true">▸</u>' : ''}</b><span>${wdl}</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()}${sep()}${info.unlock.xpLeft} XP</small>` : h.unlocks ? '<small class="lvl-next">EVERYTHING EARNED</small>' : ''}`
+      : '';
     const badge = lv
-      ? `<span class="record-chip lvl" title="${lv.into} / ${lv.need} XP to the next level"><b>LV ${lv.level}${sep()}${lv.title.toUpperCase()}${info?.streak && info.streak >= 2 ? `${sep()}🔥${info.streak}` : ''}</b><span>${wdl}</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()}${sep()}${info.unlock.xpLeft} XP</small>` : ''}</span>`
+      ? h.unlocks
+        ? `<button class="record-chip lvl" data-a="unlocks" title="${lv.into} / ${lv.need} XP to the next level. Tap for every unlock" aria-label="Level ${lv.level}, ${lv.title}. ${lv.into} of ${lv.need} XP to the next level. Open the unlock ladder">${badgeBody}</button>`
+        : `<span class="record-chip lvl" title="${lv.into} / ${lv.need} XP to the next level">${badgeBody}</span>`
       : `<span class="record-chip">${wdl}</span>`;
     // A tile's subtitle: dividers in the tile, plain " / " in its tooltip.
     const sub = (s?: string) => (s ? `<small title="${escHtml(sepText(s))}">${seps(escHtml(s))}</small>` : '');
+    // The gift / coins bar lives in the tile column: on the desktop it is pinned top-right of the screen; on a
+    // landscape phone it becomes the column's first row, so PLAY NOW never runs under it.
     const d = this.mount(`
-      <div class="topbar">
-        ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">🎁 DAILY GIFT <b>+${info.gift.amount}</b></button>` : ''}
-        ${h.account ? `<button class="btn btn-white acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
-        <div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>
-      </div>
       <div class="main-wrap ${info?.captain ? 'with-captain' : ''}">
         ${info?.captain ? `<div class="captain"><canvas class="captain-3d"></canvas><div class="captain-tag"><b>${info.captain.club}</b><span>OVR ${info.captain.ovr}</span></div></div>` : ''}
         <div class="main-col">
+        <div class="topbar">
+          ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">🎁 <span class="gift-w">DAILY </span>GIFT <b>+${info.gift.amount}</b></button>` : ''}
+          ${h.account ? `<button class="btn btn-white acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
+          <div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>
+        </div>
         <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
         <div class="tiles">
           ${h.playNow ? `<button class="btn btn-go tile tile-wide" data-a="playnow">${pixelIcon('ball', '#fff', 6)}<span>PLAY NOW</span>${sub(info?.playNow)}</button>` : ''}
+          ${h.moments ? `<button class="btn btn-teal tile tile-wide tile-moments" data-a="moments">${pixelIcon('star', '#ffd23a', 6)}<span>MOMENTS</span>${sub(info?.moments ?? 'SHORT CHALLENGES')}</button>` : ''}
           <button class="btn ${h.playNow ? 'btn-white' : 'btn-go'} tile" data-a="quick">${pixelIcon('ball', h.playNow ? '#26262e' : '#fff', 6)}<span>QUICK MATCH</span>${sub(info?.quick)}</button>
           <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${sub(info?.career)}</button>
           <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${sub(info?.club)}</button>
@@ -450,6 +471,8 @@ export class Menus {
     }
     d.querySelector('[data-a=gift]')?.addEventListener('click', () => h.gift?.());
     d.querySelector('[data-a=playnow]')?.addEventListener('click', () => h.playNow?.());
+    d.querySelector('[data-a=moments]')?.addEventListener('click', () => h.moments?.());
+    d.querySelector('[data-a=unlocks]')?.addEventListener('click', () => h.unlocks?.());
     d.querySelector('[data-a=account]')?.addEventListener('click', () => h.account?.());
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
     $(d, '[data-a=career]').addEventListener('click', h.career);
@@ -1004,6 +1027,85 @@ export class Menus {
       };
       tick();
     }, start);
+  }
+
+  /**
+   * The whole unlock ladder, from the level badge: every ball look and celebration with the level that earns it
+   * (earned ones lit, the next one marked with the XP still needed) and LEGEND difficulty by match stars. Only
+   * what the game really has (core/save unlockLadder): nothing here is a promise.
+   */
+  unlocks(save: SaveData, onBack: () => void): void {
+    const xp = save.progress.xp;
+    const lv = levelOf(xp);
+    const ladder = unlockLadder();
+    const nextLevel = ladder.find((u) => u.level > lv.level)?.level ?? 0;
+    const earned = ladder.filter((u) => u.level <= lv.level).length;
+    const rows = ladder.map((u) => {
+      const got = u.level <= lv.level;
+      const next = u.level === nextLevel;
+      const icon = u.kind === 'ball'
+        ? pixelIcon('ball', got ? BALL_TINT[u.id as BallSkinId] ?? '#fbfbf4' : '#b9b5aa', 3)
+        : pixelIcon('star', got ? '#ffd23a' : '#b9b5aa', 3);
+      const when = got ? 'EARNED' : next ? `${Math.max(0, xpAt(u.level) - xp)} XP TO GO` : `LEVEL ${u.level}`;
+      return `<li class="${got ? 'got' : ''}${next ? ' next' : ''}"><i class="ul-lv">LV ${u.level}</i>${icon}<span>${escHtml(u.name.toUpperCase())}<small>${u.kind === 'ball' ? 'BALL LOOK' : 'GOAL CELEBRATION'}</small></span><em>${when}</em></li>`;
+    }).join('');
+    const stars = save.progress.stars;
+    const legend = legendUnlocked(save.progress);
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel ul">
+          <h2>UNLOCKS</h2>
+          <div class="ul-head"><b>LV ${lv.level}</b><span>${escHtml(levelTitle(lv.level).toUpperCase())}</span><em>${lv.into} / ${lv.need} XP</em></div>
+          <div class="ft-xp-bar ul-bar"><i style="width:${Math.round((lv.into / lv.need) * 100)}%"></i></div>
+          <p class="ul-sum">${earned} OF ${ladder.length} EARNED${sep()}XP COMES FROM EVERY MATCH AND MOMENT</p>
+          <ul class="ul-list" aria-label="Unlock ladder">
+            ${rows}
+            <li class="legend ${legend ? 'got' : ''}"><i class="ul-lv">★ ${LEGEND_STARS}</i>${pixelIcon('trophy', legend ? '#ffd23a' : '#b9b5aa', 3)}<span>LEGEND DIFFICULTY<small>MATCH STARS, NOT LEVELS</small></span><em>${legend ? 'EARNED' : `${Math.min(stars, LEGEND_STARS)} / ${LEGEND_STARS} STARS`}</em></li>
+          </ul>
+          <div class="btn-row"><button class="btn btn-white btn-lg" data-a="back">BACK</button></div>
+        </div>
+      </div>`, 'unlocks');
+    $(d, '[data-a=back]').addEventListener('click', onBack);
+  }
+
+  /**
+   * Full time of a Football Moment: MOMENT COMPLETE / FAILED, the stars popping in, the seconds left, the XP
+   * earned (counted onto the level bar, a level-up splashing as on the match screen) and RETRY / NEXT MOMENT /
+   * MENU. No coins: moments pay in XP only (main.ts awards it before calling this).
+   */
+  momentResult(
+    spec: Pick<ScenarioSpec, 'id' | 'title'>, o: ScenarioOutcome, xp: { from: number; to: number },
+    h: { retry: () => void; next: () => void; nextLabel?: string; menu: () => void },
+  ): void {
+    const lv0 = levelOf(xp.from);
+    const nu = nextUnlock(xp.to);
+    const left = Math.max(0, Math.round(o.secondsLeft));
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel mo">
+          <h2 class="verdict ${o.won ? 'win' : 'lose'}">${o.won ? 'MOMENT COMPLETE' : 'FAILED'}</h2>
+          <p class="mo-title">${escHtml(spec.title)}</p>
+          <div class="ft-prog">
+            <div class="ft-stars" role="img" aria-label="${o.stars} of 3 stars">${[1, 2, 3].map((i) => `<i class="${i <= o.stars ? 'lit' : ''}" style="--i:${i}">★</i>`).join('')}</div>
+            <p class="mo-left ${o.won ? 'won' : ''}">${o.won ? `${left} SECOND${left === 1 ? '' : 'S'} LEFT` : left > 0 ? 'NOT THIS TIME' : 'TIME UP'}</p>
+            <div class="ft-xp">
+              <div class="ft-xp-h"><b class="ft-lv">LV ${lv0.level}</b><span class="ft-title">${levelTitle(lv0.level).toUpperCase()}</span><em class="ft-xp-n">+0 XP</em></div>
+              <div class="ft-xp-bar"><i style="width:${Math.round((lv0.into / lv0.need) * 100)}%"></i></div>
+              <div class="ft-levelup" aria-live="polite"></div>
+              ${nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''}
+            </div>
+          </div>
+          <div class="btn-row ft-foot mo-foot">
+            <button class="btn btn-white" data-a="menu">MENU</button>
+            <button class="btn btn-yellow btn-lg" data-a="retry">⟳ RETRY</button>
+            <button class="btn btn-go btn-lg" data-a="next">${escHtml(h.nextLabel ?? 'NEXT MOMENT')}</button>
+          </div>
+        </div>
+      </div>`, 'ft moment');
+    this.playProgress(d, { stars: o.stars, xpFrom: xp.from, xpTo: xp.to, streak: 0, mult: 1, done: [] });
+    $(d, '[data-a=menu]').addEventListener('click', h.menu);
+    $(d, '[data-a=retry]').addEventListener('click', h.retry);
+    $(d, '[data-a=next]').addEventListener('click', h.next);
   }
 
   /**

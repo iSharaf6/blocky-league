@@ -4,6 +4,7 @@ import type { CamZoom } from '../src/core/save';
 import { playFocus } from '../src/game/camFocus';
 import { KIT_MIN_DL, contrastAwayKit, kitLightnessGap, readKit, readsApart } from '../src/game/kitContrast';
 import { PRESENTATION } from '../src/game/matchSession';
+import { MatchTally } from '../src/game/ratings';
 import { BALL_OFS, FRAME_LEN, LUNGE_KICK_T0, LUNGE_S, LUNGE_STATE_T0, PF, STATE_CODE, writeFrame } from '../src/game/replay';
 import { grassLike, grassSafeKit, makeTeam, PRESET_CLUBS, resolveKitClash } from '../src/meta/data';
 import { CameraRig, type CamFocus } from '../src/render/cameraRig';
@@ -811,5 +812,42 @@ describe('kit contrast (render / session)', () => {
     const navy = { shirt: 0x223a78, shirt2: 0x223a78, pattern: 'plain' as const, shorts: 0x223a78, socks: 0x223a78, gk: 0xff8a2b };
     const white = { ...navy, shirt: 0xf6f4ec, shirt2: 0xf6f4ec, shorts: 0xf6f4ec, socks: 0xf6f4ec };
     expect(contrastAwayKit(navy, white)).toBe(white);
+  });
+});
+
+describe('match ratings follow the man, not the slot (session / game/ratings.ts)', () => {
+  it("a substitute inherits nothing; the man he replaced keeps his goals and stays man of the match", () => {
+    const m = newMatch(3, 0);
+    const t = new MatchTally();
+    const striker = m.teamPlayers(0).find((p) => p.role === 'FW')!;
+    const slot = striker.slot;
+    const offName = striker.def.name;
+    t.get(striker.idx).goals += 2;
+    t.get(striker.idx).shots += 3;
+    // Somebody else's assist stays his own too.
+    const mid = m.teamPlayers(0).find((p) => p.role === 'MF')!;
+    t.get(mid.idx).assists += 1;
+    if (!m.bench[0].some((p) => p.role !== 'GK')) m.bench[0].push({ ...striker.def, id: 'test-sub', name: 'Test Sub', number: 99 });
+    const benchIdx = m.bench[0].findIndex((p) => p.role !== 'GK');
+    expect(m.substitute(0, slot, benchIdx)).toBe(true);
+    const e = m.drainEvents().find((x) => x.type === 'sub');
+    expect(e && e.type === 'sub' && e.off === offName && e.slot === slot).toBe(true);
+    // (What the session does on the 'sub' event.)
+    const on = m.teamPlayers(0)[slot];
+    expect(on.idx).toBe(striker.idx);
+    t.sub(on.idx, offName, 0, on.isKeeper, on.role === 'DF');
+    t.get(on.idx).passes += 4;
+    m.score[0] = 2;
+    const r = t.ratings(m);
+    const sub = r.find((x) => x.name === on.def.name)!;
+    const gone = r.find((x) => x.name === offName)!;
+    expect(sub.goals).toBe(0);
+    expect(sub.rating).toBeLessThan(7);
+    expect(gone.goals).toBe(2);
+    expect(gone.rating).toBeGreaterThan(sub.rating);
+    expect(r[0].name).toBe(offName);
+    expect(r.find((x) => x.idx === mid.idx)!.assists).toBe(1);
+    // Everyone on the pitch is still rated (22), plus the man who went off.
+    expect(r.length).toBe(23);
   });
 });

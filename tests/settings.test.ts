@@ -124,3 +124,17 @@ describe('save backup (Settings > BACKUP)', () => {
     expect(typeof got.updatedAt).toBe('string');
   });
 });
+
+describe('save backup: football moments', () => {
+  it('moment stars survive an export / import round trip, and a damaged moments blob imports as empty', () => {
+    const d = defaultSave();
+    d.moments = { cross: 3, hold: 1 };
+    const back = importSave(exportSave(d));
+    expect(back?.moments).toEqual({ cross: 3, hold: 1 });
+    const raw = JSON.parse(exportSave(d)) as Record<string, unknown>;
+    raw.moments = [3, 1];
+    expect(importSave(JSON.stringify(raw))?.moments).toEqual({});
+    delete raw.moments;
+    expect(importSave(JSON.stringify(raw))?.moments).toEqual({});
+  });
+});

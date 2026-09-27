@@ -14,7 +14,7 @@ import {
 } from '../meta/career';
 import { NAME_DISALLOWED, cleanName, fallbackShort, isNameAllowed, nameProblem } from '../core/names';
 import { KIT_COLORS } from '../meta/data';
-import { SHORTLIST_MAX } from '../meta/market';
+import { SHORTLIST_MAX, WAGE_DIP, marketSummary, wageOf } from '../meta/market';
 import { openMarket } from './market';
 import { sep } from './text';
 import { cssHex } from '../render/palette';
@@ -463,9 +463,19 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
         </div>
         <div class="mc-stats">${stats}</div>
         <p class="mc-hint">Each session adds +${TRAIN_STEP} and costs 40 + 3 × OVR coins. Green stats count most for a ${p.role}.</p>
+        ${wageLine(p)}
       </div>
       <h3 class="mc-h">PICK A PLAYER</h3>
       <div class="mc-list">${club.squad.map((q, i) => playerRow(q, i, 'tpick', i === trainIdx)).join('')}</div>`;
+  };
+
+  /** Training raises a player's wage (OVR² / 40 a week); over the budget, coins drain after every match. */
+  const wageLine = (p: PlayerDef) => {
+    const s = marketSummary(st);
+    const over = s.drain > 0;
+    return `<p class="mc-hint ${over ? 'warn' : ''}">${esc(p.name)} earns ${fmt(wageOf(p))}/wk${sep()}squad wages ${fmt(s.wages)} of ${fmt(s.budget)}${
+      over ? `${sep()}OVER BUDGET: ${fmt(s.drain)} coins go after every match and everyone plays ${WAGE_DIP} point down` : ''
+    }</p>`;
   };
 
   const kitHtml = () => `<div class="mc-create">

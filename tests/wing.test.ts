@@ -166,6 +166,197 @@ describe('passing to the wings (the human)', () => {
   }
 });
 
+// ------------------------------------------------------------------ the diagonal ball (round 12)
+
+/**
+ * Round 12 (the critic, on the owner's complaint): the GEOMS above are near-square (dx 0-14 m), and the diagonal ball
+ * was still going to the marker. The winger 28-38 m away at 45-65 degrees off the carrier's facing, a marker 2.5 m off
+ * the lane (3 m short of him on the ball side, or 3 m beyond him on the goal side) and a full-back 7 m ahead, 2 m
+ * inside; the stick roughly at him, held; PASS / THROUGH tapped for 80 ms.
+ */
+interface DiagGeom { deg: number; zw: number }
+const DIAG_GEOMS: DiagGeom[] = [{ deg: 45, zw: 3 }, { deg: 45, zw: 4.5 }, { deg: 55, zw: 3 }, { deg: 55, zw: 4.5 }, { deg: 65, zw: 3 }, { deg: 65, zw: 4.5 }];
+type MarkerSide = 'ball' | 'goal';
+
+function probeDiag(seed: number, state: WingState, btn: 'pass' | 'through', g: DiagGeom, marker: MarkerSide, off: number, tapFrames = 5, holdStick = true): ProbeResult & { who: number } {
+  const m = scenario(seed);
+  const ad = m.attackDir(0);
+  const c = m.players[7];
+  const w = m.players[8];
+  const mk = m.players[17];
+  const fb = m.players[15];
+  const th = (g.deg * Math.PI) / 180;
+  const wz = HALF_W - g.zw;
+  const dx = wz / Math.tan(th);
+  const cx = -6;
+  place(c, cx * ad, 0);
+  c.facing = ad > 0 ? 0 : Math.PI;
+  place(w, (cx + dx) * ad, wz);
+  // The lane's unit line (in the carrier's frame) and its inside perpendicular (towards the middle of the pitch).
+  const ux = Math.cos(th);
+  const uz = Math.sin(th);
+  const along = marker === 'ball' ? -3 : 3;
+  place(mk, (cx + dx + ux * along + uz * 2.5) * ad, wz + uz * along - ux * 2.5);
+  place(fb, (cx + dx + 7) * ad, wz - 2);
+  mk.facing = fb.facing = ad > 0 ? Math.PI : 0;
+  if (state !== 'standing') {
+    const sp = state === 'jogging' ? 5 : 8.5;
+    w.vel.x = sp * ad;
+    w.running = true;
+    w.runT = 2.5;
+    w.sprint = state === 'sprinting';
+    w.facing = ad > 0 ? 0 : Math.PI;
+  }
+  giveBall(m, c);
+  const a = Math.atan2(w.pos.z - c.pos.z, w.pos.x - c.pos.x) + off;
+  const sx = Math.cos(a);
+  const sz = Math.sin(a);
+  const out: ProbeResult & { who: number } = { r: 'none', kind: '', target: -1, v0: 0, t: 0, margin: Infinity, who: -1 };
+  let kicked = -1;
+  for (let i = 0; i < 60 * 4; i++) {
+    const stick = holdStick || i < tapFrames + 20;
+    m.step(DT, pad(stick ? sx : 0, stick ? sz : 0, { [btn]: i < tapFrames }));
+    const evs = m.drainEvents();
+    if (kicked < 0) {
+      const k = evs.find((e) => e.type === 'kick');
+      if (k && k.type === 'kick') {
+        kicked = i;
+        out.kind = k.kind;
+        out.target = m.passTarget;
+        out.v0 = Math.hypot(m.ball.vel.x, m.ball.vel.z);
+      }
+      continue;
+    }
+    out.margin = Math.min(out.margin, HALF_W - Math.abs(m.ball.pos.z));
+    out.t = (i - kicked) * DT;
+    if (m.phase !== 'play') {
+      out.r = 'out';
+      return out;
+    }
+    const ctl = evs.find((e) => e.type === 'control');
+    const o = ctl && ctl.type === 'control' ? ctl.player : m.ball.owner;
+    if (o >= 0 && o !== c.idx) {
+      out.r = o === w.idx ? 'ok' : m.players[o].side === 0 ? 'mate' : 'int';
+      out.who = o;
+      return out;
+    }
+  }
+  return out;
+}
+
+function sweepDiag(btn: 'pass' | 'through', marker: MarkerSide): { n: number; ok: number; tally: Record<Outcome, number>; log: string[]; byGeom: Record<string, [number, number]> } {
+  const tally: Record<Outcome, number> = { ok: 0, mate: 0, int: 0, out: 0, none: 0 };
+  const byGeom: Record<string, [number, number]> = {};
+  const log: string[] = [];
+  let n = 0;
+  let seed = 1;
+  for (const g of DIAG_GEOMS) {
+    for (const state of ['standing', 'jogging', 'sprinting'] as WingState[]) {
+      for (const off of OFFS) {
+        for (let k = 0; k < 2; k++) {
+          const r = probeDiag(seed * 53 + 11, state, btn, g, marker, off);
+          seed++;
+          n++;
+          tally[r.r]++;
+          const key = `${g.deg}deg/zw${g.zw}`;
+          const bg = (byGeom[key] ??= [0, 0]);
+          bg[1]++;
+          if (r.r === 'ok') bg[0]++;
+          else log.push(`${state}/${btn}/${marker} ${key} off${Math.round((off * 180) / Math.PI)}: ${r.r} by ${r.who} kind=${r.kind} tgt=${r.target} v0=${r.v0.toFixed(1)} t=${r.t.toFixed(2)}`);
+        }
+      }
+    }
+  }
+  return { n, ok: tally.ok, tally, log, byGeom };
+}
+
+describe('the diagonal ball out to a marked winger (round 12)', () => {
+  for (const btn of ['pass', 'through'] as const) {
+    for (const marker of ['ball', 'goal'] as MarkerSide[]) {
+      it(`${btn} tap to a winger 28-38 m away at 45-65 degrees with a marker 2.5 m off the lane on the ${marker} side: he gets it`, () => {
+        const s = sweepDiag(btn, marker);
+        const per = Object.entries(s.byGeom).map(([k, v]) => `${k} ${v[0]}/${v[1]}`).join(', ');
+        // eslint-disable-next-line no-console
+        console.log(`diagonal ${btn} / marker ${marker}-side: ${JSON.stringify(s.tally)} of ${s.n} [${per}]\n  ${s.log.slice(0, 8).join('\n  ')}`);
+        // (Round 12, before: 39% completed, 56% intercepted over the critic's 54 real-key probes: the marker was
+        // picked to press the man the ball was for and ran straight down the lane at it from a 0.12 s reaction, and
+        // the ball was aimed at the man's feet, on the marker's side of him.)
+        expect(s.ok / s.n).toBeGreaterThanOrEqual(0.8);
+        for (const [k, v] of Object.entries(s.byGeom)) expect(v[0] / v[1], k).toBeGreaterThanOrEqual(0.65);
+      }, 90_000);
+    }
+  }
+
+  it('THROUGH tapped (80 ms) to a wide runner with the full-back 7 m ahead is a through ball, never led into the full-back', () => {
+    // (Round 12, the critic: d36 / 48 degrees, 6 of 6 intercepted by the full-back; d30 / 60 degrees, 5 of 6 by
+    // the marker; and every one of 27 L taps registered as a 'pass'.)
+    const tally: Record<Outcome, number> = { ok: 0, mate: 0, int: 0, out: 0, none: 0 };
+    let n = 0;
+    let through = 0;
+    let byFullBack = 0;
+    let seed = 1;
+    for (const g of [{ deg: 48, zw: 3 }, { deg: 60, zw: 4 }]) {
+      for (const state of ['standing', 'jogging', 'sprinting'] as WingState[]) {
+        for (const off of [0, -0.25]) {
+          for (let k = 0; k < 3; k++) {
+            const r = probeDiag(seed * 71 + 3, state, 'through', g, 'ball', off, 5, false);
+            seed++;
+            n++;
+            tally[r.r]++;
+            if (r.kind === 'through') through++;
+            if (r.r === 'int' && r.who === 15) byFullBack++;
+          }
+        }
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`THROUGH with the full-back 7 m ahead: ${JSON.stringify(tally)} of ${n}, ${through} through balls, ${byFullBack} cut out by the full-back`);
+    expect(through).toBe(n);
+    expect(tally.ok / n).toBeGreaterThanOrEqual(0.8);
+    expect(byFullBack / n).toBeLessThanOrEqual(0.1);
+  }, 60_000);
+
+  it('THROUGH held (0.4 s) is the lofted ball; a tap is the through ball', () => {
+    const m0 = probeDiag(5, 'jogging', 'through', { deg: 55, zw: 3 }, 'ball', 0, 5, false);
+    expect(m0.kind).toBe('through');
+    const m1 = probeDiag(5, 'jogging', 'through', { deg: 55, zw: 3 }, 'ball', 0, 24, false);
+    expect(m1.kind).toBe('lob');
+  });
+
+  it('the stick straight ahead with the winger 48 degrees off and marked: the ball goes to him, never to a man behind', () => {
+    // (Round 12, the critic: 3 of 9 forward-stick probes played a defender at -119 degrees behind the carrier.)
+    for (const seed of [1, 2, 3]) {
+      for (const state of ['standing', 'jogging'] as WingState[]) {
+        const m = scenario(seed * 17);
+        const ad = m.attackDir(0);
+        const c = m.players[7];
+        const w = m.players[8];
+        const mk = m.players[17];
+        const behind = m.players[6];
+        place(c, -6 * ad, 0);
+        c.facing = ad > 0 ? 0 : Math.PI;
+        place(w, 18 * ad, 27);
+        place(mk, 14.5 * ad, 26);
+        place(behind, -18 * ad, -28);
+        if (state === 'jogging') {
+          w.vel.x = 5 * ad;
+          w.running = true;
+          w.runT = 2.5;
+        }
+        giveBall(m, c);
+        let kind = '';
+        for (let i = 0; i < 40 && !kind; i++) {
+          m.step(DT, pad(ad, 0, { pass: i < 5 }));
+          const k = m.drainEvents().find((e) => e.type === 'kick');
+          if (k && k.type === 'kick') kind = k.kind;
+        }
+        expect(kind).toBe('pass');
+        expect(m.passTarget).toBe(w.idx);
+      }
+    }
+  });
+});
+
 // ------------------------------------------------------------------ whole matches
 
 interface WingTally {

@@ -50,6 +50,16 @@ export const QUICK_SALE = 0.45;
 export const YOUNG_AGE = 23;
 /** Weekly wage of an overall `o` player: o²/40 (45 → 51, 60 → 90, 88 → 194). */
 export const WAGE_DIV = 40;
+/** Over the wage budget: this share of the weekly overspend leaves the wallet after every matchday. */
+export const WAGE_DRAIN = 1.5;
+/** Stat points every player loses in matches while wages are over budget (unpaid, unhappy). */
+export const WAGE_DIP = 1;
+/**
+ * No flipping: AI offers for a player you signed this season stay at or under RESALE_CAP × what you paid until
+ * he has made RESALE_STARTS league starts for you (or the season ends).
+ */
+export const RESALE_CAP = 1.1;
+export const RESALE_STARTS = 6;
 
 // ------------------------------------------------------------------ types
 
@@ -60,6 +70,12 @@ export interface MetaPlayer extends PlayerDef {
   potential?: number;
   /** Seasons left, 1..4. */
   contract?: number;
+  /** Coins you paid to sign him on the market (unset for anyone else). */
+  paid?: number;
+  /** Season number you signed him in (the resale cap lasts that season). */
+  boughtSeason?: number;
+  /** League starts for you since you signed him (market signings only). */
+  starts?: number;
 }
 
 export interface Listing {
@@ -122,6 +138,10 @@ export interface NewsItem {
   week: number;
   text: string;
   kind: NewsKind;
+  /** About your own business (answers to your offers, offers for your players, your deals, your wage bill). */
+  own: boolean;
+  /** Read: set for everything once the market screen has been opened (see markNewsSeen / marketUnread). */
+  seen?: boolean;
 }
 
 export interface MarketState {
@@ -304,9 +324,34 @@ function rivalById(state: CareerState, id: string | null): LeagueClub | undefine
   return id ? state.season?.rivals.find((r) => r.id === id) : undefined;
 }
 
-function pushNews(state: CareerState, text: string, kind: NewsKind): void {
+function pushNews(state: CareerState, text: string, kind: NewsKind, own = false): void {
   const tm = state.tm;
-  tm.news = [{ season: state.season?.number ?? 0, week: marketWeek(state), text, kind }, ...tm.news].slice(0, NEWS_MAX);
+  tm.news = [{ season: state.season?.number ?? 0, week: marketWeek(state), text, kind, own, seen: false }, ...tm.news].slice(0, NEWS_MAX);
+}
+
+const fmtN = (n: number) => n.toLocaleString('en-US');
+
+/** Everything read (the market screen opened): nothing counts as unread any more. */
+export function markNewsSeen(state: CareerState): void {
+  for (const n of state.tm.news) if (!n.seen) n.seen = true;
+}
+
+/** Items about your own business you have not seen yet (the MARKET button badge). */
+export function marketUnread(state: CareerState): number {
+  return state.tm.news.filter((n) => n.own && !n.seen).length;
+}
+
+/**
+ * The news strip: your own items come first (answers to your offers never hide behind AI gossip) when they are
+ * from this week or last, or still unread (`fresh`: the unseen set captured before markNewsSeen); then
+ * everything else. Each group newest first.
+ */
+export function newsStrip(state: CareerState, max = 4, fresh?: ReadonlySet<NewsItem>): NewsItem[] {
+  const season = state.season?.number ?? 0;
+  const week = marketWeek(state);
+  const mine = (n: NewsItem) => n.own && ((n.season === season && n.week >= week - 1) || !n.seen || !!fresh?.has(n));
+  const news = state.tm.news;
+  return [...news.filter(mine), ...news.filter((n) => !mine(n))].slice(0, max);
 }
 
 function refund(state: CareerState, wallet: Wallet | undefined, amount: number): void {
@@ -349,6 +394,8 @@ export interface MarketSummary {
   wages: number;
   budget: number;
   pending: number;
+  /** Coins that leave the wallet after every matchday while wages are over budget (0 under it). */
+  drain: number;
 }
 
 export function marketSummary(state: CareerState): MarketSummary {
@@ -361,7 +408,64 @@ export function marketSummary(state: CareerState): MarketSummary {
     wages: state.club ? squadWages(state.club) : 0,
     budget: wageBudget(state.season?.division ?? 6, state.stadium),
     pending: c.players - (state.club?.squad.length ?? 0),
+    drain: wageDrain(state),
   };
+}
+
+// ------------------------------------------------------------------ wage bill
+
+/** The weekly overspend (0 when wages fit the budget). */
+export function wageOverspend(state: CareerState): number {
+  if (!state.club) return 0;
+  return Math.max(0, squadWages(state.club) - wageBudget(state.season?.division ?? 6, state.stadium));
+}
+
+/** What an over-budget wage bill costs after each matchday: WAGE_DRAIN × the overspend; nothing under budget. */
+export function wageDrain(state: CareerState): number {
+  const over = wageOverspend(state);
+  return over > 0 ? Math.round(over * WAGE_DRAIN) : 0;
+}
+
+/**
+ * Settle the wage bill after a matchday (career.ts resolveMatchday): over budget, WAGE_DRAIN × the overspend
+ * leaves the wallet (never below zero) and the news says so. Returns the coins taken.
+ */
+export function applyWageDrain(state: CareerState, wallet: Wallet): number {
+  const drain = wageDrain(state);
+  if (!drain || !state.club) return 0;
+  const taken = Math.min(drain, Math.max(0, Math.floor(wallet.coins)));
+  wallet.coins -= taken;
+  const wages = squadWages(state.club);
+  const budget = wageBudget(state.season?.division ?? 6, state.stadium);
+  pushNews(
+    state,
+    `Wages over budget (${fmtN(wages)} of ${fmtN(budget)} a week): ${fmtN(taken)} coins deducted${taken < drain ? ', all you had' : ''}`,
+    'bad',
+    true,
+  );
+  return taken;
+}
+
+// ------------------------------------------------------------------ resale cap (no flipping)
+
+/**
+ * The most an AI club offers for a player you signed this season: RESALE_CAP × what you paid, until he has made
+ * RESALE_STARTS league starts for you or a season has passed. null when no cap applies.
+ */
+export function resaleCap(state: CareerState, p: PlayerDef): number | null {
+  const m = p as MetaPlayer;
+  if (typeof m.paid !== 'number' || !(m.paid > 0) || typeof m.boughtSeason !== 'number') return null;
+  if ((state.season?.number ?? 0) !== m.boughtSeason) return null;
+  if ((m.starts ?? 0) >= RESALE_STARTS) return null;
+  return round10(m.paid * RESALE_CAP);
+}
+
+/** After a matchday: one more start for every market signing in the XI (lifts his resale cap at RESALE_STARTS). */
+export function recordStarts(club: ClubState): void {
+  for (const p of club.squad.slice(0, 11)) {
+    const m = p as MetaPlayer;
+    if (typeof m.boughtSeason === 'number') m.starts = (m.starts ?? 0) + 1;
+  }
 }
 
 // ------------------------------------------------------------------ listings
@@ -481,6 +585,10 @@ function signListing(state: CareerState, listing: Listing, paid: number): MetaPl
     potential: listing.potential,
     contract: listing.contract,
   });
+  // What you paid and when: his resale value stays near it this season (resaleCap).
+  p.paid = paid;
+  p.boughtSeason = state.season?.number ?? 0;
+  p.starts = 0;
   club.squad.push(p);
   const r = rivalById(state, listing.club);
   if (r) {
@@ -489,7 +597,7 @@ function signListing(state: CareerState, listing: Listing, paid: number): MetaPl
   }
   dropListing(state, listing.id);
   state.tm.bids = state.tm.bids.filter((b) => b.listingId !== listing.id);
-  pushNews(state, `${p.name} joins you from ${r ? townOf(r.name) : 'the free agents'} for ${paid.toLocaleString('en-US')}`, 'good');
+  pushNews(state, `${p.name} joins you from ${r ? townOf(r.name) : 'the free agents'} for ${fmtN(paid)}`, 'good', true);
   return p;
 }
 
@@ -599,14 +707,14 @@ function resolveBids(state: CareerState, wallet: Wallet | undefined, week: numbe
     if (!l) {
       drop();
       refund(state, wallet, b.amount);
-      pushNews(state, `${b.player.name} is no longer available; your ${b.amount.toLocaleString('en-US')} came back`, 'bad');
+      pushNews(state, `${b.player.name} is no longer available; your ${fmtN(b.amount)} came back`, 'bad', true);
       continue;
     }
     if (b.status === 'countered') {
       // A counter not taken before the match lapses.
       drop();
       refund(state, wallet, b.amount);
-      pushNews(state, `${townOf(l.clubName) || 'The agent'} withdrew the ${b.counter.toLocaleString('en-US')} counter for ${l.player.name}`, 'info');
+      pushNews(state, `${townOf(l.clubName) || 'The agent'} withdrew the ${fmtN(b.counter)} counter for ${l.player.name}; your ${fmtN(b.amount)} came back`, 'info', true);
       continue;
     }
     if (b.week >= week) continue;
@@ -632,9 +740,9 @@ function resolveBids(state: CareerState, wallet: Wallet | undefined, week: numbe
       if (typeof p === 'string') {
         drop();
         refund(state, wallet, b.amount);
-        pushNews(state, `${who} accepted, but you had no room for ${l.player.name} (${p === 'wages' ? 'wage budget' : 'squad full'})`, 'bad');
+        pushNews(state, `${who} accepted, but you had no room for ${l.player.name} (${p === 'wages' ? 'wage budget' : 'squad full'}); your ${fmtN(b.amount)} came back`, 'bad', true);
       } else {
-        pushNews(state, `${who} accept your ${b.amount.toLocaleString('en-US')} offer for ${p.name}`, 'good');
+        pushNews(state, `${who} accept your ${fmtN(b.amount)} offer for ${p.name}`, 'good', true);
       }
       continue;
     }
@@ -646,7 +754,7 @@ function resolveBids(state: CareerState, wallet: Wallet | undefined, week: numbe
         drop();
         refund(state, wallet, b.amount);
         tradeToRival(state, l, buyer);
-        pushNews(state, `${townOf(buyer.name)} beat you to ${l.player.name}`, 'bad');
+        pushNews(state, `${townOf(buyer.name)} beat you to ${l.player.name}; your ${fmtN(b.amount)} came back`, 'bad', true);
         continue;
       }
     }
@@ -654,12 +762,12 @@ function resolveBids(state: CareerState, wallet: Wallet | undefined, week: numbe
       const [, hi] = bidRange(l);
       b.status = 'countered';
       b.counter = l.club ? clamp(round10(l.asking * (threshold + 0.03)), b.amount + 10, hi) : l.asking;
-      pushNews(state, `${who} want ${b.counter.toLocaleString('en-US')} for ${l.player.name} (you offered ${b.amount.toLocaleString('en-US')})`, 'info');
+      pushNews(state, `${who} want ${fmtN(b.counter)} for ${l.player.name} (you offered ${fmtN(b.amount)}): answer before the next match`, 'info', true);
       continue;
     }
     drop();
     refund(state, wallet, b.amount);
-    pushNews(state, refuse ? `${who} won't let ${l.player.name} go` : `${who} reject your ${b.amount.toLocaleString('en-US')} offer for ${l.player.name}`, 'bad');
+    pushNews(state, refuse ? `${who} won't let ${l.player.name} go; your ${fmtN(b.amount)} came back` : `${who} reject your ${fmtN(b.amount)} offer for ${l.player.name}; it came back`, 'bad', true);
   }
 }
 
@@ -702,7 +810,7 @@ export function acceptOffer(state: CareerState, wallet: Wallet, playerId: string
   buyer.rating = rivalRating(buyer);
   state.tm.sales = state.tm.sales.filter((s) => s !== sale);
   wallet.coins += offer.amount;
-  pushNews(state, `${p.name} sold to ${townOf(buyer.name)} for ${offer.amount.toLocaleString('en-US')}`, 'good');
+  pushNews(state, `${p.name} sold to ${townOf(buyer.name)} for ${fmtN(offer.amount)}`, 'good', true);
   return { ok: true, delta: offer.amount, player: p };
 }
 
@@ -720,16 +828,21 @@ function tickSales(state: CareerState, week: number, rng: Rng): void {
   if (!club || !season) return;
   tm.sales = tm.sales.filter((s) => club.squad.some((p) => p.id === s.playerId));
   for (const s of tm.sales) {
+    const p = club.squad.find((x) => x.id === s.playerId)!;
+    // An offer not answered within OFFER_LIFE weeks is withdrawn (and you hear about it).
+    for (const o of s.offers) if (o.expires <= week) pushNews(state, `${townOf(o.clubName)} withdrew their ${fmtN(o.amount)} offer for ${p.name}`, 'info', true);
     s.offers = s.offers.filter((o) => o.expires > week);
     if (!windowOpen(week) || s.offers.length >= MAX_OFFERS || !rng.chance(0.65)) continue;
-    const p = club.squad.find((x) => x.id === s.playerId)!;
     const taken = new Set(s.offers.map((o) => o.club));
     const buyers = season.rivals.filter((r) => !taken.has(r.id) && rivalSquad(r).length < RIVAL_SQUAD_MAX);
     if (!buyers.length) continue;
     const buyer = rng.pick(buyers);
-    const amount = round10(playerValue(p) * (0.7 + rng.next() * 0.25));
+    let amount = round10(playerValue(p) * (0.7 + rng.next() * 0.25));
+    // No flipping: a player you signed this season fetches at most RESALE_CAP × what you paid until he has played.
+    const cap = resaleCap(state, p);
+    if (cap !== null) amount = Math.min(amount, cap);
     s.offers.push({ id: `o${tm.nextId++}`, club: buyer.id, clubName: buyer.name, amount, week, expires: week + OFFER_LIFE });
-    pushNews(state, `${townOf(buyer.name)} offer ${amount.toLocaleString('en-US')} for ${p.name}`, 'info');
+    pushNews(state, `${townOf(buyer.name)} offer ${fmtN(amount)} for ${p.name}`, 'info', true);
   }
 }
 

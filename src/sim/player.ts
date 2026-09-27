@@ -95,6 +95,8 @@ export interface KickOrder {
    * (the error margin's body term; he squares up the rest of the way during the wind-up).
    */
   bodyOff?: number;
+  /** A human's THROUGH with nobody to run onto it: driven to the locked man's feet (actions.humanThroughTarget's `feet`). */
+  toFeet?: boolean;
 }
 
 /** Top speed allowed while celebrating (adrenaline: a scorer can outrun his stamina). */

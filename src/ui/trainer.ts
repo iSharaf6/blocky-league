@@ -7,6 +7,16 @@ import type { Match } from '../sim/match';
 import { escHtml, sep, sepsOfText } from './text';
 
 type Device = 'keyboard' | 'gamepad' | 'touch';
+/** What a first-match teaching card waits for. */
+export type TeachStep = 'move' | 'pass';
+/** The stick and PASS state the teaching steps watch (a subset of core/input Controls). */
+export interface TeachControls {
+  sx: number;
+  sy: number;
+  pass: boolean;
+}
+/** A teaching wait that nothing clears (no input source wired) lets go after this long, so the game can never soft-lock. */
+const TEACH_TIMEOUT_MS = 25_000;
 export interface TrainerCue {
   title: string;
   actions: [string, string][];
@@ -48,9 +58,37 @@ export function trainerCue(m: Match, device: Device): TrainerCue {
   return { title: 'GET TO THE BALL', actions: [[sprint, 'Sprint'], [pass, 'Switch']], detail: 'Point your movement towards the ball' };
 }
 
-/** Small pitch-anchored control card and passing lane. No menus, animations, or per-frame DOM rebuilds. */
+/** The teaching cards, by device: the key cap, what to do, and one line of detail. */
+function teachCue(step: TeachStep, device: Device): TrainerCue {
+  const stick = device === 'keyboard' ? 'WASD' : 'STICK';
+  const pass = device === 'gamepad' ? 'A' : device === 'touch' ? 'PASS' : 'SPACE';
+  if (step === 'move') return {
+    title: 'STEP 1 · MOVE', actions: [[stick, device === 'keyboard' ? 'Run with W A S D (or the arrows)' : 'Push the stick to run']],
+    detail: 'Head for the goal the arrow points at',
+  };
+  return {
+    title: 'STEP 2 · PASS', actions: [[pass, device === 'touch' ? 'Tap PASS to the ringed mate' : `Tap ${pass} to the ringed mate`]],
+    detail: 'Point the stick at a mate to pick him',
+  };
+}
+
+/**
+ * Small pitch-anchored control card and passing lane. No menus, animations, or per-frame DOM rebuilds.
+ *
+ * First match (MatchConfig.firstMatch, trainer on): the first two cards are teaching steps, MOVE then PASS, that
+ * wait for the action. The session reads `waitingFor` and holds the sim while it is set (still drawing, still
+ * reading input); the step clears itself when it sees the stick move / PASS pressed through `Trainer.input`
+ * (set by main.ts), through `feed()` / the `controls` argument of update(), or, failing all of those, through
+ * the match itself (the player moved, the ball left his feet) or the safety timeout.
+ */
 export class Trainer {
+  /** The live input (main.ts: `Trainer.input = input`): how the teaching steps see the action while the sim is held. */
+  static input: { read(): TeachControls } | null = null;
   readonly root = document.createElement('div');
+  /** First-match teaching: 'move' → 'pass' → 'play' (the normal cues). 'play' from the start on any other match. */
+  stage: TeachStep | 'play' = 'play';
+  /** The action the teaching card on screen is waiting for; null when no card is waiting (the sim may run). */
+  waitingFor: TeachStep | null = null;
   private card: HTMLElement;
   private title: HTMLElement;
   private actions: HTMLElement;
@@ -62,6 +100,10 @@ export class Trainer {
   private v = new Vector3();
   private lastCue = '';
   private target = -1;
+  private stageInit = false;
+  private fed: TeachControls | null = null;
+  private waitSince = 0;
+  private startPos: [number, number] | null = null;
 
   constructor() {
     this.root.className = 'pitch-trainer';
@@ -81,9 +123,87 @@ export class Trainer {
     this.guide = this.root.querySelector('svg')!;
   }
 
-  hide(): void { this.root.hidden = true; }
+  /** Hidden (intro, pause, replay, cinematic): nothing is waiting, so the session never holds the sim on a card nobody sees. */
+  hide(): void {
+    this.root.hidden = true;
+    this.waitingFor = null;
+  }
 
-  update(m: Match, frame: Float32Array, camera: Camera, head: number, device: Device): void {
+  /** The session may hand over this frame's controls (instead of, or as well as, Trainer.input). */
+  feed(c: TeachControls | null): void {
+    this.fed = c;
+  }
+
+  /** Skip the teaching (a returning player, or the session decided): straight to the normal cues. */
+  endTeaching(): void {
+    this.stage = 'play';
+    this.waitingFor = null;
+    this.lastCue = '';
+  }
+
+  /**
+   * One teaching step: draw its card (once) and clear it when the action arrives. Returns true while the step
+   * is still waiting (the normal cue is not drawn meanwhile).
+   */
+  private teach(m: Match, frame: Float32Array, device: Device, controls: TeachControls | null | undefined): boolean {
+    const step = this.stage;
+    if (step === 'play') return false;
+    const a = m.active * PF;
+    const mine = m.ball.owner === m.active;
+    // PASS is taught the first time the player has the ball; until then the normal cue guides him to it. The ball
+    // leaving his feet while the card was up counts as the pass (a press the session let through to the sim).
+    if (step === 'pass' && !mine) {
+      if (this.waitingFor === 'pass') return this.advance(m, frame, device, controls);
+      this.waitingFor = null;
+      this.card.classList.remove('teach');
+      return false;
+    }
+    const now = performance.now();
+    if (this.waitingFor !== step) {
+      this.waitingFor = step;
+      this.waitSince = now;
+      this.startPos = [frame[a], frame[a + 1]];
+      const cue = teachCue(step, device);
+      this.lastCue = `teach:${step}:${device}`;
+      this.title.textContent = cue.title;
+      this.actions.replaceChildren(...cue.actions.map(([k, label]) => {
+        const item = document.createElement('span');
+        const cap = document.createElement('kbd');
+        cap.textContent = k;
+        item.append(cap, document.createTextNode(label));
+        return item;
+      }));
+      this.detail.innerHTML = sepsOfText(cue.detail);
+      this.card.classList.add('teach');
+    }
+    // With an input source the action itself is what counts (the sim moves him on its own at a kick-off, and
+    // move assist keeps him running: neither is the player pushing the stick). Without one, the match has to do.
+    const c = controls ?? this.fed ?? Trainer.input?.read() ?? null;
+    let done = false;
+    if (step === 'move') {
+      const moved = this.startPos ? Math.hypot(frame[a] - this.startPos[0], frame[a + 1] - this.startPos[1]) > 0.8 : false;
+      done = c ? Math.hypot(c.sx, c.sy) > 0.3 : moved;
+    } else {
+      done = c ? c.pass : m.passCharge >= 0;
+    }
+    if (!done && now - this.waitSince > TEACH_TIMEOUT_MS) done = true;
+    return done ? this.advance(m, frame, device, controls) : true;
+  }
+
+  /** The waited-for action happened: on to the next step (PASS may show at once if he has the ball) or the normal cues. */
+  private advance(m: Match, frame: Float32Array, device: Device, controls: TeachControls | null | undefined): boolean {
+    this.stage = this.stage === 'move' ? 'pass' : 'play';
+    this.waitingFor = null;
+    this.lastCue = '';
+    this.card.classList.remove('teach');
+    return this.stage !== 'play' && this.teach(m, frame, device, controls);
+  }
+
+  update(m: Match, frame: Float32Array, camera: Camera, head: number, device: Device, controls?: TeachControls | null): void {
+    if (!this.stageInit) {
+      this.stageInit = true;
+      if (m.cfg.firstMatch && m.trainer) this.stage = 'move';
+    }
     if (!m.trainer || m.phase !== 'play' || m.active < 0 || m.players[m.active].sentOff) { this.hide(); return; }
     const w = window.innerWidth, h = window.innerHeight;
     const project = (x: number, y: number, z: number) => {
@@ -94,11 +214,12 @@ export class Trainer {
     const at = project(frame[a], head + frame[a + 2], frame[a + 1]);
     if (!at.visible || at.x < 0 || at.x > w || at.y < 65 || at.y > h - 25) { this.hide(); return; }
     this.root.hidden = false;
-    const cue = trainerCue(m, device);
     const goal = project(m.attackDir(m.players[m.active].side) * HALF_L, 0, 0);
     const direction = Math.abs(goal.x - at.x) > 70 ? (goal.x > at.x ? ' →' : ' ←') : ' ↑';
-    const key = JSON.stringify(cue) + direction;
-    if (key !== this.lastCue) {
+    const teaching = this.teach(m, frame, device, controls);
+    const cue = teaching ? null : trainerCue(m, device);
+    const key = cue ? JSON.stringify(cue) + direction : this.lastCue;
+    if (cue && key !== this.lastCue) {
       this.lastCue = key;
       this.title.textContent = cue.title + (m.ball.owner === m.active ? direction : '');
       this.actions.replaceChildren(...cue.actions.map(([k, label]) => {

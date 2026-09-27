@@ -6,11 +6,12 @@ import {
   type CareerState, type LeagueClub,
 } from '../src/meta/career';
 import {
-  AI_TRADES_PER_WEEK, FREE_AGENTS, LISTINGS_MAX, LISTINGS_MIN, MORALE_DIP, SCOUT_COST, SHORTLIST_MAX, YOUNG_AGE,
-  acceptCounter, acceptOffer, ageSquad, askingPrice, bidFor, bidRange, canBid, committed, listPlayer, listingById, marketSummary, placeBid,
-  playerAge, playerPotential, playerValue, rejectOffer, saleFor, scoutListing, shortlisted, squadWages, toggleShortlist, unlistPlayer,
-  wageBudget, wageOf, windowInfo, windowOpen, withdrawBid,
-  type Listing,
+  AI_TRADES_PER_WEEK, FREE_AGENTS, LISTINGS_MAX, LISTINGS_MIN, MORALE_DIP, OFFER_LIFE, RESALE_CAP, RESALE_STARTS, SCOUT_COST, SHORTLIST_MAX,
+  WAGE_DIP, WAGE_DRAIN, YOUNG_AGE,
+  acceptCounter, acceptOffer, ageSquad, applyWageDrain, askingPrice, bidFor, bidRange, canBid, committed, listPlayer, listingById, markNewsSeen,
+  marketSummary, marketUnread, newsStrip, placeBid, playerAge, playerPotential, playerValue, quickSaleValue, rejectOffer, resaleCap, saleFor,
+  scoutListing, shortlisted, squadWages, toggleShortlist, unlistPlayer, wageBudget, wageDrain, wageOf, windowInfo, windowOpen, withdrawBid,
+  type Listing, type MetaPlayer,
 } from '../src/meta/market';
 import { KIT_COLORS, makePlayer, surnameOf } from '../src/meta/data';
 import { Rng } from '../src/core/rng';
@@ -398,6 +399,195 @@ describe('selling', () => {
     // Can't list below the minimum squad.
     while (club.squad.length > SQUAD_MIN) club.squad.pop();
     expect(listPlayer(st, club.squad[12].id)).toEqual({ ok: false, reason: 'min-squad' });
+  });
+});
+
+describe('no flipping', () => {
+  it('a player you sign this season fetches at most 1.1x what you paid until he has made 6 starts or a season has passed', () => {
+    let offers = 0;
+    let expired = 0;
+    for (const seed of [1, 2, 3, 4, 5, 6, 8, 9, 10, 12]) {
+      const st = career(seed);
+      const club = st.club!;
+      const wallet = { coins: 5000 };
+      const youth = st.tm.listings.find((l) => l.youth)!;
+      const paid = youth.asking;
+      const r = placeBid(st, wallet, youth.id, paid);
+      expect(r.ok && r.instant && !!r.player).toBe(true);
+      const signed = club.squad.find((p) => p.name === youth.player.name) as MetaPlayer;
+      expect(signed).toBeDefined();
+      expect(signed.paid).toBe(paid);
+      expect(signed.boughtSeason).toBe(1);
+      expect(signed.starts).toBe(0);
+      const cap = Math.round((paid * RESALE_CAP) / 10) * 10;
+      expect(resaleCap(st, signed)).toBe(cap);
+      // The cap bites: a youth prospect's value is about twice his asking price.
+      expect(playerValue(signed) * 0.7).toBeGreaterThan(cap);
+      expect(quickSaleValue(signed)).toBeLessThanOrEqual(cap);
+      // Straight back on the market, kept on the bench: every offer over the open window stays under the cap.
+      expect(listPlayer(st, signed.id)).toEqual({ ok: true });
+      for (let i = 0; i < 4; i++) {
+        play(st, wallet);
+        for (const o of saleFor(st, signed.id)?.offers ?? []) {
+          offers++;
+          expect(o.amount).toBeLessThanOrEqual(cap);
+          expect(o.amount).toBeGreaterThan(0);
+        }
+        if (st.tm.news.some((n) => /withdrew their .* offer for/.test(n.text) && n.own)) expired++;
+      }
+      expect(signed.starts).toBe(0);
+      // Starts count only in the XI; after RESALE_STARTS of them the cap is gone.
+      club.squad.splice(club.squad.indexOf(signed), 1);
+      club.squad.splice(5, 0, signed);
+      play(st, wallet);
+      expect(signed.starts).toBe(1);
+      signed.starts = RESALE_STARTS;
+      expect(resaleCap(st, signed)).toBeNull();
+      signed.starts = RESALE_STARTS - 1;
+      expect(resaleCap(st, signed)).toBe(cap);
+      // A season passing lifts it too.
+      while (!st.summary) play(st, wallet);
+      startNextSeason(st);
+      expect(resaleCap(st, signed)).toBeNull();
+      // Nobody else carries a cap.
+      expect(club.squad.filter((p) => resaleCap(st, p) !== null)).toHaveLength(0);
+    }
+    expect(offers).toBeGreaterThan(5);
+    expect(expired).toBeGreaterThan(0);
+    expect(OFFER_LIFE).toBe(2);
+  });
+});
+
+describe('your own news', () => {
+  it('answers to your offers and offers for your players are flagged own, sit first on the strip and count as unread until read', () => {
+    let seen = 0;
+    for (const seed of [21, 22, 23, 51, 52]) {
+      const st = career(seed);
+      const wallet = { coins: 100000 };
+      expect(marketUnread(st)).toBe(0);
+      const l = findListing(st, { starter: false, hot: false })!;
+      expect(placeBid(st, wallet, l.id, l.asking).ok).toBe(true);
+      expect(listPlayer(st, st.club!.squad[13].id)).toEqual({ ok: true });
+      play(st, wallet);
+      const own = st.tm.news.filter((n) => n.own);
+      const gossip = st.tm.news.filter((n) => !n.own);
+      expect(own.length).toBeGreaterThan(0);
+      expect(own.some((n) => /accept your|joins you|reject your|want .* for|offer .* for/.test(n.text))).toBe(true);
+      for (const n of gossip) expect(n.text).toMatch(/ sign | has left the market|looking for a club/);
+      for (const n of own) expect(n.seen).toBe(false);
+      expect(marketUnread(st)).toBe(own.length);
+      // The strip: your items first (newest first), then the rest, at most the asked-for count.
+      const strip = newsStrip(st, 4);
+      expect(strip.length).toBeLessThanOrEqual(4);
+      const firstGossip = strip.findIndex((n) => !n.own);
+      const lastOwn = strip.map((n) => n.own).lastIndexOf(true);
+      if (firstGossip >= 0 && lastOwn >= 0) expect(lastOwn).toBeLessThan(firstGossip);
+      expect(strip[0].own).toBe(true);
+      markNewsSeen(st);
+      expect(marketUnread(st)).toBe(0);
+      expect(st.tm.news.every((n) => n.seen)).toBe(true);
+      // New answers after the next match are unread again; old ones stay read.
+      play(st, wallet);
+      expect(st.tm.news.filter((n) => n.own && n.week === st.season!.matchday).every((n) => !n.seen)).toBe(true);
+      if (st.tm.news.some((n) => n.own && n.week === st.season!.matchday)) seen++;
+      // An own item left unread for weeks still comes first when the market is finally opened.
+      for (let i = 0; i < 3; i++) play(st, wallet);
+      const stale = [...st.tm.news].reverse().find((n) => n.own && n.week < st.season!.matchday - 1);
+      if (!stale) continue;
+      stale.seen = false;
+      const gossipAt = (s: typeof own) => s.findIndex((n) => !n.own);
+      const pinned = newsStrip(st, 12);
+      expect(pinned.includes(stale)).toBe(true);
+      if (gossipAt(pinned) >= 0) expect(pinned.indexOf(stale)).toBeLessThan(gossipAt(pinned));
+      const fresh = new Set(st.tm.news.filter((n) => n.own && !n.seen));
+      markNewsSeen(st);
+      const still = newsStrip(st, 12, fresh);
+      if (gossipAt(still) >= 0) expect(still.indexOf(stale)).toBeLessThan(gossipAt(still));
+      // Read and weeks old: back among the gossip, newest first.
+      const plain = newsStrip(st, 12);
+      if (gossipAt(plain) >= 0) expect(plain.indexOf(stale)).toBeGreaterThan(gossipAt(plain));
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+
+  it('a save from before the flags loads with nothing unread; the flags round-trip', () => {
+    const st = career(23);
+    const wallet = { coins: 100000 };
+    const l = findListing(st, { starter: false, hot: false })!;
+    placeBid(st, wallet, l.id, l.asking);
+    play(st, wallet);
+    expect(marketUnread(st)).toBeGreaterThan(0);
+    const raw = JSON.parse(JSON.stringify(st));
+    expect(migrateCareer(raw, 1)).toEqual(st);
+    for (const n of raw.tm.news) {
+      delete n.own;
+      delete n.seen;
+    }
+    const old = migrateCareer(raw, 1);
+    expect(old.tm.news).toHaveLength(st.tm.news.length);
+    expect(old.tm.news.every((n) => n.own === false && n.seen === false)).toBe(true);
+    expect(marketUnread(old)).toBe(0);
+  });
+});
+
+describe('wage bill', () => {
+  it('over budget: 1.5x the overspend leaves the wallet after every matchday, the squad plays a point down, signing stays blocked', () => {
+    const st = career(5);
+    const club = st.club!;
+    const wallet = { coins: 1000 };
+    const budget = wageBudget(st.season!.division, st.stadium);
+    // Under budget: nothing happens.
+    expect(wageDrain(st)).toBe(0);
+    expect(marketSummary(st).drain).toBe(0);
+    expect(applyWageDrain(st, wallet)).toBe(0);
+    play(st, wallet);
+    expect(wallet.coins).toBe(1000);
+    expect(st.tm.news.some((n) => /Wages over budget/.test(n.text))).toBe(false);
+    // Two stars push the bill over.
+    const star = (i: number) => {
+      const p = makePlayer(new Rng(i), 'MF', 99, 60 + i, `s${i}`);
+      tuneToOverall(p, 99);
+      return p;
+    };
+    club.squad.push(star(1), star(2));
+    const over = squadWages(club) - budget;
+    expect(over).toBeGreaterThan(0);
+    const drain = Math.round(over * WAGE_DRAIN);
+    expect(wageDrain(st)).toBe(drain);
+    expect(marketSummary(st).drain).toBe(drain);
+    const l = st.tm.listings.find((x) => x.club)!;
+    expect(canBid(st, wallet.coins, l.id, l.asking)).toEqual({ ok: false, reason: 'wages' });
+    // Every player on the match-day sheet is WAGE_DIP down (a listed one loses MORALE_DIP on top).
+    listPlayer(st, club.squad[12].id);
+    const nm = nextMatch(st)!;
+    const mine = nm.userHome ? nm.home : nm.away;
+    for (const copy of [...mine.players, ...(mine.bench ?? [])]) {
+      const p = club.squad.find((x) => x.id === copy.id)!;
+      const dip = WAGE_DIP + (p.id === club.squad[12].id ? MORALE_DIP : 0);
+      expect(copy.stats.pace).toBe(Math.max(1, p.stats.pace - dip));
+    }
+    // The matchday takes the drain and says so.
+    play(st, wallet);
+    expect(wallet.coins).toBe(1000 - drain);
+    const n = st.tm.news.find((x) => /Wages over budget/.test(x.text))!;
+    expect(n).toBeDefined();
+    expect(n.kind).toBe('bad');
+    expect(n.own).toBe(true);
+    expect(n.text).toContain(drain.toLocaleString('en-US'));
+    // A wallet that can't cover it is emptied, never negative.
+    wallet.coins = 5;
+    play(st, wallet);
+    expect(wallet.coins).toBe(0);
+    const short = st.tm.news.find((x) => /Wages over budget/.test(x.text))!;
+    expect(short.week).toBe(st.season!.matchday);
+    expect(short.text).toMatch(/5 coins deducted, all you had/);
+    // Letting the stars go ends it.
+    club.squad = club.squad.filter((p) => p.id !== 's1' && p.id !== 's2');
+    expect(wageDrain(st)).toBe(0);
+    const week = st.season!.matchday;
+    play(st, wallet);
+    expect(wallet.coins).toBe(0);
+    expect(st.tm.news.some((x) => /Wages over budget/.test(x.text) && x.week > week)).toBe(false);
   });
 });
 

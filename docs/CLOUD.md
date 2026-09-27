@@ -51,7 +51,11 @@ Stored in the cloud, only when a player signs in:
 
 No analytics, no other tables, no sharing between users (row level security: each user reads and writes only
 their own row). The anon key that ships in the build can do nothing outside those rules. Delete a user in the
-Supabase dashboard and the row goes with it. `public/privacy.html` must gain a paragraph saying this before the
+Supabase dashboard and the row goes with it.
+
+**Trust:** the save is client data and `importSave` only makes it well-formed, never honest (a player can edit
+their own coins, XP or stars). That is fine for a personal cloud copy, but any leaderboard or weekly competition
+must validate scores server-side (an edge function / RLS policy that checks the row, never the client's numbers). `public/privacy.html` must gain a paragraph saying this before the
 feature is switched on publicly.
 
 ## Turning it off

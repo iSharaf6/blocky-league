@@ -10,9 +10,11 @@ import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDe
 import { KIT_COLORS, dedupeSurnames, makePlayer, makeTeam, randomClubSeed, resolveKitClash } from './data';
 // Runtime import cycle (market.ts imports this file): only ever used inside functions, never at module top level.
 import {
-  MORALE_DIP, ageSquad, canBid, clearMarket, defaultMarket, marketTick, placeBid, quickSaleValue, syncLegacyMarket,
+  MORALE_DIP, NEWS_MAX, WAGE_DIP, ageSquad, applyWageDrain, canBid, clearMarket, defaultMarket, marketTick, placeBid, quickSaleValue,
+  recordStarts, syncLegacyMarket, wageDrain,
   type Bid, type Listing, type MarketState, type NewsKind,
 } from './market';
+import { sep } from '../ui/text';
 
 export const CAREER_VERSION = 1 as const;
 export const TOP_DIVISION = 1;
@@ -563,7 +565,10 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
   f.ag = Math.max(0, Math.round(ag));
   if (forfeit) f.forfeit = true;
   simulateMatchday(state, md);
+  recordStarts(state.club);
   season.matchday++;
+  // The wage bill: over budget, 1.5× the overspend leaves the wallet after every matchday (market.ts).
+  applyWageDrain(state, wallet);
   if (season.matchday >= MATCHDAYS) finishSeason(state, wallet);
   else refreshMarket(state, wallet);
   return true;
@@ -676,12 +681,15 @@ export function nextMatch(state: CareerState): NextMatch | null {
   const rival = season.rivals.find((r) => r.id === (userHome ? fixture.away : fixture.home));
   if (!rival) return null;
   const you = clubTeam(club);
-  // Players you have put up for sale have their mind elsewhere (a small stat dip until unlisted or sold).
+  // Players you have put up for sale have their mind elsewhere (a small stat dip until unlisted or sold), and
+  // a squad whose wages are over budget plays a point down across the board.
   const listed = new Set(state.tm.sales.map((s) => s.playerId));
-  if (listed.size) {
+  const unpaid = wageDrain(state) > 0 ? WAGE_DIP : 0;
+  if (listed.size || unpaid) {
     for (const p of [...you.players, ...(you.bench ?? [])]) {
-      if (!listed.has(p.id)) continue;
-      for (const k of STAT_KEYS) p.stats[k] = Math.max(1, p.stats[k] - MORALE_DIP);
+      const dip = unpaid + (listed.has(p.id) ? MORALE_DIP : 0);
+      if (!dip) continue;
+      for (const k of STAT_KEYS) p.stats[k] = Math.max(1, p.stats[k] - dip);
     }
   }
   const them = rivalTeam(rival);
@@ -718,7 +726,7 @@ export function rivalRating(r: LeagueClub): number {
 
 // ------------------------------------------------------------------ match economy
 
-/** Division -> DIFFICULTIES index: 6,5 easy · 4,3 normal · 2 hard · 1 legend. */
+/** Division -> DIFFICULTIES index: 6,5 easy / 4,3 normal / 2 hard / 1 legend. */
 export function matchDifficulty(division: number): number {
   const d = clampDivision(division);
   return d >= 5 ? 0 : d >= 3 ? 1 : d === 2 ? 2 : 3;
@@ -760,7 +768,8 @@ export function matchCoins(division: number, stadium: number, my: number, their:
 export function matchReward(division: number, stadium: number, my: number, their: number): { coins: number; label: string } {
   const base = my > their ? 'WIN BONUS' : my === their ? 'DRAW FEE' : 'MATCH FEE';
   const s = clamp(stadium, 0, STADIUM_MAX);
-  return { coins: matchCoins(division, stadium, my, their), label: s > 0 ? `${base} · +${s * 10}% GATE` : base };
+  // (HTML: the post-match reward line renders it; the divider is the ui/text.ts element, not a glyph.)
+  return { coins: matchCoins(division, stadium, my, their), label: s > 0 ? `${base}${sep()}+${s * 10}% GATE` : base };
 }
 
 // ------------------------------------------------------------------ transfers
@@ -897,7 +906,7 @@ function readPlayer(v: unknown): PlayerDef | null {
     stats[k] = clamp(Math.round(s), 1, STAT_CAP);
   }
   const look = isObj(v.look) ? v.look : {};
-  const p: PlayerDef & { age?: number; potential?: number; contract?: number } = {
+  const p: PlayerDef & { age?: number; potential?: number; contract?: number; paid?: number; boughtSeason?: number; starts?: number } = {
     id: v.id,
     name: v.name.slice(0, 24),
     number: int(v.number, 0, 99, 0),
@@ -915,6 +924,10 @@ function readPlayer(v: unknown): PlayerDef | null {
   if (isNum(v.age)) p.age = int(v.age, 16, 40, 25);
   if (isNum(v.potential)) p.potential = int(v.potential, 0, 5, 0);
   if (isNum(v.contract)) p.contract = int(v.contract, 1, 4, 1);
+  // Market signings: what was paid and when (the resale cap), starts since.
+  if (isNum(v.paid)) p.paid = int(v.paid, 0, 1e9, 0);
+  if (isNum(v.boughtSeason)) p.boughtSeason = int(v.boughtSeason, 0, 1e6, 0);
+  if (isNum(v.starts)) p.starts = int(v.starts, 0, 1e6, 0);
   return p;
 }
 
@@ -1075,8 +1088,16 @@ function readMarket(v: unknown, live: boolean): MarketState {
   tm.news = Array.isArray(v.news)
     ? v.news
         .filter((n): n is Obj => isObj(n) && isStr(n.text) && NEWS_KINDS.includes(n.kind as string))
-        .slice(0, 12)
-        .map((n) => ({ season: int(n.season, 0, 1e6, 0), week: int(n.week, 0, MATCHDAYS, 0), text: (n.text as string).slice(0, 160), kind: n.kind as NewsKind }))
+        .slice(0, NEWS_MAX)
+        .map((n) => ({
+          season: int(n.season, 0, 1e6, 0),
+          week: int(n.week, 0, MATCHDAYS, 0),
+          text: (n.text as string).slice(0, 160),
+          kind: n.kind as NewsKind,
+          // Saves from before the flags: nothing is "yours" (so nothing unread) and nothing is unseen.
+          own: n.own === true,
+          seen: n.seen === true,
+        }))
     : [];
   if (!live) return tm;
   tm.key = isStr(v.key) ? v.key : '';

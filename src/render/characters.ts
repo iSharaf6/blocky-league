@@ -975,12 +975,17 @@ export class Footballer {
         break;
       }
       case CELEB.shush: {
-        // Finger to the lips, the other arm out to the crowd, a slow walk.
+        // The shush, big enough to read from the gantry: planted, the finger to the lips, the other arm thrown
+        // straight up at the crowd (a diagonal: straight up hides behind the head) with a slow wave, the whole
+        // body leaning into the lens (kickT 0..1 is the lean), the head cocked.
         locomotion();
-        aR.rotation.set(-0.9, 0, 2.2);
-        aL.rotation.set(1.3, 0, 0.5);
-        head.rotation.z = -0.1;
-        torso.rotation.z = -0.04;
+        const l = clamp(x, 0, 1);
+        aR.rotation.set(-0.95, 0, lerp(0.6, 2.35, l));
+        aL.rotation.set(lerp(1.3, -0.75 + 0.18 * Math.sin(t * 3.2), l), 0, lerp(0.5, 2.7, l));
+        body.rotation.z = -0.14 * l;
+        torso.rotation.z = -0.3 * l;
+        head.rotation.z = -0.16 * l;
+        head.rotation.x = 0.22 * l;
         break;
       }
       case CELEB.plane: {

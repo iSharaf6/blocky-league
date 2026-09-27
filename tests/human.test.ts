@@ -337,7 +337,10 @@ describe('human assists and skill moves', () => {
     // The AI plays until our side has it in midfield, then the human pushes the stick forward and taps
     // PASS: completed (a teammate is next on it), intercepted, or out.
     const res: Record<string, number> = {};
-    for (let seed = 1; seed <= 12; seed++) {
+    // (Round 12: 14 matches, not 12. The AI reads the human's ball later and closes its receiver rather than
+    // running at it (ai.readDelay), so his passes resolve further up the pitch and fewer midfield situations fit
+    // in a match: 188 in 12 matches, against the 200 the sample needs.)
+    for (let seed = 1; seed <= 14; seed++) {
       const m = new Match({ home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 120, difficulty: 2, humanSide: 0, seed: seed * 101 + 7 });
       const cfg = m.cfg as { humanSide: number };
       let k = 0;
@@ -409,15 +412,19 @@ describe('human assists and skill moves', () => {
       place(m.players[14], ad * 10, 12);
       place(m.players[15], ad * 21.2, 14);
       expect(pickReceiver(m, c, ad, 0, 'pass')).toBe(covered.idx);
-      // Nobody ahead at all (everyone behind the ball after a kick-off): the open man out to the side,
-      // not a ball rolled into space for the other side.
+      // Nobody ahead at all (everyone behind the ball after a kick-off): the open man out to the side (at most 95
+      // degrees off the stick), not a ball rolled into space for the other side...
       m.teamPlayers(0).forEach((p, i) => {
         if (p !== c && !p.isKeeper) place(p, -ad * (6 + i), (i - 5) * 3);
       });
+      place(m.players[8], -ad * 1, 18);
+      expect(pickReceiver(m, c, ad, 0, 'pass')).toBe(m.players[8].idx);
+      // ... and never a man BEHIND the stick (round 12: the stick straight ahead played a man at -119 degrees while
+      // the covered winger stood 48 degrees off it).
+      place(m.players[8], -ad * 3.5, 18);
+      expect(pickReceiver(m, c, ad, 0, 'pass')).toBe(-1);
       place(m.players[8], -ad * 7, 18);
-      const t = pickReceiver(m, c, ad, 0, 'pass');
-      expect(t).toBeGreaterThanOrEqual(0);
-      expect(m.players[t].side).toBe(0);
+      expect(pickReceiver(m, c, ad, 0, 'pass')).toBe(-1);
     }
   });
 
@@ -631,7 +638,9 @@ describe('round 7: human through balls', () => {
         kick = m.drainEvents().find((e) => e.type === 'kick');
       }
       expect(kick?.type).toBe('kick');
-      if (kick?.type === 'kick' && kick.kind === 'pass' && m.passTarget >= 0 && m.players[m.passTarget].side === 0) feet++;
+      // (Round 12: a THROUGH tap is a 'through' whatever its weight; with nobody to run onto it, driven to the open
+      // man's feet. It used to register as a 'pass'.)
+      if (kick?.type === 'kick' && kick.kind === 'through' && m.passTarget >= 0 && m.players[m.passTarget].side === 0) feet++;
     }
     // (It used to be rolled 18 m along the stick, straight to him.)
     expect(feet).toBe(n);

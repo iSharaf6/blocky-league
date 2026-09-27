@@ -49,7 +49,7 @@ export interface CupState {
   /** The user's bracket slot. */
   user: number;
   ties: CupTie[];
-  /** Round being played: 0 QF · 1 SF · 2 final · 3 all done. */
+  /** Round being played: 0 QF, 1 SF, 2 final, 3 all done. */
   round: number;
   status: CupStatus;
   /** Coins won in this cup so far. */

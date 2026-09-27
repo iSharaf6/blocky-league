@@ -33,6 +33,13 @@ export interface CamFocus {
   group?: number;
   /** Celebrate: which way the group faces (radians, world facing), so the camera films faces not backs. */
   groupFacing?: number;
+  /**
+   * Celebrate: a scripted move's own lens angle (radians, the azimuth from the subject to the lens), taken
+   * exactly: no re-pick for sight lines, no orbit (the backflip side-on, the shush's close-up).
+   */
+  lockAngle?: number;
+  /** Celebrate: a head-and-shoulders close-up (the lens at his eye line, the face above centre, waist up). */
+  close?: boolean;
   /** After one of our set pieces is struck: the ball is still live (or in the net), so the shot may stay on it. */
   hold?: boolean;
   /** Card close-up: where the referee stands and the spot he faces (the offender). */
@@ -767,35 +774,63 @@ export class CameraRig {
         // boots of whoever stands nearest (the front of a group) just above the bottom edge (ndc -0.9).
         // Portrait phones keep him in the middle band instead (the touch buttons own the bottom) and back
         // off until ~3 m either side of him fits the narrow frame.
+        const locked = f.lockAngle !== undefined;
         const tall = (f.tall ?? 1.9) + 0.25;
-        const feet = this.portrait ? -0.45 : -0.9;
-        const head = this.portrait ? 0.1 : -0.3;
+        // (A scripted move alone in frame: boots clear of the bottom edge, the head just under the lower-third
+        // line, so the flip rises through the middle of the picture.)
+        const feet = this.portrait ? -0.45 : locked ? -0.75 : -0.9;
+        const head = this.portrait ? (locked ? 0.2 : 0.1) : locked ? -0.05 : -0.3;
         let dist = (tall - feet * g * tanH) / ((head - feet) * tanH);
         dist = Math.max(dist, (3.2 + g) / (tanH * cam.aspect));
-        const aimY = -feet * (dist - g) * tanH;
-        // A scorer sprinting away (to the corner flag) is filmed from ahead, running at the lens.
-        const rvx = f.avx ?? 0;
-        const rvz = f.avz ?? 0;
-        const heading = Math.hypot(rvx, rvz) > 2.5 ? Math.atan2(rvz, rvx) : undefined;
-        this.celebT -= dt;
-        if (this.celebT <= 0) {
-          const want = this.pickCelebrateAngle(sx, sz, dist, f.subject ?? -1, g, this.celebFresh, f.groupFacing, heading);
-          // A big change of side is a cut to the reverse angle, never a whip round him.
-          if (!this.celebFresh && Math.abs(wrapAngle(want - this.celebAz)) > 1.8) {
+        let aimY = -feet * (dist - g) * tanH;
+        let lensY = aimY;
+        if (f.close) {
+          // Head and shoulders: the lens a touch under his eye line looking slightly up, the face above
+          // centre, the frame from the waist up (these heads are big: 5.2 m has the head ~45% of the height,
+          // and the shush's raised arm still in shot).
+          const t0 = f.tall ?? 1.9;
+          dist = (this.portrait ? 5.8 : 5.2) * (t0 / 1.94);
+          aimY = t0 * 0.72;
+          lensY = t0 * 0.66;
+        }
+        let az: number;
+        if (locked) {
+          // The move's own angle, exactly: a cut onto it (or to it, from the free angle), then held still.
+          const want = f.lockAngle!;
+          if (this.celebFresh || Math.abs(wrapAngle(want - this.celebAz)) > 0.6) {
             this.celebAz = want;
             this.snap = true;
           }
           this.celebWant = want;
-          this.celebT = 0.5;
-          if (this.celebFresh) this.celebAz = this.celebWant;
           this.celebFresh = false;
+          this.celebT = 0;
+          this.celebAz = dampAngle(this.celebAz, want, 8, dt);
+          az = this.celebAz;
+        } else {
+          // A scorer sprinting away (to the corner flag) is filmed from ahead, running at the lens.
+          const rvx = f.avx ?? 0;
+          const rvz = f.avz ?? 0;
+          const heading = Math.hypot(rvx, rvz) > 2.5 ? Math.atan2(rvz, rvx) : undefined;
+          this.celebT -= dt;
+          if (this.celebT <= 0) {
+            const want = this.pickCelebrateAngle(sx, sz, dist, f.subject ?? -1, g, this.celebFresh, f.groupFacing, heading);
+            // A big change of side is a cut to the reverse angle, never a whip round him.
+            if (!this.celebFresh && Math.abs(wrapAngle(want - this.celebAz)) > 1.8) {
+              this.celebAz = want;
+              this.snap = true;
+            }
+            this.celebWant = want;
+            this.celebT = 0.5;
+            if (this.celebFresh) this.celebAz = this.celebWant;
+            this.celebFresh = false;
+          }
+          this.celebAz = dampAngle(this.celebAz, this.celebWant, 1.6, dt);
+          this.orbit += dt * 0.35;
+          az = this.celebAz + Math.sin(this.orbit) * 0.12;
         }
-        this.celebAz = dampAngle(this.celebAz, this.celebWant, 1.6, dt);
-        this.orbit += dt * 0.35;
-        const az = this.celebAz + Math.sin(this.orbit) * 0.12;
         px = sx + Math.cos(az) * dist;
         pz = sz + Math.sin(az) * dist;
-        py = aimY;
+        py = lensY;
         tx = sx; tz = sz;
         ty = aimY;
         rate = 5;

@@ -356,7 +356,7 @@ describe('promotion and relegation', () => {
 });
 
 describe('transfers', () => {
-  it('lists 4 free agents rated around the division level at round(ovr²·0.25/10)·10', () => {
+  it('lists 4 free agents rated around the division level at round(ovr² x 0.25 / 10) x 10', () => {
     for (let div = 1; div <= 6; div++) {
       const st = freshCareer(31, div);
       for (let md = 0; md < 5; md++) {
@@ -414,7 +414,7 @@ describe('transfers', () => {
 });
 
 describe('training, stadium and match economy', () => {
-  it('training costs 40 + 3·OVR for +2 and caps at 99', () => {
+  it('training costs 40 + 3 x OVR for +2 and caps at 99', () => {
     const st = freshCareer(2);
     const p = st.club!.squad[9];
     const cost = trainingCost(p);
@@ -431,7 +431,7 @@ describe('training, stadium and match economy', () => {
     expect(trainPlayer(st.club!, { coins: 1e6 }, p.id, 'pace')).toEqual({ ok: false, reason: 'maxed' });
   });
 
-  it('stadium upgrades cost 800·(level+1)^1.6 and stop at level 5', () => {
+  it('stadium upgrades cost 800 x (level+1)^1.6 and stop at level 5', () => {
     expect(stadiumUpgradeCost(0)).toBe(800);
     expect(stadiumUpgradeCost(1)).toBe(Math.round((800 * 2 ** 1.6) / 10) * 10);
     const st = freshCareer(2);

@@ -4,7 +4,7 @@ import { headerAtGoal, throughLead } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
 import { readsHuman, takeOnVsHuman, vsHuman } from './dribble';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
-import type { Match } from './match';
+import { FIRST_MATCH_PRESS, type Match } from './match';
 import type { Player } from './player';
 import type { Side } from './types';
 
@@ -62,15 +62,32 @@ export function makeBrain(): TeamBrain {
 
 const other = (s: Side): Side => (s === 0 ? 1 : 0);
 
+/**
+ * How long (s) a player takes to read a ball and set off for it: AI_REACT for everyone, except that an AI opponent
+ * reads the HUMAN's ground pass late, like a real defender watching a man pass (HUMAN_BALL_REACT), and can't cut it
+ * out by a stretch: he has to be on its line HUMAN_BALL_SET s before it gets there. (Round 12, the critic: a marker
+ * 3.5 m short of the owner's winger and 2.5-3.5 m off the lane of a 27 m/s ball played at 48-60 degrees cut it out
+ * 56% of the time from a 0.12 s reaction, while the human receiver was handicapped 0.25 s more in assignRoles.)
+ * Human-only: an AI's own balls, and every AI v AI ball, read as before.
+ */
+const AI_REACT = 0.12;
+export const HUMAN_BALL_REACT = 0.32;
+const HUMAN_BALL_SET = 0.1;
+export function readDelay(m: Match, p: Player): number {
+  return m.humanBallInFlight() && p.side !== m.kickSide ? HUMAN_BALL_REACT : AI_REACT;
+}
+
 /** Where the ball can be reached soonest by `p`, from the match's predicted ball path. */
 export function intercept(m: Match, p: Player): { x: number; z: number; t: number } {
   const path = m.ballPath;
   const top = p.top * 0.92;
+  const react = readDelay(m, p);
+  const set = react > AI_REACT ? HUMAN_BALL_SET : 0;
   for (let i = 0; i < path.length; i++) {
     const s = path[i];
     if (s.y > (p.isKeeper ? 2.6 : 2.1)) continue;
     const d = Math.max(0, dist2(p.pos.x, p.pos.z, s.x, s.z) - 0.55);
-    const need = d / top + 0.12;
+    const need = d / top + react + set;
     if (need <= s.t) return { x: s.x, z: s.z, t: s.t };
   }
   const last = path[path.length - 1];
@@ -246,6 +263,12 @@ function assignRoles(m: Match, side: Side, brain: TeamBrain): void {
 
   if (!owner) {
     if (flight && flight.side === side) return; // our receiver goes to meet it
+    // The human's ball has just left his foot: nobody of ours has read it yet (readDelay); the marks hold.
+    const humanBall = m.humanBallInFlight() && m.kickSide !== side;
+    if (humanBall && m.sinceKick < HUMAN_BALL_REACT) {
+      if (flight) assignMarks(m, side, brain, flight);
+      return;
+    }
     let bestT = Infinity;
     for (const p of team) {
       if (p.isKeeper || p.state !== 'move' || p.sentOff) continue;
@@ -262,7 +285,10 @@ function assignRoles(m: Match, side: Side, brain: TeamBrain): void {
       const contest = m.setPieceKick === m.kickId && m.kickSide !== side && m.spContest ? 0.1 : 0;
       if (bestT > intercept(m, flight).t - 0.05 + contest) {
         brain.chaser = -1;
-        pickPresser(m, side, brain, flight);
+        // (The human's ball, and we aren't clearly first to it: nobody runs at it. The presser jockeys the man
+        // it's for around the BALL, which sent the owner's winger's marker straight down the lane at it; his man
+        // is closed down once he has it. The marks hold their side of him: markSpot.)
+        if (!humanBall) pickPresser(m, side, brain, flight);
       }
       assignMarks(m, side, brain, flight);
     }
@@ -620,7 +646,7 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
   // The human's carrier facing forward in the middle or final third: a forward always goes when nobody is
   // running, and runs come far more often (humanFlow).
   const hum = humanFlow(m, p.side, c) && nX(m, p.side, c.pos.x) > -0.33;
-  const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45) * (hum ? HUMAN_RUN_BOOST : 1);
+  const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45) * (hum ? HUMAN_RUN_BOOST : 1 + AI_INTENT_RUNS * intentVsHuman(m, p.side));
   const due = hum && p.role === 'FW' && !m.teamPlayers(p.side).some((t) => t.running && !t.sentOff);
   // (The roll is made either way, as it always was: a forward who's due doesn't change the rng's course.)
   if (pr > (hum ? 1.5 : 2.2) && facingFwd && n > line - 0.32 && line < 0.8 && (m.rng.chance(chance) || due)) {
@@ -750,6 +776,15 @@ function markSpot(m: Match, p: Player, brain: TeamBrain): { x: number; z: number
   const mark = brain.marks.get(p.idx);
   if (mark === undefined) return { x: home.x, z: home.z, u: 0.5 };
   const o = m.players[mark];
+  if (mark === m.passTarget && m.humanBallInFlight()) {
+    // The human's ball is on its way to the man he marks: he keeps his side of him (within HUMAN_BALL_MARK_R m),
+    // eyes on the ball, rather than crossing its line to get goal-side as it arrives.
+    const rx = p.pos.x - o.pos.x;
+    const rz = p.pos.z - o.pos.z;
+    const rl = Math.hypot(rx, rz) || 1;
+    const keep = Math.min(rl, HUMAN_BALL_MARK_R);
+    return { x: o.pos.x + (rx / rl) * keep, z: o.pos.z + (rz / rl) * keep, u: 0.5 };
+  }
   // Defenders watch the ball, so they pick up a run a beat late (where he was, not where he is).
   const lag = o.running ? 0.45 : 0.15;
   const ox = o.pos.x - o.vel.x * lag;
@@ -806,7 +841,9 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     // Don't shadow forever: the longer we've jockeyed, the likelier we go in (~2.5/s after 1.2 s; against
     // the human, later and less).
     const ramp = vsHuman ? clamp((p.jockeyT - 0.9) / 0.9, 0, 1) * 2.2 * hk : clamp((p.jockeyT - 0.5) / 0.7, 0, 1) * 2.2;
-    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25);
+    // (His very first minute: the AI shadows him at FIRST_MATCH_PRESS of its usual aggression.)
+    const ease = vsHuman && m.firstMatchEase() ? FIRST_MATCH_PRESS : 1;
+    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25) * ease;
     if (m.rng.chance(rate * dt)) {
       p.commitT = 0.55;
       commit = true;
@@ -854,6 +891,7 @@ function chaseSlide(m: Match, p: Player, c: Player, dt: number): void {
   const ad = m.attackDir(p.side);
   const beaten = (c.pos.x - p.pos.x) * ad < 0.3; // he's level with us or past us, towards our goal
   let rate = SLIDE_RATE * (0.7 + m.aiSkill(p.side) * 0.15) * (beaten ? 1.2 : 0.85) * (1 + m.mentality[p.side] * 0.2);
+  if (m.isHumanControlled(c) && m.firstMatchEase()) rate *= FIRST_MATCH_PRESS;
   if (inOwnBox(m, p.side, c.pos.x, c.pos.z)) rate *= 0.6;
   if (m.isHumanControlled(c)) {
     if (c.protectT > 0) return;
@@ -883,6 +921,8 @@ export function pressVsHuman(skill: number): number {
 }
 /** Extra jockeying room (m) the presser gives the human's dribbler... */
 const HUMAN_JOCKEY_ROOM = 0.25;
+/** A marker holds this close (m) to the man the human's ball is on its way to, on his own side of him (markSpot). */
+const HUMAN_BALL_MARK_R = 2;
 /** ... and how far (m) the ball must be off his foot before it's poked away (0.95 against the AI). */
 const HUMAN_POKE_EXPOSED = 1.05;
 
@@ -974,7 +1014,9 @@ function aerialOrVolley(m: Match, p: Player): void {
   const d = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
   if (d > 3.2) return;
   const ad = m.attackDir(p.side);
-  const q = shotQuality(p.pos.x, p.pos.z, ad);
+  // (The player's first half-minute: the AI doesn't go for goal first time either: Match.firstMatchPatient.)
+  const patient = m.cfg.humanSide === other(p.side) && m.firstMatchPatient();
+  const q = patient ? 0 : shotQuality(p.pos.x, p.pos.z, ad);
   const ownGoalDist = dist2(p.pos.x, p.pos.z, -ad * HALF_L, 0);
   let rival = Infinity;
   for (const o of m.players) {
@@ -997,7 +1039,7 @@ function aerialOrVolley(m: Match, p: Player): void {
     }
     if (lay) {
       m.order(p, 'header', lay.pos.x - p.pos.x, lay.pos.z - p.pos.z, 0.5, lay.idx, true, { x: lay.pos.x, z: lay.pos.z });
-    } else if (headerAtGoal(m, p)) {
+    } else if (headerAtGoal(m, p) && !patient) {
       // (Only from close in: from further out a header is a nod the keeper has covered. It used to go for
       // goal whenever it had a sight of it, and headers were ~40% of all shots.)
       m.order(p, 'header', 0, 0, 0.75, -1, true);
@@ -1124,6 +1166,23 @@ const AI_CLEAR_SIGHT = 0.14;
 
 /** Lateral offsets (m) tried for a through ball, around the runner's own line. */
 const THREAD_OFFSETS = [0, -3.5, 3.5, -7, 7];
+/**
+ * The AI's attacking intent against the HUMAN (round 12: at NORMAL the scripted human had 75% of the ball and the AI 2.3
+ * shots a match; a competent player was never in danger): from nothing at EASY to full at NORMAL and above, it looks
+ * for the shot sooner (AI_INTENT_SHOT more on a sight of goal, the long-shot cost cut), rates the forward ball and the
+ * through ball higher (AI_INTENT_FORWARD, AI_INTENT_THROUGH) and makes more runs in behind (AI_INTENT_RUNS).
+ * AI v AI (no human side) is untouched.
+ */
+const AI_INTENT_FROM = 0.6;
+const AI_INTENT_FULL = 1.8;
+const AI_INTENT_SHOT = 0.6;
+const AI_INTENT_FORWARD = 0.35;
+const AI_INTENT_THROUGH = 0.4;
+const AI_INTENT_RUNS = 0.5;
+export function intentVsHuman(m: Match, side: Side): number {
+  if (m.cfg.humanSide !== other(side)) return 0;
+  return clamp((m.aiSkill(side) - AI_INTENT_FROM) / (AI_INTENT_FULL - AI_INTENT_FROM), 0, 1);
+}
 
 /**
  * Time (s) `p` loses getting up to full speed towards (x, z), compared with already being flat out
@@ -1174,10 +1233,12 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   const dg = dist2(p.pos.x, p.pos.z, gx, 0);
   const inBox = Math.abs(p.pos.x - gx) < BOX_DEPTH && Math.abs(p.pos.z) < BOX_W / 2;
 
-  // ---- Shoot
+  // ---- Shoot (never in the patient build-up of the player's first half-minute: Match.firstMatchPatient)
   let shotChoice: Choice | null = null;
   let shotXg = 0;
-  if (dg < 36) {
+  const patient = m.cfg.humanSide === opp && m.firstMatchPatient();
+  const intent = intentVsHuman(m, side);
+  if (dg < 36 && !patient) {
     let q = shotQuality(p.pos.x, p.pos.z, ad);
     const blockers = shotBlockers(m, p);
     q *= Math.pow(0.55, blockers);
@@ -1188,7 +1249,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     // A clean strike also earns rebounds and corners, and shooters love a sight of goal.
     // (A clean sight of goal from the edge of the box, 15-22 m out, is the one to hit.)
     const bonus = blockers < 0.5 ? (dg < 15 ? 0.035 : dg < 22 ? AI_CLEAR_SIGHT : dg < 28 ? 0.035 : 0.015) : 0;
-    const s = early(q * 2 + bonus + (inBox ? AI_BOX_SHOT : 0) - (dg > 22 ? AI_LONG_SHOT_COST : 0), 0.05);
+    const keen = 1 + AI_INTENT_SHOT * intent;
+    const s = early(q * 2 + (bonus + (inBox ? AI_BOX_SHOT : 0)) * keen - (dg > 22 ? AI_LONG_SHOT_COST / keen : 0), 0.05);
     // (Harder from further out, but short of flat out: see actions.AI_STRIKE_LIFT.)
     const power = clamp(0.55 + dg / 50, 0.6, 0.94);
     // A keeper who has come off his line (3.8+ m out, 3-12 m from the shooter): now and then it's
@@ -1222,7 +1284,9 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       let pc = (1 - risk) * (0.7 + 0.3 * room);
       if (d > 24) pc *= 1 - (d - 24) / 32;
       pc = clamp(pc * (0.86 + p.stat.passing / 700), 0.02, 0.96);
-      const gain = threat(m, side, lx, lz) * (t.isKeeper ? 0.3 : 1) * (0.72 + 0.28 * room);
+      // (Against the human: the forward ball is worth that much more, AI_INTENT_FORWARD.)
+      const fwd = intent > 0 ? 1 + AI_INTENT_FORWARD * intent * clamp(((lx - p.pos.x) * ad) / 15, 0, 1) : 1;
+      const gain = threat(m, side, lx, lz) * (t.isKeeper ? 0.3 : 1) * (0.72 + 0.28 * room) * fwd;
       const s = early(pc * gain - (1 - pc) * lose((p.pos.x + lx) / 2, (p.pos.z + lz) / 2), 0.6) -
         (d < 9 && pressure < 0.3 ? 0.004 : 0);
       choices.push({ s, run: () => m.order(p, 'pass', lx - p.pos.x, lz - p.pos.z, 0.6, t.idx, false) });
@@ -1257,7 +1321,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         }
         const pWin = clamp(0.42 + (tDef - tRun) * 0.7, 0.02, 0.88);
         const dT = dist2(p.pos.x, p.pos.z, ax, az);
-        const gain = threat(m, side, ax, az) + 0.02;
+        const gain = (threat(m, side, ax, az) + 0.02) * (1 + AI_INTENT_THROUGH * intent);
         const ir = interceptRisk(m, side, p.pos.x, p.pos.z, ax, az, throughSpeed(dT));
         const pc = pWin * (1 - ir);
         const sg = early(pc * gain - (1 - pc) * lose(ax, az) * 0.6, 0.35);
@@ -1281,7 +1345,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   }
 
   // ---- Crosses from wide in the final third, aimed at a zone a teammate is attacking.
-  if (Math.abs(p.pos.z) > HALF_W * 0.36 && pN > 0.42) {
+  if (Math.abs(p.pos.z) > HALF_W * 0.36 && pN > 0.42 && !patient) {
     const s0 = Math.sign(p.pos.z);
     const zones = [
       { x: gx - ad * 5.5, z: s0 * 2.2 },

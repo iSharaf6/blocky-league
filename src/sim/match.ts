@@ -354,6 +354,10 @@ const RESTART_WAIT_MIN = 0.65;
 const RESTART_WAIT_SPAN = 0.4;
 const KICKOFF_WAIT = 0.8;
 export const HUMAN_RESTART_WINDOW = 6;
+/** The first match (MatchConfig.firstMatch): the AI eases off for this long (s) and doesn't shoot for this long (s). */
+export const FIRST_MATCH_EASE = 60;
+export const FIRST_MATCH_PATIENT = 30;
+export const FIRST_MATCH_PRESS = 0.6;
 const HUMAN_RESTART_LOCK = 0.2;
 const KEEPER_HOLD_MIN = 0.7;
 const KEEPER_HOLD_SPAN = 0.8;
@@ -776,7 +780,10 @@ export class Match {
         this.bySide[side].push(p);
       }
     }
-    this.firstKickoff = this.rng.chance(0.5) ? 0 : 1;
+    // (The player's very first match: his side kicks off, and the kick-off waits for his button. The coin is
+    // still tossed so every other match's draw is what it was.)
+    const coin: Side = this.rng.chance(0.5) ? 0 : 1;
+    this.firstKickoff = cfg.firstMatch && cfg.humanSide >= 0 ? (cfg.humanSide as Side) : coin;
     this.setupKickoff(this.firstKickoff);
     this.updateBallPath();
   }
@@ -801,6 +808,29 @@ export class Match {
 
   isHumanControlled(p: Player): boolean {
     return this.cfg.humanSide === p.side && this.active === p.idx;
+  }
+
+  /**
+   * A ground pass or through ball the human played is on its way: the AI reads it late (ai.readDelay).
+   * Aerial deliveries keep their normal defensive contests, including crosses and corners.
+   */
+  humanBallInFlight(): boolean {
+    return this.humanPassKick === this.kickId &&
+      (this.kickKind === 'pass' || this.kickKind === 'through') &&
+      this.ball.owner < 0 && !this.ball.held;
+  }
+
+  /**
+   * The player's very first match (MatchConfig.firstMatch), the first FIRST_MATCH_EASE s of the first half: the AI
+   * presses him at about FIRST_MATCH_PRESS of its usual aggression (ai.press, chaseSlide)...
+   */
+  firstMatchEase(): boolean {
+    return !!this.cfg.firstMatch && this.cfg.humanSide >= 0 && this.half === 1 && this.clock < FIRST_MATCH_EASE;
+  }
+
+  /** ... and for the first FIRST_MATCH_PATIENT s it never shoots: a patient build-up (ai.carrierAI, aerialOrVolley). */
+  firstMatchPatient(): boolean {
+    return this.firstMatchEase() && this.clock < FIRST_MATCH_PATIENT;
   }
 
   aiSkill(side: Side): number {
@@ -2205,14 +2235,17 @@ export class Match {
     const charge = mode === 'lob' ? clamp(hp.t / LOB_CHARGE_T, 0.3, 1) : mode === 'pass' && hp.t > PASS_TAP_MAX ? over : undefined;
     const power = charge ?? (mode === 'through' ? 0.7 : 0.6);
     // (A THROUGH with nobody to run onto it goes to the open man's feet: the pass the preview showed.)
+    // (A THROUGH tap is a through ball whatever its weight: with nobody to run onto it, driven to the open man's
+    // feet, the pass the preview showed: KickOrder.toFeet.)
     const o = aim
       ? this.order(p, 'lob', hp.dirX, hp.dirZ, power, hp.target, false, { x: aim.x, z: aim.z }, aim.land)
-      : this.order(p, mode === 'through' && hp.feet ? 'pass' : mode, hp.dirX, hp.dirZ, power, hp.target, false);
+      : this.order(p, mode, hp.dirX, hp.dirZ, power, hp.target, false);
     if (!o) {
       // (Not on his feet this instant: try again for a moment, then forget it.)
       if (hp.wait > 0.4) this.endPass();
       return true;
     }
+    if (mode === 'through' && hp.feet) o.toFeet = true;
     o.charge = charge;
     o.runSpeed = hp.relSpeed;
     // ('assisted': the error margin reads his body at contact, after the wind-up's turn.)
@@ -2565,7 +2598,9 @@ export class Match {
     if (!r) return;
     const t = this.players[r.taker];
     if (this.cfg.humanSide === r.side) {
-      // Humans get a generous window, then it goes automatically.
+      // Humans get a generous window, then it goes automatically. (The very first match: his kick-offs wait for
+      // his button, however long: MatchConfig.firstMatch.)
+      if (r.kind === 'kickoff' && this.cfg.firstMatch) return;
       if (this.phaseT < HUMAN_RESTART_WINDOW) return;
     } else if (this.phaseT < r.wait) return;
     if (t.order) return;
@@ -2632,13 +2667,17 @@ export class Match {
         break;
       }
       case 'penalty': {
+        // Give a first-time player the same opening grace at a penalty as in open play. The restart
+        // clock keeps advancing, so the taker prepares until the patient period ends, then strikes.
+        if (this.cfg.humanSide !== r.side && this.firstMatchPatient()) return;
         const zAim = this.rng.chance(0.5) ? 1 : -1;
         this.order(t, 'shot', 0, zAim, 0.72 + this.rng.next() * 0.2, -1, false);
         break;
       }
       case 'freekick': {
         const dg = dist2(r.x, r.z, gx, 0);
-        if (isDirectFreeKick(this, r)) {
+        const patient = this.cfg.humanSide !== r.side && this.firstMatchPatient();
+        if (isDirectFreeKick(this, r) && !patient) {
           // Mostly curled over the wall into the corner behind it (the keeper covers the other one):
           // aimed just inside the near post and bent in from outside; now and then bent into the
           // keeper's side instead, and now and then just hit.
@@ -2649,13 +2688,13 @@ export class Match {
             o.aimZ = zs * (GOAL_W / 2 - 0.5 - this.rng.next() * 0.5);
             o.curl = this.rng.chance(0.8) ? -near * (0.5 + this.rng.next() * 0.5) : 0;
           }
-        } else if (isCrossingRestart(this, r)) {
+        } else if (isCrossingRestart(this, r) && !patient) {
           if (this.cfg.humanSide !== r.side && setPieceReady(this, r.side) < 4 && this.phaseT < r.wait + 3) return;
           this.deliverSetPiece(t);
         } else {
           const m = pick((p) => openness(p) + ((p.pos.x - t.pos.x) * ad) * 0.15 - dist2(p.pos.x, p.pos.z, t.pos.x, t.pos.z) * 0.1 -
             (this.offside && this.inOffsidePosition(p) ? 99 : 0));
-          this.order(t, dg < 40 ? 'lob' : 'pass', m.pos.x - t.pos.x, m.pos.z - t.pos.z, 0.7, m.idx, false);
+          this.order(t, !patient && dg < 40 ? 'lob' : 'pass', m.pos.x - t.pos.x, m.pos.z - t.pos.z, 0.7, m.idx, false);
         }
         break;
       }
@@ -3122,6 +3161,12 @@ export class Match {
       b.pos.x = k.pos.x + Math.cos(k.facing) * 0.15;
       b.pos.z = k.pos.z + Math.sin(k.facing) * 0.15;
       b.pos.y = k.isKeeper ? 1.5 : 2.15;
+    } else if (k.state === 'hold') {
+      k.facing = this.attackDir(k.side) > 0 ? 0 : Math.PI;
+      b.pos.x = k.pos.x + Math.cos(k.facing) * 0.35;
+      b.pos.z = k.pos.z + Math.sin(k.facing) * 0.35;
+      b.pos.y = 1.05;
+      b.vel.x = b.vel.y = b.vel.z = 0;
     } else if (!k.isKeeper) {
       // Throw-in: ball above the taker's head.
       b.pos.x = k.pos.x;
@@ -3930,6 +3975,9 @@ export class Match {
     this.passTarget = -1;
     this.possessionSide = k.side;
     if (k.state !== 'dive') k.setState('hold');
+    // A catch happens after the frame's usual held-ball update. Secure it immediately so neither the
+    // keeper nor the ball can spend the catch frame behind the goal line.
+    this.keepHeldBall();
     this.keeperHoldTime = KEEPER_HOLD_MIN + this.rng.next() * KEEPER_HOLD_SPAN;
     if (save) this.stats.saves[k.side]++;
     if (emit) this.events.push({ type: 'save', keeper: k.idx, caught: true });

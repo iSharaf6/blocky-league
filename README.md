@@ -8,6 +8,7 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 
 **Gameplay**
 - Quick Match against the AI with 11 hand-made clubs and 4 difficulty levels (Easy → Legend), 1.5–4 minute halves.
+- **Play Now** goes straight to kick-off. A new player's first match waits for input and teaches movement and passing while the AI eases into the game.
 - Instant assisted passing, sprint-and-pass one-twos, power shots, through balls, lobs and crosses, headers and buffered first-time finishes, player switching, pressing,
   standing and slide tackles, and a knock-on skill move (double-tap sprint).
 - An on-pitch trainer is enabled by default, with contextual keyboard/gamepad/touch hints and a guide to the selected pass recipient. Disable it in **Pause → Settings → Controls**.
@@ -20,6 +21,8 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 **Modes**
 - **Career**: six divisions of eight clubs, promotion and relegation, transfers, training, kit designer and stadium upgrades.
 - **Blocky Cup**: an 8-team knockout with a bracket, prize money, a trophy, and penalty shootouts (aim your kicks, dive with your keeper).
+- **Football Moments**: eight challenges lasting 15–90 seconds of play, with retries, three-star best scores and an unlock ladder. Attempts earn XP without changing coins or the full-match record.
+- **Unlocks**: view the level requirements for ball skins, celebrations and Legend difficulty from the main menu's level badge.
 - **Daily gift** with a seven-day streak.
 
 **Tech**
@@ -27,7 +30,7 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 - Quiet stereo rain patter and a subdued crowd bed; snow has no weather hiss. Ambience fades out on pause and in menus. Sound FX controls rain, and Crowd controls stadium ambience.
 - Keyboard, gamepad and touch controls; landscape and portrait framing.
 - Adaptive rendering quality (dynamic resolution, crowd density and shadow size follow the device).
-- Portal builds zip to about 375 KB; the web build with PWA and sharing assets is about 535 KB.
+- Portal builds zip to about 445 KB; the web build with PWA and sharing assets is about 604 KB.
 
 **Monetisation** comes from an optional portal adapter for **CrazyGames** and **Poki**: midgame ads plus an opt-in rewarded ad that doubles your coins. See [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
 

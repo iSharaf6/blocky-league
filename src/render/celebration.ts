@@ -39,7 +39,8 @@ interface Dancer {
 }
 
 export interface CelebCue {
-  kind: 'spray' | 'whoosh' | 'land' | 'thud' | 'roar';
+  /** ...`apex`: the top of the backflip (the session hit-stops a couple of frames on it). */
+  kind: 'spray' | 'whoosh' | 'land' | 'thud' | 'roar' | 'apex';
   x: number;
   z: number;
   /** Heading unit vector (a spray trails behind it). */
@@ -51,18 +52,26 @@ export interface CelebCue {
 export const AI_CELEBRATIONS: readonly CelebrationId[] = ['classic', 'knee', 'shush', 'plane'];
 
 /** How long each celebration wants before the replay / kick-off (the classic keeps the session's defaults). */
-const HOLD_S: Record<CelebrationId, number> = { classic: 0, knee: 3.4, shush: 3.1, plane: 3.3, robot: 3.3, backflip: 3.3, pile: 3.5 };
+const HOLD_S: Record<CelebrationId, number> = { classic: 0, knee: 3.4, shush: 3.4, plane: 3.3, robot: 3.3, backflip: 3.7, pile: 3.5 };
 
 const SPRINT = 8.6;
 const JOG = 5.2;
 const TO_CAMERA = Math.PI / 2;
-/** Backflip: two steps, a wind-up crouch, 0.7 s in the air (v0 6.3 m/s under 18 m/s^2: 1.1 m apex), the landing. */
-const FLIP_RUN_S = 0.5;
-const FLIP_JUMP_AT = 0.95;
+/**
+ * Backflip: two steps, a stop square to the lens (the cut to him at 0.7 s lands on a man settling, not one
+ * already crouched), the wind-up crouch, take-off at 1.6 s, 0.7 s in the air (v0 6.3 m/s under 18 m/s^2:
+ * 1.1 m apex, a hit-stop at the top), the landing. Filmed side-on from FLIP_RUN_S to the landing.
+ */
+const FLIP_RUN_S = 0.55;
+const FLIP_SET_AT = 1.05;
+const FLIP_JUMP_AT = 1.6;
 const FLIP_AIR_S = 0.7;
 const FLIP_V0 = 6.3;
 const FLIP_G = 18;
 const FLIP_LAND_S = 0.4;
+/** Shush: the jog towards the stand, then he plants and the pose (held; the lens close on his face from SHUSH_CLOSE_AT). */
+const SHUSH_JOG_S = 0.6;
+const SHUSH_CLOSE_AT = 0.6;
 /** Knee slide: the sprint's length before he drops, the slide's length. */
 const SLIDE_AFTER_M = 4;
 const SLIDE_S = 1.3;
@@ -88,7 +97,16 @@ export class CelebrationRig {
    * camera's own choice.
    */
   camFacing: number | undefined = undefined;
+  /**
+   * A move filmed from its own angle (CamFocus.lockAngle: the azimuth from the scorer to the lens, taken
+   * exactly): the backflip side-on, the shush's close-up (camClose: head and shoulders). Undefined: free.
+   */
+  camLock: number | undefined = undefined;
+  camClose = false;
   private dancers: Dancer[] = [];
+  /** The backflip's lens side (perpendicular to the flip, on the pitch side of him), and its apex cue. */
+  private side = 0;
+  private apexed = false;
   private t = 0;
   /** The scorer's opening heading (towards the pitch from the goal he scored at) and its unit vector. */
   private dir = 0;
@@ -150,7 +168,15 @@ export class CelebrationRig {
       }
       this.dir = Math.atan2(this.tz - h.z, this.tx - h.x);
     }
-    if (id === 'backflip') this.dir = sign > 0 ? Math.PI : 0; // in profile to the camera
+    if (id === 'backflip') {
+      // Along the pitch, away from the goal; the lens square to the flip on whichever side keeps it on the
+      // pitch (he is usually near a touchline, running for the corner flag).
+      this.dir = sign > 0 ? Math.PI : 0;
+      const c1 = this.dir + Math.PI / 2;
+      const c2 = this.dir - Math.PI / 2;
+      this.side = Math.abs(h.z + Math.sin(c1) * 9) < Math.abs(h.z + Math.sin(c2) * 9) ? c1 : c2;
+    }
+    this.apexed = false;
     this.ux = Math.cos(this.dir);
     this.uz = Math.sin(this.dir);
     const byDist = [...cast].filter((c) => c.idx !== hero).sort((a, b) => Math.hypot(a.x - h.x, a.z - h.z) - Math.hypot(b.x - h.x, b.z - h.z));
@@ -167,6 +193,8 @@ export class CelebrationRig {
     this.holdS = 0;
     this.heroVx = this.heroVz = 0;
     this.camFacing = undefined;
+    this.camLock = undefined;
+    this.camClose = false;
     this.dancers = [];
   }
 
@@ -254,21 +282,32 @@ export class CelebrationRig {
     }
   }
 
-  /** A jog, then a slow walk to the nearest stand with a finger to the lips; the others hang back and clap. */
+  /**
+   * A jog towards the nearest stand, then he plants and shushes it: one arm thrown straight up, the finger to
+   * the lips, leaning right into the lens, which is close on his face (camLock + camClose, from the cut to
+   * him) with the stand-facing pitch behind; held until the kick-off. The others hang back and clap.
+   */
   private shush(dt: number): void {
     const h = this.dancers[0];
-    const far = Math.hypot(this.tx - h.x, this.tz - h.z);
-    if (this.t < 0.6) {
+    const t = this.t;
+    if (t < SHUSH_JOG_S) {
       this.run(h, this.tx, this.tz, JOG, dt, 1.5);
       h.style = CELEB.armsUp;
-      h.t = this.t;
+      h.t = t;
+      h.prog = 0;
     } else {
-      this.run(h, this.tx, this.tz, 1.35, dt, 1.5, Math.atan2(this.tz - h.z, this.tx - h.x));
+      // Planted, facing the stand; the lean (kickT) builds over 0.4 s as he stops, then breathes.
+      this.run(h, h.x, h.z, 0, dt, 0, this.dir);
+      const st = t - SHUSH_JOG_S;
       h.style = CELEB.shush;
-      h.t = this.t - 0.6;
+      h.t = st;
+      h.prog = clamp(st / 0.4, 0, 1) * (0.86 + 0.14 * Math.sin(st * 2.4));
     }
-    h.prog = 0;
-    void far;
+    // The lens ahead of him (between him and the stand), on his face, from the cut to him.
+    const close = t >= SHUSH_CLOSE_AT;
+    this.camLock = close ? this.dir : undefined;
+    this.camClose = close;
+    this.camFacing = undefined;
     // The mob trails 7 m behind him, spread across his path (outside the celebrate camera's bunch radius: the
     // shot is the scorer alone, shushing the stand, his team-mates applauding in the background); the rest
     // further back still.
@@ -366,31 +405,45 @@ export class CelebrationRig {
     }
   }
 
-  /** Two steps, a wind-up crouch, the flip (whoosh), a stuck landing (dust), then arms up to the camera. */
+  /**
+   * Two steps, a stop, a wind-up crouch, the flip (whoosh, a hit-stop at the apex), a stuck landing (dust),
+   * then arms up to the lens. Filmed side-on (camLock) from the stop to the landing, the scorer alone in frame.
+   */
   private backflip(dt: number): void {
     const h = this.dancers[0];
     const t = this.t;
-    // In profile from the main-stand (+z) side, from the wind-up to the landing; then his own front again.
-    const side = Math.sin(this.dir + Math.PI / 2) >= 0 ? this.dir + Math.PI / 2 : this.dir - Math.PI / 2;
-    this.camFacing = t >= FLIP_RUN_S && t < FLIP_JUMP_AT + FLIP_AIR_S + FLIP_LAND_S ? side : undefined;
+    const side = this.side;
+    this.camLock = t >= FLIP_RUN_S && t < FLIP_JUMP_AT + FLIP_AIR_S + FLIP_LAND_S ? side : undefined;
+    this.camFacing = undefined;
     if (t < FLIP_RUN_S) {
       this.run(h, h.x + this.ux * 30, h.z + this.uz * 30, 4.6, dt);
       h.style = CELEB.armsUp;
       h.t = t;
       h.prog = 0;
-    } else if (t < FLIP_JUMP_AT) {
-      // Braking into a crouch (the crouch pose reads prog 1 as standing, 0 as deep).
+    } else if (t < FLIP_SET_AT) {
+      // Pulls up, square to the lens, arms up: the cut to him lands on this.
       this.run(h, h.x, h.z, 0, dt, 0, this.dir);
-      const u = (t - FLIP_RUN_S) / (FLIP_JUMP_AT - FLIP_RUN_S);
+      h.style = CELEB.armsUp;
+      h.t = t;
+      h.prog = 0;
+      h.y = 0;
+    } else if (t < FLIP_JUMP_AT) {
+      // The wind-up crouch (the crouch pose reads prog 1 as standing, 0 as deep).
+      this.run(h, h.x, h.z, 0, dt, 0, this.dir);
+      const u = (t - FLIP_SET_AT) / (FLIP_JUMP_AT - FLIP_SET_AT);
       h.style = CELEB.crouch;
       h.prog = 1 - 0.8 * u * u;
-      h.t = t - FLIP_RUN_S;
+      h.t = t - FLIP_SET_AT;
       h.y = 0;
     } else if (t < FLIP_JUMP_AT + FLIP_AIR_S) {
       const tau = t - FLIP_JUMP_AT;
       if (h.jumpT < 0) {
         h.jumpT = t;
         this.emit('whoosh', h.x, h.z);
+      }
+      if (!this.apexed && tau >= FLIP_AIR_S * 0.5) {
+        this.apexed = true;
+        this.emit('apex', h.x, h.z);
       }
       h.y = Math.max(0, FLIP_V0 * tau - 0.5 * FLIP_G * tau * tau);
       // A backflip travels a little backwards.
@@ -415,7 +468,8 @@ export class CelebrationRig {
       h.prog = (t - FLIP_JUMP_AT - FLIP_AIR_S) / FLIP_LAND_S;
       h.t = t - FLIP_JUMP_AT - FLIP_AIR_S;
     } else {
-      this.run(h, h.x, h.z, 0, dt, 0, TO_CAMERA);
+      // Up out of the landing and round to the lens that filmed it, arms up.
+      this.run(h, h.x, h.z, 0, dt, 0, side);
       h.y = 0;
       h.style = CELEB.armsUp;
       h.prog = 0;

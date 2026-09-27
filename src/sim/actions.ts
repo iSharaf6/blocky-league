@@ -176,6 +176,13 @@ const HEADER_SPEED_AT = 12;
 const HEADER_SPEED_SLOPE = 0.9;
 const HEADER_SPEED_FROM = 16;
 const HEADER_SPEED_MIN = 7;
+/**
+ * An open-play header from HEADER_FAR_D m or further is HEADER_FAR of the power and the composure of a close one
+ * (round 12: headers were 63% of the AI's goals; 25% of those from 8-12 m went in). Set-piece deliveries retain
+ * their separately tuned accuracy (SET_PIECE_HEADER).
+ */
+const HEADER_FAR_D = 8;
+const HEADER_FAR = 0.85;
 /** A header is aimed at goal only from inside HEADER_AT_GOAL_D m with a sight of goal of at least HEADER_AT_GOAL_Q. */
 export const HEADER_AT_GOAL_D = 14;
 export const HEADER_AT_GOAL_Q = 0.3;
@@ -328,8 +335,13 @@ const HUMAN_MARKED = 0.6;
 const HUMAN_MARK_R = 2;
 const HUMAN_RISKY = 0.6;
 const HUMAN_CONES = [1.1, 1.45];
-/** ... and for a pass to feet with nobody open that way, the open man out to the side (never straight back). */
-const HUMAN_LAST_CONE = 2.05;
+/**
+ * ... and with NOBODY in the cone at all, the man out to the side, never behind: at most HUMAN_LAST_CONE (95 degrees)
+ * off the aim. (It was 117 degrees, and opened whenever the man in the cone was covered. Round 12, the critic: the
+ * stick straight ahead with the winger 48 degrees off and marked, it found an "open" man at -119 degrees behind the
+ * carrier. The covered man the stick points at, to his outside foot, beats an open man behind.)
+ */
+const HUMAN_LAST_CONE = (95 * Math.PI) / 180;
 
 /**
  * The human's pass assistance (Match.groundAssist for PASS, Match.throughAssist for THROUGH and its lofted
@@ -365,15 +377,22 @@ export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 
   const first = scanReceivers(m, p, dx, dz, mode, mode === 'lob' ? cone : ASSIST_CONE[level], true, prefer);
   if (first.idx >= 0 && first.risk <= HUMAN_RISKY) return first.idx;
   if (semi && first.idx < 0) return -1;
-  const cones = mode === 'pass' && !semi ? [...HUMAN_CONES, HUMAN_LAST_CONE] : HUMAN_CONES;
+  // A covered man in the cone: an open one is looked for a little wider (HUMAN_CONES), never behind. Nobody in
+  // the cone at all: out to HUMAN_LAST_CONE (a covered man in roughly the right direction beats rolling it into
+  // space).
+  const cones = mode === 'pass' && !semi && first.idx < 0 ? [...HUMAN_CONES, HUMAN_LAST_CONE] : HUMAN_CONES;
   let fallback = first.idx;
   for (const c of cones) {
     const wide = scanReceivers(m, p, dx, dz, mode, Math.max(cone, c), true, prefer);
     if (wide.open >= 0) return wide.open;
-    // (Nobody that way at all: a covered man in roughly the right direction beats rolling it into space.)
-    if (fallback < 0 && c < HUMAN_LAST_CONE) fallback = wide.idx;
+    if (fallback < 0) fallback = wide.idx;
   }
   return fallback;
+}
+
+/** The last resort for a THROUGH with nobody to run onto it: the least covered man that way (HUMAN_LAST_CONE), to feet. */
+function lastResort(m: Match, p: Player, dx: number, dz: number): number {
+  return scanReceivers(m, p, dx, dz, 'pass', HUMAN_LAST_CONE, true).idx;
 }
 
 /** How likely a human's ball to `t` is to be cut out: the lane (ground passes), and his marker. */
@@ -427,6 +446,17 @@ export function laneRace(m: Match, side: number, ax: number, az: number, bx: num
  * line where the full-back stood).
  */
 export function throughLead(m: Match, r: Player, lead?: number, wide = false): { x: number; z: number } {
+  const rs = Math.hypot(r.vel.x, r.vel.z);
+  const u = throughRun(m, r, wide);
+  const l = lead ?? 6 + rs * 0.7;
+  return {
+    x: clamp(r.pos.x + u.x * l, -HALF_L + 2, HALF_L - 2),
+    z: clamp(r.pos.z + u.z * l, -HALF_W + 1.5, HALF_W - 1.5),
+  };
+}
+
+/** The (unit) line a through ball leads runner `r` along: his run biased towards goal (see throughLead). */
+function throughRun(m: Match, r: Player, wide: boolean): { x: number; z: number } {
   const ad = m.attackDir(r.side);
   const rs = Math.hypot(r.vel.x, r.vel.z);
   let rx = rs > 1.5 ? r.vel.x / rs : ad;
@@ -434,11 +464,7 @@ export function throughLead(m: Match, r: Player, lead?: number, wide = false): {
   rx = rx * 0.6 + ad * 0.4;
   if (wide && Math.abs(r.pos.z) > HALF_W - WING_LEAD_IN && rz * Math.sign(r.pos.z) > 0) rz = 0;
   const rl = Math.hypot(rx, rz) || 1;
-  const l = lead ?? 6 + rs * 0.7;
-  return {
-    x: clamp(r.pos.x + (rx / rl) * l, -HALF_L + 2, HALF_L - 2),
-    z: clamp(r.pos.z + (rz / rl) * l, -HALF_W + 1.5, HALF_W - 1.5),
-  };
+  return { x: rx / rl, z: rz / rl };
 }
 /** A runner this close (m) to a touchline gets a human's through ball straight down the line (throughLead). */
 const WING_LEAD_IN = 9;
@@ -452,8 +478,12 @@ function throughRisk(m: Match, p: Player, t: Player): number | null {
   return humanThrough(m, p, t)?.risk ?? null;
 }
 
-/** Lead distances (m ahead of the runner) a human's through ball weighs: into his stride, or longer. */
-const HUMAN_THROUGH_LEADS = [3.5, 6];
+/**
+ * Lead distances (m ahead of the runner, plus a share of his pace for the long ones) a human's through ball weighs:
+ * the full run, into his stride, or just in front of his feet; never beyond the room in front of him (leadRoom).
+ */
+const HUMAN_THROUGH_LEADS = [6, 3.5, 2, 1.2];
+const HUMAN_THROUGH_PACED = 3.5;
 /**
  * A through-ball lead point a defender would cut out more often than this (interceptRisk) isn't played:
  * the ball goes to the runner's feet instead (round 7: 54% of human through balls were intercepted).
@@ -488,9 +518,13 @@ function spaceBallRisk(m: Match, p: Player, x: number, z: number, v0: number): n
  */
 function humanThrough(m: Match, p: Player, t: Player): { x: number; z: number; risk: number } | null {
   const rs = Math.hypot(t.vel.x, t.vel.z);
+  const run = throughRun(m, t, true);
+  const room = leadRoom(m, t, run.x, run.z);
   let best: { x: number; z: number; risk: number } | null = null;
   for (const l of HUMAN_THROUGH_LEADS) {
-    const pt = throughLead(m, t, l + rs * 0.7, true);
+    const lead = l >= HUMAN_THROUGH_PACED ? l + rs * 0.7 : l;
+    if (lead > room) continue;
+    const pt = throughLead(m, t, lead, true);
     const risk = throughSpaceRisk(m, p, t, pt);
     if (risk === null) continue;
     if (!best || risk < best.risk - 0.05) best = { ...pt, risk };
@@ -745,7 +779,7 @@ function spaceReceiver(m: Match, p: Player, ux: number, uz: number, v0: number):
  * above it (order.charge: overhitPace); 'manual' (or nobody that way) along the stick at MANUAL_TAP_SPEED
  * plus the charge. Then the error margin.
  */
-function humanPass(m: Match, p: Player, order: KickOrder, dir: { x: number; z: number }, level: AssistLevel): Launch {
+function humanPass(m: Match, p: Player, order: KickOrder, dir: { x: number; z: number }, level: AssistLevel, kind: 'pass' | 'through' = 'pass'): Launch {
   const b = m.ball.pos;
   const speed = order.runSpeed ?? p.speed();
   const over = order.charge;
@@ -756,7 +790,7 @@ function humanPass(m: Match, p: Player, order: KickOrder, dir: { x: number; z: n
     const a = line + m.rng.gauss() * humanPassSpread(m, p, level, line, speed, order.bodyOff);
     const ux = Math.cos(a);
     const uz = Math.sin(a);
-    return launch(ux * sp, 0, uz * sp, 0, 0, 0, spaceReceiver(m, p, ux, uz, sp), 'pass', clamp(sp / 28, 0, 1));
+    return launch(ux * sp, 0, uz * sp, 0, 0, 0, spaceReceiver(m, p, ux, uz, sp), kind, clamp(sp / 28, 0, 1));
   }
   const r = m.players[tgt];
   const lead = humanLead(m, p, r, over);
@@ -766,7 +800,7 @@ function humanPass(m: Match, p: Player, order: KickOrder, dir: { x: number; z: n
   const line = Math.atan2(tz - b.z, tx - b.x);
   const a = line + m.rng.gauss() * humanPassSpread(m, p, level, line, speed, order.bodyOff);
   sp *= 1 + m.rng.gauss() * (1 - p.stat.passing / 100) * (level === 'assisted' ? 0.03 : 0.05);
-  return launch(Math.cos(a) * sp, 0, Math.sin(a) * sp, 0, 0, 0, tgt, 'pass', clamp(sp / 28, 0, 1));
+  return launch(Math.cos(a) * sp, 0, Math.sin(a) * sp, 0, 0, 0, tgt, kind, clamp(sp / 28, 0, 1));
 }
 
 /**
@@ -782,6 +816,67 @@ export const LEAD_IN = 1.5;
 const LEAD_RISKY = 0.45;
 /** A receiver whose run is more than this (cosine) towards the ball is checking to it: no lead. */
 const LEAD_CHECKING = 0.3;
+/**
+ * The outside foot (round 12, the critic: a marker 3.5 m short of the owner's winger and 1 m inside, 2.5-3.5 m off the
+ * lane of a ball played at 48-90 degrees, cut out 56% of the balls aimed at the man's feet): with an opponent within
+ * OUTSIDE_FOOT_R m of the receiver, every ball to him (a pass to feet, its leads, a through ball to feet) is aimed
+ * OUTSIDE_FOOT m to the side of him AWAY from that man, across the ball's line (the touchline side when the man is
+ * straight behind him on it), kept LEAD_IN m inside the touchline.
+ */
+export const OUTSIDE_FOOT = 1.3;
+const OUTSIDE_FOOT_R = 3;
+/**
+ * A ball led into a runner's stride never goes further than the room in front of him: the nearest opponent within
+ * LEAD_ROOM_LANE m of his run, less LEAD_ROOM m (round 12: a THROUGH to a wide runner with the full-back 7 m ahead
+ * was led into the full-back 11 times in 12).
+ */
+export const LEAD_ROOM = 2;
+const LEAD_ROOM_LANE = 2.5;
+
+/**
+ * Where the ball to `r` from the passer at (bx, bz) is aimed relative to his feet: the outside foot when he's marked
+ * (OUTSIDE_FOOT), else his feet. Zero offset when nobody is within OUTSIDE_FOOT_R m of him.
+ */
+export function outsideFoot(m: Match, r: Player, bx: number, bz: number): { x: number; z: number } {
+  let near: Player | null = null;
+  let nd = OUTSIDE_FOOT_R;
+  for (const o of m.players) {
+    if (o.side === r.side || o.sentOff) continue;
+    const d = dist2(o.pos.x, o.pos.z, r.pos.x, r.pos.z);
+    if (d < nd) {
+      nd = d;
+      near = o;
+    }
+  }
+  if (!near) return { x: 0, z: 0 };
+  const lx = r.pos.x - bx;
+  const lz = r.pos.z - bz;
+  const ll = Math.hypot(lx, lz) || 1;
+  // Across the ball's line, on the side away from the marker (the touchline side when he's right on the line).
+  const px = -lz / ll;
+  const pz = lx / ll;
+  const across = (r.pos.x - near.pos.x) * px + (r.pos.z - near.pos.z) * pz;
+  const s = Math.abs(across) > 0.3 ? Math.sign(across) : Math.sign(pz * r.pos.z || 1);
+  return { x: px * s * OUTSIDE_FOOT, z: pz * s * OUTSIDE_FOOT };
+}
+
+/**
+ * Room (m) in front of `r` along the run (ux, uz): how far the nearest opponent within LEAD_ROOM_LANE m of that line is
+ * ahead of him, less LEAD_ROOM. Infinity with nobody there.
+ */
+export function leadRoom(m: Match, r: Player, ux: number, uz: number): number {
+  let gap = Infinity;
+  for (const o of m.players) {
+    if (o.side === r.side || o.sentOff) continue;
+    const dx = o.pos.x - r.pos.x;
+    const dz = o.pos.z - r.pos.z;
+    const along = dx * ux + dz * uz;
+    if (along <= 0) continue;
+    const lat = Math.abs(dx * uz - dz * ux);
+    if (lat < LEAD_ROOM_LANE && along < gap) gap = along;
+  }
+  return gap - LEAD_ROOM;
+}
 
 /**
  * Where a human's pass to `r` is aimed, and how hard: into his run as far as is safe. For each share of his
@@ -800,6 +895,9 @@ function humanLead(m: Match, p: Player, r: Player, over: number | undefined): { 
   // A man coming to the ball (checking towards it: the run the press called) is played to feet, not led on.
   const db = dist2(b.x, b.z, r.pos.x, r.pos.z) || 1;
   const toBall = rs > 0.5 ? (r.vel.x * (b.x - r.pos.x) + r.vel.z * (b.z - r.pos.z)) / (rs * db) : 0;
+  // The outside foot when he's marked, and the room in front of him a lead may use (leadRoom).
+  const foot = outsideFoot(m, r, b.x, b.z);
+  const room = rs > 1.5 ? leadRoom(m, r, r.vel.x / rs, r.vel.z / rs) : Infinity;
   const opts: { x: number; z: number; sp: number; risk: number; late: number }[] = [];
   for (const f of HUMAN_LEADS) {
     if (f > 0 && (rs < 1.5 || toBall > LEAD_CHECKING)) continue;
@@ -811,9 +909,11 @@ function humanLead(m: Match, p: Player, r: Player, over: number | undefined): { 
       const d = Math.max(1, dist2(b.x, b.z, tx, tz));
       sp = overhitPace(humanGroundSpeed(d), over);
       t = Math.min(rollTime(sp, d), 3);
-      tx = clamp(r.pos.x + r.vel.x * t * f, -HALF_L + 1, HALF_L - 1);
-      tz = clamp(r.pos.z + r.vel.z * t * f, -HALF_W + LEAD_IN, HALF_W - LEAD_IN);
+      tx = clamp(r.pos.x + r.vel.x * t * f + foot.x, -HALF_L + 1, HALF_L - 1);
+      tz = clamp(r.pos.z + r.vel.z * t * f + foot.z, -HALF_W + LEAD_IN, HALF_W - LEAD_IN);
     }
+    // (Never led into the man in front of him: a lead beyond the room is not an option, to feet always is.)
+    if (f > 0 && rs * t * f > room) continue;
     // His time to the point: a run at it, or a stop and a step back when he's going the other way.
     const dx = tx - r.pos.x;
     const dz = tz - r.pos.z;
@@ -833,7 +933,10 @@ function humanLead(m: Match, p: Player, r: Player, over: number | undefined): { 
   // The longest lead that's safe, and no riskier than his feet...
   const feetRisk = opts[opts.length - 1].risk;
   for (const o of opts) if (o.late <= 0 && o.risk <= Math.min(LEAD_RISKY, feetRisk + 0.1)) return o;
-  // ... else the least risky point he can reach (a late one only when nothing else is left).
+  // ... else the least risky point he can reach (a late one only when nothing else is left): the longest such
+  // lead, now that no lead goes beyond the room in front of him. (Round 12: with everything risky the tie went to
+  // the longest lead, and a sprinting winger's ball went 20 m past him to the full-back; preferring the shortest
+  // instead cost ~4% of the human's open-play forward passes, played to feet in traffic: tests/human.test.ts pb2.)
   let best = opts[0];
   for (const o of opts) if (o.late < best.late - 1e-6 || (o.late <= best.late + 1e-6 && o.risk < best.risk)) best = o;
   return best;
@@ -888,7 +991,7 @@ export function humanThroughTarget(m: Match, p: Player, dx: number, dz: number, 
   const tz = clamp(b.z + (dz / l) * MANUAL_THROUGH_D, -HALF_W + 1.5, HALF_W - 1.5);
   if (spaceBallRisk(m, p, tx, tz, throughSpeed(Math.max(2, dist2(b.x, b.z, tx, tz)))) <= THROUGH_MAX_INTERCEPT) return { idx: -1, feet: false };
   let alt = pickReceiver(m, p, dx, dz, 'pass', prefer);
-  if (alt < 0) alt = scanReceivers(m, p, dx / l, dz / l, 'pass', HUMAN_LAST_CONE, true).idx;
+  if (alt < 0) alt = lastResort(m, p, dx / l, dz / l);
   return { idx: alt, feet: alt >= 0 };
 }
 
@@ -907,8 +1010,10 @@ function humanThroughBall(m: Match, p: Player, order: KickOrder, dir: { x: numbe
   let tz: number;
   if (tgt >= 0) {
     const r = m.players[tgt];
-    const pt = level === 'semi' ? semiThrough(m, p, r) : humanThrough(m, p, r);
-    if (!pt) return humanPass(m, p, { ...order, target: tgt, charge: undefined }, dir, level);
+    // (No room in front of him, or every ball into it cut out: a driven through ball to his feet, the outside one
+    // when he's marked. It's still his THROUGH: the kick is a 'through' whatever its weight.)
+    const pt = order.toFeet ? null : level === 'semi' ? semiThrough(m, p, r) : humanThrough(m, p, r);
+    if (!pt) return humanPass(m, p, { ...order, target: tgt, charge: undefined }, dir, level, 'through');
     tx = pt.x;
     tz = pt.z;
     if (level === 'semi') {
@@ -940,8 +1045,8 @@ function humanThroughBall(m: Match, p: Player, order: KickOrder, dir: { x: numbe
     // Nobody to run onto it, and a defender in the way or first to the space: the open man that way gets it
     // to feet rather than the defence getting it rolled to them.
     let alt = pickReceiver(m, p, dir.x, dir.z, 'pass');
-    if (alt < 0) alt = scanReceivers(m, p, dir.x, dir.z, 'pass', HUMAN_LAST_CONE, true).idx;
-    if (alt >= 0) return humanPass(m, p, { ...order, target: alt, charge: undefined }, dir, level === 'semi' ? 'semi' : 'assisted');
+    if (alt < 0) alt = lastResort(m, p, dir.x, dir.z);
+    if (alt >= 0) return humanPass(m, p, { ...order, target: alt, charge: undefined }, dir, level === 'semi' ? 'semi' : 'assisted', 'through');
   }
   const line = Math.atan2(tz - b.z, tx - b.x);
   const a = line + m.rng.gauss() * humanPassSpread(m, p, level, line, speed, order.bodyOff) * THROUGH_SPREAD;
@@ -1117,7 +1222,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
       // say): the open man that way gets it to feet rather than the defence getting it rolled to them.
       // (Everyone that way covered: the least covered of them, rather than the ball rolled to a defender.)
       let alt = pickReceiver(m, p, dir.x, dir.z, 'pass');
-      if (alt < 0) alt = scanReceivers(m, p, dir.x, dir.z, 'pass', HUMAN_LAST_CONE, true).idx;
+      if (alt < 0) alt = lastResort(m, p, dir.x, dir.z);
       if (alt >= 0) return passToFeet(m, p, alt, 'pass');
     }
     const u = rotate((tx - b.x) / d, (tz - b.z) / d, passError(p, m, 1.3));
@@ -1324,7 +1429,8 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   // Headers are less precise than a strike with the foot (but a free header is still a chance);
   // a header from a set-piece delivery, in traffic, less so again.
   const sp = m.setPieceKick === m.kickId;
-  const composure = header ? HEADER_COMPOSURE * (sp ? SET_PIECE_HEADER * (m.setPieceDriven ? DRIVEN_HEADER : 1) : 1) : 1;
+  const far = header && !sp && d >= HEADER_FAR_D ? HEADER_FAR : 1;
+  const composure = header ? HEADER_COMPOSURE * far * (sp ? SET_PIECE_HEADER * (m.setPieceDriven ? DRIVEN_HEADER : 1) : 1) : 1;
   // Coming in at an angle the same miss in the air lands further along the goal line (1 / cos).
   const obl = Math.pow(clamp(Math.abs(gx - b.x) / d, 0.45, 1), 0.8);
   // The body shape (weak foot, off balance: open play only) and a timed-finish tap scale the error.
@@ -1369,7 +1475,7 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   // (A header dies with distance: no more than HEADER_SPEED_AT + HEADER_SPEED_SLOPE m/s per metre inside
   // HEADER_SPEED_FROM m, so a keeper has one from the edge of the box covered.)
   let speed = header
-    ? Math.max(HEADER_SPEED_MIN, Math.min(11 + power * 8 + acc * 3, HEADER_SPEED_AT + HEADER_SPEED_SLOPE * (HEADER_SPEED_FROM - d)))
+    ? Math.max(HEADER_SPEED_MIN, Math.min(11 + power * 8 + acc * 3, HEADER_SPEED_AT + HEADER_SPEED_SLOPE * (HEADER_SPEED_FROM - d)) * far)
     : (strike
       ? STRIKE_SPEED_BASE + (softMiss ? Math.max(power, HUMAN_TAP_PACE) : power) * STRIKE_SPEED_POWER * (0.78 + acc * 0.3)
       : SHOT_SPEED_BASE + power * SHOT_SPEED_POWER * (0.78 + acc * 0.3)) * (shape?.pace ?? 1);

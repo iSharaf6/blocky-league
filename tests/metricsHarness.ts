@@ -69,6 +69,8 @@ export interface MatchMetrics {
   /** Shots from 25 m or more, and how many of them went in. */
   long25: number;
   long25Goals: number;
+  /** Goals scored with the head. */
+  headerGoals: number;
 }
 
 const PASS_KINDS = new Set(['pass', 'through', 'lob', 'throw', 'keeper']);
@@ -89,16 +91,17 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     penalties: 0, fouls: 0, yellows: 0, reds: 0, saves: 0, maxStall: 0, finalThird: [0, 0], crosses: 0, headers: 0, blocks: 0,
     rawPasses: 0, shotOut: {}, byKind: {}, runs: 0, overlaps: 0, beats: 0, claims: 0,
     ownGoals: 0, offsides: 0, advantages: 0, lateSubs: 0, subs: [0, 0], minStamina: 1,
-    lostByKind: {}, kickSpeed: {}, scorers: {}, subLog: [], liveT: 0, deadT: 0, goalT: 0, long25: 0, long25Goals: 0,
+    lostByKind: {}, kickSpeed: {}, scorers: {}, subLog: [], liveT: 0, deadT: 0, goalT: 0, long25: 0, long25Goals: 0, headerGoals: 0,
   };
   const wasRunning = new Set<number>();
   const lastOverlap: [number, number] = [-1, -1];
   // Shot being tracked until something resolves it.
-  let shot: { side: Side; d: number } | null = null;
+  let shot: { side: Side; d: number; header: boolean } | null = null;
   const shotDone = (k: string) => {
     if (!shot) return;
     r.shotOut[k] = (r.shotOut[k] ?? 0) + 1;
     if (k === 'goal' && shot.d >= 25) r.long25Goals++;
+    if (k === 'goal' && shot.header) r.headerGoals++;
     shot = null;
   };
   let steps = 0;
@@ -240,7 +243,7 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
         if (d >= 25) r.long25++;
         if (b.pos.y > 1) r.headerShots++;
         shotDone('unresolved');
-        shot = { side: k.side, d };
+        shot = { side: k.side, d, header: m.kickKind === 'header' };
       }
       shotsSeen = shotsNow;
     }
@@ -391,6 +394,8 @@ export interface Summary {
   /** Shots from 25 m or more a match, and the share (%) of them that went in. */
   long25: number;
   long25GoalPct: number;
+  /** Share (%) of all goals scored with the head. */
+  headerGoalPct: number;
 }
 
 export function summarise(list: MatchMetrics[]): Summary {
@@ -487,6 +492,7 @@ export function summarise(list: MatchMetrics[]): Summary {
     livePct: (sum((r) => r.liveT) / Math.max(1, sum((r) => r.liveT + r.deadT + r.goalT))) * 100,
     long25: avg((r) => r.long25),
     long25GoalPct: (sum((r) => r.long25Goals) / Math.max(1, sum((r) => r.long25))) * 100,
+    headerGoalPct: (sum((r) => r.headerGoals) / Math.max(1, goals)) * 100,
     passKinds: (() => {
       const agg: Record<string, [number, number]> = {};
       for (const r of list) {

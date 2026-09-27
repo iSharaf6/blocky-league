@@ -15,7 +15,7 @@ import { BALL_R, DT, HALF_L, HALF_W } from '../sim/constants';
 import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, PowerUpKind, RestartKind, ScenarioSpec, Side } from '../sim/types';
-import type { ScenarioOutcome } from '../sim/scenario';
+import { applyScenario, finishScenario, judgeScenario, scenarioSecondsLeft, type ScenarioOutcome } from '../sim/scenario';
 import { EdgeArrows, type EdgeMate, type EdgeRect } from '../ui/edgeArrows';
 import { Hud, hudTeam } from '../ui/hud';
 import { ShootoutHud } from '../ui/shootoutHud';
@@ -24,7 +24,10 @@ import { Trainer } from '../ui/trainer';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { playFocus } from './camFocus';
 import { contrastAwayKit } from './kitContrast';
+import { MatchTally, type PlayerRating } from './ratings';
 import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
+
+export type { PlayerRating } from './ratings';
 
 export interface SessionOptions extends MatchConfig {
   kits: [Kit, Kit];
@@ -48,15 +51,6 @@ export interface SessionOptions extends MatchConfig {
   scenario?: ScenarioSpec;
 }
 
-export interface PlayerRating {
-  idx: number;
-  name: string;
-  side: Side;
-  rating: number;
-  goals: number;
-  assists: number;
-}
-
 export interface MatchResult {
   score: [number, number];
   humanSide: Side | -1;
@@ -67,15 +61,6 @@ export interface MatchResult {
   winner?: Side;
   /** A Football Moment's verdict (only when SessionOptions.scenario was set). */
   scenarioOutcome?: ScenarioOutcome;
-}
-
-interface Tally {
-  goals: number;
-  assists: number;
-  tackles: number;
-  saves: number;
-  passes: number;
-  shots: number;
 }
 
 /** Seconds on the wide shot after a goal (the ball in the net) before cutting to the scorer. */
@@ -99,6 +84,16 @@ const REPLAY_SLOW_FROM = 1.2;
 const HALFTIME_HOLD_S = 1.0;
 const FULLTIME_HOLD_S = 1.8;
 const SHOOTOUT_HOLD_S = 3.4;
+/**
+ * Football Moments (SessionOptions.scenario): the brief holds the sim this long before "GO!"; a settled
+ * moment holds on its verdict card this long before the full-time screen; the last MOMENT_COUNT_S seconds
+ * are counted down big on the banner.
+ */
+const MOMENT_BRIEF_S = 2.2;
+const MOMENT_END_S = 2.4;
+const MOMENT_COUNT_S = 5;
+/** Hit-stop at the top of the backflip (frames). */
+const HIT_STOP_APEX = 2;
 /**
  * Hit-stop (frames the drawn frame and the sim hold still, the camera punch and the burst landing on the
  * frozen picture) on a won tackle and on a goal; the camera punch (m: ~3 px at broadcast distance) and the
@@ -198,6 +193,26 @@ const RESTART_LABEL: Record<RestartKind, string> = {
   kickoff: 'KICK OFF', throwin: 'THROW-IN', corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!',
 };
 
+/** A plain name for a colour (the first-match card names the ring under the player's man). */
+function colourName(hex: number): string {
+  const r = ((hex >> 16) & 255) / 255, g = ((hex >> 8) & 255) / 255, b = (hex & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  if (max > 0.85 && d < 0.18) return 'WHITE';
+  if (max < 0.25) return 'BLACK';
+  if (d < 0.12) return 'GREY';
+  let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = ((h * 60) + 360) % 360;
+  if (h < 18 || h >= 340) return 'RED';
+  if (h < 42) return 'ORANGE';
+  if (h < 68) return 'YELLOW';
+  if (h < 165) return 'GREEN';
+  if (h < 200) return 'TEAL';
+  if (h < 260) return 'BLUE';
+  if (h < 300) return 'PURPLE';
+  return 'PINK';
+}
+
 export class MatchSession {
   readonly match: Match;
   readonly view: MatchView;
@@ -234,8 +249,24 @@ export class MatchSession {
   private goalHypeT = 0;
   private prevButtons = false;
   private introLeft = 0;
-  private tally: Tally[] = Array.from({ length: 22 }, () => ({ goals: 0, assists: 0, tackles: 0, saves: 0, passes: 0, shots: 0 }));
+  /** Per-player tallies, keyed by identity (a sub starts at zero; see game/ratings.ts). */
+  private readonly tally = new MatchTally();
   private lastPasser: [number, number] = [-1, -1];
+  /**
+   * The player's very first match (SessionOptions.firstMatch): after the fly-in the sim holds on the kick-off
+   * framing, with a "this is you" card up, until he first moves the stick or presses a button. The sim
+   * itself makes his kick-off wait for a button; the session never presses it for him (a button that was
+   * still down from skipping the intro or releasing the hold is swallowed until it is let go).
+   */
+  private holdFirst = false;
+  private firstCardUp = false;
+  private eatButtons = false;
+  /**
+   * A Football Moment in progress (SessionOptions.scenario): the sim clock it started on, the brief's hold,
+   * the verdict once judged (the match ends on it, after the goal celebration if that is what settled it), the
+   * beat on the verdict card, and the last big countdown number shown.
+   */
+  private moment: { spec: ScenarioSpec; briefT: number; outcome: ScenarioOutcome | null; endT: number; count: number } | null = null;
   private tut = { moved: false, passed: false, shot: false, chip: false, chipT: 0, switched: false, step: 0, t: 0 };
   private readonly demo: boolean;
   /** Penalty tracker, once a knockout tie goes to a shootout. */
@@ -318,6 +349,12 @@ export class MatchSession {
     // that changes strip is never the human's: you always play in your own club's colours.
     opt.kits = opt.humanSide === 1 ? [contrastAwayKit(away, home), away] : [home, contrastAwayKit(home, away)];
     this.match = new Match(opt);
+    // A Football Moment: the sim is set up for it (score, clock, placements, ball) before anything is drawn or
+    // recorded; no fly-in, the brief instead of the fixture card.
+    if (opt.scenario && !this.demo) {
+      applyScenario(this.match, opt.scenario);
+      this.moment = { spec: opt.scenario, briefT: MOMENT_BRIEF_S, outcome: null, endT: -1, count: -1 };
+    }
     const teams = this.match.teams;
     const level = Math.max(0, Math.min(5, Math.round(opt.stadiumLevel ?? 5)));
     this.stadium = new Stadium({
@@ -342,8 +379,10 @@ export class MatchSession {
     this.cam.setZoom(opt.camZoom ?? 'normal');
     this.view.setBallSkin(opt.ballSkin);
     this.view.celeb.onCue = (c) => this.celebCue(c);
-    this.cam.setMode(this.demo ? 'menu' : 'intro');
-    if (!this.demo && !opt.skipIntro) this.introLeft = INTRO_S;
+    const intro = !this.demo && !opt.skipIntro && !this.moment;
+    this.cam.setMode(this.demo ? 'menu' : intro ? 'intro' : 'broadcast');
+    if (intro) this.introLeft = INTRO_S;
+    this.holdFirst = !this.demo && !!opt.firstMatch && !this.moment && (opt.humanSide === 0 || opt.humanSide === 1);
     if (!this.demo) {
       this.hud = new Hud(
         [hudTeam(teams[0], opt.kits[0].shirt, opt.kits[0].shirt2), hudTeam(teams[1], opt.kits[1].shirt, opt.kits[1].shirt2)],
@@ -373,10 +412,21 @@ export class MatchSession {
     writeFrame(this.match, this.cur, 0);
     this.prev.set(this.cur);
     sfx.setAmbienceActive(!this.demo);
-    if (this.hud) {
+    if (this.hud && this.moment) {
+      const s = this.moment.spec;
+      this.hud.show(s.title, s.brief, 'small intro', MOMENT_BRIEF_S - 0.1);
+      this.hud.setScore(this.match.score[0], this.match.score[1]);
+      this.stadium.setScore(this.match.score[0], this.match.score[1], `${this.match.minute()}'`);
+      this.prevButtons = true;
+    } else if (this.hud && intro) {
       this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} · ${teams[1].name}`, 'small intro', INTRO_S - 0.2);
       this.prevButtons = true;
     }
+  }
+
+  /** The human side's goal celebration for the next goal (Settings > CELEBRATION changed mid-match). */
+  setCelebration(id: string | undefined): void {
+    this.opt.celebration = id;
   }
 
   /** Light the match for a time of day and weather (sky, lights, stadium, footballers, particles, rain audio). */
@@ -452,6 +502,13 @@ export class MatchSession {
     const c = this.input.read();
     const w = this.cam.screenToWorld(c.sx, c.sy);
     const l = this.latch;
+    // A button still down from skipping the intro / the brief / the first-match hold is not a new press:
+    // swallowed (with anything latched off it) until every button has been let go.
+    if (this.eatButtons) {
+      this.clearLatch();
+      if (c.pass || c.shoot || c.through) return { mx: w.x, mz: w.z, sprint: c.sprint, pass: false, shoot: false, through: false, digital: this.input.lastDevice === 'keyboard', power: false };
+      this.eatButtons = false;
+    }
     const pad: Pad = {
       mx: w.x, mz: w.z, sprint: c.sprint, pass: c.pass || l.pass, shoot: c.shoot || l.shoot, through: c.through || l.through,
       // Keys give 8-way digital input: the sim turns set-piece aim gradually for those.
@@ -484,7 +541,8 @@ export class MatchSession {
     const m = this.match;
 
     // (A press only carries over to the next live step: nothing latched while the sim isn't stepping.)
-    if (this.paused || this.introLeft > 0 || this.replay) this.clearLatch();
+    const briefing = this.moment !== null && this.moment.briefT > 0;
+    if (this.paused || this.introLeft > 0 || this.replay || briefing) this.clearLatch();
     let held = false;
     if (this.paused) {
       // Frozen: live play, a replay or the pre-match fly-in all wait for the pause menu.
@@ -503,8 +561,23 @@ export class MatchSession {
         this.cam.setMode('broadcast');
         // Skipped (or over): the pre-match title card goes with the fly-in, never lingering over the kick-off.
         this.hud?.hideIntro();
+        // The button that skipped it never doubles as the kick-off (the sim reads a press edge next step).
+        this.eatButtons = btn;
       }
       this.view.apply(this.prev, this.cur, 1, this.time, dt);
+    } else if (briefing) {
+      // The moment's brief: the picture holds on the set-up until "GO!".
+      const mo = this.moment!;
+      mo.briefT -= dt;
+      if (mo.briefT <= 0) {
+        this.hud?.hideIntro();
+        this.hud?.show('GO!', '', 'goal', 0.9);
+        sfx.whistle('short');
+        this.eatButtons = true;
+      }
+      this.view.apply(this.prev, this.cur, 1, this.time, dt);
+    } else if (this.holdFirst) {
+      this.firstMatchHold(dt);
     } else if (this.replay) {
       this.stepReplay(dt);
     } else {
@@ -516,6 +589,7 @@ export class MatchSession {
         m.step(DT, pad);
         // (Events first: a TACKLE press this step is baked into this very frame as the lunge.)
         this.handleEvents(m.drainEvents());
+        if (this.moment) this.judgeMoment();
         for (let i = 0; i < 22; i++) if (this.lunge[i] >= 0 && (this.lunge[i] += DT) >= LUNGE_S) this.lunge[i] = -1;
         writeFrame(m, this.cur, this.time, this.lunge, this.lungeLeg);
         this.buffer.push(m, this.time, this.lunge, this.lungeLeg);
@@ -534,7 +608,7 @@ export class MatchSession {
       this.view.apply(this.prev, this.cur, this.hitStop > 0 ? 1 : clamp(this.acc / DT, 0, 1), this.time, dt);
       this.updateFrameFx(dt);
       this.updateBlitz(dt);
-      this.flow();
+      this.flow(dt);
       if (this.cardT > 0) {
         this.cardT -= dt;
         // Back to the game when the close-up is done, or at once if play restarts under it.
@@ -560,6 +634,8 @@ export class MatchSession {
     let subject = -1;
     let group = 0;
     let groupFacing: number | undefined;
+    let lockAngle: number | undefined;
+    let close = false;
     const soWinner = m.shootout && m.phase === 'fulltime' ? m.shootout.winner : -1;
     if (this.cam.mode === 'celebrate' && soWinner >= 0) {
       // Shootout won: the winners' pile-up (the sim gathers them round a hub on the halfway line).
@@ -610,14 +686,25 @@ export class MatchSession {
       avz = ((rig.active ? rig.heroVz : sc.vel.z) * 2) / n;
       // (A move that wants a particular angle, e.g. the backflip in profile, tells the camera its "front".)
       if (rig.active && rig.camFacing !== undefined) groupFacing = rig.camFacing;
+      if (rig.active && rig.camLock !== undefined) {
+        // A move filmed from its own angle (the flip side-on, the shush's close-up): the scorer alone, the
+        // lens exactly where the choreography puts it.
+        lockAngle = rig.camLock;
+        close = rig.camClose;
+        ax = sx;
+        az = sz;
+        avx = rig.heroVx;
+        avz = rig.heroVz;
+        group = 0;
+      }
       subject = si;
-      group = this.celebG;
+      group = lockAngle === undefined ? this.celebG : 0;
     }
     const ref = this.cam.mode === 'card' ? this.view.refState : null;
     this.trackHold();
     this.cam.update(this.paused ? 0 : dt, {
       ...focus,
-      ax, az, avx, avz, subject, group, groupFacing,
+      ax, az, avx, avz, subject, group, groupFacing, lockAngle, close,
       setPiece: this.replay ? null : focus.setPiece,
       hold: !this.replay && focus.hold,
       card: ref ? { rx: ref.x, rz: ref.z, fx: ref.faceX, fz: ref.faceZ } : null,
@@ -651,7 +738,7 @@ export class MatchSession {
   }
 
   /** Goal → celebration → replay → kick-off; half/full time callbacks. */
-  private flow(): void {
+  private flow(dt: number): void {
     const m = this.match;
     if (m.phase === 'goal') {
       if (this.demo) {
@@ -667,7 +754,11 @@ export class MatchSession {
       // kick-off (round 9's critic: every goal replayed cost 8.5 s, ~7% of a two-minute half).
       // (An iconic celebration holds the replay / kick-off until its moment has landed: celeb.holdS.)
       const at = Math.max(this.replayWanted ? REPLAY_AT : NO_REPLAY_AT, this.view.celeb.holdS);
-      if (m.phaseT > at && !this.replayDone) {
+      if (this.moment?.outcome) {
+        // The goal settled the moment: no replay, no kick-off; the verdict once the celebration has landed
+        // (the party plays on under it).
+        if (m.phaseT > at) this.finishMoment();
+      } else if (m.phaseT > at && !this.replayDone) {
         if (this.replayWanted) this.startReplay();
         else this.replayDone = true;
       } else if (this.replayDone) {
@@ -679,6 +770,10 @@ export class MatchSession {
         // Straight to the kick-off framing: never a glide from the replayed goal to the centre spot.
         this.resetView();
       }
+    }
+    if (this.moment) {
+      this.momentFlow(dt);
+      return;
     }
     if (m.phase === 'halftime' && !this.halftimeFired && m.phaseT > HALFTIME_HOLD_S) {
       this.halftimeFired = true;
@@ -693,6 +788,92 @@ export class MatchSession {
         score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings(), winner: this.winner(),
       });
     }
+  }
+
+  /**
+   * The first match's hold on the kick-off framing (see holdFirst): the picture is live (rings, crowd, the
+   * camera), the sim waits, a card names the player's man; the first stick movement or button lets it go.
+   */
+  private firstMatchHold(dt: number): void {
+    const m = this.match;
+    if (!this.hud || m.phase !== 'kickoff') {
+      this.holdFirst = false;
+      return;
+    }
+    if (!this.firstCardUp) {
+      // (An 'intro' card: hideIntro() takes it down the moment the hold is released.)
+      this.firstCardUp = true;
+      const you = colourName(this.view.teamColor.fill);
+      const dev = this.input.lastDevice;
+      const move = dev === 'gamepad' ? 'the LEFT STICK' : dev === 'touch' ? 'the thumbstick' : 'WASD / ARROWS';
+      // (A short title: the banner's letters are huge; "YOU ARE THE BLUE RING" ran off both edges.)
+      this.hud.show('THIS IS YOU', `the ${you} ring · move with ${move} to begin`, 'small intro', 30);
+    }
+    const c = this.input.read();
+    const btn = c.pass || c.shoot || c.through;
+    const moved = Math.hypot(c.sx, c.sy) > 0.3;
+    if (moved || (btn && !this.eatButtons) || this.latch.pass || this.latch.shoot || this.latch.through) {
+      this.holdFirst = false;
+      this.hud.hideIntro();
+      // A button that released the hold is not the kick-off (the sim makes it wait for its own press).
+      this.eatButtons = this.eatButtons || btn;
+      this.clearLatch();
+    } else if (!btn) this.eatButtons = false;
+    this.view.apply(this.prev, this.cur, 1, this.time, dt);
+  }
+
+  /** Each live step of a moment: the referee's verdict, or the sim ending the half under it (time up, unjudged). */
+  private judgeMoment(): void {
+    const mo = this.moment!;
+    const m = this.match;
+    if (mo.outcome) return;
+    let o = judgeScenario(m, mo.spec);
+    if (!o && (m.phase === 'halftime' || m.phase === 'fulltime')) o = { won: false, stars: 0, secondsLeft: 0 };
+    if (!o) return;
+    mo.outcome = o;
+    // No replay of the goal that settled it: the celebration, then the verdict.
+    this.replayWanted = false;
+    // Settled in open play (time up, a concession): straight to the verdict. A goal: after its celebration.
+    if (m.phase !== 'goal') this.finishMoment();
+  }
+
+  /** The moment is over: the whistle, the verdict card, the sim stopped; the full-time screen after a beat. */
+  private finishMoment(): void {
+    const mo = this.moment!;
+    const m = this.match;
+    if (mo.endT >= 0) return;
+    mo.endT = MOMENT_END_S;
+    const o = mo.outcome ?? { won: false, stars: 0, secondsLeft: 0 };
+    // The final whistle now (the sim's own end-of-match events follow), unless the goal that settled it is
+    // still being celebrated: then the party plays on under the card and the whistle goes with the result.
+    if (m.phase !== 'goal') finishScenario(m);
+    // (Short titles: the banner's letters are huge; "MOMENT COMPLETE" ran off both edges.)
+    const stars = o.won ? '★'.repeat(o.stars) + '☆'.repeat(Math.max(0, 3 - o.stars)) : '';
+    this.hud?.show(o.won ? 'COMPLETE!' : 'FAILED', o.won ? `MOMENT ${stars}` : 'MOMENT · try again', o.won ? 'goal' : 'small goal against', MOMENT_END_S + 0.4);
+    if (o.won) {
+      sfx.cheer(1.4);
+      this.goalHypeT = Math.max(this.goalHypeT, 3);
+    }
+    this.view.setMarkerVisible(false);
+  }
+
+  /** A moment's own half / full time: never the half-time menu; the full-time screen once the verdict has landed. */
+  private momentFlow(dt: number): void {
+    const mo = this.moment!;
+    const m = this.match;
+    if (mo.endT < 0 || this.finishFired) return;
+    // (A settling goal keeps the goal phase, and its celebration, going under the verdict card.)
+    mo.endT -= dt;
+    if (mo.endT > 0) return;
+    this.finishFired = true;
+    const o = mo.outcome ?? { won: false, stars: 0, secondsLeft: 0 };
+    // (Settled by a goal: the whistle goes now, with the celebration done; the match is at full time for the result.)
+    finishScenario(m);
+    this.view.celeb.end();
+    this.onFinish?.({
+      score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings(), winner: this.winner(),
+      scenarioOutcome: o,
+    });
   }
 
   /** Players were just reset (kick-off): show the new positions this frame and cut the camera to them. */
@@ -730,24 +911,9 @@ export class MatchSession {
     this.hud?.show('PENALTIES!', `${h.short} ${m.score[0]} - ${m.score[1]} ${a.short}`, 'small', 2.2);
   }
 
-  /** DLS-style 1–10 match ratings from what each player actually did. */
+  /** DLS-style 1–10 match ratings from what each player actually did, best first (see game/ratings.ts). */
   ratings(): PlayerRating[] {
-    const m = this.match;
-    const out: PlayerRating[] = m.players.map((p) => {
-      const t = this.tally[p.idx];
-      const my = m.score[p.side];
-      const their = m.score[p.side === 0 ? 1 : 0];
-      let r = 6.1 + t.goals * 1.15 + t.assists * 0.6 + t.tackles * 0.14 + t.saves * 0.4 + Math.min(t.passes, 40) * 0.025 + t.shots * 0.05;
-      r += my > their ? 0.4 : my < their ? -0.35 : 0;
-      if (p.isKeeper || p.role === 'DF') r -= their * (p.isKeeper ? 0.35 : 0.15);
-      if (p.isKeeper && their === 0) r += 0.6;
-      return {
-        idx: p.idx, name: p.def.name, side: p.side,
-        rating: Math.round(Math.max(3.5, Math.min(10, r)) * 10) / 10,
-        goals: t.goals, assists: t.assists,
-      };
-    });
-    return out.sort((a, b) => b.rating - a.rating || b.goals - a.goals);
+    return this.tally.ratings(this.match);
   }
 
   /**
@@ -795,6 +961,10 @@ export class MatchSession {
       case 'roar':
         sfx.cheer(1.6);
         this.goalHypeT = Math.max(this.goalHypeT, 4);
+        break;
+      case 'apex':
+        // The top of the backflip: the picture holds a couple of frames (the tuck, upside down, reads).
+        this.hitStop = Math.max(this.hitStop, HIT_STOP_APEX);
         break;
       default:
         break;
@@ -857,7 +1027,7 @@ export class MatchSession {
       this.replayDone = true;
       this.hud?.setReplay(false);
       this.cam.setMode('broadcast');
-      this.flow();
+      this.flow(dt);
       return;
     }
     this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE));
@@ -873,8 +1043,10 @@ export class MatchSession {
   private handleEvents(events: MatchEvent[]): void {
     const m = this.match;
     for (const e of events) {
-      // Every event goes to the commentary ticker too.
-      this.hud?.commentary(e, m);
+      // Every event goes to the commentary ticker too (a moment's own ending has no half-time / full-time line:
+      // the verdict card is that beat).
+      const endOfHalf = e.type === 'halftime' || e.type === 'fulltime';
+      if (!(this.moment && endOfHalf)) this.hud?.commentary(e, m);
       if (e.type === 'powerupEnd') {
         // (Both fire before the goal event they belong to: golden at the score, mega at the strike.)
         if (e.kind === 'golden') this.goldenGoalArmed = true;
@@ -885,9 +1057,9 @@ export class MatchSession {
           sfx.kick(e.power, e.kind === 'header');
           if (m.ball.lastTouch >= 0) {
             const kp = m.players[m.ball.lastTouch];
-            if (e.kind === 'shot' || (e.kind === 'header' && m.shotClock < 0.05)) this.tally[kp.idx].shots++;
+            if (e.kind === 'shot' || (e.kind === 'header' && m.shotClock < 0.05)) this.tally.get(kp.idx).shots++;
             else if (e.kind !== 'clear') {
-              this.tally[kp.idx].passes++;
+              this.tally.get(kp.idx).passes++;
               this.lastPasser[kp.side] = kp.idx;
             }
           }
@@ -907,9 +1079,9 @@ export class MatchSession {
         case 'goal': {
           this.goalFrame = this.recorded;
           if (!e.own) {
-            this.tally[e.scorer].goals++;
+            this.tally.get(e.scorer).goals++;
             const a = this.lastPasser[e.side];
-            if (a >= 0 && a !== e.scorer) this.tally[a].assists++;
+            if (a >= 0 && a !== e.scorer) this.tally.get(a).assists++;
           }
           this.lastPasser = [-1, -1];
           this.replayDone = false;
@@ -959,7 +1131,7 @@ export class MatchSession {
           this.cam.kick(0.08);
           break;
         case 'save': {
-          this.tally[e.keeper].saves++;
+          this.tally.get(e.keeper).saves++;
           sfx.save();
           const k = m.players[e.keeper];
           this.effects.dust(k.pos.x, k.pos.z, 8, 0.7);
@@ -981,7 +1153,7 @@ export class MatchSession {
           if (!fresh) this.tackleAttempt(e.by, e.slide);
           if (e.slide && !e.won) break;
           if (e.won) {
-            this.tally[e.by].tackles++;
+            this.tally.get(e.by).tackles++;
             // WON IT: the picture holds on the impact, the camera punches, a burst in his colours at the ball.
             this.hitStop = HIT_STOP_TACKLE;
             this.cam.kick(PUNCH_TACKLE);
@@ -1028,7 +1200,12 @@ export class MatchSession {
           this.hud?.toastMsg(`SUB · ${e.on} ON · ${e.off} OFF`, 2);
           // Manager and AI subs alike: draw whoever the sim now has in that slot (no-op if already swapped).
           const on = m.teamPlayers(e.side)[e.slot];
-          if (on) this.view.replacePlayer(on.idx, on.def, this.opt.kits[e.side]);
+          if (on) {
+            this.view.replacePlayer(on.idx, on.def, this.opt.kits[e.side]);
+            // The man going off keeps what he did under his own name; the sub's rating starts from nothing.
+            this.tally.sub(on.idx, e.off, e.side, on.isKeeper, on.role === 'DF');
+            if (this.lastPasser[e.side] === on.idx) this.lastPasser[e.side] = -1;
+          }
           break;
         }
         case 'card': {
@@ -1070,10 +1247,10 @@ export class MatchSession {
           break;
         }
         case 'halftime':
-          this.hud?.show('HALF TIME', `${m.score[0]} - ${m.score[1]}`, 'small', 3);
+          if (!this.moment) this.hud?.show('HALF TIME', `${m.score[0]} - ${m.score[1]}`, 'small', 3);
           break;
         case 'fulltime':
-          this.hud?.show('FULL TIME', `${m.score[0]} - ${m.score[1]}`, 'small', 3);
+          if (!this.moment) this.hud?.show('FULL TIME', `${m.score[0]} - ${m.score[1]}`, 'small', 3);
           break;
         case 'shootoutKick': {
           // A short beat per kick: banner + burst, never the goal replay.
@@ -1515,17 +1692,33 @@ export class MatchSession {
     const hud = this.hud;
     if (!hud) return;
     const m = this.match;
-    // Broadcast clock: game time mm:ss, frozen at 45:00 / 90:00 with "+N" added time.
-    const halfGame = 45 * 60;
-    const played = Math.min(m.clock / m.cfg.halfLength, 1) * halfGame;
-    const gameSec = Math.floor((m.half - 1) * halfGame + played);
-    const extra = m.clock > m.cfg.halfLength ? Math.max(1, Math.ceil(((m.clock - m.cfg.halfLength) / m.cfg.halfLength) * 45)) : 0;
-    const key10 = gameSec * 10 + extra;
-    if (key10 !== this.lastMinute) {
-      this.lastMinute = key10;
-      hud.setClock(gameSec, extra);
-      const minute = Math.floor(gameSec / 60);
-      this.stadium.setScore(m.score[0], m.score[1], extra ? `${minute}+${extra}'` : `${minute}'`);
+    if (this.moment) {
+      // A moment counts down live-play seconds, with the HUD highlighting the final five seconds.
+      const mo = this.moment;
+      // (Live-play seconds: the judge's own count, never the match clock, which runs through dead balls.)
+      const s = Math.ceil(scenarioSecondsLeft(m, mo.spec) - 1e-6);
+      if (s !== this.lastMinute) {
+        this.lastMinute = s;
+        hud.setCountdown(s);
+        this.stadium.setScore(m.score[0], m.score[1], `${s}s`);
+        if (s > 0 && s <= MOMENT_COUNT_S && !mo.outcome && mo.briefT <= 0 && m.phase !== 'goal' && s !== mo.count) {
+          mo.count = s;
+          hud.show(String(s), '', 'small', 0.85);
+        }
+      }
+    } else {
+      // Broadcast clock: game time mm:ss, frozen at 45:00 / 90:00 with "+N" added time.
+      const halfGame = 45 * 60;
+      const played = Math.min(m.clock / m.cfg.halfLength, 1) * halfGame;
+      const gameSec = Math.floor((m.half - 1) * halfGame + played);
+      const extra = m.clock > m.cfg.halfLength ? Math.max(1, Math.ceil(((m.clock - m.cfg.halfLength) / m.cfg.halfLength) * 45)) : 0;
+      const key10 = gameSec * 10 + extra;
+      if (key10 !== this.lastMinute) {
+        this.lastMinute = key10;
+        hud.setClock(gameSec, extra);
+        const minute = Math.floor(gameSec / 60);
+        this.stadium.setScore(m.score[0], m.score[1], extra ? `${minute}+${extra}'` : `${minute}'`);
+      }
     }
     // The minimap sits bottom-centre: off for set pieces, the low cameras, the shootout, and whenever play
     // is in the near third where it would cover the action.
@@ -1544,7 +1737,8 @@ export class MatchSession {
     // The over-the-shoulder set-piece camera needs the whole lower screen for the taker: no radar / chip.
     hud.setLive(
       !this.replay && this.cam.mode !== 'celebrate' && !this.cam.behindActive &&
-      m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0,
+      m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0 && !this.holdFirst &&
+      !(this.moment !== null && this.moment.briefT > 0),
     );
     if (this.so && m.shootout) this.so.update(m.shootout);
     const hs = m.cfg.humanSide;

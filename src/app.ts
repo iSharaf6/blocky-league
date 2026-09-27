@@ -1,7 +1,7 @@
 import type { SaveData } from './core/save';
 import type { MatchResult } from './game/matchSession';
 import type { TimeOfDay } from './render/world';
-import type { Kit, MatchMode, Side, TeamDef } from './sim/types';
+import type { Kit, MatchMode, ScenarioSpec, Side, TeamDef } from './sim/types';
 import type { Menus } from './ui/menus';
 
 /** What a result screen shows for coins earned. */
@@ -31,6 +31,19 @@ export interface MatchRequest {
   knockout?: boolean;
   /** 'classic' (default) or 'blitz' power-up mode. */
   mode?: MatchMode;
+  /**
+   * The player's very first match (PLAY NOW on a fresh save): the kick-off waits for a button, the AI eases off in
+   * the first minute and the trainer's first two cards teach MOVE and PASS (src/ui/trainer.ts). Passed through to
+   * SessionOptions / MatchConfig.
+   */
+  firstMatch?: boolean;
+  /**
+   * A Football Moment (src/meta/moments.ts) to run instead of a full match. The result then carries
+   * `scenarioOutcome`; the full-time screen shows MOMENT COMPLETE / FAILED with RETRY (this request again, intro
+   * skipped), NEXT MOMENT (`nextLabel` + `onDone`) and MENU; no coins, XP only (30 + 25 a star), and the best stars
+   * are kept in `save.moments[scenario.id]`.
+   */
+  scenario?: ScenarioSpec;
   /** Compute the coins for this result (called once at full time). */
   reward: (r: MatchResult) => Reward;
   /** Label for the full-time continue button. */

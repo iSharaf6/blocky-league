@@ -34,6 +34,30 @@ export interface CommentaryLine {
 
 type Vars = Record<string, string | number>;
 
+const NUMBER_WORDS = ['nil', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+
+/** A goal count as a commentator says it: "nil", "one" ... "twelve", then digits. */
+export function goalWord(n: number): string {
+  const k = Math.max(0, Math.floor(n));
+  return NUMBER_WORDS[k] ?? String(k);
+}
+
+/**
+ * A score in words, the way it is said on air: "two-nil", "five-one" (the first side's goals first), "goalless",
+ * "level at two apiece". Every scoreline in the commentary goes through here: the pixel font has no clean hyphen
+ * and the ticker is plain text, so digits are never joined with a dash.
+ */
+export function scoreWords(a: number, b: number): string {
+  if (a === b) return a === 0 ? 'goalless' : `level at ${goalWord(a)} apiece`;
+  return `${goalWord(a)}-${goalWord(b)}`;
+}
+
+/** The state of the game as a sentence start: "It's goalless" / "It's level at one apiece" / "Foxhollow lead two-one". */
+export function scoreLine(h: string, a: string, hs: number, as: number): string {
+  if (hs === as) return `It's ${scoreWords(hs, as)}`;
+  return hs > as ? `${h} lead ${scoreWords(hs, as)}` : `${a} lead ${scoreWords(as, hs)}`;
+}
+
 // ------------------------------------------------------------------ templates
 
 const T = {
@@ -44,7 +68,7 @@ const T = {
     "We're off! {h} against {a}, enjoy this one.",
   ],
   secondHalf: [
-    'The second half is under way. {h} {hs}-{as} {a}.',
+    'The second half is under way. {sl}.',
     'Back under way for the second half.',
     '{kt} get the second half going.',
   ],
@@ -134,12 +158,12 @@ const T = {
   offside: ["Flag's up. {p} is offside.", '{p} strays offside.', 'Offside! {p} went a fraction too early.', "The assistant's flag goes up against {p}."],
   advantage: ['Advantage! The referee lets {t} play on.', 'Play on, says the referee. Good advantage.', 'Advantage {t}. They keep the ball.'],
   sub: ['Change for {t}: {on} on, {off} off.', '{off} makes way for {on}.', 'Substitution for {t}. On comes {on}.'],
-  htLevel: ['Half time, and it is {hs}-{as}.', 'The referee blows for half time. Nothing between them.'],
-  htGoalless: ["Half time, and it's goalless.", 'Half time. No goals yet, {h} 0-0 {a}.'],
-  htLead: ['Half time: {lt} lead {lsc}.', "That's the break. {h} {hs}-{as} {a}.", '{lt} go in ahead at the break, {lsc}.'],
-  ftLevel: ['Full time! It finishes {hs}-{as}.', 'The final whistle! Honours even, {hs}-{as}.', 'All over. They share the spoils.'],
+  htLevel: ['Half time, and it is {sw}.', 'The referee blows for half time. Nothing between them.'],
+  htGoalless: ["Half time, and it's goalless.", 'Half time. No goals yet between {h} and {a}.'],
+  htLead: ['Half time: {lt} lead {lsc}.', "That's the break. {lt} lead {lsc}.", '{lt} go in ahead at the break, {lsc}.'],
+  ftLevel: ['Full time! It finishes {sw}.', 'The final whistle! Honours even, {sw}.', 'All over. They share the spoils.'],
   ftWin: ['Full time! {wt} win {wsc}!', "It's all over! {wt} take it, {wsc}.", 'The final whistle blows. {wt} win {wsc}.'],
-  ftRout: ['{wt} run riot! {wsc} at full time.', 'Full time, and what a performance from {wt}! {wsc}.'],
+  ftRout: ['{wt} run riot! It finishes {wsc}.', 'Full time, and what a performance from {wt}: {wsc}.'],
   soStart: ["Level at full time... it's going to penalties!", 'Nothing to separate them. Penalties it is!'],
   soScored: ['{p} scores. Cool as you like.', '{p} sends {k} the wrong way.', '{p} makes no mistake from the spot.', 'Top corner from {p}!'],
   soSaved: ["Saved! {k} keeps out {p}'s penalty!", '{k} guesses right! {p} is denied.'],
@@ -302,6 +326,8 @@ export class Commentator {
       a: clubCall(m.teams[1]),
       hs: m.score[0],
       as: m.score[1],
+      sw: scoreWords(m.score[0], m.score[1]),
+      sl: scoreLine(clubCall(m.teams[0]), clubCall(m.teams[1]), m.score[0], m.score[1]),
     };
   }
 
@@ -354,7 +380,8 @@ export class Commentator {
         const opp = other(side);
         const scorer = m.players[e.scorer];
         if (!scorer) return null;
-        const sc = `${m.score[side]}-${m.score[opp]}`;
+        // "All square at one apiece!" / "That's five-one!": the scorer's side first.
+        const sc = m.score[side] === m.score[opp] ? `${goalWord(m.score[side])} apiece` : scoreWords(m.score[side], m.score[opp]);
         const keeper = m.keeperOf(opp);
         const [pn, kn] = keeper ? this.two(m, scorer.idx, keeper.idx) : [this.sn(scorer.def.name), 'the keeper'];
         const kv: Vars = { ...v, p: pn, k: kn, t: clubCall(m.teams[side]), sc };
@@ -480,14 +507,14 @@ export class Commentator {
         const [hs, as] = m.score;
         if (hs === as) return L(this.pick(hs === 0 ? 'htGoalless' : 'htLevel', v), 5, -1, 'info', 'HT');
         const lead: Side = hs > as ? 0 : 1;
-        return L(this.pick('htLead', { ...v, lt: clubCall(m.teams[lead]), lsc: `${m.score[lead]}-${m.score[other(lead)]}` }), 5, lead, 'info', 'HT');
+        return L(this.pick('htLead', { ...v, lt: clubCall(m.teams[lead]), lsc: scoreWords(m.score[lead], m.score[other(lead)]) }), 5, lead, 'info', 'HT');
       }
       case 'fulltime': {
         if (m.shootout) return null; // the shootout winner line says it
         const [hs, as] = m.score;
         if (hs === as) return L(this.pick('ftLevel', v), 5, -1, 'info', 'FT');
         const w: Side = hs > as ? 0 : 1;
-        const kv = { ...v, wt: clubCall(m.teams[w]), wsc: `${m.score[w]}-${m.score[other(w)]}` };
+        const kv = { ...v, wt: clubCall(m.teams[w]), wsc: scoreWords(m.score[w], m.score[other(w)]) };
         return L(this.pick(Math.abs(hs - as) >= 3 ? 'ftRout' : 'ftWin', kv), 5, w, 'info', 'FT');
       }
       case 'whistle':
@@ -508,7 +535,7 @@ export class Commentator {
       case 'shootoutEnd': {
         const so = m.shootout;
         const w = e.winner;
-        const psc = so ? `${goalsOf(so.kicks[w])}-${goalsOf(so.kicks[other(w)])}` : '';
+        const psc = so ? scoreWords(goalsOf(so.kicks[w]), goalsOf(so.kicks[other(w)])) : '';
         return L(this.pick('soWin', { ...v, wt: clubCall(m.teams[w]), psc }), 5, w, 'goal', 'PENS');
       }
       case 'beat': {
@@ -606,7 +633,7 @@ export function speak(text: string, urgent: boolean): void {
       if (!urgent) return;
       ss.cancel();
     }
-    // "2-1" reads as "two one"; drop the shouty capitals so GOAL isn't spelled out.
+    // Scores are already words ("two-one"); drop the shouty capitals so GOAL isn't spelled out.
     const said = text.replace(/(\d+)-(\d+)/g, '$1 $2').replace(/\b([A-Z]{2,})\b/g, (w) => w.charAt(0) + w.slice(1).toLowerCase());
     const u = new SpeechSynthesisUtterance(said);
     if (voiceCache === undefined || voiceCache === null) {

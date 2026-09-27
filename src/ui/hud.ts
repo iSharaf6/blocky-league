@@ -106,6 +106,8 @@ export class Hud {
   private cmBox: Rect | null = null;
   private cmLastShown = -99;
   private clockS = 0;
+  /** Seconds left on a moment's countdown, or null when the match clock is showing. */
+  private countdown: number | null = null;
   /** The match the session forwards events from (names for the booking chips). */
   private m: Match | null = null;
   private readonly teamColor: [string, string];
@@ -213,11 +215,30 @@ export class Hud {
     this.score.classList.add('pop');
   }
 
-  /** Game clock in seconds, plus added-time minutes (0 = none). */
+  /** Game clock in seconds, plus added-time minutes (0 = none). Ignored while a countdown is showing (setCountdown). */
   setClock(seconds: number, extra: number): void {
+    if (this.countdown !== null) return;
     const mm = Math.floor(seconds / 60);
     const ss = seconds % 60;
     this.clock.innerHTML = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}${extra ? `<em>+${extra}</em>` : ''}`;
+  }
+
+  /**
+   * Football Moments: the clock counts DOWN. `seconds` left takes over the score bug's clock cell with a
+   * countdown look ("0:20" on ink; red and pulsing from 5 s), and setClock is ignored meanwhile, so the session
+   * can keep its match-clock path as it is. null puts the match clock back (the next setClock redraws it).
+   */
+  setCountdown(seconds: number | null): void {
+    if (seconds === null) {
+      this.countdown = null;
+      this.clock.classList.remove('count', 'low');
+      return;
+    }
+    const s = Math.max(0, Math.ceil(seconds));
+    this.countdown = s;
+    this.clock.classList.add('count');
+    this.clock.classList.toggle('low', s <= 5);
+    this.clock.innerHTML = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 
   /**
@@ -230,8 +251,12 @@ export class Hud {
     this.bannerCard = /(^|\s)card(\s|$)/.test(kind);
     this.bannerPower = /(^|\s)power(\s|$)/.test(kind);
     this.banner.className = `hud-banner on ${kind}${this.bannerCard || this.bannerPower ? ' plate' : ''}`;
-    const letters = [...title].map((ch, i) => `<i style="animation-delay:${i * 45}ms">${ch === ' ' ? '&nbsp;' : ch}</i>`).join('');
-    this.banner.innerHTML = `<div class="bn-title">${letters}</div>${sub ? `<div class="bn-sub">${seps(sub)}</div>` : ''}`;
+    // Letters fly in one by one, grouped by word so a long title can wrap between words; past 12 characters the
+    // letters also shrink (--bn-k), so "MOMENT COMPLETE" fits where "GOAL!" was measured (see .bn-title i).
+    let n = 0;
+    const words = title.split(' ').map((w) => `<span class="bn-w">${[...w].map((ch) => `<i style="animation-delay:${n++ * 45}ms">${ch}</i>`).join('')}</span>`);
+    this.banner.innerHTML = `<div class="bn-title">${words.join('')}</div>${sub ? `<div class="bn-sub">${seps(sub)}</div>` : ''}`;
+    this.banner.style.setProperty('--bn-k', String(Math.min(1, 12 / Math.max(1, title.replace(/\s+/g, '').length + (words.length - 1) * 0.5))));
     this.bannerTimer = seconds;
     const st = this.banner.style;
     st.left = st.top = st.width = '';

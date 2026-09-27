@@ -8,13 +8,13 @@ import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
 import { KEY_STATS, MATCHDAYS, ROLES, SQUAD_MAX, SQUAD_MIN, STAT_SHORT, refreshMarket, sellPlayer, sellValue, type CareerState, type ClubState } from '../meta/career';
 import {
-  MORALE_DIP, SCOUT_COST, SHORTLIST_MAX, YOUNG_AGE,
-  acceptCounter, acceptOffer, bidFor, bidRange, contractOf, filterListings, listPlayer, listingById, marketSummary, placeBid, playerAge,
-  playerPotential, playerValue, rejectOffer, saleFor, scoutListing, shortlisted, sortListings, toggleShortlist, townOf, unlistPlayer, wageOf,
-  withdrawBid, type Listing, type MarketFail,
+  MORALE_DIP, RESALE_STARTS, SCOUT_COST, SHORTLIST_MAX, WAGE_DIP, YOUNG_AGE,
+  acceptCounter, acceptOffer, bidFor, bidRange, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, newsStrip,
+  placeBid, playerAge, playerPotential, playerValue, rejectOffer, resaleCap, saleFor, scoutListing, shortlisted, sortListings, toggleShortlist,
+  townOf, unlistPlayer, wageOf, withdrawBid, type Listing, type MarketFail, type MetaPlayer, type NewsItem,
 } from '../meta/market';
 import { overall, type Kit, type PlayerDef, type Role } from '../sim/types';
-import { careerState, closeMeta, esc, failText, fmt, mountMeta, openClub, ovrBadge, roleBadge, topBar, type Handlers, type InputHandlers } from './club';
+import { careerState, closeMeta, esc, failText, fmt, mountMeta, onMetaClose, openClub, ovrBadge, roleBadge, topBar, type Handlers, type InputHandlers } from './club';
 import { faceHtml, hydrateFaces } from './preview';
 import { sep } from './text';
 
@@ -54,13 +54,16 @@ export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
   }
   // Answers to last week's offers land here too (refunds settle straight into the wallet).
   refreshMarket(st, app.save);
+  // What you had not read yet keeps a NEW tag on this visit; opening the screen clears the hub's unread badge.
+  const fresh = new Set<NewsItem>(st.tm.news.filter((n) => n.own && !n.seen));
+  markNewsSeen(st);
   app.persist();
-  marketScreen(app, st, st.club, opts.tab ?? 'buy', back, backLabel);
+  marketScreen(app, st, st.club, opts.tab ?? 'buy', back, backLabel, fresh);
 }
 
 // ------------------------------------------------------------------ bits
 
-/** The shared fact divider (ui/text.ts): an element, never the " · " glyph the pixel font can't draw. */
+/** The shared fact divider (ui/text.ts): an element, never a middle-dot glyph the pixel font can't draw. */
 const dot = sep();
 
 function stars(n: number): string {
@@ -85,7 +88,7 @@ function tag(cls: string, text: string): string {
 
 // ------------------------------------------------------------------ screen
 
-function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: MarketTab, back: () => void, backLabel: string): void {
+function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: MarketTab, back: () => void, backLabel: string, fresh: Set<NewsItem>): void {
   const scr = mountMeta(app, 'mk-screen');
   let tab = tab0;
   let pos: Role | 'ALL' = 'ALL';
@@ -104,16 +107,22 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
     const s = marketSummary(st);
     const w = s.window;
     const wagePct = Math.min(100, Math.round((s.wages / Math.max(1, s.budget)) * 100));
-    const over = s.wages > s.budget;
-    const news = st.tm.news.slice(0, 3);
+    const over = s.drain > 0;
+    // Your own answers and offers first (this week and last, or still unread), then the league's gossip.
+    const news = newsStrip(st, 4, fresh);
+    const wageTitle = over
+      ? `Wages over budget: ${fmt(s.drain)} coins leave after every match and the squad plays ${WAGE_DIP} point down. Sell players or upgrade your stadium to get under budget.`
+      : 'Weekly wages against your budget (a signing must fit under it)';
     return `<div class="mk-status">
         <span class="mc-chip ${w.open ? 'home' : 'away'}">${w.open ? 'WINDOW OPEN' : 'WINDOW CLOSED'}</span>
         <span class="mc-count ${s.squad >= SQUAD_MAX ? 'full' : ''}">SQUAD ${s.squad}/${SQUAD_MAX}${s.pending ? ` +${s.pending}` : ''}</span>
-        <div class="mk-wages ${over ? 'over' : ''}" title="Weekly wages against your budget"><small>WAGES</small><div class="mc-meter"><i style="width:${wagePct}%"></i></div><b>${fmt(s.wages)} / ${fmt(s.budget)}</b></div>
+        <div class="mk-wages ${over ? 'over' : ''}" title="${esc(wageTitle)}"><small>WAGES</small><div class="mc-meter"><i style="width:${wagePct}%"></i></div><b>${fmt(s.wages)} / ${fmt(s.budget)}</b>${
+          over ? `<em class="mk-drain" role="status">OVER BUDGET${dot}&minus;${fmt(s.drain)} A MATCH</em>` : ''
+        }</div>
       </div>
       <div class="mk-news" aria-live="polite"><b>NEWS</b><ul>
         <li class="info">${w.label.charAt(0) + w.label.slice(1).toLowerCase()}</li>
-        ${news.map((n) => `<li class="${n.kind}">${esc(n.text)}</li>`).join('')}
+        ${news.map((n) => `<li class="${n.kind} ${n.own ? 'own' : ''}">${fresh.has(n) ? '<i class="mk-tag new">NEW</i>' : ''}${esc(n.text)}</li>`).join('')}
       </ul></div>`;
   };
 
@@ -168,7 +177,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
   };
 
   const sellHtml = () =>
-    `<p class="mc-hint">Tap a player to list him: clubs bid after each match while the window is open (70 to 95% of his value), or quick-sell for 45% now. Keep ${SQUAD_MIN} players and a keeper.</p>
+    `<p class="mc-hint">Tap a player to list him: clubs bid after each match while the window is open (70 to 95% of his value), or quick-sell for 45% now. Keep ${SQUAD_MIN} players and a keeper. Someone you signed this season fetches at most 110% of what you paid until he has made ${RESALE_STARTS} starts.</p>
     <div class="mc-list">${club.squad.map(playerRow).join('')}</div>`;
 
   // ---- SHORTLIST
@@ -223,6 +232,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
       </div>
       <div class="mc-bars">${keyBars(p)}</div>
       ${l.hot ? '<p class="mc-hint warn">Other clubs are in for him: a low offer may lose him.</p>' : ''}
+      ${l.youth ? `<p class="mc-hint">Cheap because he is raw: he grows every season. No flipping, though: clubs offer at most 110% of what you pay until he has made ${RESALE_STARTS} starts for you.</p>` : ''}
       ${deal}
       <div class="mk-actions">
         <button class="btn btn-white" data-a="scout" data-id="${esc(l.id)}" ${l.scouted ? 'disabled' : ''}>${l.scouted ? 'SCOUTED' : `SCOUT ${SCOUT_COST}`}</button>
@@ -237,6 +247,9 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
     const age = playerAge(p);
     const quick = sellValue(p);
     const armed = confirm === `quick${p.id}`;
+    const w = marketSummary(st).window;
+    const cap = resaleCap(st, p);
+    const m = p as MetaPlayer;
     const offers = sale?.offers.length
       ? `<div class="mk-offers">${sale.offers
           .map(
@@ -246,7 +259,13 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
           )
           .join('')}</div>`
       : sale
-        ? '<p class="mc-hint">No offers yet. Clubs bid after each match while the window is open.</p>'
+        ? `<p class="mc-hint">No offers yet. ${
+            w.open ? 'Clubs bid after each match while the window is open.' : `${w.label.charAt(0) + w.label.slice(1).toLowerCase()}: clubs only bid while it is open.`
+          }</p>`
+        : '';
+    const capNote =
+      cap !== null
+        ? `<p class="mc-hint warn">Signed this season for ${fmt(m.paid ?? 0)}: clubs offer at most ${fmt(cap)} until he has made ${RESALE_STARTS} starts for you (${m.starts ?? 0} so far) or the season ends.</p>`
         : '';
     return `<header class="mk-sh">
         ${faceHtml(p, club.kit, 'lg')}
@@ -263,6 +282,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
       </div>
       <div class="mc-bars">${keyBars(p)}</div>
       ${offers}
+      ${capNote}
       <p class="mc-hint">A listed player has his mind elsewhere: ${MORALE_DIP} points off every stat in matches until he is unlisted or sold.</p>
       <div class="mk-actions">
         <button class="btn ${sale ? 'btn-white' : 'btn-blue'}" data-a="${sale ? 'unlist' : 'list'}" data-id="${esc(p.id)}">${sale ? 'UNLIST' : 'LIST FOR SALE'}</button>
@@ -273,12 +293,21 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
   // ---- sheet plumbing (lives on the screen root, so panel re-renders leave it alone)
 
   let sheetEl: HTMLDivElement | null = null;
+  // Escape closes the sheet and nothing else, wherever focus is (captured before the match / menu listeners).
+  const onKey = (e: KeyboardEvent) => {
+    if ((e.key !== 'Escape' && e.code !== 'Escape') || !sheetEl) return;
+    e.stopPropagation();
+    e.preventDefault();
+    closeSheet();
+  };
   const closeSheet = () => {
+    if (sheetEl) window.removeEventListener('keydown', onKey, true);
     sheetEl?.remove();
     sheetEl = null;
     sheet = null;
     confirm = '';
   };
+  onMetaClose(closeSheet);
   const drawSheet = () => {
     if (!sheet) {
       closeSheet();
@@ -326,6 +355,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
         e.stopPropagation();
         if (e.key === 'Escape') closeSheet();
       });
+      window.addEventListener('keydown', onKey, true);
       scr.root.appendChild(sheetEl);
     }
     const box = sheetEl.firstElementChild as HTMLDivElement;
@@ -344,8 +374,12 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
   };
 
   const handlers: Handlers = {
+    // BACK with a sheet open only closes the sheet; the screen itself goes on the next BACK.
     back: () => {
-      closeSheet();
+      if (sheetEl) {
+        closeSheet();
+        return;
+      }
       back();
     },
     tab: (el) => {
@@ -527,6 +561,12 @@ function ensureCss(): void {
 .mk-wages b { white-space: nowrap; }
 .mk-wages .mc-meter i { background: var(--go); }
 .mk-wages.over .mc-meter i { background: var(--red); }
+.mk-wages.over b { color: var(--red-d); }
+.mk-drain { grid-column: 1 / -1; font: 700 13px var(--px); letter-spacing: 1px; color: #fff; background: var(--red); padding: 4px 7px 2px; justify-self: start; }
+.mk-news li.own { color: var(--ink); font-weight: 700; }
+.mk-news li.own.good { color: var(--go-d); }
+.mk-news li.own.bad { color: var(--red-d); }
+.mk-tag.new { background: var(--yellow); color: var(--ink); margin-right: 6px; vertical-align: 1px; }
 .mk-news { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2); }
 .mk-news > b { font: 700 13px var(--px); letter-spacing: 1px; background: var(--ink); color: var(--yellow); padding: 5px 6px 3px; }
 .mk-news ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; min-width: 0; }

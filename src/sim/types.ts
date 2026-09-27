@@ -89,10 +89,15 @@ export interface ScenarioSpec {
   seconds: number;
   score: [number, number];
   humanSide: Side;
+  /** DIFFICULTIES index (0 easy .. 3 legend), converted by the match request. */
   difficulty?: number;
   mode?: MatchMode;
   /** Placements by side and lineup slot (0 = keeper); anyone not listed keeps his formation spot. */
   players?: { side: Side; slot: number; x: number; z: number; facing?: number }[];
+  /** Players already sent off at the start, by side and lineup slot. */
+  sentOff?: { side: Side; slot: number }[];
+  /** Blitz pickups available at the start, in the human's attacking frame. */
+  powerups?: { kind: PowerUpKind; x: number; z: number }[];
   ball?: { x: number; z: number; y?: number; vx?: number; vy?: number; vz?: number };
   /** Who starts with the ball at his feet (null: loose). */
   owner?: { side: Side; slot: number } | null;
