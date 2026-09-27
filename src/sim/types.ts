@@ -49,7 +49,12 @@ export interface TeamDef {
   players: PlayerDef[];
   /** Substitutes available on the bench. */
   bench?: PlayerDef[];
+  /** How the AI plays this club (line height, press, width, tempo); undefined = 'balanced'. */
+  style?: TeamStyle;
 }
+
+/** A club's playing style for the AI: distinct opponents (a high press, a low block, patient possession, fast counters). */
+export type TeamStyle = 'balanced' | 'high-press' | 'park-bus' | 'possession' | 'counter';
 
 export function overall(p: PlayerDef): number {
   const s = p.stats;

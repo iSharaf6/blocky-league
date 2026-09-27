@@ -49,6 +49,8 @@ export interface SessionOptions extends MatchConfig {
   celebration?: string;
   /** A Football Moment to run instead of a full match (src/sim/scenario.ts applies and judges it). */
   scenario?: ScenarioSpec;
+  /** Colour-blind aid: shape cues on rings and markers (dashed opponent rings, a chevron on your team), not colour alone. */
+  colorblind?: boolean;
 }
 
 export interface MatchResult {

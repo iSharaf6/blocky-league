@@ -1,3 +1,6 @@
+import { normalizeMastery, type MasteryState } from '../meta/mastery';
+import { normalizeRun, type RunState } from '../meta/run';
+import { normalizeSeason, type SeasonState } from '../meta/season';
 import type { Quality, TimeOfDay } from '../render/world';
 import type { AssistLevel, MatchMode } from '../sim/types';
 import { Rng, hashString } from './rng';
@@ -126,6 +129,10 @@ export interface SaveData {
    * it) but always an object once loaded, so screens can read `save.moments![id]` and write through recordMoment.
    */
   moments?: { [id: string]: number };
+  /** Club Run, mastery badges and the season track (src/meta/run.ts, mastery.ts, season.ts). */
+  run?: RunState;
+  mastery?: MasteryState;
+  season?: SeasonState;
   updatedAt: string;
 }
 
@@ -216,6 +223,9 @@ function mergeSave(d: Partial<SaveData>): SaveData {
     progress: normalizeProgress(d.progress),
     // Saves from before Football Moments (or a damaged blob) have no stars yet.
     moments: normalizeMoments(d.moments),
+    run: normalizeRun(d.run),
+    mastery: normalizeMastery(d.mastery),
+    season: normalizeSeason(d.season),
   } as SaveData;
 }
 

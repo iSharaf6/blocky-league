@@ -47,6 +47,19 @@ export interface MatchConfig {
   mode?: MatchMode;
   /** The player's very first match: the kick-off waits for a button, the AI eases off in the first minute. */
   firstMatch?: boolean;
+  /**
+   * Dynamic difficulty: 0 = none, up to 1 = the AI eases right off against the human (career loss streaks,
+   * the first matches). Scales the AI's press, tackle and finishing against the human side only.
+   */
+  assist?: number;
+  /** Club Run perks (and anything else that sets a match up): a starting score. */
+  startScore?: [number, number];
+  /** Club Run perk: a keeper boost per side (0..1, added to that keeper's reach and reactions). */
+  keeperBoost?: [number, number];
+  /** Club Run perk: that side's first goal counts double. */
+  goldenFirst?: Side;
+  /** Club Run perk (Blitz): the power-up each side holds at kick-off. */
+  startPower?: [PowerUpKind | null, PowerUpKind | null];
   /** Cup tie: level at full time goes straight to a penalty shootout (no extra time). */
   knockout?: boolean;
   /** The offside law is enforced (default true). See Match.offside. */
