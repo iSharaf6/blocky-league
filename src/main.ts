@@ -10,7 +10,7 @@ import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock, skinUnlocked, type BallSkinId, celebrationUnlocked,
   type CelebrationId, type SaveData, momentStarsTotal, momentXp, recordMoment } from './core/save';
-import { MatchSession, type MatchResult } from './game/matchSession';
+import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
 import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
 import { ads } from './platform/ads';
 import { PITCH_Y } from './render/stadium';
@@ -28,6 +28,7 @@ import { closeMeta, openClub } from './ui/club';
 import { stopSpeech } from './ui/commentary';
 import type { Projector } from './ui/hud';
 import { openMoments } from './ui/moments';
+import { openOnline, type OnlineHost } from './ui/online';
 import { installSepGuard } from './ui/text';
 import { Trainer } from './ui/trainer';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
@@ -188,7 +189,9 @@ function applySettings(): void {
   if (s.music && !session) sfx.startMusic();
   world.setQuality(s.quality);
   if (session) {
-    applyControls(session.match);
+    // (Not online: each side's controls there were agreed before the kick-off, and a change on one machine
+    // only would split the two games apart.)
+    if (!session.driver) applyControls(session.match);
     session.hud?.setCommentary(s.commentary, s.commentaryVoice);
     applyCamZoom(session);
     (session as { setBallSkin?: (id?: string) => void }).setBallSkin?.(equippedSkin());
@@ -326,6 +329,7 @@ function mainMenu(): void {
     quick: () => quickMatch(),
     blitz: () => quickMatch('blitz'),
     moments: () => openMoments(app, mainMenu),
+    online: () => openOnline(onlineHost),
     unlocks: () => menus.unlocks(save, mainMenu),
     career: () => openCareer(app),
     cup: () => openCup(app),
@@ -334,6 +338,42 @@ function mainMenu(): void {
     howto: () => menus.howTo(mainMenu, input.lastDevice),
   }, info);
 }
+
+/**
+ * ONLINE (src/ui/online.ts): it builds the match and drives it (lockstep); this puts it on screen and takes it
+ * off. No coins, XP or record: an online friendly doesn't touch the save.
+ */
+const onlineHost: OnlineHost = {
+  save,
+  input,
+  closeMenus: () => {
+    atMenu = false;
+    menus.close();
+  },
+  mainMenu: () => mainMenu(),
+  play: (opt: SessionOptions) => {
+    atMenu = false;
+    menus.close();
+    sfx.stopMusic();
+    demo?.dispose();
+    demo = null;
+    endMatch();
+    const s = new MatchSession(world, input, { ...opt, ballSkin: equippedSkin(), celebration: equippedCelebration() });
+    session = s;
+    s.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
+    s.hud?.setProjector(project);
+    const blitz = opt.mode === 'blitz';
+    s.hud?.setBlitz(blitz);
+    s.touch?.setBlitz(blitz);
+    ads.gameplayStart();
+    window.addEventListener('keydown', pauseKey);
+    return s;
+  },
+  end: () => {
+    ads.gameplayStop();
+    endMatch();
+  },
+};
 
 /** The preset club whose squad rating is closest to `mine`'s (a fair game): a tie goes to the next one along. */
 function similarRival(mine: number): number {

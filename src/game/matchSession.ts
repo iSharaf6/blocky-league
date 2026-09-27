@@ -53,6 +53,23 @@ export interface SessionOptions extends MatchConfig {
   colorblind?: boolean;
 }
 
+/**
+ * Feeds the sim its steps instead of this machine's input alone: an online match (src/ui/online.ts drives it
+ * with the lockstep engine, src/net/lockstep.ts). With a driver the session steps only when the driver has
+ * both sides' pads, lets it move the match on at stoppages (the same tick on both machines), and plays no
+ * replays and shows no half-time menu (either would hold one screen and not the other).
+ */
+export interface StepDriver {
+  /** Both sides' pads for the next step, or null to wait (the network hasn't brought them; paused). */
+  next(sample: () => Pad): readonly [Pad, Pad] | null;
+  /** After every step (the stoppages it resumes itself, the desync check). */
+  after(m: Match): void;
+  /** Once a frame, stepping or not (resends, pings, the timeout). */
+  frame(): void;
+  /** Real-time scale for the fixed-step clock (time sync with the other machine). */
+  pace(): number;
+}
+
 export interface MatchResult {
   score: [number, number];
   humanSide: Side | -1;
@@ -226,6 +243,12 @@ export class MatchSession {
   readonly touch: TouchControls | null;
   private trainer: Trainer | null = null;
   paused = false;
+  /** Online: the lockstep driver (see StepDriver); null for a local match. */
+  driver: StepDriver | null = null;
+  /** Online: seconds the sim has been waiting on the driver (the other machine's pads), 0 while stepping. */
+  netWaitS = 0;
+  /** Online: the phase last seen, for the view changes at a stoppage the driver moved on from. */
+  private netPhase = '';
   onHalftime: (() => void) | null = null;
   onFinish: ((r: MatchResult) => void) | null = null;
   onPause: (() => void) | null = null;
@@ -348,8 +371,9 @@ export class MatchSession {
     const home = grassSafeKit(opt.kits[0]);
     const away = resolveKitClash(home, grassSafeKit(opt.kits[1]));
     // ...and the two sides must read apart from the gantry (light against dark): see kitContrast. The side
-    // that changes strip is never the human's: you always play in your own club's colours.
-    opt.kits = opt.humanSide === 1 ? [contrastAwayKit(away, home), away] : [home, contrastAwayKit(home, away)];
+    // that changes strip is never the human's: you always play in your own club's colours. (Online, both sides
+    // are human and both screens must show the same strips: the away side changes, as src/net/setup.ts netKits.)
+    opt.kits = opt.humanSide === 1 && !opt.humanSides ? [contrastAwayKit(away, home), away] : [home, contrastAwayKit(home, away)];
     this.match = new Match(opt);
     // A Football Moment: the sim is set up for it (score, clock, placements, ball) before anything is drawn or
     // recorded; no fly-in, the brief instead of the fixture card.
@@ -368,6 +392,8 @@ export class MatchSession {
       // vertex cost).
       attendance: opt.attendance * stadiumFill(level) * (world.quality === 'low' ? 0.45 : world.quality === 'medium' ? 0.75 : 1),
       level,
+      // (A draw from the sim's own rng: online, both machines build the session the same way, so they draw it
+      // alike. Never draw from match.rng on anything local, like the graphics quality: the two games would part.)
       seed: this.match.rng.int(1e9),
     });
     this.view = new MatchView(teams, opt.kits, opt.humanSide);
@@ -541,6 +567,8 @@ export class MatchSession {
     const dt = Math.min(realDt, 0.1);
     this.time += dt;
     const m = this.match;
+    // (Online: the link is kept up every frame, whatever the screen is doing.)
+    this.driver?.frame();
 
     // (A press only carries over to the next live step: nothing latched while the sim isn't stepping.)
     const briefing = this.moment !== null && this.moment.briefT > 0;
@@ -583,12 +611,25 @@ export class MatchSession {
     } else if (this.replay) {
       this.stepReplay(dt);
     } else {
-      this.acc += dt;
+      const drv = this.driver;
+      this.acc += drv ? dt * drv.pace() : dt;
       let steps = 0;
+      let waited = false;
       while (this.acc >= DT && steps < 6) {
-        const pad = this.buildPad();
+        let pad: Pad | readonly [Pad, Pad];
+        if (drv) {
+          const pp = drv.next(() => this.buildPad());
+          if (!pp) {
+            // Waiting on the other machine: hold the picture, and don't bank the time (no burst once it comes).
+            this.acc = Math.min(this.acc, DT);
+            waited = true;
+            break;
+          }
+          pad = pp;
+        } else pad = this.buildPad();
         this.prev.set(this.cur);
         m.step(DT, pad);
+        drv?.after(m);
         // (Events first: a TACKLE press this step is baked into this very frame as the lunge.)
         this.handleEvents(m.drainEvents());
         if (this.moment) this.judgeMoment();
@@ -605,8 +646,9 @@ export class MatchSession {
         }
       }
       if (steps === 6) this.acc = 0;
+      this.netWaitS = waited && steps === 0 ? this.netWaitS + dt : 0;
       // (See PHASE_WANT: at about the step rate, keep the drawn frame close to the newest step.)
-      if (dt > DT * 0.8 && dt < DT * 2.5 && this.hitStop <= 0) this.acc += clamp(PHASE_WANT * DT - this.acc, -PHASE_NUDGE * DT, PHASE_NUDGE * DT);
+      if (dt > DT * 0.8 && dt < DT * 2.5 && this.hitStop <= 0 && !waited) this.acc += clamp(PHASE_WANT * DT - this.acc, -PHASE_NUDGE * DT, PHASE_NUDGE * DT);
       this.view.apply(this.prev, this.cur, this.hitStop > 0 ? 1 : clamp(this.acc / DT, 0, 1), this.time, dt);
       this.updateFrameFx(dt);
       this.updateBlitz(dt);
@@ -737,11 +779,20 @@ export class MatchSession {
     this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time, this.world.camera.position);
     this.updateAtmosphere(dt);
     this.updateHud(dt);
+    // Online: the man the other player controls gets his own ring.
+    if (this.driver) {
+      const hs = m.cfg.humanSide;
+      this.view.setRival(hs === 0 || hs === 1 ? m.activeOf(hs === 0 ? 1 : 0) : -1);
+    }
   }
 
   /** Goal → celebration → replay → kick-off; half/full time callbacks. */
   private flow(dt: number): void {
     const m = this.match;
+    if (this.driver) {
+      this.netFlow();
+      return;
+    }
     if (m.phase === 'goal') {
       if (this.demo) {
         if (m.phaseT > Math.max(3.2, this.view.celeb.holdS)) {
@@ -786,6 +837,39 @@ export class MatchSession {
     if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > (m.shootout ? SHOOTOUT_HOLD_S : FULLTIME_HOLD_S)) {
       this.finishFired = true;
       if (this.demo) return;
+      this.onFinish?.({
+        score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings(), winner: this.winner(),
+      });
+    }
+  }
+
+  /**
+   * flow() for an online match: the driver moves the sim on from a goal and from half time by itself (the same
+   * tick on both machines: src/net/setup.ts netStoppages), so this only follows with the picture: the wide shot
+   * then the scorer, back to the broadcast shot at the kick-off, a banner through the break, and full time.
+   */
+  private netFlow(): void {
+    const m = this.match;
+    if (m.phase === 'goal' && this.cam.mode !== 'celebrate' && m.phaseT > GOAL_WIDE_S) this.cam.setMode('celebrate');
+    const was = this.netPhase;
+    if (m.phase !== was) {
+      this.netPhase = m.phase;
+      if (was === 'goal') {
+        this.view.celeb.end();
+        this.cam.setMode('broadcast');
+        this.view.setMarkerVisible(true);
+        this.resetView();
+      } else if (was === 'halftime') {
+        this.resetView();
+        this.hud?.show('SECOND HALF', '', 'small', 1.6);
+      }
+      if (m.phase === 'halftime') {
+        const [h, a] = m.teams;
+        this.hud?.show('HALF TIME', `${h.short} ${m.score[0]} - ${m.score[1]} ${a.short}`, 'small', 3.2);
+      }
+    }
+    if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > FULLTIME_HOLD_S) {
+      this.finishFired = true;
       this.onFinish?.({
         score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings(), winner: this.winner(),
       });

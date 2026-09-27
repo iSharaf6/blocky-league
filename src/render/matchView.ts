@@ -112,6 +112,9 @@ export class MatchView {
   readonly ball: THREE.Mesh;
   private ballShadow: THREE.Mesh;
   private marker: THREE.Group;
+  /** Online: a ring under the man the other player controls (setRival), made on first use; -1: none. */
+  private rivalRing: THREE.Mesh | null = null;
+  private rivalIdx = -1;
   private markerRing: THREE.Mesh;
   private arrow: THREE.Mesh;
   private powerBar: THREE.Group;
@@ -554,6 +557,17 @@ export class MatchView {
       this.nameTag.position.y = top + 1.3 + f[o + 2];
       if (active !== this.nameFor) this.drawName(active);
     }
+    if (this.rivalRing) {
+      const ri = this.rivalIdx;
+      const on = ri >= 0 && this.marker.visible && this.markerMode !== 'off';
+      this.rivalRing.visible = on;
+      if (on) {
+        const o = ri * PF;
+        this.rivalRing.position.x = f[o];
+        this.rivalRing.position.z = f[o + 1];
+        this.rivalRing.rotation.y = -f[o + 3];
+      }
+    }
     const full = this.markerMode === 'full';
     this.arrow.visible = full && !this.charging;
     this.nameTag.visible = full;
@@ -785,6 +799,26 @@ export class MatchView {
   setMarkerVisible(v: boolean): void {
     this.marker.visible = v;
     if (!v) this.targetRing.visible = false;
+  }
+
+  /**
+   * Online: mark the man the other player controls (-1: nobody) with a square ring like ours in a light red, no
+   * arrow or name: you can see who you're up against without mistaking him for yours. Drawn with the marker
+   * (hidden with it, and under the low lenses when ours is ring-only).
+   */
+  setRival(idx: number): void {
+    if (idx >= 0 && !this.rivalRing) {
+      const b = new BoxBuilder();
+      const r = 0.58, t = 0.08, c = 0xff6b5e;
+      b.box(0, 0, -r, r * 2 + t, 0.03, t, c);
+      b.box(0, 0, r, r * 2 + t, 0.03, t, c);
+      b.box(-r, 0, 0, t, 0.03, r * 2, c);
+      b.box(r, 0, 0, t, 0.03, r * 2, c);
+      this.rivalRing = new THREE.Mesh(b.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
+      this.rivalRing.position.y = 0.035;
+      this.group.add(this.rivalRing);
+    }
+    this.rivalIdx = idx;
   }
 
   /**

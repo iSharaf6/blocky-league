@@ -169,6 +169,11 @@ const ICONS: Record<string, string[]> = {
     '....XX....', '....XX....', '...XXXX...', 'XXXXXXXXXX', '.XXXXXXXX.',
     '..XXXXXX..', '..XXXXXX..', '.XXX..XXX.', 'XX......XX', 'X........X',
   ],
+  /** Two players (ONLINE: play a friend). */
+  duo: [
+    '.XX....XX.', '.XX....XX.', '..........', 'XXXX..XXXX', 'XXXX..XXXX',
+    'XXXX..XXXX', '.XX....XX.', '.XX....XX.', '.XX....XX.', '..........',
+  ],
 };
 
 /** Crisp pixel icon as inline SVG. */
@@ -405,6 +410,7 @@ export class Menus {
     h: {
       quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void;
       gift?: () => void; blitz?: () => void; playNow?: () => void; account?: () => void; moments?: () => void; unlocks?: () => void;
+      online?: () => void;
     },
     info?: MainInfo,
   ): void {
@@ -455,6 +461,7 @@ export class Menus {
           <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
           <button class="btn btn-purple tile tile-side" data-a="blitz"><i class="picon bolt" aria-hidden="true">⚡</i><span>BLITZ</span><small>POWER-UPS</small></button>
           <button class="btn btn-red tile tile-side" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${sub(info?.cup)}</button>
+          ${h.online ? `<button class="btn btn-blue tile tile-online" data-a="online">${pixelIcon('duo', '#fff', 5)}<span>ONLINE</span><small>PLAY A FRIEND</small></button>` : ''}
         </div>
         ${daily}
         <div class="main-foot">
@@ -472,6 +479,7 @@ export class Menus {
     d.querySelector('[data-a=gift]')?.addEventListener('click', () => h.gift?.());
     d.querySelector('[data-a=playnow]')?.addEventListener('click', () => h.playNow?.());
     d.querySelector('[data-a=moments]')?.addEventListener('click', () => h.moments?.());
+    d.querySelector('[data-a=online]')?.addEventListener('click', () => h.online?.());
     d.querySelector('[data-a=unlocks]')?.addEventListener('click', () => h.unlocks?.());
     d.querySelector('[data-a=account]')?.addEventListener('click', () => h.account?.());
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
