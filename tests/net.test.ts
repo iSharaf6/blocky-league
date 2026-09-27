@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { stateHash } from '../src/net/hash';
 import { DT } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
+import { decodeInput, encodeInput, quantizePad, DELAY_MAX, DELAY_MIN, HASH_EVERY, TIMEOUT_MS } from '../src/net/lockstep';
 import { HumanBot } from './humanBot';
 import { FuzzPad, netConfig, runToEnd, stoppages } from './netHarness';
+import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
 
 /**
  * Online play is deterministic lockstep: both peers run the same sim on the same pads. These tests pin that
@@ -169,4 +171,192 @@ describe('two human sides', () => {
     }
     expect(used[0] + used[1]).toBeGreaterThan(0);
   }, 60_000);
+});
+
+describe('lockstep engine', () => {
+  /** Both peers' per-tick hashes agree over every tick both stepped. */
+  const agree = (a: SimPeer, b: SimPeer): number => {
+    const n = Math.min(a.hashes.length, b.hashes.length);
+    for (let i = 0; i < n; i++) if (a.hashes[i] !== b.hashes[i]) throw new Error(`peers diverged at tick ${i + 1}`);
+    return n;
+  };
+
+  it('keeps both peers bit-identical through a full match over a bad network (10% loss, 20-120 ms, reordering)', () => {
+    const net = new NetSim({ loss: 0.1, latency: [20, 120], seed: 1 });
+    const [ta, tb] = net.pair();
+    const setup = testSetup({ seed: 777 });
+    const a = new SimPeer(ta, 0, setup, net);
+    // (The guest's display runs a little slower: 17.2 ms frames.)
+    const b = new SimPeer(tb, 1, setup, net, {}, 17.2);
+    runPeers(net, a, b);
+    expect(a.lock.status).toBe('play');
+    expect(b.lock.status).toBe('play');
+    expect(a.m.phase).toBe('fulltime');
+    expect(b.m.phase).toBe('fulltime');
+    const n = agree(a, b);
+    expect(n).toBeGreaterThan(60 * 110);
+    expect(a.hashes.length).toBe(b.hashes.length);
+    expect(stateHash(a.m)).toBe(stateHash(b.m));
+    expect([...a.m.score]).toEqual([...b.m.score]);
+    // The network really was that bad, the redundancy covered it, and the hash checks ran and passed.
+    expect(net.dropped).toBeGreaterThan(500);
+    expect(a.lock.dupes + b.lock.dupes).toBeGreaterThan(1000);
+    expect(a.lock.desyncAt).toBeNull();
+    expect(b.lock.desyncAt).toBeNull();
+    // A ~140 ms round trip on average wants more than the default 4 ticks of delay; it stays within the range.
+    for (const p of [a, b]) {
+      expect(p.lock.delay).toBeGreaterThanOrEqual(5);
+      expect(p.lock.delay).toBeLessThanOrEqual(DELAY_MAX);
+      expect(p.lock.rtt).toBeGreaterThan(80);
+      expect(p.lock.rtt).toBeLessThan(260);
+    }
+    // Both humans played, and it wasn't a stall-fest: the stall count stays a small share of the ticks.
+    expect(a.m.stats.passes[0] + a.m.stats.passes[1]).toBeGreaterThan(5);
+    expect(a.lock.stalls + b.lock.stalls).toBeLessThan(n * 0.25);
+  }, 120_000);
+
+  it('a clean LAN keeps the delay low (2-4 ticks) and hardly stalls', () => {
+    const net = new NetSim({ loss: 0, latency: [1, 4], seed: 2 });
+    const [ta, tb] = net.pair();
+    const setup = testSetup({ seed: 99, halfMinutes: 0.5 });
+    const a = new SimPeer(ta, 0, setup, net);
+    const b = new SimPeer(tb, 1, setup, net);
+    runPeers(net, a, b);
+    agree(a, b);
+    expect(a.m.phase).toBe('fulltime');
+    expect(stateHash(a.m)).toBe(stateHash(b.m));
+    for (const p of [a, b]) {
+      expect(p.lock.delay).toBeGreaterThanOrEqual(DELAY_MIN);
+      expect(p.lock.delay).toBeLessThanOrEqual(4);
+    }
+    expect(a.lock.stalls + b.lock.stalls).toBeLessThan(200);
+  }, 60_000);
+
+  it('detects a desync when a pad is corrupted in flight (and both sides stop)', () => {
+    const net = new NetSim({ loss: 0.05, latency: [10, 40], seed: 3 });
+    const [ta, tb] = net.pair();
+    const setup = testSetup({ seed: 31337, halfMinutes: 1 });
+    const a = new SimPeer(ta, 0, setup, net);
+    const b = new SimPeer(tb, 1, setup, net);
+    // Every copy of the host's pad for tick 900 reaches the guest with the stick changed: the guest's sim steps
+    // a different game from there on.
+    const BAD = 900;
+    net.tamper = (data, from) => {
+      if (from !== 0 || typeof data === 'string') return data;
+      const p = decodeInput(data);
+      if (!p || BAD < p.first || BAD >= p.first + p.pads.length) return data;
+      const pads = p.pads.slice();
+      const o = pads[BAD - p.first];
+      pads[BAD - p.first] = quantizePad({ ...o, mx: o.mx > 0 ? -1 : 1, mz: 0.5, sprint: !o.sprint });
+      return encodeInput({ ...p, pads });
+    };
+    let desyncs = 0;
+    a.lock.onDesync = () => desyncs++;
+    b.lock.onDesync = () => desyncs++;
+    runPeers(net, a, b, 5 * 60_000);
+    expect(a.lock.status).toBe('desync');
+    expect(b.lock.status).toBe('desync');
+    expect(desyncs).toBe(2);
+    // Caught at the first hash check after the bad tick.
+    const at = a.lock.desyncAt!.tick;
+    expect(at).toBeGreaterThan(BAD);
+    expect(at).toBeLessThanOrEqual(BAD + HASH_EVERY);
+    expect(a.lock.reason).toMatch(/lost sync/i);
+    // Neither sim runs on past it.
+    expect(a.lock.next(() => EMPTY_PAD)).toBeNull();
+    expect(a.hashes.length).toBeLessThan(at + 60);
+  }, 60_000);
+
+  it('pauses both sides and resumes in step', () => {
+    const net = new NetSim({ loss: 0.1, latency: [20, 60], seed: 4 });
+    const [ta, tb] = net.pair();
+    const setup = testSetup({ seed: 5, halfMinutes: 0.5 });
+    const a = new SimPeer(ta, 0, setup, net);
+    const b = new SimPeer(tb, 1, setup, net);
+    const seen: [boolean, boolean][] = [];
+    b.lock.onPause = (paused, byPeer) => seen.push([paused, byPeer]);
+    let pausedAt = -1;
+    let bTickAtPause = -1;
+    runPeers(net, a, b, 10 * 60_000, (t) => {
+      if (t === 10_000) {
+        a.lock.setPaused(true);
+        pausedAt = a.lock.tick;
+      }
+      if (t === 14_000) bTickAtPause = b.lock.tick;
+      if (t === 20_000) a.lock.setPaused(false);
+    });
+    // B stopped within a few ticks of A (it only has A's pads up to A's delay ahead), and waited out the pause.
+    expect(bTickAtPause - pausedAt).toBeLessThanOrEqual(DELAY_MAX + 1);
+    expect(seen).toEqual([[true, true], [false, true]]);
+    // Ten seconds of pause is no timeout.
+    expect(a.lock.status).toBe('play');
+    expect(b.lock.status).toBe('play');
+    expect(a.m.phase).toBe('fulltime');
+    agree(a, b);
+    expect(stateHash(a.m)).toBe(stateHash(b.m));
+  }, 60_000);
+
+  it('notices the other side leaving, the link closing, and the silence of a dead link', () => {
+    const run = (fault: (net: NetSim, a: SimPeer, b: SimPeer, ta: { close(): void }) => void) => {
+      const net = new NetSim({ loss: 0, latency: [5, 10], seed: 6 });
+      const [ta, tb] = net.pair();
+      const setup = testSetup({ seed: 8 });
+      const a = new SimPeer(ta, 0, setup, net);
+      const b = new SimPeer(tb, 1, setup, net);
+      let lostB = '';
+      b.lock.onLost = (r) => (lostB = r);
+      runPeers(net, a, b, 40_000, (t) => {
+        if (t === 5_000) fault(net, a, b, ta);
+      });
+      return { a, b, lostB };
+    };
+    type Fault = (net: NetSim, a: SimPeer, b: SimPeer, ta: { close(): void }) => void;
+    const leave: Fault = (_n, a) => a.lock.leave();
+    const quit = run(leave);
+    expect(quit.b.lock.status).toBe('lost');
+    expect(quit.lostB).toMatch(/left/i);
+    const close: Fault = (_n, _a, _b, ta) => ta.close();
+    expect(run(close).b.lock.status).toBe('lost');
+    const pull: Fault = (net) => (net.cut = [true, false]);
+    const cable = run(pull);
+    expect(cable.b.lock.status).toBe('lost');
+    expect(cable.lostB).toMatch(/timed out/i);
+    // (It stalled first, waiting: it never ran far past the cut, and gave up after TIMEOUT_MS of silence.)
+    expect(cable.b.lock.tick).toBeLessThan(60 * 6);
+    expect(TIMEOUT_MS).toBeLessThan(35_000);
+  }, 60_000);
+
+  it("a rematch on the same link ignores the last match's stragglers", () => {
+    const net = new NetSim({ loss: 0.1, latency: [20, 150], seed: 9 });
+    const [ta, tb] = net.pair();
+    const s0 = testSetup({ seed: 1, halfMinutes: 0.25 });
+    const a0 = new SimPeer(ta, 0, s0, net);
+    const b0 = new SimPeer(tb, 1, s0, net);
+    runPeers(net, a0, b0);
+    expect(a0.m.phase).toBe('fulltime');
+    // The next match starts at once, with the old one's packets still in flight.
+    const s1 = testSetup({ seed: 2, halfMinutes: 0.25, epoch: 1 });
+    const a1 = new SimPeer(ta, 0, s1, net);
+    const b1 = new SimPeer(tb, 1, s1, net);
+    runPeers(net, a1, b1);
+    expect(a1.m.phase).toBe('fulltime');
+    agree(a1, b1);
+    expect(stateHash(a1.m)).toBe(stateHash(b1.m));
+  }, 60_000);
+
+  it('pads survive the wire exactly as the local sim used them', () => {
+    const f = new FuzzPad(3);
+    const pads = Array.from({ length: 30 }, () => quantizePad(f.pad()));
+    const back = decodeInput(encodeInput({ epoch: 7, first: 123456, ack: 99, tick: 123450, pads }))!;
+    expect(back.pads).toEqual(pads);
+    expect([back.epoch, back.first, back.ack, back.tick]).toEqual([7, 123456, 99, 123450]);
+    // A tiny negative stick is +0 on both sides of the wire, never -0 on the sender's (atan2 tells them apart).
+    const z = quantizePad({ ...EMPTY_PAD, mx: -0.001, mz: -0 });
+    expect(Object.is(z.mx, 0) && Object.is(z.mz, 0)).toBe(true);
+    // A digital diagonal stays a unit-length 45-degree stick (isDigitalStick still reads it as keys).
+    const d = quantizePad({ ...EMPTY_PAD, mx: Math.SQRT1_2, mz: Math.SQRT1_2 });
+    expect(Math.abs(Math.hypot(d.mx, d.mz) - 1)).toBeLessThan(0.02);
+    // 15 bytes of header and 3 a pad.
+    expect(encodeInput({ epoch: 0, first: 0, ack: 0, tick: 0, pads: pads.slice(0, 8) }).byteLength).toBe(39);
+  });
 });
