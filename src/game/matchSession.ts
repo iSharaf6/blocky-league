@@ -1,18 +1,25 @@
 import { sfx } from '../audio/sfx';
 import type { Input } from '../core/input';
 import { CELEBRATION_IDS, type CamZoom, type CelebrationId } from '../core/save';
-import { clamp, damp, smoothstep } from '../core/math';
+import { clamp, damp, smoothstep, wrapAngle } from '../core/math';
 import { BlitzFx, POWER_COLOR, POWER_LIGHT } from '../render/blitz';
-import { CameraRig } from '../render/cameraRig';
+import { CameraRig, type CamFocus } from '../render/cameraRig';
 import { AI_CELEBRATIONS, type CelebCue } from '../render/celebration';
 import { setCharacterFill, setCharacterHemiFill, setCharacterWhiteBalance } from '../render/characters';
 import { Effects } from '../render/effects';
+import { GhostArc } from '../render/ghostArc';
+import {
+  HARD_STRIKE, HIT_STOP, KEEPER_FLASH_FRAMES, PLAYER_FLASH_FRAMES, SHAKE_PX, SLOW_POST, TRAIL_LOOK, endHeat, impactBits, kickTrailStyle, trailStrength,
+  type TrailStyle,
+} from '../render/juice';
 import { MatchView } from '../render/matchView';
+import { CutFlash } from '../render/transition';
 import { PITCH_Y, Stadium, stadiumFill } from '../render/stadium';
 import { Weather, type WeatherKind } from '../render/weather';
 import type { TimeOfDay, World } from '../render/world';
-import { BALL_R, DT, HALF_L, HALF_W } from '../sim/constants';
-import { EMPTY_PAD, Match, type MatchConfig, type Pad } from '../sim/match';
+import { isCrossingRestart } from '../sim/ai';
+import { BALL_R, DT, GOAL_W, HALF_L, HALF_W } from '../sim/constants';
+import { EMPTY_PAD, Match, SHOOT_BAR, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, PowerUpKind, RestartKind, ScenarioSpec, Side } from '../sim/types';
 import { applyScenario, finishScenario, judgeScenario, scenarioSecondsLeft, type ScenarioOutcome } from '../sim/scenario';
@@ -23,6 +30,8 @@ import { TouchControls, isTouchDevice } from '../ui/touch';
 import { Trainer } from '../ui/trainer';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { playFocus } from './camFocus';
+import { ClipRecorder, clipSupported, type Clip } from './clip';
+import { GHOST_MAX_PTS, flyGhost, lobLaunch, penaltyGhost, strikeLaunch, type GhostLaunch } from './ghostArc';
 import { contrastAwayKit } from './kitContrast';
 import { MatchTally, type PlayerRating } from './ratings';
 import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
@@ -51,6 +60,8 @@ export interface SessionOptions extends MatchConfig {
   scenario?: ScenarioSpec;
   /** Colour-blind aid: shape cues on rings and markers (dashed opponent rings, a chevron on your team), not colour alone. */
   colorblind?: boolean;
+  /** No screen shake or camera punch (default: the OS "reduce motion" setting). */
+  reducedMotion?: boolean;
 }
 
 export interface MatchResult {
@@ -97,19 +108,33 @@ const MOMENT_COUNT_S = 5;
 /** Hit-stop at the top of the backflip (frames). */
 const HIT_STOP_APEX = 2;
 /**
- * Hit-stop (frames the drawn frame and the sim hold still, the camera punch and the burst landing on the
- * frozen picture) on a won tackle and on a goal; the camera punch (m: ~3 px at broadcast distance) and the
- * goal's shake (~8 px, decaying).
+ * Hit-stop (60 Hz frames the drawn picture holds on the impact: the sim waits, its clock untouched, while the
+ * camera punch, the flash and the burst land on the frozen picture) on a won tackle and on a goal (the rest:
+ * render/juice.ts HIT_STOP), and the camera punch (m: ~3 px at broadcast distance). The screen shake is in
+ * pixels (juice.ts SHAKE_PX).
  */
-const HIT_STOP_TACKLE = 2;
-const HIT_STOP_GOAL = 3;
+const HIT_STOP_TACKLE = HIT_STOP.tackle;
+const HIT_STOP_GOAL = HIT_STOP.goal;
 const PUNCH_TACKLE = 0.09;
-const SHAKE_GOAL = 0.27;
+/** A won standing tackle is "heavy" (it shakes the picture) when the two men met at this closing speed (m/s). */
+const HEAVY_TACKLE_MS = 8;
+/**
+ * The camera push-in on a big chance: a shot struck at the goal (within CHANCE_S s, the ball loose and still
+ * going goalwards at CHANCE_MS m/s or more) from inside CHANCE_RANGE m of the goal line.
+ */
+const CHANCE_S = 1.1;
+const CHANCE_MS = 5;
+const CHANCE_RANGE = 28;
+/** Set-piece ghost arc: at or below this AI difficulty (EASY 0.6, NORMAL 1.8; HARD is 3). */
+const GHOST_MAX_DIFFICULTY = 2.4;
+/** Recent kicks' trail styles kept for replays (a replayed header still glows). */
+const KICK_LOG = 24;
+/** A goal's poster still: at most this wide (px). */
+const POSTER_W = 1280;
 /** A 'tackle' outcome within this long (s) of a 'tackleTry' from the same man is the same attempt. */
 const TACKLE_TRY_S = 0.15;
 /** Pace readability: speed lines and dust from this speed (m/s); the ball trails from this speed. */
 const SPRINT_FX_MS = 7;
-const BALL_TRAIL_MS = 18;
 /** Blitz: the mega ball stays a fireball this long (s) after it leaves the shooter's foot; a freeze's fallback length. */
 const MEGA_FLY_S = 1.5;
 const FREEZE_MAX_S = 6;
@@ -184,12 +209,20 @@ const TOUCH_LABELS = {
 type HintCtx = keyof typeof TOUCH_LABELS;
 type HintKey = 'pass' | 'shoot' | 'through';
 
+/** Button names per device for the hints (module constants: no object per call). */
+const PAD_KEYS: Record<HintKey, string> = { pass: 'A', shoot: 'B', through: 'X' };
+const KEY_KEYS: Record<HintKey, string> = { pass: 'SPACE', shoot: 'K', through: 'L' };
+
 /** The presentation pace, for tests (seconds; see INTRO_S and friends). */
 export const PRESENTATION = {
   introS: INTRO_S, goalWideS: GOAL_WIDE_S, replayAtS: REPLAY_AT, replayLeadS: REPLAY_LEAD_S, replayTailS: REPLAY_TAIL_S,
   buildRate: REPLAY_BUILD_RATE, slowRate: REPLAY_SLOW_RATE, slowFromS: REPLAY_SLOW_FROM, halftimeHoldS: HALFTIME_HOLD_S,
   fulltimeHoldS: FULLTIME_HOLD_S, hitStopTackle: HIT_STOP_TACKLE, hitStopGoal: HIT_STOP_GOAL,
+  hitStopPost: HIT_STOP.post, hitStopPostSlow: HIT_STOP.postSlow, hitStopSlide: HIT_STOP.slide, hitStopSave: HIT_STOP.save,
 } as const;
+
+/** White chips off the woodwork. */
+const POST_BITS = [0xffffff, 0xf4f4ea, 0xdfe6ec] as const;
 
 const RESTART_LABEL: Record<RestartKind, string> = {
   kickoff: 'KICK OFF', throwin: 'THROW-IN', corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!',
@@ -320,8 +353,40 @@ export class MatchSession {
   private edgeAvoid: EdgeRect[] = [];
   private edgeAvoidT = 0;
   private edgeMates: EdgeMate[] = [];
-  /** Hit-stop frames left (see HIT_STOP_TACKLE). */
-  private hitStop = 0;
+  /** Hit-stop: seconds of hold left (frames / 60; see HIT_STOP_TACKLE). */
+  private hitStopT = 0;
+  /** The ball's owner and pace before the last sim step (who was tackled; was a strike first-time; how hard it hit the post). */
+  private ownerBefore = -1;
+  private ballSpeedBefore = 0;
+  /** The ball's trail look since the last kick (see juice.ts kickTrailStyle), and the recent kicks' for replays. */
+  private trailStyle: TrailStyle = 'strike';
+  private kickLogT = new Float32Array(KICK_LOG).fill(-1e9);
+  private kickLogS: TrailStyle[] = new Array(KICK_LOG).fill('strike');
+  private kickLogI = 0;
+  /** The set-piece ghost arc (Easy / Normal), its path scratch and launch. */
+  private ghost: GhostArc | null = null;
+  private ghostPath = new Float32Array(GHOST_MAX_PTS * 3);
+  private ghostL: GhostLaunch = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+  /** Replay in / out flash cut. */
+  private flash = new CutFlash();
+  /** Goal clips (lastClip / lastPoster) and whether this goal's clip is the live celebration (no replay). */
+  private clips = new ClipRecorder();
+  private poster: Blob | null = null;
+  private posterWanted = false;
+  private clipLive = false;
+  private clipName = '';
+  /** Any input at all since the last frame (key, button, tap): skips a replay. */
+  private anyPress = false;
+  private offPointer: (() => void) | null = null;
+  /** Scratch (no allocation per frame). */
+  private fadeKeep: number[] = [];
+  private fadeSight: { x: number; z: number }[] = [];
+  private sightPool: { x: number; z: number }[] = [{ x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }, { x: 0, z: 0 }];
+  private matePool: EdgeMate[] = [];
+  private celebNear: number[] = [];
+  private edgeBox: EdgeRect = { l: 0, t: 0, r: 0, b: 0 };
+  private cardFocus = { rx: 0, rz: 0, fx: 0, fz: 0 };
+  private focusOut = { bx: 0, by: 0, bz: 0, bvx: 0, bvz: 0, ax: 0, az: 0, attack: 1 } as CamFocus;
   /**
    * Standing-tackle lunges baked into the frames (replay.ts writeFrame): per player, seconds since his TACKLE
    * press (< 0: none) and the leg he lunges with; and when his last attempt was seen (TACKLE_TRY_S).
@@ -341,6 +406,10 @@ export class MatchSession {
   private megaFlyT = 0;
   private megaHot = false;
   private frozen = new Uint8Array(22);
+  private bzTurbo = [false, false];
+  private bzFrozen = [false, false];
+  private bzMagMan = [-1, -1];
+  private bzMagD = [Infinity, Infinity];
 
   constructor(private world: World, private input: Input, readonly opt: SessionOptions) {
     this.demo = !!opt.demo;
@@ -370,13 +439,19 @@ export class MatchSession {
       level,
       seed: this.match.rng.int(1e9),
     });
-    this.view = new MatchView(teams, opt.kits, opt.humanSide);
+    this.view = new MatchView(teams, opt.kits, opt.humanSide, !!opt.colorblind);
     this.applyTimeOfDay(opt.timeOfDay ?? 'day', opt.weather ?? 'clear');
     this.view.group.position.y = PITCH_Y;
     this.effects.mesh.position.y = PITCH_Y;
     world.scene.add(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
     this.cam = new CameraRig(world.camera);
     this.cam.players = this.view.frame;
+    // Reduced motion (the setting, or the OS preference): no screen shake, no camera punch.
+    const reduce = opt.reducedMotion ?? (typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    this.cam.setReducedMotion(!!reduce);
+    world.scene.add(this.flash.mesh);
+    // The crowd: louder and singing more in a bigger, fuller ground.
+    sfx.setStadium(level, Math.max(0, Math.min(1, opt.attendance * stadiumFill(level))));
     this.cam.touchLayout = !this.demo && isTouchDevice();
     this.cam.setZoom(opt.camZoom ?? 'normal');
     this.view.setBallSkin(opt.ballSkin);
@@ -403,10 +478,23 @@ export class MatchSession {
       this.touch.setEnabled(isTouchDevice());
       // Latch presses as they happen (see `latch`): a key-down is read through Input itself (whatever it maps
       // to), a touch button by its own press.
-      this.offKey = input.onKey(() => this.latchPresses(input.read()));
+      this.offKey = input.onKey(() => {
+        this.anyPress = true;
+        this.latchPresses(input.read());
+      });
       this.touch.onPress = (k) => {
+        this.anyPress = true;
         if (k !== 'sprint') this.latch[k] = true;
       };
+      // A tap or click on the picture itself counts as "any input" too (it skips a replay).
+      const cv = (world as { canvas?: HTMLCanvasElement }).canvas;
+      if (cv && typeof cv.addEventListener === 'function') {
+        const down = () => {
+          this.anyPress = true;
+        };
+        cv.addEventListener('pointerdown', down);
+        this.offPointer = () => cv.removeEventListener('pointerdown', down);
+      }
     } else {
       this.hud = null;
       this.touch = null;
@@ -537,10 +625,22 @@ export class MatchSession {
     l.pass = l.shoot = l.through = l.power = false;
   }
 
+  /** Hold the picture for `frames` 60 Hz frames (the longer of what is already held and this). */
+  private hold(frames: number): void {
+    this.hitStopT = Math.max(this.hitStopT, frames / 60);
+  }
+
+  /** Seconds of hit-stop left (tests / dev tools). */
+  get hitStopLeft(): number {
+    return this.hitStopT;
+  }
+
   update(realDt: number): void {
     const dt = Math.min(realDt, 0.1);
     this.time += dt;
     const m = this.match;
+    // Hit flashes count rendered frames, before this frame's events (see MatchView.tickFlashes).
+    if (!this.paused) this.view.tickFlashes(dt);
 
     // (A press only carries over to the next live step: nothing latched while the sim isn't stepping.)
     const briefing = this.moment !== null && this.moment.briefT > 0;
@@ -548,9 +648,10 @@ export class MatchSession {
     let held = false;
     if (this.paused) {
       // Frozen: live play, a replay or the pre-match fly-in all wait for the pause menu.
-    } else if (this.hitStop > 0) {
+    } else if (this.hitStopT > 1e-4) {
       // Hit-stop: the drawn frame, the sim and the particles hold for a frame or two (the punch lands on it).
-      this.hitStop--;
+      // (The sim is simply not stepped: its clock waits, nothing in it is scaled or skipped.)
+      this.hitStopT -= dt;
       held = true;
     } else if (this.introLeft > 0) {
       this.introLeft -= dt;
@@ -588,6 +689,8 @@ export class MatchSession {
       while (this.acc >= DT && steps < 6) {
         const pad = this.buildPad();
         this.prev.set(this.cur);
+        this.ownerBefore = m.ball.owner;
+        this.ballSpeedBefore = Math.hypot(m.ball.vel.x, m.ball.vel.y, m.ball.vel.z);
         m.step(DT, pad);
         // (Events first: a TACKLE press this step is baked into this very frame as the lunge.)
         this.handleEvents(m.drainEvents());
@@ -598,7 +701,7 @@ export class MatchSession {
         this.recorded++;
         this.acc -= DT;
         steps++;
-        if (this.hitStop > 0) {
+        if (this.hitStopT > 1e-4) {
           // Freeze on the impact frame: whatever was left over is dropped, never caught up after the hold.
           this.acc = 0;
           break;
@@ -606,8 +709,9 @@ export class MatchSession {
       }
       if (steps === 6) this.acc = 0;
       // (See PHASE_WANT: at about the step rate, keep the drawn frame close to the newest step.)
-      if (dt > DT * 0.8 && dt < DT * 2.5 && this.hitStop <= 0) this.acc += clamp(PHASE_WANT * DT - this.acc, -PHASE_NUDGE * DT, PHASE_NUDGE * DT);
-      this.view.apply(this.prev, this.cur, this.hitStop > 0 ? 1 : clamp(this.acc / DT, 0, 1), this.time, dt);
+      const stopped = this.hitStopT > 1e-4;
+      if (dt > DT * 0.8 && dt < DT * 2.5 && !stopped) this.acc += clamp(PHASE_WANT * DT - this.acc, -PHASE_NUDGE * DT, PHASE_NUDGE * DT);
+      this.view.apply(this.prev, this.cur, stopped ? 1 : clamp(this.acc / DT, 0, 1), this.time, dt);
       this.updateFrameFx(dt);
       this.updateBlitz(dt);
       this.flow(dt);
@@ -628,7 +732,7 @@ export class MatchSession {
     // Camera: the live-play focus (ball, controlled player, possession lean, set piece; see camFocus), with
     // the subject swapped for the celebrating scorer / the shootout winners.
     const f = this.view.frame;
-    const focus = playFocus(m, f, this.view.headTop);
+    const focus = playFocus(m, f, this.view.headTop, this.focusOut);
     let ax = focus.ax;
     let az = focus.az;
     let avx = 0;
@@ -665,7 +769,8 @@ export class MatchSession {
       let cx = sx * 2;
       let cz = sz * 2;
       let n = 2;
-      const near: number[] = [];
+      const near = this.celebNear;
+      near.length = 0;
       for (const p of m.teamPlayers(sc.side)) {
         const o = p.idx * PF;
         if (p.idx === si || f[o + 4] !== STATE_CODE.celebrate) continue;
@@ -704,13 +809,30 @@ export class MatchSession {
     }
     const ref = this.cam.mode === 'card' ? this.view.refState : null;
     this.trackHold();
-    this.cam.update(this.paused ? 0 : dt, {
-      ...focus,
-      ax, az, avx, avz, subject, group, groupFacing, lockAngle, close,
-      setPiece: this.replay ? null : focus.setPiece,
-      hold: !this.replay && focus.hold,
-      card: ref ? { rx: ref.x, rz: ref.z, fx: ref.faceX, fz: ref.faceZ } : null,
-    }, this.time);
+    // (The focus object is reused frame to frame: filled in place, never spread into a new one.)
+    focus.ax = ax;
+    focus.az = az;
+    focus.avx = avx;
+    focus.avz = avz;
+    focus.subject = subject;
+    focus.group = group;
+    focus.groupFacing = groupFacing;
+    focus.lockAngle = lockAngle;
+    focus.close = close;
+    if (this.replay) focus.setPiece = null;
+    focus.hold = !this.replay && focus.hold;
+    if (ref) {
+      const cf = this.cardFocus;
+      cf.rx = ref.x;
+      cf.rz = ref.z;
+      cf.fx = ref.faceX;
+      cf.fz = ref.faceZ;
+      focus.card = cf;
+    } else focus.card = null;
+    // A big chance: the broadcast lens pushes in and leans towards the goal (see CHANCE_S).
+    this.updateChance();
+    this.cam.viewH = typeof window !== 'undefined' ? window.innerHeight : 720;
+    this.cam.update(this.paused ? 0 : dt, focus, this.time);
     // Low cameras (over the set-piece taker's shoulder, the shootout) drop the name tag and arrow, which would
     // otherwise float over the goal mouth; the referee close-up drops the marker altogether.
     this.view.setMarkerMode(this.cam.mode === 'card' ? 'off' : this.cam.behindActive || this.cam.mode === 'penalty' ? 'ring' : 'full');
@@ -727,6 +849,8 @@ export class MatchSession {
       this.hud?.setCinematic(cine);
     }
     this.updateFades(ref, this.paused ? 0 : dt);
+    // Shadow budget: on the lower settings only the players nearest the ball cast (see MatchView).
+    this.view.setShadowBudget(this.world.quality === 'high' ? null : this.world.quality === 'medium' ? 6 : 0);
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
     this.stadium.updateGlare(this.world.camera);
     if (this.weather.kind === 'rain' && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ, 22, 15, 90, this.world.camera.position);
@@ -737,6 +861,13 @@ export class MatchSession {
     this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time, this.world.camera.position);
     this.updateAtmosphere(dt);
     this.updateHud(dt);
+    this.updateGhost(this.paused ? 0 : dt);
+    this.flash.update(this.paused ? 0 : dt);
+    this.clips.update(this.paused ? 0 : dt);
+    // The clip of a goal with no replay: the celebration, until the kick-off.
+    if (this.clipLive && this.clips.recording && m.phase !== 'goal') this.endClip();
+    if (this.posterWanted) this.takePoster();
+    this.anyPress = false;
   }
 
   /** Goal → celebration → replay → kick-off; half/full time callbacks. */
@@ -833,8 +964,9 @@ export class MatchSession {
     if (!o && (m.phase === 'halftime' || m.phase === 'fulltime')) o = { won: false, stars: 0, secondsLeft: 0 };
     if (!o) return;
     mo.outcome = o;
-    // No replay of the goal that settled it: the celebration, then the verdict.
+    // No replay of the goal that settled it: the celebration, then the verdict (its clip is the celebration).
     this.replayWanted = false;
+    if (m.phase === 'goal' && this.clipName && !this.clips.recording) this.startClip(true);
     // Settled in open play (time up, a concession): straight to the verdict. A goal: after its celebration.
     if (m.phase !== 'goal') this.finishMoment();
   }
@@ -966,15 +1098,200 @@ export class MatchSession {
         break;
       case 'apex':
         // The top of the backflip: the picture holds a couple of frames (the tuck, upside down, reads).
-        this.hitStop = Math.max(this.hitStop, HIT_STOP_APEX);
+        this.hold(HIT_STOP_APEX);
         break;
       default:
         break;
     }
   }
 
+  // ------------------------------------------------------------------ juice helpers
+
+  /** Note a kick's trail style at the session time its frame is stamped with (replays look it up). */
+  private logKick(style: TrailStyle): void {
+    const i = this.kickLogI;
+    this.kickLogT[i] = this.time;
+    this.kickLogS[i] = style;
+    this.kickLogI = (i + 1) % KICK_LOG;
+  }
+
+  /** The trail style of the last kick at or before session time `t` (a replayed frame's own stamp). */
+  private styleAt(t: number): TrailStyle {
+    let best = -1;
+    let bt = -Infinity;
+    for (let i = 0; i < KICK_LOG; i++) {
+      const k = this.kickLogT[i];
+      if (k <= t + 1e-4 && k > bt) {
+        bt = k;
+        best = i;
+      }
+    }
+    return best >= 0 ? this.kickLogS[best] : 'strike';
+  }
+
+  /**
+   * A big chance for the camera (see CHANCE_S): a shot struck at goal from within CHANCE_RANGE, still loose and
+   * going goalwards; and the goal's own wide shot (the ball in the net) before the cut to the scorer.
+   */
+  private updateChance(): void {
+    const m = this.match;
+    const cam = this.cam;
+    let c = 0;
+    if (!this.replay && m.phase === 'play' && m.shotClock < CHANCE_S && m.ball.owner < 0 && !m.ball.held) {
+      const ad = m.attackDir(m.shotSide);
+      const b = m.ball;
+      if (b.vel.x * ad >= CHANCE_MS && Math.abs(ad * HALF_L - b.pos.x) < CHANCE_RANGE && Math.abs(b.pos.z) < HALF_W * 0.8) {
+        c = 1;
+        cam.chanceGoal = ad;
+      }
+    } else if (!this.replay && m.phase === 'goal' && m.phaseT < GOAL_WIDE_S) {
+      c = 1;
+      cam.chanceGoal = Math.sign(m.ball.pos.x) || 1;
+    }
+    cam.chance = c;
+  }
+
+  /**
+   * Set-piece ghost arc (Easy / Normal): while the human lines up a free kick, corner or penalty (or his
+   * shootout kick), a dotted preview of the ball's path for the aim and power on right now (game/ghostArc.ts),
+   * fading once it is struck.
+   */
+  private updateGhost(dt: number): void {
+    const m = this.match;
+    const hs = m.cfg.humanSide;
+    const want = !this.demo && hs >= 0 && m.cfg.difficulty <= GHOST_MAX_DIFFICULTY;
+    if (!want) return;
+    const g = (this.ghost ??= this.makeGhost());
+    const L = this.ghostLaunch();
+    if (L) g.show(this.ghostPath, flyGhost(L, this.ghostPath));
+    else g.release();
+    if (this.replay || this.cam.mode === 'card') g.clear();
+    g.update(dt, this.world.camera.position);
+  }
+
+  private makeGhost(): GhostArc {
+    const g = new GhostArc();
+    this.view.group.add(g.mesh);
+    return g;
+  }
+
+  /** The launch the human's set piece would have if struck now, or null when there's nothing to preview. */
+  private ghostLaunch(): GhostLaunch | null {
+    const m = this.match;
+    const hs = m.cfg.humanSide as Side;
+    const b = m.ball.pos;
+    const out = this.ghostL;
+    const so = m.phase === 'shootout' ? m.shootout : null;
+    if (so) {
+      if (so.turn !== hs || (so.stage !== 'aim' && so.stage !== 'intro')) return null;
+      const t = m.players[so.taker];
+      const p = m.shootCharge > 0.04 ? clamp(m.shootCharge / SHOOT_BAR, 0.45, 1) : 0.6;
+      return penaltyGhost(b.x, b.y, b.z, so.goal * HALF_L, so.aimZ, p, t.stat.shooting / 100, out);
+    }
+    const r = m.restart;
+    if (m.phase !== 'restart' || !r || r.side !== hs) return null;
+    if (r.kind !== 'freekick' && r.kind !== 'corner' && r.kind !== 'penalty') return null;
+    if (this.cam.mode !== 'broadcast' || this.introLeft > 0) return null;
+    const t = m.players[r.taker];
+    const ad = m.attackDir(hs);
+    const gx = ad * HALF_L;
+    const acc = t.stat.shooting / 100;
+    const fx = Math.cos(t.facing);
+    const fz = Math.sin(t.facing);
+    const shoot = m.shootCharge > 0.04;
+    const through = m.throughCharge > 0.04;
+    const cross = isCrossingRestart(m, r);
+    if (r.kind === 'penalty' || (r.kind === 'freekick' && !cross && !through)) {
+      // A strike at goal along the aim arrow (where it meets the goal line), at the power charged so far.
+      const az = m.aimOnGoalLine(t);
+      const aimZ = az ?? clamp(b.z, -GOAL_W / 2, GOAL_W / 2);
+      const p = shoot ? clamp(m.shootCharge / SHOOT_BAR, 0.45, 1) : 0.6;
+      return strikeLaunch(b.x, b.y, b.z, gx, aimZ, p, acc, out);
+    }
+    // A lofted delivery: along the aim when he has one, else at the box; its carry from the THROUGH charge (a
+    // corner's SHOOT is the driven cross).
+    const pw = through ? clamp(m.throughCharge / 0.8, 0.3, 1) : 0.7;
+    const driven = r.kind === 'corner' && shoot;
+    const aimed = Math.abs(wrapAngle(t.facing - m.restartAim)) > 0.04;
+    let tx: number;
+    let tz: number;
+    if (aimed || r.kind === 'freekick') {
+      const reach = 16 + pw * 24;
+      tx = b.x + fx * reach;
+      tz = b.z + fz * reach;
+    } else {
+      tx = ad * (HALF_L - 8);
+      tz = clamp(-Math.sign(b.z) * 2, -4, 4);
+    }
+    return lobLaunch(b.x, b.y, b.z, tx, tz, driven ? 0.65 : pw, driven, out);
+  }
+
+  /** Start this goal's clip: `live` the celebration (no replay), else the replay about to roll. */
+  private startClip(live: boolean): void {
+    if (!this.clipName || this.clips.recording) return;
+    const cv = (this.world as { canvas?: HTMLCanvasElement }).canvas;
+    if (!cv) return;
+    const audio = sfx.captureStream();
+    const ok = this.clips.start(cv, `${this.clipName}.webm`, audio, () => sfx.endCapture());
+    if (!ok) sfx.endCapture();
+    this.clipLive = ok && live;
+  }
+
+  private endClip(): void {
+    this.clipLive = false;
+    this.clipName = '';
+    this.clips.stop();
+  }
+
+  /**
+   * The goal's poster frame: this frame's picture, copied as it is drawn (no extra render) into a small canvas
+   * (at most POSTER_W wide) and encoded to JPEG off the frame loop.
+   */
+  private takePoster(): void {
+    this.posterWanted = false;
+    const cv = (this.world as { canvas?: HTMLCanvasElement }).canvas;
+    const w = this.world as { onNextRender?: (fn: () => void) => void };
+    if (!cv || typeof document === 'undefined' || typeof w.onNextRender !== 'function') return;
+    // (A WebGL canvas is only readable in the task that drew it: straight after the frame is drawn.)
+    w.onNextRender(() => {
+      try {
+        const k = Math.min(1, POSTER_W / Math.max(1, cv.width));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(cv.width * k));
+        c.height = Math.max(1, Math.round(cv.height * k));
+        const g = c.getContext('2d');
+        if (!g) return;
+        g.drawImage(cv, 0, 0, c.width, c.height);
+        c.toBlob((b) => {
+          if (b) this.poster = b;
+        }, 'image/jpeg', 0.88);
+      } catch {
+        // (No poster on a browser that won't read the canvas back.)
+      }
+    });
+  }
+
+  /** The human's last goal as a clip (webm), or null (none yet, or this browser can't record). */
+  lastClip(): Clip | null {
+    return this.clips.last;
+  }
+
+  /** Can this browser record goal clips? */
+  clipSupported(): boolean {
+    return clipSupported();
+  }
+
+  /** A still of the human's last goal (JPEG, the moment it went in), or null. */
+  lastPoster(): Blob | null {
+    return this.poster;
+  }
+
   private startReplay(): void {
     this.view.celeb.end();
+    // A flash cut into the replay (the wash clears in ~0.2 s) and, for the human's goal, the clip rolls.
+    this.flash.play(0xfbfbf4, 0.85, 0.22);
+    this.ghost?.clear();
+    if (this.clipName && !this.clips.recording) this.startClip(false);
     const lead = Math.round(REPLAY_LEAD_S * 60);
     const tail = Math.round(REPLAY_TAIL_S * 60);
     const since = this.recorded - this.goalFrame;
@@ -1021,14 +1338,18 @@ export class MatchSession {
     this.replayT += dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE);
     const i = Math.floor(idx);
     const c = this.input.read();
-    const btn = c.pass || c.shoot || c.through;
-    const skip = btn && !this.prevButtons;
+    const btn = c.pass || c.shoot || c.through || c.sprint || !!(c as { power?: boolean }).power;
+    // Any input skips it: a button, any key, a tap on the picture or a touch button.
+    const skip = (btn && !this.prevButtons) || this.anyPress;
     this.prevButtons = btn;
     if (i >= frames.length - 1 || skip) {
       this.replay = null;
       this.replayDone = true;
       this.hud?.setReplay(false);
       this.cam.setMode('broadcast');
+      // Out of the replay with the same quick flash cut; the clip ends with it.
+      this.flash.play(0xfbfbf4, 0.7, 0.18);
+      this.endClip();
       this.flow(dt);
       return;
     }
@@ -1056,7 +1377,27 @@ export class MatchSession {
       }
       switch (e.type) {
         case 'kick': {
-          sfx.kick(e.power, e.kind === 'header');
+          const kicker = m.ball.lastTouch;
+          // A strike he never had under control first (a volley, a one-touch finish): the sim executes it at
+          // the contact, with the ball still loose.
+          const firstTime = kicker >= 0 && this.ownerBefore !== kicker;
+          // Sound: the layered strike for a shot (with the crowd's "oooh" if it's on target), the header's own
+          // thock, the plain boot for everything else.
+          if (e.kind === 'header') sfx.header(e.power);
+          else if (e.kind === 'shot') sfx.shot(e.power, m.shotOnTarget);
+          else sfx.kick(e.power);
+          // The trail it leaves (juice.ts kickTrailStyle), logged for the replay.
+          this.trailStyle = kickTrailStyle(e.kind, e.power, e.y, firstTime);
+          this.logKick(this.trailStyle);
+          // Struck hard: the ball flashes white and pops (a throw is no strike).
+          if (e.power >= HARD_STRIKE && e.kind !== 'throw' && e.kind !== 'keeper') this.view.flashBall();
+          if (e.kind === 'header' && kicker >= 0) {
+            // Off the head: chunky bits in his kit colour.
+            const kit = this.opt.kits[m.players[kicker].side];
+            this.effects.chunks(e.x, e.y, e.z, [kit.shirt, kit.shirt2, 0xfbfbf4], 6 + Math.round(e.power * 6), 3 + e.power * 3, 1.2);
+          }
+          // The mega ball struck (blitz: its powerupEnd came just before this kick): the picture jolts.
+          if (e.kind === 'shot' && this.time - this.megaShotT < 0.05) this.cam.shakePx(SHAKE_PX.mega);
           if (m.ball.lastTouch >= 0) {
             const kp = m.players[m.ball.lastTouch];
             if (e.kind === 'shot' || (e.kind === 'header' && m.shotClock < 0.05)) this.tally.get(kp.idx).shots++;
@@ -1096,6 +1437,14 @@ export class MatchSession {
           const golden = this.goldenGoalArmed;
           this.goldenGoalArmed = false;
           sfx.goal();
+          // The human's goal: a poster frame now (the impact, on the hold) and a clip (the replay, or the
+          // celebration when no replay rolls).
+          const ours = human >= 0 && e.side === human && !this.demo;
+          this.clipName = ours ? `blocky-league-goal-${m.minute()}min` : '';
+          if (ours) {
+            this.posterWanted = true;
+            if (!this.replayWanted) this.startClip(true);
+          }
           const side = e.side;
           const s = m.teams[side];
           const scorer = m.players[e.scorer];
@@ -1110,14 +1459,16 @@ export class MatchSession {
           const gx = Math.sign(m.ball.pos.x) * HALF_L;
           // Juice: a hold on the impact frame, a decaying shake, the net rippling, a fat burst in the scorer's
           // colours out of the goal mouth, confetti from the roof and the ground and the whole bowl flashing.
-          this.hitStop = HIT_STOP_GOAL;
+          this.hold(HIT_STOP_GOAL);
+          this.view.flashBall();
           this.effects.burst(gx, 1.5, m.ball.pos.z, cols, 90, 13, 2.4);
           this.effects.burst(gx - Math.sign(gx) * 2, 0.3, m.ball.pos.z, cols, 50, 9, 2);
           this.effects.confetti(gx * 0.7, 0, cols, 320, 60);
           this.stadium.punchNet(gx, Math.max(0.6, Math.min(2, m.ball.pos.y)), m.ball.pos.z, 24);
           this.stadium.flashBurst(golden ? 90 : 60);
           if (golden) this.effects.burst(gx - Math.sign(gx) * 3, 2.4, m.ball.pos.z, [0xffd23a, 0xfff0b0, 0xffb300], 70, 11, 3);
-          this.cam.kick(SHAKE_GOAL);
+          this.cam.shakePx(SHAKE_PX.goal);
+          this.cam.kick(0.12);
           this.view.setMarkerVisible(false);
           this.celebG = 0;
           this.startCelebration(side);
@@ -1127,20 +1478,62 @@ export class MatchSession {
         case 'whistle':
           sfx.whistle(e.kind);
           break;
-        case 'post':
-          sfx.post(e.speed);
+        case 'post': {
+          // Off the woodwork: a hold on the clang, the picture jolting, the ball flashing and white chips of
+          // paint flying back off the frame (a softer knock holds and shakes less).
+          // (The sim reports the pace into the post; the ball's own pace says how hard it was struck.)
+          const hit = Math.max(e.speed, this.ballSpeedBefore);
+          const slow = hit <= SLOW_POST;
+          sfx.post(hit);
           this.hud?.toastMsg('OFF THE WOODWORK!');
+          this.hold(slow ? HIT_STOP.postSlow : HIT_STOP.post);
+          this.cam.shakePx(slow ? SHAKE_PX.postSlow : SHAKE_PX.post);
           this.cam.kick(0.08);
+          this.view.flashBall();
+          const bits = impactBits(hit, 8, 0.8, 30);
+          this.effects.chunks(e.x, e.y, e.z, POST_BITS, bits.n, bits.v, 1.5, -Math.sign(e.x || 1) * 0.6, 0.3, 0);
+          this.effects.sparks(e.x, e.y, e.z, POST_BITS, 8, bits.v * 1.3, 0.18, 4);
           break;
+        }
         case 'save': {
           this.tally.get(e.keeper).saves++;
-          sfx.save();
           const k = m.players[e.keeper];
+          // A real save (a shot on its way in): a hold on the gloves, the keeper lit up, the gasp.
+          const big = m.shotClock < 2;
+          sfx.save(e.caught, big);
           this.effects.dust(k.pos.x, k.pos.z, 8, 0.7);
-          if (m.shotClock < 2) {
+          const gk = this.opt.kits[k.side].gk;
+          const b = m.ball.pos;
+          this.effects.chunks(b.x, Math.max(0.3, b.y), b.z, [gk, 0xfbfbf4], big ? 10 : 5, big ? 4.5 : 3, 1.3);
+          if (big) {
             this.hud?.toastMsg(e.caught ? 'GREAT SAVE!' : 'PARRIED!');
             sfx.saveFlash(e.caught);
             sfx.cheer(0.6);
+            this.hold(HIT_STOP.save);
+            this.view.flashPlayer(e.keeper, KEEPER_FLASH_FRAMES);
+            this.cam.kick(0.06);
+          }
+          break;
+        }
+        case 'block': {
+          // Cannoned off a man: bits in his kit colour where it hit him, and a body thud.
+          const by = m.players[e.by];
+          if (by) {
+            const kit = this.opt.kits[by.side];
+            const sp = Math.hypot(m.ball.vel.x, m.ball.vel.z);
+            const bits = impactBits(sp, 4, 0.35, 14);
+            this.effects.chunks(e.x, Math.max(0.5, m.ball.pos.y), e.z, [kit.shirt, kit.shirt2, 0xfbfbf4], bits.n, bits.v, 1.2);
+            sfx.block(e.shot);
+            if (e.shot) this.view.flashPlayer(e.by, PLAYER_FLASH_FRAMES);
+          }
+          break;
+        }
+        case 'claim': {
+          const k = m.players[e.keeper];
+          if (k) {
+            const b = m.ball.pos;
+            this.effects.chunks(b.x, Math.max(0.5, b.y), b.z, [this.opt.kits[k.side].gk, 0xfbfbf4], 4, 2.5, 1.1);
+            sfx.save(e.caught, false);
           }
           break;
         }
@@ -1156,15 +1549,26 @@ export class MatchSession {
           if (e.slide && !e.won) break;
           if (e.won) {
             this.tally.get(e.by).tackles++;
-            // WON IT: the picture holds on the impact, the camera punches, a burst in his colours at the ball.
-            this.hitStop = HIT_STOP_TACKLE;
+            // WON IT: the picture holds on the impact (a slide that connects longest), the camera punches, a
+            // heavy one shakes the picture, the man who lost it flashes white, a burst in the winner's colours.
+            const ob = this.ownerBefore;
+            const victim = ob >= 0 && ob < m.players.length && m.players[ob].side !== p.side ? m.players[ob] : null;
+            const closing = victim ? Math.hypot(p.vel.x - victim.vel.x, p.vel.z - victim.vel.z) : p.speed();
+            const heavy = e.slide || closing >= HEAVY_TACKLE_MS;
+            this.hold(e.slide ? HIT_STOP.slide : HIT_STOP_TACKLE);
             this.cam.kick(PUNCH_TACKLE);
+            if (heavy) this.cam.shakePx(e.slide ? SHAKE_PX.slide : SHAKE_PX.tackleHeavy);
             const kit = this.opt.kits[p.side];
             const b = m.ball.pos;
             this.effects.burst(b.x, Math.max(0.25, b.y), b.z, [kit.shirt, kit.shirt2, 0xfbfbf4], 30, 7, 1.6);
             this.effects.dust(b.x, b.z, 8, 0.9, p.vel.x * 0.3, p.vel.z * 0.3);
             this.effects.grass(p.pos.x, p.pos.z, e.slide ? 12 : 6, e.slide ? 0.8 : 0.5);
-            sfx.thump();
+            if (victim) {
+              this.view.flashPlayer(victim.idx, PLAYER_FLASH_FRAMES);
+              const vk = this.opt.kits[victim.side];
+              this.effects.chunks(victim.pos.x, 0.6, victim.pos.z, [vk.shirt, vk.shirt2], 6, 3.5, 1.1);
+            }
+            sfx.tackleHit(heavy);
           } else {
             // Missed: a scuff of boot on grass. In blitz, a challenge that bounced off a shielded carrier (or
             // was thrown by a frozen tackler) bonks off the bubble instead.
@@ -1180,9 +1584,15 @@ export class MatchSession {
           }
           break;
         }
-        case 'bounce':
+        case 'bounce': {
           sfx.bounce(e.speed);
+          // Turf kicked up where it lands, more the harder it comes down.
+          if (e.speed > 3.5) {
+            const b = m.ball.pos;
+            this.effects.grass(b.x, b.z, impactBits(e.speed, -1, 0.9, 14).n, Math.min(1, e.speed / 12));
+          }
           break;
+        }
         case 'net':
           this.stadium.punchNet(e.x, e.y, e.z, e.speed);
           sfx.net(e.speed);
@@ -1241,6 +1651,15 @@ export class MatchSession {
         case 'foul': {
           const on = m.players[e.on];
           const by = m.players[e.by];
+          // The contact: a thump and a grunt (the sim blows the whistle), the man brought down flashing white; a
+          // slide that connects holds the picture and shakes it.
+          const slide = by.state === 'slide';
+          sfx.tackleHit(slide);
+          this.view.flashPlayer(e.on, PLAYER_FLASH_FRAMES);
+          if (slide) {
+            this.hold(HIT_STOP.slide);
+            this.cam.shakePx(SHAKE_PX.slide);
+          }
           this.foulOn = e.on;
           this.foulAt = { x: on.pos.x, z: on.pos.z };
           this.foulBy = { x: by.pos.x, z: by.pos.z };
@@ -1384,20 +1803,32 @@ export class MatchSession {
         if (turbo && Math.random() < 0.5) fx.sparks(x - ux * 0.3, 0.3 * k, z - uz * 0.3, [POWER_COLOR.turbo, POWER_LIGHT.turbo], 1, 3, 0.2, 2);
       }
     }
-    // The ball: a short white trail at real pace; a fireball when it is the mega ball.
+    // The ball's trail: nothing under TRAIL_FROM m/s, growing to full strength at TRAIL_FULL (more bits, bigger,
+    // longer-lived), in the look of what last struck it (juice.ts: white off a boot, lighter and longer off a
+    // long pass, a cyan glow off a head, a volley or a first-time strike); a fireball when it is the mega ball.
     const bx = f[BALL_OFS], by = f[BALL_OFS + 1], bz = f[BALL_OFS + 2];
     const bvx = f[BALL_OFS + 3], bvy = f[BALL_OFS + 4], bvz = f[BALL_OFS + 5];
     const bs = Math.hypot(bvx, bvy, bvz);
     const hot = this.megaHot && !this.replay;
-    if (bs > BALL_TRAIL_MS || (hot && bs > 2)) {
-      this.ballFxAcc += dt * (hot ? 90 : 60);
+    // (Controlled again: back to the plain look for whatever strikes it next.)
+    if (f[BALL_OFS + 7] >= 0 && !this.replay) this.trailStyle = 'strike';
+    const tk = trailStrength(bs);
+    if (tk > 0 || (hot && bs > 2)) {
+      const style = this.replay ? this.styleAt(f[BALL_OFS + 9]) : this.trailStyle;
+      const look = TRAIL_LOOK[style];
+      this.ballFxAcc += dt * (hot ? 90 : look.rate * (0.35 + 0.65 * tk));
       while (this.ballFxAcc >= 1) {
         this.ballFxAcc -= 1;
         // Placed back along the path, so the trail starts at the ball rather than inside it.
-        const back = Math.random() * 0.5;
+        const back = Math.random() * (style === 'long' ? 0.8 : 0.5);
         const px = bx - (bvx / bs) * back, py = Math.max(0.1, by - (bvy / bs) * back), pz = bz - (bvz / bs) * back;
         if (hot) fx.fire(px, py, pz, 2, -bvx * 0.04, 0, -bvz * 0.04);
-        else fx.spawn(px, py, pz, 0, 0, 0, 0xffffff, 0.09 + Math.min(0.06, (bs - BALL_TRAIL_MS) * 0.004), 0.16, 0, 0);
+        else {
+          const col = look.colors[(Math.random() * look.colors.length) | 0];
+          fx.trailBit(px, py, pz, col, look.size * (0.55 + 0.45 * tk), look.life * (0.6 + 0.4 * tk));
+          // The glow's hot core: a few sparks shed off it.
+          if (style === 'glow' && Math.random() < 0.25 * tk) fx.sparks(px, py, pz, look.colors, 1, 2, 0.16, 0);
+        }
       }
     } else this.ballFxAcc = 0;
   }
@@ -1428,7 +1859,10 @@ export class MatchSession {
         this.frozenT = FREEZE_MAX_S;
         this.cam.kick(0.06);
       }
-      if (e.kind === 'mega') this.cam.kick(0.05);
+      if (e.kind === 'mega') {
+        this.cam.kick(0.05);
+        this.cam.shakePx(SHAKE_PX.mega * 0.6);
+      }
     } else if (e.type === 'powerupEnd') {
       sfx.powerEnd();
       if (e.kind === 'freeze') this.frozenSide = -1;
@@ -1466,16 +1900,21 @@ export class MatchSession {
     // Per-player effects.
     this.frozenT = Math.max(0, this.frozenT - dt);
     if (this.frozenT <= 0) this.frozenSide = -1;
-    const turboSide = [false, false];
-    const frozenSide = [this.frozenSide === 0, this.frozenSide === 1];
+    const turboSide = this.bzTurbo;
+    const frozenSide = this.bzFrozen;
+    turboSide[0] = turboSide[1] = false;
+    frozenSide[0] = this.frozenSide === 0;
+    frozenSide[1] = this.frozenSide === 1;
     let hot = false;
     const ball = m.ball;
     const bxp = f[BALL_OFS], byp = f[BALL_OFS + 1], bzp = f[BALL_OFS + 2];
     bz.beginBubbles();
     // (The sim sets Player.boost on a whole side: the bubble goes round that side's carrier alone, and the
     // magnet's sparks between the ball and the boot of the one man on it or nearest it.)
-    const magnetMan: [number, number] = [-1, -1];
-    const magnetD: [number, number] = [Infinity, Infinity];
+    const magnetMan = this.bzMagMan;
+    const magnetD = this.bzMagD;
+    magnetMan[0] = magnetMan[1] = -1;
+    magnetD[0] = magnetD[1] = Infinity;
     for (const p of m.players) {
       if (p.boost !== 'magnet') continue;
       const d = ball.owner === p.idx ? -1 : Math.hypot(f[p.idx * PF] - bxp, f[p.idx * PF + 1] - bzp);
@@ -1527,9 +1966,9 @@ export class MatchSession {
     this.megaHot = hot || this.megaFlyT > 0;
     this.view.setBallHot(this.megaHot);
     if (hot) this.effects.fire(bxp, byp + 0.1, bzp, 1);
-    for (const side of [0, 1] as const) {
+    for (let side = 0; side < 2; side++) {
       const kind: PowerUpKind | null = turboSide[side] ? 'turbo' : frozenSide[side] ? 'freeze' : null;
-      if (bz.sideGlows[side] !== kind) bz.setSideGlow(side, kind);
+      if (bz.sideGlows[side] !== kind) bz.setSideGlow(side as Side, kind);
     }
     bz.updateSideGlow(f, PF, k, time);
   }
@@ -1621,8 +2060,11 @@ export class MatchSession {
       return;
     }
     const m = this.match;
-    const keep: number[] = [];
-    const sight: { x: number; z: number }[] = [];
+    const keep = this.fadeKeep;
+    const sight = this.fadeSight;
+    keep.length = 0;
+    sight.length = 0;
+    const pool = this.sightPool;
     if (cam.mode === 'card') {
       if (this.cardPlayer >= 0) keep.push(this.cardPlayer);
       if (this.cardVictim >= 0) keep.push(this.cardVictim);
@@ -1633,7 +2075,14 @@ export class MatchSession {
       if (ref) {
         const mx = (ref.x + ref.faceX) / 2;
         const mz = (ref.z + ref.faceZ) / 2;
-        for (const [x, z] of [[ref.x, ref.z], [mx, mz], [ref.faceX, ref.faceZ]]) sight.push({ x: lx + (x - lx) * 1.6, z: lz + (z - lz) * 1.6 });
+        for (let k = 0; k < 3; k++) {
+          const x = k === 0 ? ref.x : k === 1 ? mx : ref.faceX;
+          const z = k === 0 ? ref.z : k === 1 ? mz : ref.faceZ;
+          const q = pool[k];
+          q.x = lx + (x - lx) * 1.6;
+          q.z = lz + (z - lz) * 1.6;
+          sight.push(q);
+        }
       }
     } else if (cam.mode === 'penalty' && m.shootout) keep.push(m.shootout.taker);
     else if (cam.mode === 'replay') {
@@ -1656,7 +2105,12 @@ export class MatchSession {
         }
       }
       if (best >= 0) keep.push(best);
-      if (cam.replayShot === 'goal') sight.push({ x: bx, z: bz });
+      if (cam.replayShot === 'goal') {
+        const q = pool[3];
+        q.x = bx;
+        q.z = bz;
+        sight.push(q);
+      }
     } else if (cam.behindActive && m.restart && !this.replay) keep.push(m.restart.taker);
     // The card close-up is a clean two-shot: everyone (but the pair and the man held in the background)
     // standing no further from the lens than the booked player is cleared out of the frame.
@@ -1671,13 +2125,19 @@ export class MatchSession {
     this.view.fadeNearLens(lens.x, lens.z, radius, floor, keep, sight, card ? 1.3 : 0.85, card, dt, cam.justCut);
   }
 
+  /** How far (0..1) the ball is towards the goal `side` attacks (past the first fifth of that half). */
+  private toward(side: Side): number {
+    const m = this.match;
+    return clamp(((m.ball.pos.x * m.attackDir(side)) / HALF_L - 0.2) / 0.8, 0, 1);
+  }
+
   private updateAtmosphere(dt: number): void {
     const m = this.match;
-    const bx = m.ball.pos.x;
     // Fans lift as the ball nears the goal their team attacks.
-    const toward = (side: Side) => clamp(((bx * m.attackDir(side)) / HALF_L - 0.2) / 0.8, 0, 1);
-    let h0 = 0.12 + toward(0) * 0.35;
-    let h1 = 0.12 + toward(1) * 0.35;
+    const t0 = this.toward(0);
+    const t1 = this.toward(1);
+    let h0 = 0.12 + t0 * 0.35;
+    let h1 = 0.12 + t1 * 0.35;
     if (this.goalHypeT > 0) {
       this.goalHypeT -= dt;
       if (m.goalSide === 0) h0 = 1;
@@ -1687,7 +2147,29 @@ export class MatchSession {
       h0 = h1 = 0.3;
     }
     this.stadium.setHype(h0, h1, dt);
-    sfx.setExcitement(clamp(Math.max(toward(0), toward(1)) * 0.8 + (this.goalHypeT > 0 ? 0.6 : 0), 0, 1));
+    sfx.setExcitement(clamp(Math.max(t0, t1) * 0.8 + (this.goalHypeT > 0 ? 0.6 : 0), 0, 1));
+    // The crowd behind each goal: murmuring, then restless, then roaring as the ball (a carrier bearing down
+    // most of all) gets to their box; the whole end up after a goal there.
+    const b = m.ball;
+    const live = m.phase === 'play' && !this.replay;
+    const owner = b.owner >= 0 ? m.players[b.owner] : null;
+    let left = 0;
+    let right = 0;
+    if (live) {
+      for (let e = -1; e <= 1; e += 2) {
+        // The side attacking the goal at x = e * HALF_L.
+        const att: Side = m.attackDir(0) === e ? 0 : 1;
+        const heat = endHeat(Math.hypot(e * HALF_L - b.pos.x, b.pos.z), owner !== null && owner.side === att, owner === null && !b.held);
+        if (e < 0) left = heat;
+        else right = heat;
+      }
+    }
+    if (this.goalHypeT > 0 && m.phase === 'goal') {
+      if (m.ball.pos.x < 0) left = 1;
+      else right = 1;
+    }
+    sfx.setEnds(left, right);
+    sfx.tick(this.paused ? 0 : dt);
   }
 
   private updateHud(dt: number): void {
@@ -1752,10 +2234,8 @@ export class MatchSession {
     const incoming = m.ball.owner < 0 && m.passTarget >= 0 && m.players[m.passTarget].side === hs && m.kickSide === hs;
     // The context the touch buttons are labelled for right now: hints name the button on screen.
     const ctx: HintCtx = so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine || incoming ? 'attack' : 'defend';
-    const key = (k: HintKey): string =>
-      dev === 'gamepad' ? { pass: 'A', shoot: 'B', through: 'X' }[k]
-        : dev === 'touch' ? TOUCH_LABELS[ctx][k === 'pass' ? 0 : k === 'shoot' ? 1 : 2]
-          : { pass: 'SPACE', shoot: 'K', through: 'L' }[k];
+    this.hintCtx = ctx;
+    const key = this.keyName;
     let hint = '';
     const soAim = !!so && (so.stage === 'aim' || so.stage === 'intro');
     // Hold for power, let go to strike (never "SHOOT to shoot": the touch button already says SHOOT).
@@ -1823,6 +2303,14 @@ export class MatchSession {
     if (c && !this.paused) this.requestPause();
   }
 
+  /** The touch-button context the hints are worded for this frame (see updateHud). */
+  private hintCtx: HintCtx = 'attack';
+  /** The name of the button for `k` on the device in hand (bound once: the hints call it several times a frame). */
+  private readonly keyName = (k: HintKey): string => {
+    const dev = this.input.lastDevice;
+    return dev === 'gamepad' ? PAD_KEYS[k] : dev === 'touch' ? TOUCH_LABELS[this.hintCtx][k === 'pass' ? 0 : k === 'shoot' ? 1 : 2] : KEY_KEYS[k];
+  };
+
   /** Is the ball, or the controlled player (boots to head), drawn under the minimap (or within RADAR_MARGIN of it)? */
   private radarOccludes(dt: number): boolean {
     const hud = this.hud;
@@ -1839,24 +2327,24 @@ export class MatchSession {
     }
     const R = this.radarRect;
     if (!R) return false;
-    const cam = this.world.camera;
-    const v = (this.scratchV ??= cam.position.clone());
-    const W = window.innerWidth;
-    const H = window.innerHeight;
-    const under = (x: number, y: number, z: number): boolean => {
-      v.set(x, y, z).project(cam);
-      if (v.z > 1) return false;
-      const sx = ((v.x + 1) / 2) * W;
-      const sy = ((1 - v.y) / 2) * H;
-      return sx > R.l - RADAR_MARGIN && sx < R.r + RADAR_MARGIN && sy > R.t - RADAR_MARGIN && sy < R.b + RADAR_MARGIN;
-    };
     const f = this.view.frame;
-    if (under(f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2])) return true;
+    if (this.underRadar(R, f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2])) return true;
     const a = this.match.active;
     if (a < 0 || a >= 22) return false;
     const x = f[a * PF];
     const z = f[a * PF + 1];
-    return under(x, 0, z) || under(x, this.view.headTop * 0.5, z) || under(x, this.view.headTop, z);
+    return this.underRadar(R, x, 0, z) || this.underRadar(R, x, this.view.headTop * 0.5, z) || this.underRadar(R, x, this.view.headTop, z);
+  }
+
+  /** Is world point (x, y, z) drawn under the minimap's rectangle `R` (or within RADAR_MARGIN of it)? */
+  private underRadar(R: { l: number; t: number; r: number; b: number }, x: number, y: number, z: number): boolean {
+    const cam = this.world.camera;
+    const v = (this.scratchV ??= cam.position.clone());
+    v.set(x, y, z).project(cam);
+    if (v.z > 1) return false;
+    const sx = ((v.x + 1) / 2) * window.innerWidth;
+    const sy = ((1 - v.y) / 2) * window.innerHeight;
+    return sx > R.l - RADAR_MARGIN && sx < R.r + RADAR_MARGIN && sy > R.t - RADAR_MARGIN && sy < R.b + RADAR_MARGIN;
   }
 
   /**
@@ -1908,7 +2396,16 @@ export class MatchSession {
     const b = m.ball;
     const ours = m.cfg.humanSide >= 0 && b.lastTouchSide === m.cfg.humanSide;
     const flying = !b.held && b.owner < 0 && b.pos.y > 1.2 && m.kickKind !== 'shot' && m.kickKind !== 'header';
-    const down = off || !ours || !flying ? undefined : m.ballPath.find((q) => q.y <= BALL_R + 0.05);
+    let down: { x: number; z: number } | null = null;
+    if (!off && ours && flying) {
+      const path = m.ballPath;
+      for (let i = 0; i < path.length; i++) {
+        if (path[i].y <= BALL_R + 0.05) {
+          down = path[i];
+          break;
+        }
+      }
+    }
     if (!down) this.view.setLanding(false);
     else this.view.setLanding(true, down.x, down.z, this.time);
   }
@@ -2001,13 +2498,22 @@ export class MatchSession {
         sy = ((1 - v.y) / 2) * H;
       }
       const d = Math.hypot(x - bx, z - bz);
-      out.push({
-        idx: i, x: sx, y: sy, num: p.def.number,
-        alpha: 1 - (1 - EDGE_MIN_ALPHA) * smoothstep(EDGE_NEAR, EDGE_FAR, d),
-        pass: i === aim ? 1 : this.view.previewWeight(i), through: this.view.throughWeight(i),
-      });
+      // (Pooled: the same EdgeMate objects every frame, refilled.)
+      const q = (this.matePool[out.length] ??= { idx: 0, x: 0, y: 0, num: 0, alpha: 1, pass: 0, through: 0 });
+      q.idx = i;
+      q.x = sx;
+      q.y = sy;
+      q.num = p.def.number;
+      q.alpha = 1 - (1 - EDGE_MIN_ALPHA) * smoothstep(EDGE_NEAR, EDGE_FAR, d);
+      q.pass = i === aim ? 1 : this.view.previewWeight(i);
+      q.through = this.view.throughWeight(i);
+      out.push(q);
     }
-    const box = { l: EDGE_SIDE, t: Math.min(EDGE_TOP, H * 0.2), r: W - EDGE_SIDE, b: H - Math.min(EDGE_BOTTOM, H * 0.22) };
+    const box = this.edgeBox;
+    box.l = EDGE_SIDE;
+    box.t = Math.min(EDGE_TOP, H * 0.2);
+    box.r = W - EDGE_SIDE;
+    box.b = H - Math.min(EDGE_BOTTOM, H * 0.22);
     ea.update(out, this.edgeFade, box, this.edgeAvoid);
   }
 
@@ -2085,6 +2591,13 @@ export class MatchSession {
     sfx.setAmbienceActive(false);
     this.offKey?.();
     this.offKey = null;
+    this.offPointer?.();
+    this.offPointer = null;
+    this.clips.dispose();
+    sfx.endCapture();
+    this.ghost?.dispose();
+    this.ghost = null;
+    this.flash.dispose();
     this.blitz?.dispose();
     this.blitz = null;
     this.hud?.dispose();

@@ -7,12 +7,19 @@ interface Bit {
   life: number; max: number; size: number;
   gravity: number;
   drag: number;
-  /** A streak: stretched this many times its size along `dir` (radians on the ground), no tumble. */
-  stretch?: number;
-  dir?: number;
+  /** A streak: stretched this many times its size along `dir` (radians on the ground), no tumble (0: none). */
+  stretch: number;
+  dir: number;
   /** Grows (rather than shrinks) as it dies: a puff of dust or smoke. */
-  grow?: boolean;
+  grow: boolean;
 }
+
+/** Palettes (module constants: an emitter never allocates one per call). */
+const DUST = [0xe9dfc4, 0xd9cfb2, 0xf2ead6, 0xc9bf9f];
+const FIRE = [0xffe45c, 0xff9a1f, 0xff4a1a, 0xff2e12];
+const FROST = [0xe6f7ff, 0xa8e4ff, 0xffffff, 0x7fdcff];
+const GRASS = [0x8fcb4c, 0x7dbb3f, 0xa8dc62, 0x6fa838];
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 
 /** A cube with its face shading baked into vertex colours (top 1, sides 0.86-0.92, bottom 0.7): reads as a block unlit. */
 function shadedCube(): THREE.BufferGeometry {
@@ -28,10 +35,15 @@ function shadedCube(): THREE.BufferGeometry {
   return geo;
 }
 
-/** One pool of particles in one instanced mesh. */
+/**
+ * One pool of particles in one instanced mesh. Every slot owns its Bit for good (allocated once): a spawn fills
+ * a free slot's Bit in place, so particles never allocate in the frame loop.
+ */
 class Pool {
   readonly mesh: THREE.InstancedMesh;
-  readonly bits: (Bit | null)[];
+  /** Every slot's particle; `live[i]` says whether it is in flight. */
+  readonly bits: Bit[];
+  readonly live: Uint8Array;
   readonly free: number[] = [];
   private c = new THREE.Color();
 
@@ -39,21 +51,32 @@ class Pool {
     this.mesh = new THREE.InstancedMesh(geo, mat, capacity);
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = false;
-    this.bits = new Array(capacity).fill(null);
-    for (let i = capacity - 1; i >= 0; i--) this.free.push(i);
-    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    this.bits = [];
+    this.live = new Uint8Array(capacity);
     for (let i = 0; i < capacity; i++) {
-      this.mesh.setMatrixAt(i, zero);
+      this.bits.push({
+        x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, spin: 0, life: 0, max: 1, size: 0, gravity: 0, drag: 0, stretch: 0, dir: 0, grow: false,
+      });
+    }
+    for (let i = capacity - 1; i >= 0; i--) this.free.push(i);
+    for (let i = 0; i < capacity; i++) {
+      this.mesh.setMatrixAt(i, ZERO);
       this.mesh.setColorAt(i, this.c.setHex(0xffffff));
     }
   }
 
-  spawn(b: Bit, color: number): void {
+  /** A free slot's Bit, reset and marked live with `color` (null when the pool is full). */
+  take(color: number): Bit | null {
     const i = this.free.pop();
-    if (i === undefined) return;
-    this.bits[i] = b;
+    if (i === undefined) return null;
+    this.live[i] = 1;
+    const b = this.bits[i];
+    b.stretch = 0;
+    b.dir = 0;
+    b.grow = false;
     this.mesh.setColorAt(i, this.c.setHex(color));
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    return b;
   }
 }
 
@@ -86,18 +109,59 @@ export class Effects {
     return { lit: this.lit.capacity - this.lit.free.length, unlit: this.glow.capacity - this.glow.free.length };
   }
 
+  /** Fill a particle's motion (the pools' one writer). */
+  private static set(
+    b: Bit, x: number, y: number, z: number, vx: number, vy: number, vz: number, rx: number, ry: number, spin: number,
+    life: number, max: number, size: number, gravity: number, drag: number,
+  ): Bit {
+    b.x = x; b.y = y; b.z = z;
+    b.vx = vx; b.vy = vy; b.vz = vz;
+    b.rx = rx; b.ry = ry; b.spin = spin;
+    b.life = life; b.max = max; b.size = size;
+    b.gravity = gravity; b.drag = drag;
+    return b;
+  }
+
   spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number, color: number, size: number, life: number, gravity = 14, drag = 0.4, unlit = true): void {
-    (unlit ? this.glow : this.lit).spawn({
-      x, y, z, vx, vy, vz, rx: Math.random() * 6, ry: Math.random() * 6, spin: (Math.random() - 0.5) * 14,
-      life, max: life, size, gravity, drag,
-    }, color);
+    const b = (unlit ? this.glow : this.lit).take(color);
+    if (b) Effects.set(b, x, y, z, vx, vy, vz, Math.random() * 6, Math.random() * 6, (Math.random() - 0.5) * 14, life, life, size, gravity, drag);
   }
 
   /** A flat streak along the ground (speed lines): `len` m long, `size` thick, drifting with (vx, vz). */
   streak(x: number, y: number, z: number, dir: number, len: number, size: number, color: number, life: number, vx = 0, vz = 0): void {
-    this.glow.spawn({
-      x, y, z, vx, vy: 0, vz, rx: 0, ry: 0, spin: 0, life, max: life, size, gravity: 0, drag: 0, stretch: len / size, dir,
-    }, color);
+    const b = this.glow.take(color);
+    if (!b) return;
+    Effects.set(b, x, y, z, vx, 0, vz, 0, 0, 0, life, life, size, 0, 0);
+    b.stretch = len / size;
+    b.dir = dir;
+  }
+
+  /**
+   * Chunky impact bits (a ball off the woodwork, off a man, a keeper's gloves): `n` voxel chunks of `colors`
+   * from (x, y, z), flying out at up to `speed` m/s biased along (nx, ny, nz) (the way the ball came off; 0s:
+   * all round), `size` x a normal bit. Seen from the gantry: fat, fast, short-lived.
+   */
+  chunks(x: number, y: number, z: number, colors: readonly number[], n: number, speed: number, size = 1.6, nx = 0, ny = 0.6, nz = 0): void {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const e = Math.random() * 1.3 - 0.2;
+      const sp = speed * (0.45 + Math.random() * 0.55);
+      const b = this.glow.take(colors[i % colors.length]);
+      if (!b) return;
+      Effects.set(b, x, y, z,
+        Math.cos(a) * Math.cos(e) * sp + nx * speed * 0.6, Math.sin(e) * sp + ny * speed * 0.6 + 1.2, Math.sin(a) * Math.cos(e) * sp + nz * speed * 0.6,
+        Math.random() * 6, Math.random() * 6, (Math.random() - 0.5) * 18,
+        0.32 + Math.random() * 0.3, 0.62, (0.1 + Math.random() * 0.07) * size, 16, 1.2);
+    }
+  }
+
+  /**
+   * One bit of the ball's trail at (x, y, z): `size` m, `life` s, drifting with (vx, vy, vz); no gravity or tumble,
+   * it just shrinks away where the ball was.
+   */
+  trailBit(x: number, y: number, z: number, color: number, size: number, life: number, vx = 0, vy = 0, vz = 0): void {
+    const b = this.glow.take(color);
+    if (b) Effects.set(b, x, y, z, vx, vy, vz, Math.random() * 6, Math.random() * 6, 0, life, life, size, 0, 0);
   }
 
   /**
@@ -105,22 +169,22 @@ export class Effects {
    * (a boot planting hard, a slide, a keeper hitting the deck). `n` puffs, `power` 0..1 for spread and lift.
    */
   dust(x: number, z: number, n: number, power: number, vx = 0, vz = 0, y = 0.06): void {
-    const cols = [0xe9dfc4, 0xd9cfb2, 0xf2ead6, 0xc9bf9f];
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = (0.6 + Math.random() * 2) * (0.4 + power);
       // Low and wide: it spreads along the grass, lifting a little, and settles back (never up round the head).
-      this.glow.spawn({
-        x: x + (Math.random() - 0.5) * 0.35, y: y + Math.random() * 0.08, z: z + (Math.random() - 0.5) * 0.35,
-        vx: Math.cos(a) * sp + vx, vy: 0.25 + Math.random() * 0.8 * power, vz: Math.sin(a) * sp + vz,
-        rx: Math.random() * 6, ry: Math.random() * 6, spin: (Math.random() - 0.5) * 3,
-        life: 0.35 + Math.random() * 0.3, max: 0.6, size: 0.12 + Math.random() * 0.1 * (0.5 + power), gravity: 1.6, drag: 2.4, grow: true,
-      }, cols[i % 4]);
+      const b = this.glow.take(DUST[i % 4]);
+      if (!b) return;
+      Effects.set(b, x + (Math.random() - 0.5) * 0.35, y + Math.random() * 0.08, z + (Math.random() - 0.5) * 0.35,
+        Math.cos(a) * sp + vx, 0.25 + Math.random() * 0.8 * power, Math.sin(a) * sp + vz,
+        Math.random() * 6, Math.random() * 6, (Math.random() - 0.5) * 3,
+        0.35 + Math.random() * 0.3, 0.6, 0.12 + Math.random() * 0.1 * (0.5 + power), 1.6, 2.4);
+      b.grow = true;
     }
   }
 
   /** Sparks: fast, tiny, bright bits that fly out and die quickly (a magnet's crackle, a mega ball). */
-  sparks(x: number, y: number, z: number, colors: number[], n: number, speed: number, life = 0.25, gravity = 6): void {
+  sparks(x: number, y: number, z: number, colors: readonly number[], n: number, speed: number, life = 0.25, gravity = 6): void {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const e = (Math.random() - 0.3) * 1.4;
@@ -132,20 +196,20 @@ export class Effects {
 
   /** Fire: hot bits that rise and swell into smoke as they fade (the mega ball's tail). */
   fire(x: number, y: number, z: number, n: number, vx = 0, vy = 0, vz = 0): void {
-    const cols = [0xffe45c, 0xff9a1f, 0xff4a1a, 0xff2e12];
     for (let i = 0; i < n; i++) {
-      this.glow.spawn({
-        x: x + (Math.random() - 0.5) * 0.16, y: y + (Math.random() - 0.5) * 0.16, z: z + (Math.random() - 0.5) * 0.16,
-        vx: vx + (Math.random() - 0.5) * 1.2, vy: vy + 1 + Math.random() * 1.5, vz: vz + (Math.random() - 0.5) * 1.2,
-        rx: Math.random() * 6, ry: Math.random() * 6, spin: (Math.random() - 0.5) * 8,
-        life: 0.22 + Math.random() * 0.2, max: 0.4, size: 0.12 + Math.random() * 0.1, gravity: -3, drag: 1.5, grow: true,
-      }, cols[i % 4]);
+      const b = this.glow.take(FIRE[i % 4]);
+      if (!b) return;
+      Effects.set(b, x + (Math.random() - 0.5) * 0.16, y + (Math.random() - 0.5) * 0.16, z + (Math.random() - 0.5) * 0.16,
+        vx + (Math.random() - 0.5) * 1.2, vy + 1 + Math.random() * 1.5, vz + (Math.random() - 0.5) * 1.2,
+        Math.random() * 6, Math.random() * 6, (Math.random() - 0.5) * 8,
+        0.22 + Math.random() * 0.2, 0.4, 0.12 + Math.random() * 0.1, -3, 1.5);
+      b.grow = true;
     }
   }
 
   /** Frost: slow, pale-blue flakes that drift down round a frozen player. */
   frost(x: number, y: number, z: number, n: number): void {
-    const cols = [0xe6f7ff, 0xa8e4ff, 0xffffff, 0x7fdcff];
+    const cols = FROST;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = 0.25 + Math.random() * 0.45;
@@ -155,7 +219,7 @@ export class Effects {
   }
 
   grass(x: number, z: number, n: number, power: number): void {
-    const cols = [0x8fcb4c, 0x7dbb3f, 0xa8dc62, 0x6fa838];
+    const cols = GRASS;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 1 + Math.random() * 2.5 * power;
@@ -163,7 +227,7 @@ export class Effects {
     }
   }
 
-  confetti(cx: number, cz: number, colors: number[], n: number, spread: number): void {
+  confetti(cx: number, cz: number, colors: readonly number[], n: number, spread: number): void {
     for (let i = 0; i < n; i++) {
       const x = cx + (Math.random() - 0.5) * spread;
       const z = cz + (Math.random() - 0.5) * spread * 0.5;
@@ -173,7 +237,7 @@ export class Effects {
   }
 
   /** A burst of chunky bits from (x, y, z); `size` scales the bits (2+ for something seen from the gantry). */
-  burst(x: number, y: number, z: number, colors: number[], n: number, speed: number, size = 1): void {
+  burst(x: number, y: number, z: number, colors: readonly number[], n: number, speed: number, size = 1): void {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const e = Math.random() * 1.2;
@@ -211,13 +275,12 @@ export class Effects {
   }
 
   clear(): void {
-    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
     for (const p of [this.lit, this.glow]) {
       for (let i = 0; i < p.capacity; i++) {
-        if (p.bits[i]) {
-          p.bits[i] = null;
+        if (p.live[i]) {
+          p.live[i] = 0;
           p.free.push(i);
-          p.mesh.setMatrixAt(i, zero);
+          p.mesh.setMatrixAt(i, ZERO);
         }
       }
       p.mesh.instanceMatrix.needsUpdate = true;
@@ -232,14 +295,14 @@ export class Effects {
   private updatePool(p: Pool, dt: number): void {
     let dirty = false;
     for (let i = 0; i < p.capacity; i++) {
+      if (!p.live[i]) continue;
       const b = p.bits[i];
-      if (!b) continue;
       dirty = true;
       b.life -= dt;
       if (b.life <= 0) {
-        p.bits[i] = null;
+        p.live[i] = 0;
         p.free.push(i);
-        p.mesh.setMatrixAt(i, this.m4.makeScale(0, 0, 0));
+        p.mesh.setMatrixAt(i, ZERO);
         continue;
       }
       b.vy -= b.gravity * dt;
@@ -267,7 +330,7 @@ export class Effects {
       // Dust swells as it thins out (drawn as a shrinking cube it would read as a pebble).
       const sz = b.grow ? b.size * (1 + (1 - b.life / b.max) * 1.2) * Math.min(1, fade * 2) : b.size * fade;
       if (b.stretch) {
-        this.q.setFromAxisAngle(this.up, -(b.dir ?? 0));
+        this.q.setFromAxisAngle(this.up, -b.dir);
         this.m4.compose(this.v.set(b.x, b.y, b.z), this.q, this.s.set(sz * b.stretch * fade, sz * 0.5, sz));
       } else {
         this.q.setFromEuler(this.e.set(b.rx, b.ry, 0));

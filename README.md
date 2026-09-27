@@ -1,36 +1,41 @@
 # Blocky League
 
-by Calynx · Islam Sharaf
+by Calynx, Islam Sharaf
 
 Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Crossy-Road-style toy world, built with **TypeScript + Three.js + Vite** as a fully static build. Progress lives in `localStorage` (Settings › Backup exports and imports it as a file); signing in is optional, for cloud saves (Supabase, see [`docs/CLOUD.md`](docs/CLOUD.md)), and the ACCOUNT button only appears in builds with a backend configured.
 
 **Playtest:** [Play Blocky League](https://isharaf6.github.io/blocky-league/). Pushes to `main` run the gameplay/audio checks, build the web package, and deploy it through `.github/workflows/pages.yml`.
 
 **Gameplay**
-- Quick Match against the AI with 11 hand-made clubs and 4 difficulty levels (Easy → Legend), 1.5–4 minute halves.
-- **Play Now** goes straight to kick-off. A new player's first match waits for input and teaches movement and passing while the AI eases into the game.
+- **Learn the basics:** a first visit starts with three short staged drills (pass in a 2 v 1, an open shot, a cross to a runner), one prompt at a time, replayed until done (no fail state). Then the first match; the player's first goal unlocks Career, Moments, Club Run and Blitz. On a portal build, TAP TO PLAY goes straight into the first drill.
+- Quick Match against the AI with 11 hand-made clubs and 4 difficulty levels (Easy to Legend), 1.5 to 4 minute halves.
+- **Play Now** goes straight to kick-off. The first match waits for input while the AI eases into the game.
+- A hidden ease (`src/core/dda.ts`) softens the AI for the first two matches and after three defeats in a row (career, or quick match at one difficulty, which also suggests Easy). It is described honestly in `docs/PUBLISHING.md`.
 - Instant assisted passing, sprint-and-pass one-twos, power shots, through balls, lobs and crosses, headers and buffered first-time finishes, player switching, pressing,
   standing and slide tackles, and a knock-on skill move (double-tap sprint).
 - An on-pitch trainer is enabled by default, with contextual keyboard/gamepad/touch hints and a guide to the selected pass recipient. Disable it in **Pause → Settings → Controls**.
 - Keepers dive, claim crosses, rush out and distribute. Fouls, free kicks with walls, penalties and yellow cards from an on-pitch referee.
 - Corners and wide free kicks with loaded boxes, an aim arrow and a behind-the-ball camera.
 - Half-time tactics: mentality (defensive / balanced / attacking) and up to three substitutions with fresh legs.
-- Goal celebrations, TV-style instant replays, Man of the Match and player ratings.
+- Goal celebrations, TV-style instant replays, Man of the Match and player ratings, and a text commentary ticker (no spoken commentary).
+- Goal clips: where the browser can record the canvas, SAVE CLIP and SHARE on the full-time screen and the pause menu.
 - Day, sunset and floodlit night matches, rain and voxel snow, in front of an animated voxel crowd.
 
 **Modes**
 - **Career**: six divisions of eight clubs, promotion and relegation, transfers, training, kit designer and stadium upgrades.
 - **Blocky Cup**: an 8-team knockout with a bracket, prize money, a trophy, and penalty shootouts (aim your kicks, dive with your keeper).
-- **Football Moments**: eight challenges lasting 15–90 seconds of play, with retries, three-star best scores and an unlock ladder. Attempts earn XP without changing coins or the full-match record.
+- **Football Moments**: eight challenges lasting 15 to 90 seconds of play, with retries, three-star best scores and an unlock ladder. Attempts earn XP without changing coins or the full-match record.
+- **Club Run**: seven short matches against a ladder of stronger clubs, one life, a perk after every win.
+- **Badges and season**: mastery badges on five skill tracks and a free monthly season track (from the level badge's unlock ladder).
 - **Unlocks**: view the level requirements for ball skins, celebrations and Legend difficulty from the main menu's level badge.
 - **Daily gift** with a seven-day streak.
 
 **Tech**
 - Every sound is synthesised live with WebAudio, so there are no audio files.
 - Quiet stereo rain patter and a subdued crowd bed; snow has no weather hiss. Ambience fades out on pause and in menus. Sound FX controls rain, and Crowd controls stadium ambience.
-- Keyboard, gamepad and touch controls; landscape and portrait framing.
+- Keyboard, gamepad and touch controls; landscape and portrait framing. Every key and gamepad button can be rebound (Settings › Keys, with swaps on a conflict and RESET), the touch stick can float or stay fixed, and a colour-blind option adds shape cues. Every key hint on screen follows the bindings.
 - Adaptive rendering quality (dynamic resolution, crowd density and shadow size follow the device).
-- Portal builds zip to about 445 KB; the web build with PWA and sharing assets is about 604 KB.
+- Portal builds zip to about 480 KB; the web build with PWA and sharing assets is about 640 KB.
 
 **Monetisation** comes from an optional portal adapter for **CrazyGames** and **Poki**: midgame ads plus an opt-in rewarded ad that doubles your coins. See [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
 
@@ -46,7 +51,7 @@ npm run dev          # http://localhost:5173 (also exposed on your LAN for phone
 URL parameters:
 
 - `?quick`: skip the menus and start a match straight away. Dev server only.
-- `?portal=crazygames` or `?portal=poki`: load that portal's SDK in the dev server (portal builds pick their SDK at build time).
+- `?portal=crazygames` or `?portal=poki`: load that portal's SDK in the dev server (portal builds pick their SDK at build time), and behave like a portal build (a first visit goes straight into the first basics drill).
   On localhost, CrazyGames runs in local mode, where fake ads appear as overlays.
 
 ## Test
@@ -119,9 +124,9 @@ src/
 | Shoot (hold to power) / tackle (tap), slide (hold) | K | B |
 | Through ball (tap) / lob-cross (hold) / press | L | X |
 | Sprint (double-tap to knock it on) | Shift | RT |
-| Pause | Esc / P | |
+| Pause | Esc / P | Start |
 
-On touch screens there's a virtual stick on the left and action buttons on the right. Attacking labels stay visible while your pass is travelling.
+These are the defaults; everything can be rebound in Settings › Keys. On touch screens there's a virtual stick on the left and action buttons on the right. Attacking labels stay visible while your pass is travelling.
 
 **Instant Pass** is on by default for assisted ground passes: press once and the game chooses the weight. Semi/manual passing and turning Instant Pass off retain release-to-pass and hold-for-power controls. Hold Sprint while passing to send the passer on a return run. You can queue a first-time pass or shot before the ball arrives.
 

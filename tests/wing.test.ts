@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
+import { humanThroughTarget, pickReceiver } from '../src/sim/actions';
 import { DT, HALF_L, HALF_W } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
@@ -23,6 +24,8 @@ function scenario(seed: number): Match {
   m.players.forEach((p, i) => place(p, -40 + i * 3.6, -HALF_W + 1.5));
   return m;
 }
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 function place(p: Player, x: number, z: number): void {
   p.pos.x = x;
@@ -357,6 +360,138 @@ describe('the diagonal ball out to a marked winger (round 12)', () => {
   });
 });
 
+// ------------------------------------------------------------------ round 13 (the critic's leftovers)
+
+/**
+ * The diagonal ball the critic measured in round 12, as he measured it: the winger 24-36 m away at 48-65 degrees off the
+ * carrier's facing, 3 m in from the touchline, a marker 2-3 m off the lane (short of him on the ball side, or beyond him
+ * on the goal side), a full-back 7 m ahead; the stick at him, held; PASS / THROUGH tapped for 80 ms.
+ */
+function probeDiag2(seed: number, state: WingState, btn: 'pass' | 'through', d: number, deg: number, mOff: number, marker: MarkerSide): Outcome {
+  const m = scenario(seed);
+  const ad = m.attackDir(0);
+  const c = m.players[7];
+  const w = m.players[8];
+  const mk = m.players[17];
+  const fb = m.players[15];
+  const th = (deg * Math.PI) / 180;
+  const wz = HALF_W - 3;
+  const cx = -6;
+  place(c, cx * ad, wz - d * Math.sin(th));
+  c.facing = ad > 0 ? 0 : Math.PI;
+  const wx = cx + d * Math.cos(th);
+  place(w, wx * ad, wz);
+  const ux = Math.cos(th);
+  const uz = Math.sin(th);
+  const along = marker === 'ball' ? -3 : 3;
+  place(mk, (wx + ux * along + uz * mOff) * ad, wz + uz * along - ux * mOff);
+  place(fb, (wx + 7) * ad, wz - 2);
+  mk.facing = fb.facing = ad > 0 ? Math.PI : 0;
+  if (state !== 'standing') {
+    w.vel.x = (state === 'jogging' ? 5 : 8.5) * ad;
+    w.running = true;
+    w.runT = 2.5;
+    w.sprint = state === 'sprinting';
+    w.facing = c.facing;
+  }
+  giveBall(m, c);
+  const a = Math.atan2(w.pos.z - c.pos.z, w.pos.x - c.pos.x);
+  let kicked = false;
+  for (let i = 0; i < 60 * 4; i++) {
+    m.step(DT, pad(Math.cos(a), Math.sin(a), { [btn]: i < 5 }));
+    const evs = m.drainEvents();
+    if (!kicked) {
+      kicked = evs.some((e) => e.type === 'kick');
+      continue;
+    }
+    if (m.phase !== 'play') return 'out';
+    const ctl = evs.find((e) => e.type === 'control');
+    const o = ctl && ctl.type === 'control' ? ctl.player : m.ball.owner;
+    if (o >= 0 && o !== c.idx) return o === w.idx ? 'ok' : m.players[o].side === 0 ? 'mate' : 'int';
+  }
+  return 'none';
+}
+
+describe('round 13: the critic\'s leftovers', () => {
+  it('the diagonal to a marked winger (24-36 m, 48-65 degrees, marker 2-3 m off the lane) is completed 80%+', () => {
+    for (const btn of ['pass', 'through'] as const) {
+      const tally: Record<Outcome, number> = { ok: 0, mate: 0, int: 0, out: 0, none: 0 };
+      let n = 0;
+      let seed = 3;
+      for (const d of [24, 30, 36]) {
+        for (const deg of [48, 56, 65]) {
+          for (const mOff of [2, 2.5, 3]) {
+            for (const marker of ['ball', 'goal'] as MarkerSide[]) {
+              for (const state of ['standing', 'jogging', 'sprinting'] as WingState[]) {
+                tally[probeDiag2((seed += 37), state, btn, d, deg, mOff, marker)]++;
+                n++;
+              }
+            }
+          }
+        }
+      }
+      // eslint-disable-next-line no-console
+      console.log(`round-13 diagonal ${btn}: ${JSON.stringify(tally)} of ${n}`);
+      expect(tally.ok / n).toBeGreaterThanOrEqual(0.8);
+    }
+  }, 120_000);
+
+  it('an 80 ms THROUGH tap (4-6 frames) is always a through ball, never a pass, runner or not', () => {
+    let n = 0;
+    const kinds: Record<string, number> = {};
+    for (const frames of [4, 5, 6]) {
+      for (const state of ['standing', 'jogging', 'sprinting'] as WingState[]) {
+        for (let k = 0; k < 4; k++) {
+          const r = probeDiag(k * 19 + frames * 7, state, 'through', { deg: [48, 55, 60, 65][k], zw: 3 }, 'ball', 0, frames, k % 2 === 0);
+          kinds[r.kind] = (kinds[r.kind] ?? 0) + 1;
+          n++;
+        }
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`THROUGH taps of 67-100 ms: ${JSON.stringify(kinds)} of ${n}`);
+    expect(kinds.through).toBe(n);
+  }, 60_000);
+
+  it('the pass assist never plays a man more than ~95 degrees off the stick (no ball behind him against a forward stick)', () => {
+    let checked = 0;
+    let worst = 0;
+    for (let seed = 1; seed <= 150; seed++) {
+      const m = scenario(seed * 7);
+      const c = m.players[6];
+      place(c, ((seed % 9) - 4) * 5, ((seed % 7) - 3) * 4);
+      c.facing = (seed % 12) * 0.52;
+      // Teammates and opponents scattered round him, a few marked.
+      let r = seed * 2654435761;
+      const rnd = () => {
+        r = (Math.imul(r, 1664525) + 1013904223) >>> 0;
+        return r / 4294967296;
+      };
+      for (const p of m.players) {
+        if (p === c || p.isKeeper) continue;
+        place(p, c.pos.x + (rnd() - 0.5) * 60, clamp((rnd() - 0.5) * 56, -HALF_W + 1, HALF_W - 1));
+      }
+      giveBall(m, c);
+      for (let a = 0; a < 8; a++) {
+        const sa = (a * Math.PI) / 4 + rnd() * 0.3;
+        const dx = Math.cos(sa);
+        const dz = Math.sin(sa);
+        for (const t of [pickReceiver(m, c, dx, dz, 'pass'), pickReceiver(m, c, dx, dz, 'through'), humanThroughTarget(m, c, dx, dz).idx]) {
+          if (t < 0) continue;
+          const q = m.players[t];
+          const off = Math.abs(Math.atan2(Math.sin(Math.atan2(q.pos.z - c.pos.z, q.pos.x - c.pos.x) - sa), Math.cos(Math.atan2(q.pos.z - c.pos.z, q.pos.x - c.pos.x) - sa)));
+          worst = Math.max(worst, off);
+          checked++;
+        }
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`pass assist: ${checked} picks, widest ${((worst * 180) / Math.PI).toFixed(1)} degrees off the stick`);
+    expect(checked).toBeGreaterThan(500);
+    expect(worst).toBeLessThanOrEqual((95.5 * Math.PI) / 180);
+  });
+});
+
 // ------------------------------------------------------------------ whole matches
 
 interface WingTally {
@@ -429,7 +564,9 @@ function wingMatches(n: number, difficulty = 1.8): WingTally {
 
 describe('passing to the wings over whole matches', () => {
   it('the bot\'s passes from the middle out to a man near the touchline are mostly completed, and rarely run out for a throw-in', () => {
-    const t = wingMatches(10);
+    // (Round 13: the support triangle, a short option either side of the carrier and one ahead, gives the bot more
+    // passes inside, so it finds a centre-to-wing ball ~3 a match rather than ~7: 20 matches for the same sample.)
+    const t = wingMatches(20);
     const pct = (x: number) => ((100 * x) / Math.max(1, t.n)).toFixed(1);
     // eslint-disable-next-line no-console
     console.log(`centre-to-wing passes: ${t.n}: completed ${pct(t.ok)}% (to the man ${pct(t.toMan)}%), intercepted ${pct(t.int)}%, throw-in ${pct(t.throwIn)}%, other ${pct(t.other)}%, none ${pct(t.none)}%`);

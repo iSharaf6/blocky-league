@@ -1,7 +1,7 @@
 /**
- * Broadcast commentary: turns match events into one-line captions for the HUD ticker (and, when the player
- * turns it on, the browser's speech synthesis). Pure text logic lives in Commentator; the HUD decides where
- * and when a line shows. Nothing here may throw into the match loop.
+ * Broadcast commentary: turns match events into one-line captions for the HUD ticker (text only: the spoken
+ * voice was removed at the owner's request). Pure text logic lives in Commentator; the HUD decides where and
+ * when a line shows. Nothing here may throw into the match loop.
  */
 import { GOAL_H, HALF_L } from '../sim/constants';
 import type { Match } from '../sim/match';
@@ -602,60 +602,4 @@ export class Commentator {
 /** Every template, for tests and the count in docs. */
 export function templateCount(): number {
   return Object.values(T).reduce((n, l) => n + l.length, 0);
-}
-
-// ------------------------------------------------------------------ speech
-
-let voiceCache: SpeechSynthesisVoice | null | undefined;
-
-function synth(): SpeechSynthesis | null {
-  try {
-    return typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined' ? window.speechSynthesis : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Whether this browser can speak at all (the Settings toggle shows N/A otherwise). */
-export function speechAvailable(): boolean {
-  return synth() !== null;
-}
-
-/**
- * Say a line. `urgent` lines (goals, reds, full time) cut off whatever is being said; others are skipped
- * while the commentator is still talking, so speech never lags behind play.
- */
-export function speak(text: string, urgent: boolean): void {
-  const ss = synth();
-  if (!ss) return;
-  try {
-    if (ss.speaking || ss.pending) {
-      if (!urgent) return;
-      ss.cancel();
-    }
-    // Scores are already words ("two-one"); drop the shouty capitals so GOAL isn't spelled out.
-    const said = text.replace(/(\d+)-(\d+)/g, '$1 $2').replace(/\b([A-Z]{2,})\b/g, (w) => w.charAt(0) + w.slice(1).toLowerCase());
-    const u = new SpeechSynthesisUtterance(said);
-    if (voiceCache === undefined || voiceCache === null) {
-      const vs = ss.getVoices();
-      if (vs.length) voiceCache = vs.find((x) => /en[-_]GB/i.test(x.lang)) ?? vs.find((x) => /^en/i.test(x.lang)) ?? null;
-    }
-    if (voiceCache) u.voice = voiceCache;
-    u.lang = voiceCache?.lang ?? 'en-GB';
-    u.rate = urgent ? 1.12 : 1.05;
-    u.pitch = urgent ? 1.08 : 1;
-    u.volume = 0.9;
-    ss.speak(u);
-  } catch {
-    // Speech is a nicety: never let it break the match.
-  }
-}
-
-/** Stop talking now (pause, quit, leaving the match). */
-export function stopSpeech(): void {
-  try {
-    synth()?.cancel();
-  } catch {
-    // ignore
-  }
 }

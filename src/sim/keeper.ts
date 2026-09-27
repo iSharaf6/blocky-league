@@ -1,6 +1,6 @@
 import { clamp, dist2 } from '../core/math';
 import {
-  AIR_DRAG, BALL_R, BOUNCE, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SIX_W, TEMPO,
+  AIR_DRAG, BALL_R, BOUNCE, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SIX_DEPTH, SIX_W, TEMPO,
   WALL_DIST,
 } from './constants';
 import { blitzDive } from './blitz';
@@ -16,6 +16,9 @@ type RestartLike = { kind: string; side: Side; x: number; z: number };
  * more often: goals at both ends.)
  */
 const DIVE_PACE = 0.72;
+/** An AI's open-play cross dropping into his six-yard box: this much more on his claim chance, the traffic never cutting it below SIX_TRAFFIC. */
+const SIX_CLAIM = 0.3;
+const SIX_TRAFFIC = 0.65;
 /** How far (m) towards his near post a keeper shades when the ball is out at a tight angle. */
 const NEAR_POST_SHADE = 0.8;
 /** A chip: how long (s) the keeper takes to read it, and how near (m) his line he must be to claim it. */
@@ -33,6 +36,14 @@ const FK_KEEPER_SHADE = 0.2;
  * over SHOT_TEMPO (shots are that much faster; he reads them that much sooner).
  */
 const KEEPER_REACT = 0.33;
+/**
+ * An AI keeper reads an AI's strike with the foot this much (s) later (round 13: with headers down from ~60% of the AI's
+ * goals to under 40%, its strikes carry more of the scoring; keepers were saving 63% of them, and AI v AI goals fell to
+ * ~2.6). AI v AI only: with a human playing, every keeper reads every strike as he did.
+ */
+const AI_STRIKE_UNREAD = 0.025;
+/** ... from inside this far (m) out: one from range he still reads for its whole flight (SHOT_READ_T). */
+const AI_UNREAD_D = 20;
 /** Extra reaction time (s) to a free kick struck over the wall. */
 const FK_UNSIGHTED = 0.05;
 /**
@@ -357,7 +368,8 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
         const finesse = m.shotStyle === 'finesse' && m.shotKick === m.kickId && Math.abs(m.kickZ) > GOAL_W / 2;
         // (The base reaction rides on the shot tempo; the wall's and the curler's late read don't.)
         const reaction = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) / SHOT_TEMPO + (m.freeKickShot() ? FK_UNSIGHTED : 0) +
-          (finesse ? FINESSE_READ : 0);
+          (finesse ? FINESSE_READ : 0) +
+          (m.cfg.humanSide >= 0 || m.shotKick !== m.kickId || m.kickKind !== 'shot' || m.shotDist > AI_UNREAD_D ? 0 : AI_STRIKE_UNREAD);
         const lateral = zc - k.pos.z;
         const high = yc > HIGH_DIVE_Y;
         // A dropper (a floated long shot coming down steeply: over his head where he stands, under the bar at
@@ -417,7 +429,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
     }
   }
 
-  // ---- Crosses: come and claim high balls dropping into the goal area --------------
+  // ---- Crosses: come and claim high balls dropping into the goal area (SIX_CLAIM, SIX_TRAFFIC) -----
   if (b.owner < 0 && !b.held && m.shotClock > 0.6 && m.kickSide !== k.side && m.sinceKick < 3.5) {
     const c = crossDrop(m, k);
     if (c) {
@@ -430,10 +442,15 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
         for (const o of m.players) {
           if (!o.isKeeper && !o.sentOff && dist2(o.pos.x, o.pos.z, c.x, c.z) < 5) crowd++;
         }
-        const traffic = clamp(1.1 - crowd * 0.12, 0.3, 1);
         // A set-piece delivery into a loaded box is mostly left to the defenders.
-        const sp = m.setPieceKick === m.kickId ? 0.4 : 1;
-        k.claiming = tK < c.t + 0.08 && m.rng.chance((0.5 + keeping * 0.35 + m.keeperBonus(k.side) * 2) * traffic * sp);
+        const setPiece = m.setPieceKick === m.kickId;
+        const sp = setPiece ? 0.4 : 1;
+        // (An open-play cross dropping into his six-yard box is his: he comes for it through the traffic far more often.
+        // Round 13: headers from inside 6 m went in 62% of the time, a third of the AI's goals.)
+        const gx = -m.attackDir(k.side) * HALF_L;
+        const six = !setPiece && m.cfg.humanSide !== m.kickSide && Math.abs(c.x - gx) < SIX_DEPTH + 1 && Math.abs(c.z) < SIX_W / 2 + 1;
+        const traffic = clamp(1.1 - crowd * 0.12, six ? SIX_TRAFFIC : 0.3, 1);
+        k.claiming = tK < c.t + 0.08 && m.rng.chance((0.5 + keeping * 0.35 + m.keeperBonus(k.side) * 2 + (six ? SIX_CLAIM : 0)) * traffic * sp);
       }
       if (k.claiming) {
         moveTo(k, c.x, c.z, true);

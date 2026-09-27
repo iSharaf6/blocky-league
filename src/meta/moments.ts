@@ -25,7 +25,10 @@ export interface Moment {
   icon: string;
   /** What a star pays, in words ("+25 XP a star"). */
   xpNote: string;
-  /** Controls reminder for the pre-play card (action names as HOW TO PLAY uses them; keys in brackets). */
+  /**
+   * Controls reminder for the pre-play card (action names as HOW TO PLAY uses them; the key in brackets as a
+   * {pass} / {shoot} / {through} / {sprint} / {power} token, filled with the player's own binding: see fillKeys).
+   */
   tip: string;
   /** Preset clubs (indexes into PRESET_CLUBS) to play as / against; undefined = the player's own club / usual rival. */
   home?: number;
@@ -66,7 +69,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Take the pass and score from ten metres. 20 seconds.',
     icon: '⚽',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'The ball is rolling to your striker: let it come, then SHOOT (K) with the stick at a corner of the goal. Tap SHOOT again as the foot meets the ball for a perfect finish.',
+    tip: 'The ball is rolling to your striker: let it come, then SHOOT ({shoot}) with the stick at a corner of the goal. Tap SHOOT again as the foot meets the ball for a perfect finish.',
     difficulty: 0,
     next: 'cross-finish',
     spec: {
@@ -95,7 +98,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Your winger has it. Cross for the runner and score. 25 seconds.',
     icon: '↗',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Hold THROUGH (L) with the stick towards the box to cross; control switches to your striker as it comes in. Leave the stick to head it, or SHOOT (K) to head at goal.',
+    tip: 'Hold THROUGH ({through}) with the stick towards the box to cross; control switches to your striker as it comes in. Leave the stick to head it, or SHOOT ({shoot}) to head at goal.',
     difficulty: 0,
     next: 'one-on-one',
     spec: {
@@ -123,7 +126,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Through on goal from 25 metres, two defenders on your heels. 15 seconds.',
     icon: '🏃',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'SPRINT (Shift) at goal and shoot before they catch you: SHOOT (K) with the stick across the keeper, or hold SHOOT and tap THROUGH (L) to chip him.',
+    tip: 'SPRINT ({sprint}) at goal and shoot before they catch you: SHOOT ({shoot}) with the stick across the keeper, or hold SHOOT and tap THROUGH ({through}) to chip him.',
     difficulty: 1,
     next: 'corner-kick',
     spec: {
@@ -151,7 +154,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Score from a corner. 30 seconds of play (the wait for the kick is free).',
     icon: '⚑',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Aim with the stick and tap PASS (Space) to swing it in, or hold for a driven ball. As it drops, SHOOT (K) to head at goal, or push the stick to bring it down.',
+    tip: 'Aim with the stick and tap PASS ({pass}) to swing it in, or hold for a driven ball. As it drops, SHOOT ({shoot}) to head at goal, or push the stick to bring it down.',
     difficulty: 1,
     next: 'two-down',
     spec: {
@@ -175,7 +178,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Two goals behind, a minute to play, the ball at your feet. Draw or better.',
     icon: '⏱',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Move it fast: PASS (Space) to the ringed man, THROUGH (L) for a runner, SHOOT (K) from anywhere near the box. Win the kick-off back after you score. A draw is one star, a win two.',
+    tip: 'Move it fast: PASS ({pass}) to the ringed man, THROUGH ({through}) for a runner, SHOOT ({shoot}) from anywhere near the box. Win the kick-off back after you score. A draw is one star, a win two.',
     difficulty: 0,
     next: 'hold-the-fort',
     spec: {
@@ -206,7 +209,7 @@ export const MOMENTS: Moment[] = [
     brief: 'One up, one man down, they are coming. Keep them out for 45 seconds.',
     icon: '🛡',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Hold THROUGH (L) to PRESS and stay goal-side, tap SHOOT (K) to tackle when you are close. PASS (Space) switches to the nearest defender. Win it and keep it for more stars.',
+    tip: 'Hold THROUGH ({through}) to PRESS and stay goal-side, tap SHOOT ({shoot}) to tackle when you are close. PASS ({pass}) switches to the nearest defender. Win it and keep it for more stars.',
     difficulty: 2,
     next: 'giant-killing',
     spec: {
@@ -237,7 +240,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Duckworth Albion against Northwick Wanderers, Hard. Be in front after 90 seconds.',
     icon: '👑',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Their players are faster and sharper: keep it simple, PASS (Space) early, shoot when the lane is clear. A win is one star; a clean sheet or two clear goals makes two; both, three.',
+    tip: 'Their players are faster and sharper: keep it simple, PASS ({pass}) early, shoot when the lane is clear. A win is one star; a clean sheet or two clear goals makes two; both, three.',
     // Duckworth (54) against Northwick (88): the widest gap the scripted bot still wins now and then on Hard.
     home: 2,
     away: 9,
@@ -263,7 +266,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Grab the MEGA cube and score with the rocket. 40 seconds.',
     icon: '⚡',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Run over the cube, press POWER (E) to arm it, wait a second for the ball to glow, then SHOOT (K) from range: a mega shot cannot be saved from inside twelve metres.',
+    tip: 'Run over the cube, press POWER ({power}) to arm it, wait a second for the ball to glow, then SHOOT ({shoot}) from range: a mega shot cannot be saved from inside twelve metres.',
     difficulty: 1,
     next: null,
     spec: {
@@ -338,4 +341,129 @@ export function starRules(spec: ScenarioSpec): [string, string, string] {
     case 'win-shootout':
       return ['win the shootout', 'win by one kick or more', 'win by two kicks or more'];
   }
+}
+
+// ------------------------------------------------------------------ LEARN THE BASICS (the first-visit campaign)
+
+/**
+ * One prompt of a basics step. The trainer (ui/trainer.ts) shows at most one at a time: a cue appears `after`
+ * seconds of play (counted from the start, or from the previous cue being done) while `when` holds, and goes
+ * once `done` happens. The key cap is the player's own binding for `key` (core/input.ts actionKey).
+ */
+export interface LessonCue {
+  key: 'pass' | 'shoot' | 'through' | 'sprint' | 'move';
+  /** What to do, beside the key cap ("to your free team-mate"). */
+  text: string;
+  after: number;
+  /** onBall: our man has it at his feet; offBall: nobody of ours has it; incoming: a ball is on its way to our man. */
+  when: 'onBall' | 'offBall' | 'incoming' | 'any';
+  done: 'pass' | 'shot' | 'cross' | 'sprint' | 'move';
+}
+
+/** A LEARN THE BASICS step: a tiny staged situation (a Football Moment spec that isn't in the MOMENTS list). */
+export interface BasicsStep {
+  id: string;
+  /** Short: the brief banner's letters are huge. */
+  title: string;
+  brief: string;
+  icon: string;
+  lesson: LessonCue[];
+  spec: FullScenarioSpec;
+}
+
+/** Every lineup slot of a side except `keep` (sent off before the start: a drill has only the players it needs). */
+const allBut = (side: Side, keep: number[]): { side: Side; slot: number }[] =>
+  Array.from({ length: 11 }, (_, slot) => slot).filter((s) => !keep.includes(s)).map((slot) => ({ side, slot }));
+
+/**
+ * The three steps, in order: PASS (a 2 v 1: square it to the free man), SHOOT (an open shot from 12 m, then
+ * SPRINT after a rebound) and CROSS (from the wing to a runner). Easy AI, generous clocks; they are replayed
+ * until done (main.ts: a miss restarts the step at once, no result screen, no fail state).
+ */
+export const BASICS: readonly BasicsStep[] = [
+  {
+    id: 'basics-pass',
+    title: 'PASS',
+    brief: 'Two against one. Pass to your free team-mate, then score.',
+    icon: '⇄',
+    lesson: [
+      { key: 'pass', text: 'Pass to the free man', after: 0.5, when: 'onBall', done: 'pass' },
+      { key: 'shoot', text: 'Now shoot!', after: 0.3, when: 'onBall', done: 'shot' },
+    ],
+    spec: {
+      id: 'basics-pass',
+      title: 'PASS',
+      brief: 'Pass to the free man, then score.',
+      clock: 0,
+      seconds: 30,
+      score: [0, 0],
+      humanSide: HS,
+      difficulty: 0,
+      players: [
+        at(HS, 9, GOAL_X - 25, -7), at(HS, 10, GOAL_X - 13, 9),
+        AI_KEEPER, at(AI, 3, GOAL_X - 21.5, -5.5, Math.PI),
+      ],
+      sentOff: [...allBut(HS, [0, 9, 10]), ...allBut(AI, [0, 3])],
+      owner: { side: HS, slot: 9 },
+      goal: 'score',
+      stars: [0, 15, 22],
+    },
+  },
+  {
+    id: 'basics-shoot',
+    title: 'SHOOT',
+    brief: 'An open shot from twelve metres. Hold SHOOT, aim at a corner, let go.',
+    icon: '⚽',
+    lesson: [
+      { key: 'shoot', text: 'Hold, aim at a corner, let go', after: 0.5, when: 'onBall', done: 'shot' },
+      { key: 'sprint', text: 'Sprint after the ball', after: 1.2, when: 'offBall', done: 'sprint' },
+    ],
+    spec: {
+      id: 'basics-shoot',
+      title: 'SHOOT',
+      brief: 'Score from twelve metres.',
+      clock: 0,
+      seconds: 30,
+      score: [0, 0],
+      humanSide: HS,
+      difficulty: 0,
+      players: [at(HS, 9, GOAL_X - 12, -2), AI_KEEPER],
+      sentOff: [...allBut(HS, [0, 9]), ...allBut(AI, [0])],
+      owner: { side: HS, slot: 9 },
+      goal: 'score',
+      stars: [0, 15, 22],
+    },
+  },
+  {
+    id: 'basics-cross',
+    title: 'CROSS',
+    brief: 'Your winger has it. Cross for the runner and score.',
+    icon: '↗',
+    lesson: [
+      { key: 'through', text: 'Hold to cross to your runner', after: 0.5, when: 'onBall', done: 'cross' },
+      { key: 'shoot', text: 'Head it in!', after: 0, when: 'incoming', done: 'shot' },
+    ],
+    spec: {
+      id: 'basics-cross',
+      title: 'CROSS',
+      brief: 'Cross for the runner and score.',
+      clock: 0,
+      seconds: 30,
+      score: [0, 0],
+      humanSide: HS,
+      difficulty: 0,
+      players: [
+        at(HS, 8, GOAL_X - 15, 21), at(HS, 9, GOAL_X - 17, 1),
+        AI_KEEPER, at(AI, 2, GOAL_X - 9, 15, Math.PI),
+      ],
+      sentOff: [...allBut(HS, [0, 8, 9]), ...allBut(AI, [0, 2])],
+      owner: { side: HS, slot: 8 },
+      goal: 'score',
+      stars: [0, 15, 22],
+    },
+  },
+];
+
+export function basicsStep(i: number): BasicsStep | undefined {
+  return BASICS[i];
 }

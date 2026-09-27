@@ -3,7 +3,8 @@ import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { DT } from '../src/sim/constants';
 import { EMPTY_PAD, Match } from '../src/sim/match';
 import type { MatchEvent } from '../src/sim/types';
-import { Commentator, clubCall, speak, speechAvailable, stopSpeech, surname, templateCount } from '../src/ui/commentary';
+import * as commentary from '../src/ui/commentary';
+import { Commentator, clubCall, surname, templateCount } from '../src/ui/commentary';
 
 function newMatch(seed: number): Match {
   return new Match({
@@ -136,9 +137,9 @@ describe('commentary', () => {
     expect(plain?.text ?? '').not.toMatch(/chip|curl/i);
   });
 
-  it('speech is a no-op without a browser', () => {
-    expect(speechAvailable()).toBe(false);
-    expect(() => speak('GOAL! Chunk scores! 1-0', true)).not.toThrow();
-    expect(() => stopSpeech()).not.toThrow();
+  it('is text only: the spoken voice is gone (the owner asked for the voice to go, the ticker to stay)', () => {
+    expect('speak' in commentary).toBe(false);
+    expect('stopSpeech' in commentary).toBe(false);
+    expect('speechAvailable' in commentary).toBe(false);
   });
 });

@@ -98,6 +98,20 @@ function makeCharMaterial(): THREE.MeshLambertMaterial {
 /** The footballers' (and referee's, and ball's) shared opaque material. */
 export const charMaterial = makeCharMaterial();
 
+/**
+ * Hit flash (a tackled man, a keeper making a save): the whole figure white for a frame or two, still faintly
+ * shaded so it reads as the player lit up, not a cut-out. Shared by everyone who flashes.
+ */
+let flashMaterial: THREE.MeshLambertMaterial | null = null;
+function charFlashMaterial(): THREE.MeshLambertMaterial {
+  if (!flashMaterial) {
+    flashMaterial = makeCharMaterial();
+    flashMaterial.color.setHex(0xffffff);
+    flashMaterial.emissive.setRGB(0.82, 0.82, 0.8);
+  }
+  return flashMaterial;
+}
+
 /** Character fill light intensity (light units, e.g. 0.5; 0 = off), slightly cool like the floodlights. */
 export function setCharacterFill(intensity: number): void {
   const k = Math.max(0, intensity) / Math.PI;
@@ -435,6 +449,13 @@ export class Footballer {
   private readonly armR: THREE.Mesh;
   private readonly legL: THREE.Mesh;
   private readonly legR: THREE.Mesh;
+  /** The four limbs and all six parts, in POSE order (made once: no array per pose). */
+  private readonly limbs: THREE.Mesh[];
+  private readonly parts: THREE.Mesh[];
+  /** Hit flash: drawn white while set (see setFlash). */
+  private flashing = false;
+  /** Casts a dynamic shadow (see setCastShadow: the shadow budget on the lower settings). */
+  private casting = true;
   /** Extra draw scale on top of CHAR_SCALE (phones: see screenCharK). */
   scaleK = 1;
   /** Own see-through copy of the voxel material, made the first time this player is faded. */
@@ -483,6 +504,8 @@ export class Footballer {
     this.armR = mk(armG);
     this.legL = mk(legG);
     this.legR = mk(legG);
+    this.limbs = [this.armL, this.armR, this.legL, this.legR];
+    this.parts = [this.torso, this.head, this.armL, this.armR, this.legL, this.legR];
 
     this.group.add(this.body);
     this.group.scale.setScalar(CHAR_SCALE);
@@ -530,10 +553,29 @@ export class Footballer {
     this.applyMaterial();
   }
 
+  /** Hit flash: the figure drawn white (on) or back to its own look (off). Never while faded out of a lens. */
+  setFlash(on: boolean): void {
+    if (on === this.flashing) return;
+    this.flashing = on;
+    this.applyMaterial();
+  }
+
+  /** Whether this player casts a dynamic shadow (the lower settings cast only the few nearest the ball). */
+  setCastShadow(on: boolean): void {
+    if (on === this.casting) return;
+    this.casting = on;
+    for (const m of this.parts) m.castShadow = on;
+  }
+
+  get castsShadow(): boolean {
+    return this.casting;
+  }
+
   private applyMaterial(): void {
     const faded = this.alpha < 1;
     let mat: THREE.MeshLambertMaterial = charMaterial;
     if (faded) mat = this.fadeMat!;
+    else if (this.flashing) mat = charFlashMaterial();
     else if (this.tint !== null) {
       if (!this.tintMat) this.tintMat = makeCharMaterial();
       this.tintMat.color.setHex(this.tint);
@@ -541,7 +583,7 @@ export class Footballer {
       this.tintMat.emissive.setHex(this.tintGlow);
       mat = this.tintMat;
     }
-    for (const m of [this.torso, this.head, this.armL, this.armR, this.legL, this.legR]) m.material = mat;
+    for (const m of this.parts) m.material = mat;
   }
 
   /** Hang a prop (the referee's card) in a hand: `obj` is placed in that arm's space at the hand. */
@@ -558,7 +600,7 @@ export class Footballer {
     out[5] = t.rotation.x; out[6] = t.rotation.y; out[7] = t.rotation.z; out[8] = t.scale.y;
     out[9] = h.rotation.x; out[10] = h.rotation.y; out[11] = h.rotation.z;
     let k = 12;
-    for (const m of [this.armL, this.armR, this.legL, this.legR]) {
+    for (const m of this.limbs) {
       out[k++] = m.rotation.x;
       out[k++] = m.rotation.y;
       out[k++] = m.rotation.z;
@@ -573,7 +615,7 @@ export class Footballer {
     t.scale.y = v[8];
     h.rotation.set(v[9], v[10], v[11]);
     let k = 12;
-    for (const m of [this.armL, this.armR, this.legL, this.legR]) {
+    for (const m of this.limbs) {
       m.rotation.set(v[k], v[k + 1], v[k + 2]);
       k += 3;
     }
@@ -660,60 +702,10 @@ export class Footballer {
     const run = clamp(p.speed / 7.5, 0, 1);
     const swing = Math.sin(ph);
 
-    const locomotion = () => {
-      // Idle and running blend continuously with speed (no snap from the stand to the stride at a threshold),
-      // eased over time too: the sim gets a man from a standstill to a run in a few frames.
-      const mvWant = smoothstep(0.08, 0.7, p.speed);
-      this.moveW = dt > 0 ? this.moveW + (mvWant - this.moveW) * Math.min(1, dt * 14) : mvWant;
-      const mv = this.moveW;
-      const iw = 1 - mv;
-      const amp = (0.25 + run * 0.75) * mv;
-      lL.rotation.z = swing * amp;
-      lR.rotation.z = -swing * amp;
-      aL.rotation.z = -swing * amp * 0.85;
-      aR.rotation.z = swing * amp * 0.85;
-      // Toy hop on every step.
-      body.position.y = HIP_Y + Math.abs(Math.cos(ph)) * 0.06 * (0.4 + run) * mv;
-      torso.rotation.z = (-p.lean - run * 0.1) * mv;
-      head.rotation.z = run * 0.08;
-      const br = Math.sin(time * 2.4 + p.runPhase * 9);
-      torso.scale.y = 1 + br * 0.012 * iw;
-      aL.rotation.x = lerp(-0.12, -0.08 - br * 0.02, iw);
-      aR.rotation.x = lerp(0.12, 0.08 + br * 0.02, iw);
-      if (p.keeper && iw > 0) {
-        // Set position: knees bent, gloves ready.
-        body.position.y -= 0.045 * iw;
-        torso.rotation.z += -0.18 * iw;
-        aL.rotation.x = lerp(aL.rotation.x, -0.5, iw);
-        aL.rotation.z = lerp(aL.rotation.z, 0.9, iw);
-        aR.rotation.x = lerp(aR.rotation.x, 0.5, iw);
-        aR.rotation.z = lerp(aR.rotation.z, 0.9, iw);
-        lL.rotation.x = 0.14 * iw;
-        lL.rotation.z = lerp(lL.rotation.z, 0.12, iw);
-        lR.rotation.x = -0.14 * iw;
-        lR.rotation.z = lerp(lR.rotation.z, 0.12, iw);
-      }
-    };
-
-    /**
-     * A braking plant step (0..1): the standing leg reaching ahead, hips sinking, torso back, arms out;
-     * `kickLeg` (the sim's own plant state only) also trails the kicking leg, ready to swing.
-     */
-    const plantStep = (w: number, plant: THREE.Mesh, kickLeg: THREE.Mesh | null) => {
-      if (w <= 0) return;
-      plant.rotation.z = lerp(plant.rotation.z, 0.42, w);
-      if (kickLeg) kickLeg.rotation.z = lerp(kickLeg.rotation.z, -0.45, w * 0.7);
-      body.position.y -= 0.04 * w;
-      torso.rotation.z += 0.16 * w;
-      head.rotation.z -= 0.1 * w;
-      aL.rotation.x -= 0.35 * w;
-      aR.rotation.x += 0.35 * w;
-    };
-
     switch (p.state) {
       case PSTATE.move:
       case PSTATE.stand: {
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         if (p.state === PSTATE.stand) {
           const k = 1 - clamp(p.stateT / 0.38, 0, 1);
           body.rotation.z = k * 0.9;
@@ -737,7 +729,7 @@ export class Footballer {
           // Standing tackle: straight out of the stride into a deep lunge at the ball, the leading leg
           // stretched out low, the standing leg bent back under him, hips dropped, torso pitched forward and
           // both arms flung wide for balance; held, then back into the run (see POKE_HIT / POKE_HOLD).
-          locomotion();
+          this.locomotion(p, time, dt, ph, run, swing);
           const u = clamp((t - POKE_T0) / (1 - POKE_T0), 0, 1);
           const e = u < POKE_HOLD ? 1 : 1 - smoothstep(POKE_HOLD, 1, u);
           kickLeg.rotation.z = lerp(kickLeg.rotation.z, 1.4, e);
@@ -772,19 +764,19 @@ export class Footballer {
           head.rotation.z = -h * 0.5;
           torso.rotation.z = -0.3 * h;
           kickLeg.rotation.z = 0.2;
-        } else plantStep(fast * (1 - smoothstep(0.18, 0.42, t)), plant, null);
+        } else this.plantStep(fast * (1 - smoothstep(0.18, 0.42, t)), plant, null);
         break;
       }
       case PSTATE.plant: {
         // (Sim plant state, when it has one: braking into the strike that follows.)
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         const right = p.kickLeg >= 0;
-        plantStep(smoothstep(0, 0.12, p.stateT), right ? lL : lR, right ? lR : lL);
+        this.plantStep(smoothstep(0, 0.12, p.stateT), right ? lL : lR, right ? lR : lL);
         break;
       }
       case PSTATE.stumble: {
         // (Sim stumble state, when it has one: pitched forward, arms thrown out, feet scrambling.)
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         const k = Math.sin(clamp(p.stateT / 0.6, 0, 1) * Math.PI);
         torso.rotation.z -= 0.45 * k;
         head.rotation.z += 0.3 * k;
@@ -855,7 +847,7 @@ export class Footballer {
         break;
       }
       case PSTATE.hold: {
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         aL.rotation.set(-0.25, 0, 1.25);
         aR.rotation.set(0.25, 0, 1.25);
         break;
@@ -863,10 +855,10 @@ export class Footballer {
       case PSTATE.celebrate: {
         const st = Math.round(p.celebrate);
         if (st >= CELEB.knee) {
-          this.iconic(st, p, time, locomotion);
+          this.iconic(st, p, time, dt, ph, run, swing);
           break;
         }
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         const style = p.celebrate;
         const hop = Math.abs(Math.sin(time * 7 + p.runPhase * 3));
         if (p.speed < 1.2) {
@@ -903,7 +895,7 @@ export class Footballer {
         break;
       }
       case PSTATE.dejected: {
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         // Hands on head.
         head.rotation.z = -0.25;
         torso.rotation.z = -0.08;
@@ -913,7 +905,7 @@ export class Footballer {
       }
       default:
         // A state this build doesn't know yet (a newer sim): at least keep him running, never frozen stiff.
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         break;
     }
     if (p.signal) {
@@ -952,7 +944,62 @@ export class Footballer {
    * axes: +x forward, +y up, the left arm at -z. Euler order is Z (lift forward / up), then Y, then X (swing
    * sideways): a hanging arm swings outward with +x on the left and -x on the right; a raised one the other way.
    */
-  private iconic(st: number, p: PoseInput, time: number, locomotion: () => void): void {
+  /**
+   * Idle and running blend continuously with speed (no snap from the stand to the stride at a threshold),
+   * eased over time too: the sim gets a man from a standstill to a run in a few frames. (A method, not a
+   * closure made per pose: nothing allocated per player per frame.)
+   */
+  private locomotion(p: PoseInput, time: number, dt: number, ph: number, run: number, swing: number): void {
+    const body = this.body, torso = this.torso, head = this.head;
+    const aL = this.armL, aR = this.armR, lL = this.legL, lR = this.legR;
+    const mvWant = smoothstep(0.08, 0.7, p.speed);
+    this.moveW = dt > 0 ? this.moveW + (mvWant - this.moveW) * Math.min(1, dt * 14) : mvWant;
+    const mv = this.moveW;
+    const iw = 1 - mv;
+    const amp = (0.25 + run * 0.75) * mv;
+    lL.rotation.z = swing * amp;
+    lR.rotation.z = -swing * amp;
+    aL.rotation.z = -swing * amp * 0.85;
+    aR.rotation.z = swing * amp * 0.85;
+    // Toy hop on every step.
+    body.position.y = HIP_Y + Math.abs(Math.cos(ph)) * 0.06 * (0.4 + run) * mv;
+    torso.rotation.z = (-p.lean - run * 0.1) * mv;
+    head.rotation.z = run * 0.08;
+    const br = Math.sin(time * 2.4 + p.runPhase * 9);
+    torso.scale.y = 1 + br * 0.012 * iw;
+    aL.rotation.x = lerp(-0.12, -0.08 - br * 0.02, iw);
+    aR.rotation.x = lerp(0.12, 0.08 + br * 0.02, iw);
+    if (p.keeper && iw > 0) {
+      // Set position: knees bent, gloves ready.
+      body.position.y -= 0.045 * iw;
+      torso.rotation.z += -0.18 * iw;
+      aL.rotation.x = lerp(aL.rotation.x, -0.5, iw);
+      aL.rotation.z = lerp(aL.rotation.z, 0.9, iw);
+      aR.rotation.x = lerp(aR.rotation.x, 0.5, iw);
+      aR.rotation.z = lerp(aR.rotation.z, 0.9, iw);
+      lL.rotation.x = 0.14 * iw;
+      lL.rotation.z = lerp(lL.rotation.z, 0.12, iw);
+      lR.rotation.x = -0.14 * iw;
+      lR.rotation.z = lerp(lR.rotation.z, 0.12, iw);
+    }
+  }
+
+  /**
+   * A braking plant step (0..1): the standing leg reaching ahead, hips sinking, torso back, arms out;
+   * `kickLeg` (the sim's own plant state only) also trails the kicking leg, ready to swing.
+   */
+  private plantStep(w: number, plant: THREE.Mesh, kickLeg: THREE.Mesh | null): void {
+    if (w <= 0) return;
+    plant.rotation.z = lerp(plant.rotation.z, 0.42, w);
+    if (kickLeg) kickLeg.rotation.z = lerp(kickLeg.rotation.z, -0.45, w * 0.7);
+    this.body.position.y -= 0.04 * w;
+    this.torso.rotation.z += 0.16 * w;
+    this.head.rotation.z -= 0.1 * w;
+    this.armL.rotation.x -= 0.35 * w;
+    this.armR.rotation.x += 0.35 * w;
+  }
+
+  private iconic(st: number, p: PoseInput, time: number, dt: number, ph: number, run: number, swing: number): void {
     const body = this.body, torso = this.torso, head = this.head;
     const aL = this.armL, aR = this.armR, lL = this.legL, lR = this.legR;
     const t = p.stateT;
@@ -978,7 +1025,7 @@ export class Footballer {
         // The shush, big enough to read from the gantry: planted, the finger to the lips, the other arm thrown
         // straight up at the crowd (a diagonal: straight up hides behind the head) with a slow wave, the whole
         // body leaning into the lens (kickT 0..1 is the lean), the head cocked.
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         const l = clamp(x, 0, 1);
         aR.rotation.set(-0.95, 0, lerp(0.6, 2.35, l));
         aL.rotation.set(lerp(1.3, -0.75 + 0.18 * Math.sin(t * 3.2), l), 0, lerp(0.5, 2.7, l));
@@ -990,7 +1037,7 @@ export class Footballer {
       }
       case CELEB.plane: {
         // Aeroplane: running with the arms out, banked into the turn (kickT -1..1, right positive).
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         aL.rotation.set(1.5, 0, 0.35);
         aR.rotation.set(-1.5, 0, 0.35);
         torso.rotation.x = x * 0.6;
@@ -1066,7 +1113,7 @@ export class Footballer {
       case CELEB.clap:
       default: {
         // Applause from the ones hanging back: hands meeting in front (a yaw brings them together), a bob.
-        locomotion();
+        this.locomotion(p, time, dt, ph, run, swing);
         const c = 0.5 + 0.5 * Math.sin(t * 16 + p.runPhase * 5);
         aL.rotation.set(0, -0.25 - 0.5 * c, 1.4);
         aR.rotation.set(0, 0.25 + 0.5 * c, 1.4);

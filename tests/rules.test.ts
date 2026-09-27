@@ -487,7 +487,10 @@ describe('fitness', () => {
 
   it('a busy midfielder ends a 2x2-min match around half fit, whatever the half length', () => {
     const endMf = (halfLength: number) => {
+      // (Two plain sides: the stamina model is what's measured. Round 13's club styles make one seed's match run
+      // differently at different half lengths, a possession side's midfield ending 0.56 fit at 2x2 min and 0.80 at 2x5.)
       const m = newMatch(23, -1, halfLength);
+      for (const t of m.teams) t.style = 'balanced';
       for (let i = 0; i < 60 * halfLength * 3 && m.phase !== 'fulltime'; i++) {
         m.step(DT, EMPTY_PAD);
         m.drainEvents();

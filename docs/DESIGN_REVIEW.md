@@ -16,7 +16,7 @@ Written against build b459cd5, from the round 7 to 12 critic data and the owner'
 
 - **Losing the ball with no explanation:** a tackle, a heavy first touch or an interception happens, and nothing on screen says why.
 - **Impacts that don't land:** a won tackle or a shot off the bar has too little weight (sound, freeze, shake), so good play doesn't feel good.
-- **Commentary noise:** the ticker competes with the play and repeats itself. The owner has asked for it to go.
+- **Commentary voice:** the spoken commentary talks over the play. The owner has asked for the voice to go; the text ticker stays.
 - **Slow dead balls:** set pieces and replays on a 1.5-minute half eat a big share of the match.
 - **Difficulty cliffs:** a novice concedes early, while a competent player is never in danger at Normal.
 
@@ -24,7 +24,7 @@ Written against build b459cd5, from the round 7 to 12 critic data and the owner'
 
 1. **Football shape.** At most two players press the ball. Everyone else holds a line and a lane, and makes runs. Teams play in distinct styles (high press, park the bus, possession, counter), so opponents feel different.
 2. **Weight on every impact:** hit-stop on goals, posts and slide tackles; small screen shake; flashes on the ball and players; layered synthesised sound for shots, headers, tackles and goals; and a crowd that swells as the ball nears a box.
-3. **Remove the commentator.** Keep the big event banners (GOAL!, SAVE!, WON IT!).
+3. **Remove the commentary voice.** Keep the commentary text and the big event banners (GOAL!, SAVE!, WON IT!).
 4. **Staged onboarding:** learn to move, then pass, then shoot, then score your first goal. Career and Moments unlock after that goal.
 5. **One-more-run and mastery,** below.
 

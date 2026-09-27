@@ -5,7 +5,7 @@ import {
   pickReceiver, resolveKick, shotQuality, stickCurl, throwInPlan,
 } from './actions';
 import { assistRun, intercept, isCrossingRestart, makeBrain, meetSpot, penaltyWaitSpot, setPieceAim, setPieceReady, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
-import { headerAtGoal, pickReceiver as pickPassMate, reaimShot, WILD_LIFT, type Launch } from './actions';
+import { headerAtGoal, naturalPass, pickReceiver as pickPassMate, reaimShot, ROLL_CURL_DECAY, WILD_LIFT, type Launch } from './actions';
 import { Ball, groundPassSpeed, type BallHit } from './ball';
 import { blitzClear, blitzGoal, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, megaHands } from './blitz';
 import {
@@ -15,7 +15,7 @@ import {
 } from './dribble';
 import {
   AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
-  PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SHOT_TEMPO, SIX_DEPTH, SIX_W, SPRINT_SPEED, TEMPO,
+  PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SHOT_TEMPO, SIX_DEPTH, SIX_W, SPRINT_SPEED, TEMPO, DDA_TACKLE, KEEPER_BOOST,
 } from './constants';
 import { FORMATIONS, kickoffSlot, type Slot } from './formations';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick } from './keeper';
@@ -159,6 +159,11 @@ const SHOT_CREDIT = 1.3;
  * wide) body of level, is onside.
  */
 export const OFFSIDE_TOL = 0.8;
+/**
+ * The AI's missed standing tackles and slides give a foul this much as often (round 13: the shape's presser is on the
+ * ball more, a possession side holds it longer, and AI v AI fouls went from ~4 to ~5.2 a match, past the 3-5 band).
+ */
+const AI_FOUL_K = 0.8;
 /** Athletic edge per AI difficulty level above/below 2 (the human side is never scaled). */
 const AI_PACE_EDGE = 0.02;
 /** The human side's keeper bonus at EASY (0.6), and how much of it goes per difficulty level (see keeperBonus). */
@@ -260,6 +265,34 @@ const RACE_ONLINE = 1.5;
 const RECEIVE_EASE = 2;
 const RECEIVE_SET_SPRINT = 3;
 const RECEIVE_HOLD = 2;
+/**
+ * Steering onto the pass (round 13, the owner: "when i pass it down the line to player running and hes moving with
+ * wasd, sometimes it goes past him ... very very very very annoying"). With the stick pushed (the assisted receive is
+ * off: he let go after the pass and pressed on again), the run is bent STEER_RECV_BLEND of the way towards his
+ * meeting point with the ball (receivePoint), the stick still the bias; fully within STEER_RECV_FULL rad of that
+ * point's direction, fading to nothing at STEER_RECV_OFF (he's clearly choosing to go elsewhere). He sprints to it
+ * when it's more than RECEIVE_SPRINT m off. (Before: 13% of such balls down the line received, 0% with the stick 25
+ * degrees inside: tests/receive.test.ts.)
+ */
+const STEER_RECV_BLEND = 0.65;
+const STEER_RECV_FULL = (60 * Math.PI) / 180;
+const STEER_RECV_OFF = (80 * Math.PI) / 180;
+/** steerPoint: the first point his way he can reach this long (s) before the ball; he's paced to be there STEER_ARRIVE s before it. */
+const STEER_SPARE = 0.2;
+const STEER_ARRIVE = 0.15;
+const STEER_NEAR = 1.6;
+const STEER_SQUARE = 1.5;
+const STEER_PACE = 0.85;
+/**
+ * The receive magnet: a ground pass of the human's to his man (below RECV_MAGNET_Y m) within RECV_MAGNET_R m of his
+ * body is his first touch (checkPossession), and over its last RECV_BEND_D m it bends towards his foot (at most
+ * RECV_BEND_ACC m/s² across its line), unless he's steering more than RECV_AWAY rad off the way to its line (clearly away).
+ */
+export const RECV_MAGNET_R = 1.3;
+const RECV_MAGNET_Y = 0.55;
+const RECV_BEND_D = 3;
+const RECV_BEND_ACC = 14;
+const RECV_AWAY = (150 * Math.PI) / 180;
 /**
  * A teammate standing in the lane of the human's pass to someone else lets it run past him (a dummy) for this
  * long (s) after the strike, while the man it's for is set for it uncontested. (Round 10: 6 of 52 of the
@@ -371,6 +404,7 @@ export const HUMAN_RESTART_WINDOW = 6;
 export const FIRST_MATCH_EASE = 60;
 export const FIRST_MATCH_PATIENT = 30;
 export const FIRST_MATCH_PRESS = 0.6;
+export { DDA_FINISH, DDA_PRESS, DDA_TACKLE } from './constants';
 const HUMAN_RESTART_LOCK = 0.2;
 const KEEPER_HOLD_MIN = 0.7;
 const KEEPER_HOLD_SPAN = 0.8;
@@ -497,6 +531,8 @@ const WING_BLOCK_TOUCH = 0.8;
 const AUTO_SUB_STAMINA = [0.55, 0.45];
 
 const otherSide = (s: Side): Side => (s === 0 ? 1 : 0);
+/** A starting score (MatchConfig.startScore): whole goals, never negative. */
+const startGoals = (n: number): number => (Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0);
 
 /** Timed finishing's verdict on a second SHOOT tap (the 'timing' event). */
 export type TimingGrade = Extract<MatchEvent, { type: 'timing' }>['grade'];
@@ -675,6 +711,8 @@ export class Match {
   heldPower: [PowerUpKind | null, PowerUpKind | null] = [null, null];
   /** Blitz mode: the side whose next goal counts double (a golden cube in play), -1 when none. */
   goldenSide: Side | -1 = -1;
+  /** Club Run's golden first goal (MatchConfig.goldenFirst): the side whose first goal still counts double, else -1. */
+  goldenFirstPending: Side | -1 = -1;
   /**
    * The teammate a PASS / THROUGH press has just locked onto (-1: none): he makes his move before the ball
    * comes (ai.ts: checks towards the ball for a pass, starts his sprint in behind for a through ball).
@@ -686,6 +724,13 @@ export class Match {
   private readonly pv = { carrier: -1, a: 0, pass: -1, through: -1, feet: false, t: 0 };
   /** kickId of the human's last pass / through ball (its receiver's first touch: HUMAN_PASS_TRAP). */
   private humanPassKick = -1;
+  /**
+   * The rolling curl on the ball (actions.naturalPass): its roll, the kick it came off and who struck it. It bends the
+   * ball while it rolls, untouched since (rollCurlStep; updateBallPath predicts it too).
+   */
+  private rollCurl = 0;
+  private curlKick = -1;
+  private curlBy = -1;
   /**
    * What the charging ball is while PASS / THROUGH is held (and until it's struck): a pass, a through ball
    * (THROUGH tapped) or a lofted one (THROUGH held THROUGH_LOB_HOLD s or more); null otherwise.
@@ -798,6 +843,11 @@ export class Match {
     const coin: Side = this.rng.chance(0.5) ? 0 : 1;
     this.firstKickoff = cfg.firstMatch && cfg.humanSide >= 0 ? (cfg.humanSide as Side) : coin;
     this.setupKickoff(this.firstKickoff);
+    // Club Run perks (and anything else that sets a match up): the score it starts at, the item each side holds at
+    // kick-off (Blitz), a golden first goal.
+    if (cfg.startScore) this.score = [startGoals(cfg.startScore[0]), startGoals(cfg.startScore[1])];
+    if (cfg.mode === 'blitz' && cfg.startPower) this.heldPower = [cfg.startPower[0] ?? null, cfg.startPower[1] ?? null];
+    this.goldenFirstPending = cfg.goldenFirst === 0 || cfg.goldenFirst === 1 ? cfg.goldenFirst : -1;
     this.updateBallPath();
   }
 
@@ -846,6 +896,16 @@ export class Match {
     return this.firstMatchEase() && this.clock < FIRST_MATCH_PATIENT;
   }
 
+  /**
+   * How much the AI side `side` eases off (MatchConfig.assist, 0..1): against the HUMAN side only, so 0 AI v AI and
+   * for the human's own side.
+   */
+  assistEase(side: Side): number {
+    if (this.cfg.humanSide !== otherSide(side)) return 0;
+    const a = this.cfg.assist ?? 0;
+    return Number.isFinite(a) ? clamp(a, 0, 1) : 0;
+  }
+
   aiSkill(side: Side): number {
     if (this.cfg.humanSide === side) return 2.6;
     return this.cfg.sideDifficulty?.[side] ?? this.cfg.difficulty;
@@ -862,8 +922,10 @@ export class Match {
    * level: goals at both ends against a bot that used to concede 0.25 a match).
    */
   keeperBonus(side: Side): number {
-    if (this.cfg.humanSide === side) return HUMAN_KEEPER_BONUS - (this.aiSkill(otherSide(side)) - 0.6) * HUMAN_KEEPER_SLOPE;
-    return (this.aiSkill(side) - 2) * 0.025;
+    // (Club Run's sharper keeper: MatchConfig.keeperBoost.)
+    const boost = clamp(this.cfg.keeperBoost?.[side] ?? 0, 0, 1) * KEEPER_BOOST;
+    if (this.cfg.humanSide === side) return HUMAN_KEEPER_BONUS - (this.aiSkill(otherSide(side)) - 0.6) * HUMAN_KEEPER_SLOPE + boost;
+    return (this.aiSkill(side) - 2) * 0.025 + boost;
   }
 
   /** Deepest outfield defender of `side`, in the normalised frame of the team attacking them. */
@@ -1210,6 +1272,8 @@ export class Match {
     this.keepHeldBall();
     this.dribbleControl();
 
+    if (this.phase === 'play') this.receiveBend(dt);
+    this.rollCurlStep(dt);
     this.hits.length = 0;
     this.ballPrev.x = this.ball.pos.x;
     this.ballPrev.y = this.ball.pos.y;
@@ -1306,6 +1370,7 @@ export class Match {
     let x = b.pos.x, y = b.pos.y, z = b.pos.z;
     let vx = b.vel.x, vy = b.vel.y, vz = b.vel.z;
     const dt = 0.05;
+    const curl = this.curlNow();
     for (let i = 1; i <= 64; i++) {
       const grounded = y <= BALL_R + 0.01 && Math.abs(vy) < 0.9;
       if (grounded) {
@@ -1316,6 +1381,13 @@ export class Match {
           const ns = Math.max(0, sh - (ROLL_A + ROLL_B * sh) * dt);
           vx *= ns / sh;
           vz *= ns / sh;
+        }
+        if (curl !== 0) {
+          // (The curled pass's roll: the same pull as rollCurlStep.)
+          const k = curl * Math.exp(-ROLL_CURL_DECAY * (i - 1) * dt) * dt;
+          const nvx = vx - k * vz;
+          vz += k * vx;
+          vx = nvx;
         }
       } else {
         vy -= GRAVITY * dt;
@@ -1581,6 +1653,8 @@ export class Match {
       o.wild = grade === 'early';
     }
     const L = so?.pen ? penaltyLaunch(this, p, so.pen) : resolveKick(this, p, o);
+    // (A ground pass isn't laser-straight: a touch of curl, pace and skim: actions.naturalPass.)
+    if (!so) naturalPass(this, p, L, this.kickId + 1);
     b.owner = -1;
     b.vel.x = L.vx;
     b.vel.y = L.vy;
@@ -1595,6 +1669,9 @@ export class Match {
     p.kickCooldown = 0.3;
     p.order = null;
     this.kickId++;
+    this.rollCurl = L.roll ?? 0;
+    this.curlKick = this.kickId;
+    this.curlBy = p.idx;
     this.sinceKick = 0;
     this.kickX = b.pos.x;
     this.kickZ = b.pos.z;
@@ -2092,8 +2169,165 @@ export class Match {
         if (ground && tl < 1.5 && b.vel.x * (p.pos.x - b.pos.x) + b.vel.z * (p.pos.z - b.pos.z) > 0) {
           p.faceTarget = Math.atan2(b.pos.z - p.pos.z, b.pos.x - p.pos.x);
         }
+      } else if (this.passTarget === p.idx && stickLen >= 0.2 && b.owner < 0 && this.humanPassKick === this.kickId &&
+        (this.kickKind === 'pass' || this.kickKind === 'through') && p.state === 'move') {
+        this.steerReceive(p, pad, stickLen);
       }
     }
+  }
+
+  /**
+   * The human steering his man onto a ground pass of his (see STEER_RECV_BLEND): his run bent towards where he meets
+   * it (steerPoint), and paced so he's there STEER_ARRIVE s before the ball (a man sprinting away from a ball that's
+   * slowing down never lets it catch him), both by the blend: the stick keeps the rest.
+   */
+  private steerReceive(p: Player, pad: Pad, stickLen: number): void {
+    const sx = pad.mx / stickLen;
+    const sz = pad.mz / stickLen;
+    if (this.steeringAway(p, sx, sz)) return;
+    const pt = this.steerPoint(p, sx, sz);
+    if (!pt) return;
+    const tx = pt.x - p.pos.x;
+    const tz = pt.z - p.pos.z;
+    const tl = Math.hypot(tx, tz);
+    let w = STEER_RECV_BLEND;
+    let dx = sx;
+    let dz = sz;
+    const b = this.ball;
+    const bs = b.hspeed();
+    if (tl < STEER_NEAR && bs > 1) {
+      // Within STEER_NEAR m of it he's on its line: squared up onto the line (across the ball's path) whatever the
+      // angle, his way along it, paced below, while it comes.
+      const ux = b.vel.x / bs;
+      const uz = b.vel.z / bs;
+      const lat = -tx * uz + tz * ux;
+      // (Only the stick's part along the line: the part across it would take him off it.)
+      const along = sx * ux + sz * uz;
+      dx = ux * along - uz * lat * STEER_SQUARE;
+      dz = uz * along + ux * lat * STEER_SQUARE;
+      const dl = Math.hypot(dx, dz) || 1;
+      dx /= dl;
+      dz /= dl;
+    } else if (tl >= 0.3) {
+      const ang = Math.acos(clamp((sx * tx + sz * tz) / tl, -1, 1));
+      w *= clamp((STEER_RECV_OFF - ang) / (STEER_RECV_OFF - STEER_RECV_FULL), 0, 1);
+      if (w <= 0) return;
+      dx = sx * (1 - w) + (tx / tl) * w;
+      dz = sz * (1 - w) + (tz / tl) * w;
+      const dl = Math.hypot(dx, dz) || 1;
+      dx /= dl;
+      dz /= dl;
+    }
+    // The pace that gets him there just before it (flat out when he's late for every point his way).
+    const need = pt.late ? Infinity : tl / Math.max(0.08, pt.t - STEER_ARRIVE);
+    const sprint = need > p.jogPace() * 0.98;
+    const pace = Math.min(1, need / (sprint ? p.sprintPace() : p.jogPace()));
+    // (His pace follows the ball's more than his direction does: a man who keeps on walking away from a slowing ball at
+    // the stick's share of his pace never lets it reach him.)
+    const wp = pace < 1 ? Math.max(w, STEER_PACE) : w;
+    const mag = Math.min(1, stickLen) * (1 - wp) + pace * wp;
+    p.wantX = dx * mag;
+    p.wantZ = dz * mag;
+    p.sprint = sprint || (pad.sprint && pace > 0.9);
+  }
+
+  /**
+   * Where the man the human is steering meets his ground pass: the first point on the ball's path (below knee height),
+   * no more than STEER_RECV_OFF off his stick (a point within a stride of him counts as his way), that he can reach
+   * STEER_SPARE s before the ball; with none in time, the one he's least late for (`late`). Null with nothing his way.
+   */
+  private steerPoint(p: Player, sx: number, sz: number): { x: number; z: number; t: number; late: boolean } | null {
+    const top = p.top * 0.92;
+    const cosOff = Math.cos(STEER_RECV_OFF);
+    let late: { x: number; z: number; t: number; late: boolean } | null = null;
+    let lateBy = Infinity;
+    for (const s of this.ballPath) {
+      if (s.y > 1) continue;
+      const dx = s.x - p.pos.x;
+      const dz = s.z - p.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d >= 1 && (dx * sx + dz * sz) / d < cosOff) continue;
+      const spare = s.t - (Math.max(0, d - 0.55) / top + 0.1);
+      if (spare >= STEER_SPARE) return { x: s.x, z: s.z, t: s.t, late: false };
+      if (STEER_SPARE - spare < lateBy) {
+        lateBy = STEER_SPARE - spare;
+        late = { x: s.x, z: s.z, t: s.t, late: true };
+      }
+    }
+    return late;
+  }
+
+  /**
+   * Is `p` the man a ground pass of the human's is on its way to, not steering clearly away from it (RECV_AWAY)? The
+   * receive magnet applies (RECV_MAGNET_R, RECV_BEND_D).
+   */
+  private magnetFor(p: Player): boolean {
+    if (this.humanPassKick !== this.kickId || this.passTarget !== p.idx || !this.isHumanControlled(p)) return false;
+    if (this.kickKind !== 'pass' && this.kickKind !== 'through') return false;
+    const b = this.ball;
+    if (b.owner >= 0 || b.held || b.pos.y > RECV_MAGNET_Y || p.state !== 'move' || p.kickCooldown > 0) return false;
+    const sl = Math.hypot(this.prev.mx, this.prev.mz);
+    return sl < 0.3 || !this.steeringAway(p, this.prev.mx / sl, this.prev.mz / sl);
+  }
+
+  /**
+   * Is the human's man, the stick (sx, sz) (a unit vector), steering clearly away from the ball: more than RECV_AWAY off
+   * the way to its line? (A man running alongside it, or with it catching him up from behind, is steering along it.)
+   */
+  private steeringAway(p: Player, sx: number, sz: number): boolean {
+    const b = this.ball;
+    const bs = b.hspeed();
+    if (bs < 0.5) return false;
+    const ux = b.vel.x / bs;
+    const uz = b.vel.z / bs;
+    const rx = b.pos.x - p.pos.x;
+    const rz = b.pos.z - p.pos.z;
+    const along = rx * ux + rz * uz;
+    const lx = rx - ux * along;
+    const lz = rz - uz * along;
+    const ll = Math.hypot(lx, lz);
+    if (ll < 0.4) return false;
+    return (sx * lx + sz * lz) / ll <= Math.cos(RECV_AWAY);
+  }
+
+  /** The roll on the current curled pass right now (0 when it's been touched since, or it's in the air). */
+  private curlNow(dt = 0): number {
+    const b = this.ball;
+    if (this.rollCurl === 0 || this.curlKick !== this.kickId || b.owner >= 0 || b.held || b.lastTouch !== this.curlBy) return 0;
+    return this.rollCurl * Math.exp(-ROLL_CURL_DECAY * (this.sinceKick + dt));
+  }
+
+  /** A curled pass rolling: pulled sideways by its roll x its pace (actions.naturalPass). */
+  private rollCurlStep(dt: number): void {
+    const c = this.curlNow();
+    if (c === 0) return;
+    const b = this.ball;
+    if (b.pos.y > BALL_R + 0.005 || Math.abs(b.vel.y) >= 0.9) return;
+    const k = c * dt;
+    const vx = b.vel.x - k * b.vel.z;
+    b.vel.z += k * b.vel.x;
+    b.vel.x = vx;
+  }
+
+  /** The receive magnet's bend: over its last RECV_BEND_D m the human's ground pass curls in towards his man's foot. */
+  private receiveBend(dt: number): void {
+    if (this.passTarget < 0) return;
+    const p = this.players[this.passTarget];
+    if (!this.magnetFor(p)) return;
+    const b = this.ball;
+    const fx = p.footX() - b.pos.x;
+    const fz = p.footZ() - b.pos.z;
+    const d = Math.hypot(fx, fz);
+    const bs = b.hspeed();
+    if (d > RECV_BEND_D || d < 0.15 || bs < 1) return;
+    // Only a ball still coming towards him: the component of the foot across its line.
+    const ux = b.vel.x / bs;
+    const uz = b.vel.z / bs;
+    if (fx * ux + fz * uz <= 0) return;
+    const lat = -fx * uz + fz * ux;
+    const acc = clamp(lat * 8, -RECV_BEND_ACC, RECV_BEND_ACC) * dt;
+    b.vel.x += -uz * acc;
+    b.vel.z += ux * acc;
   }
 
   /**
@@ -2924,8 +3158,15 @@ export class Match {
   }
 
   private goal(side: Side): void {
+    const before = this.score[side];
     this.score[side]++;
     if (this.cfg.mode === 'blitz') blitzGoal(this, side);
+    // Club Run's golden first goal: that side's first goal is worth two (one more on the score, still one 'goal' event;
+    // with a Blitz golden already doubling it, that's the double).
+    if (this.goldenFirstPending === side) {
+      this.goldenFirstPending = -1;
+      if (this.score[side] === before + 1) this.score[side]++;
+    }
     let scorer = this.ball.lastTouch >= 0 ? this.players[this.ball.lastTouch] : this.bySide[side][10];
     // An on-target shot that goes in off a save, a block or a deflection is the shooter's goal, not
     // an own goal (as long as nobody has struck the ball since).
@@ -3427,7 +3668,7 @@ export class Match {
    * (dribbleControl); a heavier one squirts off him loose (up to TOUCH_MAX m) for anyone to get to. The
    * distance is kept in lastTouchD.
    */
-  private firstTouch(p: Player, rel: number): void {
+  private firstTouch(p: Player, rel: number, clean = false): void {
     const b = this.ball;
     const human = this.isHumanControlled(p);
     const bs = Math.hypot(b.vel.x, b.vel.z);
@@ -3457,7 +3698,8 @@ export class Match {
     let heavy = (r / (20 * TEMPO)) ** 2 * (1.2 - ctrl) * (1 + 0.8 * press + 0.5 * back + 0.4 * air + (p.stumbleT > 0 ? 0.6 : 0)) *
       (1.15 - this.kickSkill(p) * 0.075);
     heavy *= human ? TOUCH_ASSIST[this.groundAssist] : TOUCH_AI;
-    const dist = Math.min(TOUCH_MAX, TOUCH_BASE + heavy * TOUCH_K * (0.6 + 0.8 * this.rng.next()));
+    let dist = Math.min(TOUCH_MAX, TOUCH_BASE + heavy * TOUCH_K * (0.6 + 0.8 * this.rng.next()));
+    if (clean) dist = Math.min(dist, TOUCH_SPILL * 0.8);
     this.lastTouchD = dist;
     // Where he means to take it: the stick (the human; no stick, in front of him), else into his run, or on
     // the way it was going, opened up towards goal and away from his marker.
@@ -3538,7 +3780,9 @@ export class Match {
         const fz = p.footZ() - b.pos.z;
         if (fx * b.vel.x + fz * b.vel.z < 0) continue;
       }
-      const d = dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z);
+      let d = dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z);
+      // (The receive magnet: the human's pass to his man, within RECV_MAGNET_R of him, is his, and cleanly.)
+      if (d >= p.controlRadius() && dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z) < RECV_MAGNET_R && this.magnetFor(p)) d = p.controlRadius() - 0.01;
       if (d < p.controlRadius() && d < bestD) {
         bestD = d;
         best = p;
@@ -3567,9 +3811,10 @@ export class Match {
         return;
       }
     }
-    // An outfielder meeting a moving ball: a first touch (clean into his stride, or heavy and loose).
+    // An outfielder meeting a moving ball: a first touch (clean into his stride, or heavy and loose; the human's pass
+    // that the receive magnet brings to his man, clean).
     if (!best.isKeeper && rel >= TOUCH_MIN_REL) {
-      this.firstTouch(best, rel);
+      this.firstTouch(best, rel, this.magnetFor(best) && dist2(best.pos.x, best.pos.z, b.pos.x, b.pos.z) < RECV_MAGNET_R);
       return;
     }
     if (rel > trap) {
@@ -4016,7 +4261,7 @@ export class Match {
       const tl = Math.hypot(tx, tz) || 1;
       const behind = clamp(-(Math.cos(c.facing) * tx + Math.sin(c.facing) * tz) / tl, 0, 1);
       const def = p.stat.defending / 100;
-      pFoul = human ? humanSlideFoul(behind) : clamp(0.03 + behind * 0.14 + (0.75 - def) * 0.2 + (c.speed() > 6 ? 0.03 : 0), 0.02, 0.4);
+      pFoul = human ? humanSlideFoul(behind) : clamp(0.03 + behind * 0.14 + (0.75 - def) * 0.2 + (c.speed() > 6 ? 0.03 : 0), 0.02, 0.4) * AI_FOUL_K;
     }
     p.setState('slide');
     p.longSlide = human;
@@ -4222,6 +4467,7 @@ export class Match {
       if (br.presser === p.idx) br.presser = -1;
       if (br.cover === p.idx) br.cover = -1;
       if (br.chaser === p.idx) br.chaser = -1;
+      if (br.trap === p.idx) br.trap = -1;
       br.think = 0;
     }
     if (this.cfg.humanSide === p.side && this.active === p.idx) {
@@ -4306,6 +4552,8 @@ export class Match {
       chance *= TACKLE_WIN;
     }
     chance *= carrierGuard(this, p, c);
+    // (Dynamic difficulty: the AI's tackle on the human's carrier is that much less sure.)
+    if (this.isHumanControlled(c)) chance *= 1 - DDA_TACKLE * this.assistEase(p.side);
     if (this.rng.chance(chance)) {
       this.stats.tackles[p.side]++;
       this.events.push({ type: 'tackle', by: p.idx, won: true, slide: false });
@@ -4356,7 +4604,7 @@ export class Match {
       this.events.push({ type: 'tackle', by: p.idx, won: false, slide: false });
       // Mistimed: clipping the carrier from behind or through their back is a foul.
       const inBox = inOwnBox(this, p.side, c.pos.x, c.pos.z);
-      const base = assisted ? standingFoulChance(behind, shielded) : 0.042 + behind * 0.18 + shielded * 0.1 + (c.speed() > 5 ? 0.04 : 0);
+      const base = assisted ? standingFoulChance(behind, shielded) : (0.042 + behind * 0.18 + shielded * 0.1 + (c.speed() > 5 ? 0.04 : 0)) * AI_FOUL_K;
       const pFoul = base * (inBox ? 0.9 : 1) * this.foulScale;
       if (this.rng.chance(pFoul)) {
         c.setState('fallen');

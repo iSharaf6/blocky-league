@@ -13,15 +13,25 @@ type BtnKey = 'pass' | 'shoot' | 'through' | 'sprint';
 /** How long (ms) a ⚡ tap stays down at least, so a tap shorter than a frame still reaches the sim as a press. */
 const POWER_TAP_MS = 70;
 
+/** Settings > Controls > THUMBSTICK: under the thumb wherever it lands, or anchored bottom-left. */
+export type StickMode = 'floating' | 'fixed';
+
+/** Fixed stick: a touch this far (px) from its centre still takes it; further out is ignored. */
+const FIXED_REACH = 150;
+
 /**
- * Floating thumbstick on the left half, chunky action buttons on the right.
+ * Thumbstick on the left half (floating: it appears under the thumb; fixed: anchored bottom-left with its
+ * base always drawn, see TouchControls.stickMode), chunky action buttons on the right.
  *
  * The whole overlay also hides itself (CSS, see style.css "touch") while the HUD is dead-ball only — goal
  * celebrations, replays, half / full time and open menus — so it works even when nobody calls setVisible().
  * During a replay a full-screen tap skips it (the buttons that normally do that are hidden).
  */
 export class TouchControls {
+  /** The stick style for new overlays (main.ts sets it from the save; setStickMode changes a live one). */
+  static stickMode: StickMode = 'floating';
   readonly root: HTMLDivElement;
+  private mode: StickMode = TouchControls.stickMode;
   private knob: HTMLDivElement;
   private base: HTMLDivElement;
   private stickId: number | null = null;
@@ -55,16 +65,26 @@ export class TouchControls {
       <div class="touch-skip" aria-hidden="true"></div>`;
     this.base = this.root.querySelector('.touch-base')!;
     this.knob = this.root.querySelector('.touch-knob')!;
+    this.root.classList.toggle('fixed', this.mode === 'fixed');
     const zone = this.root.querySelector<HTMLDivElement>('.touch-stick-zone')!;
     const t = input.touch;
 
     zone.addEventListener('pointerdown', (e) => {
       if (this.stickId !== null) return;
+      if (this.mode === 'fixed') {
+        // Fixed: the stick stays put; the thumb has to land on (or near) it.
+        const r = this.base.getBoundingClientRect();
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        if (!r.width || Math.hypot(e.clientX - cx, e.clientY - cy) > FIXED_REACH) return;
+        this.origin = { x: cx, y: cy };
+      } else {
+        this.origin = { x: e.clientX, y: e.clientY };
+        this.base.style.left = `${e.clientX}px`;
+        this.base.style.top = `${e.clientY}px`;
+      }
       this.stickId = e.pointerId;
       zone.setPointerCapture(e.pointerId);
-      this.origin = { x: e.clientX, y: e.clientY };
-      this.base.style.left = `${e.clientX}px`;
-      this.base.style.top = `${e.clientY}px`;
       this.base.classList.add('on');
       // Once the stick has been found, the idle base stops being drawn (it only covered players).
       this.root.classList.add('used');
@@ -78,7 +98,10 @@ export class TouchControls {
       let dx = e.clientX - this.origin.x;
       let dy = e.clientY - this.origin.y;
       const l = Math.hypot(dx, dy);
-      if (l > r) {
+      if (l > r && this.mode === 'fixed') {
+        dx = (dx / l) * r;
+        dy = (dy / l) * r;
+      } else if (l > r) {
         // Drag the base along so the stick never feels stuck.
         this.origin.x += (dx / l) * (l - r);
         this.origin.y += (dy / l) * (l - r);
@@ -169,6 +192,23 @@ export class TouchControls {
     this.stickId = null;
     this.input.touch.sx = this.input.touch.sy = 0;
     this.base.classList.remove('on');
+    if (this.mode === 'fixed') this.knob.style.transform = 'translate(-50%, -50%)';
+  }
+
+  /** Floating or fixed stick (Settings, also mid-match from the pause menu). */
+  setStickMode(mode: StickMode): void {
+    if (this.stickId !== null) this.releaseStick();
+    this.mode = mode;
+    this.root.classList.toggle('fixed', mode === 'fixed');
+    if (mode === 'fixed') {
+      // CSS anchors it; clear where the last floating touch left it.
+      this.base.style.left = this.base.style.top = '';
+      this.knob.style.transform = 'translate(-50%, -50%)';
+    }
+  }
+
+  get stick(): StickMode {
+    return this.mode;
   }
 
   /** Drop every held button and the stick (the overlay is going away mid-press). */

@@ -4,6 +4,9 @@ import { BALL_OFS, PF } from '../game/replay';
 import { HALF_L } from '../sim/constants';
 import { PITCH_Y } from '../render/stadium';
 import type { Match } from '../sim/match';
+import type { MatchEvent } from '../sim/types';
+import { actionKey, moveKeys } from '../core/input';
+import type { LessonCue } from '../meta/moments';
 import { escHtml, sep, sepsOfText } from './text';
 
 type Device = 'keyboard' | 'gamepad' | 'touch';
@@ -14,6 +17,8 @@ export interface TeachControls {
   sx: number;
   sy: number;
   pass: boolean;
+  /** Read by the SPRINT lesson (LEARN THE BASICS); optional for older feeds. */
+  sprint?: boolean;
 }
 /** A teaching wait that nothing clears (no input source wired) lets go after this long, so the game can never soft-lock. */
 const TEACH_TIMEOUT_MS = 25_000;
@@ -25,9 +30,8 @@ export interface TrainerCue {
 
 /** Uses the same possession and charge state as the controller, including passes in flight. */
 export function trainerCue(m: Match, device: Device): TrainerCue {
-  const keys = device === 'gamepad' ? ['A', 'B', 'X', 'RT'] : device === 'touch'
-    ? ['PASS', 'SHOOT', 'THROUGH', 'SPRINT'] : ['SPACE', 'K', 'L', 'SHIFT'];
-  const [pass, shoot, through, sprint] = keys;
+  // The player's own bindings (Settings > Controls > KEYS), or the touch buttons' names.
+  const [pass, shoot, through, sprint] = (['pass', 'shoot', 'through', 'sprint'] as const).map((a) => actionKey(a, device));
   const own = m.ball.owner;
   const mine = own === m.active && own >= 0;
   if (mine && m.ball.held) return {
@@ -58,18 +62,95 @@ export function trainerCue(m: Match, device: Device): TrainerCue {
   return { title: 'GET TO THE BALL', actions: [[sprint, 'Sprint'], [pass, 'Switch']], detail: 'Point your movement towards the ball' };
 }
 
+/** A basics prompt's title (the action), over its key cap and line. */
+const LESSON_TITLE: Record<LessonCue['key'], string> = { pass: 'PASS', shoot: 'SHOOT', through: 'CROSS', sprint: 'SPRINT', move: 'MOVE' };
+
 /** The teaching cards, by device: the key cap, what to do, and one line of detail. */
 function teachCue(step: TeachStep, device: Device): TrainerCue {
-  const stick = device === 'keyboard' ? 'WASD' : 'STICK';
-  const pass = device === 'gamepad' ? 'A' : device === 'touch' ? 'PASS' : 'SPACE';
+  const keys = moveKeys('keyboard').split(' / ')[0];
+  const stick = device === 'keyboard' ? keys : 'STICK';
+  const pass = actionKey('pass', device);
   if (step === 'move') return {
-    title: 'STEP 1 · MOVE', actions: [[stick, device === 'keyboard' ? 'Run with W A S D (or the arrows)' : 'Push the stick to run']],
+    title: 'STEP 1 · MOVE', actions: [[stick, device === 'keyboard' ? `Run with ${[...keys].join(' ')}${moveKeys('keyboard').includes('ARROWS') ? ' (or the arrows)' : ''}` : 'Push the stick to run']],
     detail: 'Head for the goal the arrow points at',
   };
   return {
     title: 'STEP 2 · PASS', actions: [[pass, device === 'touch' ? 'Tap PASS to the ringed mate' : `Tap ${pass} to the ringed mate`]],
     detail: 'Point the stick at a mate to pick him',
   };
+}
+
+/**
+ * LEARN THE BASICS: a drill's prompts (meta/moments.ts BasicsStep.lesson), one at a time. main.ts puts the
+ * step's lesson in Trainer.lesson and forwards the match events to event(); the trainer card shows `cue`.
+ * A cue waits `after` seconds of play (from the start, or from the previous cue being done) and for its
+ * `when` to hold; the action it teaches clears it, even one done early (a quick pass skips the PASS card).
+ */
+export class Lesson {
+  private i = 0;
+  /** Match clock when the current cue's wait began (-1: not started). */
+  private from = -1;
+  private sprintT = 0;
+  private lastClock = -1;
+  constructor(readonly cues: readonly LessonCue[]) {}
+
+  /** The cue waiting to be learned (null: all done). */
+  get current(): LessonCue | null {
+    return this.cues[this.i] ?? null;
+  }
+
+  private done(what: LessonCue['done']): void {
+    // An action done early counts for its cue, and for any cue before it that taught the same thing.
+    const at = this.cues.findIndex((c, k) => k >= this.i && c.done === what);
+    if (at < 0) return;
+    this.i = at + 1;
+    this.from = -1;
+    this.sprintT = 0;
+  }
+
+  /** Every match event (main.ts): our kicks clear PASS / SHOOT / CROSS cues. */
+  event(e: MatchEvent, m: Match): void {
+    if (e.type !== 'kick') return;
+    const hs = m.cfg.humanSide;
+    const by = m.players[m.ball.lastTouch];
+    if (!by || by.side !== hs) return;
+    if (e.kind === 'shot' || e.kind === 'header') this.done('shot');
+    else if (e.kind === 'through' || e.kind === 'lob') {
+      this.done('cross');
+      this.done('pass');
+    } else if (e.kind === 'pass') this.done('pass');
+  }
+
+  /** The cue to show now, if its time and moment have come (called by the trainer each frame). */
+  show(m: Match, c: TeachControls | null): LessonCue | null {
+    const cue = this.current;
+    if (!cue || m.phase !== 'play') return null;
+    const clock = m.clock;
+    if (this.from < 0) this.from = clock;
+    const dt = this.lastClock >= 0 ? Math.max(0, Math.min(0.1, clock - this.lastClock)) : 0;
+    this.lastClock = clock;
+    if (cue.done === 'move' && c && Math.hypot(c.sx, c.sy) > 0.3) {
+      this.done('move');
+      return null;
+    }
+    if (cue.done === 'sprint' && c?.sprint) {
+      this.sprintT += dt;
+      if (this.sprintT > 0.35) {
+        this.done('sprint');
+        return null;
+      }
+    }
+    if (clock - this.from < cue.after) return null;
+    const hs = m.cfg.humanSide;
+    const own = m.ball.owner;
+    const ours = own >= 0 && m.players[own]?.side === hs;
+    const holds =
+      cue.when === 'any' ? true
+        : cue.when === 'onBall' ? ours && own === m.active
+          : cue.when === 'offBall' ? !ours
+            : own < 0 && m.passTarget >= 0 && m.players[m.passTarget]?.side === hs;
+    return holds ? cue : null;
+  }
 }
 
 /**
@@ -84,6 +165,10 @@ function teachCue(step: TeachStep, device: Device): TrainerCue {
 export class Trainer {
   /** The live input (main.ts: `Trainer.input = input`): how the teaching steps see the action while the sim is held. */
   static input: { read(): TeachControls } | null = null;
+  /** LEARN THE BASICS: the drill's prompts, replacing the normal cues (main.ts sets it per step; null otherwise). */
+  static lesson: Lesson | null = null;
+  /** The basics are done: the first match skips its own MOVE / PASS teaching cards. */
+  static taught = false;
   readonly root = document.createElement('div');
   /** First-match teaching: 'move' → 'pass' → 'play' (the normal cues). 'play' from the start on any other match. */
   stage: TeachStep | 'play' = 'play';
@@ -202,7 +287,7 @@ export class Trainer {
   update(m: Match, frame: Float32Array, camera: Camera, head: number, device: Device, controls?: TeachControls | null): void {
     if (!this.stageInit) {
       this.stageInit = true;
-      if (m.cfg.firstMatch && m.trainer) this.stage = 'move';
+      if (m.cfg.firstMatch && m.trainer && !Trainer.taught && !Trainer.lesson) this.stage = 'move';
     }
     if (!m.trainer || m.phase !== 'play' || m.active < 0 || m.players[m.active].sentOff) { this.hide(); return; }
     const w = window.innerWidth, h = window.innerHeight;
@@ -216,12 +301,24 @@ export class Trainer {
     this.root.hidden = false;
     const goal = project(m.attackDir(m.players[m.active].side) * HALF_L, 0, 0);
     const direction = Math.abs(goal.x - at.x) > 70 ? (goal.x > at.x ? ' →' : ' ←') : ' ↑';
-    const teaching = this.teach(m, frame, device, controls);
-    const cue = teaching ? null : trainerCue(m, device);
+    const lesson = Trainer.lesson;
+    const teaching = !lesson && this.teach(m, frame, device, controls);
+    let cue: TrainerCue | null = null;
+    if (lesson) {
+      // A basics drill: its one prompt (or nothing, while the next one waits its turn).
+      const lc = lesson.show(m, controls ?? this.fed ?? Trainer.input?.read() ?? null);
+      cue = lc ? { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveKeys(device).split(' / ')[0] : actionKey(lc.key, device), lc.text]], detail: '' } : null;
+      this.card.classList.toggle('lesson', !!lc);
+      this.card.classList.toggle('teach', !!lc);
+      this.card.hidden = !lc;
+    } else {
+      this.card.hidden = false;
+      cue = teaching ? null : trainerCue(m, device);
+    }
     const key = cue ? JSON.stringify(cue) + direction : this.lastCue;
     if (cue && key !== this.lastCue) {
       this.lastCue = key;
-      this.title.textContent = cue.title + (m.ball.owner === m.active ? direction : '');
+      this.title.textContent = cue.title + (m.ball.owner === m.active && !lesson ? direction : '');
       this.actions.replaceChildren(...cue.actions.map(([k, label]) => {
         const item = document.createElement('span');
         const cap = document.createElement('kbd');
@@ -268,7 +365,7 @@ export class Trainer {
     if (this.target !== idx || this.recipient.dataset.device !== device) {
       this.target = idx;
       this.recipient.dataset.device = device;
-      this.recipient.innerHTML = `${device === 'gamepad' ? 'A' : device === 'touch' ? 'PASS' : 'SPACE'}${sep()}${escHtml(String(m.players[idx].def.number))}`;
+      this.recipient.innerHTML = `${escHtml(actionKey('pass', device))}${sep()}${escHtml(String(m.players[idx].def.number))}`;
     }
   }
 }

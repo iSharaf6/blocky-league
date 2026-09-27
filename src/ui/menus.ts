@@ -9,7 +9,11 @@ import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { KitPreview, faceHtml, hydrateFaces } from './preview';
 import { crestSvg } from './crest';
-import { speechAvailable } from './commentary';
+import {
+  DEFAULT_KEYS, DEFAULT_PAD, Input, KEY_ACTIONS, KEY_SLOTS, PAD_ACTIONS, PAD_SLOTS, actionKey, bindKey, bindPad, isKey, keyLabel, moveKeys, normCode,
+  normalizeKeyMap, normalizePadMap, padLabel, unbindKey, unbindPad, type KeyAction, type KeyMap, type PadAction, type PadMap,
+} from '../core/input';
+import type { LockedFeature } from '../core/onboarding';
 import { cssHex, shade } from '../render/palette';
 import { FORMATIONS, FORMATION_IDS, type Slot } from '../sim/formations';
 import type { Match } from '../sim/match';
@@ -88,6 +92,19 @@ export interface MainInfo {
   account?: string;
   /** MOMENTS tile subtitle ("SHORT CHALLENGES · ★ 4"). Plain " · ": the menu draws the dividers. */
   moments?: string;
+  /** CLUB RUN tile subtitle ("BEST: ROUND 3"). */
+  run?: string;
+  /**
+   * The big first tile when it isn't PLAY NOW: LEARN THE BASICS (step n of 3) or FIRST MATCH (the campaign,
+   * core/onboarding.ts). Its subtitle is `playNow`.
+   */
+  hero?: { title: string; kind: 'basics' | 'first' | 'play' };
+  /** Modes still waiting for the first goal: drawn locked ("SCORE YOUR FIRST GOAL"). */
+  locked?: readonly LockedFeature[];
+  /** The nearest mastery badge tier ("2 MORE GOALS FOR FINISHER II"), shown on the level badge. */
+  badgeGoal?: string;
+  /** Badge / season rewards waiting on the BADGES screen (a dot on the level badge). */
+  badgesPending?: number;
 }
 
 /** What the full-time screen shows for progression (stars, XP, streak, challenges done this match). */
@@ -168,6 +185,10 @@ const ICONS: Record<string, string[]> = {
   star: [
     '....XX....', '....XX....', '...XXXX...', 'XXXXXXXXXX', '.XXXXXXXX.',
     '..XXXXXX..', '..XXXXXX..', '.XXX..XXX.', 'XX......XX', 'X........X',
+  ],
+  lock: [
+    '...XXXX...', '..XX..XX..', '..X....X..', '..X....X..', '.XXXXXXXX.',
+    '.XXXXXXXX.', '.XXXX.XXX.', '.XXXX.XXX.', '.XXXXXXXX.', '.XXXXXXXX.',
   ],
 };
 
@@ -253,53 +274,65 @@ export function defaultDevice(): 'keyboard' | 'touch' {
   }
 }
 
-const HOWTO_KEYS = `
+/** A key cap for an action's first binding (keyboard or gamepad), escaped for markup. */
+const kc = (a: PadAction, dev: 'keyboard' | 'gamepad') => `<kbd>${escHtml(actionKey(a, dev))}</kbd>`;
+
+/** HOW TO PLAY for the keyboard: every key named is the player's own binding (Settings > Controls > KEYS). */
+function howtoKeys(): string {
+  const k = (a: PadAction) => kc(a, 'keyboard');
+  const mv = moveKeys('keyboard').split(' / ');
+  return `
   <div class="howto">
     <div class="ht-col">
       <h3>ATTACK</h3>
-      <p><kbd>WASD</kbd> / <kbd>←↑→↓</kbd> move</p>
-      <p><kbd>SPACE</kbd> pass to the <b>ringed</b> mate: press = instant${sep()}aim to choose</p>
-      <p><kbd>L</kbd> through ball: your runner goes${sep()}hold: lob / cross</p>
-      <p><kbd>K</kbd> hold &amp; release to shoot${sep()}the keys aim while you charge</p>
-      <p>Tap <kbd>K</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
-      <p>Hold <kbd>K</kbd> + tap <kbd>L</kbd>: chip${sep()}soft <kbd>K</kbd> on a diagonal: curler</p>
-      <p><kbd>SHIFT</kbd> sprint${sep()}double-tap to knock it past a defender</p>
-      <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; <kbd>K</kbd> to head at goal</p>
+      <p>${mv.map((m) => `<kbd>${escHtml(m === 'ARROWS' ? '←↑→↓' : m)}</kbd>`).join(' / ')} move</p>
+      <p>${k('pass')} pass to the <b>ringed</b> mate: press = instant${sep()}aim to choose</p>
+      <p>${k('through')} through ball: your runner goes${sep()}hold: lob / cross</p>
+      <p>${k('shoot')} hold &amp; release to shoot${sep()}the keys aim while you charge</p>
+      <p>Tap ${k('shoot')} again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
+      <p>Hold ${k('shoot')} + tap ${k('through')}: chip${sep()}soft ${k('shoot')} on a diagonal: curler</p>
+      <p>${k('sprint')} sprint${sep()}double-tap to knock it past a defender</p>
+      <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; ${k('shoot')} to head at goal</p>
     </div>
     <div class="ht-col">
       <h3>DEFEND</h3>
-      <p><kbd>SPACE</kbd> switch player</p>
-      <p><kbd>K</kbd> tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</p>
-      <p><kbd>L</kbd> hold to press: he stays goal-side and steals loose touches</p>
+      <p>${k('pass')} switch player</p>
+      <p>${k('shoot')} tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</p>
+      <p>${k('through')} hold to press: he stays goal-side and steals loose touches</p>
       <p>Flick the stick sharply while dribbling to cut past a defender</p>
-      <p><kbd>ESC</kbd> pause</p>
+      <p>${k('pause')} pause</p>
     </div>
   </div>
-  <p class="fine">The <b>ringed</b> team-mate is who a pass goes to: point the stick to pick another (arrows at the screen edge show mates out of shot). First-time finish: press SHOOT just before the ball reaches you. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+  <p class="fine">The <b>ringed</b> team-mate is who a pass goes to: point the stick to pick another (arrows at the screen edge show mates out of shot). First-time finish: press SHOOT just before the ball reaches you. Change any key: <b>Settings › Keys</b>. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+}
 
-const HOWTO_PAD = `
+/** HOW TO PLAY for a gamepad (the player's own button bindings). */
+function howtoPad(): string {
+  const k = (a: PadAction) => kc(a, 'gamepad');
+  return `
   <div class="howto">
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>LEFT STICK</kbd> move</p>
-      <p><kbd>A</kbd> pass to the <b>ringed</b> mate: press = instant${sep()}aim to choose</p>
-      <p><kbd>X</kbd> through ball: your runner goes${sep()}hold: lob / cross</p>
-      <p><kbd>B</kbd> hold &amp; release to shoot${sep()}the stick aims while you charge</p>
-      <p>Tap <kbd>B</kbd> again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
-      <p>Hold <kbd>B</kbd> + tap <kbd>X</kbd>: chip${sep()}soft <kbd>B</kbd> on a diagonal: curler</p>
-      <p><kbd>RT</kbd> sprint${sep()}double-tap to knock it past</p>
-      <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; <kbd>B</kbd> to head at goal</p>
+      <p>${k('pass')} pass to the <b>ringed</b> mate: press = instant${sep()}aim to choose</p>
+      <p>${k('through')} through ball: your runner goes${sep()}hold: lob / cross</p>
+      <p>${k('shoot')} hold &amp; release to shoot${sep()}the stick aims while you charge</p>
+      <p>Tap ${k('shoot')} again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
+      <p>Hold ${k('shoot')} + tap ${k('through')}: chip${sep()}soft ${k('shoot')} on a diagonal: curler</p>
+      <p>${k('sprint')} sprint${sep()}double-tap to knock it past</p>
+      <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; ${k('shoot')} to head at goal</p>
     </div>
     <div class="ht-col">
       <h3>DEFEND</h3>
-      <p><kbd>A</kbd> switch player</p>
-      <p><kbd>B</kbd> tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</p>
-      <p><kbd>X</kbd> hold to press: he stays goal-side and steals loose touches</p>
+      <p>${k('pass')} switch player</p>
+      <p>${k('shoot')} tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</p>
+      <p>${k('through')} hold to press: he stays goal-side and steals loose touches</p>
       <p>Flick the stick sharply while dribbling to cut past a defender</p>
-      <p><kbd>START</kbd> pause</p>
+      <p>${k('pause')} pause</p>
     </div>
   </div>
-  <p class="fine">The <b>ringed</b> team-mate is who a pass goes to: point the stick to pick another (arrows at the screen edge show mates out of shot). First-time finish: press SHOOT just before the ball reaches you. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+  <p class="fine">The <b>ringed</b> team-mate is who a pass goes to: point the stick to pick another (arrows at the screen edge show mates out of shot). First-time finish: press SHOOT just before the ball reaches you. Change any button: <b>Settings › Keys</b>. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+}
 
 /** One of the in-match touch buttons, drawn small (same colours, rim and base as the real ones). */
 const touchBtn = (cls: string, label: string) => `<i class="ht-tb ${cls}"><span>${label}</span></i>`;
@@ -314,7 +347,7 @@ const HOWTO_TOUCH = `
         ${touchBtn('sprint', 'SPRINT')}${touchBtn('through', 'THROUGH')}${touchBtn('shoot', 'SHOOT')}${touchBtn('pass', 'PASS')}
       </div>
     </div>
-    <p class="ht-note"><b>MOVE</b> Put your thumb down anywhere on the left half and drag: the stick follows your thumb.</p>
+    <p class="ht-note"><b>MOVE</b> <span class="ht-stick-float">Put your thumb down anywhere on the left half and drag: the stick follows your thumb.</span><span class="ht-stick-fixed">Put your thumb on the stick at the bottom left and drag (FIXED stick: Settings › Controls).</span></p>
     <table class="ht-table">
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
@@ -344,10 +377,35 @@ const howtoBlitz = (use: string) => `
     </ul>
   </div>`;
 
+/** Settings > KEYS: what each bindable action is called on screen. */
+const KEY_ACTION_NAMES: Record<KeyAction, string> = {
+  up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT', pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', power: 'POWER-UP', pause: 'PAUSE',
+};
+
+/** A finished match's goal clip (the session's clip API, when the browser can record one). */
+export interface ClipSource {
+  clip: () => { blob: Blob; name: string } | null;
+  poster?: () => Blob | null;
+}
+
+/** Extra full-time lines: badge / season tier-ups, the "Try EASY?" hint, and the goal clip. */
+export interface FtExtras {
+  tierUps?: readonly string[];
+  /** Quick match, three defeats in a row above Easy: offer EASY (sets the Quick Match difficulty). */
+  tryEasy?: () => void;
+  clip?: ClipSource;
+  /** The very first match: no rewarded-ad offer on it. */
+  noAds?: boolean;
+}
+
 export class Menus {
   readonly root: HTMLElement;
   private screen: HTMLDivElement | null = null;
   private preview: KitPreview | null = null;
+  /** The touch stick style (Settings), so HOW TO PLAY describes the one in use. */
+  stick: 'floating' | 'fixed' = 'floating';
+  /** Save and share a goal clip (main.ts wires ui/clips.ts; hidden when absent). */
+  clipActions: { save: (c: { blob: Blob; name: string }) => void; share: (c: { blob: Blob; name: string }) => Promise<'shared' | 'saved' | 'cancelled'> } | null = null;
 
   constructor() {
     this.root = document.getElementById('ui')!;
@@ -405,6 +463,7 @@ export class Menus {
     h: {
       quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void;
       gift?: () => void; blitz?: () => void; playNow?: () => void; account?: () => void; moments?: () => void; unlocks?: () => void;
+      run?: () => void; locked?: (f: LockedFeature) => void;
     },
     info?: MainInfo,
   ): void {
@@ -425,7 +484,7 @@ export class Menus {
     const wdl = `W ${r.won}${sep()}D ${r.drawn}${sep()}L ${r.lost}${sep()}${r.goalsFor} GOALS`;
     // The level badge is a button when the ladder screen is offered: the whole list of unlocks sits behind it.
     const badgeBody = lv
-      ? `<b>LV ${lv.level}${sep()}${lv.title.toUpperCase()}${info?.streak && info.streak >= 2 ? `${sep()}🔥${info.streak}` : ''}${h.unlocks ? '<u class="chev" aria-hidden="true">▸</u>' : ''}</b><span>${wdl}</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()}${sep()}${info.unlock.xpLeft} XP</small>` : h.unlocks ? '<small class="lvl-next">EVERYTHING EARNED</small>' : ''}`
+      ? `<b>LV ${lv.level}${sep()}${escHtml(lv.title.toUpperCase())}${info?.streak && info.streak >= 2 ? `${sep()}🔥${info.streak}` : ''}${info?.badgesPending ? `<em class="lvl-dot" aria-label="${info.badgesPending} rewards to claim">${info.badgesPending}</em>` : ''}${h.unlocks ? '<u class="chev" aria-hidden="true">▸</u>' : ''}</b><span>${info?.badgeGoal ? escHtml(info.badgeGoal) : wdl}</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()}${sep()}${info.unlock.xpLeft} XP</small>` : h.unlocks ? '<small class="lvl-next">EVERYTHING EARNED</small>' : ''}`
       : '';
     const badge = lv
       ? h.unlocks
@@ -434,6 +493,17 @@ export class Menus {
       : `<span class="record-chip">${wdl}</span>`;
     // A tile's subtitle: dividers in the tile, plain " / " in its tooltip.
     const sub = (s?: string) => (s ? `<small title="${escHtml(sepText(s))}">${seps(escHtml(s))}</small>` : '');
+    // A mode still waiting for the first goal: the same tile, greyed, with a lock and what opens it.
+    const locked = new Set(info?.locked ?? []);
+    const lockable = (f: LockedFeature, html: string) => {
+      if (!locked.has(f)) return html;
+      const side = html.includes('tile-side');
+      return html
+        .replace('class="btn ', `aria-disabled="true" data-locked="${f}" class="btn locked `)
+        .replace(/<svg class="picon"[\s\S]*?<\/svg>|<i class="picon bolt"[^>]*>[^<]*<\/i>/, pixelIcon('lock', '#f1efe8', side ? 5 : 6))
+        .replace(/<small[^>]*>[\s\S]*?<\/small>/, '')
+        .replace('</button>', '<small class="lock-note">SCORE YOUR FIRST GOAL</small></button>');
+    };
     // The gift / coins bar lives in the tile column: on the desktop it is pinned top-right of the screen; on a
     // landscape phone it becomes the column's first row, so PLAY NOW never runs under it.
     const d = this.mount(`
@@ -446,14 +516,15 @@ export class Menus {
           <div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>
         </div>
         <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
-        <div class="tiles">
-          ${h.playNow ? `<button class="btn btn-go tile tile-wide" data-a="playnow">${pixelIcon('ball', '#fff', 6)}<span>PLAY NOW</span>${sub(info?.playNow)}</button>` : ''}
-          ${h.moments ? `<button class="btn btn-teal tile tile-wide tile-moments" data-a="moments">${pixelIcon('star', '#ffd23a', 6)}<span>MOMENTS</span>${sub(info?.moments ?? 'SHORT CHALLENGES')}</button>` : ''}
+        <div class="tiles t13 ${info?.hero && info.hero.kind !== 'play' ? 'campaign' : ''}">
+          ${h.playNow ? `<button class="btn btn-go tile tile-wide ${info?.hero && info.hero.kind !== 'play' ? 'pulse' : ''}" data-a="playnow">${pixelIcon('ball', '#fff', 6)}<span>${escHtml(info?.hero?.title ?? 'PLAY NOW')}</span>${sub(info?.playNow)}</button>` : ''}
+          ${h.moments ? lockable('moments', `<button class="btn btn-teal tile tile-side tile-moments" data-a="moments">${pixelIcon('star', '#ffd23a', 5)}<span>MOMENTS</span>${sub(info?.moments ?? 'SHORT CHALLENGES')}</button>`) : ''}
+          ${h.run ? lockable('run', `<button class="btn btn-orange tile tile-side tile-run" data-a="run">${pixelIcon('trophy', '#fff', 5)}<span>CLUB RUN</span>${sub(info?.run ?? 'ONE MORE RUN')}</button>`) : ''}
           <button class="btn ${h.playNow ? 'btn-white' : 'btn-go'} tile" data-a="quick">${pixelIcon('ball', h.playNow ? '#26262e' : '#fff', 6)}<span>QUICK MATCH</span>${sub(info?.quick)}</button>
-          <button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${sub(info?.career)}</button>
+          ${lockable('career', `<button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${sub(info?.career)}</button>`)}
           <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${sub(info?.club)}</button>
           <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
-          <button class="btn btn-purple tile tile-side" data-a="blitz"><i class="picon bolt" aria-hidden="true">⚡</i><span>BLITZ</span><small>POWER-UPS</small></button>
+          ${lockable('blitz', `<button class="btn btn-purple tile tile-side" data-a="blitz"><i class="picon bolt" aria-hidden="true">⚡</i><span>BLITZ</span><small>POWER-UPS</small></button>`)}
           <button class="btn btn-red tile tile-side" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${sub(info?.cup)}</button>
         </div>
         ${daily}
@@ -471,7 +542,18 @@ export class Menus {
     }
     d.querySelector('[data-a=gift]')?.addEventListener('click', () => h.gift?.());
     d.querySelector('[data-a=playnow]')?.addEventListener('click', () => h.playNow?.());
+    // Locked tiles say what opens them instead of opening (capture: before the tile's own handler).
+    d.querySelectorAll<HTMLElement>('[data-locked]').forEach((el) =>
+      el.addEventListener('click', (e) => {
+        e.stopImmediatePropagation();
+        el.classList.remove('nope');
+        void el.offsetWidth;
+        el.classList.add('nope');
+        h.locked?.(el.dataset.locked as LockedFeature);
+      }, true),
+    );
     d.querySelector('[data-a=moments]')?.addEventListener('click', () => h.moments?.());
+    d.querySelector('[data-a=run]')?.addEventListener('click', () => h.run?.());
     d.querySelector('[data-a=unlocks]')?.addEventListener('click', () => h.unlocks?.());
     d.querySelector('[data-a=account]')?.addEventListener('click', () => h.account?.());
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
@@ -483,11 +565,13 @@ export class Menus {
     $(d, '[data-a=howto]').addEventListener('click', h.howto);
   }
 
-  quickMatch(save: SaveData, onBack: () => void, onKickOff: (home: number, away: number, mode: MatchMode) => void, mode?: MatchMode): void {
+  quickMatch(
+    save: SaveData, onBack: () => void, onKickOff: (home: number, away: number, mode: MatchMode) => void, mode?: MatchMode, blitzLocked = false,
+  ): void {
     let home = save.clubIdx;
     let away = save.opponentIdx === home ? (home + 1) % PRESET_CLUBS.length : save.opponentIdx;
     const modes: MatchMode[] = ['classic', 'blitz'];
-    let cur: MatchMode = mode ?? (save.settings.lastMode === 'blitz' ? 'blitz' : 'classic');
+    let cur: MatchMode = blitzLocked ? 'classic' : mode ?? (save.settings.lastMode === 'blitz' ? 'blitz' : 'classic');
     const d = this.mount(`
       <div class="panel-wrap">
         <div class="panel qm">
@@ -564,11 +648,12 @@ export class Menus {
       draw();
     };
     const why = $(d, '.qm-why');
-    const drawWhy = () => {
-      why.textContent = MODE_WHY[cur];
+    const drawWhy = (nope = false) => {
+      why.textContent = nope ? 'BLITZ opens with your first goal.' : MODE_WHY[cur];
       d.classList.toggle('blitz', cur === 'blitz');
     };
-    seg('mode', ['CLASSIC', 'BLITZ ⚡'], () => modes.indexOf(cur), (i) => {
+    seg('mode', ['CLASSIC', blitzLocked ? 'BLITZ 🔒' : 'BLITZ ⚡'], () => modes.indexOf(cur), (i) => {
+      if (blitzLocked && modes[i] === 'blitz') return drawWhy(true);
       cur = modes[i];
       save.settings.lastMode = cur;
       drawWhy();
@@ -594,7 +679,15 @@ export class Menus {
    * Pause menu. QUIT MATCH asks first: `quitNote` says what walking off costs (a forfeit defeat in the
    * career and the cup; a friendly just doesn't count).
    */
-  pause(h: { resume: () => void; howto: () => void; quit: () => void; settings: () => void; tactics?: () => void; quitNote?: string }): void {
+  pause(h: {
+    resume: () => void; howto: () => void; quit: () => void; settings: () => void; tactics?: () => void; quitNote?: string;
+    /** The last goal's clip (SAVE CLIP / SHARE), when there is one. */
+    clip?: ClipSource;
+    /** LEARN THE BASICS: skip the rest of them. */
+    skip?: () => void;
+    /** The quit button's words (default QUIT MATCH). */
+    quitLabel?: string;
+  }): void {
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel narrow">
@@ -604,7 +697,9 @@ export class Menus {
             ${h.tactics ? '<button class="btn btn-blue" data-a="tactics">TACTICS &amp; SUBS</button>' : ''}
             <button class="btn btn-white" data-a="howto">CONTROLS</button>
             <button class="btn btn-white" data-a="settings">SETTINGS</button>
-            <button class="btn btn-red" data-a="quit">QUIT MATCH</button>
+            ${this.clipRow(h.clip)}
+            ${h.skip ? '<button class="btn btn-white" data-a="skip">SKIP THE BASICS</button>' : ''}
+            <button class="btn btn-red" data-a="quit">${escHtml(h.quitLabel ?? 'QUIT MATCH')}</button>
           </div>
           <div class="quit-ask" hidden>
             <p class="fine big">${h.quitNote ?? "This match won't count."}</p>
@@ -637,8 +732,13 @@ export class Menus {
     $(d, '[data-a=howto]').addEventListener('click', h.howto);
     $(d, '[data-a=settings]').addEventListener('click', h.settings);
     $(d, '[data-a=quit]').addEventListener('click', () => asking(true));
+    d.querySelector('[data-a=skip]')?.addEventListener('click', () => {
+      window.removeEventListener('keydown', key);
+      h.skip?.();
+    });
+    this.wireClip(d, h.clip);
     const key = (e: KeyboardEvent) => {
-      if (e.code === 'Escape' || e.code === 'KeyP') {
+      if (isKey('pause', e.code)) {
         window.removeEventListener('keydown', key);
         h.resume();
       }
@@ -896,7 +996,9 @@ export class Menus {
     h: { double: () => Promise<boolean>; next: () => void; nextLabel?: string; rematch?: () => void },
     ratings?: { idx: number; name: string; side: number; rating: number; goals: number; assists: number }[],
     prog?: FtProgress,
+    extra: FtExtras = {},
   ): void {
+    if (extra.noAds) canDouble = false;
     const motm = ratings?.[0];
     const mine = ratings?.filter((r) => r.side === humanSide).slice(0, 3) ?? [];
     // Head shots: the player as he looked on the pitch, in the kit his side wore.
@@ -935,14 +1037,20 @@ export class Menus {
           </div>
           ${prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">🔥 ${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : ''}
           ${prog.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : ''}
+          ${extra.tierUps?.length ? `<ul class="ft-tiers">${extra.tierUps.map((t) => `<li>${escHtml(t)}</li>`).join('')}</ul>` : ''}
         </div>`
+      : '';
+    const easyHtml = extra.tryEasy
+      ? '<p class="ft-easy">Tough run? <button class="btn btn-white ft-easy-btn" data-a="easy">TRY EASY</button></p>'
       : '';
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel">
           <h2 class="verdict ${cls}">${verdict}</h2>
           ${this.scoreHeader(m, kits)}${pens}
+          ${easyHtml}
           ${progHtml}
+          ${this.clipRow(extra.clip, true)}
           ${motmHtml}
           ${this.statsTable(m, kits)}
           <div class="btn-row ft-foot">
@@ -985,6 +1093,112 @@ export class Menus {
     });
     $(d, '[data-a=next]').addEventListener('click', h.next);
     if (h.rematch) d.querySelector('[data-a=rematch]')?.addEventListener('click', h.rematch);
+    const easy = d.querySelector<HTMLButtonElement>('[data-a=easy]');
+    easy?.addEventListener('click', () => {
+      extra.tryEasy?.();
+      easy.disabled = true;
+      easy.textContent = 'EASY IS SET';
+    });
+    this.wireClip(d, extra.clip);
+  }
+
+  /**
+   * SAVE CLIP / SHARE for the last goal (the session's clip API). Nothing at all when the browser can't
+   * record or there is no clip yet. `big` = the full-time layout (a labelled row).
+   */
+  private clipRow(src?: ClipSource, big = false): string {
+    const c = src?.clip();
+    if (!c || !this.clipActions) return '';
+    return `<div class="clip-row ${big ? 'big' : ''}">
+        ${big ? '<span class="clip-l">GOAL CLIP</span>' : ''}
+        <button class="btn btn-white" data-a="clip-save">SAVE CLIP</button>
+        <button class="btn btn-blue" data-a="clip-share">SHARE</button>
+      </div>`;
+  }
+
+  private wireClip(d: HTMLElement, src?: ClipSource): void {
+    const act = this.clipActions;
+    if (!src || !act) return;
+    const saveBtn = d.querySelector<HTMLButtonElement>('[data-a=clip-save]');
+    const shareBtn = d.querySelector<HTMLButtonElement>('[data-a=clip-share]');
+    saveBtn?.addEventListener('click', () => {
+      const c = src.clip();
+      if (!c) return;
+      act.save(c);
+      saveBtn.textContent = 'SAVED';
+    });
+    shareBtn?.addEventListener('click', async () => {
+      const c = src.clip();
+      if (!c) return;
+      shareBtn.disabled = true;
+      const r = await act.share(c).catch(() => 'cancelled' as const);
+      shareBtn.disabled = false;
+      if (r !== 'cancelled') shareBtn.textContent = r === 'shared' ? 'SHARED' : 'SAVED';
+    });
+  }
+
+  /** A small message over the menu (a locked tile: what opens it). Plain text; gone after a couple of seconds. */
+  toast(text: string): void {
+    this.root.querySelector('.menu-toast')?.remove();
+    const t = document.createElement('div');
+    t.className = 'menu-toast';
+    t.setAttribute('role', 'status');
+    t.textContent = text;
+    this.root.appendChild(t);
+    setTimeout(() => t.remove(), 2600);
+  }
+
+  /**
+   * LEARN THE BASICS done: the three ticks and FIRST MATCH (straight to the kick-off) or MENU. A natural stop,
+   * and still no ad (the first match isn't played yet).
+   */
+  basicsDone(h: { play: () => void; menu: () => void }): void {
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel narrow basics-done">
+          <h2 class="verdict win">YOU'RE READY!</h2>
+          <ul class="bd-steps">
+            <li><b>✓</b>PASS</li><li><b>✓</b>SHOOT</li><li><b>✓</b>CROSS</li>
+          </ul>
+          <p class="fine big">Now your first match. Score a goal to unlock <b>CAREER</b>, <b>MOMENTS</b>, <b>CLUB RUN</b> and <b>BLITZ</b>.</p>
+          <div class="btn-row">
+            <button class="btn btn-white" data-a="menu">MENU</button>
+            <button class="btn btn-go btn-lg pulse" data-a="play">FIRST MATCH ▸</button>
+          </div>
+        </div>
+      </div>`, 'basics-screen');
+    const go = () => {
+      window.removeEventListener('keydown', key);
+      h.play();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.code === 'Space' || e.code === 'Enter') go();
+    };
+    window.addEventListener('keydown', key);
+    $(d, '[data-a=play]').addEventListener('click', go);
+    $(d, '[data-a=menu]').addEventListener('click', () => {
+      window.removeEventListener('keydown', key);
+      h.menu();
+    });
+  }
+
+  /** The first goal opened the locked modes: shown once, over the main menu. */
+  unlocked(onOk: () => void): void {
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel narrow unlocked-panel">
+          <h2 class="verdict win">UNLOCKED!</h2>
+          <p class="fine big">Your first goal. The whole game is open:</p>
+          <ul class="ul-new">
+            <li>${pixelIcon('trophy', '#ffd23a', 3)}<b>CAREER</b><span>build a club, climb six divisions</span></li>
+            <li>${pixelIcon('star', '#ffd23a', 3)}<b>MOMENTS</b><span>short challenges for stars</span></li>
+            <li>${pixelIcon('trophy', '#fff', 3)}<b>CLUB RUN</b><span>seven matches, one life, a perk a win</span></li>
+            <li><i class="ul-bolt" aria-hidden="true">⚡</i><b>BLITZ</b><span>football with power-ups</span></li>
+          </ul>
+          <div class="btn-row"><button class="btn btn-go btn-lg" data-a="ok">LET'S GO</button></div>
+        </div>
+      </div>`, 'unlocked-screen');
+    $(d, '[data-a=ok]').addEventListener('click', onOk);
   }
 
   /** Full time: the stars pop in one by one, then the XP bar counts up (a level-up splashes and the bar starts over). */
@@ -1034,7 +1248,7 @@ export class Menus {
    * (earned ones lit, the next one marked with the XP still needed) and LEGEND difficulty by match stars. Only
    * what the game really has (core/save unlockLadder): nothing here is a promise.
    */
-  unlocks(save: SaveData, onBack: () => void): void {
+  unlocks(save: SaveData, onBack: () => void, onBadges?: () => void): void {
     const xp = save.progress.xp;
     const lv = levelOf(xp);
     const ladder = unlockLadder();
@@ -1062,10 +1276,14 @@ export class Menus {
             ${rows}
             <li class="legend ${legend ? 'got' : ''}"><i class="ul-lv">★ ${LEGEND_STARS}</i>${pixelIcon('trophy', legend ? '#ffd23a' : '#b9b5aa', 3)}<span>LEGEND DIFFICULTY<small>MATCH STARS, NOT LEVELS</small></span><em>${legend ? 'EARNED' : `${Math.min(stars, LEGEND_STARS)} / ${LEGEND_STARS} STARS`}</em></li>
           </ul>
-          <div class="btn-row"><button class="btn btn-white btn-lg" data-a="back">BACK</button></div>
+          <div class="btn-row">
+            <button class="btn btn-white btn-lg" data-a="back">BACK</button>
+            ${onBadges ? '<button class="btn btn-blue btn-lg" data-a="badges">BADGES &amp; SEASON ▸</button>' : ''}
+          </div>
         </div>
       </div>`, 'unlocks');
     $(d, '[data-a=back]').addEventListener('click', onBack);
+    d.querySelector('[data-a=badges]')?.addEventListener('click', () => onBadges?.());
   }
 
   /**
@@ -1109,14 +1327,15 @@ export class Menus {
   }
 
   /**
-   * Settings, in two tabs: GENERAL (sound, commentary, graphics, camera, the ball look and celebration earned
-   * by levelling up, and BACKUP when `opts.backup` is given: the main menu offers it, the pause menu not) and
-   * CONTROLS (pass assistance, switching, timed finishing; each option says in a line what it does). `tab`
-   * picks the one shown first (the pause menu opens on CONTROLS). Every change is saved and applied at once
-   * via onChange.
+   * Settings, in three tabs: GENERAL (sound, commentary, colour-blind aid, graphics, camera, the ball look and
+   * celebration earned by levelling up, and BACKUP when `opts.backup` is given: the main menu offers it, the
+   * pause menu not), CONTROLS (pass assistance, switching, timed finishing, the touch THUMBSTICK; each option
+   * says in a line what it does) and KEYS (rebind the keyboard and gamepad, with swaps on a conflict and RESET).
+   * `tab` picks the one shown first (the pause menu opens on CONTROLS). Every change is saved and applied at
+   * once via onChange.
    */
   settings(
-    save: SaveData, onChange: () => void, onBack: () => void, tab: 'general' | 'controls' = 'general', opts: { backup?: () => void } = {},
+    save: SaveData, onChange: () => void, onBack: () => void, tab: 'general' | 'controls' | 'keys' = 'general', opts: { backup?: () => void } = {},
   ): void {
     const s = save.settings;
     // Each row carries both forms of a switch: the one-button ON / OFF toggle (portrait: label inside it) and
@@ -1133,6 +1352,14 @@ export class Menus {
           <p class="ctl-why" aria-live="polite"></p>
         </div>`;
     };
+    const STICK_WHY: Record<'floating' | 'fixed', string> = {
+      floating: `The stick appears under your thumb${sep()}anywhere on the left`,
+      fixed: `Anchored bottom left, always drawn${sep()}put your thumb on it`,
+    };
+    const keyRow = (a: KeyAction) => `<div class="kb-row" data-ka="${a}"><span class="kb-act">${KEY_ACTION_NAMES[a]}</span>${
+      Array.from({ length: KEY_SLOTS }, (_, i) => `<button class="kb-slot" data-ka="${a}" data-s="${i}" aria-label="${KEY_ACTION_NAMES[a]} key ${i + 1}"></button>`).join('')}</div>`;
+    const padRow = (a: PadAction) => `<div class="kb-row" data-pa="${a}"><span class="kb-act">${KEY_ACTION_NAMES[a]}</span>${
+      Array.from({ length: PAD_SLOTS }, (_, i) => `<button class="kb-slot" data-pa="${a}" data-s="${i}" aria-label="${KEY_ACTION_NAMES[a]} button ${i + 1}"></button>`).join('')}</div>`;
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel narrow set-panel">
@@ -1140,6 +1367,7 @@ export class Menus {
           <div class="seg set-tabs" role="tablist">
             <button data-tab="general" role="tab">GENERAL</button>
             <button data-tab="controls" role="tab">CONTROLS</button>
+            <button data-tab="keys" role="tab">KEYS</button>
           </div>
           <div class="set-pane" data-pane="general" role="tabpanel">
             <div class="toggles">
@@ -1147,7 +1375,7 @@ export class Menus {
               <button data-k="crowd"></button>
               <button data-k="music"></button>
               <button data-k="commentary"></button>
-              <button data-k="commentaryVoice"></button>
+              <button data-k="colorblind"></button>
               <button data-k="quality"></button>
               <button data-k="camZoom"></button>
               <button data-k="ballSkin"></button>
@@ -1158,11 +1386,28 @@ export class Menus {
           </div>
           <div class="set-pane ctl-pane" data-pane="controls" role="tabpanel">
             ${CONTROL_ROWS.map(ctlRow).join('')}
+            <div class="ctl-row level ctl-stick" data-c="stick">
+              <span class="ctl-label" id="ctl-stick">THUMBSTICK</span>
+              <div class="seg ctl-seg" role="radiogroup" aria-labelledby="ctl-stick">
+                <button data-stick="floating" role="radio">FLOATING</button>
+                <button data-stick="fixed" role="radio">FIXED</button>
+              </div>
+              <p class="ctl-why" aria-live="polite"></p>
+            </div>
+          </div>
+          <div class="set-pane kb-pane" data-pane="keys" role="tabpanel">
+            <p class="kb-msg" role="status" aria-live="polite"></p>
+            <div class="kb-head"><b>KEYBOARD</b><button class="btn btn-white kb-reset" data-reset="keys">RESET</button></div>
+            <p class="kb-hint">Tap a key box, then press the new key. A key already in use swaps over. BACKSPACE clears a spare, ESC cancels.</p>
+            <div class="kb-grid">${KEY_ACTIONS.map(keyRow).join('')}</div>
+            <div class="kb-head"><b>GAMEPAD</b><button class="btn btn-white kb-reset" data-reset="pad">RESET</button></div>
+            <p class="kb-hint">Tap a button box, then press the button on the pad. The d-pad and left stick always move.</p>
+            <div class="kb-grid pad">${PAD_ACTIONS.map(padRow).join('')}</div>
           </div>
           <div class="btn-row"><button class="btn btn-go" data-a="back">DONE</button></div>
         </div>
       </div>`, 'settings');
-    const showTab = (t: 'general' | 'controls') => {
+    const showTab = (t: 'general' | 'controls' | 'keys') => {
       d.querySelectorAll<HTMLButtonElement>('.set-tabs button').forEach((b) => {
         const on = b.dataset.tab === t;
         b.classList.toggle('on', on);
@@ -1170,11 +1415,11 @@ export class Menus {
       });
       d.querySelectorAll<HTMLElement>('.set-pane').forEach((p) => (p.hidden = p.dataset.pane !== t));
       d.querySelector('.panel')!.scrollTop = 0;
+      stopListening();
     };
     d.querySelectorAll<HTMLButtonElement>('.set-tabs button').forEach((b) =>
-      b.addEventListener('click', () => showTab(b.dataset.tab as 'general' | 'controls')),
+      b.addEventListener('click', () => showTab(b.dataset.tab as 'general' | 'controls' | 'keys')),
     );
-    showTab(tab);
     // Controls: an ASSISTED / SEMI / MANUAL row per pass type, an ON / OFF switch for the rest.
     const drawControls = () => {
       const c = controlsOf(s);
@@ -1196,6 +1441,14 @@ export class Menus {
         // Static copy with divider elements in it (see CONTROL_ROWS): markup, not text.
         $(row, '.ctl-why').innerHTML = r.why[String(v)] ?? '';
       }
+      const stick = s.stick === 'fixed' ? 'fixed' : 'floating';
+      const sr = $(d, '.ctl-row[data-c=stick]');
+      sr.querySelectorAll<HTMLButtonElement>('[data-stick]').forEach((b) => {
+        const on = b.dataset.stick === stick;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', String(on));
+      });
+      $(sr, '.ctl-why').innerHTML = STICK_WHY[stick];
     };
     for (const r of CONTROL_ROWS) {
       const row = $(d, `.ctl-row[data-c=${r.k}]`);
@@ -1215,21 +1468,169 @@ export class Menus {
         onChange();
       });
     }
+    d.querySelectorAll<HTMLButtonElement>('[data-stick]').forEach((b) =>
+      b.addEventListener('click', () => {
+        s.stick = b.dataset.stick === 'fixed' ? 'fixed' : 'floating';
+        drawControls();
+        onChange();
+      }),
+    );
     drawControls();
+
+    // KEYS: every slot shows its key; tapping one listens for the next key (or gamepad button).
+    const msgEl = $(d, '.kb-msg');
+    const say = (t: string, kind: 'good' | 'bad' | '' = '') => {
+      msgEl.textContent = t;
+      msgEl.className = `kb-msg ${kind}`;
+    };
+    const keysOf = (): KeyMap => normalizeKeyMap(s.keys);
+    const padOf = (): PadMap => normalizePadMap(s.pad);
+    const drawKeys = () => {
+      const km = keysOf();
+      const pm = padOf();
+      d.querySelectorAll<HTMLButtonElement>('.kb-slot[data-ka]').forEach((b) => {
+        const code = km[b.dataset.ka as KeyAction][Number(b.dataset.s)];
+        b.textContent = code ? keyLabel(code) : '+';
+        b.classList.toggle('empty', !code);
+        b.classList.remove('listen');
+      });
+      d.querySelectorAll<HTMLButtonElement>('.kb-slot[data-pa]').forEach((b) => {
+        const btn = pm[b.dataset.pa as PadAction][Number(b.dataset.s)];
+        b.textContent = btn !== undefined ? padLabel(btn) : '+';
+        b.classList.toggle('empty', btn === undefined);
+        b.classList.remove('listen');
+      });
+    };
+    let listening: { el: HTMLButtonElement; kind: 'key' | 'pad'; action: string; slot: number } | null = null;
+    let padRaf = 0;
+    let padTimer = 0;
+    const stopListening = () => {
+      window.removeEventListener('keydown', onKey, true);
+      cancelAnimationFrame(padRaf);
+      clearTimeout(padTimer);
+      listening = null;
+      drawKeys();
+    };
+    const commitKeys = (km: KeyMap) => {
+      s.keys = km;
+      onChange();
+    };
+    const commitPad = (pm: PadMap) => {
+      s.pad = pm;
+      onChange();
+    };
+    const name = (a: string) => KEY_ACTION_NAMES[a as KeyAction] ?? a.toUpperCase();
+    function onKey(e: KeyboardEvent): void {
+      if (!listening) return;
+      // The key goes to the binding, never to the game or the menu behind (ESC would resume the match).
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.repeat) return;
+      const l = listening;
+      const code = normCode(e.code);
+      if (code === 'Escape') {
+        say('');
+        stopListening();
+        return;
+      }
+      if (l.kind === 'pad') {
+        if (code === 'Backspace' || code === 'Delete') {
+          const pa = l.action as PadAction;
+          const pm = padOf();
+          if (pm[pa].length > 1 && pm[pa][l.slot] !== undefined) {
+            commitPad(unbindPad(pm, pa, l.slot));
+            say(`${name(pa)} BUTTON CLEARED`);
+          } else say(`${name(pa)} NEEDS AT LEAST ONE BUTTON`, 'bad');
+          stopListening();
+        }
+        return;
+      }
+      const a = l.action as KeyAction;
+      if (code === 'Backspace' || code === 'Delete') {
+        const km = keysOf();
+        if (km[a].length > 1 && km[a][l.slot]) {
+          commitKeys(unbindKey(km, a, l.slot));
+          say(`${name(a)} KEY CLEARED`);
+        } else say(`${name(a)} NEEDS AT LEAST ONE KEY`, 'bad');
+        stopListening();
+        return;
+      }
+      const r = bindKey(keysOf(), a, l.slot, code);
+      if (r.refused === 'reserved') say(`${keyLabel(code)} IS RESERVED`, 'bad');
+      else if (r.refused === 'last') say(`${keyLabel(code)} IS ${name(KEY_ACTIONS.find((x) => keysOf()[x].includes(code)) ?? '')}'S ONLY KEY`, 'bad');
+      else {
+        commitKeys(r.map);
+        // (Plain text: the " · " becomes a divider element through the menus' divider guard, ui/text.ts.)
+        say(r.swapped ? `${keyLabel(code)} IS NOW ${name(a)} · ${name(r.swapped)} TOOK ITS OLD KEY` : `${keyLabel(code)} IS NOW ${name(a)}`, 'good');
+      }
+      stopListening();
+    }
+    const listenPad = (held: Set<number>) => {
+      const tick = () => {
+        if (!listening || listening.kind !== 'pad') return;
+        const btn = Input.padButtonDown(held);
+        // A button held when listening began has to be let go first.
+        for (const h of [...held]) if (!Input.padButtonsHeld().has(h)) held.delete(h);
+        if (btn >= 0) {
+          const a = listening.action as PadAction;
+          const r = bindPad(padOf(), a, listening.slot, btn);
+          if (r.refused === 'last') say(`${padLabel(btn)} IS ANOTHER ACTION'S ONLY BUTTON`, 'bad');
+          else if (r.refused) say(`${padLabel(btn)} CAN'T BE BOUND`, 'bad');
+          else {
+            commitPad(r.map);
+            say(r.swapped ? `${padLabel(btn)} IS NOW ${name(a)} · ${name(r.swapped)} TOOK ITS OLD BUTTON` : `${padLabel(btn)} IS NOW ${name(a)}`, 'good');
+          }
+          stopListening();
+          return;
+        }
+        padRaf = requestAnimationFrame(tick);
+      };
+      padRaf = requestAnimationFrame(tick);
+      padTimer = window.setTimeout(() => {
+        if (listening?.kind === 'pad') {
+          say('NO BUTTON PRESSED', 'bad');
+          stopListening();
+        }
+      }, 8000);
+    };
+    d.querySelectorAll<HTMLButtonElement>('.kb-slot').forEach((b) =>
+      b.addEventListener('click', () => {
+        sfx.click();
+        const pad = b.dataset.pa !== undefined;
+        stopListening();
+        listening = { el: b, kind: pad ? 'pad' : 'key', action: (pad ? b.dataset.pa : b.dataset.ka)!, slot: Number(b.dataset.s) };
+        b.classList.add('listen');
+        b.textContent = 'PRESS';
+        say(pad ? `PRESS A BUTTON FOR ${name(listening.action)}` : `PRESS A KEY FOR ${name(listening.action)}`);
+        window.addEventListener('keydown', onKey, true);
+        if (pad) listenPad(Input.padButtonsHeld());
+      }),
+    );
+    d.querySelectorAll<HTMLButtonElement>('[data-reset]').forEach((b) =>
+      b.addEventListener('click', () => {
+        sfx.click();
+        stopListening();
+        if (b.dataset.reset === 'keys') {
+          commitKeys(normalizeKeyMap(DEFAULT_KEYS));
+          say('KEYBOARD BACK TO THE DEFAULTS', 'good');
+        } else {
+          commitPad(normalizePadMap(DEFAULT_PAD));
+          say('GAMEPAD BACK TO THE DEFAULTS', 'good');
+        }
+        drawKeys();
+      }),
+    );
+    drawKeys();
+    showTab(tab);
+
     const labels: Record<string, string> = {
-      sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', commentaryVoice: 'COMMENTARY VOICE', quality: 'GRAPHICS',
+      sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', colorblind: 'COLOUR-BLIND', quality: 'GRAPHICS',
       camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION',
     };
-    const canSpeak = speechAvailable();
     const draw = () => {
       d.querySelectorAll<HTMLButtonElement>('.toggles button[data-k]').forEach((b) => {
         const k = b.dataset.k as keyof typeof s;
         const v = s[k];
-        if (k === 'commentaryVoice' && !canSpeak) {
-          b.disabled = true;
-          b.innerHTML = `<span>${labels[k]}</span><b class="off na">N/A</b>`;
-          return;
-        }
         if (k === 'ballSkin') {
           // The ball look, and the next one still to earn (levels: see BALL_SKIN_LEVEL).
           const lvl = levelOf(save.progress.xp).level;
@@ -1246,8 +1647,10 @@ export class Menus {
           b.innerHTML = `<span>${labels[k]}</span><b>${CELEBRATION_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}🔒 ${CELEBRATION_NAMES[locked].toUpperCase()} LV${CELEBRATION_LEVEL[locked]}</small>` : ''}</b>`;
           return;
         }
-        const val = k === 'quality' ? String(v).toUpperCase() : k === 'camZoom' ? (s.camZoom ?? 'normal').toUpperCase() : v ? 'ON' : 'OFF';
-        b.innerHTML = `<span>${labels[k]}</span><b class="${v === false ? 'off' : ''}">${val}</b>`;
+        const on = k === 'colorblind' ? v === true : v;
+        const val = k === 'quality' ? String(v).toUpperCase() : k === 'camZoom' ? (s.camZoom ?? 'normal').toUpperCase() : on ? 'ON' : 'OFF';
+        b.innerHTML = `<span>${labels[k]}</span><b class="${on === false ? 'off' : ''}">${val}</b>`;
+        if (k !== 'quality' && k !== 'camZoom') b.setAttribute('aria-pressed', String(!!on));
       });
     };
     d.querySelectorAll<HTMLButtonElement>('.toggles button[data-k]').forEach((b) =>
@@ -1270,14 +1673,21 @@ export class Menus {
           const open = CELEBRATION_IDS.filter((x) => celebrationUnlocked(x, lvl));
           const cur = open.indexOf((s.celebration ?? 'classic') as CelebrationId);
           s.celebration = open[(cur + 1) % open.length];
-        } else (s as unknown as Record<string, boolean>)[k] = !s[k];
+        } else if (k === 'colorblind') s.colorblind = !s.colorblind;
+        else (s as unknown as Record<string, boolean>)[k] = !s[k];
         draw();
         onChange();
       }),
     );
     draw();
-    d.querySelector('[data-a=backup]')?.addEventListener('click', () => opts.backup?.());
-    $(d, '[data-a=back]').addEventListener('click', onBack);
+    d.querySelector('[data-a=backup]')?.addEventListener('click', () => {
+      stopListening();
+      opts.backup?.();
+    });
+    $(d, '[data-a=back]').addEventListener('click', () => {
+      stopListening();
+      onBack();
+    });
   }
 
   /**
@@ -1389,6 +1799,7 @@ export class Menus {
           <div class="btn-row"><button class="btn btn-go" data-a="back">GOT IT</button></div>
         </div>
       </div>`, 'howto-screen');
+    d.classList.toggle('stick-fixed', this.stick === 'fixed');
     const body = $(d, '.ht-body');
     const show = (dev: 'keyboard' | 'touch' | 'gamepad') => {
       d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) => {
@@ -1396,8 +1807,8 @@ export class Menus {
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       });
-      body.innerHTML = (dev === 'touch' ? HOWTO_TOUCH : dev === 'gamepad' ? HOWTO_PAD : HOWTO_KEYS)
-        + howtoBlitz(dev === 'touch' ? 'the <b>⚡</b> button' : dev === 'gamepad' ? '<kbd>Y</kbd>' : '<kbd>E</kbd>');
+      body.innerHTML = (dev === 'touch' ? HOWTO_TOUCH : dev === 'gamepad' ? howtoPad() : howtoKeys())
+        + howtoBlitz(dev === 'touch' ? 'the <b>⚡</b> button' : kc('power', dev));
     };
     d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) =>
       b.addEventListener('click', () => {

@@ -4,7 +4,8 @@ import type { Match } from '../sim/match';
 import type { Kit, MatchEvent, PowerUpKind, TeamDef } from '../sim/types';
 import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
-import { Commentator, POWER_INFO, pitchNames, speak, stopSpeech, surname, type CommentaryLine } from './commentary';
+import { Commentator, POWER_INFO, pitchNames, surname, type CommentaryLine } from './commentary';
+import { actionKey, currentDevice, remapKeys } from '../core/input';
 import { scoreHtml, seps, sepsOfText } from './text';
 
 /** How long (s) each power-up runs once used, for the slot's countdown ring when the sim doesn't say. */
@@ -94,7 +95,6 @@ export class Hud {
   private cmText: HTMLElement;
   private readonly commentator = new Commentator();
   private cmTextOn = true;
-  private cmVoice = false;
   private cmLine: CommentaryLine | null = null;
   private cmLeft = 0;
   private cmAge = 0;
@@ -145,6 +145,15 @@ export class Hud {
   /** Every match event, before the commentary (main.ts counts goals, headers, tackles ... for XP and challenges). */
   onEvent: ((e: MatchEvent, m: Match) => void) | null = null;
   onPause: (() => void) | null = null;
+  /**
+   * Rewrites (or drops, by returning null) a banner before it shows: LEARN THE BASICS turns the moment's
+   * FAILED / COMPLETE! verdicts into its own words and drops the last-seconds countdown (main.ts sets it).
+   */
+  retitle: ((b: { title: string; sub: string; kind: string; seconds: number }) => { title: string; sub: string; kind: string; seconds: number } | null) | null = null;
+  /** Shown in the clock cell instead of a moment's countdown (LEARN THE BASICS: "1/3"); null = the countdown. */
+  countdownLabel: string | null = null;
+  /** Colour-blind aid on the minimap: the other side's dots are round, yours square (shape, not only colour). */
+  private colorblind = false;
 
   constructor(teams: [HudTeam, HudTeam], humanSide: number) {
     this.root = document.createElement('div');
@@ -237,6 +246,12 @@ export class Hud {
     const s = Math.max(0, Math.ceil(seconds));
     this.countdown = s;
     this.clock.classList.add('count');
+    if (this.countdownLabel !== null) {
+      // A drill with no clock to beat: the step it is, never a ticking count.
+      this.clock.classList.remove('low');
+      if (this.clock.textContent !== this.countdownLabel) this.clock.textContent = this.countdownLabel;
+      return;
+    }
     this.clock.classList.toggle('low', s <= 5);
     this.clock.innerHTML = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
@@ -248,6 +263,13 @@ export class Hud {
    * split with " · " get the divider element, so the session can keep writing them the plain way.
    */
   show(title: string, sub = '', kind = '', seconds = 2.2): void {
+    if (this.retitle) {
+      const r = this.retitle({ title, sub, kind, seconds });
+      if (!r) return;
+      ({ title, sub, kind, seconds } = r);
+    }
+    // Key names in the words ("move with WASD / ARROWS") follow the player's own bindings.
+    sub = remapKeys(sub, currentDevice());
     this.bannerCard = /(^|\s)card(\s|$)/.test(kind);
     this.bannerPower = /(^|\s)power(\s|$)/.test(kind);
     this.banner.className = `hud-banner on ${kind}${this.bannerCard || this.bannerPower ? ' plate' : ''}`;
@@ -349,7 +371,7 @@ export class Hud {
     el.style.setProperty('--pw', info?.color ?? 'rgba(255,255,255,0.35)');
     this.powerIcon.textContent = info?.icon ?? '';
     this.powerName.textContent = a ? info!.name.toUpperCase() : info ? info.name.toUpperCase() : 'NO POWER-UP';
-    this.powerKey.textContent = this.powerDevice === 'gamepad' ? 'Y' : this.powerDevice === 'touch' ? '⚡' : 'E';
+    this.powerKey.textContent = actionKey('power', this.powerDevice);
     this.powerKey.hidden = !this.powerKind || !!a;
     const ring = this.powerRing;
     const C = 2 * Math.PI * 17;
@@ -527,6 +549,8 @@ export class Hud {
   }
 
   setHint(text: string): void {
+    // The session writes the default key names ("SPACE to kick off"): the player's own bindings replace them.
+    text = remapKeys(text, currentDevice());
     this.hintWant = text;
     // The player acted on this hint (see buttons()): it stays down until the session asks for another one.
     if (!text) this.hintDone = '';
@@ -573,15 +597,19 @@ export class Hud {
     this.project = fn;
   }
 
-  /** Text ticker and spoken commentary switches (Settings). Turning speech off stops it mid-sentence. */
-  setCommentary(text: boolean, voice: boolean): void {
+  /** The commentary ticker switch (Settings > COMMENTARY). Text only: there is no spoken commentary. */
+  setCommentary(text: boolean): void {
     this.cmTextOn = text;
-    if (this.cmVoice && !voice) stopSpeech();
-    this.cmVoice = voice;
     if (!text) this.hideLine();
   }
 
-  /** Commentary hook: the session forwards every match event here (before its own handling). */
+  /** Colour-blind aid (Settings > COLOUR-BLIND): shape cues on the minimap as well as the kit colours. */
+  setColorblind(on: boolean): void {
+    this.colorblind = on;
+    this.root.classList.toggle('cb', on);
+  }
+
+  /** Event hook (named for the ticker it feeds): the session forwards every match event here (before its own handling). */
   commentary(e: MatchEvent, m: Match): void {
     this.m = m;
     try {
@@ -609,7 +637,7 @@ export class Hud {
         const side = m.players[e.player]?.side;
         if (side !== undefined) queueMicrotask(() => this.unnamed[side] && this.drawCards(side));
       }
-      if (!this.cmTextOn && !this.cmVoice) return;
+      if (!this.cmTextOn) return;
       if (this.root.classList.contains('replaying')) return;
       const line = this.commentator.line(e, m);
       if (!line) return;
@@ -644,7 +672,6 @@ export class Hud {
     this.cmAge = 0;
     this.cmLeft = line.priority >= 5 || line.tone === 'goal' ? BIG_LINE_S : LINE_S;
     this.cmLastShown = this.clockS;
-    if (this.cmVoice) speak(line.text, line.priority >= 5);
     if (!this.cmTextOn) return;
     this.cmTag.textContent = line.tag;
     this.cmText.textContent = line.text;
@@ -1164,6 +1191,7 @@ export class Hud {
 
   /** Tutorial tip (top centre). Empty string hides it. */
   setTip(html: string): void {
+    html = remapKeys(html, currentDevice());
     if (this.tip.dataset.t === html) return;
     this.tip.dataset.t = html;
     this.tip.innerHTML = seps(html);
@@ -1367,8 +1395,16 @@ export class Hud {
       const s = i === active ? s1 : s0;
       g.fillStyle = this.dotFill[side];
       g.strokeStyle = this.dotEdge[side];
-      g.fillRect(x - s / 2, y - s / 2, s, s);
-      g.strokeRect(x - s / 2, y - s / 2, s, s);
+      if (this.colorblind && side !== this.humanSide) {
+        // Colour-blind aid: the other side are round dots, yours stay square.
+        g.beginPath();
+        g.arc(x, y, s / 2 + 0.5, 0, Math.PI * 2);
+        g.fill();
+        g.stroke();
+      } else {
+        g.fillRect(x - s / 2, y - s / 2, s, s);
+        g.strokeRect(x - s / 2, y - s / 2, s, s);
+      }
       if (i === active) {
         g.strokeStyle = '#ffd23a';
         g.lineWidth = Math.max(1.5, 2 * u);
@@ -1387,7 +1423,6 @@ export class Hud {
 
   dispose(): void {
     this.radarObs?.disconnect();
-    if (this.cmVoice) stopSpeech();
     this.root.remove();
   }
 }

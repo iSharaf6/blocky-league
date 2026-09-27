@@ -3,6 +3,7 @@ import { DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
 import type { MatchEvent, Side } from '../src/sim/types';
+import { emptyShape, fmtShape, sampleShape, summariseShape, type ShapeStats, type ShapeSummary } from './metricsHarness';
 
 /**
  * A realistic scripted human for whole-match measurements: it plays the pad (never the sim) the way a
@@ -606,6 +607,8 @@ export interface BotMatch {
   shotsFor: number;
   shotsAgainst: number;
   tally: BotTally;
+  /** Team shape over the match (metricsHarness.sampleShape; the pressure counts are left at zero). */
+  shape: ShapeStats;
 }
 
 export interface BotMatchOptions {
@@ -616,6 +619,8 @@ export interface BotMatchOptions {
   away?: number;
   halfLength?: number;
   bot?: BotOptions;
+  /** MatchConfig.assist (dynamic difficulty) for the match. */
+  assist?: number;
 }
 
 export function playBotMatch(o: BotMatchOptions): BotMatch {
@@ -626,9 +631,12 @@ export function playBotMatch(o: BotMatchOptions): BotMatch {
     difficulty: o.difficulty,
     humanSide: HS,
     seed: o.seed,
+    assist: o.assist,
   });
   const bot = new HumanBot(o.seed, o.bot);
+  const shape = emptyShape();
   for (let steps = 0; m.phase !== 'fulltime' && steps < 60 * 60 * 16; steps++) {
+    if (steps % 6 === 0) sampleShape(m, shape);
     const pad = bot.pad(m);
     const before = m.ball.owner;
     m.step(DT, pad);
@@ -648,6 +656,7 @@ export function playBotMatch(o: BotMatchOptions): BotMatch {
     shotsFor: m.stats.shots[0],
     shotsAgainst: m.stats.shots[1],
     tally: bot.tally,
+    shape,
   };
 }
 
@@ -681,6 +690,8 @@ export interface BotSummary {
   foulsAgainst: number;
   /** Share (%) of our time on the ball spent in the attacking third. */
   attThird: number;
+  /** Team shape (side 0 is the bot's). */
+  shape: ShapeSummary;
 }
 
 /**
@@ -728,6 +739,7 @@ export function summariseBot(list: BotMatch[], difficulty: number): BotSummary {
     fouls: t((x) => x.fouls) / n,
     foulsAgainst: t((x) => x.foulsAgainst) / n,
     attThird: pct(t((x) => x.thirds[2]), t((x) => x.thirds[0] + x.thirds[1] + x.thirds[2])),
+    shape: summariseShape(list.map((r) => r.shape)),
   };
 }
 
@@ -736,5 +748,5 @@ export function fmtBot(s: BotSummary): string {
   return `diff ${s.difficulty} N=${s.n}: W${s.w} D${s.d} L${s.l} | GF ${f(s.gf, 2)} GA ${f(s.ga, 2)} | poss ${f(s.poss)}% | shots ${f(s.shotsFor)}-${f(s.shotsAgainst)}` +
     ` | cuts ${f(s.cutsPerMatch)}/m beat ${f(s.beatPct)}% kept ${f(s.cutKeptPct)}% | knock kept ${f(s.knockKeptPct)}%` +
     ` | TACKLE taps ${f(s.tapsPerMatch)}/m won ${f(s.tackleWonPct)}% ball ${f(s.tackleBallPct)}% foul ${f(s.tackleFoulPct)}% | free tackles ${f(s.freeTackles)}/m` +
-    ` | dispossessed ${f(s.dispossessed)}/m | pass ${f(s.passPct)}% | fouls ${f(s.fouls)}-${f(s.foulsAgainst)} | att third ${f(s.attThird)}%`;
+    ` | dispossessed ${f(s.dispossessed)}/m | pass ${f(s.passPct)}% | fouls ${f(s.fouls)}-${f(s.foulsAgainst)} | att third ${f(s.attThird)}% | ${fmtShape(s.shape)}`;
 }
