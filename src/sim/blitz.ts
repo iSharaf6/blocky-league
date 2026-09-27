@@ -119,12 +119,13 @@ export interface BlitzState {
   user: [Timers, Timers];
   /** Kick id of the side's live mega shot (-1: none). */
   megaKick: [number, number];
-  prevPower: boolean;
+  /** Each human's power button on the last step (a use is a press). */
+  prevPower: [boolean, boolean];
   half: number;
   /** Seconds (of play) each AI side has held its current item. */
   aiHold: [number, number];
-  /** The human is holding TACKLE off the ball this step: his keeper braces for a rocket. */
-  brace: boolean;
+  /** The side's human is holding TACKLE off the ball this step: his keeper braces for a rocket. */
+  brace: [boolean, boolean];
 }
 
 const STATES = new WeakMap<Match, BlitzState>();
@@ -139,7 +140,7 @@ export function blitzState(m: Match): BlitzState {
   if (!s) {
     s = {
       spawnT: m.rng.range(FIRST_SPAWN[0], FIRST_SPAWN[1]), nextId: 1, fx: [timers(), timers()], user: [timers(-1), timers(-1)],
-      megaKick: [-1, -1], prevPower: false, half: m.half, aiHold: [0, 0], brace: false,
+      megaKick: [-1, -1], prevPower: [false, false], half: m.half, aiHold: [0, 0], brace: [false, false],
     };
     STATES.set(m, s);
   }
@@ -155,19 +156,32 @@ export function effectLeft(m: Match, side: Side, kind: PowerUpKind): number {
 function canTake(m: Match, p: Player): boolean {
   if (p.sentOff) return false;
   if (!m.heldPower[p.side]) return true;
-  return p.side === m.cfg.humanSide && p.idx === m.active;
+  return m.isHumanControlled(p);
 }
 
 // ------------------------------------------------------------------ the step
 
-/** Called from Match.step every fixed step (before the AI and the human's input are applied). */
-export function blitzStep(m: Match, dt: number, pad: Pad): void {
+const NO_PAD: Pad = { mx: 0, mz: 0, sprint: false, pass: false, shoot: false, through: false };
+
+/**
+ * Called from Match.step every fixed step (before the AI and the humans' input are applied), with the pads by
+ * side (or, as tests call it, the view's human's one pad).
+ */
+export function blitzStep(m: Match, dt: number, input: Pad | readonly [Pad, Pad]): void {
+  const pads = (Array.isArray(input) ? input
+    : m.viewSide === 0 ? [input, NO_PAD] : [NO_PAD, input]) as readonly [Pad, Pad];
   const s = blitzState(m);
-  const press = !!pad.power && !s.prevPower;
-  s.prevPower = !!pad.power;
-  const hs = m.cfg.humanSide;
   const b = m.ball;
-  s.brace = hs >= 0 && !!pad.shoot && !(b.owner >= 0 && m.players[b.owner].side === hs);
+  const press: [boolean, boolean] = [false, false];
+  for (const side of [0, 1] as Side[]) {
+    const pad = pads[side];
+    // (The view's side keeps its button history while the AI has it, as the one human's always did.)
+    if (m.human[side] || side === m.viewSide) {
+      press[side] = !!pad.power && !s.prevPower[side];
+      s.prevPower[side] = !!pad.power;
+    }
+    s.brace[side] = m.human[side] && !!pad.shoot && !(b.owner >= 0 && m.players[b.owner].side === side);
+  }
   if (m.half !== s.half) {
     blitzClear(m);
     s.half = m.half;
@@ -232,10 +246,10 @@ export function blitzStep(m: Match, dt: number, pad: Pad): void {
     }
   }
 
-  // Uses: the human's press; the AI sides by policy.
-  if (press && hs >= 0) usePower(m, hs as Side, sideUser(m, hs as Side));
+  // Uses: the humans' presses; the AI sides by policy.
+  for (const side of [0, 1] as Side[]) if (m.human[side] && press[side]) usePower(m, side, sideUser(m, side));
   for (const side of [0, 1] as Side[]) {
-    if (side === hs) continue;
+    if (m.human[side]) continue;
     const kind = m.heldPower[side];
     if (!kind) continue;
     s.aiHold[side] += dt;
@@ -310,7 +324,8 @@ function syncGolden(m: Match, s: BlitzState): void {
 function sideUser(m: Match, side: Side): number {
   const b = m.ball;
   if (b.owner >= 0 && m.players[b.owner].side === side) return b.owner;
-  if (m.cfg.humanSide === side && m.active >= 0) return m.active;
+  const act = m.activeOf(side);
+  if (act >= 0) return act;
   return nearestOf(m, side, b.pos.x, b.pos.z).idx;
 }
 
@@ -591,7 +606,7 @@ export function megaHands(m: Match, k: Player, onFrame: boolean): boolean {
   if (m.shotKick !== m.kickId || m.shotSide !== side || s.megaKick[side] !== m.shotKick || m.shotClock > 2) return false;
   const b = m.ball;
   const hs = b.hspeed() || 1;
-  const braced = k.side === m.cfg.humanSide ? s.brace : m.rng.chance(AI_BRACE[0] + (k.stat.keeping / 100) * AI_BRACE[1]);
+  const braced = m.human[k.side] ? s.brace[k.side] : m.rng.chance(AI_BRACE[0] + (k.stat.keeping / 100) * AI_BRACE[1]);
   const knock = MEGA_KNOCK * (braced ? MEGA_BRACE_KNOCK : 1);
   k.setState('fallen');
   k.vel.x = (b.vel.x / hs) * knock;
@@ -632,18 +647,18 @@ export const SEEK_R = 11;
  */
 export function blitzSeek(m: Match): void {
   if (m.phase !== 'play' || m.powerups.length === 0) return;
-  const hs = m.cfg.humanSide;
-  const active = hs >= 0 && m.active >= 0 ? m.players[m.active] : null;
   for (const side of [0, 1] as Side[]) {
     if (m.heldPower[side]) continue;
+    const act = m.activeOf(side);
+    const active = act >= 0 ? m.players[act] : null;
     let best: Player | null = null;
     let bestD = SEEK_R;
     let target: PowerUp | null = null;
     for (const pu of m.powerups) {
-      if (side === hs && active && dist2(active.pos.x, active.pos.z, pu.x, pu.z) <= SEEK_R) continue;
+      if (active && dist2(active.pos.x, active.pos.z, pu.x, pu.z) <= SEEK_R) continue;
       for (const p of m.players) {
         if (p.side !== side || p.isKeeper || p.sentOff || p.state !== 'move' || p.order) continue;
-        if (side === hs && p.idx === m.active) continue;
+        if (p.idx === act) continue;
         if (m.ball.owner === p.idx || dist2(p.pos.x, p.pos.z, m.ball.pos.x, m.ball.pos.z) < 6) continue;
         const d = dist2(p.pos.x, p.pos.z, pu.x, pu.z);
         if (d < bestD) {

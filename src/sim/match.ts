@@ -37,6 +37,13 @@ export interface MatchConfig {
   /** 0 (Sunday league) .. 4 (legend). */
   difficulty: number;
   humanSide: Side | -1;
+  /**
+   * Both sides human (an online match: src/net/lockstep.ts): which sides a human plays, overriding humanSide for
+   * everything the sim does (each side then gets its own controls, assists and switching: Match.ctl, and its pad
+   * from Match.step's pair). humanSide then only names this machine's player (the view: HUD, camera, markers),
+   * so two peers with different humanSides still run the very same match.
+   */
+  humanSides?: [boolean, boolean];
   seed?: number;
   /**
    * Optional per-side AI difficulty (0..4) overriding `difficulty` for that side's AI.
@@ -117,6 +124,11 @@ export interface GoalRecord {
 }
 
 export const EMPTY_PAD: Pad = { mx: 0, mz: 0, sprint: false, pass: false, shoot: false, through: false };
+
+/** Match.step's input is a pair of pads by side (both sides human) rather than the one human's pad. */
+export function isPadPair(p: Pad | readonly [Pad, Pad]): p is readonly [Pad, Pad] {
+  return Array.isArray(p);
+}
 
 /** How fast (rad/s) keyboard / d-pad input turns a set-piece aim (~60 degrees a second). */
 export const AIM_TURN = Math.PI / 3;
@@ -403,6 +415,102 @@ interface PassCharge {
   /** His speed (m/s) when he let the button go (the error margin's speed term). */
   relSpeed: number;
 }
+
+/**
+ * One human's control state: the man he controls, his buttons' charges and press edges, the pass / preview /
+ * switch / receive / timed-finish bookkeeping, his dribble and tackle assists (dribble.ts), and his control
+ * settings (Settings > Controls). The match keeps one per side (Match.ctl) and uses a side's only when that
+ * side is human (Match.human), so two humans (an online match) each get their own. It all lived on Match itself
+ * while there could only be one human; Match's single-human accessors (active, passPreview, groundAssist, ...)
+ * still read and write the view's (Match.viewSide).
+ */
+export class HumanCtl {
+  constructor(readonly side: Side) {}
+  /** Human-controlled player index, -1 when nobody. */
+  active = -1;
+  /** The shot power bar while SHOOT is held: shootCharge / SHOOT_BAR is 0..1 (full after SHOOT_FULL_T s). */
+  shootCharge = 0;
+  throughCharge = 0;
+  /** A tackle hold stays a defensive action even if that tackle wins possession. */
+  defendingShotHold = false;
+  /** 0..1 while the human is charging a pass (PASS held), -1 otherwise. */
+  passCharge = -1;
+  /** The teammate the charging pass is locked onto, -1 when none (render marks him). */
+  passAim = -1;
+  /**
+   * While the human has the ball (not charging): who a PASS / THROUGH pressed right now would go to, -1 when
+   * nobody. Updated every step from the stick so the render can highlight the receiver before the press.
+   */
+  passPreview = -1;
+  throughPreview = -1;
+  /**
+   * The teammate a PASS / THROUGH press has just locked onto (-1: none): he makes his move before the ball
+   * comes (ai.ts: checks towards the ball for a pass, starts his sprint in behind for a through ball).
+   */
+  calledRun = -1;
+  calledMode: 'pass' | 'through' | 'lob' | null = null;
+  calledT = 0;
+  /** Preview hysteresis: whose preview it is, the aim's line when it was picked, the men shown, its age (s). */
+  readonly pv = { carrier: -1, a: 0, pass: -1, through: -1, feet: false, t: 0 };
+  /**
+   * What the charging ball is while PASS / THROUGH is held (and until it's struck): a pass, a through ball
+   * (THROUGH tapped) or a lofted one (THROUGH held THROUGH_LOB_HOLD s or more); null otherwise.
+   */
+  passMode: 'pass' | 'through' | 'lob' | null = null;
+  hp: PassCharge | null = null;
+  /** Switch tracking for move assist: the man last seen controlled, seconds since the last switch. */
+  seenActive = -1;
+  sinceSwitch = 99;
+  /** Seconds the stick has been left alone, and the direction it was held at the last switch (see STICK_LATCH_TURN). */
+  stickIdle = 0;
+  latch: { x: number; z: number } | null = null;
+  /** PASS pressed while a pass was on its way to him (see PASS_BUFFER). */
+  passBuffer = 0;
+  /** His man's committed meeting point for the ground pass on its way to him (receivePoint). */
+  meet: { kick: number; player: number; x: number; z: number; race: boolean } | null = null;
+  /** His pad on the last step (press and release edges). */
+  prev: Pad = { ...EMPTY_PAD };
+  lastSprintTap = -9;
+  humanTime = 0;
+  switchT = 0;
+  /** Landing point shown for his throw-in, locked when the button is pressed. */
+  throwPreview: { x: number; z: number } | null = null;
+  /**
+   * His open-play strike being timed (timedFinish): from SHOOT's release (t = 0) until FINISH_WINDOWS.late s
+   * after the boot meets the ball (`contact`, s after the release; -1 before). `tap`: when the second SHOOT tap
+   * came (-1: none yet). `aim`: the strike's aim and error, for a late tap to re-aim.
+   */
+  finish: {
+    p: number; side: Side; t: number; contact: number; tap: number; kick: number; aim: Launch['aim'] | null;
+  } | null = null;
+  /** SHOOT went down as the timed-finish tap: not a new press (no slide, no charge, no strike) until let go. */
+  finishHeld = false;
+  /**
+   * His dribble / tackle assists (see dribble.ts). (Its skill cut replaces the old humanCuts check, whose
+   * smoothed turn never passed its 0.9 rad bar once the human's cut was a quick bend.)
+   */
+  readonly assist = new AssistState();
+  /** His last stick input looked like keys / d-pad (see isDigitalStick, Pad.digital). */
+  padDigital = false;
+  /** THROUGH was tapped during the current SHOOT charge: the shot will be a chip. */
+  chipArmed = false;
+  /** His set-piece delivery pressed while the box was still filling. */
+  queuedKick: (() => void) | null = null;
+  /** The kick a cushion was last judged for, and whether an opponent won that contest (see crossControl). */
+  cushionKick = -1;
+  cushionLost = false;
+  /** Settings > Controls, his own: auto switch, pass assistance for ground passes and through balls (AssistLevel). */
+  autoSwitch = true;
+  groundAssist: AssistLevel = 'assisted';
+  throughAssist: AssistLevel = 'assisted';
+  /** Arcade controls and contextual on-pitch guidance, also applied live from Settings. */
+  quickPass = true;
+  trainer = true;
+  /** After a switch (and with the stick left alone off the ball) the new man keeps making the AI's run. */
+  moveAssist = true;
+  /** A second SHOOT tap at contact sharpens (or, mistimed, spoils) the shot. */
+  timedFinish = true;
+}
 /** Extra hang time (s) on a corner to the far post, so it clears the near-post crowd. */
 const FAR_POST_HANG = 0.22;
 /**
@@ -497,6 +605,7 @@ const WING_BLOCK_TOUCH = 0.8;
 const AUTO_SUB_STAMINA = [0.55, 0.45];
 
 const otherSide = (s: Side): Side => (s === 0 ? 1 : 0);
+const SIDES: readonly Side[] = [0, 1];
 
 /** Timed finishing's verdict on a second SHOOT tap (the 'timing' event). */
 export type TimingGrade = Extract<MatchEvent, { type: 'timing' }>['grade'];
@@ -637,78 +746,53 @@ export class Match {
   ballPath: { t: number; x: number; y: number; z: number }[] = [];
   /** The kick ballPath was last predicted for as a flight (no owner); -1 while it's the carrier's line. */
   private pathKick = -1;
-  /** The human's man's committed meeting point for the ground pass on its way to him (receivePoint). */
-  private meet: { kick: number; player: number; x: number; z: number; race: boolean } | null = null;
   keeperHoldTime = 1.4;
-  /** Human-controlled player index, -1 when nobody. */
-  active = -1;
-  /** The shot power bar while SHOOT is held: shootCharge / SHOOT_BAR is 0..1 (full after SHOOT_FULL_T s). */
-  shootCharge = 0;
-  throughCharge = 0;
-  /** A tackle hold stays a defensive action even if that tackle wins possession. */
-  private defendingShotHold = false;
+  /**
+   * Which sides a human plays: MatchConfig.humanSides when given (online: both), else just humanSide (read live:
+   * a test may hand a side to the AI mid-match). The sim decides everything human-specific from this (and each
+   * side's HumanCtl), never from humanSide, which for a two-human match only says which side this machine's
+   * player is (the view).
+   */
+  get human(): readonly [boolean, boolean] {
+    const c = this.cfg;
+    if (c.humanSide !== this.humanKey || c.humanSides !== this.humansKey) {
+      this.humanKey = c.humanSide;
+      this.humansKey = c.humanSides;
+      const hs = c.humanSides;
+      this.humanNow = hs ? [!!hs[0], !!hs[1]] : [c.humanSide === 0, c.humanSide === 1];
+    }
+    return this.humanNow;
+  }
+
+  private humanKey: Side | -1 | null = null;
+  private humansKey: [boolean, boolean] | undefined = undefined;
+  private humanNow: readonly [boolean, boolean] = [false, false];
+  /** Per-side human control state (see HumanCtl); only a human side's is ever used. */
+  readonly ctl: readonly [HumanCtl, HumanCtl] = [new HumanCtl(0), new HumanCtl(1)];
+  /**
+   * The side whose HumanCtl the single-human accessors (active, passPreview, groundAssist, ...) read and write:
+   * cfg.humanSide, or side 0 with no human. For the render, HUD, menus and tests; the sim itself never goes
+   * through them (online peers view different sides of one match).
+   */
+  get viewSide(): Side {
+    return this.cfg.humanSide === 1 ? 1 : 0;
+  }
+  /** The human being processed right now: set by the sim before any human-context code runs. */
+  private h: HumanCtl;
   goalSide: Side = 0;
   lastGoalScorer = -1;
-  autoSwitch = true;
-  /** Human pass assistance for ground passes and through balls (settings; see AssistLevel). */
-  groundAssist: AssistLevel = 'assisted';
-  throughAssist: AssistLevel = 'assisted';
-  /** Arcade controls and contextual on-pitch guidance, also applied live from Settings. */
-  quickPass = true;
-  trainer = true;
-  /** After a switch (and with the stick left alone off the ball) the new man keeps making the AI's run. */
-  moveAssist = true;
-  /** A second SHOOT tap at contact sharpens (or, mistimed, spoils) the shot. */
-  timedFinish = true;
-  /** 0..1 while the human is charging a pass (PASS held), -1 otherwise. */
-  passCharge = -1;
-  /** The teammate the charging pass is locked onto, -1 when none (render marks him). */
-  passAim = -1;
-  /**
-   * While the human has the ball (not charging): who a PASS / THROUGH pressed right now would go to, -1 when
-   * nobody. Updated every step from the stick so the render can highlight the receiver before the press.
-   */
-  passPreview = -1;
-  throughPreview = -1;
   /** Blitz mode: pickups on the pitch, and the power-up each side is holding (null = none). Render/HUD read these. */
   powerups: PowerUp[] = [];
   heldPower: [PowerUpKind | null, PowerUpKind | null] = [null, null];
   /** Blitz mode: the side whose next goal counts double (a golden cube in play), -1 when none. */
   goldenSide: Side | -1 = -1;
-  /**
-   * The teammate a PASS / THROUGH press has just locked onto (-1: none): he makes his move before the ball
-   * comes (ai.ts: checks towards the ball for a pass, starts his sprint in behind for a through ball).
-   */
-  calledRun = -1;
-  calledMode: 'pass' | 'through' | 'lob' | null = null;
-  private calledT = 0;
-  /** Preview hysteresis: whose preview it is, the aim's line when it was picked, the men shown, its age (s). */
-  private readonly pv = { carrier: -1, a: 0, pass: -1, through: -1, feet: false, t: 0 };
   /** kickId of the human's last pass / through ball (its receiver's first touch: HUMAN_PASS_TRAP). */
   private humanPassKick = -1;
-  /**
-   * What the charging ball is while PASS / THROUGH is held (and until it's struck): a pass, a through ball
-   * (THROUGH tapped) or a lofted one (THROUGH held THROUGH_LOB_HOLD s or more); null otherwise.
-   */
-  passMode: 'pass' | 'through' | 'lob' | null = null;
-  private hp: PassCharge | null = null;
-  /** Switch tracking for move assist: the man last seen controlled, seconds since the last switch. */
-  private seenActive = -1;
-  private sinceSwitch = 99;
-  /** Seconds the stick has been left alone, and the direction it was held at the last switch (see STICK_LATCH_TURN). */
-  private stickIdle = 0;
-  private latch: { x: number; z: number } | null = null;
-  /** PASS pressed while a pass was on its way to him (see PASS_BUFFER). */
-  private passBuffer = 0;
   /** Seconds since the last possession change (drives crowd tension, auto-switch). */
   sincePossession = 0;
   possessionSide: Side | -1 = -1;
 
-  private prev: Pad = { ...EMPTY_PAD };
-  private lastSprintTap = -9;
-  private humanTime = 0;
   private hits: BallHit[] = [];
-  private switchT = 0;
   private firstKickoff: Side = 0;
   private pendingRestart: Restart | null = null;
   private pathT = 0;
@@ -761,8 +845,6 @@ export class Match {
   private stepInT = 0;
   /** The default aim (radians, world facing) the current restart's taker was set up with. */
   restartAim = 0;
-  /** Landing point shown for a human throw-in, locked when the button is pressed. */
-  throwPreview: { x: number; z: number } | null = null;
 
   /**
    * Foul probabilities scale with the half length (like fatigue), so a match of any length has a
@@ -771,6 +853,8 @@ export class Match {
   private readonly foulScale: number;
 
   constructor(readonly cfg: MatchConfig) {
+    const hs = cfg.humanSides;
+    this.h = this.ctl[this.viewSide];
     this.rng = new Rng(cfg.seed ?? 12345);
     this.foulScale = 1.2 * clamp(Math.pow(FATIGUE_REF_HALF / Math.max(30, cfg.halfLength), 1.3), 0.4, 1.8);
     this.teams = [cfg.home, cfg.away];
@@ -781,7 +865,7 @@ export class Match {
     for (const side of [0, 1] as Side[]) {
       const team = this.teams[side];
       // Harder AI sides get a small athletic edge (the human side is never scaled).
-      const pace = cfg.humanSide === side ? 1 : 1 + (this.aiSkill(side) - 2) * AI_PACE_EDGE;
+      const pace = this.human[side] ? 1 : 1 + (this.aiSkill(side) - 2) * AI_PACE_EDGE;
       for (let s = 0; s < 11; s++) {
         const p = new Player(this.players.length, side, s, team.players[s]);
         p.runT = this.rng.next() * 4;
@@ -796,9 +880,160 @@ export class Match {
     // (The player's very first match: his side kicks off, and the kick-off waits for his button. The coin is
     // still tossed so every other match's draw is what it was.)
     const coin: Side = this.rng.chance(0.5) ? 0 : 1;
-    this.firstKickoff = cfg.firstMatch && cfg.humanSide >= 0 ? (cfg.humanSide as Side) : coin;
+    this.firstKickoff = cfg.firstMatch && !hs && cfg.humanSide >= 0 ? (cfg.humanSide as Side) : coin;
     this.setupKickoff(this.firstKickoff);
     this.updateBallPath();
+  }
+
+  // ---- The view's human (Match.viewSide), the single-human API as it always was.
+
+  get active(): number {
+    return this.ctl[this.viewSide].active;
+  }
+
+  set active(v: number) {
+    this.ctl[this.viewSide].active = v;
+  }
+
+  get shootCharge(): number {
+    return this.ctl[this.viewSide].shootCharge;
+  }
+
+  set shootCharge(v: number) {
+    this.ctl[this.viewSide].shootCharge = v;
+  }
+
+  get throughCharge(): number {
+    return this.ctl[this.viewSide].throughCharge;
+  }
+
+  set throughCharge(v: number) {
+    this.ctl[this.viewSide].throughCharge = v;
+  }
+
+  get passCharge(): number {
+    return this.ctl[this.viewSide].passCharge;
+  }
+
+  set passCharge(v: number) {
+    this.ctl[this.viewSide].passCharge = v;
+  }
+
+  get passAim(): number {
+    return this.ctl[this.viewSide].passAim;
+  }
+
+  set passAim(v: number) {
+    this.ctl[this.viewSide].passAim = v;
+  }
+
+  get passPreview(): number {
+    return this.ctl[this.viewSide].passPreview;
+  }
+
+  set passPreview(v: number) {
+    this.ctl[this.viewSide].passPreview = v;
+  }
+
+  get throughPreview(): number {
+    return this.ctl[this.viewSide].throughPreview;
+  }
+
+  set throughPreview(v: number) {
+    this.ctl[this.viewSide].throughPreview = v;
+  }
+
+  get passMode(): 'pass' | 'through' | 'lob' | null {
+    return this.ctl[this.viewSide].passMode;
+  }
+
+  set passMode(v: 'pass' | 'through' | 'lob' | null) {
+    this.ctl[this.viewSide].passMode = v;
+  }
+
+  get calledRun(): number {
+    return this.ctl[this.viewSide].calledRun;
+  }
+
+  set calledRun(v: number) {
+    this.ctl[this.viewSide].calledRun = v;
+  }
+
+  get calledMode(): 'pass' | 'through' | 'lob' | null {
+    return this.ctl[this.viewSide].calledMode;
+  }
+
+  set calledMode(v: 'pass' | 'through' | 'lob' | null) {
+    this.ctl[this.viewSide].calledMode = v;
+  }
+
+  get throwPreview(): { x: number; z: number } | null {
+    return this.ctl[this.viewSide].throwPreview;
+  }
+
+  set throwPreview(v: { x: number; z: number } | null) {
+    this.ctl[this.viewSide].throwPreview = v;
+  }
+
+  get autoSwitch(): boolean {
+    return this.ctl[this.viewSide].autoSwitch;
+  }
+
+  set autoSwitch(v: boolean) {
+    this.ctl[this.viewSide].autoSwitch = v;
+  }
+
+  get groundAssist(): AssistLevel {
+    return this.ctl[this.viewSide].groundAssist;
+  }
+
+  set groundAssist(v: AssistLevel) {
+    this.ctl[this.viewSide].groundAssist = v;
+  }
+
+  get throughAssist(): AssistLevel {
+    return this.ctl[this.viewSide].throughAssist;
+  }
+
+  set throughAssist(v: AssistLevel) {
+    this.ctl[this.viewSide].throughAssist = v;
+  }
+
+  get quickPass(): boolean {
+    return this.ctl[this.viewSide].quickPass;
+  }
+
+  set quickPass(v: boolean) {
+    this.ctl[this.viewSide].quickPass = v;
+  }
+
+  get trainer(): boolean {
+    return this.ctl[this.viewSide].trainer;
+  }
+
+  set trainer(v: boolean) {
+    this.ctl[this.viewSide].trainer = v;
+  }
+
+  get moveAssist(): boolean {
+    return this.ctl[this.viewSide].moveAssist;
+  }
+
+  set moveAssist(v: boolean) {
+    this.ctl[this.viewSide].moveAssist = v;
+  }
+
+  get timedFinish(): boolean {
+    return this.ctl[this.viewSide].timedFinish;
+  }
+
+  set timedFinish(v: boolean) {
+    this.ctl[this.viewSide].timedFinish = v;
+  }
+
+  /** The view human's dribble / tackle assists (dribble.ts). */
+  get assist(): AssistState {
+    return this.ctl[this.viewSide].assist;
   }
 
   // ---------------------------------------------------------------- queries
@@ -819,8 +1054,14 @@ export class Match {
     return this.bySide[side][0];
   }
 
+  /** Is `p` the man his side's human controls right now? */
   isHumanControlled(p: Player): boolean {
-    return this.cfg.humanSide === p.side && this.active === p.idx;
+    return this.human[p.side] && this.ctl[p.side].active === p.idx;
+  }
+
+  /** The man `side`'s human controls (-1: nobody, or `side` isn't human). */
+  activeOf(side: Side): number {
+    return this.human[side] ? this.ctl[side].active : -1;
   }
 
   /**
@@ -838,7 +1079,7 @@ export class Match {
    * presses him at about FIRST_MATCH_PRESS of its usual aggression (ai.press, chaseSlide)...
    */
   firstMatchEase(): boolean {
-    return !!this.cfg.firstMatch && this.cfg.humanSide >= 0 && this.half === 1 && this.clock < FIRST_MATCH_EASE;
+    return !!this.cfg.firstMatch && (this.human[0] || this.human[1]) && this.half === 1 && this.clock < FIRST_MATCH_EASE;
   }
 
   /** ... and for the first FIRST_MATCH_PATIENT s it never shoots: a patient build-up (ai.carrierAI, aerialOrVolley). */
@@ -847,7 +1088,7 @@ export class Match {
   }
 
   aiSkill(side: Side): number {
-    if (this.cfg.humanSide === side) return 2.6;
+    if (this.human[side]) return 2.6;
     return this.cfg.sideDifficulty?.[side] ?? this.cfg.difficulty;
   }
 
@@ -862,7 +1103,7 @@ export class Match {
    * level: goals at both ends against a bot that used to concede 0.25 a match).
    */
   keeperBonus(side: Side): number {
-    if (this.cfg.humanSide === side) return HUMAN_KEEPER_BONUS - (this.aiSkill(otherSide(side)) - 0.6) * HUMAN_KEEPER_SLOPE;
+    if (this.human[side]) return HUMAN_KEEPER_BONUS - (this.aiSkill(otherSide(side)) - 0.6) * HUMAN_KEEPER_SLOPE;
     return (this.aiSkill(side) - 2) * 0.025;
   }
 
@@ -985,8 +1226,8 @@ export class Match {
     this.ball.lastTouch = kicker.idx;
     this.ball.lastTouchSide = side;
     this.restart = { kind: 'kickoff', side, x: 0, z: 0, taker: kicker.idx, wait: KICKOFF_WAIT };
-    if (this.cfg.humanSide >= 0) {
-      this.active = side === this.cfg.humanSide ? kicker.idx : this.nearestTo(this.cfg.humanSide as Side, 0, 0, true);
+    for (const hs of SIDES) {
+      if (this.human[hs]) this.ctl[hs].active = side === hs ? kicker.idx : this.nearestTo(hs, 0, 0, true);
     }
     this.events.push({ type: 'kickoffReady', side });
   }
@@ -1028,7 +1269,7 @@ export class Match {
     p.def = on;
     p.role = this.slots[side][slot].role;
     const pace = on.stats.pace / 100;
-    const edge = this.cfg.humanSide === side ? 1 : 1 + (this.aiSkill(side) - 2) * AI_PACE_EDGE;
+    const edge = this.human[side] ? 1 : 1 + (this.aiSkill(side) - 2) * AI_PACE_EDGE;
     p.jog = JOG_SPEED * (0.86 + pace * 0.22) * edge;
     p.top = SPRINT_SPEED * (0.82 + pace * 0.26) * edge;
     p.stamina = 1;
@@ -1093,7 +1334,7 @@ export class Match {
     if (this.half !== 2 || this.shootout) return;
     const min = this.minute();
     for (const side of [0, 1] as Side[]) {
-      if (this.cfg.humanSide === side) continue;
+      if (this.human[side]) continue;
       let w = this.subWindow[side];
       if (w < AUTO_SUB_MINUTES.length && min >= AUTO_SUB_MINUTES[w]) {
         while (w < AUTO_SUB_MINUTES.length && min >= AUTO_SUB_MINUTES[w]) w++;
@@ -1160,17 +1401,22 @@ export class Match {
 
   // ---------------------------------------------------------------- main step
 
-  step(dt: number, pad: Pad): void {
+  /**
+   * One fixed step. `pad`: the human's pad (the view's side: cfg.humanSide), or a pair of pads by side when
+   * both sides are human (MatchConfig.humanSides). A side that isn't human ignores its pad.
+   */
+  step(dt: number, pad: Pad | readonly [Pad, Pad]): void {
+    const pads = this.padsFor(pad);
     this.phaseT += dt;
-    if (this.cfg.mode === 'blitz') blitzStep(this, dt, pad);
+    if (this.cfg.mode === 'blitz') blitzStep(this, dt, pads);
     if (this.phase === 'fulltime' && this.shootout && this.shootout.winner >= 0 && this.phaseT < 8) {
       this.shootoutParty(dt);
       return;
     }
     if (this.phase === 'halftime' || this.phase === 'fulltime') return;
     if (this.phase === 'shootout') {
-      this.stepShootout(dt, pad);
-      this.prev = { ...pad };
+      this.stepShootout(dt, pads);
+      this.keepPads(pads);
       return;
     }
 
@@ -1185,11 +1431,15 @@ export class Match {
     } else {
       updateTeamAI(this, 0, dt);
       updateTeamAI(this, 1, dt);
-      this.applyHuman(dt, pad);
+      for (const side of SIDES) {
+        if (!this.human[side]) continue;
+        this.h = this.ctl[side];
+        this.applyHuman(dt, pads[side], side);
+      }
       if (this.cfg.mode === 'blitz') blitzSeek(this);
       this.restartTakers(dt);
     }
-    this.prev = { ...pad };
+    this.keepPads(pads);
 
     this.resolveOrders(dt);
     const frozen = this.phase === 'kickoff' || this.phase === 'restart';
@@ -1230,11 +1480,19 @@ export class Match {
       this.checkZonal();
       this.checkPossession();
       this.checkGraze();
-      this.autoTackle();
+      for (const side of SIDES) {
+        if (!this.human[side]) continue;
+        this.h = this.ctl[side];
+        this.autoTackle();
+      }
       this.checkBounds();
       if (this.phase === 'play') this.updateAdvantage(dt);
-      this.autoSwitchUpdate(dt);
-      this.freshPreview();
+      for (const side of SIDES) {
+        if (!this.human[side]) continue;
+        this.h = this.ctl[side];
+        this.autoSwitchUpdate(dt, side);
+        this.freshPreview();
+      }
     } else if (this.phase === 'out') {
       // A late change that's due (a side still without one past FORCED_SUB_MINUTE, or a window that opened
       // while the ball was already dead) is made while the ball is out, not held over to the next stoppage.
@@ -1263,6 +1521,25 @@ export class Match {
     this.sinceKick += dt;
     this.sincePossession += dt;
     if (this.ball.owner >= 0) this.players[this.ball.owner].ballT += dt;
+  }
+
+  /** Step input by side: a pair as given, or the one pad for the view's human (the other side's is empty). */
+  private padsFor(pad: Pad | readonly [Pad, Pad]): readonly [Pad, Pad] {
+    if (isPadPair(pad)) return pad;
+    const pp = this.padPair;
+    pp[this.viewSide] = pad;
+    pp[otherSide(this.viewSide)] = EMPTY_PAD;
+    return pp;
+  }
+
+  private readonly padPair: [Pad, Pad] = [EMPTY_PAD, EMPTY_PAD];
+
+  /**
+   * Each human's pad this step becomes his last one (press and release edges next step). The view's side keeps
+   * its pad even while the AI has it (a test handing the side to the AI and back sees the edges it always did).
+   */
+  private keepPads(pads: readonly [Pad, Pad]): void {
+    for (const side of SIDES) if (this.human[side] || side === this.viewSide) this.ctl[side].prev = { ...pads[side] };
   }
 
   private endHalf(): void {
@@ -1572,7 +1849,8 @@ export class Match {
     }
     const so = this.phase === 'shootout' && this.shootout?.taker === p.idx ? this.shootout : null;
     // Timed finishing: a second tap before the strike is judged now, at contact.
-    const timed = this.finish && this.finish.p === p.idx && this.finish.contact < 0 && o.kind === 'shot' ? this.finish : null;
+    const fin = this.ctl[p.side].finish;
+    const timed = fin && fin.p === p.idx && fin.contact < 0 && o.kind === 'shot' ? fin : null;
     let grade: TimingGrade | null = null;
     if (timed && timed.tap >= 0) {
       const off = timed.t - timed.tap;
@@ -1648,9 +1926,9 @@ export class Match {
       if (off.length) this.offWatch = { kick: this.kickId, side: p.side, passer: p.idx, players: off };
     }
     this.events.push({ type: 'kick', power: L.power, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: L.kind, ...(L.style ? { style: L.style } : {}) });
-    if (this.cfg.humanSide === p.side && L.target >= 0 && !isShot) {
+    if (this.human[p.side] && L.target >= 0 && !isShot) {
       const r = this.players[L.target];
-      if (r.side === p.side) this.active = r.idx;
+      if (r.side === p.side) this.ctl[p.side].active = r.idx;
     }
     const r = this.restart;
     if (this.phase === 'restart' && r && r.taker === p.idx) {
@@ -1778,57 +2056,56 @@ export class Match {
 
   // ---------------------------------------------------------------- human control
 
-  private applyHuman(dt: number, pad: Pad): void {
-    const hs = this.cfg.humanSide;
-    if (hs < 0) return;
-    const side = hs as Side;
-    const passP = pad.pass && !this.prev.pass;
+  /** `side`'s human's pad for this step (this.h is his HumanCtl). */
+  private applyHuman(dt: number, pad: Pad, side: Side): void {
+    const hs = side;
+    const passP = pad.pass && !this.h.prev.pass;
     // Timed finishing: a SHOOT press while a strike is being timed is its second tap (judged, and used up:
     // it doesn't slide, charge or strike again until it's let go).
     this.finishTick(dt);
-    if (pad.shoot && !this.prev.shoot && this.finishTap()) this.finishHeld = true;
-    const shootP = pad.shoot && !this.prev.shoot && !this.finishHeld;
-    if (shootP) this.defendingShotHold = this.phase === 'play' && this.ball.owner >= 0 && this.players[this.ball.owner].side !== hs;
-    const shootR = !pad.shoot && this.prev.shoot && !this.finishHeld && !this.defendingShotHold;
-    if (!pad.shoot) this.defendingShotHold = false;
-    if (!pad.shoot) this.finishHeld = false;
-    const throughP = pad.through && !this.prev.through;
-    const throughR = !pad.through && this.prev.through;
+    if (pad.shoot && !this.h.prev.shoot && this.finishTap()) this.h.finishHeld = true;
+    const shootP = pad.shoot && !this.h.prev.shoot && !this.h.finishHeld;
+    if (shootP) this.h.defendingShotHold = this.phase === 'play' && this.ball.owner >= 0 && this.players[this.ball.owner].side !== hs;
+    const shootR = !pad.shoot && this.h.prev.shoot && !this.h.finishHeld && !this.h.defendingShotHold;
+    if (!pad.shoot) this.h.defendingShotHold = false;
+    if (!pad.shoot) this.h.finishHeld = false;
+    const throughP = pad.through && !this.h.prev.through;
+    const throughR = !pad.through && this.h.prev.through;
     const stickLen = Math.hypot(pad.mx, pad.mz);
     // Charge is measured while held and read on the release frame.
     // A tap is a proper driven shot (round 9's critic: 12 m taps went in 1/6 at a 0.15 floor); a hold adds pace and lift.
-    const shootPower = clamp(this.shootCharge / SHOOT_BAR, 0.45, 1);
-    const throughHold = this.throughCharge;
-    if (!pad.shoot && !this.prev.shoot) this.chipArmed = false;
-    this.shootCharge = pad.shoot && !this.finishHeld && !this.defendingShotHold ? this.shootCharge + (dt * SHOOT_BAR) / SHOOT_FULL_T : 0;
-    this.throughCharge = pad.through ? this.throughCharge + dt : 0;
+    const shootPower = clamp(this.h.shootCharge / SHOOT_BAR, 0.45, 1);
+    const throughHold = this.h.throughCharge;
+    if (!pad.shoot && !this.h.prev.shoot) this.h.chipArmed = false;
+    this.h.shootCharge = pad.shoot && !this.h.finishHeld && !this.h.defendingShotHold ? this.h.shootCharge + (dt * SHOOT_BAR) / SHOOT_FULL_T : 0;
+    this.h.throughCharge = pad.through ? this.h.throughCharge + dt : 0;
     if (this.phase === 'shootout') {
-      this.shootoutInput(pad, shootR, shootPower, stickLen);
+      this.shootoutInput(pad, shootR, shootPower, stickLen, side);
       return;
     }
     // A pass being charged doesn't outlive open play.
-    if (this.hp && this.phase !== 'play') this.endPass();
+    if (this.h.hp && this.phase !== 'play') this.endPass();
     // The pass preview is set again below while his man has it at his feet (updatePreview); a called run
     // lasts until the ball comes (or CALL_T).
-    this.passPreview = this.throughPreview = -1;
-    this.throwPreview = null;
-    this.calledT += dt;
-    if (this.calledRun >= 0 && (this.calledT > CALL_T || this.phase !== 'play')) this.calledRun = -1;
+    this.h.passPreview = this.h.throughPreview = -1;
+    this.h.throwPreview = null;
+    this.h.calledT += dt;
+    if (this.h.calledRun >= 0 && (this.h.calledT > CALL_T || this.phase !== 'play')) this.h.calledRun = -1;
 
     // Set pieces we're taking.
     if ((this.phase === 'kickoff' || this.phase === 'restart') && this.restart && this.restart.side === side) {
       const t = this.players[this.restart.taker];
-      this.active = t.idx;
+      this.h.active = t.idx;
       t.wantX = t.wantZ = 0;
       const kind = this.restart.kind;
       // Keyboard / d-pad (no analog magnitude): remembered from the last time the stick was pushed.
-      if (stickLen > 0.3) this.padDigital = pad.digital ?? isDigitalStick(pad.mx, pad.mz, this.restartAim);
-      else if (pad.digital !== undefined) this.padDigital = pad.digital;
+      if (stickLen > 0.3) this.h.padDigital = pad.digital ?? isDigitalStick(pad.mx, pad.mz, this.restartAim);
+      else if (pad.digital !== undefined) this.h.padDigital = pad.digital;
       // On free kicks and corners the keys turn the aim steadily (AIM_TURN) from the default instead of
       // snapping it to one of eight directions; W (towards goal) puts it back. An analog stick aims
       // directly. On the frame a free kick is struck the stick is read for curl only, so a flick
       // sideways bends the ball without swinging the aim.
-      const rotating = this.padDigital && this.phase === 'restart' && (kind === 'freekick' || kind === 'corner');
+      const rotating = this.h.padDigital && this.phase === 'restart' && (kind === 'freekick' || kind === 'corner');
       const striking = kind === 'freekick' && (shootR || throughR || passP);
       if (stickLen > 0.3 && kind !== 'kickoff' && this.stepIn !== t.idx && !striking && !(kind === 'throwin' && t.order)) {
         const want = Math.atan2(pad.mz, pad.mx);
@@ -1863,7 +2140,7 @@ export class Match {
         const aimed = rotating ? Math.abs(angleDiff(this.restartAim, t.facing)) > 0.04 : stickLen > 0.3;
         if (passP && !aimed && kind === 'corner') {
           // Played short to the man who came across for it: no need to wait for the box.
-          this.queuedKick = null;
+          this.h.queuedKick = null;
           this.shortCorner(t);
           return;
         }
@@ -1881,10 +2158,10 @@ export class Match {
           const aim = aimed ? { x: dx, z: dz } : undefined;
           want = () => this.deliverSetPiece(t, DRIVEN_POWER, true, aim);
         }
-        if (want) this.queuedKick = want;
+        if (want) this.h.queuedKick = want;
         if (setPieceReady(this, side) < 4 && this.phaseT < 1.6) return;
-        const q = this.queuedKick;
-        this.queuedKick = null;
+        const q = this.h.queuedKick;
+        this.h.queuedKick = null;
         q?.();
         return;
       }
@@ -1899,7 +2176,7 @@ export class Match {
         if ((passP || throughP) && !t.order && throwAim) {
           const aim = throwAim;
           t.facing = Math.atan2(aim.z - t.pos.z, aim.x - t.pos.x);
-          this.order(t, 'throw', aim.x - t.pos.x, aim.z - t.pos.z, 0.5, this.passPreview, false, aim);
+          this.order(t, 'throw', aim.x - t.pos.x, aim.z - t.pos.z, 0.5, this.h.passPreview, false, aim);
         }
       } else {
         const fdx = kind === 'freekick' ? Math.cos(t.facing) : dx;
@@ -1915,8 +2192,8 @@ export class Match {
     }
     if (this.phase !== 'play') {
       // Free movement while the ball is dead.
-      if (this.phase !== 'kickoff' && this.active >= 0 && this.players[this.active].side === side && !this.players[this.active].sentOff) {
-        const p = this.players[this.active];
+      if (this.phase !== 'kickoff' && this.h.active >= 0 && this.players[this.h.active].side === side && !this.players[this.h.active].sentOff) {
+        const p = this.players[this.h.active];
         p.wantX = pad.mx;
         p.wantZ = pad.mz;
         p.sprint = pad.sprint;
@@ -1929,13 +2206,13 @@ export class Match {
     // Our keeper has it in their hands: they're ours to distribute.
     if (b.held && b.owner >= 0 && this.players[b.owner].side === side) {
       const k = this.players[b.owner];
-      this.active = k.idx;
-      if (this.hp) this.endPass();
+      this.h.active = k.idx;
+      if (this.h.hp) this.endPass();
       const dx = stickLen > 0.3 ? pad.mx : this.attackDir(side);
       const dz = stickLen > 0.3 ? pad.mz : 0;
       // (Who his roll-out, PASS, or his kick, THROUGH / SHOOT, would find: keeperDistribute's pick.)
-      this.passPreview = pickReceiver(this, k, dx, dz, 'pass');
-      this.throughPreview = pickReceiver(this, k, dx, dz, 'lob');
+      this.h.passPreview = pickReceiver(this, k, dx, dz, 'pass');
+      this.h.throughPreview = pickReceiver(this, k, dx, dz, 'lob');
       if (k.stateT > 0.3) {
         if (passP) this.keeperDistribute(k, dx, dz, false);
         else if (throughP || shootP) this.keeperDistribute(k, dx, dz, true);
@@ -1943,17 +2220,17 @@ export class Match {
       return;
     }
 
-    if (this.active < 0 || this.players[this.active].side !== side || this.players[this.active].sentOff) {
-      this.active = this.nearestTo(side, b.pos.x, b.pos.z, true);
+    if (this.h.active < 0 || this.players[this.h.active].side !== side || this.players[this.h.active].sentOff) {
+      this.h.active = this.nearestTo(side, b.pos.x, b.pos.z, true);
     }
-    if (this.active < 0) return;
-    const p = this.players[this.active];
+    if (this.h.active < 0) return;
+    const p = this.players[this.h.active];
     const hasBall = b.owner === p.idx;
     this.trackSwitch(p, pad, stickLen, hasBall, dt);
     p.faceTarget = null;
     // Winding up a shot he mostly plants and aims: the stick picks the corner, it doesn't carry him (he
     // used to be dragged ~4 m sideways by a stick held across the goal while charging).
-    const move = hasBall && pad.shoot && !this.defendingShotHold ? SHOOT_CHARGE_MOVE : 1;
+    const move = hasBall && pad.shoot && !this.h.defendingShotHold ? SHOOT_CHARGE_MOVE : 1;
     p.wantX = pad.mx * move;
     p.wantZ = pad.mz * move;
     p.sprint = pad.sprint && move === 1;
@@ -1963,24 +2240,24 @@ export class Match {
     const dirX = stickLen > 0.25 ? pad.mx : Math.cos(p.facing);
     const dirZ = stickLen > 0.25 ? pad.mz : Math.sin(p.facing);
     // Double-tap sprint while dribbling: knock it past your man and chase it.
-    this.humanTime += dt;
-    if (pad.sprint && !this.prev.sprint) {
-      if (hasBall && this.humanTime - this.lastSprintTap < KNOCK_TAP && p.state === 'move' && !b.held) {
+    this.h.humanTime += dt;
+    if (pad.sprint && !this.h.prev.sprint) {
+      if (hasBall && this.h.humanTime - this.h.lastSprintTap < KNOCK_TAP && p.state === 'move' && !b.held) {
         this.knockOn(p, dirX, dirZ);
-        this.lastSprintTap = -9;
+        this.h.lastSprintTap = -9;
       } else {
-        this.lastSprintTap = this.humanTime;
+        this.h.lastSprintTap = this.h.humanTime;
       }
     }
 
     // Chip: THROUGH tapped while SHOOT is charging fires it there and then, at the charge so far (or SHOOT
     // let go with THROUGH held).
-    const chipTap = throughP && pad.shoot && this.prev.shoot && !this.defendingShotHold;
-    if (chipTap) this.chipArmed = true;
+    const chipTap = throughP && pad.shoot && this.h.prev.shoot && !this.h.defendingShotHold;
+    if (chipTap) this.h.chipArmed = true;
     if (hasBall && b.owner === p.idx) {
       // Who a PASS / THROUGH now would go to (the render highlights him), then the pass itself: locked onto
       // that man at the press, his body turned to him (see humanPass).
-      if (!this.hp) this.updatePreview(p, pad, stickLen, dt);
+      if (!this.h.hp) this.updatePreview(p, pad, stickLen, dt);
       if (this.humanPass(p, pad, stickLen, passP, throughP, shootP, dt)) {
         // (The charge, the wait for his turn, or the wind-up: that's this frame.)
       } else if (chipTap) {
@@ -1996,7 +2273,7 @@ export class Match {
           // keeper into that corner.
           const fwd = (sx * this.attackDir(side)) / Math.max(stickLen, 1e-6);
           const lat = Math.abs(sz) / Math.max(stickLen, 1e-6);
-          if (this.chipArmed || pad.through) o.style = 'chip';
+          if (this.h.chipArmed || pad.through) o.style = 'chip';
           else if (stickLen > 0.5 && fwd > 0.5 && lat > 0.4 && shootPower < FINESSE_MAX_POWER) {
             o.style = 'finesse';
             o.curl = Math.sign(sz) * FINESSE_CURL;
@@ -2008,28 +2285,28 @@ export class Match {
             this.startFinish(p);
           }
         }
-        this.chipArmed = false;
+        this.h.chipArmed = false;
       }
     } else {
-      if (this.hp) this.endPass(); // (lost it mid-charge, or it's away)
-      this.pv.carrier = -1;
+      if (this.h.hp) this.endPass(); // (lost it mid-charge, or it's away)
+      this.h.pv.carrier = -1;
       const d = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
       const loose = b.owner < 0 && !b.held;
       const opp = b.owner >= 0 && this.players[b.owner].side !== side;
       // An early shot/through press belongs to the incoming ball. Queue it while it's still travelling,
       // instead of silently losing it outside the old four-metre first-time window.
       const incoming = loose && this.passTarget === p.idx;
-      if (incoming && !p.order) this.passPreview = pickPassMate(this, p, dirX, dirZ, 'pass');
+      if (incoming && !p.order) this.h.passPreview = pickPassMate(this, p, dirX, dirZ, 'pass');
       if (incoming && d >= 4 && (shootP || throughP)) {
         const o = this.order(p, shootP ? 'shot' : 'through', shootP && stickLen <= 0.25 ? 0 : dirX,
           shootP && stickLen <= 0.25 ? 0 : dirZ, shootP ? 0.65 : 0.7, -1, true);
         if (o) o.expires = 1.4;
       }
       if (loose && d < 4) {
-        if (passP || (this.passBuffer > 0 && this.passTarget === p.idx)) {
-          this.passBuffer = 0;
+        if (passP || (this.h.passBuffer > 0 && this.passTarget === p.idx)) {
+          this.h.passBuffer = 0;
           // (A ball in the air is headed to the man the preview shows: the assist's pick along the stick.)
-          const o = this.order(p, 'pass', dirX, dirZ, 0.6, b.pos.y > 1.05 ? this.passPreview : -1, true);
+          const o = this.order(p, 'pass', dirX, dirZ, 0.6, b.pos.y > 1.05 ? this.h.passPreview : -1, true);
           if (o) o.runSpeed = p.speed();
         } else if (shootP) this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0, 0.8, -1, true);
         else if (throughP) {
@@ -2039,7 +2316,7 @@ export class Match {
       } else {
         // A pass on its way to him: PASS now is a first-time ball when it gets there (a one-two), not a
         // switch away from the man it's for.
-        if (passP && loose && this.passTarget === p.idx) this.passBuffer = PASS_BUFFER;
+        if (passP && loose && this.passTarget === p.idx) this.h.passBuffer = PASS_BUFFER;
         else if (passP) this.switchPlayer(stickLen > 0.3 ? pad.mx : 0, stickLen > 0.3 ? pad.mz : 0);
       }
       // Move assist: the run the AI had him making, just after a switch or with the stick left alone.
@@ -2077,7 +2354,7 @@ export class Match {
         const ground = this.kickKind === 'pass' || this.kickKind === 'through';
         const i = this.receivePoint(p);
         // A spot he's to be set on before the ball comes (not a race for it): he eases in and stops on it.
-        const set = ground && this.meet !== null && !this.meet.race;
+        const set = ground && this.h.meet !== null && !this.h.meet.race;
         const tx = i.x - p.pos.x;
         const tz = i.z - p.pos.z;
         const tl = Math.hypot(tx, tz);
@@ -2104,7 +2381,7 @@ export class Match {
    * 'manual', or with nobody that way.
    */
   private updatePreview(p: Player, pad: Pad, stickLen: number, dt: number): void {
-    const pv = this.pv;
+    const pv = this.h.pv;
     const dx = stickLen > 0.25 ? pad.mx / stickLen : Math.cos(p.facing);
     const dz = stickLen > 0.25 ? pad.mz / stickLen : Math.sin(p.facing);
     const a = Math.atan2(dz, dx);
@@ -2120,8 +2397,8 @@ export class Match {
       pv.feet = through.feet;
       pv.t = 0;
     }
-    this.passPreview = pv.pass;
-    this.throughPreview = pv.through;
+    this.h.passPreview = pv.pass;
+    this.h.throughPreview = pv.through;
   }
 
   /**
@@ -2142,14 +2419,14 @@ export class Match {
   private humanPass(
     p: Player, pad: Pad, stickLen: number, passP: boolean, throughP: boolean, shootP: boolean, dt: number,
   ): boolean {
-    let hp = this.hp;
+    let hp = this.h.hp;
     if (hp && hp.player !== p.idx) {
       this.endPass();
       hp = null;
     }
     if (!hp) {
-      const btn = passP || this.passBuffer > 0 ? 'pass' : throughP && !pad.shoot && !this.chipArmed ? 'through' : null;
-      this.passBuffer = 0;
+      const btn = passP || this.h.passBuffer > 0 ? 'pass' : throughP && !pad.shoot && !this.h.chipArmed ? 'through' : null;
+      this.h.passBuffer = 0;
       if (!btn || (p.state !== 'move' && !(p.state === 'kick' && p.poke))) return false;
       const l = stickLen > 0.25 ? stickLen : 0;
       const dirX = l ? pad.mx / l : Math.cos(p.facing);
@@ -2157,10 +2434,10 @@ export class Match {
       // Locked at the press: the man the preview shows, picked again from this frame's positions with him
       // preferred (so it's him unless someone just stepped into his lane: then the man the preview was about to
       // move to).
-      const shown = btn === 'pass' ? this.passPreview : this.throughPreview;
+      const shown = btn === 'pass' ? this.h.passPreview : this.h.throughPreview;
       const pick = btn === 'pass' ? { idx: pickReceiver(this, p, dirX, dirZ, btn, shown), feet: false } : humanThroughTarget(this, p, dirX, dirZ, shown);
       const target = pick.idx;
-      hp = this.hp = {
+      hp = this.h.hp = {
         btn, player: p.idx, t: 0, dirX, dirZ, released: false, wait: 0, target, mode: btn,
         lockA: Math.atan2(dirZ, dirX), cross: false, feet: pick.feet, line: p.facing, ordered: false, relSpeed: 0,
       };
@@ -2183,7 +2460,7 @@ export class Match {
     const held = hp.btn === 'pass' ? pad.pass : pad.through;
     // The assisted arcade pass answers the press. Holding the same button never repeats it.
     // Semi/manual keep their weight control, as does the optional classic passing setting.
-    if (this.quickPass && this.groundAssist === 'assisted' && hp.btn === 'pass' && !hp.released) {
+    if (this.h.quickPass && this.h.groundAssist === 'assisted' && hp.btn === 'pass' && !hp.released) {
       hp.released = true;
       hp.relSpeed = p.speed();
     }
@@ -2206,7 +2483,7 @@ export class Match {
     const swung = (!hp.released || letGo) && Math.abs(angleDiff(hp.lockA, a)) > PASS_RELOCK;
     if (mode !== hp.mode || swung) {
       const keep = swung ? -1 : hp.target;
-      hp.cross = mode === 'lob' && this.throughAssist !== 'manual' && isCrossPosition(this, p);
+      hp.cross = mode === 'lob' && this.h.throughAssist !== 'manual' && isCrossPosition(this, p);
       hp.feet = false;
       let t = hp.cross ? crossTarget(this, p, hp.dirX, hp.dirZ, keep) : -1;
       if (t < 0 && mode === 'through') {
@@ -2227,11 +2504,11 @@ export class Match {
     const aim = hp.cross && hp.target >= 0 ? crossAim(this, p, this.players[hp.target]) : null;
     const pt = aim ?? passAimPoint(this, p, hp.target, hp.feet ? 'pass' : mode, hp.dirX, hp.dirZ);
     hp.line = Math.atan2(pt.z - b.z, pt.x - b.x);
-    this.passAim = hp.target;
-    this.passMode = mode;
+    this.h.passAim = hp.target;
+    this.h.passMode = mode;
     // The bar starts at the ideal weight (0) and fills above it once the tap window is over.
     const over = clamp((hp.t - PASS_TAP_MAX) / PASS_OVER_T, 0, 1);
-    this.passCharge = hp.btn === 'pass' && !hp.released ? over : -1;
+    this.h.passCharge = hp.btn === 'pass' && !hp.released ? over : -1;
     // Square up to it, quickly (locomote holds the facing he's turned to); through a tap he keeps his stride.
     p.facing = turnToward(p.facing, hp.line, this.passTurnRate(p, mode) * dt);
     p.faceTarget = p.facing;
@@ -2241,9 +2518,9 @@ export class Match {
     p.sprint = tap && pad.sprint;
     if (!hp.released) return true;
     // Turned right away from it: a frame or two more for the turn (the wind-up squares him up the rest of the way).
-    const level = assistLevel(this, mode);
+    const level = assistLevel(this, mode, p.side);
     const off = Math.abs(angleDiff(p.facing, hp.line));
-    if (!(this.quickPass && level === 'assisted' && mode === 'pass') && off > PASS_OUTSIDE[level] && hp.wait < PASS_TURN_WAIT) return true;
+    if (!(this.h.quickPass && level === 'assisted' && mode === 'pass') && off > PASS_OUTSIDE[level] && hp.wait < PASS_TURN_WAIT) return true;
     // Play it: a tap at the ideal pace, a longer PASS hold above it, a lofted ball by its charge.
     const charge = mode === 'lob' ? clamp(hp.t / LOB_CHARGE_T, 0.3, 1) : mode === 'pass' && hp.t > PASS_TAP_MAX ? over : undefined;
     const power = charge ?? (mode === 'through' ? 0.7 : 0.6);
@@ -2264,7 +2541,7 @@ export class Match {
     // ('assisted': the error margin reads his body at contact, after the wind-up's turn.)
     o.bodyOff = level === 'assisted' ? undefined : off;
     // Struck at once: a short wind-up (a flick's shorter still), the swing paced to meet the ball then.
-    const windup = this.quickPass && level === 'assisted' && mode === 'pass'
+    const windup = this.h.quickPass && level === 'assisted' && mode === 'pass'
       ? HUMAN_FLICK_WINDUP : hp.t < PASS_FLICK && off <= FLICK_SQUARE ? HUMAN_FLICK_WINDUP : HUMAN_PASS_WINDUP;
     p.kickWindup = windup;
     p.kickT = Math.max(0, 0.32 - (Math.ceil(windup / DT - 1e-6) * DT) / 0.34);
@@ -2284,9 +2561,9 @@ export class Match {
       const o = t.order;
       const plan = o?.kind === 'throw' && o.aimX !== undefined && o.aimZ !== undefined
         ? { x: o.aimX, z: o.aimZ, target: o.target } : throwInPlan(this, t, dx, dz);
-      this.passPreview = this.throughPreview = plan.target;
-      this.throwPreview = { x: plan.x, z: plan.z };
-      return this.throwPreview;
+      this.h.passPreview = this.h.throughPreview = plan.target;
+      this.h.throwPreview = { x: plan.x, z: plan.z };
+      return this.h.throwPreview;
     }
     let px = dx;
     let pz = dz;
@@ -2297,8 +2574,8 @@ export class Match {
       px = Math.cos(t.facing);
       pz = Math.sin(t.facing);
     }
-    this.passPreview = pickReceiver(this, t, px, pz, 'pass');
-    this.throughPreview = kind === 'kickoff' ? this.passPreview : pickReceiver(this, t, px, pz, 'lob');
+    this.h.passPreview = pickReceiver(this, t, px, pz, 'pass');
+    this.h.throughPreview = kind === 'kickoff' ? this.h.passPreview : pickReceiver(this, t, px, pz, 'lob');
   }
 
   /**
@@ -2306,34 +2583,34 @@ export class Match {
    * this very frame, not the next one.
    */
   private freshPreview(): void {
-    if (this.cfg.humanSide < 0 || this.active < 0 || this.hp) return;
-    const p = this.players[this.active];
+    if (this.h.active < 0 || this.h.hp) return;
+    const p = this.players[this.h.active];
     const b = this.ball;
-    if (b.owner !== p.idx || b.held || this.pv.carrier === p.idx) return;
-    const pad = this.prev;
+    if (b.owner !== p.idx || b.held || this.h.pv.carrier === p.idx) return;
+    const pad = this.h.prev;
     this.updatePreview(p, pad, Math.hypot(pad.mx, pad.mz), 0);
   }
 
   /** The man a PASS / THROUGH press has locked onto makes his move before the ball comes (ai.ts). */
   private callRun(target: number, mode: 'pass' | 'through' | 'lob'): void {
-    this.calledRun = target;
-    this.calledMode = target >= 0 ? mode : null;
-    this.calledT = 0;
+    this.h.calledRun = target;
+    this.h.calledMode = target >= 0 ? mode : null;
+    this.h.calledT = 0;
   }
 
   /** The pass charge is over (struck, lost, or play stopped). */
   private endPass(): void {
-    this.hp = null;
-    this.passCharge = -1;
-    this.passAim = -1;
-    this.passMode = null;
-    this.calledRun = -1;
-    this.calledMode = null;
+    this.h.hp = null;
+    this.h.passCharge = -1;
+    this.h.passAim = -1;
+    this.h.passMode = null;
+    this.h.calledRun = -1;
+    this.h.calledMode = null;
   }
 
   /** How fast (rad/s) a passer turns his body to the pass line: PASS_TURN (by the ball's assist level) standing, less at speed. */
   private passTurnRate(p: Player, mode: 'pass' | 'through' | 'lob'): number {
-    return PASS_TURN[assistLevel(this, mode)] * (1 - PASS_TURN_SPRINT_LOSS * Math.min(1, p.speed() / SPRINT_SPEED));
+    return PASS_TURN[assistLevel(this, mode, p.side)] * (1 - PASS_TURN_SPRINT_LOSS * Math.min(1, p.speed() / SPRINT_SPEED));
   }
 
   /**
@@ -2342,18 +2619,18 @@ export class Match {
    * has the ball), how long the stick has been left alone, and a buffered PASS that no longer applies.
    */
   private trackSwitch(p: Player, pad: Pad, stickLen: number, hasBall: boolean, dt: number): void {
-    if (p.idx !== this.seenActive) {
-      this.seenActive = p.idx;
-      this.sinceSwitch = 0;
-      this.switchT = 0;
-      this.latch = stickLen > 0.3 ? { x: pad.mx / stickLen, z: pad.mz / stickLen } : null;
-    } else this.sinceSwitch += dt;
-    const l = this.latch;
-    if (l && (hasBall || stickLen < 0.3 || (pad.mx * l.x + pad.mz * l.z) / stickLen < Math.cos(STICK_LATCH_TURN))) this.latch = null;
-    this.stickIdle = stickLen < 0.2 ? this.stickIdle + dt : 0;
+    if (p.idx !== this.h.seenActive) {
+      this.h.seenActive = p.idx;
+      this.h.sinceSwitch = 0;
+      this.h.switchT = 0;
+      this.h.latch = stickLen > 0.3 ? { x: pad.mx / stickLen, z: pad.mz / stickLen } : null;
+    } else this.h.sinceSwitch += dt;
+    const l = this.h.latch;
+    if (l && (hasBall || stickLen < 0.3 || (pad.mx * l.x + pad.mz * l.z) / stickLen < Math.cos(STICK_LATCH_TURN))) this.h.latch = null;
+    this.h.stickIdle = stickLen < 0.2 ? this.h.stickIdle + dt : 0;
     const b = this.ball;
-    if ((b.owner >= 0 && b.owner !== p.idx) || (this.passTarget >= 0 && this.passTarget !== p.idx)) this.passBuffer = 0;
-    else this.passBuffer = Math.max(0, this.passBuffer - dt);
+    if ((b.owner >= 0 && b.owner !== p.idx) || (this.passTarget >= 0 && this.passTarget !== p.idx)) this.h.passBuffer = 0;
+    else this.h.passBuffer = Math.max(0, this.h.passBuffer - dt);
   }
 
   /**
@@ -2363,14 +2640,14 @@ export class Match {
    * follows his AI positioning / marking at a jog.
    */
   private moveAssistRun(p: Player, pad: Pad, stickLen: number): void {
-    if (!this.moveAssist || p.state !== 'move') return;
-    const fresh = this.sinceSwitch < MOVE_ASSIST_T;
-    const idle = this.stickIdle > MOVE_IDLE_T;
+    if (!this.h.moveAssist || p.state !== 'move') return;
+    const fresh = this.h.sinceSwitch < MOVE_ASSIST_T;
+    const idle = this.h.stickIdle > MOVE_IDLE_T;
     if (!fresh && !idle) return;
     const run = assistRun(this, p);
     if (!run) return;
     if (fresh) {
-      if (stickLen >= 0.2 && !this.latch) {
+      if (stickLen >= 0.2 && !this.h.latch) {
         const rl = Math.hypot(run.wantX, run.wantZ);
         if (rl < 0.05 || (pad.mx * run.wantX + pad.mz * run.wantZ) / (stickLen * rl) < Math.cos(MOVE_ASSIST_CONE)) return;
       }
@@ -2391,11 +2668,11 @@ export class Match {
     const kick = this.kickId;
     const ground = this.kickKind === 'pass' || this.kickKind === 'through';
     if (!ground || this.pathKick !== kick) {
-      this.meet = null;
+      this.h.meet = null;
       return intercept(this, p);
     }
-    let mt = this.meet;
-    if (mt && (mt.kick !== kick || mt.player !== p.idx)) mt = this.meet = null;
+    let mt = this.h.meet;
+    if (mt && (mt.kick !== kick || mt.player !== p.idx)) mt = this.h.meet = null;
     if (mt?.race) return this.racePoint(p);
     if (mt) {
       let near = Infinity;
@@ -2416,11 +2693,11 @@ export class Match {
     }
     const s = meetSpot(this, p, RECEIVE_EARLY);
     if (s && !this.contested(p, s.t)) {
-      this.meet = { kick, player: p.idx, x: s.x, z: s.z, race: false };
+      this.h.meet = { kick, player: p.idx, x: s.x, z: s.z, race: false };
       return s;
     }
     // A man of theirs can get to the ball's line before it gets to him: a race for it, all the way.
-    this.meet = { kick, player: p.idx, x: 0, z: 0, race: true };
+    this.h.meet = { kick, player: p.idx, x: 0, z: 0, race: true };
     return this.racePoint(p);
   }
 
@@ -2455,8 +2732,8 @@ export class Match {
 
   /** Does the assisted receive run the human's man onto a pass coming to him (see applyHuman)? */
   private receiveAssisted(p: Player, pad: Pad, stickLen: number): boolean {
-    if (stickLen < 0.2 || this.latch) return true;
-    if (!this.moveAssist || this.sinceSwitch >= MOVE_ASSIST_T) return false;
+    if (stickLen < 0.2 || this.h.latch) return true;
+    if (!this.h.moveAssist || this.h.sinceSwitch >= MOVE_ASSIST_T) return false;
     const i = this.receivePoint(p);
     const tx = i.x - p.pos.x;
     const tz = i.z - p.pos.z;
@@ -2492,13 +2769,13 @@ export class Match {
     }
     if (p.state !== 'move' || p.kickCooldown > 0 || b.pos.y > CUSHION_TOP + p.y || dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z) > CUSHION_R) return;
     // Contested: an opponent going for the same ball wins it now and then (decided once per ball).
-    if (this.cushionKick !== this.kickId) {
-      this.cushionKick = this.kickId;
+    if (this.h.cushionKick !== this.kickId) {
+      this.h.cushionKick = this.kickId;
       const contested = this.bySide[otherSide(p.side)].some((o) => !o.sentOff && o.state === 'move' && o.order?.firstTime &&
         dist2(o.pos.x, o.pos.z, b.pos.x, b.pos.z) < CONTEST_R);
-      this.cushionLost = contested && this.rng.chance(CONTEST_LOSE);
+      this.h.cushionLost = contested && this.rng.chance(CONTEST_LOSE);
     }
-    if (this.cushionLost) return;
+    if (this.h.cushionLost) return;
     const wx = steering ? pad.mx / stickLen : Math.cos(p.facing);
     const wz = steering ? pad.mz / stickLen : Math.sin(p.facing);
     this.cushion(p, wx, wz);
@@ -2523,20 +2800,19 @@ export class Match {
     b.spin.x = b.spin.y = b.spin.z = 0;
   }
 
-  /** The kick a cushion was last judged for, and whether an opponent won that contest (see crossControl). */
-  private cushionKick = -1;
-  private cushionLost = false;
 
-  switchPlayer(dirX = 0, dirZ = 0): void {
-    const hs = this.cfg.humanSide;
-    if (hs < 0) return;
+  /** Hand `side`'s human (default: the one being processed) the best-placed man, the stick's way if pushed. */
+  switchPlayer(dirX = 0, dirZ = 0, side?: Side): void {
+    if (side !== undefined) this.h = this.ctl[side];
+    const hs = this.h.side;
+    if (!this.human[hs]) return;
     const b = this.ball;
-    const cur = this.active >= 0 ? this.players[this.active] : null;
+    const cur = this.h.active >= 0 ? this.players[this.h.active] : null;
     let best = -1;
     let bestS = Infinity;
     const aim = Math.hypot(dirX, dirZ) > 0.3;
     for (const p of this.bySide[hs as Side]) {
-      if (p.isKeeper || p.idx === this.active || p.sentOff) continue;
+      if (p.isKeeper || p.idx === this.h.active || p.sentOff) continue;
       let s = intercept(this, p).t * 6 + dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z) * 0.4;
       // Prefer players goal-side of the ball.
       const ad = this.attackDir(hs as Side);
@@ -2553,23 +2829,22 @@ export class Match {
       }
     }
     if (best >= 0) {
-      this.active = best;
-      this.switchT = 0;
+      this.h.active = best;
+      this.h.switchT = 0;
     }
   }
 
-  private autoSwitchUpdate(dt: number): void {
-    const hs = this.cfg.humanSide;
-    if (hs < 0 || !this.autoSwitch) return;
-    this.switchT += dt;
+  private autoSwitchUpdate(dt: number, hs: Side): void {
+    if (!this.h.autoSwitch) return;
+    this.h.switchT += dt;
     const b = this.ball;
     // Defending only: their ball (at their feet, or a pass of theirs), or a loose one. Never while ours is
     // at our feet, in a keeper's hands, or on its way to one of ours.
     if (b.held) return;
     if (b.owner >= 0 && this.players[b.owner].side === hs) return;
     if (b.owner < 0 && this.passTarget >= 0 && this.players[this.passTarget].side === hs) return;
-    if (this.switchT < AUTO_SWITCH_GAP || this.active < 0) return;
-    const cur = this.players[this.active];
+    if (this.h.switchT < AUTO_SWITCH_GAP || this.h.active < 0) return;
+    const cur = this.players[this.h.active];
     if (cur.sentOff) return;
     // A man on the floor (or just gone to ground) is out of it for a moment.
     const down = cur.state !== 'move' && cur.state !== 'kick' && cur.stateT > 0.3;
@@ -2588,7 +2863,7 @@ export class Match {
     const ratio = b.owner < 0 ? AUTO_SWITCH_RATIO_LOOSE : AUTO_SWITCH_RATIO;
     if (best < 0 || bestT > curT * ratio || curT - bestT < AUTO_SWITCH_MARGIN) return;
     // Never away from a man the stick is steering onto the ball while he's closing in on it.
-    const pad = this.prev;
+    const pad = this.h.prev;
     const sl = Math.hypot(pad.mx, pad.mz);
     if (!down && sl > 0.3) {
       const toward = (x: number, z: number): boolean => {
@@ -2599,8 +2874,8 @@ export class Match {
       };
       if (toward(ci.x, ci.z) || toward(b.pos.x, b.pos.z)) return;
     }
-    this.active = best;
-    this.switchT = 0;
+    this.h.active = best;
+    this.h.switchT = 0;
   }
 
   // ---------------------------------------------------------------- set pieces
@@ -2610,7 +2885,7 @@ export class Match {
     const r = this.restart;
     if (!r) return;
     const t = this.players[r.taker];
-    if (this.cfg.humanSide === r.side) {
+    if (this.human[r.side]) {
       // Humans get a generous window, then it goes automatically. (The very first match: his kick-offs wait for
       // his button, however long: MatchConfig.firstMatch.)
       if (r.kind === 'kickoff' && this.cfg.firstMatch) return;
@@ -2657,7 +2932,7 @@ export class Match {
       }
       case 'corner': {
         // Now and then it's played short to the man who came for it.
-        if (this.cfg.humanSide !== r.side && this.shortRolled !== r) {
+        if (!this.human[r.side] && this.shortRolled !== r) {
           this.shortRolled = r;
           if (this.rng.chance(0.1)) {
             this.shortCorner(t);
@@ -2665,7 +2940,7 @@ export class Match {
           }
         }
         // Give the runners a moment to load the box.
-        if (this.cfg.humanSide !== r.side && setPieceReady(this, r.side) < 4 && this.phaseT < r.wait + 3) return;
+        if (!this.human[r.side] && setPieceReady(this, r.side) < 4 && this.phaseT < r.wait + 3) return;
         this.deliverSetPiece(t);
         break;
       }
@@ -2682,14 +2957,14 @@ export class Match {
       case 'penalty': {
         // Give a first-time player the same opening grace at a penalty as in open play. The restart
         // clock keeps advancing, so the taker prepares until the patient period ends, then strikes.
-        if (this.cfg.humanSide !== r.side && this.firstMatchPatient()) return;
+        if (!this.human[r.side] && this.firstMatchPatient()) return;
         const zAim = this.rng.chance(0.5) ? 1 : -1;
         this.order(t, 'shot', 0, zAim, 0.72 + this.rng.next() * 0.2, -1, false);
         break;
       }
       case 'freekick': {
         const dg = dist2(r.x, r.z, gx, 0);
-        const patient = this.cfg.humanSide !== r.side && this.firstMatchPatient();
+        const patient = !this.human[r.side] && this.firstMatchPatient();
         if (isDirectFreeKick(this, r) && !patient) {
           // Mostly curled over the wall into the corner behind it (the keeper covers the other one):
           // aimed just inside the near post and bent in from outside; now and then bent into the
@@ -2702,7 +2977,7 @@ export class Match {
             o.curl = this.rng.chance(0.8) ? -near * (0.5 + this.rng.next() * 0.5) : 0;
           }
         } else if (isCrossingRestart(this, r) && !patient) {
-          if (this.cfg.humanSide !== r.side && setPieceReady(this, r.side) < 4 && this.phaseT < r.wait + 3) return;
+          if (!this.human[r.side] && setPieceReady(this, r.side) < 4 && this.phaseT < r.wait + 3) return;
           this.deliverSetPiece(t);
         } else {
           const m = pick((p) => openness(p) + ((p.pos.x - t.pos.x) * ad) * 0.15 - dist2(p.pos.x, p.pos.z, t.pos.x, t.pos.z) * 0.1 -
@@ -2788,7 +3063,7 @@ export class Match {
 
   private beginRestart(r: Restart): void {
     this.pendingRestart = null;
-    this.queuedKick = null;
+    this.ctl[0].queuedKick = this.ctl[1].queuedKick = null;
     const ad = this.attackDir(r.side);
     const taker = r.taker >= 0 ? this.players[r.taker] : this.pickTaker(r);
     r.taker = taker.idx;
@@ -2879,8 +3154,9 @@ export class Match {
       this.runUpFoot = this.rng.chance(0.8) ? 1 : -1;
       this.holdDeadBall();
     }
-    if (this.cfg.humanSide === r.side) this.active = taker.idx;
-    else if (this.cfg.humanSide >= 0) this.active = this.nearestTo(this.cfg.humanSide as Side, r.x, r.z, true);
+    for (const hs of SIDES) {
+      if (this.human[hs]) this.ctl[hs].active = hs === r.side ? taker.idx : this.nearestTo(hs, r.x, r.z, true);
+    }
   }
 
   private checkBounds(): void {
@@ -3321,27 +3597,17 @@ export class Match {
 
   // ---------------------------------------------------------------- timed finishing
 
-  /**
-   * The human's open-play strike being timed (Match.timedFinish): from SHOOT's release (t = 0) until
-   * FINISH_WINDOWS.late s after the boot meets the ball (`contact`, s after the release; -1 before). `tap`:
-   * when the second SHOOT tap came (-1: none yet). `aim`: the strike's aim and error, for a late tap to re-aim.
-   */
-  private finish: {
-    p: number; side: Side; t: number; contact: number; tap: number; kick: number; aim: Launch['aim'] | null;
-  } | null = null;
-  /** SHOOT went down as the timed-finish tap: not a new press (no slide, no charge, no strike) until let go. */
-  private finishHeld = false;
 
   /** The human has just ordered a strike on SHOOT's release: time it (when timed finishing is on). */
   private startFinish(p: Player): void {
-    this.finish = this.timedFinish
+    this.h.finish = this.h.timedFinish
       ? { p: p.idx, side: p.side, t: 0, contact: -1, tap: -1, kick: -1, aim: null }
       : null;
   }
 
   /** The timed strike's clock: it ends when the late window closes, or the strike never comes. */
   private finishTick(dt: number): void {
-    const f = this.finish;
+    const f = this.h.finish;
     if (!f) return;
     f.t += dt;
     const p = this.players[f.p];
@@ -3349,7 +3615,7 @@ export class Match {
     const gone = f.contact < 0
       ? p.state !== 'kick' || !p.order
       : f.t > Math.max(0.25, f.contact + FINISH_WINDOWS.late) + 1e-6 || b.owner >= 0 || b.lastTouch !== f.p || this.shotKick !== f.kick;
-    if (this.phase !== 'play' || gone) this.finish = null;
+    if (this.phase !== 'play' || gone) this.h.finish = null;
   }
 
   /**
@@ -3357,7 +3623,7 @@ export class Match {
    * judged at contact (execute); after it, the ball is put right (or wrong) in flight now.
    */
   private finishTap(): boolean {
-    const f = this.finish;
+    const f = this.h.finish;
     if (!f) return false;
     if (f.tap >= 0) return true; // one tap per strike
     f.tap = f.t;
@@ -3456,18 +3722,19 @@ export class Match {
     const r = human && this.humanPassKick === this.kickId ? Math.min(rel, HUMAN_PASS_TRAP) : rel;
     let heavy = (r / (20 * TEMPO)) ** 2 * (1.2 - ctrl) * (1 + 0.8 * press + 0.5 * back + 0.4 * air + (p.stumbleT > 0 ? 0.6 : 0)) *
       (1.15 - this.kickSkill(p) * 0.075);
-    heavy *= human ? TOUCH_ASSIST[this.groundAssist] : TOUCH_AI;
+    const hc = this.ctl[p.side];
+    heavy *= human ? TOUCH_ASSIST[hc.groundAssist] : TOUCH_AI;
     const dist = Math.min(TOUCH_MAX, TOUCH_BASE + heavy * TOUCH_K * (0.6 + 0.8 * this.rng.next()));
     this.lastTouchD = dist;
     // Where he means to take it: the stick (the human; no stick, in front of him), else into his run, or on
     // the way it was going, opened up towards goal and away from his marker.
     const ad = this.attackDir(p.side);
-    const stick = human ? Math.hypot(this.prev.mx, this.prev.mz) : 0;
+    const stick = human ? Math.hypot(hc.prev.mx, hc.prev.mz) : 0;
     let wx: number;
     let wz: number;
     if (stick > 0.3) {
-      wx = this.prev.mx / stick;
-      wz = this.prev.mz / stick;
+      wx = hc.prev.mx / stick;
+      wz = hc.prev.mz / stick;
     } else if (human) {
       // (No stick: cushioned in front of him, the way he's facing.)
       wx = Math.cos(p.facing);
@@ -3524,7 +3791,7 @@ export class Match {
     const wallLive = this.wallKick === this.kickId && this.sinceKick < 0.9;
     // The human's pass to a man beyond a teammate, with that man set for it and nobody of theirs near its
     // line (receivePoint): the teammate lets it run (a dummy) for DUMMY_T s. A contested ball he takes.
-    const mt = this.meet;
+    const mt = this.ctl[this.kickSide].meet;
     const dummy = this.humanPassKick === this.kickId && this.passTarget >= 0 && this.sinceKick < DUMMY_T &&
       mt !== null && mt.kick === this.kickId && mt.player === this.passTarget && !mt.race;
     for (const p of this.players) {
@@ -3603,7 +3870,7 @@ export class Match {
     if (this.possessionSide !== p.side) this.sincePossession = 0;
     this.possessionSide = p.side;
     this.events.push({ type: 'control', player: p.idx });
-    if (this.cfg.humanSide === p.side && !p.isKeeper) this.active = p.idx;
+    if (this.human[p.side] && !p.isKeeper) this.ctl[p.side].active = p.idx;
   }
 
   /**
@@ -4224,8 +4491,8 @@ export class Match {
       if (br.chaser === p.idx) br.chaser = -1;
       br.think = 0;
     }
-    if (this.cfg.humanSide === p.side && this.active === p.idx) {
-      this.active = this.nearestTo(p.side, this.ball.pos.x, this.ball.pos.z, true);
+    if (this.isHumanControlled(p)) {
+      this.ctl[p.side].active = this.nearestTo(p.side, this.ball.pos.x, this.ball.pos.z, true);
     }
   }
 
@@ -4393,7 +4660,7 @@ export class Match {
     o.jockeyT = 0;
     // The human's own man keeps his tackle: a take-on used to lock his TACKLE press out for 0.6 s on the very
     // frame he pressed it (the render still lunged, so he saw a whiff he never had a chance in).
-    o.tackleCooldown = Math.max(o.tackleCooldown, this.cfg.humanSide === o.side && o.idx === this.active ? 0.15 : 0.6);
+    o.tackleCooldown = Math.max(o.tackleCooldown, this.isHumanControlled(o) ? 0.15 : 0.6);
     this.events.push({ type: 'beat', by: p.idx, on: o.idx });
   }
 
@@ -4414,26 +4681,15 @@ export class Match {
     return this.ball.pos.z + (fz * (ad * HALF_L - this.ball.pos.x)) / fx;
   }
 
-  /**
-   * The human's dribble / tackle assists (see dribble.ts). (Its skill cut replaces the old humanCuts check,
-   * whose smoothed turn never passed its 0.9 rad bar once the human's cut was a quick bend.)
-   */
-  readonly assist = new AssistState();
-  /** The human's last stick input looked like keys / d-pad (see isDigitalStick, Pad.digital). */
-  private padDigital = false;
-  /** THROUGH was tapped during the current SHOOT charge: the shot will be a chip. */
-  private chipArmed = false;
-  /** A human set-piece delivery pressed while the box was still filling. */
-  private queuedKick: (() => void) | null = null;
 
   /** The human's player tackles automatically when they run into the carrier. */
   private autoTackle(): void {
-    if (this.cfg.humanSide < 0 || this.active < 0) return;
-    const p = this.players[this.active];
+    if (this.h.active < 0) return;
+    const p = this.players[this.h.active];
     const b = this.ball;
     if (b.owner < 0 || b.held || p.sentOff) return;
     const c = this.players[b.owner];
-    if (c.side === p.side || tackleClosing(this)) return; // (a TACKLE tap closing in makes its own challenge)
+    if (c.side === p.side || tackleClosing(this, this.h.side)) return; // (a TACKLE tap closing in makes its own challenge)
     // (The assisted standing tackle, less sure than one he went in for, by difficulty: dribble.ts vsHuman.auto.
     // A bump he didn't ask for shouldn't leave him stranded or give away a free kick.)
     if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) < 1.0) this.tryTackle(p, c, vsHuman(this.aiSkill(c.side)).auto, true, false);
@@ -4526,13 +4782,12 @@ export class Match {
     this.stepIn = -1;
     this.runUpFoot = this.rng.chance(0.8) ? 1 : -1;
     this.holdDeadBall();
-    const hs = this.cfg.humanSide;
-    if (hs === side) this.active = taker.idx;
-    else if (hs === def) this.active = k.idx;
+    if (this.human[side]) this.ctl[side].active = taker.idx;
+    if (this.human[def]) this.ctl[def].active = k.idx;
   }
 
   /** Only the taker, the keeper and the ball are simulated; the line-up just waits. */
-  private stepShootout(dt: number, pad: Pad): void {
+  private stepShootout(dt: number, pads: readonly [Pad, Pad]): void {
     const s = this.shootout!;
     s.t += dt;
     if (s.stage === 'intro' && s.t >= INTRO_BEAT) {
@@ -4550,10 +4805,14 @@ export class Match {
     }
     const taker = this.players[s.taker];
     const k = this.players[s.keeper];
-    this.applyHuman(dt, pad);
+    for (const side of SIDES) {
+      if (!this.human[side]) continue;
+      this.h = this.ctl[side];
+      this.applyHuman(dt, pads[side], side);
+    }
     if (s.stage === 'aim') {
       // AI takers step up after a breath; a human who never shoots gets the kick taken for them.
-      const wait = this.cfg.humanSide === s.turn ? HUMAN_WINDOW : this.restart?.wait ?? 1.4;
+      const wait = this.human[s.turn] ? HUMAN_WINDOW : this.restart?.wait ?? 1.4;
       if (!taker.order && s.t > wait) this.shootoutKick(taker, aiPenaltyAim(this.rng));
       k.wantX = k.wantZ = 0;
       k.faceTarget = Math.atan2(this.ball.pos.z - k.pos.z, this.ball.pos.x - k.pos.x);
@@ -4586,15 +4845,21 @@ export class Match {
     this.sinceKick += dt;
   }
 
-  /** Human taker aims across the goal mouth and shoots on release; the stick is also the keeper's dive. */
-  private shootoutInput(pad: Pad, shootR: boolean, shootPower: number, stickLen: number): void {
+  /**
+   * Human taker aims across the goal mouth and shoots on release; the stick is also the keeper's dive (the
+   * keeper's human's stick when both sides are human).
+   */
+  private shootoutInput(pad: Pad, shootR: boolean, shootPower: number, stickLen: number, side: Side): void {
     const s = this.shootout;
     if (!s) return;
-    s.stick.x = pad.mx;
-    s.stick.z = pad.mz;
-    if (this.cfg.humanSide !== s.turn || (s.stage !== 'aim' && s.stage !== 'intro')) return;
+    const keeps = otherSide(s.turn);
+    if (side === keeps || !this.human[keeps]) {
+      s.stick.x = pad.mx;
+      s.stick.z = pad.mz;
+    }
+    if (side !== s.turn || (s.stage !== 'aim' && s.stage !== 'intro')) return;
     const t = this.players[s.taker];
-    this.active = t.idx;
+    this.h.active = t.idx;
     // Sideways share of the stick picks the spot; it stays where it was left.
     if (stickLen > 0.3) s.aimZ = clamp(pad.mz / stickLen / 0.85, -1, 1) * (GOAL_W / 2 - 0.5);
     if (s.stage !== 'aim' || s.t < 0.35 || t.order) return;
@@ -4618,7 +4883,7 @@ export class Match {
     const pred = predictCrossing(this.ball, s.goal * HALF_L);
     const st = s.stick;
     const sl = Math.hypot(st.x, st.z);
-    const human = this.cfg.humanSide === k.side && sl > 0.3;
+    const human = this.human[k.side] && sl > 0.3;
     let dir: -1 | 0 | 1;
     let read = false;
     if (human) dir = Math.abs(st.z) / sl > 0.38 ? (st.z > 0 ? 1 : -1) : 0;

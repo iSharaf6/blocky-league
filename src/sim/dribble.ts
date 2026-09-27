@@ -2,6 +2,7 @@ import { angleDiff, clamp, dist2 } from '../core/math';
 import { TEMPO } from './constants';
 import type { Match, Pad } from './match';
 import type { Player } from './player';
+import type { Side } from './types';
 
 /**
  * Dribble and tackle assists for the human's man (arcade-generous, DLS / FIFA-assisted feel). Everything
@@ -126,7 +127,7 @@ export class AssistState {
  * run): cut detection and wrong-footing, shielding, path assist. Charging a shot or a pass, it only watches.
  */
 export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt: number): void {
-  const st = m.assist;
+  const st = m.ctl[p.side].assist;
   st.t += dt;
   // (Winding up a shot he plants: his quick legs don't carry him across the goal as he aims.)
   p.quickLegs = !pad.shoot;
@@ -136,7 +137,7 @@ export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt
   }
   if (p.state !== 'move') return;
   // (Charging a shot or a pass, or aiming one with PASS / THROUGH down, the stick is aiming: no skill move.)
-  const busy = pad.shoot || pad.pass || pad.through || m.passMode !== null;
+  const busy = pad.shoot || pad.pass || pad.through || m.ctl[p.side].passMode !== null;
   // ---- Skill cut. (A flick across a thumbstick passes near the middle for a frame or two: those frames
   // are skipped, not a reset.)
   const h = st.hist;
@@ -198,8 +199,9 @@ function skillCut(m: Match, p: Player): void {
     }
   }
   if (beat) p.protectT = PROTECT_T;
-  if (near && m.assist.t - m.assist.lastSkill > SKILL_GAP) {
-    m.assist.lastSkill = m.assist.t;
+  const st = m.ctl[p.side].assist;
+  if (near && st.t - st.lastSkill > SKILL_GAP) {
+    st.lastSkill = st.t;
     m.events.push({ type: 'skill', player: p.idx });
   }
 }
@@ -284,10 +286,11 @@ function pathAssist(m: Match, p: Player, stickLen: number): void {
  */
 export function closeTouch(m: Match, p: Player, pulse: number): number {
   if (!m.isHumanControlled(p)) {
-    // An AI carrier with the human's man closing: the harder sides keep it tighter (vsHuman.tight).
-    const hs = m.cfg.humanSide;
-    if (hs >= 0 && p.side !== hs && m.active >= 0 && pulse > 0) {
-      const h = m.players[m.active];
+    // An AI carrier with the other side's human's man closing: the harder sides keep it tighter (vsHuman.tight).
+    const hs = p.side === 0 ? 1 : 0;
+    const act = m.activeOf(hs);
+    if (act >= 0 && pulse > 0) {
+      const h = m.players[act];
       if (h.side === hs && dist2(h.pos.x, h.pos.z, p.pos.x, p.pos.z) < TIGHT_R) return pulse * (1 - vsHuman(m.aiSkill(p.side)).tight);
     }
     return pulse;
@@ -450,7 +453,7 @@ export function standingFoulChance(behind: number, shielded: number): number {
  * over the man's run while a tap is closing in. `shootP`: pressed this frame.
  */
 export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stickLen: number, dt: number): void {
-  const st = m.assist;
+  const st = m.ctl[p.side].assist;
   st.t += dt;
   // His quick legs answer the stick and PRESS (and a TACKLE closing in, below), not a run the sim makes for him.
   p.quickLegs = stickLen > 0.2 || pad.through;
@@ -531,7 +534,7 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
  */
 export function takeOnVsHuman(m: Match, o: Player): number {
   if (!m.isHumanControlled(o)) return 1;
-  return m.assist.tackle !== null ? TAKE_ON_LUNGING : vsHuman(m.aiSkill(o.side === 0 ? 1 : 0)).takeOn;
+  return m.ctl[o.side].assist.tackle !== null ? TAKE_ON_LUNGING : vsHuman(m.aiSkill(o.side === 0 ? 1 : 0)).takeOn;
 }
 const TAKE_ON_LUNGING = 0.35;
 
@@ -543,15 +546,15 @@ const TAKE_ON_LUNGING = 0.35;
 export function readsHuman(m: Match, p: Player, o: Player | null, d: number, dt: number): boolean {
   if (!o || d > READ_D || !m.isHumanControlled(o) || p.ballT < 0.2) return false;
   const closing = ((o.vel.x * (p.pos.x - o.pos.x) + o.vel.z * (p.pos.z - o.pos.z)) / Math.max(0.1, d)) > READ_CLOSING;
-  if (!closing && m.assist.tackle === null) return false;
+  if (!closing && m.ctl[o.side].assist.tackle === null) return false;
   return m.rng.chance(vsHuman(m.aiSkill(p.side)).read * dt);
 }
 const READ_D = 3;
 const READ_CLOSING = 2;
 
-/** A tap is closing in on the carrier (Match.autoTackle leaves the challenge to it). */
-export function tackleClosing(m: Match): boolean {
-  return m.assist.tackle !== null && m.phase === 'play';
+/** `side`'s human's tap is closing in on the carrier (Match.autoTackle leaves the challenge to it). */
+export function tackleClosing(m: Match, side: Side): boolean {
+  return m.ctl[side].assist.tackle !== null && m.phase === 'play';
 }
 
 /**

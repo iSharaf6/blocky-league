@@ -462,7 +462,7 @@ describe('blitz mode: effects', () => {
 
     // Braced (the human holding TACKLE off the ball): half the knock-back, and a parry even from close in.
     const d = setup(12);
-    B.blitzState(d.m).brace = true;
+    B.blitzState(d.m).brace[1] = true;
     expect(B.megaHands(d.m, d.k, true)).toBe(true);
     expect(Math.hypot(d.k.vel.x, d.k.vel.z)).toBeCloseTo(B.MEGA_KNOCK * B.MEGA_BRACE_KNOCK, 5);
     expect(Math.sign(d.m.ball.vel.x)).toBe(-d.ad);

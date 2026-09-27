@@ -424,7 +424,7 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
       continue;
     }
     // The man the human's PASS / THROUGH press has locked onto makes his move before the ball comes.
-    const called = owner && m.calledRun === p.idx && m.cfg.humanSide === side ? calledSpot(m, p, owner) : null;
+    const called = owner && m.human[side] && m.ctl[side].calledRun === p.idx ? calledSpot(m, p, owner) : null;
     if (called) {
       moveTo(p, called.x, called.z, 1, ball.pos);
       continue;
@@ -558,7 +558,7 @@ function organiseAttack(m: Match, side: Side, c: Player, brain: TeamBrain, dt: n
  * point or two more often; so the support spots are the AI's.)
  */
 function humanFlow(m: Match, side: Side, c: Player | null): boolean {
-  return m.cfg.humanSide === side && !!c && c.side === side && m.isHumanControlled(c);
+  return m.human[side] && !!c && c.side === side && m.isHumanControlled(c);
 }
 const HUMAN_RUN_BOOST = 1.6;
 const HUMAN_WIDE = 0.33;
@@ -572,7 +572,8 @@ const HUMAN_BOX_REACH = 45;
  * on, so the run doesn't take him offside before the pass). Null for a lofted ball (its runner keeps his run).
  */
 function calledSpot(m: Match, p: Player, c: Player): { x: number; z: number } | null {
-  if (m.calledMode === 'pass') {
+  const mode = m.ctl[p.side].calledMode;
+  if (mode === 'pass') {
     const dx = c.pos.x - p.pos.x;
     const dz = c.pos.z - p.pos.z;
     const d = Math.hypot(dx, dz) || 1;
@@ -586,7 +587,7 @@ function calledSpot(m: Match, p: Player, c: Player): { x: number; z: number } | 
     }
     return { x, z };
   }
-  if (m.calledMode !== 'through') return null;
+  if (mode !== 'through') return null;
   const ad = m.attackDir(p.side);
   const pt = throughLead(m, p, CALLED_RUN, true);
   if (m.offside) {
@@ -1015,7 +1016,7 @@ function aerialOrVolley(m: Match, p: Player): void {
   if (d > 3.2) return;
   const ad = m.attackDir(p.side);
   // (The player's first half-minute: the AI doesn't go for goal first time either: Match.firstMatchPatient.)
-  const patient = m.cfg.humanSide === other(p.side) && m.firstMatchPatient();
+  const patient = m.human[other(p.side)] && m.firstMatchPatient();
   const q = patient ? 0 : shotQuality(p.pos.x, p.pos.z, ad);
   const ownGoalDist = dist2(p.pos.x, p.pos.z, -ad * HALF_L, 0);
   let rival = Infinity;
@@ -1180,7 +1181,7 @@ const AI_INTENT_FORWARD = 0.35;
 const AI_INTENT_THROUGH = 0.4;
 const AI_INTENT_RUNS = 0.5;
 export function intentVsHuman(m: Match, side: Side): number {
-  if (m.cfg.humanSide !== other(side)) return 0;
+  if (!m.human[other(side)]) return 0;
   return clamp((m.aiSkill(side) - AI_INTENT_FROM) / (AI_INTENT_FULL - AI_INTENT_FROM), 0, 1);
 }
 
@@ -1236,7 +1237,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   // ---- Shoot (never in the patient build-up of the player's first half-minute: Match.firstMatchPatient)
   let shotChoice: Choice | null = null;
   let shotXg = 0;
-  const patient = m.cfg.humanSide === opp && m.firstMatchPatient();
+  const patient = m.human[opp] && m.firstMatchPatient();
   const intent = intentVsHuman(m, side);
   if (dg < 36 && !patient) {
     let q = shotQuality(p.pos.x, p.pos.z, ad);

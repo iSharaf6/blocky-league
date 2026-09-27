@@ -143,7 +143,7 @@ export function applyScenario(m: Match, spec: ScenarioSpec): void {
   m.phaseT = 0;
   m.restart = null;
   m['pendingRestart'] = null;
-  m['queuedKick'] = null;
+  m.ctl[0].queuedKick = m.ctl[1].queuedKick = null;
   m['offWatch'] = null;
   m['adv'] = null;
   m.passTarget = -1;
@@ -271,8 +271,8 @@ export function applyScenario(m: Match, spec: ScenarioSpec): void {
   }
 
   // The human's man: the ball carrier, else the man a rolling ball is going to, else whoever's nearest it.
-  if (m.cfg.humanSide === hs) {
-    m.active = owner && owner.side === hs && !owner.sentOff ? owner.idx : m.passTarget >= 0 ? m.passTarget : nearest(m, hs, b.pos.x, b.pos.z, true);
+  if (m.human[hs]) {
+    m.ctl[hs].active = owner && owner.side === hs && !owner.sentOff ? owner.idx : m.passTarget >= 0 ? m.passTarget : nearest(m, hs, b.pos.x, b.pos.z, true);
   }
   m.updateBallPath();
 

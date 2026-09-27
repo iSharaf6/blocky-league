@@ -8,7 +8,7 @@ import type { Match } from './match';
 import type { KickOrder, Player } from './player';
 import { STUMBLE_LOST } from './player';
 import { megaLaunch } from './blitz';
-import type { AssistLevel, KickKind, ShotStyle } from './types';
+import type { AssistLevel, KickKind, ShotStyle, Side } from './types';
 
 export interface Launch {
   vx: number;
@@ -215,7 +215,7 @@ export function throwInPlan(m: Match, p: Player, dx: number, dz: number, lockedT
     dist2(p.pos.x, p.pos.z, q.pos.x, q.pos.z) >= 2 && dist2(p.pos.x, p.pos.z, q.pos.x, q.pos.z) <= THROW_RANGE;
   let target = lockedTarget ?? -1;
   if (target >= 0 && !eligible(m.players[target])) target = -1;
-  if (lockedTarget === undefined && !(m.isHumanControlled(p) && m.groundAssist === 'manual')) {
+  if (lockedTarget === undefined && !(m.isHumanControlled(p) && m.ctl[p.side].groundAssist === 'manual')) {
     let best = -Infinity;
     for (const q of m.teamPlayers(p.side)) {
       if (!eligible(q)) continue;
@@ -353,9 +353,10 @@ const HUMAN_LAST_CONE = (95 * Math.PI) / 180;
  */
 export const ASSIST_CONE: Record<AssistLevel, number> = { assisted: 1.05, semi: 0.66, manual: 0 };
 
-/** The assist level that governs a human ball of this kind. */
-export function assistLevel(m: Match, mode: 'pass' | 'through' | 'lob'): AssistLevel {
-  return mode === 'pass' ? m.groundAssist : m.throughAssist;
+/** The assist level that governs `side`'s human's ball of this kind. */
+export function assistLevel(m: Match, mode: 'pass' | 'through' | 'lob', side: Side): AssistLevel {
+  const c = m.ctl[side];
+  return mode === 'pass' ? c.groundAssist : c.throughAssist;
 }
 
 /**
@@ -371,7 +372,7 @@ export const PREVIEW_STICKY = 0.2;
 export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 'pass' | 'through' | 'lob', prefer = -1): number {
   const cone = mode === 'lob' ? 0.95 : 0.85;
   if (!m.isHumanControlled(p)) return scanReceivers(m, p, dx, dz, mode, cone, false).idx;
-  const level = assistLevel(m, mode);
+  const level = assistLevel(m, mode, p.side);
   if (level === 'manual') return -1;
   const semi = level === 'semi' && mode !== 'lob';
   const first = scanReceivers(m, p, dx, dz, mode, mode === 'lob' ? cone : ASSIST_CONE[level], true, prefer);
@@ -737,7 +738,7 @@ export function passAimPoint(
   if (tgt < 0) return { x: b.x + (dx / l) * 15, z: b.z + (dz / l) * 15 };
   const r = m.players[tgt];
   if (mode === 'through') {
-    const pt = assistLevel(m, 'through') === 'semi' ? semiThrough(m, p, r) : humanThrough(m, p, r);
+    const pt = assistLevel(m, 'through', p.side) === 'semi' ? semiThrough(m, p, r) : humanThrough(m, p, r);
     if (pt) return pt;
   }
   const d = dist2(b.x, b.z, r.pos.x, r.pos.z);
@@ -984,7 +985,7 @@ const SEMI_THROUGH_SLACK = 0.1;
  */
 export function humanThroughTarget(m: Match, p: Player, dx: number, dz: number, prefer = -1): { idx: number; feet: boolean } {
   const t = pickReceiver(m, p, dx, dz, 'through', prefer);
-  if (t >= 0 || m.throughAssist === 'manual') return { idx: t, feet: false };
+  if (t >= 0 || m.ctl[p.side].throughAssist === 'manual') return { idx: t, feet: false };
   const b = m.ball.pos;
   const l = Math.hypot(dx, dz) || 1;
   const tx = clamp(b.x + (dx / l) * MANUAL_THROUGH_D, -HALF_L + 2, HALF_L - 2);
@@ -1002,7 +1003,7 @@ export function humanThroughTarget(m: Match, p: Player, dx: number, dz: number, 
  * 'manual': along the stick, MANUAL_THROUGH_D m (a charged one 10-36 m).
  */
 function humanThroughBall(m: Match, p: Player, order: KickOrder, dir: { x: number; z: number }): Launch {
-  const level = m.throughAssist;
+  const level = m.ctl[p.side].throughAssist;
   const b = m.ball.pos;
   const speed = order.runSpeed ?? p.speed();
   const tgt = level === 'manual' ? -1 : order.target >= 0 ? order.target : pickReceiver(m, p, dir.x, dir.z, 'through');
@@ -1171,7 +1172,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
     return resolveShot(m, p, order, kind === 'header');
   }
 
-  if (kind === 'pass' && m.isHumanControlled(p)) return humanPass(m, p, order, dir, m.groundAssist);
+  if (kind === 'pass' && m.isHumanControlled(p)) return humanPass(m, p, order, dir, m.ctl[p.side].groundAssist);
   if (kind === 'through' && m.isHumanControlled(p) && order.aimX === undefined) return humanThroughBall(m, p, order, dir);
 
   if (kind === 'throw') {
@@ -1241,7 +1242,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
       tz = order.aimZ;
     } else {
       if (tgt < 0 && kind !== 'clear') tgt = pickReceiver(m, p, dir.x, dir.z, 'lob');
-      if (humanLob && m.throughAssist === 'manual') tgt = -1;
+      if (humanLob && m.ctl[p.side].throughAssist === 'manual') tgt = -1;
       if (tgt >= 0) {
         const r = m.players[tgt];
         const d0 = dist2(b.x, b.z, r.pos.x, r.pos.z);
@@ -1250,7 +1251,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
         tz = r.pos.z + r.vel.z * t0 * 0.8;
         if (humanLob) {
           const di = Math.max(3, dist2(b.x, b.z, tx, tz));
-          const dc = assistPace(m.throughAssist, di, carry, LOB_CHARGE_MIN + LOB_CHARGE_SPAN);
+          const dc = assistPace(m.ctl[p.side].throughAssist, di, carry, LOB_CHARGE_MIN + LOB_CHARGE_SPAN);
           tx = b.x + ((tx - b.x) / di) * dc;
           tz = b.z + ((tz - b.z) / di) * dc;
         }
@@ -1303,7 +1304,7 @@ function resolveKickRaw(m: Match, p: Player, order: KickOrder): Launch {
       s = { vh: (s.vh * maxSpeed) / sp0, vy: (s.vy * maxSpeed) / sp0 };
     }
     let err = humanLob
-      ? m.rng.gauss() * humanPassSpread(m, p, m.throughAssist, Math.atan2(tz - b.z, tx - b.x), order.runSpeed ?? p.speed(), order.bodyOff) *
+      ? m.rng.gauss() * humanPassSpread(m, p, m.ctl[p.side].throughAssist, Math.atan2(tz - b.z, tx - b.x), order.runSpeed ?? p.speed(), order.bodyOff) *
         LOB_SPREAD
       : passError(p, m, kind === 'clear' ? 2.2 : 1.4);
     // A scrambled clearance from inside our own box sometimes slices off behind for a corner.

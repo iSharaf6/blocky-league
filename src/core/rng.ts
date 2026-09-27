@@ -6,6 +6,11 @@ export class Rng {
     this.s = seed >>> 0;
   }
 
+  /** The generator's internal state (read-only: the netcode's desync hash folds it in). */
+  state(): number {
+    return this.s;
+  }
+
   next(): number {
     let t = (this.s = (this.s + 0x6d2b79f5) >>> 0);
     t = Math.imul(t ^ (t >>> 15), t | 1);
