@@ -24,7 +24,7 @@ import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, PowerUpKind, RestartKind, ScenarioSpec, Side } from '../sim/types';
 import { applyScenario, finishScenario, judgeScenario, scenarioSecondsLeft, type ScenarioOutcome } from '../sim/scenario';
 import { EdgeArrows, type EdgeMate, type EdgeRect } from '../ui/edgeArrows';
-import { Hud, hudTeam } from '../ui/hud';
+import { Hud, hudTeam, penaltyHint } from '../ui/hud';
 import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
 import { Trainer } from '../ui/trainer';
@@ -1182,15 +1182,19 @@ export class MatchSession {
     const b = m.ball.pos;
     const out = this.ghostL;
     const so = m.phase === 'shootout' ? m.shootout : null;
-    if (so) {
-      if (so.turn !== hs || (so.stage !== 'aim' && so.stage !== 'intro')) return null;
-      const t = m.players[so.taker];
-      const p = m.shootCharge > 0.04 ? clamp(m.shootCharge / SHOOT_BAR, 0.45, 1) : 0.6;
-      return penaltyGhost(b.x, b.y, b.z, so.goal * HALF_L, so.aimZ, p, t.stat.shooting / 100, out);
-    }
     const r = m.restart;
+    // A penalty (in the match or his shootout kick): through the reticle, at the power charged so far (let go of
+    // SHOOT, the last path, at the power it was struck with, fades out).
+    const pen = m.penAim;
+    if (so || (pen && r?.kind === 'penalty')) {
+      if (!pen || pen.locked || !r || r.side !== hs) return null;
+      if (!so && (this.cam.mode !== 'broadcast' || this.introLeft > 0)) return null;
+      const t = m.players[r.taker];
+      const p = m.shootCharge > 0.04 ? clamp(m.shootCharge / SHOOT_BAR, 0.45, 1) : 0.6;
+      return penaltyGhost(b.x, b.y, b.z, pen.gx, pen.z, p, t.stat.shooting / 100, out, pen.h);
+    }
     if (m.phase !== 'restart' || !r || r.side !== hs) return null;
-    if (r.kind !== 'freekick' && r.kind !== 'corner' && r.kind !== 'penalty') return null;
+    if (r.kind !== 'freekick' && r.kind !== 'corner') return null;
     if (this.cam.mode !== 'broadcast' || this.introLeft > 0) return null;
     const t = m.players[r.taker];
     const ad = m.attackDir(hs);
@@ -1201,7 +1205,7 @@ export class MatchSession {
     const shoot = m.shootCharge > 0.04;
     const through = m.throughCharge > 0.04;
     const cross = isCrossingRestart(m, r);
-    if (r.kind === 'penalty' || (r.kind === 'freekick' && !cross && !through)) {
+    if (r.kind === 'freekick' && !cross && !through) {
       // A strike at goal along the aim arrow (where it meets the goal line), at the power charged so far.
       const az = m.aimOnGoalLine(t);
       const aimZ = az ?? clamp(b.z, -GOAL_W / 2, GOAL_W / 2);
@@ -2240,8 +2244,16 @@ export class MatchSession {
     const soAim = !!so && (so.stage === 'aim' || so.stage === 'intro');
     // Hold for power, let go to strike (never "SHOOT to shoot": the touch button already says SHOOT).
     const strike = `hold ${key('shoot')} to strike`;
+    // A penalty's hint names the player's own keys (penaltyHint), so it isn't remapped again.
+    let bound = false;
     if (so) {
-      if (soAim) hint = so.turn === hs ? `Aim · ${strike}` : 'Dive: point the stick when they shoot';
+      if (soAim && so.turn === hs) {
+        hint = penaltyHint(dev);
+        bound = true;
+      } else if (soAim) hint = 'Dive: point the stick when they shoot';
+    } else if (m.phase === 'restart' && r && r.side === hs && r.kind === 'penalty') {
+      hint = penaltyHint(dev);
+      bound = true;
     } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs) {
       switch (r.kind) {
         case 'kickoff': hint = `${key('pass')} to kick off`; break;
@@ -2251,18 +2263,19 @@ export class MatchSession {
         case 'corner': hint = `${key('pass')} short · hold ${key('through')} to whip it in · ${key('shoot')} = driven cross`; break;
         case 'goalkick': hint = `${key('pass')} short · hold ${key('through')} to go long`; break;
         case 'freekick': hint = `Aim · ${strike} · hold ${key('through')} to whip it in`; break;
-        case 'penalty': hint = `Aim · ${strike}`; break;
       }
     } else if (m.ball.held && mine) {
       hint = `${key('pass')} to throw it out · ${key('through')} to kick long`;
     }
     // Nothing over the referee close-up (the set-piece hint comes back when the camera cuts back to the game).
     const cinematic = !!this.replay || this.cam.mode === 'card';
-    hud.setHint(cinematic ? '' : hint);
-    // Aim arrow for our set pieces (shootout: at the spot picked across the goal mouth).
-    if (so && soAim && so.turn === hs) {
-      const t = m.players[so.taker];
-      this.view.setAim(true, t.pos.x, t.pos.z, Math.atan2(so.aimZ - t.pos.z, so.goal * HALF_L - t.pos.x), 1.3);
+    hud.setHint(cinematic ? '' : hint, bound);
+    // The penalty reticle on the goal, where his penalty (or shootout kick) is aimed, until it's struck.
+    this.view.setPenAim(cinematic ? null : m.penAim);
+    // Aim arrow for our set pieces. A penalty (in the match or his shootout kick) has the reticle instead.
+    if (m.penAim || (so && soAim && so.turn === hs)) {
+      this.aimFrozen = null;
+      this.view.setAim(false);
     } else if (!cinematic && r?.kind === 'throwin' && r.side === hs && m.phase === 'restart' && m.throwPreview) {
       const aim = m.throwPreview;
       this.view.setAim(true, r.x, r.z, Math.atan2(aim.z - r.z, aim.x - r.x), 1.4);

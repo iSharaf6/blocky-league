@@ -2,6 +2,9 @@ import { clamp, dist2 } from '../core/math';
 import { LOB_MAX_SPEED, SHOT_SPEED_BASE, SHOT_SPEED_POWER } from '../sim/actions';
 import { Ball, solveLob, type BallHit } from '../sim/ball';
 import { BALL_R, DT, GOAL_W, GRAVITY, HALF_L, HALF_W } from '../sim/constants';
+import { penaltySpeed, solveStrike } from '../sim/shootout';
+
+const solved = { vx: 0, vy: 0, vz: 0 };
 
 /**
  * Set-piece "ghost" arc (Easy / Normal only): where the human's free kick, corner or penalty will go for the
@@ -46,8 +49,22 @@ export function strikeLaunch(bx: number, by: number, bz: number, gx: number, aim
   return aimed(bx, by, bz, gx, tz, h, speed, 0.9, -2, 13, out);
 }
 
-/** A penalty in a shootout (penaltyLaunch without the noise): aimed at `aimZ`, the height it was set to rise to. */
-export function penaltyGhost(bx: number, by: number, bz: number, gx: number, aimZ: number, power: number, acc: number, out: GhostLaunch): GhostLaunch {
+/**
+ * A penalty (penaltyLaunch without the noise), aimed at `aimZ` across the goal. With `aimH` it is the human's
+ * placed aim (the reticle): solved on the ball's own flight to cross the line at (aimZ, aimH), exactly as the
+ * strike is (shootout.solveStrike). Without it, the old model: the height the power makes it rise to.
+ */
+export function penaltyGhost(
+  bx: number, by: number, bz: number, gx: number, aimZ: number, power: number, acc: number, out: GhostLaunch, aimH?: number,
+): GhostLaunch {
+  if (aimH !== undefined) {
+    const v = solveStrike(bx, by, bz, gx, aimZ, aimH, penaltySpeed(power, acc), 0, solved);
+    out.x = bx; out.y = Math.max(BALL_R, by); out.z = bz;
+    out.vx = v.vx;
+    out.vy = v.vy;
+    out.vz = v.vz;
+    return out;
+  }
   const p = clamp(power, 0.15, 1);
   const h = Math.max(0.15, 0.3 + p * 0.75 + p * p * 0.45);
   const speed = Math.min(34, 16 + p * 15 * (0.8 + acc * 0.3));

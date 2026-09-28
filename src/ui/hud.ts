@@ -5,8 +5,25 @@ import type { Kit, MatchEvent, PowerUpKind, TeamDef } from '../sim/types';
 import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
 import { Commentator, POWER_INFO, pitchNames, surname, type CommentaryLine } from './commentary';
-import { actionKey, currentDevice, remapKeys } from '../core/input';
+import { actionKey, currentDevice, moveKeys, remapKeys, type Device } from '../core/input';
 import { scoreHtml, seps, sepsOfText } from './text';
+
+/**
+ * The penalty hint (in the match and the shootout), in the player's own keys: "A D  W S aim · hold K" on the
+ * defaults (left right, up down as they are bound, SHOOT's first key); the stick on a pad; a drag on touch. Short
+ * enough for one line in the slot beside the goal mouth on the penalty lens (~290 px at 1280 x 720: "hold K
+ * shoot" wrapped there). The " · " becomes the styled divider the other hints use (sepsOfText, never a glyph).
+ * It already names the bindings: show it with Hud.setHint(text, true).
+ */
+export function penaltyHint(device: Device): string {
+  if (device === 'touch') return `Drag to aim · hold ${actionKey('shoot', 'touch')}`;
+  if (device === 'gamepad') return `Stick to aim · hold ${actionKey('shoot', 'gamepad')}`;
+  // (moveKeys reads up, left, down, right: "WASD", "I J K L" with a longer name among them, or "ARROWS".)
+  const mv = moveKeys('keyboard').split(' / ')[0];
+  const [up, left, down, right] = mv === 'ARROWS' ? ['↑', '←', '↓', '→'] : mv.includes(' ') ? mv.split(' ') : [...mv];
+  // (A no-break pair between the two key pairs, so the gap survives HTML's collapsing.)
+  return `${left} ${right}\u00a0\u00a0${up} ${down} aim · hold ${actionKey('shoot', 'keyboard')}`;
+}
 
 /** How long (s) each power-up runs once used, for the slot's countdown ring when the sim doesn't say. */
 export const POWER_SECONDS: Record<PowerUpKind, number> = { turbo: 6, mega: 8, freeze: 5, magnet: 6, shield: 6, golden: 20 };
@@ -118,8 +135,11 @@ export class Hud {
   private hintT = 0;
   /** Seconds left of a hint blackout (card close-ups): set-piece hints stay hidden whatever the session asks. */
   private hintHold = 0;
-  /** The hint the session last asked for (it comes back when a blackout ends). */
+  /** The hint the session last asked for (it comes back when a blackout ends), as shown (its keys remapped). */
   private hintWant = '';
+  /** ...and as it was asked for (setHint's own words and `bound` flag), to ask again without remapping twice. */
+  private hintAsked = '';
+  private hintBound = false;
   /** The words in the hint box now (its HTML has dividers in place of the " · " the session writes). */
   private hintText = '';
   /** A hint the player has already acted on (hidden until the session wants a different one). */
@@ -548,9 +568,12 @@ export class Hud {
     el.style.top = `${Math.round(pick.t)}px`;
   }
 
-  setHint(text: string): void {
+  setHint(text: string, bound = false): void {
+    this.hintAsked = text;
+    this.hintBound = bound;
     // The session writes the default key names ("SPACE to kick off"): the player's own bindings replace them.
-    text = remapKeys(text, currentDevice());
+    // (`bound`: it already names them, penaltyHint.)
+    if (!bound) text = remapKeys(text, currentDevice());
     this.hintWant = text;
     // The player acted on this hint (see buttons()): it stays down until the session asks for another one.
     if (!text) this.hintDone = '';
@@ -578,7 +601,7 @@ export class Hud {
   buttons(down: boolean): void {
     if (down && !this.btnDown && this.hint.classList.contains('on') && this.hintWant) {
       this.hintDone = this.hintWant;
-      this.setHint(this.hintWant);
+      this.setHint(this.hintAsked, this.hintBound);
     }
     this.btnDown = down;
   }
@@ -589,7 +612,7 @@ export class Hud {
    */
   suppressHints(seconds: number): void {
     this.hintHold = Math.max(this.hintHold, seconds);
-    this.setHint(this.hintWant);
+    this.setHint(this.hintAsked, this.hintBound);
   }
 
   /** Where the camera puts world points on screen; enables keep-clear placement of the ticker and hints. */
@@ -1251,7 +1274,7 @@ export class Hud {
       this.hintHold -= dt;
       if (this.hintHold <= 0) {
         this.hintHold = 0;
-        this.setHint(this.hintWant);
+        this.setHint(this.hintAsked, this.hintBound);
       }
     }
     if (this.hint.classList.contains('on')) {

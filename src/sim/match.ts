@@ -22,8 +22,9 @@ import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick } from './keep
 import { FATIGUE_REF_HALF, Player, type KickOrder } from './player';
 import { STUMBLE_BUMP, STUMBLE_LOST } from './player';
 import {
-  HUMAN_WINDOW, INTRO_BEAT, KICK_TIMEOUT, RESULT_BEAT, aiPenaltyAim, divePlan, keeperGuess, lineupSpot, nextTurn, penaltyLaunch,
-  predictCrossing, shootoutWinner, takerOrder, type KeeperDive, type KickHow, type PenAim, type ShootoutState,
+  HUMAN_WINDOW, INTRO_BEAT, KICK_TIMEOUT, RESULT_BEAT, aiPenaltyAim, divePlan, keeperGuess, lineupSpot, newPenAim, nextTurn, PEN_AIM_H0,
+  penaltyLaunch, penaltyTell, predictCrossing, shootoutWinner, steerPenAim, takerOrder, type KeeperDive, type KickHow, type PenAim,
+  type PenAimState, type ShootoutState,
 } from './shootout';
 import type { AssistLevel, FormationId, MatchMode, PowerUp, PowerUpKind, KickKind, MatchEvent, PlayerDef, RestartKind, ShotStyle, Side, TeamDef } from './types';
 
@@ -77,7 +78,7 @@ export interface Pad {
   /**
    * Optional: the stick is keyboard / d-pad (true) or an analog stick / touch thumbstick (false).
    * Left out, the sim guesses from the vector (isDigitalStick). Keys turn a free-kick / corner aim
-   * gradually instead of snapping it to eight directions.
+   * gradually instead of snapping it to eight directions, and slide a penalty's aim point (steerPenAim).
    */
   digital?: boolean;
   /** Blitz mode: use the held power-up (optional; a press, not a hold). */
@@ -406,6 +407,8 @@ export const FIRST_MATCH_PATIENT = 30;
 export const FIRST_MATCH_PRESS = 0.6;
 export { DDA_FINISH, DDA_PRESS, DDA_TACKLE } from './constants';
 const HUMAN_RESTART_LOCK = 0.2;
+/** A human's penalty that goes on its own (his time ran out, SHOOT not held) is struck at this power. */
+const PEN_AUTO_POWER = 0.65;
 const KEEPER_HOLD_MIN = 0.7;
 const KEEPER_HOLD_SPAN = 0.8;
 
@@ -808,6 +811,21 @@ export class Match {
   restartAim = 0;
   /** Landing point shown for a human throw-in, locked when the button is pressed. */
   throwPreview: { x: number; z: number } | null = null;
+  /**
+   * The human lining up a penalty (in the match or his shootout kick): where on the goal line at x = `gx` it is
+   * aimed, `z` across the mouth and `h` up it (the render draws the reticle there, the ghost arc runs through
+   * it). `locked` once SHOOT is let go and he is stepping in: it is struck there. Null otherwise.
+   * (The same object every frame it is on: read it at once.)
+   */
+  penAim: { gx: number; z: number; h: number; locked: boolean } | null = null;
+  private readonly penAimBuf = { gx: 0, z: 0, h: PEN_AIM_H0, locked: false };
+  /** The aim the keys / stick move (steerPenAim), and the kick it belongs to (a new restart starts it in the middle). */
+  private penSteer: PenAimState = newPenAim();
+  private penSteerOf: Restart | null = null;
+  /** The human's in-match penalty, ordered: struck at this aim (penaltyLaunch) when his run-up reaches the ball. */
+  private penStrike: { taker: number; aim: PenAim } | null = null;
+  /** ...and struck: the keeper's guessed dive, waiting on his reaction (penaltyKeeper, stepPenDive). */
+  private penDive: { k: number; kick: number; d: KeeperDive } | null = null;
 
   /**
    * Foul probabilities scale with the half length (like fatigue), so a match of any length has a
@@ -1224,6 +1242,9 @@ export class Match {
 
   step(dt: number, pad: Pad): void {
     this.phaseT += dt;
+    // (Set again in applyHuman while he lines up a penalty.)
+    this.penAim = null;
+    if (this.penDive) this.stepPenDive();
     if (this.cfg.mode === 'blitz') blitzStep(this, dt, pad);
     if (this.phase === 'fulltime' && this.shootout && this.shootout.winner >= 0 && this.phaseT < 8) {
       this.shootoutParty(dt);
@@ -1652,7 +1673,15 @@ export class Match {
       o.finish = TIMING_ERR[grade];
       o.wild = grade === 'early';
     }
-    const L = so?.pen ? penaltyLaunch(this, p, so.pen) : resolveKick(this, p, o);
+    // (The human's in-match penalty is struck at his aim point, the same model as his shootout kicks.)
+    const r0 = this.restart;
+    const inMatchPen = this.penStrike && this.penStrike.taker === p.idx && o.kind === 'shot' && this.phase === 'restart' &&
+      r0?.kind === 'penalty' && r0.taker === p.idx ? this.penStrike.aim : null;
+    this.penStrike = null;
+    // (Struck: the reticle goes this frame.)
+    if (r0?.kind === 'penalty' && r0.taker === p.idx) this.penAim = null;
+    const pen = so?.pen ?? inMatchPen;
+    const L = pen ? penaltyLaunch(this, p, pen) : resolveKick(this, p, o);
     // (A ground pass isn't laser-straight: a touch of curl, pace and skim: actions.naturalPass.)
     if (!so) naturalPass(this, p, L, this.kickId + 1);
     b.owner = -1;
@@ -1749,6 +1778,7 @@ export class Match {
       this.restart = null;
     }
     if (so?.stage === 'aim') this.shootoutStrike();
+    else if (inMatchPen) this.penaltyKeeper(p);
   }
 
   keeperDistribute(k: Player, dirX = 0, dirZ = 0, long = false): void {
@@ -1880,7 +1910,7 @@ export class Match {
     this.shootCharge = pad.shoot && !this.finishHeld && !this.defendingShotHold ? this.shootCharge + (dt * SHOOT_BAR) / SHOOT_FULL_T : 0;
     this.throughCharge = pad.through ? this.throughCharge + dt : 0;
     if (this.phase === 'shootout') {
-      this.shootoutInput(pad, shootR, shootPower, stickLen);
+      this.shootoutInput(pad, shootR, shootPower, stickLen, dt);
       return;
     }
     // A pass being charged doesn't outlive open play.
@@ -1901,6 +1931,11 @@ export class Match {
       // Keyboard / d-pad (no analog magnitude): remembered from the last time the stick was pushed.
       if (stickLen > 0.3) this.padDigital = pad.digital ?? isDigitalStick(pad.mx, pad.mz, this.restartAim);
       else if (pad.digital !== undefined) this.padDigital = pad.digital;
+      // A penalty is aimed at a point on the goal line (the keys slide it, a stick puts it there).
+      if (kind === 'penalty' && this.phase === 'restart') {
+        this.penaltyInput(t, pad, passP, throughR, throughHold, shootR, shootPower, dt);
+        return;
+      }
       // On free kicks and corners the keys turn the aim steadily (AIM_TURN) from the default instead of
       // snapping it to one of eight directions; W (towards goal) puts it back. An analog stick aims
       // directly. On the frame a free kick is struck the stick is read for curl only, so a flick
@@ -1984,8 +2019,6 @@ export class Match {
         if (passP) this.order(t, 'pass', fdx, fdz, 0.6, -1, false);
         else if (throughR) this.order(t, 'lob', fdx, fdz, clamp(throughHold / 0.8, 0.3, 1), -1, false);
         else if (shootR && kind === 'freekick') fkShot(shootPower);
-        // Penalties are struck clean.
-        else if (shootR && kind === 'penalty') this.order(t, 'shot', dx, dz, shootPower, -1, false);
         else if (shootR) this.order(t, 'lob', fdx, fdz, 1, -1, false);
       }
       return;
@@ -2851,6 +2884,14 @@ export class Match {
       if (this.phaseT < HUMAN_RESTART_WINDOW) return;
     } else if (this.phaseT < r.wait) return;
     if (t.order) return;
+    if (this.cfg.humanSide === r.side && r.kind === 'penalty') {
+      // He never struck it: it goes where his reticle is, at the power he has on (humanPenaltyAim).
+      const aim = this.humanPenaltyAim();
+      const b = this.ball.pos;
+      const gx = this.attackDir(r.side) * HALF_L;
+      if (this.order(t, 'shot', gx - b.x, aim.z - b.z, aim.power, -1, false)) this.penStrike = { taker: t.idx, aim };
+      return;
+    }
     const ad = this.attackDir(r.side);
     const gx = ad * HALF_L;
     const mates = this.bySide[r.side].filter((p) => p !== t && !p.sentOff);
@@ -4703,6 +4744,7 @@ export class Match {
       taker: -1,
       keeper: -1,
       aimZ: 0,
+      aimH: PEN_AIM_H0,
       stick: { x: 0, z: 0 },
       pen: null,
       dive: null,
@@ -4734,6 +4776,7 @@ export class Match {
     s.dive = null;
     s.post = false;
     s.aimZ = 0;
+    s.aimH = PEN_AIM_H0;
     const spotX = g * (HALF_L - PEN_SPOT);
     for (const p of this.players) {
       if (p.sentOff) continue;
@@ -4802,11 +4845,14 @@ export class Match {
     if (s.stage === 'aim') {
       // AI takers step up after a breath; a human who never shoots gets the kick taken for them.
       const wait = this.cfg.humanSide === s.turn ? HUMAN_WINDOW : this.restart?.wait ?? 1.4;
-      if (!taker.order && s.t > wait) this.shootoutKick(taker, aiPenaltyAim(this.rng));
+      // (Out of time, his kick goes at his aim, at the power he has on: humanPenaltyAim.)
+      if (!taker.order && s.t > wait) this.shootoutKick(taker, this.cfg.humanSide === s.turn ? this.humanPenaltyAim() : aiPenaltyAim(this.rng));
       k.wantX = k.wantZ = 0;
       k.faceTarget = Math.atan2(this.ball.pos.z - k.pos.z, this.ball.pos.x - k.pos.x);
     } else if (s.stage === 'flight' && s.dive && s.t >= s.dive.at && k.state === 'move') {
-      this.commitDive(k, s.dive);
+      const d = s.dive;
+      s.dive = null;
+      this.commitDive(k, d);
     }
     this.resolveOrders(dt);
     taker.step(dt, this.ball.owner === taker.idx);
@@ -4834,8 +4880,104 @@ export class Match {
     this.sinceKick += dt;
   }
 
-  /** Human taker aims across the goal mouth and shoots on release; the stick is also the keeper's dive. */
-  private shootoutInput(pad: Pad, shootR: boolean, shootPower: number, stickLen: number): void {
+  /**
+   * The human's penalty aim for this frame (in the match or the shootout), on the goal line at x = `gx`: the
+   * keys / stick move it (steerPenAim) until `locked` (SHOOT let go, stepping in); a new kick starts it in the
+   * middle. Published as `penAim` for the render.
+   */
+  private steerPenalty(pad: Pad, dt: number, gx: number, locked: boolean): PenAimState {
+    if (this.penSteerOf !== this.restart) {
+      this.penSteer = newPenAim();
+      this.penSteerOf = this.restart;
+      this.penStrike = null;
+    }
+    const a = this.penSteer;
+    // (World z is across the goal at either end; up the goal is the way it's being taken.)
+    if (!locked) steerPenAim(a, pad.mz, pad.mx * (Math.sign(gx) || 1), this.padDigital, dt);
+    const o = this.penAimBuf;
+    o.gx = gx;
+    o.z = a.z;
+    o.h = a.h;
+    o.locked = locked;
+    this.penAim = o;
+    return a;
+  }
+
+  /**
+   * The human's in-match penalty: aimed at a point on the goal line (steerPenalty), squared up to it, and let go
+   * of SHOOT it's struck there at the power charged (penStrike: penaltyLaunch, as in a shootout). PASS / THROUGH
+   * still roll it or chip it along the aim.
+   */
+  private penaltyInput(
+    t: Player, pad: Pad, passP: boolean, throughR: boolean, throughHold: number, shootR: boolean, shootPower: number, dt: number,
+  ): void {
+    const gx = this.attackDir(t.side) * HALF_L;
+    const b = this.ball.pos;
+    const locked = !!t.order;
+    const a = this.steerPenalty(pad, dt, gx, locked);
+    const fx = gx - b.x;
+    const fz = a.z - b.z;
+    // (Square to the aim; left in the middle, the facing he was set up with.)
+    if (!locked) t.facing = Math.abs(fz) > 1e-6 ? Math.atan2(fz, fx) : this.restartAim;
+    if (locked || this.phaseT < HUMAN_RESTART_LOCK) return;
+    if (shootR) {
+      const o = this.order(t, 'shot', fx, fz, shootPower, -1, false);
+      if (o) this.penStrike = { taker: t.idx, aim: { z: a.z, h: a.h, power: shootPower, placed: true } };
+    } else if (passP) this.order(t, 'pass', fx, fz, 0.6, -1, false);
+    else if (throughR) this.order(t, 'lob', fx, fz, clamp(throughHold / 0.8, 0.3, 1), -1, false);
+  }
+
+  /**
+   * The human's kick when his time runs out without a strike: at his aim point (it starts in the middle), at the
+   * power charged so far, or PEN_AUTO_POWER with SHOOT not held.
+   */
+  private humanPenaltyAim(): PenAim {
+    const a = this.penSteerOf === this.restart ? this.penSteer : newPenAim();
+    const power = this.shootCharge > 0.04 ? clamp(this.shootCharge / SHOOT_BAR, 0.45, 1) : PEN_AUTO_POWER;
+    return { z: a.z, h: a.h, power, placed: true };
+  }
+
+  /**
+   * The human's in-match penalty, struck: the keeper picks his side as it's hit, as in a shootout (keeperGuess
+   * with the tell of an aim left by a post, divePlan, commitDive), rather than reacting to its flight as in open
+   * play. Staying up in the middle, he leaves it to his hands (the keeper brain takes over). AI takers' penalties
+   * never come here.
+   */
+  private penaltyKeeper(taker: Player): void {
+    const k = this.keeperOf(taker.side === 0 ? 1 : 0);
+    if (!k || k.sentOff || k.state !== 'move' || this.isHumanControlled(k)) return;
+    const keeping = k.stat.keeping / 100;
+    const pred = predictCrossing(this.ball, this.attackDir(taker.side) * HALF_L);
+    const { dir, read } = keeperGuess(this.rng, keeping, this.keeperBonus(k.side), pred.z, penaltyTell(this.penSteer.dwell));
+    const plan = divePlan(dir, pred, this.rng);
+    if (!plan) return;
+    // (shootoutStrike's timing and miss: he leaves his line after his reaction, sharp when he read it, and knowing
+    // the side isn't knowing the spot.)
+    const reaction = clamp(0.13 - keeping * 0.06, 0.06, 0.13);
+    const at = read ? reaction : Math.max(reaction, pred.t - 0.55);
+    const miss = this.rng.gauss() * 0.35 * (1.2 - keeping);
+    this.penDive = { k: k.idx, kick: this.kickId, d: { at, z: plan.z + miss, y: plan.y, arrive: pred.t, boost: read ? 3 : 0 } };
+  }
+
+  /**
+   * The keeper's committed dive on the human's in-match penalty goes at its time (before the keeper brain runs
+   * this step, so it is his guess, not a reaction to the flight); dropped once the kick is over or he's busy.
+   */
+  private stepPenDive(): void {
+    const pd = this.penDive;
+    if (!pd) return;
+    const k = this.players[pd.k];
+    if (this.phase !== 'play' || this.kickId !== pd.kick || k.state !== 'move' || this.ball.owner >= 0) {
+      this.penDive = null;
+      return;
+    }
+    if (this.sinceKick + 1e-9 < pd.d.at) return;
+    this.penDive = null;
+    this.commitDive(k, pd.d);
+  }
+
+  /** Human taker aims at a point on the goal (steerPenalty) and shoots on release; the stick is also the keeper's dive. */
+  private shootoutInput(pad: Pad, shootR: boolean, shootPower: number, stickLen: number, dt: number): void {
     const s = this.shootout;
     if (!s) return;
     s.stick.x = pad.mx;
@@ -4843,10 +4985,14 @@ export class Match {
     if (this.cfg.humanSide !== s.turn || (s.stage !== 'aim' && s.stage !== 'intro')) return;
     const t = this.players[s.taker];
     this.active = t.idx;
-    // Sideways share of the stick picks the spot; it stays where it was left.
-    if (stickLen > 0.3) s.aimZ = clamp(pad.mz / stickLen / 0.85, -1, 1) * (GOAL_W / 2 - 0.5);
+    if (stickLen > 0.3) this.padDigital = pad.digital ?? isDigitalStick(pad.mx, pad.mz, s.goal > 0 ? 0 : Math.PI);
+    else if (pad.digital !== undefined) this.padDigital = pad.digital;
+    // It stays where it was left.
+    const a = this.steerPenalty(pad, dt, s.goal * HALF_L, !!t.order);
+    s.aimZ = a.z;
+    s.aimH = a.h;
     if (s.stage !== 'aim' || s.t < 0.35 || t.order) return;
-    if (shootR) this.shootoutKick(t, { z: s.aimZ, h: 0.3 + shootPower * 0.75, power: shootPower });
+    if (shootR) this.shootoutKick(t, { z: a.z, h: a.h, power: shootPower, placed: true });
   }
 
   private shootoutKick(t: Player, aim: PenAim): void {
@@ -4870,7 +5016,7 @@ export class Match {
     let dir: -1 | 0 | 1;
     let read = false;
     if (human) dir = Math.abs(st.z) / sl > 0.38 ? (st.z > 0 ? 1 : -1) : 0;
-    else ({ dir, read } = keeperGuess(this.rng, keeping, this.keeperBonus(k.side), pred.z));
+    else ({ dir, read } = keeperGuess(this.rng, keeping, this.keeperBonus(k.side), pred.z, this.cfg.humanSide === s.turn ? penaltyTell(this.penSteer.dwell) : 0));
     const plan = divePlan(dir, pred, this.rng);
     if (!plan) {
       s.dive = null;
@@ -4886,8 +5032,6 @@ export class Match {
   }
 
   private commitDive(k: Player, d: KeeperDive): void {
-    const s = this.shootout!;
-    s.dive = null;
     const lateral = d.z - k.pos.z;
     if (Math.abs(lateral) < 0.6) {
       // Down the middle: stand tall and let the hands do it (a hop for a high one).
