@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp, smoothstep } from '../core/math';
 import { Rng } from '../core/rng';
+import { LOGO_ROWS, MARK_ROWS, drawRows } from '../core/calynxArt';
 import {
   BOX_DEPTH, BOX_W, CENTER_R, GOAL_DEPTH, GOAL_H, GOAL_W, HALF_L, HALF_W, PEN_SPOT, SIX_DEPTH, SIX_W,
 } from '../sim/constants';
@@ -130,20 +131,6 @@ const BOARD_SEG_PX = 384;
 const BOARD_WORD_M = 10;
 /** Calynx (the studio): its blue, and its lynx head (the wordmark's x: tufted ears, the muzzle to the right). */
 export const CALYNX_BLUE = 0x2230d6;
-const LYNX = [
-  '..#.....#...',
-  '..#.....#...',
-  '.###...###..',
-  '.#########..',
-  '###########.',
-  '######.#####',
-  '############',
-  '###########.',
-  '.#########..',
-  '.########...',
-  '#.######....',
-  '...#.#......',
-];
 /** The playing surface is a raised lawn; players, ball and goals sit on top of it. */
 export const PITCH_Y = 0.12;
 
@@ -181,12 +168,13 @@ function snowMaterial(snow: { value: number }, snowCol: number, key: string, sat
   return m;
 }
 
-/** The lynx head, `px` canvas pixels a cell, its top-left at (x, y). */
+/**
+ * The studio's lynx-x mark (the real logo's pixel art, src/core/calynxArt.ts), filling the old 12-cell glyph's
+ * footprint: about 12 × `px` canvas pixels tall, its top-left at (x, y).
+ */
 function drawLynx(g: CanvasRenderingContext2D, x: number, y: number, px: number, color: string): void {
-  g.fillStyle = color;
-  LYNX.forEach((row, r) => {
-    for (let c = 0; c < row.length; c++) if (row[c] === '#') g.fillRect(x + c * px, y + r * px, px, px);
-  });
+  const cell = Math.max(1, Math.round((12 * px) / MARK_ROWS.length));
+  drawRows(g, MARK_ROWS, x, y + Math.round((12 * px - MARK_ROWS.length * cell) / 2), cell, color);
 }
 
 export class Stadium {
@@ -493,6 +481,14 @@ export class Stadium {
       // Chunky pixel stripe at the edges like LED panels.
       g.fillStyle = 'rgba(0,0,0,0.18)';
       g.fillRect(i * segW, 56, segW, 8);
+      if (w === 'CALYNX') {
+        // The studio board: the real logo (pixel art from the studio's artwork) in its blue on the white panel.
+        const cell = Math.max(1, Math.floor(Math.min((segW * 0.82) / LOGO_ROWS[0].length, 50 / LOGO_ROWS.length)));
+        const lw = LOGO_ROWS[0].length * cell;
+        const lh = LOGO_ROWS.length * cell;
+        drawRows(g, LOGO_ROWS, Math.round(i * segW + (segW - lw) / 2), Math.round((56 - lh) / 2) + 1, cell, cssHex(CALYNX_BLUE));
+        return;
+      }
       // The studio board: its blue on white, the lynx head to the right of the wordmark.
       const brand = w === 'CALYNX';
       const light = ((bg >> 16) & 255) * 0.3 + ((bg >> 8) & 255) * 0.59 + (bg & 255) * 0.11 > 170;
