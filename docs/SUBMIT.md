@@ -68,7 +68,7 @@ Folder: `release/submission/crazygames/`
 
 1. **Sign up.** Go to <https://developer.crazygames.com/> and create a developer account. Accept the developer terms yourself.
 2. **Start a submission.** Click **Submit a game** (or the portal's equivalent, such as *Add game* or *Upload*).
-3. **Upload the build.** Upload `upload/blocky-league-crazygames-v0.1.0.zip`. Its `index.html` is at the root of the zip, all paths are relative, and there are 12 files (1.5 MB), well under CrazyGames' limits. _CrazyGames' docs don't say whether the portal wants a zip or loose files. If it asks for files, unzip the zip and upload the contents._
+3. **Upload the build.** Upload `upload/blocky-league-crazygames-v1.0.0.zip`. Its `index.html` is at the root of the zip, all paths are relative, and there are 12 files (1.5 MB), well under CrazyGames' limits. _CrazyGames' docs don't say whether the portal wants a zip or loose files. If it asks for files, unzip the zip and upload the contents._
 4. **Test in the Preview tool.** The portal opens your build in the **Preview** (QA) tool. Check all of these:
    - TAP TO PLAY goes straight into the first drill (one click).
    - A quick match plays through to full time.
@@ -124,7 +124,7 @@ Folder: `release/submission/itch/`
    - **Kind of project:** **HTML**
    - **Release status:** Released
 4. **Pricing.** Choose **No payments**, or "$0 or donate". itch lets HTML games take donations only unless you contact its support.
-5. **Uploads.** Upload `upload/blocky-league-itch-v0.1.0.zip` and tick **This file will be played in the browser**.
+5. **Uploads.** Upload `upload/blocky-league-itch-v1.0.0.zip` and tick **This file will be played in the browser**.
 6. **Embed options.** Set these:
    - **Embed in page**, viewport **960 × 540** (the game scales to fit).
    - **Mobile friendly:** ON. Choose landscape if an orientation option appears.
@@ -162,7 +162,7 @@ Folder: `release/submission/poki/`
 3. **Poki Inspector.** Open <https://inspector.poki.dev> and give it the folder `upload/inspector-folder/` (Poki asks for the game's folder, not a zip). Work through its QA checklist, SDK event log, load time and size, external-request warnings, scaling tests and phone test by QR code. The Inspector can also be opened from the **Versions** tab. Expect:
    - one external host from the game: `game-cdn.poki.com`
    - the ad requests Poki's SDK makes on its own
-4. **Upload the version** in the **Versions** tab, using the folder or `upload/blocky-league-poki-v0.1.0.zip`, whichever the tab accepts.
+4. **Upload the version** in the **Versions** tab, using the folder or `upload/blocky-league-poki-v1.0.0.zip`, whichever the tab accepts.
 5. **Thumbnails** tab:
    - **Static:** `thumbnails/poki-thumbnail-1024x1024.png` (square, no text; Poki rounds the corners).
    - **Animated:** `thumbnails/blocky-league-square-1080x1080.mp4` (1080×1080, 60 fps, 5.5 s, muted). It's needed before global release.
