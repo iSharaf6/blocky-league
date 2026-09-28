@@ -1015,7 +1015,8 @@ async function boot(): Promise<void> {
   menus.stick = TouchControls.stickMode;
   ads.onMute = (m) => sfx.setMuted(m);
   // Every screen's text goes through the divider guard (see ui/text.ts): no glyph the fonts lack.
-  installSepGuard(menus.root);
+  // (The whole page: menus, the HUD, the trainer card and anything else that writes text.)
+  installSepGuard(document.body);
   // Never let a slow or blocked portal SDK hold the title screen hostage; the studio splash gets its moment.
   await Promise.all([
     Promise.race([ads.init(), new Promise<void>((r) => setTimeout(r, 3000))]),

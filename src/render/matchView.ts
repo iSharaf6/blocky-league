@@ -64,6 +64,33 @@ const PASS_ARROW_MAX = 5.5;
 /** ...and turned this far (rad, about the raised arm) from facing the offender towards the lens side. */
 const CARD_TURN = -1.3;
 /**
+ * The penalty aim reticle (setPenAim): pixel art, `#` the ring and crosshair, `o` the centre pixel, each pixel
+ * RETICLE_PX m (about a metre across, a ball and a half), pulsing RETICLE_PULSE of its size RETICLE_HZ times a
+ * second while he aims, RETICLE_LOCKED of it once he has let SHOOT go.
+ */
+const RETICLE_ART = [
+  '....#####....',
+  '..##.....##..',
+  '.#....#....#.',
+  '.#....#....#.',
+  '#...........#',
+  '#...........#',
+  '#.##..o..##.#',
+  '#...........#',
+  '#...........#',
+  '.#....#....#.',
+  '.#....#....#.',
+  '..##.....##..',
+  '....#####....',
+];
+const RETICLE_PX = 0.078;
+const RETICLE_FILL = 0xffd23a;
+const RETICLE_CORE = 0xfbfbf4;
+const RETICLE_EDGE = 0x1b2230;
+const RETICLE_HZ = 2.2;
+const RETICLE_PULSE = 0.08;
+const RETICLE_LOCKED = 0.86;
+/**
  * Pass-target preview (the human on the ball, not charging): who a PASS pressed now goes to stands on a calm
  * white ring (teal inside; no pulse: the charge ring is the one that pulses) and his pip turns white and
  * PREVIEW_PIP_K bigger; who a THROUGH ball goes to gets a fainter dashed ring out in the space ahead of him.
@@ -1003,6 +1030,70 @@ export class MatchView {
     this.group.add(f.group);
     this.names[i] = def.name.split('. ').pop()!.toUpperCase();
     if (this.nameFor === i) this.nameFor = -1;
+  }
+
+  /**
+   * The penalty aim reticle: a pixel ring and crosshair standing on the goal plane at x = `gx`, `h` up and `z`
+   * across (Match.penAim), drawn over everything and pulsing while he aims; once `locked` (SHOOT let go) it
+   * holds still, a touch smaller, until the ball is struck. Null hides it.
+   */
+  setPenAim(aim: { gx: number; z: number; h: number; locked: boolean } | null): void {
+    if (!aim) {
+      if (this.reticle) this.reticle.visible = false;
+      return;
+    }
+    const r = (this.reticle ??= this.makeReticle());
+    r.visible = true;
+    r.position.set(aim.gx, aim.h, aim.z);
+    // (Its face turned out of the goal, towards the spot.)
+    r.rotation.y = aim.gx > 0 ? -Math.PI / 2 : Math.PI / 2;
+    const beat = Math.sin(this.clock * Math.PI * 2 * RETICLE_HZ);
+    r.scale.setScalar(aim.locked ? RETICLE_LOCKED : 1 + RETICLE_PULSE * beat);
+    (r.material as THREE.MeshBasicMaterial).opacity = aim.locked ? 1 : 0.86 + 0.14 * beat;
+  }
+
+  private reticle: THREE.Mesh | null = null;
+
+  /** The reticle's pixels (RETICLE_ART, a dark outline round the yellow, the centre pixel white) as one flat mesh. */
+  private makeReticle(): THREE.Mesh {
+    const n = RETICLE_ART.length;
+    const half = (n - 1) / 2;
+    const on = (i: number, j: number) => i >= 0 && j >= 0 && i < n && j < n && RETICLE_ART[j][i] !== '.';
+    const pos: number[] = [];
+    const col: number[] = [];
+    const c = new THREE.Color();
+    const quad = (i: number, j: number, hex: number, grow: number) => {
+      const x = (i - half) * RETICLE_PX;
+      const y = (half - j) * RETICLE_PX;
+      const s = (RETICLE_PX * grow) / 2;
+      pos.push(x - s, y - s, 0, x + s, y - s, 0, x + s, y + s, 0, x - s, y - s, 0, x + s, y + s, 0, x - s, y + s, 0);
+      c.setHex(hex);
+      for (let k = 0; k < 6; k++) col.push(c.r, c.g, c.b);
+    };
+    // The outline first (drawn under), then the pixels.
+    for (let j = -1; j <= n; j++) {
+      for (let i = -1; i <= n; i++) {
+        if (on(i, j)) continue;
+        let near = false;
+        for (let dj = -1; dj <= 1 && !near; dj++) for (let di = -1; di <= 1 && !near; di++) near = on(i + di, j + dj);
+        if (near) quad(i, j, RETICLE_EDGE, 1.02);
+      }
+    }
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) if (on(i, j)) quad(i, j, RETICLE_ART[j][i] === 'o' ? RETICLE_CORE : RETICLE_FILL, 1.02);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    const m = new THREE.Mesh(
+      g,
+      new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, depthTest: false, depthWrite: false, fog: false, side: THREE.DoubleSide }),
+    );
+    m.renderOrder = 12;
+    m.frustumCulled = false;
+    m.visible = false;
+    this.group.add(m);
+    return m;
   }
 
   /** Show the set-piece aim arrow from (x, z) along `angle` (radians, world facing). */

@@ -23,9 +23,11 @@ export interface Rules {
   halfMinutes: number;
   timeOfDay: 'day' | 'sunset' | 'night';
   weather: 'clear' | 'rain' | 'snow';
+  /** Level at full time: penalties (true) or a draw. */
+  knockout: boolean;
 }
 
-export const DEFAULT_RULES: Rules = { mode: 'classic', halfMinutes: 2, timeOfDay: 'day', weather: 'clear' };
+export const DEFAULT_RULES: Rules = { mode: 'classic', halfMinutes: 2, timeOfDay: 'day', weather: 'clear', knockout: false };
 
 type LobbyMsg =
   | { t: 'hello'; v: number; app: string; me: PeerInfo }
@@ -109,6 +111,7 @@ export class OnlineLink {
       halfMinutes: this.rules.halfMinutes,
       timeOfDay: this.rules.timeOfDay,
       weather: this.rules.weather,
+      knockout: this.rules.knockout,
       controls: [this.me.controls, this.peer.controls],
       delay: DEFAULT_DELAY,
     });
@@ -237,6 +240,7 @@ function cleanRules(r: Partial<Rules> | undefined): Rules {
     halfMinutes: (NET_HALVES as readonly number[]).includes(r?.halfMinutes ?? -1) ? r!.halfMinutes! : DEFAULT_RULES.halfMinutes,
     timeOfDay: r?.timeOfDay === 'sunset' || r?.timeOfDay === 'night' ? r.timeOfDay : 'day',
     weather: r?.weather === 'rain' || r?.weather === 'snow' ? r.weather : 'clear',
+    knockout: r?.knockout === true,
   };
 }
 

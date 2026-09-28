@@ -2,6 +2,8 @@
 
 _Checked against the build on **28 September 2026**. Portal rules were last read on 25 September 2026; they change, so re-read the linked pages (§12) before each submission._
 
+**Ready to submit?** Follow **[docs/SUBMIT.md](SUBMIT.md)**, the click-by-click guide for each portal. `npm run build:all`, then `npm run submission`, builds the submission kit in `release/submission/`: the zip, images, videos and a `listing.txt` of fields to paste for each portal, all re-checked on every run.
+
 **Where things stand:** the game is feature-complete for a v1 web-portal launch and `npm run build:all` produces the four upload zips. What's left is the owner's part: accounts, screenshots and a video, and the submissions themselves (§1.2). The contact email (calynx@zohomail.com.au) is in the privacy policy.
 
 **Playtest deployment:** [GitHub Pages](https://isharaf6.github.io/blocky-league/) is configured for this repository. `.github/workflows/pages.yml` tests and packages the web game on pushes to `main`, then deploys `dist-web`. The source repository remains private; the playable site is public. Portal submissions and monetisation are separate from this playtest deployment.
@@ -56,7 +58,7 @@ What the v1 game has (so the listing stays honest): LEARN THE BASICS (three dril
 1. **Pick the first portal.** Recommended: **CrazyGames first** (open submission, non-exclusive, fast Basic Launch), then GameDistribution later. Choose **Poki** instead only if you're happy with web exclusivity and a slower, curated process (they rule out the others; §2).
 2. ~~Add a contact email~~ Done: calynx@zohomail.com.au is in `public/privacy.html`.
 3. **Create the portal account(s) yourself** and accept their terms: [CrazyGames developer portal](https://developer.crazygames.com/) (and later Poki / GameDistribution / itch.io). Fill in the payout and tax forms when asked. Nobody else can do this for you.
-4. **Capture the store media** from the shot list in `docs/STORE_LISTING.md`: five 1920×1080 screenshots, and for CrazyGames a 15–20 s silent video in 16:9 and 2:3 (Poki later needs a 4–6 s square loop). The covers and thumbnails are already in `release/store-assets/`.
+4. ~~Capture the store media~~ Done 29 Sep. The screenshots (8 at 1920×1080, 2 phone shots at 1080×1920) and videos (CrazyGames 16:9 and 2:3, Poki's 1080×1080 loop) are in `release/submission/media/`, and `npm run submission` sorts them into each portal's folder (`docs/SUBMIT.md`).
 5. **Test the portal build in the portal's own tool** before submitting: CrazyGames' Preview/QA tool (or `localhost` with `?useLocalSdk=true`), Poki Inspector for Poki. Check a full match, a rewarded ad, mute during ads, and the phone layouts.
 6. **Submit** `release/blocky-league-crazygames-v0.1.0.zip` with the three CrazyGames covers and the copy from `docs/STORE_LISTING.md`. At submission, switch on **Automatic Progress Save** (no code needed; the game has no purchases).
 7. **While in Basic Launch** (at least 7 days and 500 plays): watch the portal's stats (conversion to gameplay, playtime, retention) and fix what they show before Full Launch review.

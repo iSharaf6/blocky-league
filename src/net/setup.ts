@@ -28,6 +28,8 @@ export interface MatchSetup {
   halfMinutes: number;
   timeOfDay: 'day' | 'sunset' | 'night';
   weather: 'clear' | 'rain' | 'snow';
+  /** Level at full time: a penalty shootout (true) or a draw. */
+  knockout?: boolean;
   /** Each side's controls (index = side). */
   controls: [NetControls, NetControls];
   /** Starting input delay (ticks). */
@@ -91,6 +93,7 @@ export function netConfig(s: MatchSetup, localSide: Side, teams = netTeams(s)): 
     humanSides: [true, true],
     seed: s.seed,
     mode: s.mode,
+    knockout: !!s.knockout,
   };
 }
 

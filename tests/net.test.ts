@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { stateHash } from '../src/net/hash';
-import { DT } from '../src/sim/constants';
+import { DT, HALF_L, PEN_SPOT } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import { decodeInput, encodeInput, quantizePad, DELAY_MAX, DELAY_MIN, HASH_EVERY, TIMEOUT_MS } from '../src/net/lockstep';
 import { buildSdp, codeToSdp, parseSdp, sdpToCode } from '../src/net/sdpCode';
+import type { Side } from '../src/sim/types';
 import { HumanBot } from './humanBot';
-import { koRun, SCENARIOS, type Row } from './netBaseline';
+import { aiKoRun, koRun, PEN_SCENARIOS, SCENARIOS, type Row } from './netBaseline';
 import { FuzzPad, netConfig, runToEnd, stoppages } from './netHarness';
 import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
 
@@ -18,8 +19,8 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
 
 /**
  * tests/netBaseline.ts's table (end-state hash, a fold of the hash every 60 steps, steps, score, shootout),
- * recorded on main at fd7d748 (round 13: team styles, DDA, Club Run perks, the receive magnet and pass curl,
- * onboarding) before MatchConfig.humanSides / Match.ctl were merged onto it, by the very same drivers.
+ * recorded on main at 11c4bed (v1: round 13 plus the placed penalty aim) before MatchConfig.humanSides / Match.ctl
+ * were merged onto it, by the very same drivers. (29 rows were recorded and all 29 matched; these are pinned.)
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2262850705, 2447626034, 19417, 2, 3, 0],
@@ -31,9 +32,16 @@ const BEFORE: Record<string, Row> = {
   fuzzSide1: [564545257, 66790653, 11302, 2, 0, 0],
   fuzzBlitz0: [330126010, 2987368122, 11796, 0, 4, 0],
   fuzzBlitzPerks1: [3596118942, 2629035978, 11761, 3, 0, 0],
-  ko1: [3215721388, 3569230494, 5446, 0, 0, 1],
+  penTaker0: [3053883865, 1881196537, 8136, 1, 3, 0],
+  penTaker1Low: [3199996930, 80591715, 7395, 0, 1, 0],
+  penTimeout1: [2797593929, 2649676874, 8497, 2, 1, 0],
+  penKeeper1: [1295567434, 3269572079, 7737, 1, 0, 0],
+  ko1: [3289689461, 3138158849, 6939, 0, 0, 1],
   ko3: [2122207129, 3367927030, 3305, 1, 0, 0],
-  ko6: [2854817792, 3440828893, 5906, 0, 0, 1],
+  ko6: [2729493649, 51519168, 5296, 0, 0, 1],
+  aiKo1: [47845968, 1192999698, 5817, 0, 0, 1],
+  aiKo4: [2291840460, 860824426, 3346, 0, 1, 0],
+  aiKo7: [4112032605, 1756315151, 5108, 0, 0, 1],
 };
 
 describe('single-player stays bit-identical', () => {
@@ -47,8 +55,13 @@ describe('single-player stays bit-identical', () => {
     }
   }, 90_000);
 
-  it('knockout ties, through a penalty shootout', () => {
+  it("in-match penalties: the human's placed aim (either side, a timed-out one) and the AI's against his keeper", () => {
+    for (const k of Object.keys(PEN_SCENARIOS)) expect(PEN_SCENARIOS[k](), k).toEqual(BEFORE[k]);
+  }, 60_000);
+
+  it('knockout ties through shootouts, a human taking and keeping, and AI v AI', () => {
     for (const s of [1, 3, 6]) expect(koRun(s), `ko${s}`).toEqual(BEFORE[`ko${s}`]);
+    for (const s of [1, 4, 7]) expect(aiKoRun(s), `aiKo${s}`).toEqual(BEFORE[`aiKo${s}`]);
   }, 60_000);
 });
 
@@ -144,6 +157,96 @@ describe('two human sides', () => {
     }
     expect(used[0] + used[1]).toBeGreaterThan(0);
   }, 60_000);
+
+  /** Both sims given the same penalty at the same tick (as tests/penalty.test.ts sets one up). */
+  const givePenalty = (ms: readonly Match[], side: Side): void => {
+    for (const m of ms) {
+      Object.assign(m, { phase: 'play', restart: null });
+      (m as unknown as { goOut: (k: string, s: number, x: number, z: number) => void }).goOut('penalty', side, m.attackDir(side) * (HALF_L - PEN_SPOT), 0);
+    }
+  };
+
+  it("either player's in-match penalty: aimed from his own pads, per side, the same on both machines, never shown to the other", () => {
+    const [a, b] = pair(61);
+    const p0 = new FuzzPad(8);
+    const p1 = new FuzzPad(9);
+    const step = (pads: [Pad, Pad]) => {
+      a.step(DT, pads);
+      b.step(DT, pads);
+      a.drainEvents();
+      b.drainEvents();
+      stoppages(a, [true, true]);
+      stoppages(b, [true, true]);
+      expect(stateHash(b)).toBe(stateHash(a));
+    };
+    for (let i = 0; i < 180; i++) step([p0.pad(), p1.pad()]);
+    // The away side's (side 1's) human takes it: the machine viewing side 0 is the keeper's.
+    givePenalty([a, b], 1);
+    let aimed = 0;
+    let n = 0;
+    let struck = false;
+    let firstZ = NaN;
+    let lastZ = NaN;
+    for (let i = 0; i < 60 * 30 && !struck; i++) {
+      const r = a.restart;
+      const taking = a.phase === 'restart' && r?.kind === 'penalty';
+      // The taker: the keys slide the reticle across for 40 steps, then SHOOT is held 20 and let go.
+      const pad1: Pad = taking ? { ...EMPTY_PAD, digital: true, mz: n < 40 ? 1 : 0, shoot: n >= 40 && n < 60 } : p1.pad();
+      if (taking) n++;
+      const kickBefore = a.kickId;
+      step([p0.pad(), pad1]);
+      if (a.kickId !== kickBefore && taking) struck = true;
+      const aim = a.ctl[1].penAim;
+      if (aim && !aim.locked) {
+        aimed++;
+        if (Number.isNaN(firstZ)) firstZ = aim.z;
+        lastZ = aim.z;
+        // The same aim in both sims (it's sim state, from his pads)...
+        expect(b.ctl[1].penAim).toEqual(aim);
+        // ...but only his own machine shows it: the keeper's side's view has no reticle.
+        expect(a.penAim).toBeNull();
+        expect(b.penAim).toEqual(aim);
+      }
+    }
+    expect(struck).toBe(true);
+    expect(aimed).toBeGreaterThan(30);
+    expect(Math.abs(lastZ - firstZ)).toBeGreaterThan(0.5);
+    // And on through the rest of the match, still identical.
+    for (let i = 0; i < 60 * 20; i++) step([p0.pad(), p1.pad()]);
+  }, 60_000);
+
+  it('a shootout with a human on each side: each takes his own kicks at his own aim and keeps his own goal', () => {
+    let played = 0;
+    for (const seed of [3, 5, 8, 13]) {
+      const [a, b] = pair(seed, { halfLength: 25, knockout: true });
+      const p0 = new FuzzPad(seed * 3);
+      const p1 = new FuzzPad(seed * 3 + 1);
+      const placed = [0, 0];
+      let lastPen: unknown = null;
+      for (let steps = 0; a.phase !== 'fulltime' && steps < 60 * 60 * 10; steps++) {
+        const pads: [Pad, Pad] = [p0.pad(), p1.pad()];
+        a.step(DT, pads);
+        b.step(DT, pads);
+        a.drainEvents();
+        b.drainEvents();
+        stoppages(a, [true, true]);
+        stoppages(b, [true, true]);
+        expect(stateHash(b)).toBe(stateHash(a));
+        const so = a.shootout;
+        if (so?.pen && so.pen !== lastPen) {
+          lastPen = so.pen;
+          if (so.pen.placed) placed[so.turn]++;
+        }
+      }
+      if (!a.shootout) continue;
+      played++;
+      // Every kick was a human's placed one (his reticle, or his time running out at it), both sides.
+      expect(placed[0]).toBeGreaterThan(0);
+      expect(placed[1]).toBeGreaterThan(0);
+      expect(a.shootout.winner).toBeGreaterThanOrEqual(0);
+    }
+    expect(played).toBeGreaterThan(0);
+  }, 90_000);
 });
 
 describe('lockstep engine', () => {
@@ -187,6 +290,27 @@ describe('lockstep engine', () => {
     // Both humans played, and it wasn't a stall-fest: the stall count stays a small share of the ticks.
     expect(a.m.stats.passes[0] + a.m.stats.passes[1]).toBeGreaterThan(5);
     expect(a.lock.stalls + b.lock.stalls).toBeLessThan(n * 0.25);
+  }, 120_000);
+
+  it('IF LEVEL: PENALTIES: a drawn match goes to a shootout, both peers identical through it, over a bad network', () => {
+    let shootouts = 0;
+    for (const seed of [2, 5, 9, 14]) {
+      const net = new NetSim({ loss: 0.1, latency: [20, 120], seed });
+      const [ta, tb] = net.pair();
+      const setup = testSetup({ seed: 900 + seed, halfMinutes: 0.25, knockout: true });
+      const a = new SimPeer(ta, 0, setup, net);
+      const b = new SimPeer(tb, 1, setup, net);
+      runPeers(net, a, b);
+      expect(a.lock.status).toBe('play');
+      expect(b.lock.status).toBe('play');
+      expect(agree(a, b)).toBeGreaterThan(60 * 25);
+      expect(a.m.phase).toBe('fulltime');
+      if (!a.m.shootout) continue;
+      shootouts++;
+      expect(b.m.shootout!.winner).toBe(a.m.shootout.winner);
+      expect(b.m.shootout!.kicks).toEqual(a.m.shootout.kicks);
+    }
+    expect(shootouts).toBeGreaterThan(0);
   }, 120_000);
 
   it('a clean LAN keeps the delay low (2-4 ticks) and hardly stalls', () => {

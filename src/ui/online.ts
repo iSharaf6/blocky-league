@@ -11,6 +11,7 @@ import { BroadcastTransport, broadcastAvailable, roomCode, type Transport } from
 import { APP_VERSION } from './brand';
 import { crestSvg } from './crest';
 import { shirtArt } from './menus';
+import { goalsOf } from '../sim/shootout';
 import { escHtml, scoreHtml, sep } from './text';
 
 /**
@@ -397,6 +398,7 @@ function drawLobby(host: OnlineHost, link: OnlineLink, how: string): void {
     <div class="opt-row"><label>MODE</label><div class="seg" data-o="mode"></div></div>
     <div class="opt-row"><label>HALF LENGTH</label><div class="seg" data-o="len"></div></div>
     <div class="opt-row"><label>KICK-OFF</label><div class="seg" data-o="tod"></div></div>
+    <div class="opt-row"><label>IF LEVEL</label><div class="seg" data-o="ko"></div></div>
     ${hostSide ? '' : '<p class="fine">The host sets the rules.</p>'}
     <p class="net-status" aria-live="polite">${escHtml(status)}</p>
     <div class="btn-row">
@@ -415,6 +417,7 @@ function drawLobby(host: OnlineHost, link: OnlineLink, how: string): void {
   seg('mode', ['CLASSIC', 'BLITZ ⚡'], r.mode === 'blitz' ? 1 : 0, (i) => link.setRules({ mode: i ? 'blitz' : 'classic' }));
   seg('len', NET_HALVES.map((m) => `${m} MIN`), Math.max(0, NET_HALVES.indexOf(r.halfMinutes as (typeof NET_HALVES)[number])), (i) => link.setRules({ halfMinutes: NET_HALVES[i] }));
   seg('tod', ['DAY', 'SUNSET', 'NIGHT'], Math.max(0, TODS.indexOf(r.timeOfDay)), (i) => link.setRules({ timeOfDay: TODS[i] }));
+  seg('ko', ['DRAW', 'PENALTIES'], r.knockout ? 1 : 0, (i) => link.setRules({ knockout: i === 1 }));
   d.querySelectorAll<HTMLButtonElement>('[data-side=me] .arrow').forEach((b) => b.addEventListener('click', () => {
     const n = PRESET_CLUBS.length;
     let c = (link.me.club + Number(b.dataset.d) + n) % n;
@@ -550,9 +553,10 @@ function fullTime(host: OnlineHost, link: OnlineLink, r: MatchResult): void {
   const m = r.match;
   const [h, a] = m.teams;
   const mine = link.role === 'host' ? 0 : 1;
-  const my = r.score[mine];
-  const their = r.score[mine === 0 ? 1 : 0];
-  const verdict = my > their ? 'YOU WIN' : my < their ? 'YOU LOSE' : 'DRAW';
+  // (Level after a shootout: its winner, r.winner.)
+  const verdict = r.winner === undefined ? 'DRAW' : r.winner === mine ? 'YOU WIN' : 'YOU LOSE';
+  const so = m.shootout;
+  const pens = so ? `<p class="net-line">ON PENALTIES ${scoreHtml(goalsOf(so.kicks[0]), goalsOf(so.kicks[1]))}</p>` : '';
   const d = mount(panel(`
     <h2>FULL TIME</h2>
     <p class="net-verdict">${verdict}</p>
@@ -561,6 +565,7 @@ function fullTime(host: OnlineHost, link: OnlineLink, r: MatchResult): void {
       <span class="net-score">${scoreHtml(r.score[0], r.score[1])}</span>
       <b>${escHtml(a.short)}${crestSvg(a.name, a.short, r.match.teams[1].kit, 2)}</b>
     </div>
+    ${pens}
     <p class="net-status" aria-live="polite"></p>
     <div class="btn-row">
       <button class="btn btn-white" data-a="menu">MENU</button>

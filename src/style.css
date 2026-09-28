@@ -4973,8 +4973,10 @@ button.mc-pl:active {
    fallback bullet in its place) and its hyphen is a clunky bar. A thin bar in the text colour by default; a
    pixel square wherever the text is in the pixel font; a wide red square between the two numbers of a score. */
 .sep { display: inline-block; width: 2px; height: 0.62em; background: currentColor; opacity: 0.45; margin: 0 0.4em; vertical-align: -0.02em; }
+/* In the pixel font too the divider is a thin upright bar, never a square (a square reads as a dot, which the
+   owner asked to be rid of). */
 .btn .sep, .panel h3 .sep, .hud-hint .sep, .hud-toast .sep, .coins .sep, .mc-wdl .sep, .bn-title .sep, .mc-result b .sep,
-.trainer-recipient .sep, .captain-tag span .sep, .daily-n .sep, .mc-ovr .sep, .mc-side b .sep { width: 3px; height: 3px; opacity: 0.75; margin: 0 0.45em; vertical-align: 0.28em; }
+.trainer-recipient .sep, .captain-tag span .sep, .daily-n .sep, .mc-ovr .sep, .mc-side b .sep { width: 2px; height: 0.72em; opacity: 0.6; margin: 0 0.5em; vertical-align: -0.06em; }
 .tile small .sep, .btn small .sep { width: 2px; height: 0.62em; opacity: 0.45; margin: 0 0.45em; vertical-align: -0.02em; }
 .mc-wdl .sep { margin: 0; opacity: 0.5; }
 /* (The divider hangs from the baseline, so it never grows a line box; the squares sit mid x-height.) */
@@ -5431,6 +5433,11 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   .unlocked-panel .fine.big { margin: 0; }
   .basics-done .bd-steps li { padding: 5px 10px 4px; font-size: 15px; }
 }
+
+/* Side tiles (MOMENTS, CLUB RUN, BLOCKY CUP) on wide screens: a smaller icon, and a title that wraps between
+   words instead of being cut off with an ellipsis ("MOMEN...", "CLUB R..." at 1920x1080). */
+.tiles.t13 > .tile.tile-side .picon { width: 38px; height: 38px; flex: none; }
+.tiles.t13 > .tile.tile-side span:not(.sep) { white-space: normal; text-overflow: clip; overflow: visible; line-height: 1.05; min-width: 0; }
 /* ================================================================ ONLINE (src/ui/online.ts) */
 
 /* Main menu: ONLINE is a sideways tile (like BLITZ / CUP) spanning a row of its own under the grid, in either shape

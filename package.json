@@ -14,7 +14,8 @@
     "build:crazygames": "tsc --noEmit && node scripts/release.mjs crazygames",
     "build:poki": "tsc --noEmit && node scripts/release.mjs poki",
     "build:itch": "tsc --noEmit && node scripts/release.mjs itch",
-    "build:all": "tsc --noEmit && node scripts/release.mjs web crazygames poki itch"
+    "build:all": "tsc --noEmit && node scripts/release.mjs web crazygames poki itch",
+    "submission": "node scripts/submission.mjs"
   },
   "dependencies": {
     "@fontsource/lilita-one": "^5.3.0",
