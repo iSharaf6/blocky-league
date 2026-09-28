@@ -71,9 +71,158 @@ export interface MatchMetrics {
   long25Goals: number;
   /** Goals scored with the head. */
   headerGoals: number;
+  /** Team shape (sampleShape) and each side's possession (s), shots and passes tried. */
+  shape: ShapeStats;
+  possession: [number, number];
+  shotsSide: [number, number];
 }
 
 const PASS_KINDS = new Set(['pass', 'through', 'lob', 'throw', 'keeper']);
+
+/**
+ * Team shape, sampled at 10 Hz in open play (the owner, round 13: "everybody just chasing the ball ... like
+ * children in primary"). Per side:
+ * - swarm: outfield players within SWARM_R m of the ball (the swarm index is its mean);
+ * - length / width: the outfield block's extent along / across the pitch (m);
+ * - lineDef: how far (m) the deepest outfield man stands from his own goal line while the other side has it;
+ * - press: passes the other side played in their own 60% of the pitch, and our defensive actions there (tackles
+ *   tried, interceptions, fouls): passes per defensive action is the PPDA-style pressure stat (lower = more press).
+ */
+export const SWARM_R = 8;
+export interface ShapeStats {
+  samples: [number, number];
+  swarm: [number, number];
+  length: [number, number];
+  width: [number, number];
+  defSamples: [number, number];
+  lineDef: [number, number];
+  /** Opponent passes in their own 60%, our defensive actions there (for the side named by the index). */
+  pressPasses: [number, number];
+  pressActions: [number, number];
+  /** Samples with 3+ of the side's outfield men within SWARM_R m of the ball; men within 12 m (summed). */
+  crowd3: [number, number];
+  near12: [number, number];
+  /** The same, split by who has the ball: while the side is defending (the other side on it) / attacking. */
+  swarmDef: [number, number];
+  swarmAtt: [number, number];
+  attSamples: [number, number];
+  /** Open-play passes played, and those played 5 m or more forward (to where the man it was for stood). */
+  passes: [number, number];
+  fwdPasses: [number, number];
+}
+export const emptyShape = (): ShapeStats => ({
+  samples: [0, 0], swarm: [0, 0], length: [0, 0], width: [0, 0], defSamples: [0, 0], lineDef: [0, 0], pressPasses: [0, 0], pressActions: [0, 0],
+  crowd3: [0, 0], near12: [0, 0], swarmDef: [0, 0], swarmAtt: [0, 0], attSamples: [0, 0], passes: [0, 0], fwdPasses: [0, 0],
+});
+
+/** One shape sample of `m` (open play only), into `s`. */
+export function sampleShape(m: Match, s: ShapeStats): void {
+  if (m.phase !== 'play') return;
+  const b = m.ball.pos;
+  const owner = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
+  for (const side of [0, 1] as Side[]) {
+    const ad = m.attackDir(side);
+    let near = 0;
+    let near12 = 0;
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    let zMin = Infinity;
+    let zMax = -Infinity;
+    for (const p of m.teamPlayers(side)) {
+      if (p.isKeeper || p.sentOff) continue;
+      const d = Math.hypot(p.pos.x - b.x, p.pos.z - b.z);
+      if (d < SWARM_R) near++;
+      if (d < 12) near12++;
+      const x = p.pos.x * ad;
+      xMin = Math.min(xMin, x);
+      xMax = Math.max(xMax, x);
+      zMin = Math.min(zMin, p.pos.z);
+      zMax = Math.max(zMax, p.pos.z);
+    }
+    s.samples[side]++;
+    s.swarm[side] += near;
+    s.near12[side] += near12;
+    if (near >= 3) s.crowd3[side]++;
+    if (owner && owner.side === side) {
+      s.attSamples[side]++;
+      s.swarmAtt[side] += near;
+    }
+    s.length[side] += xMax - xMin;
+    s.width[side] += zMax - zMin;
+    if (owner && owner.side !== side) {
+      s.defSamples[side]++;
+      s.lineDef[side] += xMin + HALF_L;
+      s.swarmDef[side] += near;
+    }
+  }
+}
+
+/** The shape's averages: swarm index (both sides, and each), block length / width, line height, PPDA. */
+export interface ShapeSummary {
+  swarm: number;
+  swarmSide: [number, number];
+  length: [number, number];
+  width: [number, number];
+  lineDef: [number, number];
+  ppda: [number, number];
+  /** Share (%) of samples with 3+ men within SWARM_R, men within 12 m, swarm while defending / attacking. */
+  crowd3: [number, number];
+  near12: [number, number];
+  swarmDef: [number, number];
+  swarmAtt: [number, number];
+  /** Share (%) of open-play passes played 5 m or more forward. */
+  fwdShare: [number, number];
+}
+export function summariseShape(list: ShapeStats[]): ShapeSummary {
+  const t = emptyShape();
+  for (const s of list) {
+    for (const k of Object.keys(t) as (keyof ShapeStats)[]) for (const i of [0, 1]) t[k][i] += s[k][i];
+  }
+  const per = (a: [number, number], n: [number, number]): [number, number] => [a[0] / Math.max(1, n[0]), a[1] / Math.max(1, n[1])];
+  const sw = per(t.swarm, t.samples);
+  return {
+    swarm: (t.swarm[0] + t.swarm[1]) / Math.max(1, t.samples[0] + t.samples[1]),
+    swarmSide: sw,
+    length: per(t.length, t.samples),
+    width: per(t.width, t.samples),
+    lineDef: per(t.lineDef, t.defSamples),
+    ppda: per(t.pressPasses, t.pressActions),
+    crowd3: per(t.crowd3, t.samples).map((v) => v * 100) as [number, number],
+    near12: per(t.near12, t.samples),
+    swarmDef: per(t.swarmDef, t.defSamples),
+    swarmAtt: per(t.swarmAtt, t.attSamples),
+    fwdShare: per(t.fwdPasses, t.passes).map((v) => v * 100) as [number, number],
+  };
+}
+/** Per side over a list of matches: possession (%), passes tried per shot, goals for, and the shape. */
+export interface SideSummary extends ShapeSummary {
+  poss: [number, number];
+  passesPerShot: [number, number];
+  goalsFor: [number, number];
+  shots: [number, number];
+}
+export function sideSummary(list: MatchMetrics[]): SideSummary {
+  const sum = (f: (r: MatchMetrics) => number) => list.reduce((a, r) => a + f(r), 0);
+  const poss0 = sum((r) => r.possession[0]);
+  const poss1 = sum((r) => r.possession[1]);
+  const n = Math.max(1, list.length);
+  return {
+    ...summariseShape(list.map((r) => r.shape)),
+    poss: [(poss0 / Math.max(1e-6, poss0 + poss1)) * 100, (poss1 / Math.max(1e-6, poss0 + poss1)) * 100],
+    passesPerShot: [sum((r) => r.passAtt[0]) / Math.max(1, sum((r) => r.shotsSide[0])), sum((r) => r.passAtt[1]) / Math.max(1, sum((r) => r.shotsSide[1]))],
+    goalsFor: [sum((r) => r.score[0]) / n, sum((r) => r.score[1]) / n],
+    shots: [sum((r) => r.shotsSide[0]) / n, sum((r) => r.shotsSide[1]) / n],
+  };
+}
+export function fmtSide(s: SideSummary): string {
+  const f = (v: [number, number], d = 1) => `${v[0].toFixed(d)}/${v[1].toFixed(d)}`;
+  return `${fmtShape(s)} | poss ${f(s.poss)}% | passes/shot ${f(s.passesPerShot)} | shots ${f(s.shots)} | goals ${f(s.goalsFor, 2)}`;
+}
+
+export function fmtShape(s: ShapeSummary): string {
+  const f = (v: [number, number], d = 1) => `${v[0].toFixed(d)}/${v[1].toFixed(d)}`;
+  return `swarm ${s.swarm.toFixed(2)} (${f(s.swarmSide, 2)}; def ${f(s.swarmDef, 2)} att ${f(s.swarmAtt, 2)}; 3+ ${f(s.crowd3, 0)}%; <12m ${f(s.near12, 2)}) | length ${f(s.length)} m | width ${f(s.width)} m | line (defending) ${f(s.lineDef)} m | PPDA ${f(s.ppda)} | forward passes ${f(s.fwdShare, 0)}%`;
+}
 
 export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx = 5, awayIdx = 6): MatchMetrics {
   const m = new Match({
@@ -92,7 +241,10 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     rawPasses: 0, shotOut: {}, byKind: {}, runs: 0, overlaps: 0, beats: 0, claims: 0,
     ownGoals: 0, offsides: 0, advantages: 0, lateSubs: 0, subs: [0, 0], minStamina: 1,
     lostByKind: {}, kickSpeed: {}, scorers: {}, subLog: [], liveT: 0, deadT: 0, goalT: 0, long25: 0, long25Goals: 0, headerGoals: 0,
+    shape: emptyShape(), possession: [0, 0], shotsSide: [0, 0],
   };
+  // In `side`'s frame, is the ball in the other side's own 60% of the pitch (the PPDA pressing zone)?
+  const inPressZone = (side: Side, x: number) => (x * m.attackDir(side)) / HALF_L > -0.2;
   const wasRunning = new Set<number>();
   const lastOverlap: [number, number] = [-1, -1];
   // Shot being tracked until something resolves it.
@@ -116,7 +268,10 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
     if (side === pending.side) {
       r.passCmp[pending.side]++;
       bk[1]++;
-    } else if (side !== -1) lk[1]++;
+    } else if (side !== -1) {
+      lk[1]++;
+      if (inPressZone(side, m.ball.pos.x)) r.shape.pressActions[side]++;
+    }
     pending = null;
   };
   // Carrier stretches (merging brief control flickers by the same player).
@@ -161,6 +316,12 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
           if (PASS_KINDS.has(e.kind) && m.passTarget >= 0) {
             r.passAtt[k.side]++;
             pending = { side: k.side, kicker: k.idx, kind: e.kind };
+            const dSide = (1 - k.side) as Side;
+            if (m.phase === 'play' && inPressZone(dSide, e.x)) r.shape.pressPasses[dSide]++;
+            if (m.phase === 'play' && e.kind !== 'throw' && e.kind !== 'keeper') {
+              r.shape.passes[k.side]++;
+              if ((m.players[m.passTarget].pos.x - e.x) * ad >= 5) r.shape.fwdPasses[k.side]++;
+            }
           }
           if (e.kind === 'lob' && Math.abs(e.z) > HALF_W * 0.42 && e.x * ad > HALF_L * 0.45) r.crosses++;
           break;
@@ -194,6 +355,7 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
           }
           break;
         case 'tackle':
+          if (inPressZone(m.players[e.by].side, b.pos.x)) r.shape.pressActions[m.players[e.by].side]++;
           if (e.slide && !e.won) {
             r.slides++;
             r.tackleAttempts++;
@@ -231,6 +393,7 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
           break;
       }
     }
+    if (steps % 6 === 0) sampleShape(m, r.shape);
     const shotsNow = m.stats.shots[0] + m.stats.shots[1];
     if (shotsNow > shotsSeen) {
       const k = m.players[b.lastTouch];
@@ -325,6 +488,8 @@ export function runMatch(cfg: Partial<MatchConfig> & { seed: number }, homeIdx =
   r.fouls = m.stats.fouls[0] + m.stats.fouls[1];
   r.saves = m.stats.saves[0] + m.stats.saves[1];
   r.minStamina = Math.min(...m.players.filter((p) => !p.isKeeper && !p.sentOff).map((p) => p.stamina));
+  r.possession = [m.stats.possession[0], m.stats.possession[1]];
+  r.shotsSide = [m.stats.shots[0], m.stats.shots[1]];
   return r;
 }
 

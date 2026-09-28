@@ -7,7 +7,7 @@ import { safeName, safeShort } from '../core/names';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, teamRating } from '../sim/types';
 import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDef } from '../sim/types';
-import { KIT_COLORS, dedupeSurnames, makePlayer, makeTeam, randomClubSeed, resolveKitClash } from './data';
+import { KIT_COLORS, dedupeSurnames, makePlayer, makeTeam, randomClubSeed, resolveKitClash, styleFor } from './data';
 // Runtime import cycle (market.ts imports this file): only ever used inside functions, never at module top level.
 import {
   MORALE_DIP, NEWS_MAX, WAGE_DIP, ageSquad, applyWageDrain, canBid, clearMarket, defaultMarket, marketTick, placeBid, quickSaleValue,
@@ -701,7 +701,8 @@ export function nextMatch(state: CareerState): NextMatch | null {
 }
 
 function rivalBase(r: LeagueClub): TeamDef {
-  return makeTeam({ name: r.name, short: r.short, kit: r.kit, formation: r.formation, level: r.level }, r.id);
+  // Each league rival plays its own way (styleFor is deterministic from the name, so a club keeps its style).
+  return makeTeam({ name: r.name, short: r.short, kit: r.kit, formation: r.formation, level: r.level, style: styleFor(r.name) }, r.id);
 }
 
 /** Everyone a rival has right now: its generated squad minus the players it sold, plus the ones it signed. */

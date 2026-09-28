@@ -3,6 +3,9 @@ import { normalizeRun, type RunState } from '../meta/run';
 import { normalizeSeason, type SeasonState } from '../meta/season';
 import type { Quality, TimeOfDay } from '../render/world';
 import type { AssistLevel, MatchMode } from '../sim/types';
+import { normalizeDda, type DdaState } from './dda';
+import { normalizeKeyMap, normalizePadMap, type KeyMap, type PadMap } from './input';
+import { normalizeOnboarding, type OnboardingState } from './onboarding';
 import { Rng, hashString } from './rng';
 
 export type { AssistLevel };
@@ -17,10 +20,8 @@ export interface Settings {
   autoSwitch: boolean;
   timeOfDay: TimeOfDay | 'random';
   weather: 'clear' | 'rain' | 'snow' | 'random';
-  /** Broadcast commentary ticker in matches (default on). */
+  /** Broadcast commentary ticker in matches (default on). Text only: the spoken voice was removed (old saves' commentaryVoice is dropped on load). */
   commentary: boolean;
-  /** Spoken commentary through the browser's speech synthesis (default off). */
-  commentaryVoice: boolean;
   /** Match camera distance (default 'normal'; older saves lack it). */
   camZoom?: CamZoom;
   /** Chosen unlockable ball look (progression); undefined = classic. */
@@ -38,7 +39,16 @@ export interface Settings {
   quickPass?: boolean;
   /** The mode Quick Match last kicked off in (default classic; older saves lack it). */
   lastMode?: MatchMode;
+  /** Keyboard and gamepad bindings (Settings > Controls > KEYS; core/input.ts reads them). Always whole once loaded. */
+  keys?: KeyMap;
+  pad?: PadMap;
+  /** Touch thumbstick: 'floating' (appears under the thumb, the default) or 'fixed' (anchored bottom-left, base always drawn). */
+  stick?: StickMode;
+  /** Colour-blind aid: shape cues on rings, markers and the minimap as well as colour (SessionOptions.colorblind). */
+  colorblind?: boolean;
 }
+
+export type StickMode = 'floating' | 'fixed';
 
 export type CamZoom = 'wide' | 'normal' | 'close';
 
@@ -89,6 +99,13 @@ export function normalizeSettings(raw: unknown): Settings {
   const s: Settings = { ...base, ...(raw && typeof raw === 'object' ? (raw as Partial<Settings>) : {}) };
   if (!CAM_ZOOMS.includes(s.camZoom as CamZoom)) s.camZoom = 'normal';
   if (s.lastMode !== 'classic' && s.lastMode !== 'blitz') s.lastMode = 'classic';
+  // The spoken commentary is gone: an old save's switch for it is dropped.
+  delete (s as unknown as { commentaryVoice?: unknown }).commentaryVoice;
+  if (typeof s.commentary !== 'boolean') s.commentary = true;
+  s.keys = normalizeKeyMap(s.keys);
+  s.pad = normalizePadMap(s.pad);
+  if (s.stick !== 'floating' && s.stick !== 'fixed') s.stick = 'floating';
+  if (typeof s.colorblind !== 'boolean') s.colorblind = false;
   if (s.ballSkin !== undefined && !(BALL_SKIN_IDS as readonly string[]).includes(s.ballSkin)) s.ballSkin = undefined;
   if (s.celebration !== undefined && !(CELEBRATION_IDS as readonly string[]).includes(s.celebration)) s.celebration = undefined;
   if (!ASSIST_LEVELS.includes(s.groundAssist as AssistLevel)) s.groundAssist = CONTROL_DEFAULTS.groundAssist;
@@ -129,6 +146,10 @@ export interface SaveData {
    * it) but always an object once loaded, so screens can read `save.moments![id]` and write through recordMoment.
    */
   moments?: { [id: string]: number };
+  /** LEARN THE BASICS progress and the first-goal unlock (core/onboarding.ts). Always whole once loaded. */
+  onboarding?: OnboardingState;
+  /** The hidden ease's loss streaks (core/dda.ts). Always whole once loaded. */
+  dda?: DdaState;
   /** Club Run, mastery badges and the season track (src/meta/run.ts, mastery.ts, season.ts). */
   run?: RunState;
   mastery?: MasteryState;
@@ -167,7 +188,8 @@ export function defaultSave(): SaveData {
     opponentIdx: 6,
     settings: {
       sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, timeOfDay: 'random', weather: 'random',
-      commentary: true, commentaryVoice: false, camZoom: 'normal', ...CONTROL_DEFAULTS,
+      commentary: true, camZoom: 'normal', ...CONTROL_DEFAULTS,
+      keys: normalizeKeyMap(undefined), pad: normalizePadMap(undefined), stick: 'floating', colorblind: false,
     },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
@@ -175,6 +197,12 @@ export function defaultSave(): SaveData {
     seenTutorial: false,
     progress: defaultProgress(),
     moments: {},
+    onboarding: normalizeOnboarding(undefined, null),
+    dda: normalizeDda(undefined),
+    // Whole from the start (a brand-new player's first session counts toward badges and the season too).
+    run: normalizeRun(undefined),
+    mastery: normalizeMastery(undefined),
+    season: normalizeSeason(undefined),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -223,6 +251,9 @@ function mergeSave(d: Partial<SaveData>): SaveData {
     progress: normalizeProgress(d.progress),
     // Saves from before Football Moments (or a damaged blob) have no stars yet.
     moments: normalizeMoments(d.moments),
+    // Saves from before the basics campaign: a player with matches behind him has everything open.
+    onboarding: normalizeOnboarding(d.onboarding, d.record),
+    dda: normalizeDda(d.dda),
     run: normalizeRun(d.run),
     mastery: normalizeMastery(d.mastery),
     season: normalizeSeason(d.season),

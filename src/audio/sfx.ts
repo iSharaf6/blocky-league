@@ -1,9 +1,26 @@
 import { rainSamples } from './ambience';
 
 /**
- * Every sound is synthesised with WebAudio — no asset downloads, no licences.
+ * Every sound is synthesised with WebAudio — no asset downloads, no licences, no voices.
  * Crowd bed + reactions, whistle, kicks, woodwork, net, UI blips and a chiptune menu loop.
+ *
+ * Impacts are layered (the owner's brief): a shot is the boot's transient, a low body, a short room tail and,
+ * on target, a crowd "oooh"; a header is a dry, higher "thock"; a won tackle or a foul a low thump and a short
+ * grunt (the referee's whistle comes from the sim); the woodwork a metallic clang; a goal the net, then the
+ * crowd swelling, then the horn; a save a glove slap and a gasp. The crowd is two panned beds, one behind each
+ * goal, that swell and get restless as the ball nears that end (setEnds), over a wash that follows the match's
+ * excitement; the ground's size and crowd set how loud it all is and how often they sing (setStadium).
+ *
+ * CPU: the beds, the reverb and the buses are made once; per-frame calls only move AudioParams (and only when
+ * the value really changes); nodes are only made when a sound plays.
  */
+/** Room tail: a short, dark impulse (s) and how much of it each kind of hit sends. */
+const REVERB_S = 0.55;
+/** Crowd beds behind each goal: pan (left goal = -x on the broadcast shot) and loudness from calm to roaring. */
+const END_PAN = 0.72;
+const END_CALM = 0.012;
+const END_ROAR = 0.15;
+
 export class Sfx {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -13,6 +30,23 @@ export class Sfx {
   private noise!: AudioBuffer;
   private crowdGain!: GainNode;
   private crowdFilter!: BiquadFilterNode;
+  /** Master output (after the compressor): what a clip's audio tap listens to. */
+  private out!: DynamicsCompressorNode;
+  /** The room tail's input (anything connected here gets the short reverb). */
+  private reverbIn!: GainNode;
+  /** Crowd beds behind the two goals (index 0: the -x end, 1: the +x end). */
+  private ends: { gain: GainNode; filter: BiquadFilterNode; lfo: OscillatorNode; lfoGain: GainNode; heat: number }[] = [];
+  /** How big and full the ground is: 0 (a muddy park) .. 1 (a sold-out Mega Dome). */
+  private stadiumK = 1;
+  private stadiumLevel = 5;
+  private fill = 0.9;
+  /** Seconds to the crowd's next chant, and the audio time until which a goal roar owns the stands. */
+  private chantT = 8;
+  private roarUntil = 0;
+  private lastOoh = -9;
+  /** A clip's audio tap (MediaStreamAudioDestinationNode), made on first use. */
+  private tap: MediaStreamAudioDestinationNode | null = null;
+  private tapping = false;
   private excitement = 0.2;
   private musicTimer: number | null = null;
   private musicStep = 0;
@@ -46,6 +80,7 @@ export class Sfx {
       comp.threshold.value = -14;
       comp.ratio.value = 4;
       this.master.connect(comp).connect(c.destination);
+      this.out = comp;
       this.sfxBus = c.createGain();
       this.crowdBus = c.createGain();
       this.musicBus = c.createGain();
@@ -66,6 +101,9 @@ export class Sfx {
         d[i] = (b0 + b1 + b2 + w * 0.12) * 0.9;
       }
       this.startCrowd();
+      this.startReverb();
+      this.startEnds();
+      this.applyStadium();
       this.setRain(this.rainActive);
       this.mixAmbience();
     }
@@ -102,6 +140,214 @@ export class Sfx {
       src.start(0, Math.random() * 2);
     }
     this.crowdFilter.connect(rumbleCut).connect(this.crowdGain).connect(this.crowdBus);
+  }
+
+  /**
+   * The room tail: one ConvolverNode on a synthesised impulse (REVERB_S of dark, decaying stereo noise with a
+   * 12 ms pre-delay), fed through reverbIn, into the effects bus. Shared by every sound that wants some.
+   */
+  private startReverb(): void {
+    const c = this.ctx!;
+    const len = Math.round(c.sampleRate * REVERB_S);
+    const ir = c.createBuffer(2, len, c.sampleRate);
+    const pre = Math.round(c.sampleRate * 0.012);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = ir.getChannelData(ch);
+      let lp = 0;
+      for (let i = pre; i < len; i++) {
+        const t = (i - pre) / c.sampleRate;
+        // One-pole low-pass on the noise: a dull stadium concourse, not a bright hall.
+        lp += 0.35 * ((Math.random() * 2 - 1) - lp);
+        d[i] = lp * Math.exp(-t / 0.11) * 0.9;
+      }
+    }
+    const conv = c.createConvolver();
+    conv.normalize = true;
+    conv.buffer = ir;
+    this.reverbIn = c.createGain();
+    this.reverbIn.gain.value = 0.55;
+    this.reverbIn.connect(conv).connect(this.sfxBus);
+  }
+
+  /** Send `node`'s output into the room tail at `amount` (a per-sound gain: made when the sound plays). */
+  private wet(node: AudioNode, amount: number): void {
+    if (!this.reverbIn || amount <= 0) return;
+    const g = this.ctx!.createGain();
+    g.gain.value = amount;
+    node.connect(g).connect(this.reverbIn);
+  }
+
+  /**
+   * The crowd behind each goal: a looped bed each (the shared noise at its own rate), band-passed, panned to its
+   * end of the broadcast shot and breathing on a slow LFO. setEnds swells one as the ball nears that goal and
+   * quickens its LFO (restless), so the noise moves round the ground with the play.
+   */
+  private startEnds(): void {
+    const c = this.ctx!;
+    for (let k = 0; k < 2; k++) {
+      const src = c.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      src.playbackRate.value = k ? 1.02 : 0.96;
+      const filter = c.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 850;
+      filter.Q.value = 0.9;
+      const gain = c.createGain();
+      gain.gain.value = 0;
+      const pan = c.createStereoPanner();
+      pan.pan.value = k ? END_PAN : -END_PAN;
+      const lfo = c.createOscillator();
+      lfo.frequency.value = k ? 0.23 : 0.17;
+      const lfoGain = c.createGain();
+      lfoGain.gain.value = 0;
+      lfo.connect(lfoGain).connect(gain.gain);
+      lfo.start();
+      src.connect(filter).connect(gain).connect(pan).connect(this.crowdBus);
+      src.start(0, Math.random() * 2 + k);
+      this.ends.push({ gain, filter, lfo, lfoGain, heat: -1 });
+    }
+  }
+
+  /**
+   * How hot each end is (0 a murmur .. 1 a roar): `left` the goal at -x, `right` the one at +x. Cheap to call
+   * every frame: the params only move when a value changes by a step.
+   */
+  setEnds(left: number, right: number): void {
+    if (!this.ctx || this.ends.length < 2) return;
+    const t = this.ctx.currentTime;
+    const on = this.ambienceActive && this.crowdOn;
+    for (let k = 0; k < 2; k++) {
+      const e = this.ends[k];
+      const h = on ? Math.max(0, Math.min(1, k ? right : left)) : -0.5;
+      if (Math.abs(h - e.heat) < 0.02) continue;
+      e.heat = h;
+      const heat = Math.max(0, h);
+      const level = on ? (END_CALM + heat * heat * (END_ROAR - END_CALM)) * this.stadiumK : 0;
+      e.gain.gain.setTargetAtTime(level, t, heat > 0.5 ? 0.25 : 0.6);
+      // Restless: a quicker, deeper breath, and brighter as they get up off their seats.
+      e.lfoGain.gain.setTargetAtTime(level * (0.18 + heat * 0.45), t, 0.4);
+      e.lfo.frequency.setTargetAtTime(0.17 + k * 0.06 + heat * 1.6, t, 0.5);
+      e.filter.frequency.setTargetAtTime(820 + heat * 700, t, 0.5);
+    }
+  }
+
+  /**
+   * The ground: `level` 0 (a muddy park) .. 5 (the Mega Dome) and `fill` 0..1 (how full it is). A bigger, fuller
+   * ground is louder all round and sings more often, with more voices.
+   */
+  setStadium(level: number, fill: number): void {
+    this.stadiumLevel = Math.max(0, Math.min(5, level));
+    this.fill = Math.max(0, Math.min(1, fill));
+    this.stadiumK = (0.4 + 0.12 * this.stadiumLevel) * (0.55 + 0.45 * this.fill);
+    this.chantT = this.chantGap() * (0.3 + Math.random() * 0.4);
+    this.applyStadium();
+  }
+
+  private applyStadium(): void {
+    if (!this.ctx || !this.crowdBus) return;
+    this.crowdBus.gain.setTargetAtTime(Math.min(1.05, 0.5 + this.stadiumK * 0.55), this.ctx.currentTime, 0.3);
+    for (const e of this.ends) e.heat = -1;
+  }
+
+  /** Seconds between chants for this ground (Infinity: a park with hardly anyone there never sings). */
+  private chantGap(): number {
+    const people = this.fill * (0.25 + this.stadiumLevel * 0.15);
+    if (people < 0.12) return Infinity;
+    return (40 - this.stadiumLevel * 5.5) / (0.6 + this.fill * 0.6);
+  }
+
+  /** Once a frame in a match: the crowd's chants (made only when one starts; never over a goal roar). */
+  tick(dt: number): void {
+    if (!this.ready || !this.crowdOn || !this.ambienceActive) return;
+    this.chantT -= dt;
+    if (this.chantT > 0) return;
+    const gap = this.chantGap();
+    this.chantT = Number.isFinite(gap) ? gap * (0.7 + Math.random() * 0.6) : 30;
+    if (!Number.isFinite(gap) || this.ctx!.currentTime < this.roarUntil) return;
+    this.chant();
+  }
+
+  /**
+   * A chant: the classic clap rhythm (clap clap, clap-clap-clap) twice, and from a mid-sized ground up a sung
+   * "oh-oh" line on top (more voices, a drum, the bigger the ground).
+   */
+  chant(): void {
+    if (!this.ready || !this.crowdOn) return;
+    const c = this.ctx!;
+    const t = c.currentTime + 0.05;
+    const lv = this.stadiumLevel;
+    const k = 0.6 + 0.4 * this.fill;
+    const beat = 0.34;
+    const claps = [0, 1, 2.5, 3, 3.5];
+    for (let r = 0; r < 2; r++) {
+      for (const b of claps) {
+        const ct = t + (r * 5 + b) * beat;
+        this.noiseBurst(ct, 0.06, 'bandpass', 1500 + Math.random() * 300, 1.1, 0.11 * k, this.crowdBus, 0.004);
+        if (lv >= 4) this.tone(ct, 'sine', 95, 55, 0.12, 0.12 * k, this.crowdBus);
+      }
+    }
+    if (lv < 2) return;
+    // Sung: two notes, a crowd of detuned voices through vowel formants ("oh"), louder the bigger the ground.
+    const voices = lv >= 5 ? 5 : lv >= 3 ? 4 : 3;
+    const notes: [number, number][] = [[0, 220], [2, 262], [5, 220], [7, 196]];
+    const vf = c.createBiquadFilter();
+    vf.type = 'bandpass';
+    vf.frequency.value = 620;
+    vf.Q.value = 1.4;
+    const vf2 = c.createBiquadFilter();
+    vf2.type = 'bandpass';
+    vf2.frequency.value = 1050;
+    vf2.Q.value = 2;
+    const vg = c.createGain();
+    vg.gain.value = 0.05 * k * (0.6 + lv * 0.1);
+    vf.connect(vg);
+    vf2.connect(vg);
+    vg.connect(this.crowdBus);
+    for (const [b, f] of notes) {
+      const st = t + b * beat;
+      for (let v = 0; v < voices; v++) {
+        const o = c.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.value = f * (1 + (Math.random() - 0.5) * 0.03) * (v % 2 ? 0.5 : 1);
+        const g = c.createGain();
+        this.env(g, st, 0.08, 0.5 / voices, beat * 1.7);
+        o.connect(g);
+        g.connect(vf);
+        g.connect(vf2);
+        o.start(st);
+        o.stop(st + beat * 2);
+      }
+    }
+  }
+
+  /**
+   * Clip audio: a MediaStream of everything the player hears (connected only while a clip records), or null
+   * where the browser can't.
+   */
+  captureStream(): MediaStream | null {
+    if (!this.ctx || !this.out) return null;
+    try {
+      this.tap ??= this.ctx.createMediaStreamDestination();
+      if (!this.tapping) {
+        this.out.connect(this.tap);
+        this.tapping = true;
+      }
+      return this.tap.stream;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The clip has finished: stop feeding it. */
+  endCapture(): void {
+    if (!this.tap || !this.tapping) return;
+    try {
+      this.out.disconnect(this.tap);
+    } catch {
+      // (Already disconnected.)
+    }
+    this.tapping = false;
   }
 
   private rainGain: GainNode | null = null;
@@ -154,6 +400,14 @@ export class Sfx {
     this.crowdGain.gain.setTargetAtTime(target, t, target ? 0.6 : 0.12);
     const rain = this.ambienceActive && this.rainActive && this.sfxOn ? 0.16 : 0;
     this.rainGain?.gain.setTargetAtTime(rain, t, rain ? 0.8 : 0.12);
+    if (!(this.ambienceActive && this.crowdOn)) {
+      // The end beds go quiet with the rest of the ambience (setEnds brings them back).
+      for (const e of this.ends) {
+        e.heat = -1;
+        e.gain.gain.setTargetAtTime(0, t, 0.12);
+        e.lfoGain.gain.setTargetAtTime(0, t, 0.12);
+      }
+    }
   }
 
   /** 0 calm .. 1 edge-of-seat. */
@@ -200,17 +454,105 @@ export class Sfx {
     return o;
   }
 
+  /** A pass, a clearance, a throw's first touch: the boot on the ball (a header gets its own thock). */
+  /** tone(), returning its gain node (to send it on to the room tail). */
+  private toneG(t: number, type: OscillatorType, f0: number, f1: number, dur: number, peak: number, bus = this.sfxBus, attack = 0.004): GainNode {
+    const c = this.ctx!;
+    const o = c.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+    const g = c.createGain();
+    this.env(g, t, attack, peak, dur);
+    o.connect(g).connect(bus);
+    o.start(t);
+    o.stop(t + attack + dur + 0.05);
+    return g;
+  }
+
   kick(power: number, header = false): void {
     if (!this.ready || !this.sfxOn) return;
-    const t = this.ctx!.currentTime;
-    const p = Math.max(0.15, Math.min(1, power));
     if (header) {
-      this.tone(t, 'sine', 260, 120, 0.08, 0.25 + p * 0.2);
-      this.noiseBurst(t, 0.03, 'bandpass', 1400, 1, 0.12);
+      this.header(power);
       return;
     }
+    const t = this.ctx!.currentTime;
+    const p = Math.max(0.15, Math.min(1, power));
     this.tone(t, 'sine', 170 + p * 30, 48, 0.1 + p * 0.05, 0.35 + p * 0.45);
     this.noiseBurst(t, 0.025 + p * 0.02, 'highpass', 1800, 0.7, 0.18 + p * 0.25);
+  }
+
+  /**
+   * A shot: the boot's crack (a short bright transient), a low body under it, a hard one's whoosh of air, a short
+   * room tail on it all, and, if it's on target, the crowd's "oooh" a beat later.
+   */
+  shot(power: number, onTarget = false): void {
+    if (!this.ready) return;
+    const c = this.ctx!;
+    const t = c.currentTime;
+    const p = Math.max(0.2, Math.min(1, power));
+    if (this.sfxOn) {
+      const crack = this.noiseBurst(t, 0.014 + p * 0.01, 'highpass', 2600, 0.7, 0.3 + p * 0.3, this.sfxBus, 0.002);
+      const body = this.toneG(t, 'sine', 140 + p * 50, 50, 0.11 + p * 0.07, 0.5 + p * 0.4);
+      this.tone(t, 'triangle', 460, 190, 0.04, 0.14 + p * 0.06);
+      this.wet(crack.g, 0.5);
+      this.wet(body, 0.35);
+      if (p > 0.55) {
+        const air = this.noiseBurst(t + 0.02, 0.2, 'bandpass', 1900, 1.3, 0.06 + p * 0.07, this.sfxBus, 0.03);
+        air.f.frequency.exponentialRampToValueAtTime(650, t + 0.24);
+      }
+    }
+    if (onTarget) this.oohAt(t + 0.26, 0.55);
+  }
+
+  /** A header: a distinct dry "thock" (higher and hollower than a strike, no low body, no room tail). */
+  header(power: number): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    const p = Math.max(0.2, Math.min(1, power));
+    this.tone(t, 'sine', 640, 360, 0.055, 0.3 + p * 0.18, this.sfxBus, 0.002);
+    this.tone(t, 'triangle', 1280, 880, 0.028, 0.1 + p * 0.05, this.sfxBus, 0.001);
+    this.noiseBurst(t, 0.018, 'bandpass', 2300, 2.2, 0.16 + p * 0.08, this.sfxBus, 0.001);
+  }
+
+  /** A short effortful grunt (a man going into or taking a challenge): no words, a voiced "hff". */
+  grunt(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const c = this.ctx!;
+    const t = c.currentTime + 0.01;
+    const f0 = 135 * (0.85 + Math.random() * 0.3);
+    const o = c.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f0 * 0.72, t + 0.14);
+    const f1 = c.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.frequency.value = 650;
+    f1.Q.value = 3;
+    const f2 = c.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.frequency.value = 1150;
+    f2.Q.value = 4;
+    const g = c.createGain();
+    this.env(g, t, 0.012, 0.16, 0.13);
+    o.connect(f1).connect(g);
+    o.connect(f2).connect(g);
+    g.connect(this.sfxBus);
+    o.start(t);
+    o.stop(t + 0.2);
+    this.noiseBurst(t, 0.09, 'bandpass', 900, 1.2, 0.07, this.sfxBus, 0.01);
+  }
+
+  /** A crunching challenge that won it (or a foul): the low thump, a heavier one for a slide, and a grunt. */
+  tackleHit(heavy: boolean): void {
+    if (!this.ready || !this.sfxOn) return;
+    this.thump();
+    if (heavy) {
+      const t = this.ctx!.currentTime;
+      const g = this.toneG(t, 'sine', 90, 34, 0.22, 0.45);
+      this.wet(g, 0.2);
+    }
+    this.grunt();
   }
 
   bounce(speed: number): void {
@@ -257,14 +599,23 @@ export class Sfx {
     }
   }
 
+  /**
+   * Off the woodwork: a metallic clang (a struck tube's inharmonic partials, the high ones dying first), the
+   * strike's crack and a dull thunk of the frame, with a room tail.
+   */
   post(speed: number): void {
     if (!this.ready || !this.sfxOn) return;
     const t = this.ctx!.currentTime;
-    const v = Math.min(1, speed / 20);
-    this.tone(t, 'sine', 523, 520, 1.1, 0.22 * v + 0.05);
-    this.tone(t, 'sine', 1319, 1310, 0.7, 0.14 * v + 0.03);
-    this.tone(t, 'triangle', 2217, 2200, 0.45, 0.09 * v + 0.02);
-    this.noiseBurst(t, 0.04, 'highpass', 3000, 0.7, 0.2 * v);
+    const v = Math.min(1, speed / 22);
+    const f0 = 360 + Math.random() * 50;
+    const parts: [number, number, number][] = [[1, 1.0, 0.24], [2.76, 0.62, 0.16], [5.4, 0.34, 0.1], [8.93, 0.2, 0.06]];
+    for (const [r, dur, pk] of parts) {
+      const g = this.toneG(t, r > 5 ? 'triangle' : 'sine', f0 * r, f0 * r * 0.995, dur * (0.7 + v * 0.5), pk * (0.35 + v * 0.75), this.sfxBus, 0.001);
+      this.wet(g, 0.45);
+    }
+    const crack = this.noiseBurst(t, 0.03, 'highpass', 3400, 0.7, 0.22 + 0.2 * v, this.sfxBus, 0.001);
+    this.wet(crack.g, 0.3);
+    this.tone(t, 'sine', 130, 70, 0.1, 0.25 * v + 0.08);
   }
 
   net(speed: number): void {
@@ -276,11 +627,26 @@ export class Sfx {
 
   ooh(): void {
     if (!this.ready || !this.crowdOn) return;
-    const t = this.ctx!.currentTime;
+    this.oohAt(this.ctx!.currentTime, 1);
+  }
+
+  /** The crowd's "oooh" at audio time `t`, `k` loud (never two on top of each other). */
+  private oohAt(t: number, k: number): void {
+    if (!this.ready || !this.crowdOn || t - this.lastOoh < 0.9) return;
+    this.lastOoh = t;
     for (const [f0, f1, pk] of [[640, 380, 0.5], [1150, 820, 0.25]] as const) {
-      const n = this.noiseBurst(t, 1.2, 'bandpass', f0, 5, pk, this.crowdBus, 0.18);
+      const n = this.noiseBurst(t, 1.2, 'bandpass', f0, 5, pk * k, this.crowdBus, 0.18);
       n.f.frequency.exponentialRampToValueAtTime(f1, t + 1.3);
     }
+  }
+
+  /** The crowd drawing breath at a big save: a quick bright gasp falling away. */
+  gasp(): void {
+    if (!this.ready || !this.crowdOn) return;
+    const t = this.ctx!.currentTime + 0.05;
+    const n = this.noiseBurst(t, 0.55, 'bandpass', 1650, 1.6, 0.38, this.crowdBus, 0.04);
+    n.f.frequency.exponentialRampToValueAtTime(820, t + 0.6);
+    this.noiseBurst(t + 0.05, 0.7, 'bandpass', 700, 1.2, 0.18, this.crowdBus, 0.08);
   }
 
   cheer(level = 1): void {
@@ -290,23 +656,38 @@ export class Sfx {
     n.f.frequency.exponentialRampToValueAtTime(1500, t + 0.4);
   }
 
+  /**
+   * A goal, in three beats: the ball hitting the net (a fat thud in the rigging), the crowd swelling up out of
+   * it, then the stadium horn over the roar (and the claps after).
+   */
   goal(): void {
     if (!this.ready) return;
     const c = this.ctx!;
     const t = c.currentTime;
+    this.roarUntil = t + 6;
+    if (this.sfxOn) {
+      // 1. The net: a low thud and the rigging's rustle.
+      const thud = this.toneG(t, 'sine', 95, 42, 0.26, 0.55, this.sfxBus, 0.004);
+      this.wet(thud, 0.3);
+      const rig = this.noiseBurst(t, 0.42, 'bandpass', 2200, 0.7, 0.26, this.sfxBus, 0.006);
+      rig.f.frequency.exponentialRampToValueAtTime(800, t + 0.42);
+    }
     if (this.crowdOn) {
-      const a = this.noiseBurst(t, 4.2, 'bandpass', 500, 0.6, 0.85, this.crowdBus, 0.35);
-      a.f.frequency.exponentialRampToValueAtTime(1300, t + 0.8);
-      a.f.frequency.exponentialRampToValueAtTime(800, t + 4);
-      this.noiseBurst(t, 3.4, 'lowpass', 900, 0.5, 0.5, this.crowdBus, 0.3);
+      // 2. The crowd swelling up (from a beat after the net).
+      const s0 = t + 0.1;
+      const a = this.noiseBurst(s0, 4.2, 'bandpass', 480, 0.6, 0.85, this.crowdBus, 0.45);
+      a.f.frequency.exponentialRampToValueAtTime(1300, s0 + 0.9);
+      a.f.frequency.exponentialRampToValueAtTime(800, s0 + 4);
+      this.noiseBurst(s0, 3.4, 'lowpass', 900, 0.5, 0.5, this.crowdBus, 0.4);
       // Rhythmic claps a few seconds later.
       for (let i = 0; i < 9; i++) {
-        const ct = t + 2.2 + i * 0.36 + (i % 3 === 2 ? 0.12 : 0);
+        const ct = t + 2.4 + i * 0.36 + (i % 3 === 2 ? 0.12 : 0);
         this.noiseBurst(ct, 0.07, 'bandpass', 1700, 1.2, 0.22, this.crowdBus);
       }
     }
     if (this.sfxOn) {
-      // Stadium air horn.
+      // 3. The stadium air horn, once the roar is up.
+      const h0 = t + 0.55;
       for (const [f, pk] of [[233, 0.12], [466, 0.06], [349, 0.07]] as const) {
         const o = c.createOscillator();
         o.type = 'sawtooth';
@@ -315,13 +696,14 @@ export class Sfx {
         lp.type = 'lowpass';
         lp.frequency.value = 1600;
         const g = c.createGain();
-        g.gain.setValueAtTime(0.0001, t + 0.15);
-        g.gain.exponentialRampToValueAtTime(pk, t + 0.22);
-        g.gain.setValueAtTime(pk, t + 1.2);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+        g.gain.setValueAtTime(0.0001, h0);
+        g.gain.exponentialRampToValueAtTime(pk, h0 + 0.07);
+        g.gain.setValueAtTime(pk, h0 + 1.05);
+        g.gain.exponentialRampToValueAtTime(0.0001, h0 + 1.35);
         o.connect(lp).connect(g).connect(this.sfxBus);
-        o.start(t + 0.15);
-        o.stop(t + 1.6);
+        this.wet(g, 0.25);
+        o.start(h0);
+        o.stop(h0 + 1.45);
       }
     }
   }
@@ -339,11 +721,17 @@ export class Sfx {
     this.tone(t + 0.08, 'square', 1319, 1319, 0.22, 0.07);
   }
 
-  save(): void {
-    if (!this.ready || !this.sfxOn) return;
-    const t = this.ctx!.currentTime;
-    this.tone(t, 'sine', 140, 70, 0.12, 0.35);
-    this.noiseBurst(t, 0.06, 'bandpass', 900, 1, 0.2);
+  /** Gloves on the ball: a bright slap and a thump (a catch muffles it). A big save: and the crowd's gasp. */
+  save(caught = false, big = false): void {
+    if (this.ready && this.sfxOn) {
+      const t = this.ctx!.currentTime;
+      const slap = this.noiseBurst(t, 0.035, 'highpass', 2100, 0.8, caught ? 0.2 : 0.32, this.sfxBus, 0.001);
+      this.wet(slap.g, 0.3);
+      this.tone(t, 'sine', 170, 75, 0.1, 0.38);
+      if (caught) this.noiseBurst(t + 0.02, 0.08, 'lowpass', 600, 0.6, 0.22, this.sfxBus, 0.004);
+      else this.noiseBurst(t, 0.06, 'bandpass', 900, 1, 0.2);
+    }
+    if (big) this.gasp();
   }
 
   /** "SAVE!": a bright two-note flash on top of the glove thump (a real stop, not a routine catch). */
@@ -370,7 +758,7 @@ export class Sfx {
   thump(): void {
     if (!this.ready || !this.sfxOn) return;
     const t = this.ctx!.currentTime;
-    this.tone(t, 'sine', 150, 40, 0.16, 0.6);
+    this.wet(this.toneG(t, 'sine', 150, 40, 0.16, 0.6), 0.15);
     this.tone(t, 'triangle', 620, 180, 0.05, 0.18);
     this.noiseBurst(t, 0.05, 'highpass', 1500, 0.7, 0.3);
     this.noiseBurst(t + 0.02, 0.14, 'lowpass', 500, 0.5, 0.25);
@@ -391,6 +779,14 @@ export class Sfx {
     const t = this.ctx!.currentTime;
     this.tone(t, 'sine', 120, 45, 0.14, 0.4);
     this.noiseBurst(t + 0.01, 0.12, 'lowpass', 420, 0.6, 0.22);
+  }
+
+  /** The ball cannoned off a body (a block): a dull thud, heavier for a shot. */
+  block(shot = false): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    this.tone(t, 'sine', 150, 62, 0.1, shot ? 0.5 : 0.34);
+    this.noiseBurst(t, 0.07, 'lowpass', 520, 0.6, shot ? 0.26 : 0.16, this.sfxBus, 0.003);
   }
 
   /** Missed him: a soft scuff of boot on grass. */

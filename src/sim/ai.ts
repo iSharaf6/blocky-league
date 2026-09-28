@@ -1,27 +1,37 @@
 import { clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
 import { headerAtGoal, throughLead } from './actions';
-import { ACCEL, BOX_DEPTH, BOX_W, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
+import { ACCEL, BOX_DEPTH, BOX_W, DDA_PRESS, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
 import { readsHuman, takeOnVsHuman, vsHuman } from './dribble';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import { FIRST_MATCH_PRESS, type Match } from './match';
 import type { Player } from './player';
-import type { Side } from './types';
+import type { Side, TeamStyle } from './types';
 
 /**
  * Team brain. Roles are re-assigned ~8x a second; each player then acts on its role every tick.
  *
- * Out of possession: one presser jockeys goal-side and only commits to a tackle now and then,
- * a second man covers behind him, defenders hold a line and mark goal-side in their zone.
- * In possession: two support options, runners in behind, full-back overlaps, width from the
- * wide men and box runs when the ball is out wide. The carrier weighs every option by a simple
- * expected-threat model (see `threat`) with difficulty-scaled noise.
+ * Round 13 (the owner: "everybody just chasing the ball ... back and forth like children in primary"): real shape.
+ * Out of possession at most two men engage the ball: the presser jockeys goal-side and only commits now and then,
+ * the cover takes the carrier's most dangerous passing lane rather than a man (a high-pressing side sends a third,
+ * the trap, in the other half). Everyone else holds a zonal block built from his formation slot: a back line that
+ * steps up and drops as a unit, a midfield bank in front of it and the forwards ahead, the whole block sliding
+ * across with the ball (BLOCK_SLIDE of its z) and kept clear of the ball (ENGAGE_R) unless it's in our box.
+ * In possession: a support triangle around the carrier (a short option either side, one ahead), runners in
+ * behind timed on the last line, full-backs overlapping on their own flank, width from the wide men and box runs
+ * when the ball is out wide; nobody else crowds the carrier (ATTACK_SPACE). The carrier weighs every option by a
+ * simple expected-threat model (see `threat`) with difficulty-scaled noise. How high the block sits, how hard it
+ * presses and how the ball is moved on all come from the club's style (TeamDef.style, STYLES).
  */
 export interface TeamBrain {
   think: number;
   chaser: number;
   presser: number;
   cover: number;
+  /** A high-pressing side's third man in the other half: he cuts off the carrier's escape (-1: none). */
+  trap: number;
+  /** The presser holds a screen in front of the block instead of engaging (the carrier is beyond the style's press zone). */
+  screen: boolean;
   supporter: number;
   supportX: number;
   supportZ: number;
@@ -29,11 +39,20 @@ export interface TeamBrain {
   supporter2: number;
   support2X: number;
   support2Z: number;
+  /** The support triangle's man ahead of the carrier. */
+  supporter3: number;
+  support3X: number;
+  support3Z: number;
   marks: Map<number, number>; // our player idx -> opponent idx
   overlap: number;
   overlapT: number;
   /** Our back line in our own normalised frame (-1 = our goal line). */
   line: number;
+  /**
+   * 0 (our defending shape) .. 1 (our attacking shape), eased after a turnover (SHAPE_WIN / SHAPE_LOSE s) so the men
+   * who aren't engaging move into the new shape rather than all turning and sprinting the other way at once.
+   */
+  att: number;
   /** Box-attacking assignments while the ball is out wide: player idx -> world point. */
   boxZones: Map<number, { x: number; z: number }>;
   /** Set-piece positions, computed once per restart (`spFor`). */
@@ -52,15 +71,93 @@ export interface TeamBrain {
 
 export function makeBrain(): TeamBrain {
   return {
-    think: 0, chaser: -1, presser: -1, cover: -1,
+    think: 0, chaser: -1, presser: -1, cover: -1, trap: -1, screen: false,
     supporter: -1, supportX: 0, supportZ: 0, supportT: 0,
     supporter2: -1, support2X: 0, support2Z: 0,
-    marks: new Map(), overlap: -1, overlapT: 0, line: -0.5, boxZones: new Map(),
+    supporter3: -1, support3X: 0, support3Z: 0,
+    marks: new Map(), overlap: -1, overlapT: 0, line: -0.5, att: 0, boxZones: new Map(),
     spFor: null, spTaker: -1, spTargets: new Map(), spRunners: [], spZones: new Map(), spWall: [], spZonal: new Map(),
   };
 }
 
 const other = (s: Side): Side => (s === 0 ? 1 : 0);
+
+// ------------------------------------------------------------------ team styles
+
+/**
+ * How a style plays (TeamDef.style; undefined is 'balanced'). Lines are in the side's normalised frame (-1 its own
+ * goal line, +1 theirs; 0.1 is 4.8 m).
+ */
+export interface StyleParams {
+  /** Added to the back line's height, and the highest it may step up to. */
+  line: number;
+  lineMax: number;
+  /** The midfield bank sits this far (least, most) in front of the back line out of possession. */
+  midMin: number;
+  midMax: number;
+  /** The forwards sit this far in front of the midfield bank, at most (they may stay further up). */
+  fwdGap: number;
+  /** The block's width out of possession (times the slot's). */
+  defWidth: number;
+  /** The presser engages only while the carrier is behind this (our frame); further up he screens in front of the block. */
+  pressFrom: number;
+  /** His commit rate, and times this again with the carrier in his own half. */
+  pressRate: number;
+  pressHigh: number;
+  /** A third man (the trap) engages while the carrier is in his own half. */
+  trap: boolean;
+  /** In possession: weight on what a lost pass costs (risk aversion), and on its length past LONG_PASS_D. */
+  safe: number;
+  longCost: number;
+  /** Extra value on a ball forward (times its threat, per 15 m gained). */
+  forward: number;
+  /** The carrier's hold before he moves it on (times). */
+  hold: number;
+  /** A shot's score (times; patient sides wait for a better one). */
+  shoot: number;
+  /** A clearance / long ball out of our half is worth this much more. */
+  direct: number;
+  /** For this long (s) after a regain the side breaks: runs in behind at once, forward balls worth more still. */
+  counter: number;
+  /** Runs in behind (times the chance), and the in-possession width (times). */
+  runs: number;
+  width: number;
+}
+
+export const STYLES: Record<TeamStyle, StyleParams> = {
+  balanced: {
+    line: 0, lineMax: -0.12, midMin: 0.14, midMax: 0.34, fwdGap: 0.34, defWidth: 1, pressFrom: 1, pressRate: 1, pressHigh: 1, trap: false,
+    safe: 1, longCost: 0, forward: 0, hold: 1, shoot: 1, direct: 0, counter: 0, runs: 1, width: 1,
+  },
+  // Line 8 m higher, the forwards on their back line, a third man in their half, quick regains.
+  'high-press': {
+    line: 0.167, lineMax: 0.06, midMin: 0.14, midMax: 0.3, fwdGap: 0.36, defWidth: 0.95, pressFrom: 1, pressRate: 1.3, pressHigh: 2.6, trap: true,
+    safe: 1, longCost: 0, forward: 0.15, hold: 0.9, shoot: 1.05, direct: 0, counter: 1.5, runs: 1.15, width: 1,
+  },
+  // A low block: two banks of four or five inside our own third, one man up; cleared long, then a counter.
+  'park-bus': {
+    line: -0.1, lineMax: -0.56, midMin: 0.19, midMax: 0.21, fwdGap: 0.28, defWidth: 0.85, pressFrom: -0.04, pressRate: 1.3, pressHigh: 1, trap: false,
+    safe: 1.2, longCost: 0, forward: 0.2, hold: 0.9, shoot: 1, direct: 0.006, counter: 3.5, runs: 1.1, width: 0.9,
+  },
+  // Short passes, patient, no risky balls: more of the ball.
+  possession: {
+    line: 0.04, lineMax: -0.08, midMin: 0.14, midMax: 0.3, fwdGap: 0.32, defWidth: 1, pressFrom: 1, pressRate: 1.1, pressHigh: 1.1, trap: false,
+    safe: 2.1, longCost: 0.006, forward: -0.15, hold: 1.6, shoot: 0.6, direct: 0, counter: 0, runs: 0.6, width: 1.08,
+  },
+  // A mid-block that breaks at pace: forward balls and sprints the moment it's won.
+  counter: {
+    line: -0.06, lineMax: -0.36, midMin: 0.16, midMax: 0.24, fwdGap: 0.3, defWidth: 0.9, pressFrom: 0.05, pressRate: 1, pressHigh: 1, trap: false,
+    safe: 0.85, longCost: 0, forward: 0.45, hold: 0.7, shoot: 1.2, direct: 0.006, counter: 4, runs: 1.35, width: 0.95,
+  },
+};
+
+/** The style `side` plays. */
+export function styleOf(m: Match, side: Side): StyleParams {
+  return STYLES[m.teams[side].style ?? 'balanced'] ?? STYLES.balanced;
+}
+
+/** A pass longer than this (m) costs a possession side StyleParams.longCost a metre. */
+const LONG_PASS_D = 20;
 
 /**
  * How long (s) a player takes to read a ball and set off for it: AI_REACT for everyone, except that an AI opponent
@@ -215,29 +312,72 @@ export function shapeTarget(m: Match, p: Player, attacking: boolean, refX: numbe
   return { x: x * HALF_L * ad, z: z * HALF_W * ad };
 }
 
-/** Defensive block position: a back line, a midfield screen in front of it, forwards up. */
+/**
+ * Defensive block position: a back line (brain.line, the unit that steps up and drops), a midfield bank in front of
+ * it (the style's midMin..midMax ahead, half-way to the ball) and the forwards ahead of that, each from his slot, the
+ * whole block sliding across with the ball (BLOCK_SLIDE of its z) and squeezed to the style's defWidth.
+ */
 function defendHome(m: Match, p: Player, brain: TeamBrain, refX: number, refZ: number): { x: number; z: number } {
   const ad = m.attackDir(p.side);
   const slot = slotOf(m, p);
+  const st = styleOf(m, p.side);
   const bx = (refX * ad) / HALF_L;
   const bz = (refZ * ad) / HALF_W;
+  const w = st.defWidth;
   let x: number;
   let z: number;
+  // A screen between the back line and the ball, leaving room in front of it.
+  const screen = brain.line + clamp((bx - brain.line) * 0.5, st.midMin, st.midMax);
   if (p.role === 'DF') {
     x = brain.line + (Math.abs(slot.z) >= 0.5 ? 0.015 : 0);
-    z = slot.z * 0.64 + bz * 0.3;
+    z = slot.z * 0.64 * w + bz * BLOCK_SLIDE * 0.8;
   } else if (p.role === 'MF') {
-    // A screen between the back line and the ball, leaving room in front of it.
-    const screen = brain.line + Math.max(0.14, (bx - brain.line) * 0.5);
     x = Math.min(screen + (slot.x + 0.3) * 0.25, bx - 0.06);
-    z = slot.z * 0.68 + bz * 0.36;
+    z = slot.z * 0.68 * w + bz * BLOCK_SLIDE;
   } else {
     x = Math.max(-0.14, slot.x * 0.5 + bx * 0.45 + 0.04 + m.mentality[p.side] * 0.06);
-    z = slot.z * 0.75 + bz * 0.3;
+    // (No further ahead of the midfield bank than the style's fwdGap, unless the ball is up there with them.)
+    x = Math.min(x, Math.max(screen + st.fwdGap, bx - 0.1));
+    if (st.trap) x = Math.max(x, Math.min(bx - 0.12, 0.45));
+    z = slot.z * 0.75 * w + bz * BLOCK_SLIDE * 0.75;
   }
   x = clamp(x, -0.9, 0.6);
   z = clamp(z, -0.9, 0.9);
   return { x: x * HALF_L * ad, z: z * HALF_W * ad };
+}
+
+/** Out of possession the block slides across this share of the ball's z (the midfield bank; the back line 0.8 of it). */
+const BLOCK_SLIDE = 0.42;
+/**
+ * Nobody but the presser, the cover (and a high press's trap) comes nearer the ball than this (m) out of possession,
+ * unless it's within ENGAGE_BOX m of our goal (then the box is defended man for man); in possession nobody but the
+ * support triangle, a runner, an overlap or a box run comes nearer the carrier than ATTACK_SPACE.
+ */
+const ENGAGE_R = 7.5;
+const ENGAGE_R_HUMAN = 5.5;
+const ENGAGE_BOX = 24;
+const ATTACK_SPACE = 8.5;
+
+/**
+ * Keep a target point at least `r` m from the ball: pushed straight out from it, and (defending) round towards our
+ * own goal, so a man who isn't engaging drops off goal-side rather than stepping in.
+ */
+function keepOff(m: Match, p: Player, x: number, z: number, r: number, goalSide: boolean, ref: { x: number; z: number } = m.ball.pos): { x: number; z: number } {
+  const b = ref;
+  let dx = x - b.x;
+  let dz = z - b.z;
+  const d = Math.hypot(dx, dz);
+  if (d >= r) return { x, z };
+  if (goalSide) {
+    const gx = -m.attackDir(p.side) * HALF_L;
+    const gl = Math.hypot(gx - b.x, b.z) || 1;
+    const k = clamp(1 - d / r, 0, 1);
+    dx = dx + ((gx - b.x) / gl) * k * r;
+    dz = dz + (-b.z / gl) * k * r;
+  }
+  const l = Math.hypot(dx, dz);
+  if (l < 1e-3) return { x, z };
+  return { x: clamp(b.x + (dx / l) * r, -HALF_L + 1, HALF_L - 1), z: clamp(b.z + (dz / l) * r, -HALF_W + 1, HALF_W - 1) };
 }
 
 // ------------------------------------------------------------------ role assignment
@@ -249,15 +389,18 @@ function assignRoles(m: Match, side: Side, brain: TeamBrain): void {
   brain.chaser = -1;
   brain.presser = -1;
   brain.cover = -1;
+  brain.trap = -1;
+  brain.screen = false;
   brain.marks.clear();
   // The line steps up with the ball but sits off it, drops to around the penalty spot as the
   // ball comes towards the box, and tracks it inside once it's right on top of it. (Deeper than a
   // no-offside line: with the law on, the space in behind is what attackers have to earn.)
   const bxN = nX(m, side, ball.pos.x);
-  brain.line = bxN < -0.72 ? Math.max(-0.88, bxN - 0.1) : clamp(bxN - 0.5, -0.82, -0.12);
+  const st = styleOf(m, side);
+  brain.line = bxN < -0.72 ? Math.max(-0.88, bxN - 0.1) : clamp(bxN - 0.5 + st.line, -0.82, st.lineMax);
   // Mentality: attacking sides hold a higher line, defensive ones sit deeper.
   const ment = m.mentality[side];
-  if (ment !== 0 && bxN >= -0.7) brain.line = clamp(brain.line + ment * 0.08, -0.86, 0.02);
+  if (ment !== 0 && bxN >= -0.7) brain.line = clamp(brain.line + ment * 0.08, -0.86, Math.max(st.lineMax + 0.14, -0.5));
   if (owner && ball.held) return;
   const flight = !owner && m.passTarget >= 0 ? m.players[m.passTarget] : null;
 
@@ -317,16 +460,34 @@ function pickPresser(m: Match, side: Side, brain: TeamBrain, c: Player): void {
   const human = ranked.find((r) => m.isHumanControlled(r.p));
   const first = ranked[0];
   if (!first) return;
+  const st = styleOf(m, side);
+  // Beyond the style's press zone (a low block, a mid-block) the presser holds a screen in front of the block and
+  // nobody else steps out of it.
+  brain.screen = cN > st.pressFrom && !inOwnBox(m, side, c.pos.x, c.pos.z);
+  let engaged: Player | null;
   if (human && human.s < first.s + 4) {
     // The human is on it; the nearest AI teammate covers.
+    engaged = human.p;
     const next = ranked.find((r) => r.p !== human.p);
-    if (next && next.s < 18) brain.cover = next.p.idx;
+    if (next && next.s < 18 && !brain.screen) brain.cover = next.p.idx;
   } else {
+    engaged = first.p;
     brain.presser = first.p.idx;
     const next = ranked.find((r) => r.p !== first.p && !m.isHumanControlled(r.p));
-    if (next && next.s < 18) brain.cover = next.p.idx;
+    if (next && next.s < 18 && !brain.screen) brain.cover = next.p.idx;
+  }
+  // A high press in their half: a third man closes the carrier's way out (the human's man, only in his own third).
+  if (st.trap && !brain.screen && cN > (m.isHumanControlled(c) ? TRAP_FROM_HUMAN : TRAP_FROM)) {
+    const t = ranked.find((r) => r.p !== engaged && r.p.idx !== brain.cover && !m.isHumanControlled(r.p) && r.p.role !== 'DF');
+    if (t && t.s < 22) brain.trap = t.p.idx;
   }
 }
+
+/** A high press's trap engages while the carrier is this far up (our frame: 0 is halfway, so in his own half; the human's, his own third). */
+const TRAP_FROM = 0;
+const TRAP_FROM_HUMAN = 0.33;
+/** How much of a style's extra press (pressRate x pressHigh over 1) it brings against the human's carrier. */
+const STYLE_VS_HUMAN = 0.4;
 
 /** Zonal marking: each defender / midfielder takes the most dangerous opponent near their zone. */
 function assignMarks(m: Match, side: Side, brain: TeamBrain, c: Player): void {
@@ -337,7 +498,7 @@ function assignMarks(m: Match, side: Side, brain: TeamBrain, c: Player): void {
   const taken = new Set<number>();
   const order = m
     .teamPlayers(side)
-    .filter((p) => !p.isKeeper && !p.sentOff && p.role !== 'FW' && p.idx !== brain.presser && p.idx !== brain.cover)
+    .filter((p) => !p.isKeeper && !p.sentOff && p.role !== 'FW' && p.idx !== brain.presser && p.idx !== brain.cover && p.idx !== brain.trap)
     .sort((a, b) => (a.role === 'DF' ? 0 : 1) - (b.role === 'DF' ? 0 : 1));
   for (const p of order) {
     const home = defendHome(m, p, brain, ball.pos.x, ball.pos.z);
@@ -376,6 +537,8 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
   const weHave = focus ? focus.side === side : false;
   const theyHave = focus ? focus.side !== side : false;
   const live = m.phase === 'play';
+  const want = weHave ? 1 : theyHave ? 0 : m.possessionSide === side ? 1 : 0;
+  brain.att = live ? clamp(want, brain.att - dt / SHAPE_LOSE, brain.att + dt / SHAPE_WIN) : want;
 
   if (live && weHave && focus) organiseAttack(m, side, focus, brain, dt);
   else {
@@ -383,6 +546,7 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
     brain.overlap = -1;
     brain.supporter = -1;
     brain.supporter2 = -1;
+    brain.supporter3 = -1;
   }
 
   for (const p of m.teamPlayers(side)) {
@@ -431,7 +595,8 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
     }
     if (weHave && focus) {
       const t = attackTarget(m, p, brain, focus);
-      moveTo(p, t.x, t.z, t.u, ball.pos);
+      const b = t.shape ? blendShape(m, p, brain, t.x, t.z, true) : t;
+      moveTo(p, b.x, b.z, t.u, ball.pos);
       continue;
     }
     // One of our shots just saved or blocked: the men up there follow it in for the rebound.
@@ -441,16 +606,34 @@ export function updateTeamAI(m: Match, side: Side, dt: number): void {
       aerialOrVolley(m, p);
       continue;
     }
-    // Loose ball: hold the shape of whoever had it last.
+    // Loose ball: hold the shape of whoever had it last (the chaser goes for it; nobody else crowds it).
     if (m.possessionSide === side) {
       const t = attackTarget(m, p, brain, p);
-      moveTo(p, t.x, t.z, 0.45, ball.pos);
+      const b = t.shape ? zonalSpot(m, p, ...xz(blendShape(m, p, brain, t.x, t.z, true))) : t;
+      moveTo(p, b.x, b.z, 0.45, ball.pos);
     } else {
       const home = defendHome(m, p, brain, ball.pos.x, ball.pos.z);
-      moveTo(p, home.x, home.z, 0.55, ball.pos);
+      const b = zonalSpot(m, p, ...xz(blendShape(m, p, brain, home.x, home.z, false)));
+      moveTo(p, b.x, b.z, 0.55, ball.pos);
     }
   }
 }
+
+/** Easing of TeamBrain.att: seconds to go from the defending to the attacking shape, and back. */
+const SHAPE_WIN = 1.1;
+const SHAPE_LOSE = 0.7;
+
+/**
+ * A man holding his place in the shape, while the team is still moving between its two shapes (TeamBrain.att): his
+ * target in this phase's shape (`attacking`: the attacking one) blended with the other one by how far the team has got.
+ */
+function blendShape(m: Match, p: Player, brain: TeamBrain, x: number, z: number, attacking: boolean): { x: number; z: number } {
+  const k = attacking ? brain.att : 1 - brain.att;
+  if (k >= 0.999) return { x, z };
+  const o = attacking ? zonalSpot(m, p, ...xz(defendHome(m, p, brain, m.ball.pos.x, m.ball.pos.z))) : attackTarget(m, p, brain, p);
+  return { x: o.x + (x - o.x) * k, z: o.z + (z - o.z) * k };
+}
+const xz = (q: { x: number; z: number }): [number, number] => [q.x, q.z];
 
 // ------------------------------------------------------------------ attacking organisation
 
@@ -500,7 +683,10 @@ function organiseAttack(m: Match, side: Side, c: Player, brain: TeamBrain, dt: n
   if (brain.overlap >= 0 && (brain.overlapT <= 0 || cN < -0.05 || m.players[brain.overlap].state !== 'move')) brain.overlap = -1;
   if (brain.overlap < 0 && cN > 0.02 && cN < 0.75 && isWide(m, c) && c.role !== 'DF' && m.rng.chance(dt * 0.4 * (1 + m.mentality[c.side] * 0.6))) {
     const sgn = Math.sign(slotOf(m, c).z);
+    // (Only the full-back on the flank the carrier is on now: never across the pitch.)
+    const onFlank = Math.sign(c.pos.z * ad) === sgn;
     for (const p of team) {
+      if (!onFlank) break;
       if (!free(p) || p.role !== 'DF' || !isWide(m, p) || Math.sign(slotOf(m, p).z) !== sgn) continue;
       if (nX(m, side, p.pos.x) < cN) {
         brain.overlap = p.idx;
@@ -509,44 +695,79 @@ function organiseAttack(m: Match, side: Side, c: Player, brain: TeamBrain, dt: n
     }
   }
 
-  // ---- Two support options: one short angle, one forward diagonal.
+  // ---- The support triangle: a short option either side of the carrier (SUPPORT_SHORT m) and one ahead
+  // (SUPPORT_AHEAD m), each spot the most open of a few angles, and the nearest free men sent to them.
   brain.supportT -= dt;
   if (brain.supportT > 0 && brain.supporter >= 0) return;
   brain.supportT = 0.5;
+  // (The wide men give the width: a winger never comes in to make the triangle, a full-back only on his own flank.)
+  const cFlank = Math.sign(c.pos.z * ad);
   const avail = team
-    .filter((p) => free(p) && !brain.boxZones.has(p.idx) && brain.overlap !== p.idx && !p.running)
+    .filter((p) => free(p) && !brain.boxZones.has(p.idx) && brain.overlap !== p.idx && !p.running &&
+      !(isWide(m, p) && (p.role !== 'DF' || Math.sign(slotOf(m, p).z) !== cFlank)))
     .map((p) => ({ p, d: dist2(p.pos.x, p.pos.z, c.pos.x, c.pos.z) }))
-    .sort((a, b2) => a.d - b2.d);
-  brain.supporter = avail[0]?.p.idx ?? -1;
-  brain.supporter2 = avail[1]?.p.idx ?? -1;
+    .sort((a, b2) => a.d - b2.d)
+    .slice(0, 5)
+    .map((a) => a.p);
   const base = ad > 0 ? 0 : Math.PI;
-  const pick = (angs: number[], r: number, mate: Player | undefined, into: 1 | 2) => {
-    if (!mate) return;
+  // (Out wide the touchline side's short option is behind him, not in the stand.)
+  const spotFor = (angs: number[], r: number): { x: number; z: number } => {
     let bestS = Infinity;
+    let out = { x: c.pos.x, z: c.pos.z };
     for (const ang of angs) {
       const a = base + ang;
       const x = clamp(c.pos.x + Math.cos(a) * r, -HALF_L + 3, HALF_L - 4);
       const z = clamp(c.pos.z + Math.sin(a) * r, -HALF_W + 2.5, HALF_W - 2.5);
       let crowd = 0;
-      for (const t of team) if (t !== mate && t !== c && !t.sentOff && dist2(t.pos.x, t.pos.z, x, z) < 6) crowd += 0.25;
+      for (const t of team) if (t !== c && !t.sentOff && dist2(t.pos.x, t.pos.z, x, z) < 6) crowd += 0.12;
       const open = nearestOpp(m, side, x, z).d;
-      const s = laneRisk(m, side, c.pos.x, c.pos.z, x, z) * 1.3 + (open < 3 ? 0.35 : 0) + crowd +
-        dist2(mate.pos.x, mate.pos.z, x, z) * 0.02 - Math.cos(ang) * 0.12;
+      const s = laneRisk(m, side, c.pos.x, c.pos.z, x, z) * 1.3 + (open < 3 ? 0.35 : 0) + crowd - Math.cos(ang) * 0.12 +
+        (dist2(c.pos.x, c.pos.z, x, z) < r * 0.7 ? 0.4 : 0);
       if (s < bestS) {
         bestS = s;
-        if (into === 1) {
-          brain.supportX = x;
-          brain.supportZ = z;
-        } else {
-          brain.support2X = x;
-          brain.support2Z = z;
+        out = { x, z };
+      }
+    }
+    return out;
+  };
+  const spots = [
+    spotFor([0.9, 1.3, 1.8, 2.3], SUPPORT_SHORT),
+    spotFor([-0.9, -1.3, -1.8, -2.3], SUPPORT_SHORT),
+    spotFor([-0.55, -0.25, 0.25, 0.55], SUPPORT_AHEAD),
+  ];
+  // The cheapest way to fill them (total distance) from the five nearest free men.
+  let bestCost = Infinity;
+  let bestPick: (Player | null)[] = [null, null, null];
+  const n = avail.length;
+  const cost = (p: Player | null, k: number) => (p ? dist2(p.pos.x, p.pos.z, spots[k].x, spots[k].z) : 60);
+  for (let i = -1; i < n; i++) {
+    for (let j = -1; j < n; j++) {
+      if (j >= 0 && j === i) continue;
+      for (let k = -1; k < n; k++) {
+        if (k >= 0 && (k === i || k === j)) continue;
+        const pick = [i >= 0 ? avail[i] : null, j >= 0 ? avail[j] : null, k >= 0 ? avail[k] : null];
+        const s = cost(pick[0], 0) + cost(pick[1], 1) + cost(pick[2], 2);
+        if (s < bestCost) {
+          bestCost = s;
+          bestPick = pick;
         }
       }
     }
-  };
-  pick([-2.3, -1.6, -1.0, 1.0, 1.6, 2.3], 10, avail[0]?.p, 1);
-  pick([-0.95, -0.5, 0.5, 0.95], 16, avail[1]?.p, 2);
+  }
+  brain.supporter = bestPick[0]?.idx ?? -1;
+  brain.supporter2 = bestPick[1]?.idx ?? -1;
+  brain.supporter3 = bestPick[2]?.idx ?? -1;
+  brain.supportX = spots[0].x;
+  brain.supportZ = spots[0].z;
+  brain.support2X = spots[1].x;
+  brain.support2Z = spots[1].z;
+  brain.support3X = spots[2].x;
+  brain.support3Z = spots[2].z;
 }
+
+/** The support triangle: the short options' distance from the carrier (m), and the man ahead's. */
+const SUPPORT_SHORT = 12;
+const SUPPORT_AHEAD = 17;
 
 /**
  * The human's man has it (or a pass is on its way to him): his teammates move sooner and more, the Mario
@@ -647,7 +868,10 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
   // The human's carrier facing forward in the middle or final third: a forward always goes when nobody is
   // running, and runs come far more often (humanFlow).
   const hum = humanFlow(m, p.side, c) && nX(m, p.side, c.pos.x) > -0.33;
-  const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45) * (hum ? HUMAN_RUN_BOOST : 1 + AI_INTENT_RUNS * intentVsHuman(m, p.side));
+  const st = styleOf(m, p.side);
+  const breaking = st.counter > 0 && m.sincePossession < st.counter && !hum;
+  const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45) * (hum ? HUMAN_RUN_BOOST : 1 + AI_INTENT_RUNS * intentVsHuman(m, p.side)) *
+    st.runs * (breaking ? COUNTER_RUNS : 1);
   const due = hum && p.role === 'FW' && !m.teamPlayers(p.side).some((t) => t.running && !t.sentOff);
   // (The roll is made either way, as it always was: a forward who's due doesn't change the rng's course.)
   if (pr > (hum ? 1.5 : 2.2) && facingFwd && n > line - 0.32 && line < 0.8 && (m.rng.chance(chance) || due)) {
@@ -655,11 +879,13 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
     p.runCued = false;
     p.runT = 2.1 + m.rng.next() * 0.9;
   } else {
-    p.runT = hum ? 0.3 + m.rng.next() * 0.6 : 0.7 + m.rng.next() * 1.8;
+    p.runT = hum || breaking ? 0.3 + m.rng.next() * 0.6 : 0.7 + m.rng.next() * 1.8;
   }
 }
+/** On the break, runs in behind come this much more often (and he looks again sooner). */
+const COUNTER_RUNS = 1.6;
 
-function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: number; z: number; u: number } {
+function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: number; z: number; u: number; shape?: boolean } {
   const side = p.side;
   const ad = m.attackDir(side);
   if (p.giveGoT > 0 && p !== c) {
@@ -689,10 +915,10 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
     }
     return { x: zx, z: zone.z, u: stranded ? 0.95 : 0.85 };
   }
-  if (brain.supporter === p.idx || brain.supporter2 === p.idx) {
-    const one = brain.supporter === p.idx;
-    let sx = one ? brain.supportX : brain.support2X;
-    const sz = one ? brain.supportZ : brain.support2Z;
+  if (brain.supporter === p.idx || brain.supporter2 === p.idx || brain.supporter3 === p.idx) {
+    const k = brain.supporter === p.idx ? 1 : brain.supporter2 === p.idx ? 2 : 3;
+    let sx = k === 1 ? brain.supportX : k === 2 ? brain.support2X : brain.support3X;
+    const sz = k === 1 ? brain.supportZ : k === 2 ? brain.support2Z : brain.support3Z;
     if (m.offside && onBall && p.role !== 'DF' && nX(m, side, sx) > line - 0.012) sx = (line - 0.012) * HALF_L * ad;
     return { x: sx, z: sz, u: stranded ? 0.95 : 0.6 };
   }
@@ -713,22 +939,27 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
       z = slot.z * 1.2 + bz * 0.12;
     }
   }
+  if (wide) z *= styleOf(m, side).width;
   let u = 0.45;
+  let shape = true;
   if (brain.overlap === p.idx) {
     x = Math.min(nX(m, side, c.pos.x) + 0.18, 0.86);
     z = Math.sign(slot.z) * 0.88;
     u = 0.95;
+    shape = false;
   } else if (p.role !== 'DF') {
     if (p.running) {
       x = Math.min(line + 0.22, 0.9);
       z *= 0.55; // attack the channel between centre-back and full-back
       u = 0.95;
+      shape = false;
     } else if (m.offside) {
       // Stay on the last man (level is onside), ready to spin in behind; if stranded, drop back.
       x = Math.min(x, line - 0.01);
       if (stranded) {
         x = Math.min(x, nX(m, side, p.pos.x) - 0.08);
         u = 0.95;
+        shape = false;
       }
     } else {
       x = Math.min(x, line - 0.015);
@@ -736,7 +967,12 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
   }
   x = clamp(x, -0.9, 0.92);
   z = clamp(z, -0.92, 0.92);
-  return { x: x * HALF_L * ad, z: z * HALF_W * ad, u };
+  // (Holding his place in the shape: not crowding the man on the ball, or the man a pass of ours is on its way to.)
+  if (shape && c.side === side && c !== p && (onBall || m.passTarget === c.idx)) {
+    const k = keepOff(m, p, x * HALF_L * ad, z * HALF_W * ad, ATTACK_SPACE, false, onBall ? m.ball.pos : c.pos);
+    return { x: k.x, z: k.z, u, shape };
+  }
+  return { x: x * HALF_L * ad, z: z * HALF_W * ad, u, shape };
 }
 
 // ------------------------------------------------------------------ defending
@@ -744,6 +980,11 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
 function defend(m: Match, p: Player, brain: TeamBrain, c: Player, dt: number): void {
   const ball = m.ball.pos;
   if (brain.presser === p.idx) {
+    if (brain.screen) {
+      const s = screenSpot(m, p, c);
+      moveTo(p, s.x, s.z, 0.6, ball);
+      return;
+    }
     press(m, p, c, dt, brain);
     return;
   }
@@ -754,12 +995,35 @@ function defend(m: Match, p: Player, brain: TeamBrain, c: Player, dt: number): v
     moveTo(p, s.x, s.z, 0.75, ball);
     return;
   }
+  if (brain.trap === p.idx) {
+    trap(m, p, c, dt);
+    return;
+  }
   const s = markSpot(m, p, brain);
-  moveTo(p, s.x, s.z, s.u, ball);
+  const off = zonalSpot(m, p, s.x, s.z);
+  const b = blendShape(m, p, brain, off.x, off.z, false);
+  moveTo(p, b.x, b.z, s.u, ball);
 }
 
-/** The second defender's spot: goal-side of the carrier, a few metres behind the challenge. */
+/** A man in the block who isn't engaging: kept ENGAGE_R off the ball (goal-side), unless it's near our goal. */
+function zonalSpot(m: Match, p: Player, x: number, z: number): { x: number; z: number } {
+  const b = m.ball.pos;
+  if (dist2(b.x, b.z, -m.attackDir(p.side) * HALF_L, 0) < ENGAGE_BOX) return { x, z };
+  // (Against the human's carrier the block keeps ENGAGE_R_HUMAN off: it drops a touch less deep off him.)
+  const o = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
+  return keepOff(m, p, x, z, o && m.isHumanControlled(o) ? ENGAGE_R_HUMAN : ENGAGE_R, true);
+}
+
+/**
+ * The cover's spot: in the carrier's most dangerous passing lane (the teammate of his, level with him or nearer our
+ * goal, whose ball is worth most: laneCover), COVER_LANE of the way along it (COVER_MIN..COVER_MAX m out) and a
+ * little goal-side; with no such lane, goal-side of the carrier, a few metres behind the challenge.
+ */
 function coverSpot(m: Match, p: Player, c: Player): { x: number; z: number } {
+  // (The human's carrier: the cover sits goal-side of him as before; cutting his lanes as well made the game a notch
+  // harder than it was, round 13's Football Moments against the scripted bot: two-down 8/10 -> 4/10.)
+  const lane = m.isHumanControlled(c) ? null : laneCover(m, p.side, c);
+  if (lane) return lane;
   const gx = -m.attackDir(p.side) * HALF_L;
   const ux = gx - c.pos.x;
   const uz = -c.pos.z * 0.7;
@@ -767,6 +1031,69 @@ function coverSpot(m: Match, p: Player, c: Player): { x: number; z: number } {
   const back = Math.min(5.5, ul * 0.5);
   return { x: c.pos.x + (ux / ul) * back + c.vel.x * 0.3, z: c.pos.z + (uz / ul) * back + c.vel.z * 0.3 };
 }
+
+export function laneCover(m: Match, side: Side, c: Player): { x: number; z: number; target: number } | null {
+  const ad = m.attackDir(side);
+  const gx = -ad * HALF_L;
+  let best: Player | null = null;
+  let bestS = 0;
+  for (const t of m.teamPlayers(c.side)) {
+    if (t === c || t.isKeeper || t.sentOff) continue;
+    const d = dist2(c.pos.x, c.pos.z, t.pos.x, t.pos.z);
+    if (d < 7 || d > 32) continue;
+    // Only a ball that goes our way (or square): a back pass isn't worth leaving the carrier for.
+    if ((t.pos.x - c.pos.x) * ad > 3) continue;
+    const s = threat(m, c.side, t.pos.x, t.pos.z) * (1 - laneRisk(m, c.side, c.pos.x, c.pos.z, t.pos.x, t.pos.z) * 0.7);
+    if (s > bestS) {
+      bestS = s;
+      best = t;
+    }
+  }
+  if (!best) return null;
+  const dx = best.pos.x - c.pos.x;
+  const dz = best.pos.z - c.pos.z;
+  const d = Math.hypot(dx, dz) || 1;
+  const along = clamp(d * COVER_LANE, COVER_MIN, COVER_MAX);
+  const gl = Math.hypot(gx - c.pos.x, c.pos.z) || 1;
+  return {
+    x: c.pos.x + (dx / d) * along + ((gx - c.pos.x) / gl) * 1.2,
+    z: c.pos.z + (dz / d) * along - (c.pos.z / gl) * 1.2,
+    target: best.idx,
+  };
+}
+const COVER_LANE = 0.4;
+const COVER_MIN = 5.5;
+const COVER_MAX = 9;
+
+/** The presser beyond the style's press zone: a screen ~SCREEN_D m goal-side of the carrier, no challenge. */
+function screenSpot(m: Match, p: Player, c: Player): { x: number; z: number } {
+  const gx = -m.attackDir(p.side) * HALF_L;
+  const ux = gx - c.pos.x;
+  const uz = -c.pos.z * 0.6;
+  const ul = Math.hypot(ux, uz) || 1;
+  return { x: c.pos.x + (ux / ul) * SCREEN_D + c.vel.x * 0.3, z: c.pos.z + (uz / ul) * SCREEN_D + c.vel.z * 0.3 };
+}
+const SCREEN_D = 6.5;
+
+/**
+ * The trap (a high press, the carrier in his own half): on the carrier's open side, ~TRAP_D m off him across the
+ * pitch, shutting the way out and the square ball; he pokes at a touch that gets away from the carrier.
+ */
+function trap(m: Match, p: Player, c: Player, dt: number): void {
+  const b = m.ball.pos;
+  const ad = m.attackDir(p.side);
+  // Across the carrier, towards the middle of the pitch (a man near the touchline is shown down the line).
+  const sgn = Math.sign(-c.pos.z) || 1;
+  const x = c.pos.x - ad * 1.2 + c.vel.x * 0.3;
+  const z = clamp(c.pos.z + sgn * TRAP_D + c.vel.z * 0.3, -HALF_W + 1, HALF_W - 1);
+  moveTo(p, x, z, 0.9, b);
+  if (m.ball.owner === c.idx && p.tackleCooldown <= 0 && p.slowT <= 0 && !(m.isHumanControlled(c) && c.protectT > 0) &&
+    dist2(p.footX(), p.footZ(), b.x, b.z) < 0.95 && dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.95) {
+    m.tryTackle(p, c, (0.62 + m.aiSkill(p.side) * 0.09) * 1.1);
+  }
+  chaseSlide(m, p, c, dt);
+}
+const TRAP_D = 3.2;
 
 /** Where a defender who isn't pressing or covering goes (and how urgently): his man, or his block position. */
 function markSpot(m: Match, p: Player, brain: TeamBrain): { x: number; z: number; u: number } {
@@ -828,6 +1155,7 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   // goes in during the protection window after a skill (Player.protectT).
   const vsHuman = m.isHumanControlled(c);
   const hk = vsHuman ? pressVsHuman(skill) : 1;
+  const st = styleOf(m, p.side);
   const guarded = vsHuman && c.protectT > 0;
   // Jockey goal-side, then commit to a tackle now and then: more often when the ball is
   // exposed, when the carrier has their back to goal, and when a teammate is covering.
@@ -844,7 +1172,12 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     const ramp = vsHuman ? clamp((p.jockeyT - 0.9) / 0.9, 0, 1) * 2.2 * hk : clamp((p.jockeyT - 0.5) / 0.7, 0, 1) * 2.2;
     // (His very first minute: the AI shadows him at FIRST_MATCH_PRESS of its usual aggression.)
     const ease = vsHuman && m.firstMatchEase() ? FIRST_MATCH_PRESS : 1;
-    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25) * ease;
+    // (The style's press, and against the human his dynamic difficulty: assistEase.)
+    // (Against the human a style's extra press is STYLE_VS_HUMAN of what it is against the AI: a high press is felt, not a
+    // mugging.)
+    const styleK = st.pressRate * (nX(m, p.side, c.pos.x) > 0 ? st.pressHigh : 1);
+    const style = (vsHuman ? 1 + (styleK - 1) * STYLE_VS_HUMAN : styleK) * (vsHuman ? 1 - DDA_PRESS * m.assistEase(p.side) : 1);
+    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25) * ease * style;
     if (m.rng.chance(rate * dt)) {
       p.commitT = 0.55;
       commit = true;
@@ -852,7 +1185,10 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   }
   // The jockeying gap is measured from the ball so the presser's foot isn't already on it (a little more room
   // for the human's dribbler).
-  const gap = commit ? 0.1 : clamp(1.95 + (c.speed() > 5 ? 0.45 : 0) - skill * 0.06, 1.6, 2.5) + (vsHuman ? HUMAN_JOCKEY_ROOM : 0);
+  // (A high press in their half stands tighter on him: HIGH_PRESS_TIGHT m less room.)
+  const tight = st.pressHigh > 1 && nX(m, p.side, c.pos.x) > 0 ? HIGH_PRESS_TIGHT : 0;
+  const gap = commit ? 0.1 : clamp(1.95 + (c.speed() > 5 ? 0.45 : 0) - skill * 0.06 - tight, 1.3, 2.5) +
+    (vsHuman ? HUMAN_JOCKEY_ROOM + DDA_ROOM * m.assistEase(p.side) : 0);
   const jx = b.x + c.vel.x * 0.28 + (ux / ul) * gap;
   const jz = b.z + c.vel.z * 0.28 + (uz / ul) * gap;
   moveTo(p, jx, jz, 1, b);
@@ -896,7 +1232,7 @@ function chaseSlide(m: Match, p: Player, c: Player, dt: number): void {
   if (inOwnBox(m, p.side, c.pos.x, c.pos.z)) rate *= 0.6;
   if (m.isHumanControlled(c)) {
     if (c.protectT > 0) return;
-    rate *= pressVsHuman(m.aiSkill(p.side));
+    rate *= pressVsHuman(m.aiSkill(p.side)) * (1 - DDA_PRESS * m.assistEase(p.side));
   }
   // Only a reckless defender slides when the carrier's body is between him and the ball.
   const bx = b.pos.x + c.vel.x * 0.18;
@@ -909,9 +1245,10 @@ function chaseSlide(m: Match, p: Player, c: Player, dt: number): void {
 
 /**
  * Base rate (per second) of slide attempts while chasing an escaping carrier. A defender is only in
- * that position ~12 s a match, so this lands at ~3-4 slides a match.
+ * that position ~12 s a match, so this lands at ~3-4 slides a match. (Round 13: 0.45 before; with the cover in the
+ * passing lane more carriers get past the presser to be chased down, and slides reached 6 a match at 2x150 s.)
  */
-const SLIDE_RATE = 0.45;
+const SLIDE_RATE = 0.42;
 
 /**
  * How readily the AI goes in on the human's dribbler (its commit rate, its chase slides), against an AI
@@ -920,8 +1257,10 @@ const SLIDE_RATE = 0.45;
 export function pressVsHuman(skill: number): number {
   return vsHuman(skill).press;
 }
-/** Extra jockeying room (m) the presser gives the human's dribbler... */
+/** Extra jockeying room (m) the presser gives the human's dribbler (and DDA_ROOM more at full dynamic difficulty)... */
 const HUMAN_JOCKEY_ROOM = 0.25;
+const HIGH_PRESS_TIGHT = 0.35;
+const DDA_ROOM = 0.6;
 /** A marker holds this close (m) to the man the human's ball is on its way to, on his own side of him (markSpot). */
 const HUMAN_BALL_MARK_R = 2;
 /** ... and how far (m) the ball must be off his foot before it's poked away (0.95 against the AI). */
@@ -1079,7 +1418,8 @@ function aerialOrVolley(m: Match, p: Player): void {
     p.volleyKick = m.kickId;
     // (A corner or wide free kick dropping to him: as ever, the box is crowded.)
     const sp = m.kickId === m.setPieceKick;
-    if (m.rng.chance(sp ? clamp(q * 1.1, 0.25, 0.75) : clamp(q * AI_VOLLEY, 0.3, rebound ? 0.85 : 0.8))) m.order(p, 'shot', 0, 0, 0.75, -1, true);
+    const volley = m.human[p.side] ? HUMAN_SIDE_VOLLEY : AI_VOLLEY;
+    if (m.rng.chance(sp ? clamp(q * 1.1, 0.25, 0.75) : clamp(q * volley, 0.3, rebound ? 0.85 : 0.8))) m.order(p, 'shot', 0, 0, 0.75, -1, true);
   } else if (ownGoalDist < 22 && rival < 2 && b.hspeed() > 4) {
     // Under pressure in our box: hack it away first time.
     p.volleyKick = m.kickId;
@@ -1144,7 +1484,9 @@ function shield(m: Match, p: Player, o: Player): void {
 type Choice = { s: number; run: () => void };
 
 /** A first-time finish from a low cross, a cut-back or a rebound (open play) is hit with chance shotQuality x AI_VOLLEY. */
-const AI_VOLLEY = 1.6;
+const AI_VOLLEY = 2.1;
+/** ... and the human's own AI teammates' (round 12's AI_VOLLEY: the round-13 rise is the AI sides' alone). */
+const HUMAN_SIDE_VOLLEY = 1.6;
 /**
  * For this long (s) after one of our shots from open play, attackers near goal follow it in for a rebound
  * (set pieces have their own shape: see setPieceShot).
@@ -1161,9 +1503,9 @@ const AI_CHIP = 0.35;
 /** What an AI carrier knocks off a shot from beyond 22 m (work it into the box instead)... */
 const AI_LONG_SHOT_COST = 0.006;
 /** ... and what a sight of goal inside the box adds to one... */
-const AI_BOX_SHOT = 0.18;
+const AI_BOX_SHOT = 0.28;
 /** ... and a clean sight of goal (nobody in the way) from the edge of the box (15-22 m out). */
-const AI_CLEAR_SIGHT = 0.14;
+const AI_CLEAR_SIGHT = 0.17;
 
 /** Lateral offsets (m) tried for a through ball, around the runner's own line. */
 const THREAD_OFFSETS = [0, -3.5, 3.5, -7, 7];
@@ -1217,7 +1559,11 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   }
   // (Think times and the hold ride on the tempo: the AI carrier looks up and moves it on that much sooner.)
   p.aiT = (firstTouch ? 0.32 + m.rng.next() * 0.3 - skill * 0.03 : 0.24 + m.rng.next() * 0.2 - skill * 0.015) / TEMPO;
-  if (firstTouch) p.holdT = (1.1 + m.rng.next() * 1.5) / TEMPO;
+  // The style: how patient (hold), how safe, how direct; on the break (just won it, a counter side) it goes forward.
+  const st = styleOf(m, side);
+  const breaking = st.counter > 0 && m.sincePossession < st.counter;
+  if (firstTouch) p.holdT = ((1.1 + m.rng.next() * 1.5) / TEMPO) * st.hold * (breaking ? COUNTER_HOLD : 1);
+  const fwdK = st.forward + (breaking ? COUNTER_FORWARD : 0);
 
   const team = m.teamPlayers(side);
   const choices: Choice[] = [];
@@ -1251,7 +1597,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     // (A clean sight of goal from the edge of the box, 15-22 m out, is the one to hit.)
     const bonus = blockers < 0.5 ? (dg < 15 ? 0.035 : dg < 22 ? AI_CLEAR_SIGHT : dg < 28 ? 0.035 : 0.015) : 0;
     const keen = 1 + AI_INTENT_SHOT * intent;
-    const s = early(q * 2 + (bonus + (inBox ? AI_BOX_SHOT : 0)) * keen - (dg > 22 ? AI_LONG_SHOT_COST / keen : 0), 0.05);
+    const s0 = early(q * 2 + (bonus + (inBox ? AI_BOX_SHOT : 0)) * keen - (dg > 22 ? AI_LONG_SHOT_COST / keen : 0), 0.05);
+    const s = s0 > 0 ? s0 * st.shoot : s0;
     // (Harder from further out, but short of flat out: see actions.AI_STRIKE_LIFT.)
     const power = clamp(0.55 + dg / 50, 0.6, 0.94);
     // A keeper who has come off his line (3.8+ m out, 3-12 m from the shooter): now and then it's
@@ -1286,10 +1633,11 @@ function carrierAI(m: Match, p: Player, dt: number): void {
       if (d > 24) pc *= 1 - (d - 24) / 32;
       pc = clamp(pc * (0.86 + p.stat.passing / 700), 0.02, 0.96);
       // (Against the human: the forward ball is worth that much more, AI_INTENT_FORWARD.)
-      const fwd = intent > 0 ? 1 + AI_INTENT_FORWARD * intent * clamp(((lx - p.pos.x) * ad) / 15, 0, 1) : 1;
+      const ahead = clamp(((lx - p.pos.x) * ad) / 15, 0, 1);
+      const fwd = (intent > 0 ? 1 + AI_INTENT_FORWARD * intent * ahead : 1) * (1 + fwdK * ahead);
       const gain = threat(m, side, lx, lz) * (t.isKeeper ? 0.3 : 1) * (0.72 + 0.28 * room) * fwd;
-      const s = early(pc * gain - (1 - pc) * lose((p.pos.x + lx) / 2, (p.pos.z + lz) / 2), 0.6) -
-        (d < 9 && pressure < 0.3 ? 0.004 : 0);
+      const s = early(pc * gain - (1 - pc) * lose((p.pos.x + lx) / 2, (p.pos.z + lz) / 2) * st.safe, 0.6) -
+        (d < 9 && pressure < 0.3 ? 0.004 : 0) - Math.max(0, d - LONG_PASS_D) * st.longCost;
       choices.push({ s, run: () => m.order(p, 'pass', lx - p.pos.x, lz - p.pos.z, 0.6, t.idx, false) });
     }
 
@@ -1322,10 +1670,10 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         }
         const pWin = clamp(0.42 + (tDef - tRun) * 0.7, 0.02, 0.88);
         const dT = dist2(p.pos.x, p.pos.z, ax, az);
-        const gain = (threat(m, side, ax, az) + 0.02) * (1 + AI_INTENT_THROUGH * intent);
+        const gain = (threat(m, side, ax, az) + 0.02) * (1 + AI_INTENT_THROUGH * intent) * (1 + Math.max(0, fwdK));
         const ir = interceptRisk(m, side, p.pos.x, p.pos.z, ax, az, throughSpeed(dT));
         const pc = pWin * (1 - ir);
-        const sg = early(pc * gain - (1 - pc) * lose(ax, az) * 0.6, 0.35);
+        const sg = early(pc * gain - (1 - pc) * lose(ax, az) * 0.6 * st.safe, 0.35);
         // (A lane a defender would cut out isn't threaded at all: the pass to feet is the option there.)
         if (ir <= THROUGH_MAX_INTERCEPT && (!bestG || sg > bestG.s)) {
           bestG = { s: sg, run: () => m.order(p, 'through', 0, 0, 0.7, t.idx, false, { x: ax, z: az }) };
@@ -1334,7 +1682,7 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         // last man: only the race to the landing spot matters, but it's harder to weight.
         if (dT > 16 && dT < 42 && ir > 0.4 && onShoulder) {
           const pl = pWin * 0.62 * (0.8 + p.stat.passing / 700);
-          const sl = early(pl * gain - (1 - pl) * lose(ax, az) * 0.6, 0.5);
+          const sl = early(pl * gain - (1 - pl) * lose(ax, az) * 0.6 * st.safe, 0.5);
           if (!bestL || sl > bestL.s) {
             bestL = { s: sl, run: () => m.order(p, 'lob', ax - p.pos.x, az - p.pos.z, 0.7, t.idx, false, { x: ax, z: az }, 0.5) };
           }
@@ -1378,18 +1726,20 @@ function carrierAI(m: Match, p: Player, dt: number): void {
         : 0.1;
       const hq = shotQuality(zn.x, zn.z, ad) * 0.75;
       // A won header is far from a sure goal: credit roughly its real conversion.
-      const s = early(pWin * (0.03 + hq * 0.42) - (1 - pWin) * 0.02, 0.3);
+      const s = early(pWin * (0.03 + hq * AI_CROSS_VALUE) - (1 - pWin) * 0.02, 0.3);
       choices.push({ s, run: () => m.order(p, 'lob', zn.x - p.pos.x, zn.z - p.pos.z, 0.75, who, false, { x: zn.x, z: zn.z }) });
     }
   }
 
   // ---- Clear it when trapped deep in our own third: from out wide, up the line and into touch
   // (safe, and the throw is deep in their half); from the middle, towards the wing.
-  if (pN < -0.35 && pressure > 0.5) {
+  // (A low block clears it from anywhere in our half with a man near him: long, towards its outlet up top.)
+  const clearFrom = st.direct > 0.008 ? [-0.05, 0.25] : [-0.35, 0.5];
+  if (pN < clearFrom[0] && pressure > clearFrom[1]) {
     const wide = Math.abs(p.pos.z) > HALF_W * 0.35;
     const tz = Math.sign(p.pos.z || 1) * (wide ? HALF_W + 4 : HALF_W - 1.5);
     const tx = p.pos.x + ad * (wide ? 30 : 38);
-    choices.push({ s: -0.004 + (pN < -0.6 ? 0.006 : 0) + (wide ? 0.002 : 0), run: () => m.order(p, 'clear', ad, 0, 1, -1, false, { x: tx, z: tz }) });
+    choices.push({ s: -0.004 + (pN < -0.6 ? 0.006 : 0) + (wide ? 0.002 : 0) + st.direct, run: () => m.order(p, 'clear', ad, 0, 1, -1, false, { x: tx, z: tz }) });
   }
 
   // ---- Trapped by the touchline in our half: put it out for a throw rather than lose it.
@@ -1545,6 +1895,15 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   }
   best?.run();
 }
+
+/**
+ * What a won header from a cross is worth to the AI carrier, times the zone's shot quality (round 13: 0.42, and headers
+ * were 55-65% of its goals; one carry-wide-and-cross pattern).
+ */
+const AI_CROSS_VALUE = 0.32;
+/** On the break (StyleParams.counter): the hold is this much shorter, and a ball forward worth this much more. */
+const COUNTER_HOLD = 0.6;
+const COUNTER_FORWARD = 0.35;
 
 /** A teammate needs a chance at least this much better (xG, times the shooter's) to be looked for... */
 const AI_SQUARE_XG = 1.25;

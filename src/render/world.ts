@@ -257,7 +257,20 @@ export class World {
       this.sun.shadow.map?.dispose();
       this.sun.shadow.map = null;
     }
-    this.renderer.shadowMap.enabled = q !== 'low';
+    const shadows = q !== 'low';
+    if (this.renderer.shadowMap.enabled !== shadows || this.sun.castShadow !== shadows) {
+      // Switching shadows on or off mid-match: the sun stops (or starts) casting too, and every material is
+      // rebuilt for it. (Flipping shadowMap.enabled alone left the lit materials sampling a shadow map that is
+      // no longer drawn: switching to LOW in a match blanked the lawn and the players.)
+      this.renderer.shadowMap.enabled = shadows;
+      this.sun.castShadow = shadows;
+      this.scene.traverse((o) => {
+        const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        if (!mat) return;
+        if (Array.isArray(mat)) for (const x of mat) x.needsUpdate = true;
+        else mat.needsUpdate = true;
+      });
+    }
     this.resize();
   }
 
@@ -295,6 +308,21 @@ export class World {
 
   render(): void {
     this.renderer.render(this.scene, this.camera);
+    const f = this.afterRender;
+    if (f) {
+      this.afterRender = null;
+      f();
+    }
+  }
+
+  private afterRender: (() => void) | null = null;
+
+  /**
+   * Run `fn` straight after the next frame is drawn, in the same task: the WebGL canvas can still be read then
+   * (a goal's poster frame), with no extra render.
+   */
+  onNextRender(fn: () => void): void {
+    this.afterRender = fn;
   }
 
   /**

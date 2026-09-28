@@ -55,25 +55,33 @@ export function possessionLean(m: Match): number {
  * (the ball when there is none), the possession lean and any set piece. `tall`: a standing player's head
  * height at the current draw scale. The session overrides the subject for celebrations and replays.
  */
-export function playFocus(m: Match, f: Float32Array, tall: number): CamFocus {
+export function playFocus(m: Match, f: Float32Array, tall: number, out?: CamFocus): CamFocus {
   const hs = m.cfg.humanSide;
   const act = f[BALL_OFS + 8];
   const has = act >= 0 && act < 22;
-  return {
-    bx: f[BALL_OFS], by: f[BALL_OFS + 1], bz: f[BALL_OFS + 2],
-    bvx: f[BALL_OFS + 3], bvz: f[BALL_OFS + 5],
-    ax: has ? f[act * PF] : f[BALL_OFS],
-    az: has ? f[act * PF + 1] : f[BALL_OFS + 2],
-    avx: 0, avz: 0,
-    attack: hs >= 0 ? m.attackDir(hs as Side) : 1,
-    lean: possessionLean(m),
-    subject: -1,
-    group: 0,
-    setPiece: setPieceFocus(m),
-    // After our set piece the over-the-shoulder shot may stay on the ball while it is live, in the net, or
-    // just gone out (the one cut is then to the next set-piece framing, not to the wide shot first).
-    hold: m.phase === 'play' || m.phase === 'goal' || m.phase === 'out',
-    card: null,
-    tall,
-  };
+  // (`out`: the caller's focus, refilled in place every frame, so the frame loop allocates none.)
+  const o = out ?? ({} as CamFocus);
+  o.bx = f[BALL_OFS];
+  o.by = f[BALL_OFS + 1];
+  o.bz = f[BALL_OFS + 2];
+  o.bvx = f[BALL_OFS + 3];
+  o.bvz = f[BALL_OFS + 5];
+  o.ax = has ? f[act * PF] : f[BALL_OFS];
+  o.az = has ? f[act * PF + 1] : f[BALL_OFS + 2];
+  o.avx = 0;
+  o.avz = 0;
+  o.attack = hs >= 0 ? m.attackDir(hs as Side) : 1;
+  o.lean = possessionLean(m);
+  o.subject = -1;
+  o.group = 0;
+  o.groupFacing = undefined;
+  o.lockAngle = undefined;
+  o.close = undefined;
+  o.setPiece = setPieceFocus(m);
+  // After our set piece the over-the-shoulder shot may stay on the ball while it is live, in the net, or
+  // just gone out (the one cut is then to the next set-piece framing, not to the wide shot first).
+  o.hold = m.phase === 'play' || m.phase === 'goal' || m.phase === 'out';
+  o.card = null;
+  o.tall = tall;
+  return o;
 }

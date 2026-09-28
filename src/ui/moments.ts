@@ -7,6 +7,7 @@
  * mountMeta) plus a few rules of its own below; fits 375×667 and 667×375 (one column, the panel scrolls).
  */
 import type { AppContext, MatchRequest } from '../app';
+import { fillKeys } from '../core/input';
 import { momentStars, momentXp, type SaveData } from '../core/save';
 import { makeTeam, PRESET_CLUBS, resolveKitClash } from '../meta/data';
 import { MOMENT_XP_PER_STAR, MOMENTS, firstOpenMoment, momentStarTotals, momentUnlocked, nextMoment, starRules, type Moment } from '../meta/moments';
@@ -34,6 +35,7 @@ export function momentRequest(app: AppContext, mo: Moment, h: { onDone: (won: bo
     away,
     kits: [home.kit, resolveKitClash(home.kit, away.kit)],
     humanSide: mo.spec.humanSide,
+    kind: 'moment',
     difficulty: mo.spec.difficulty ?? mo.difficulty,
     // Never reached: the judge ends the moment (the sim's own half-time must not get there first).
     halfMinutes: 10,
@@ -131,7 +133,7 @@ function preplayScreen(app: AppContext, scr: MetaScreen, mo: Moment, back: () =>
       <ul class="mo-rules" aria-label="Star rules">
         ${rules.map((r, i) => `<li class="${got > i ? 'got' : ''}">${starsHtml(i + 1, false)}<span>${esc(r.charAt(0).toUpperCase() + r.slice(1))}</span></li>`).join('')}
       </ul>
-      <p class="mo-tip"><b>HOW</b> ${esc(mo.tip)}</p>
+      <p class="mo-tip"><b>HOW</b> ${esc(fillKeys(mo.tip))}</p>
       <div class="mo-best">${got ? `BEST ${starsHtml(got)}` : 'NOT YET PLAYED'}${sep()}${esc(mo.xpNote)}</div>
     </div>
     <div class="btn-row no-stick">

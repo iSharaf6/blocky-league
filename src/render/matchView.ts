@@ -1,10 +1,12 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { lerp, wrapAngle } from '../core/math';
 import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, PlayerDef, TeamDef } from '../sim/types';
 import { CelebrationRig } from './celebration';
 import { CHAR_H, Footballer, PSTATE, ballSkinOf, buildBallGeometry, charMaterial, screenCharK, setCharacterFill, setCharacterHemiFill, type PoseInput } from './characters';
+import { BALL_FLASH_S, ballFlashScale } from './juice';
 import { FLOODLIGHT_TOWERS } from './stadium';
 import { BoxBuilder } from './voxel';
 
@@ -76,6 +78,38 @@ const PREVIEW_EDGE_OUT = 0.9;
 const THROUGH_R = 0.72;
 const THROUGH_DASHES = 10;
 const THROUGH_ALPHA = 0.75;
+/**
+ * Colour-blind aid (SessionOptions.colorblind): no information by colour alone. The opponents' rings are
+ * dashed (CB_DASHES short arcs), ours stay solid (with the chevron pips over our heads), the pass-preview ring
+ * is notched (CB_NOTCHES gaps in its white edge) and the controlled player's square marker gets corner brackets.
+ */
+const CB_DASHES = 12;
+const CB_NOTCHES = 4;
+/**
+ * Shadow budget (the medium / low settings: setShadowBudget): only the players nearest the ball cast a dynamic
+ * shadow; the rest stand on a soft blob. A player already casting keeps it until he is BUDGET_STICKY m further
+ * out than the one replacing him (no flicker at the edge of the budget).
+ */
+const BUDGET_STICKY = 3;
+const BLOB_R = 0.42;
+const BLOB_ALPHA = 0.26;
+
+/**
+ * A flat ring of `n` arcs (inner / outer radius, m) lying on the ground, each `fill` of its share of the circle
+ * (the rest a gap), the first centred on `start` radians.
+ */
+function arcRing(inner: number, outer: number, n: number, fill: number, start = 0): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const share = (Math.PI * 2) / n;
+  const len = share * fill;
+  for (let i = 0; i < n; i++) {
+    const a = start + i * share - len / 2;
+    parts.push(new THREE.RingGeometry(inner, outer, Math.max(2, Math.round(24 * fill / n * 4)), 1, a, len).rotateX(-Math.PI / 2));
+  }
+  const g = mergeGeometries(parts)!;
+  for (const q of parts) q.dispose();
+  return g;
+}
 
 /**
  * Ring / pip colours per side: `bright` (the human's team: the shirt colour, lifted and saturated so it glows
@@ -207,10 +241,22 @@ export class MatchView {
   /** Players faded out of a latched close-up (see fadeNearLens). */
   private fadeLatch = new Set<number>();
   private turnRate = new Float32Array(22);
+  /** Colour-blind shape cues (see CB_DASHES). */
+  readonly colorblind: boolean;
+  /** Hit flashes: rendered frames each player has left drawn white, and the ball's flash clock (s; < 0: none). */
+  private flashLeft = new Uint8Array(22);
+  private ballFlashT = -1;
+  private ballFlashMat: THREE.MeshBasicMaterial | null = null;
+  /** Shadow budget (null: everyone casts), the blob shadows it puts under the rest, and scratch for the pick. */
+  private shadowBudget: number | null = null;
+  private blobs: THREE.InstancedMesh | null = null;
+  private budgetD = new Float32Array(23);
+  private refState_ = { x: 0, z: 0, faceX: 0, faceZ: 0, booking: false };
   /** Interpolated frame the renderer last drew (read by camera, HUD). */
   readonly frame: Float32Array;
 
-  constructor(teams: [TeamDef, TeamDef], kits: [Kit, Kit], humanSide: number) {
+  constructor(teams: [TeamDef, TeamDef], kits: [Kit, Kit], humanSide: number, colorblind = false) {
+    this.colorblind = colorblind;
     for (let s = 0; s < 2; s++) {
       teams[s].players.forEach((def, i) => {
         const f = new Footballer(def, kits[s], i === 0);
@@ -260,12 +306,13 @@ export class MatchView {
 
     // Team rings: flat, see-through rings on the lawn (instanced; lifted off the grass and polygon-offset, so
     // no z-fighting). AI v AI: one ring style in each side's colour. With a human side his team stands out.
-    const ringSet = (inner: number, outer: number, idx: number[], color: (i: number) => THREE.Color, opacity: number, order: number) => {
+    const ringSet = (inner: number, outer: number, idx: number[], color: (i: number) => THREE.Color, opacity: number, order: number, dashed = false) => {
       const mat = new THREE.MeshBasicMaterial({
         color: 0xffffff, transparent: true, opacity, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
       });
-      const mesh = new THREE.InstancedMesh(new THREE.RingGeometry(inner, outer, 24).rotateX(-Math.PI / 2), mat, idx.length);
+      const geo = dashed ? arcRing(inner, outer, CB_DASHES, 0.55) : new THREE.RingGeometry(inner, outer, 24).rotateX(-Math.PI / 2);
+      const mesh = new THREE.InstancedMesh(geo, mat, idx.length);
       mesh.frustumCulled = false;
       mesh.renderOrder = order;
       idx.forEach((i, k) => mesh.setColorAt(k, color(i)));
@@ -279,8 +326,9 @@ export class MatchView {
       const theirs = RING_IDX.filter((i) => (i < 11 ? 0 : 1) !== humanSide);
       const us = style[humanSide];
       const them = style[humanSide === 0 ? 1 : 0];
-      // Their ring first (under), then our edge and fill on top.
-      ringSet(THEIR_RING_IN, THEIR_RING_OUT, theirs, () => them.dim, THEIR_RING_ALPHA, 2);
+      // Their ring first (under), then our edge and fill on top. (Colour-blind: theirs dashed, a touch wider.)
+      if (colorblind) ringSet(THEIR_RING_IN - 0.02, THEIR_RING_OUT + 0.04, theirs, () => them.dim, Math.max(THEIR_RING_ALPHA, 0.85), 2, true);
+      else ringSet(THEIR_RING_IN, THEIR_RING_OUT, theirs, () => them.dim, THEIR_RING_ALPHA, 2);
       ringSet(OUR_RING_OUT - 0.02, OUR_EDGE_OUT, ours, () => us.edge, OUR_EDGE_ALPHA, 2);
       ringSet(OUR_RING_IN, OUR_RING_OUT, ours, () => us.bright, OUR_RING_ALPHA, 3);
       // Pips over his team-mates (keeper too): a little voxel chevron in the team colour with a white rim.
@@ -330,6 +378,17 @@ export class MatchView {
     rb.box(-r, 0, 0, t, 0.03, r * 2, markColor);
     rb.box(r, 0, 0, t, 0.03, r * 2, markColor);
     rb.box(r + 0.28, 0, 0, 0.3, 0.03, 0.26, markColor);
+    if (colorblind) {
+      // Colour-blind: corner brackets outside the square (a reticle), a shape no ring has.
+      const c = r + 0.3;
+      const L = 0.34;
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          rb.box(sx * (c - L / 2 + t / 2), 0, sz * c, L, 0.03, t, markColor);
+          rb.box(sx * c, 0, sz * (c - L / 2 + t / 2), t, 0.03, L, markColor);
+        }
+      }
+    }
     this.markerRing = new THREE.Mesh(rb.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
     this.markerRing.position.y = 0.04;
     this.marker.add(this.markerRing);
@@ -463,7 +522,12 @@ export class MatchView {
       f[o + 1] = lerp(a[o + 1], b[o + 1], alpha);
       f[o + 2] = lerp(a[o + 2], b[o + 2], alpha);
       f[o + 3] = a[o + 3] + wrapAngle(b[o + 3] - a[o + 3]) * alpha;
-      for (const k of [4, 9, 11, 13, 14]) f[o + k] = b[o + k];
+      // (Discrete channels: state, kick foot, dive direction, celebration style, has the ball.)
+      f[o + 4] = b[o + 4];
+      f[o + 9] = b[o + 9];
+      f[o + 11] = b[o + 11];
+      f[o + 13] = b[o + 13];
+      f[o + 14] = b[o + 14];
       f[o + 5] = b[o + 4] === a[o + 4] ? lerp(a[o + 5], b[o + 5], alpha) : b[o + 5];
       const dp = b[o + 6] - a[o + 6];
       f[o + 6] = a[o + 6] + (dp < -0.5 ? dp + 1 : dp) * alpha;
@@ -513,7 +577,7 @@ export class MatchView {
       const bearing = Math.atan2(f[BALL_OFS + 2] - f[o + 1], f[BALL_OFS] - f[o]);
       // Model left is -z; our facing angle grows towards +z, so negate for "left positive". Someone held on a
       // mark for a close-up looks where he faces (at the referee), not at the ball.
-      pose.look = this.pinned.length && this.pinned.some((p) => p.i === i) ? 0 : -wrapAngle(bearing - f[o + 3]);
+      pose.look = this.isPinned(i) ? 0 : -wrapAngle(bearing - f[o + 3]);
       if (dt > 0) {
         const dF = wrapAngle(f[o + 3] - this.lastFacing[i]) / dt;
         this.turnRate[i] += (Math.max(-12, Math.min(12, -dF)) - this.turnRate[i]) * Math.min(1, dt * 8);
@@ -525,6 +589,7 @@ export class MatchView {
       fb.pose(pose, time + i * 0.37);
     }
     if (this.ringsOn) this.updateTeamRings();
+    if (this.shadowBudget !== null) this.updateShadowBudget();
 
     // Ball: position plus rolling rotation integrated from its velocity.
     const bx = f[BALL_OFS], by = f[BALL_OFS + 1], bz = f[BALL_OFS + 2];
@@ -538,6 +603,11 @@ export class MatchView {
       this.ball.quaternion.copy(this.ballQuat);
     }
     void vy;
+    // Struck hard / off the woodwork: white and 1.25x for a moment (see flashBall).
+    const flash = this.ballFlashT >= 0 && this.ballFlashT < BALL_FLASH_S;
+    this.ball.scale.setScalar(flash ? ballFlashScale(this.ballFlashT) : 1);
+    const want = flash ? this.flashMatBall() : this.ballHot ? this.hotMat! : charMaterial;
+    if (this.ball.material !== want) this.ball.material = want;
     this.ball.visible = !this.ballHidden;
     this.ballShadow.position.set(bx, 0.02, bz);
     // Contact shadow straight under the ball: shrinks and fades with height so you can read it.
@@ -587,10 +657,145 @@ export class MatchView {
     }
   }
 
+  /** Is player `i` held on a mark for a close-up (see pinPlayer)? */
+  private isPinned(i: number): boolean {
+    const pins = this.pinned;
+    for (let k = 0; k < pins.length; k++) if (pins[k].i === i) return true;
+    return false;
+  }
+
+  private flashMatBall(): THREE.MeshBasicMaterial {
+    return (this.ballFlashMat ??= new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  }
+
+  /** The ball struck hard (or off the woodwork): white and 1.25x for BALL_FLASH_S (render/juice.ts). */
+  flashBall(): void {
+    this.ballFlashT = 0;
+  }
+
+  /** Player `i` drawn white for the next `frames` rendered frames (a tackle, a foul, a save). */
+  flashPlayer(i: number, frames: number): void {
+    const fb = this.players[i];
+    if (!fb || !(frames > 0)) return;
+    this.flashLeft[i] = Math.max(this.flashLeft[i], Math.min(255, Math.round(frames)));
+    fb.setFlash(true);
+  }
+
+  /**
+   * Advance the hit flashes by one rendered frame (`dt` s): call once per frame BEFORE this frame's events, so a
+   * flash set now is drawn white on exactly `frames` frames. (Runs through a hit-stop: the frozen picture is the
+   * one that flashes.)
+   */
+  tickFlashes(dt: number): void {
+    for (let i = 0; i < 22; i++) {
+      const n = this.flashLeft[i];
+      if (n === 0) continue;
+      this.flashLeft[i] = n - 1;
+      if (n - 1 === 0) this.players[i]?.setFlash(false);
+    }
+    if (this.ballFlashT >= 0) {
+      this.ballFlashT += dt;
+      if (this.ballFlashT >= BALL_FLASH_S) {
+        this.ballFlashT = -1;
+        this.ball.scale.setScalar(1);
+        this.ball.material = this.ballHot ? this.hotMat! : charMaterial;
+      }
+    }
+  }
+
+  /** Frames of white left on player `i` (tests). */
+  flashFrames(i: number): number {
+    return this.flashLeft[i] ?? 0;
+  }
+
+  /**
+   * Shadow budget (the medium / low settings): only the `n` players nearest the ball (and the ball, and on
+   * medium the referee) cast a dynamic shadow; everyone else stands on a soft blob. null: everyone casts (high).
+   */
+  setShadowBudget(n: number | null): void {
+    if (n === this.shadowBudget) return;
+    this.shadowBudget = n;
+    if (n === null) {
+      for (const fb of this.players) fb.setCastShadow(true);
+      this.referee.setCastShadow(true);
+      if (this.blobs) this.blobs.visible = false;
+      return;
+    }
+    if (!this.blobs) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x1e3312, transparent: true, opacity: BLOB_ALPHA, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      });
+      this.blobs = new THREE.InstancedMesh(new THREE.CircleGeometry(BLOB_R, 16).rotateX(-Math.PI / 2), mat, 23);
+      this.blobs.frustumCulled = false;
+      this.blobs.renderOrder = 1;
+      this.m4.makeScale(0, 0, 0);
+      for (let i = 0; i < 23; i++) this.blobs.setMatrixAt(i, this.m4);
+      this.group.add(this.blobs);
+    }
+    this.blobs.visible = true;
+    // (No shadow map at all on low: the referee gets a blob too.)
+    this.referee.setCastShadow(n > 0);
+    this.updateShadowBudget();
+  }
+
+  get shadowCasters(): number {
+    let n = 0;
+    for (const fb of this.players) if (fb.castsShadow) n++;
+    return n;
+  }
+
+  private updateShadowBudget(): void {
+    const n = this.shadowBudget;
+    const blobs = this.blobs;
+    if (n === null || !blobs) return;
+    const f = this.frame;
+    const bx = f[BALL_OFS];
+    const bz = f[BALL_OFS + 2];
+    const d = this.budgetD;
+    for (let i = 0; i < 22; i++) {
+      const o = i * PF;
+      const fb = this.players[i];
+      d[i] = f[o + 4] === SENT_OFF_CODE || fb.opacity < 0.5
+        ? Infinity
+        : Math.hypot(f[o] - bx, f[o + 1] - bz) - (fb.castsShadow ? BUDGET_STICKY : 0);
+    }
+    // The n nearest (selection: n passes over 22; marked by setting their distance to -1).
+    for (let k = 0; k < n; k++) {
+      let best = -1;
+      let bd = Infinity;
+      for (let i = 0; i < 22; i++) {
+        if (d[i] >= 0 && d[i] < bd) {
+          bd = d[i];
+          best = i;
+        }
+      }
+      if (best < 0) break;
+      d[best] = -1;
+    }
+    const k = this.charK;
+    this.q.identity();
+    for (let i = 0; i < 22; i++) {
+      const fb = this.players[i];
+      const cast = d[i] === -1;
+      fb.setCastShadow(cast);
+      const o = i * PF;
+      const s = cast || fb.opacity < 0.5 || !fb.group.visible ? 0 : k * Math.max(0.45, 1 - f[o + 2] * 0.35);
+      this.m4.compose(this.v3.set(f[o], 0.025, f[o + 1]), this.q, this.s3.set(s, 1, s));
+      blobs.setMatrixAt(i, this.m4);
+    }
+    blobs.instanceMatrix.needsUpdate = true;
+  }
+
   /** The referee jogs a diagonal about 10 m from the ball and signals fouls. */
   updateReferee(dt: number, time: number, visible: boolean): void {
     const g = this.referee.group;
     g.visible = visible;
+    if (!visible && this.blobs && this.shadowBudget === 0) {
+      this.m4.makeScale(0, 0, 0);
+      this.blobs.setMatrixAt(22, this.m4);
+      this.blobs.instanceMatrix.needsUpdate = true;
+    }
     if (!visible || dt <= 0) return;
     const f = this.frame;
     const bx = f[BALL_OFS];
@@ -617,6 +822,13 @@ export class MatchView {
     g.position.set(r.x, 0, r.z);
     g.rotation.y = -r.facing;
     this.referee.scaleK = this.charK;
+    if (this.blobs && this.shadowBudget === 0) {
+      // (Low: no shadow map at all, so the referee stands on a blob like everyone else.)
+      this.q.identity();
+      this.m4.compose(this.v3.set(r.x, 0.025, r.z), this.q, this.s3.set(this.charK, 1, this.charK));
+      this.blobs.setMatrixAt(22, this.m4);
+      this.blobs.instanceMatrix.needsUpdate = true;
+    }
     const booking = r.signal > 0 && r.kind === 'card';
     this.cards.yellow.visible = booking && this.cardColor === 'yellow';
     this.cards.red.visible = booking && this.cardColor === 'red';
@@ -685,7 +897,7 @@ export class MatchView {
     if (on === this.ballHot) return;
     this.ballHot = on;
     if (on && !this.hotMat) this.hotMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xff4a1a });
-    this.ball.material = on ? this.hotMat! : charMaterial;
+    if (this.ballFlashT < 0) this.ball.material = on ? this.hotMat! : charMaterial;
   }
 
   /** Blitz: a colour cast over player `i` (an ice-blue tint on a frozen side), null for none. */
@@ -701,9 +913,16 @@ export class MatchView {
   }
 
   /** Where the referee stands and whom he faces (card close-ups). */
+  /** (The same object every call: read it at once.) */
   get refState(): { x: number; z: number; faceX: number; faceZ: number; booking: boolean } {
     const r = this.ref;
-    return { x: r.x, z: r.z, faceX: r.faceX, faceZ: r.faceZ, booking: r.kind === 'card' && r.signal > 0 };
+    const o = this.refState_;
+    o.x = r.x;
+    o.z = r.z;
+    o.faceX = r.faceX;
+    o.faceZ = r.faceZ;
+    o.booking = r.kind === 'card' && r.signal > 0;
+    return o;
   }
 
   /**
@@ -859,8 +1078,10 @@ export class MatchView {
     // (No team ring under the man the human controls: his yellow marker is the one ring there.)
     const active = this.marker.visible ? f[BALL_OFS + 8] : -1;
     this.q.identity();
-    for (const { mesh, idx } of this.ringSets) {
-      idx.forEach((i, n) => {
+    for (let r = 0; r < this.ringSets.length; r++) {
+      const { mesh, idx } = this.ringSets[r];
+      for (let n = 0; n < idx.length; n++) {
+        const i = idx[n];
         const o = i * PF;
         // Shrinks away under a jump; gone for a player sent off (parked by his dugout) or faded out of a lens.
         const gone = i === active || f[o + 4] === SENT_OFF_CODE || this.players[i].opacity < 0.5;
@@ -868,7 +1089,7 @@ export class MatchView {
         const s = gone ? 0 : k * Math.max(0.5, 1 - f[o + 2] * 0.5) * (1 - this.previewW[i]);
         this.m4.compose(this.v3.set(f[o], 0.03, f[o + 1]), this.q, this.s3.set(s, 1, s));
         mesh.setMatrixAt(n, this.m4);
-      });
+      }
       mesh.instanceMatrix.needsUpdate = true;
     }
   }
@@ -886,7 +1107,8 @@ export class MatchView {
     const k = this.charK;
     const top = this.headTop + PIP_UP * k;
     let dirty = false;
-    this.pipIdx.forEach((i, n) => {
+    for (let n = 0; n < this.pipIdx.length; n++) {
+      const i = this.pipIdx[n];
       const o = i * PF;
       const hide = i === active || f[o + 4] === SENT_OFF_CODE || this.players[i].opacity < 0.5;
       const aimed = i === this.passAimIdx && this.passing;
@@ -903,7 +1125,7 @@ export class MatchView {
         fill.setColorAt(n, this.tmpC.setHex(next));
         dirty = true;
       }
-    });
+    }
     fill.instanceMatrix.needsUpdate = true;
     edge.instanceMatrix.needsUpdate = true;
     if (dirty) fill.instanceColor!.needsUpdate = true;
@@ -1165,7 +1387,11 @@ export class MatchView {
     const mat = (color: number) =>
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false });
     const g = new THREE.Group();
-    const edge = new THREE.Mesh(new THREE.RingGeometry(PREVIEW_EDGE_IN, PREVIEW_EDGE_OUT, 32).rotateX(-Math.PI / 2), mat(PASS_WHITE));
+    // (Colour-blind: the white edge notched at the four compass points, so it reads apart from any team ring.)
+    const edgeGeo = this.colorblind
+      ? arcRing(PREVIEW_EDGE_IN, PREVIEW_EDGE_OUT + 0.04, CB_NOTCHES, 0.78, Math.PI / 4)
+      : new THREE.RingGeometry(PREVIEW_EDGE_IN, PREVIEW_EDGE_OUT, 32).rotateX(-Math.PI / 2);
+    const edge = new THREE.Mesh(edgeGeo, mat(PASS_WHITE));
     const fill = new THREE.Mesh(new THREE.RingGeometry(PREVIEW_RING_IN, PREVIEW_RING_OUT, 32).rotateX(-Math.PI / 2), mat(PASS_TEAL));
     edge.renderOrder = 8;
     fill.renderOrder = 8;

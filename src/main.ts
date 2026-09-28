@@ -3,9 +3,13 @@ import '@fontsource/silkscreen/400.css';
 import '@fontsource/silkscreen/700.css';
 import './style.css';
 import { Vector3 } from 'three';
-import type { AppContext, MatchRequest } from './app';
+import type { AppContext, MatchKind, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
-import { Input } from './core/input';
+import { ddaAssist, ddaRecord, suggestEasy, type Outcome } from './core/dda';
+import { Input, isKey, setBindings, setDeviceSource } from './core/input';
+import {
+  BASICS_STEPS, LOCKED_FEATURES, basicsDone, completeBasics, featureOpen, heroOf, noteGoals, straightToBasics, type LockedFeature,
+} from './core/onboarding';
 import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock, skinUnlocked, type BallSkinId, celebrationUnlocked,
@@ -16,6 +20,7 @@ import { ads } from './platform/ads';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
 import { BOX_DEPTH, BOX_W, HALF_L } from './sim/constants';
+import { finishScenario } from './sim/scenario';
 import type { Match } from './sim/match';
 import type { FormationId, KickKind, MatchEvent, MatchMode, Side } from './sim/types';
 import { DIFFICULTIES, DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
@@ -25,12 +30,19 @@ import { overall } from './sim/types';
 import { openCareer } from './ui/career';
 import { openCup } from './ui/cup';
 import { closeMeta, openClub } from './ui/club';
-import { stopSpeech } from './ui/commentary';
 import type { Projector } from './ui/hud';
 import { openMoments } from './ui/moments';
-import { openOnline, type OnlineHost } from './ui/online';
+import type { OnlineHost } from './ui/online';
 import { installSepGuard } from './ui/text';
-import { Trainer } from './ui/trainer';
+import { Lesson, Trainer } from './ui/trainer';
+import { TouchControls } from './ui/touch';
+import { saveClip, shareClip } from './ui/clips';
+import { openRun } from './ui/run';
+import { openBadges } from './ui/badges';
+import { BASICS } from './meta/moments';
+import { badgePending, nextBadgeGoal, recordMatchMeta, wornTitle, type MasteryMatch } from './meta/mastery';
+import { runTileText } from './meta/run';
+import type { ClipSource } from './ui/menus';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
 
 /** When the script started: the studio splash stays up at least SPLASH_MS from here. */
@@ -41,8 +53,14 @@ const world = new World(canvas);
 const input = new Input();
 // The trainer's first-match teaching steps watch the stick and PASS through the live input (see ui/trainer.ts).
 Trainer.input = input;
+// Every on-screen key hint names the device in hand (core/input.ts).
+setDeviceSource(() => input.lastDevice);
 const menus = new Menus();
+menus.clipActions = { save: saveClip, share: shareClip };
 const save = loadSave();
+/** A portal build (CrazyGames / Poki; in dev, ?portal=): a first visit goes straight from TAP TO PLAY to the first drill. */
+const PORTAL = import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki'
+  || (import.meta.env.DEV && new URLSearchParams(location.search).has('portal'));
 let session: MatchSession | null = null;
 let demo: MatchSession | null = null;
 /** The main menu (or a screen off it) is up, as opposed to the title screen or a match. */
@@ -188,11 +206,19 @@ function applySettings(): void {
   sfx.setMusic(s.music);
   if (s.music && !session) sfx.startMusic();
   world.setQuality(s.quality);
+  // Key bindings, the touch stick style and the colour-blind aid (Settings), live in a match too.
+  setBindings(s.keys, s.pad);
+  TouchControls.stickMode = s.stick === 'fixed' ? 'fixed' : 'floating';
+  menus.stick = TouchControls.stickMode;
+  document.body.classList.toggle('cb', !!s.colorblind);
   if (session) {
     // (Not online: each side's controls there were agreed before the kick-off, and a change on one machine
     // only would split the two games apart.)
     if (!session.driver) applyControls(session.match);
-    session.hud?.setCommentary(s.commentary, s.commentaryVoice);
+    if (basicsNow) session.match.trainer = true;
+    session.hud?.setCommentary(s.commentary);
+    session.hud?.setColorblind(!!s.colorblind);
+    session.touch?.setStickMode(TouchControls.stickMode);
     applyCamZoom(session);
     (session as { setBallSkin?: (id?: string) => void }).setBallSkin?.(equippedSkin());
     (session as { setCelebration?: (id?: string) => void }).setCelebration?.(equippedCelebration());
@@ -253,9 +279,22 @@ function mainInfo(): MainInfo {
   const info: MainInfo = {};
   const q = PRESET_CLUBS[save.clubIdx];
   const o = PRESET_CLUBS[save.opponentIdx];
-  if (q) {
+  // The campaign (core/onboarding.ts): the big tile is the next basics drill, then the first match, then PLAY NOW.
+  const hero = heroOf(onboarding(), played());
+  if (hero.kind === 'basics') {
+    info.hero = { title: 'LEARN THE BASICS', kind: 'basics' };
+    info.playNow = `STEP ${hero.step + 1} OF ${BASICS_STEPS} · ${BASICS[hero.step]?.title ?? ''}`;
+  } else if (q) {
     const p = playNowPlan();
+    if (hero.kind === 'first') info.hero = { title: 'FIRST MATCH', kind: 'first' };
     info.playNow = `${q.short} v ${PRESET_CLUBS[p.rival].short} · ${DIFFICULTIES[p.difficulty]}`;
+  }
+  info.locked = LOCKED_FEATURES.filter((f) => !featureOpen(onboarding(), f));
+  const run = save.run;
+  try {
+    info.run = runTileText(save);
+  } catch {
+    info.run = run?.best ? `BEST: ROUND ${run.best}` : 'ONE MORE RUN';
   }
   if (q && o) info.quick = 'PICK TEAMS · RULES';
   const moStars = momentStarsTotal(save);
@@ -291,7 +330,14 @@ function mainInfo(): MainInfo {
   // Progression: the level badge and today's challenges (rolled over to a new day here, and saved if so).
   const p = save.progress;
   const lv = levelOf(p.xp);
-  info.level = { level: lv.level, title: levelTitle(lv.level), into: lv.into, need: lv.need };
+  info.level = { level: lv.level, title: wornTitle(save) ?? levelTitle(lv.level), into: lv.into, need: lv.need };
+  try {
+    // The nearest badge tier (always a near goal on the level badge) and anything waiting to be claimed.
+    info.badgeGoal = save.mastery ? nextBadgeGoal(save.mastery)?.text : undefined;
+    info.badgesPending = badgePending(save);
+  } catch {
+    // (Retention bookkeeping never breaks the menu.)
+  }
   info.unlock = nextUnlock(save.progress.xp);
   const dayBefore = p.daily.day;
   const daily = dailyFor(p, localDay());
@@ -301,10 +347,28 @@ function mainInfo(): MainInfo {
   return info;
 }
 
+/** The save's campaign state (always whole once loaded: core/save.ts). */
+function onboarding(): NonNullable<typeof save.onboarding> {
+  save.onboarding ??= { basics: played() > 0 ? BASICS_STEPS : 0, firstGoal: played() > 0, unlockSeen: played() > 0 };
+  return save.onboarding;
+}
+
+const FEATURE_NAMES: Record<LockedFeature, string> = { career: 'CAREER', moments: 'MOMENTS', run: 'CLUB RUN', blitz: 'BLITZ' };
+
 function mainMenu(): void {
   atMenu = true;
+  basicsNow = false;
+  Trainer.lesson = null;
   if (!demo) startDemo();
   if (save.settings.music) sfx.startMusic();
+  // The first goal opened the locked modes: say so once, over the menu.
+  const ob = onboarding();
+  if (ob.firstGoal && !ob.unlockSeen) {
+    ob.unlockSeen = true;
+    persist();
+    menus.unlocked(() => mainMenu());
+    return;
+  }
   const info = mainInfo();
   const backup = (): void => menus.backup(save, { onImport: reload, back: () => settings() });
   const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', { backup });
@@ -329,8 +393,17 @@ function mainMenu(): void {
     quick: () => quickMatch(),
     blitz: () => quickMatch('blitz'),
     moments: () => openMoments(app, mainMenu),
-    online: () => openOnline(onlineHost),
-    unlocks: () => menus.unlocks(save, mainMenu),
+    // (The condition written out here, not through a variable: the bundler drops the whole branch, the import
+    // with it, only when it can see the literal: see ONLINE below.)
+    online: !import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none'
+      ? () => void import('./ui/online').then((o) => o.openOnline(onlineHost))
+      : undefined,
+    run: () => openRun(app, mainMenu),
+    locked: (f) => menus.toast(`SCORE YOUR FIRST GOAL TO UNLOCK ${FEATURE_NAMES[f]}`),
+    unlocks: () => {
+      const ladder = (): void => menus.unlocks(save, mainMenu, () => openBadges(app, ladder));
+      ladder();
+    },
     career: () => openCareer(app),
     cup: () => openCup(app),
     club: () => openClub(app),
@@ -339,9 +412,15 @@ function mainMenu(): void {
   }, info);
 }
 
+/*
+ * ONLINE ships in the web builds only: the own site and itch (VITE_PORTAL 'none'), and dev (unset). The portal builds
+ * (CrazyGames, Poki) leave it out altogether: no tile, and none of its code in the bundle (the main menu's lazy
+ * import is dead there once VITE_PORTAL is a literal), so a portal submission makes no WebRTC or STUN request.
+ */
+
 /**
- * ONLINE (src/ui/online.ts): it builds the match and drives it (lockstep); this puts it on screen and takes it
- * off. No coins, XP or record: an online friendly doesn't touch the save.
+ * ONLINE (src/ui/online.ts, loaded on first use): it builds the match and drives it (lockstep); this puts it on
+ * screen and takes it off. No coins, XP or record: an online friendly doesn't touch the save.
  */
 const onlineHost: OnlineHost = {
   save,
@@ -358,10 +437,18 @@ const onlineHost: OnlineHost = {
     demo?.dispose();
     demo = null;
     endMatch();
-    const s = new MatchSession(world, input, { ...opt, ballSkin: equippedSkin(), celebration: equippedCelebration() });
+    // (No basics lesson in an online match; the trainer's cards follow Settings as ever.)
+    basicsNow = false;
+    Trainer.lesson = null;
+    Trainer.taught = basicsDone(onboarding());
+    const s = new MatchSession(world, input, {
+      ...opt, ballSkin: equippedSkin(), celebration: equippedCelebration(), colorblind: !!save.settings.colorblind,
+    });
     session = s;
-    s.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
+    s.hud?.setCommentary(save.settings.commentary);
+    s.hud?.setColorblind(!!save.settings.colorblind);
     s.hud?.setProjector(project);
+    s.touch?.setStickMode(TouchControls.stickMode);
     const blitz = opt.mode === 'blitz';
     s.hud?.setBlitz(blitz);
     s.touch?.setBlitz(blitz);
@@ -399,7 +486,8 @@ function similarRival(mine: number): number {
 function playNowPlan(): { home: number; rival: number; difficulty: number; halfMinutes: number } {
   const home = PRESET_CLUBS[save.clubIdx] ? save.clubIdx : 0;
   const fresh = save.record.played === 0;
-  return { home, rival: similarRival(home), difficulty: fresh ? 1 : save.settings.difficulty, halfMinutes: fresh ? 1.5 : save.settings.halfMinutes };
+  // The very first match is on Easy (with the first-match ease on top: core/dda.ts), and short.
+  return { home, rival: similarRival(home), difficulty: fresh ? 0 : save.settings.difficulty, halfMinutes: fresh ? 1.5 : save.settings.halfMinutes };
 }
 
 /** Matches played on this save so far (a moment is not a match). */
@@ -411,6 +499,11 @@ const played = (): number => save.record.played;
  * trainer teaches MOVE and PASS (MatchRequest.firstMatch).
  */
 function playNow(): void {
+  const hero = heroOf(onboarding(), played());
+  if (hero.kind === 'basics') {
+    startBasics(hero.step);
+    return;
+  }
   const p = playNowPlan();
   const home = makeTeam(PRESET_CLUBS[p.home]);
   const away = makeTeam(PRESET_CLUBS[p.rival]);
@@ -423,6 +516,7 @@ function playNow(): void {
     attendance: 0.9,
     stadiumLevel: 5,
     mode: 'classic',
+    kind: 'playnow',
     firstMatch: played() === 0,
     skipIntro: true,
     rematch: true,
@@ -430,6 +524,51 @@ function playNow(): void {
     onDone: () => mainMenu(),
     onQuit: () => mainMenu(),
   });
+}
+
+/** Coins-free XP for finishing a basics drill (a taste of the level bar). */
+const BASICS_XP = 30;
+/** A basics drill is running (the trainer stays on, the prompts show; applySettings keeps it that way). */
+let basicsNow = false;
+
+/**
+ * LEARN THE BASICS step `step` (meta/moments.ts BASICS): a tiny staged drill on the Moments engine, with the
+ * trainer's one-at-a-time prompts. No result screen: a miss restarts it at once (`again`), a goal goes to the
+ * next step, and after the last one the YOU'RE READY card offers the first match.
+ */
+function startBasics(step: number, again = false): void {
+  const b = BASICS[Math.max(0, Math.min(BASICS.length - 1, step))];
+  const homeIdx = PRESET_CLUBS[save.clubIdx] ? save.clubIdx : 0;
+  const awayIdx = similarRival(homeIdx);
+  const home = makeTeam(PRESET_CLUBS[homeIdx]);
+  const away = makeTeam(PRESET_CLUBS[awayIdx]);
+  const spec = again ? { ...b.spec, brief: `One more go. ${b.spec.brief}` } : b.spec;
+  startMatch({
+    home, away,
+    kits: [home.kit, resolveKitClash(home.kit, away.kit)],
+    humanSide: 0,
+    difficulty: 0,
+    // Never reached: the drill ends itself.
+    halfMinutes: 10,
+    attendance: 0.6,
+    stadiumLevel: 4,
+    mode: 'classic',
+    kind: 'basics',
+    basicsStep: step,
+    scenario: spec,
+    skipIntro: true,
+    // The AI barely competes: this is a lesson, not a test.
+    assist: 0.8,
+    quitNote: 'You can pick the basics up again from the menu.',
+    reward: () => ({ coins: 0, label: 'BASICS' }),
+    onDone: () => mainMenu(),
+    onQuit: () => mainMenu(),
+  });
+}
+
+/** After the basics: the first real match (Easy, short, the first-match ease and kick-off hold). */
+function firstMatch(): void {
+  playNow();
 }
 
 /** Standard coin payout, scaled by difficulty. */
@@ -461,12 +600,13 @@ function quickMatch(mode?: MatchMode): void {
       attendance: 0.9,
       stadiumLevel: 5,
       mode: m,
+      kind: 'quick',
       rematch: true,
       reward: (r) => standardReward(r, difficulty),
       onDone: () => mainMenu(),
       onQuit: () => mainMenu(),
     });
-  }, mode);
+  }, mode, !featureOpen(onboarding(), 'blitz'));
 }
 
 function pickTime(): TimeOfDay {
@@ -498,19 +638,59 @@ function recordResult(r: MatchResult): void {
   else rec.lost++;
 }
 
-let matchesPlayed = 0;
+/** Matches and moments finished this visit (an ad break is only ever between two of them). */
+let finishedThisVisit = 0;
+
+/** Roman numerals for badge tiers (the FT line: "FINISHER II"). */
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+
+/**
+ * Mastery and season progress for a finished match or moment: the tier-ups as lines for the full-time screen.
+ * The retention modules own the rules (meta/mastery.ts, meta/season.ts); a failure there never breaks full time.
+ */
+function retention(m: MasteryMatch | null, xp: number): string[] {
+  const lines: string[] = [];
+  try {
+    // (recordMatchMeta creates the badge / season state on a brand-new save; a moment or drill adds no match numbers.)
+    const none: MasteryMatch = { goals: 0, assists: 0, passes: 0, tackles: 0, cleanSheet: false, skills: 0, saves: 0 };
+    const { badgeUps, seasonUps } = recordMatchMeta(save, m ?? none, xp);
+    for (const up of badgeUps) lines.push(`BADGE UP: ${up.track.toUpperCase()} ${ROMAN[up.tier] ?? up.tier}`);
+    if (seasonUps.length) lines.push(`SEASON TIER ${seasonUps[seasonUps.length - 1]} REACHED`);
+  } catch {
+    // Progress bookkeeping must never stop the result screen.
+  }
+  return lines;
+}
+
+/** The session's goal clip, if the browser can record one and a goal was caught (the RENDER side's API). */
+function clipOf(s: MatchSession): ClipSource | undefined {
+  const api = s as MatchSession & {
+    lastClip?: () => { blob: Blob; name: string } | null;
+    clipSupported?: () => boolean;
+    lastPoster?: () => Blob | null;
+  };
+  if (!api.clipSupported?.()) return undefined;
+  return { clip: () => api.lastClip?.() ?? null, poster: () => api.lastPoster?.() ?? null };
+}
 
 async function startMatch(req: MatchRequest): Promise<void> {
   atMenu = false;
   menus.close();
   sfx.stopMusic();
-  // Portal interstitial at the natural break before a new kick-off (never on the first match).
-  if (matchesPlayed > 0) await ads.midgame();
+  const basics = req.kind === 'basics';
+  // Portal interstitial only at a natural break before a new kick-off: never the first thing this visit, never
+  // in or right after the basics, never before the first real match.
+  if (finishedThisVisit > 0 && !basics && !req.firstMatch && played() > 0) await ads.midgame();
   demo?.dispose();
   demo = null;
   const { kits, humanSide } = req;
   // A new player's first three matches are played in daylight and clear weather (no snow on a first kick-off).
   const early = played() < 3;
+  // The hidden ease (core/dda.ts): the request's own, else the save's streaks decide. Shown nowhere.
+  const assist = req.assist ?? ddaAssist(save.dda ?? { careerLosses: 0, quickLosses: [0, 0, 0, 0] }, played(), req.kind, req.difficulty);
+  basicsNow = basics;
+  Trainer.lesson = basics ? new Lesson(BASICS[req.basicsStep ?? 0]?.lesson ?? []) : null;
+  Trainer.taught = basicsDone(onboarding());
   session = new MatchSession(world, input, {
     home: req.home,
     away: req.away,
@@ -520,8 +700,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     humanSide,
     attendance: req.attendance,
     seed: Math.floor(Math.random() * 1e9),
-    timeOfDay: req.timeOfDay ?? (early ? 'day' : pickTime()),
-    weather: req.weather ?? (early ? 'clear' : pickWeather()),
+    timeOfDay: req.timeOfDay ?? (early || basics ? 'day' : pickTime()),
+    weather: req.weather ?? (early || basics ? 'clear' : pickWeather()),
     knockout: req.knockout,
     // Career and the cup stay classic; Quick Match passes the mode the player picked.
     mode: req.mode ?? 'classic',
@@ -529,21 +709,51 @@ async function startMatch(req: MatchRequest): Promise<void> {
     scenario: req.scenario,
     skipIntro: req.skipIntro,
     stadiumLevel: Math.max(0, Math.min(5, Math.round(req.stadiumLevel ?? 5))),
-    tutorial: !save.seenTutorial,
+    tutorial: !save.seenTutorial && !basics,
     camZoom: camZoom(),
     ballSkin: equippedSkin(),
     celebration: equippedCelebration(),
+    colorblind: !!save.settings.colorblind,
+    assist,
+    startScore: req.startScore,
+    keeperBoost: req.keeperBoost,
+    goldenFirst: req.goldenFirst,
+    startPower: req.startPower,
+    sideDifficulty: req.sideDifficulty,
   });
   applyControls(session.match);
-  session.hud?.setCommentary(save.settings.commentary, save.settings.commentaryVoice);
+  // The basics prompts live in the trainer: it is on for them whatever Settings says.
+  if (basics) session.match.trainer = true;
+  session.hud?.setCommentary(save.settings.commentary && !basics);
+  session.hud?.setColorblind(!!save.settings.colorblind);
   session.hud?.setProjector(project);
+  session.touch?.setStickMode(TouchControls.stickMode);
   const blitz = req.mode === 'blitz';
   session.hud?.setBlitz(blitz);
   session.touch?.setBlitz(blitz);
+  if (basics && session.hud) {
+    const hud = session.hud;
+    const step = (req.basicsStep ?? 0) + 1;
+    // No clock to beat and no fail state: the step number where the countdown was, no 5-4-3-2-1, and the
+    // moment's verdicts in the drill's own words.
+    hud.countdownLabel = `${step}/${BASICS_STEPS}`;
+    hud.retitle = (b) => {
+      if (/^\d+$/.test(b.title)) return null;
+      if (b.title === 'FAILED') return { ...b, title: 'AGAIN!', sub: 'one more go' };
+      if (b.title === 'COMPLETE!') return { ...b, title: 'NICE!', sub: step < BASICS_STEPS ? `step ${step} of ${BASICS_STEPS} done` : 'basics done' };
+      return b;
+    };
+  }
   // Count what the human does (headers, long-range goals, tackles, skills, pickups) for XP and the daily challenges.
   const tally = newTally();
   const hs: Side = humanSide === 1 ? 1 : 0;
-  if (session.hud) session.hud.onEvent = (e, m) => track(tally, e, m, hs);
+  const lesson = Trainer.lesson;
+  if (session.hud) {
+    session.hud.onEvent = (e, m) => {
+      track(tally, e, m, hs);
+      lesson?.event(e, m);
+    };
+  }
   const s = session;
   ads.gameplayStart();
   const tacticsMenu = (back: () => void) =>
@@ -556,11 +766,11 @@ async function startMatch(req: MatchRequest): Promise<void> {
     });
   s.onPause = () => {
     ads.gameplayStop();
-    stopSpeech();
     const pauseMenu = (): void =>
       menus.pause({
         quitNote: req.quitNote ?? "This match won't count and you won't earn any coins.",
-        tactics: () => tacticsMenu(pauseMenu),
+        quitLabel: basics ? 'BACK TO MENU' : undefined,
+        tactics: basics ? undefined : () => tacticsMenu(pauseMenu),
         resume: () => {
           menus.close();
           s.resume();
@@ -569,6 +779,16 @@ async function startMatch(req: MatchRequest): Promise<void> {
         howto: () => menus.howTo(pauseMenu, input.lastDevice),
         // Mid-match, the options that matter are the controls: open on that tab.
         settings: () => menus.settings(save, applySettings, pauseMenu, 'controls'),
+        // The last goal's clip, once there is one.
+        clip: basics ? undefined : clipOf(s),
+        // LEARN THE BASICS: an experienced player can skip the rest (the modes still wait for a real goal).
+        skip: basics ? () => {
+          onboarding().basics = BASICS_STEPS;
+          persist();
+          menus.close();
+          endMatch();
+          mainMenu();
+        } : undefined,
         quit: () => {
           menus.close();
           endMatch();
@@ -589,7 +809,30 @@ async function startMatch(req: MatchRequest): Promise<void> {
   };
   s.onFinish = (r) => {
     ads.gameplayStop();
-    matchesPlayed++;
+    if (basics && r.scenarioOutcome) {
+      // LEARN THE BASICS: no result screen. A miss restarts the step at once; a goal goes on to the next one,
+      // and the last one hands over to the first match. (Its goals don't count for the unlock: noteGoals.)
+      const step = req.basicsStep ?? 0;
+      const won = r.scenarioOutcome.won;
+      let next = step;
+      if (won) {
+        save.progress.xp += BASICS_XP;
+        next = completeBasics(onboarding(), step);
+        retention(null, BASICS_XP);
+        persist();
+      }
+      menus.close();
+      endMatch();
+      if (!won) startBasics(step, true);
+      else if (next >= 0) startBasics(next);
+      else {
+        // The menu's live pitch behind the card (the drill's session is gone).
+        if (!demo) startDemo();
+        menus.basicsDone({ play: () => firstMatch(), menu: () => mainMenu() });
+      }
+      return;
+    }
+    finishedThisVisit++;
     if (r.scenarioOutcome && req.scenario) {
       // A Football Moment: not a match (no record, coins, streak or challenges); XP for the try and the stars,
       // the best stars kept by moment id. RETRY runs the same request again, NEXT MOMENT hands back to the list.
@@ -598,6 +841,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
       const xpFrom = p.xp;
       p.xp += momentXp(o.stars);
       recordMoment(save, req.scenario.id, o.stars);
+      noteGoals(onboarding(), 'moment', Math.max(0, r.score[hs] - (req.scenario.score?.[hs] ?? 0)));
+      retention(null, p.xp - xpFrom);
       persist();
       const leave = (then: () => void) => {
         menus.close();
@@ -612,6 +857,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
       });
       return;
     }
+    const firstEver = played() === 0;
     recordResult(r);
     save.seenTutorial = true;
     // Progression: the win streak boosts the coins (×1.1 a win, up to ×2); XP, stars and today's challenges.
@@ -640,6 +886,31 @@ async function startMatch(req: MatchRequest): Promise<void> {
     const bonus = done.reduce((n, x) => n + x.challenge.coins, 0);
     let earned = reward.coins + bonus;
     save.coins += earned;
+    // The first real goal opens CAREER, MOMENTS, CLUB RUN and BLITZ (the menu says so next).
+    noteGoals(onboarding(), req.kind, my);
+    // The hidden ease's streaks, and the one visible hint: three quick-match defeats in a row above Easy.
+    const outcome: Outcome = won ? 'win' : drawn ? 'draw' : 'loss';
+    const kind: MatchKind | undefined = req.kind;
+    let tryEasy: (() => void) | undefined;
+    /** TRY EASY was pressed: Quick Match is on Easy from now, and a REMATCH from this screen is too. */
+    let easyNow = false;
+    if (save.dda) {
+      ddaRecord(save.dda, kind, req.difficulty, outcome);
+      if (suggestEasy(save.dda, kind, req.difficulty, outcome)) {
+        tryEasy = () => {
+          save.settings.difficulty = 0;
+          easyNow = true;
+          persist();
+        };
+      }
+    }
+    // Mastery badges and the season track (the RETENTION modules): tier-ups become a line at full time.
+    // (Goals our own players scored, from the ratings: a HEAD START perk's goal or a golden double isn't a finish.)
+    const scored = (r.ratings ?? []).filter((x) => x.side === hs).reduce((n, x) => n + x.goals, 0);
+    const tierUps = retention({
+      goals: scored, assists: summary.assists, passes: summary.passes, tackles: tally.tacklesWon, cleanSheet: their === 0,
+      skills: tally.skills, saves: r.match.stats.saves?.[hs] ?? 0,
+    }, p.xp - xpFrom);
     persist();
     let doubled = false;
     menus.fulltime(r.match, kits, humanSide, reward, ads.rewardedAvailable && reward.coins > 0, {
@@ -664,33 +935,62 @@ async function startMatch(req: MatchRequest): Promise<void> {
       rematch: req.rematch ? () => {
         menus.close();
         endMatch();
-        void startMatch({ ...req, skipIntro: true });
+        const easy = easyNow ? { difficulty: 0, reward: (x: MatchResult) => standardReward(x, 0) } : {};
+        void startMatch({ ...req, ...easy, firstMatch: false, skipIntro: true });
       } : undefined,
     }, r.ratings, {
       stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: done.map((x) => ({ text: x.challenge.text, coins: x.challenge.coins })),
-    });
+    }, { tierUps, tryEasy, clip: clipOf(s), noAds: firstEver });
   };
   window.addEventListener('keydown', pauseKey);
 }
 
 function pauseKey(e: KeyboardEvent): void {
-  if ((e.code === 'Escape' || e.code === 'KeyP') && session && !session.paused && !menus.open) session.requestPause();
+  if (isKey('pause', e.code) && session && !session.paused && !menus.open) session.requestPause();
 }
 
 function endMatch(): void {
   window.removeEventListener('keydown', pauseKey);
-  stopSpeech();
   session?.dispose();
   session = null;
+  basicsNow = false;
+  Trainer.lesson = null;
 }
 
+// Tabbed away, or the portal's frame lost focus (a click outside the game): the match pauses itself.
+const autoPause = (): void => {
+  if (session && !session.paused && !menus.open) session.requestPause();
+};
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && session && !session.paused && !menus.open) session.requestPause();
+  if (document.hidden) autoPause();
 });
+window.addEventListener('blur', autoPause);
 window.addEventListener('resize', () => {
   world.resize();
   canvasRect = canvas.getBoundingClientRect();
 });
+
+/** LEARN THE BASICS: once the other side has kept the ball this long (s), the drill restarts at once. */
+const BASICS_LOST_S = 2.5;
+let basicsLostT = 0;
+
+/** No chasing an AI player round the pitch for half a minute in a lesson: lose it, and the step starts again. */
+function basicsWatch(dt: number): void {
+  const s = session;
+  if (!basicsNow || !s || s.paused) {
+    basicsLostT = 0;
+    return;
+  }
+  const m = s.match;
+  const own = m.ball.owner;
+  const theirs = m.phase === 'play' && own >= 0 && m.players[own].side !== m.cfg.humanSide && !m.players[own].isKeeper;
+  basicsLostT = theirs ? basicsLostT + dt : 0;
+  if (basicsLostT > BASICS_LOST_S) {
+    basicsLostT = 0;
+    // The session sees the whistle and ends the drill unsettled: AGAIN!, then main.ts restarts the step.
+    finishScenario(m);
+  }
+}
 
 let last = performance.now();
 function frame(now: number): void {
@@ -700,6 +1000,7 @@ function frame(now: number): void {
   const t0 = performance.now();
   canvasRect = canvas.getBoundingClientRect();
   (session ?? demo)?.update(dt);
+  basicsWatch(dt);
   syncControlsUi(session);
   world.render();
   world.adapt(dt, (performance.now() - t0) / 1000);
@@ -708,6 +1009,10 @@ function frame(now: number): void {
 
 async function boot(): Promise<void> {
   world.setQuality(save.settings.quality);
+  // Bindings before anything reads a key (the title's SPACE / ENTER is fixed; the match keys are the player's).
+  setBindings(save.settings.keys, save.settings.pad);
+  TouchControls.stickMode = save.settings.stick === 'fixed' ? 'fixed' : 'floating';
+  menus.stick = TouchControls.stickMode;
   ads.onMute = (m) => sfx.setMuted(m);
   // Every screen's text goes through the divider guard (see ui/text.ts): no glyph the fonts lack.
   installSepGuard(menus.root);
@@ -736,7 +1041,9 @@ async function boot(): Promise<void> {
   menus.title(() => {
     sfx.unlock();
     applySettings();
-    mainMenu();
+    // Portal builds, first visit: TAP TO PLAY is the one click to gameplay (the first basics drill).
+    if (straightToBasics(onboarding(), played(), PORTAL)) startBasics(0);
+    else mainMenu();
   });
   // Cloud saves (a no-op until a backend is configured): pull the newer copy, then keep pushing changes.
   void cloudBoot({ save, persist, reload });
@@ -756,7 +1063,10 @@ if (import.meta.env.DEV) {
     app,
     /** Advance the game by n frames even when the pane is hidden (rAF paused). */
     step(n: number, dt = 1 / 60) {
-      for (let i = 0; i < n; i++) (session ?? demo)?.update(dt);
+      for (let i = 0; i < n; i++) {
+        (session ?? demo)?.update(dt);
+        basicsWatch(dt);
+      }
       syncControlsUi(session);
       world.render();
     },

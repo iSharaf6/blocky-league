@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  DEFAULT_KEYS, DEFAULT_PAD, actionKey, bindKey, bindPad, fillKeys, keyLabel, moveKeys, normalizeKeyMap, normalizePadMap, padLabel, remapKeys,
+  setBindings, unbindKey,
+} from '../src/core/input';
 import { CONTROL_DEFAULTS, controlsOf, defaultSave, exportSave, importSave, loadSave, normalizeSettings } from '../src/core/save';
 
 const KEY = 'blocky-league-save-v1';
@@ -136,5 +140,107 @@ describe('save backup: football moments', () => {
     expect(importSave(JSON.stringify(raw))?.moments).toEqual({});
     delete raw.moments;
     expect(importSave(JSON.stringify(raw))?.moments).toEqual({});
+  });
+});
+
+describe('settings: the commentator (text stays, the voice is gone)', () => {
+  it('an old save with the voice switch loads fine: the switch is dropped, the ticker setting kept', () => {
+    const old = { ...defaultSave(), settings: { ...defaultSave().settings, commentary: false, commentaryVoice: true } };
+    stubStorage(old);
+    const d = loadSave();
+    expect(d.settings.commentary).toBe(false);
+    expect('commentaryVoice' in d.settings).toBe(false);
+    expect(normalizeSettings({ commentary: 'loud' }).commentary).toBe(true);
+    expect('commentaryVoice' in defaultSave().settings).toBe(false);
+  });
+});
+
+describe('settings: key bindings (Settings > Controls > KEYS)', () => {
+  afterEach(() => setBindings());
+
+  it('new saves have every default key; a damaged or partial map is made whole', () => {
+    const s = defaultSave().settings;
+    expect(s.keys).toEqual(normalizeKeyMap(DEFAULT_KEYS));
+    expect(s.pad).toEqual(normalizePadMap(DEFAULT_PAD));
+    expect(s.stick).toBe('floating');
+    expect(s.colorblind).toBe(false);
+    const k = normalizeKeyMap({ pass: ['KeyK', 42, 'KeyQ'], shoot: 'nope' });
+    // K went to PASS first, so SHOOT (not a list) falls back to its default keys still free.
+    expect(k.pass).toEqual(['KeyK', 'KeyQ']);
+    expect(k.shoot).toEqual(['KeyX']);
+    expect(k.up).toEqual(['KeyW', 'ArrowUp']);
+    // No code is ever bound twice, and at most three a action.
+    const all = Object.values(normalizeKeyMap({ pass: ['Space', 'Space', 'KeyA', 'KeyB', 'KeyC', 'KeyD'] })).flat();
+    expect(new Set(all).size).toBe(all.length);
+    expect(normalizeKeyMap({ pass: ['KeyQ', 'KeyR', 'KeyT', 'KeyY'] }).pass.length).toBe(3);
+    // Right-hand modifiers count as the left ones.
+    expect(normalizeKeyMap({ sprint: ['ShiftRight'] }).sprint).toEqual(['ShiftLeft']);
+    expect(normalizePadMap({ pass: [12, 3], power: [] }).pass).toEqual([3]);
+    expect(normalizeSettings({ stick: 'wobbly', colorblind: 'yes' })).toMatchObject({ stick: 'floating', colorblind: false });
+  });
+
+  it('a key already in use swaps over; the other action keeps a key', () => {
+    const r = bindKey(DEFAULT_KEYS, 'pass', 0, 'KeyK');
+    expect(r.swapped).toBe('shoot');
+    expect(r.map.pass[0]).toBe('KeyK');
+    expect(r.map.shoot).toContain('Space');
+    expect(r.map.shoot).not.toContain('KeyK');
+    // A slot's old key goes to the action that gave its key up (Z for X here)...
+    const r2 = bindKey(DEFAULT_KEYS, 'pass', 2, 'KeyX');
+    expect(r2.map.pass).toEqual(['Space', 'KeyJ', 'KeyX']);
+    expect(r2.map.shoot).toEqual(['KeyK', 'KeyZ']);
+    // ...and an empty slot taking another action's key just takes it (that action has others).
+    const r2b = bindKey(DEFAULT_KEYS, 'shoot', 2, 'KeyJ');
+    expect(r2b.map.shoot).toEqual(['KeyK', 'KeyX', 'KeyJ']);
+    expect(r2b.map.pass).toEqual(['Space', 'KeyZ']);
+    // ...but never its only key.
+    const lonely = { ...normalizeKeyMap(DEFAULT_KEYS), shoot: ['KeyK'] };
+    const r3 = bindKey({ ...lonely, pass: ['Space'] }, 'pass', 1, 'KeyK');
+    expect(r3.refused).toBe('last');
+    expect(r3.map.shoot).toEqual(['KeyK']);
+    // Reserved keys can't be bound; clearing never leaves an action keyless.
+    expect(bindKey(DEFAULT_KEYS, 'pass', 0, 'Tab').refused).toBe('reserved');
+    expect(unbindKey({ ...lonely }, 'shoot', 0).shoot).toEqual(['KeyK']);
+    // Gamepad: the same rule; the d-pad is reserved.
+    const p = bindPad(DEFAULT_PAD, 'pass', 0, 1);
+    expect(p.swapped).toBe('shoot');
+    expect(p.map.shoot).toEqual([0]);
+    expect(bindPad(DEFAULT_PAD, 'pass', 0, 12).refused).toBe('reserved');
+  });
+
+  it('every on-screen key name reads the bindings in force', () => {
+    expect(keyLabel('KeyK')).toBe('K');
+    expect(keyLabel('Space')).toBe('SPACE');
+    expect(keyLabel('ShiftRight')).toBe('SHIFT');
+    expect(keyLabel('ArrowUp')).toBe('↑');
+    expect(padLabel(0)).toBe('A');
+    expect(padLabel(7)).toBe('RT');
+    expect(actionKey('pass', 'keyboard')).toBe('SPACE');
+    expect(moveKeys('keyboard')).toBe('WASD / ARROWS');
+    // Unchanged bindings: the session's default hints pass through untouched.
+    expect(remapKeys('SPACE short · hold L to whip it in · K = driven cross', 'keyboard')).toBe('SPACE short · hold L to whip it in · K = driven cross');
+    const km = bindKey(bindKey(DEFAULT_KEYS, 'pass', 0, 'KeyK').map, 'up', 0, 'KeyI');
+    setBindings(km.map, DEFAULT_PAD);
+    expect(actionKey('pass', 'keyboard')).toBe('K');
+    expect(actionKey('shoot', 'keyboard')).toBe('SPACE');
+    expect(moveKeys('keyboard')).toBe('IASD / ARROWS');
+    // One pass: SPACE and K swapped places without chaining; KICK is a word, not a key.
+    expect(remapKeys('SPACE short · KICK OFF · K = driven cross · move with WASD / ARROWS', 'keyboard')).toBe('K short · KICK OFF · SPACE = driven cross · move with IASD / ARROWS');
+    expect(fillKeys('SHOOT ({shoot}) and PASS ({pass})', 'keyboard')).toBe('SHOOT (SPACE) and PASS (K)');
+    expect(fillKeys('SHOOT ({shoot}) now', 'touch')).toBe('SHOOT now');
+    setBindings(DEFAULT_KEYS, bindPad(DEFAULT_PAD, 'shoot', 0, 3).map);
+    expect(actionKey('shoot', 'gamepad')).toBe('Y');
+    expect(remapKeys('Aim · hold B to strike', 'gamepad')).toBe('Aim · hold Y to strike');
+  });
+
+  it('bindings and the touch / colour-blind options survive an export / import round trip', () => {
+    const s = defaultSave();
+    s.settings.keys = bindKey(s.settings.keys!, 'pass', 0, 'KeyQ').map;
+    s.settings.stick = 'fixed';
+    s.settings.colorblind = true;
+    const back = importSave(exportSave(s))!;
+    expect(back.settings.keys!.pass[0]).toBe('KeyQ');
+    expect(back.settings.stick).toBe('fixed');
+    expect(back.settings.colorblind).toBe(true);
   });
 });

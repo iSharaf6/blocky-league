@@ -5,6 +5,7 @@ import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import { decodeInput, encodeInput, quantizePad, DELAY_MAX, DELAY_MIN, HASH_EVERY, TIMEOUT_MS } from '../src/net/lockstep';
 import { buildSdp, codeToSdp, parseSdp, sdpToCode } from '../src/net/sdpCode';
 import { HumanBot } from './humanBot';
+import { koRun, SCENARIOS, type Row } from './netBaseline';
 import { FuzzPad, netConfig, runToEnd, stoppages } from './netHarness';
 import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
 
@@ -16,67 +17,38 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  */
 
 /**
- * End-state hash, a fold of the hash every 60 steps, the step count and the score, recorded with the sim as it
- * was before MatchConfig.humanSides / Match.ctl (commit bb34939) by the same drivers as below.
+ * tests/netBaseline.ts's table (end-state hash, a fold of the hash every 60 steps, steps, score, shootout),
+ * recorded on main at fd7d748 (round 13: team styles, DDA, Club Run perks, the receive magnet and pass curl,
+ * onboarding) before MatchConfig.humanSides / Match.ctl were merged onto it, by the very same drivers.
  */
-const BEFORE = {
-  aiClassic: [2077768361, 1578466246, 18111, [0, 0]],
-  aiBlitz: [1735493330, 1863915192, 11618, [0, 4]],
-  botSide0: [4019672980, 1082181710, 15214, [3, 0]],
-  fuzzSide1: [3273114491, 3761332502, 11420, [2, 0]],
-  fuzzBlitz0: [3222048373, 3000282187, 11826, [0, 3]],
-  ko1: [3491640593, 2415376323, 5398, [0, 0]],
-  ko6: [583792695, 3974704757, 6495, [0, 0]],
-  ko3: [779716697, 1298573416, 3468, [2, 0]],
-} as const;
-
-const summary = (r: { end: number; trail: number; steps: number; m: Match }) => [r.end, r.trail, r.steps, [...r.m.score]];
+const BEFORE: Record<string, Row> = {
+  aiClassic: [2262850705, 2447626034, 19417, 2, 3, 0],
+  aiBlitz: [513065991, 663489125, 11382, 0, 2, 0],
+  aiStyles: [2891120658, 2774569015, 11673, 1, 2, 0],
+  botSide0: [968774606, 4002283040, 15685, 5, 0, 0],
+  botPerks: [3751426527, 3709179552, 11857, 3, 1, 0],
+  botFirstMatch: [4178294758, 4099178923, 11761, 3, 0, 0],
+  fuzzSide1: [564545257, 66790653, 11302, 2, 0, 0],
+  fuzzBlitz0: [330126010, 2987368122, 11796, 0, 4, 0],
+  fuzzBlitzPerks1: [3596118942, 2629035978, 11761, 3, 0, 0],
+  ko1: [3215721388, 3569230494, 5446, 0, 0, 1],
+  ko3: [2122207129, 3367927030, 3305, 1, 0, 0],
+  ko6: [2854817792, 3440828893, 5906, 0, 0, 1],
+};
 
 describe('single-player stays bit-identical', () => {
-  it('AI v AI, classic and blitz', () => {
-    const a = runToEnd(new Match(netConfig({ seed: 7, halfLength: 150, difficulty: 2 })), () => EMPTY_PAD, [false, false]);
-    expect(summary(a)).toEqual(BEFORE.aiClassic);
-    const b = runToEnd(new Match(netConfig({ seed: 31, halfLength: 90, difficulty: 3, mode: 'blitz' })), () => EMPTY_PAD, [false, false]);
-    expect(summary(b)).toEqual(BEFORE.aiBlitz);
+  it('AI v AI: classic, blitz, contrasting team styles', () => {
+    for (const k of ['aiClassic', 'aiBlitz', 'aiStyles']) expect(SCENARIOS[k](), k).toEqual(BEFORE[k]);
   }, 60_000);
 
-  it('one human (the scripted bot on side 0; a masher on side 1 with non-default controls; blitz)', () => {
-    const m = new Match(netConfig({ seed: 11, halfLength: 120, difficulty: 1.8, humanSide: 0 }));
-    const bot = new HumanBot(11);
-    let steps = 0;
-    let trail = 0;
-    while (m.phase !== 'fulltime' && steps < 60 * 60 * 16) {
-      const pad = bot.pad(m);
-      const before = m.ball.owner;
-      m.step(DT, pad);
-      bot.observe(m, m.drainEvents(), before);
-      stoppages(m, [true, false]);
-      steps++;
-      if (steps % 60 === 0) trail = (Math.imul(trail ^ stateHash(m), 16777619) + steps) >>> 0;
+  it('one human: the scripted bot (plain, with DDA + Club Run perks, first-match onboarding), a masher either side, blitz', () => {
+    for (const k of ['botSide0', 'botPerks', 'botFirstMatch', 'fuzzSide1', 'fuzzBlitz0', 'fuzzBlitzPerks1']) {
+      expect(SCENARIOS[k](), k).toEqual(BEFORE[k]);
     }
-    expect([stateHash(m), trail, steps, [...m.score]]).toEqual(BEFORE.botSide0);
-
-    const m1 = new Match(netConfig({ seed: 5, halfLength: 90, difficulty: 3, humanSide: 1 }));
-    m1.groundAssist = 'manual';
-    m1.throughAssist = 'semi';
-    m1.quickPass = false;
-    m1.autoSwitch = false;
-    const f1 = new FuzzPad(5);
-    expect(summary(runToEnd(m1, () => f1.pad(), [false, true]))).toEqual(BEFORE.fuzzSide1);
-
-    const f2 = new FuzzPad(9);
-    const m2 = new Match(netConfig({ seed: 9, halfLength: 90, difficulty: 1.8, humanSide: 0, mode: 'blitz' }));
-    expect(summary(runToEnd(m2, () => f2.pad(), [true, false]))).toEqual(BEFORE.fuzzBlitz0);
-  }, 60_000);
+  }, 90_000);
 
   it('knockout ties, through a penalty shootout', () => {
-    for (const [seed, want] of [[1, BEFORE.ko1], [6, BEFORE.ko6], [3, BEFORE.ko3]] as const) {
-      const m = new Match(netConfig({ seed, halfLength: 25, difficulty: 1.8, humanSide: 1, knockout: true }));
-      const f = new FuzzPad(seed);
-      const r = runToEnd(m, () => f.pad(), [false, true]);
-      expect(summary(r)).toEqual(want);
-      expect(!!m.shootout).toBe(seed !== 3);
-    }
+    for (const s of [1, 3, 6]) expect(koRun(s), `ko${s}`).toEqual(BEFORE[`ko${s}`]);
   }, 60_000);
 });
 
@@ -196,8 +168,9 @@ describe('lockstep engine', () => {
     expect(b.m.phase).toBe('fulltime');
     const n = agree(a, b);
     expect(n).toBeGreaterThan(60 * 110);
-    expect(a.hashes.length).toBe(b.hashes.length);
-    expect(stateHash(a.m)).toBe(stateHash(b.m));
+    // (One may have stood a tick or two longer at full time when the run stopped: the sim is idle there.)
+    expect(Math.abs(a.hashes.length - b.hashes.length)).toBeLessThanOrEqual(DELAY_MAX);
+    expect(a.hashes[n - 1]).toBe(b.hashes[n - 1]);
     expect([...a.m.score]).toEqual([...b.m.score]);
     // The network really was that bad, the redundancy covered it, and the hash checks ran and passed.
     expect(net.dropped).toBeGreaterThan(500);

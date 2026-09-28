@@ -1,6 +1,8 @@
-# Publishing & monetising Blocky League
+# Publishing Blocky League: the v1 checklist
 
-_Last checked against the portals' own documentation: **25 September 2026**. Portal rules change, so re-read the linked pages before each submission._
+_Checked against the build on **28 September 2026**. Portal rules were last read on 25 September 2026; they change, so re-read the linked pages (§12) before each submission._
+
+**Where things stand:** the game is feature-complete for a v1 web-portal launch and `npm run build:all` produces the four upload zips. What's left is the owner's part: accounts, a contact email, screenshots and a video, and the submissions themselves (§1.2).
 
 **Playtest deployment:** [GitHub Pages](https://isharaf6.github.io/blocky-league/) is configured for this repository. `.github/workflows/pages.yml` tests and packages the web game on pushes to `main`, then deploys `dist-web`. The source repository remains private; the playable site is public. Portal submissions and monetisation are separate from this playtest deployment.
 
@@ -10,8 +12,8 @@ _Last checked against the portals' own documentation: **25 September 2026**. Por
 
 ## Contents
 
-1. [Recommended path](#1-recommended-path)
-2. [What is already done in this repo](#2-what-is-already-done-in-this-repo)
+1. [The v1 checklist](#1-the-v1-checklist)
+2. [Recommended path](#2-recommended-path)
 3. [Building the release files](#3-building-the-release-files)
 4. [CrazyGames](#4-crazygames)
 5. [Poki](#5-poki)
@@ -19,13 +21,58 @@ _Last checked against the portals' own documentation: **25 September 2026**. Por
 7. [itch.io](#7-itchio)
 8. [Your own website (free hosting) + ads](#8-your-own-website-free-hosting--ads)
 9. [Later: iOS / Android via Capacitor](#9-later-ios--android-via-capacitor)
-10. [Fix list before any ad-portal submission](#10-fix-list-before-any-ad-portal-submission)
+10. [The old fix list (all done)](#10-the-old-fix-list-all-done)
 11. [Cost table](#11-cost-table)
 12. [Sources](#12-sources)
 
 ---
 
-## 1. Recommended path
+## 1. The v1 checklist
+
+### 1.1 Done in the build
+
+| Item | Where | How it was checked |
+|---|---|---|
+| Four release zips (web, crazygames, poki, itch), `index.html` at the zip root, relative paths only | `scripts/release.mjs`, `npm run build:all` | `build:all` passes; the script re-opens each zip and checks every entry |
+| **One SDK per build, no other external requests.** CrazyGames' zip names only `sdk.crazygames.com`, Poki's only `game-cdn.poki.com`, web and itch none. (The other two "hosts" the script lists are not requests: `www.w3.org` is the SVG namespace string and `jcgt.org` is a comment inside a three.js shader.) Fonts are bundled. Cloud saves are compiled out of portal and itch builds | `src/platform/ads.ts`, `scripts/release.mjs` | `grep` of every built file for `http(s)://` on 28 Sep |
+| **One click to gameplay** for a new player on a portal: TAP TO PLAY goes straight into the first LEARN THE BASICS drill | `src/main.ts` boot, `src/core/onboarding.ts` `straightToBasics` | Browser, `?portal=crazygames` on a fresh save |
+| **No ads during onboarding or the first match.** Interstitials only at a natural break: just before a new kick-off, never the first thing in a visit, never before or during the basics, never before the first real match; no 2× COINS offer on the first match's result | `src/main.ts` `startMatch` / `onFinish` | Code review; the gating conditions are `finishedThisVisit > 0 && kind !== 'basics' && !firstMatch && played > 0` |
+| **All audio muted during ads** (music, effects, crowd: one master gain) and on CrazyGames' `muteAudio` setting | `src/platform/ads.ts` → `sfx.setMuted` | Code review of `src/audio/sfx.ts` (every bus goes through the master gain) |
+| **Pause on focus loss:** switching tab or clicking outside the portal frame pauses the match and shows the pause menu | `src/main.ts` `autoPause` (visibilitychange + blur) | Browser |
+| SDK start-up capped at 3 s so a slow or blocked SDK never holds the title screen; everything fails soft (adblock users play normally) | `src/main.ts` boot, `src/platform/ads.ts` | Code review |
+| CrazyGames: `environment === 'disabled'` treated as no portal, `loadingStart/Stop`, `gameplayStart/Stop` deduplicated, `happytime` only for a 3-goal win. Poki: `gameLoadingFinished`, `commercialBreak` before kick-off, `rewardedBreak` rewards only when watched | `src/platform/ads.ts` | Code review |
+| Rewarded button reads "🎬 2× COINS", yellow, beside a larger CONTINUE; CONTINUE is disabled while the ad runs | `src/ui/menus.ts` `fulltime` | Code review |
+| Works in incognito / with storage blocked (every `localStorage` call is wrapped) | `src/core/save.ts` | Code review |
+| Store text, covers and thumbnails | `docs/STORE_LISTING.md`, `release/store-assets/` (`npm run assets`) | Store text rewritten on 28 Sep to match the v1 features |
+| Privacy policy (web build) | `public/privacy.html` | Updated 28 Sep: goal clips, key bindings. **Needs the owner's contact email** (§1.2) |
+| Third-party licence notices (three.js MIT, fonts OFL, supabase-js MIT) | `third-party-licenses.txt`, generated into every build | Present in every zip |
+
+What the v1 game has (so the listing stays honest): LEARN THE BASICS (three drills), then the first match; the first goal unlocks CAREER, MOMENTS, CLUB RUN and BLITZ. Quick Match, Blocky Cup, Career (six divisions, transfer market, stadium), Club Run (seven matches, perks), eight Football Moments, Blitz power-ups, XP levels, mastery badges, a monthly season track, daily challenges and gift, unlockable balls and celebrations. Text commentary (the spoken voice was removed). Settings: key and gamepad remapping, fixed or floating touch stick, colour-blind shape cues. Goal clips (SAVE CLIP / SHARE, a WebM) where the browser can record the canvas.
+
+**Hidden difficulty help (honest note):** the game quietly eases the AI in a few cases. The first two real matches of a save, three career defeats in a row (until the next career win) and three quick-match defeats in a row at one difficulty (until a win there) make the AI press, tackle and finish a little softer against the player (`src/core/dda.ts`: 0.5 / 0.35 / 0.25 on `MatchConfig.assist`). The only visible sign is a "Tough run? TRY EASY" line after the third quick-match defeat. The drills in LEARN THE BASICS use a strong ease (0.8). None of this is shown as a difficulty label, so don't describe the difficulty levels as fixed in store copy.
+
+### 1.2 What the owner must do (in this order)
+
+1. **Pick the first portal.** Recommended: **CrazyGames first** (open submission, non-exclusive, fast Basic Launch), then GameDistribution later. Choose **Poki** instead only if you're happy with web exclusivity and a slower, curated process (they rule out the others; §2).
+2. **Add a contact email** to `public/privacy.html` (the `[CONTACT EMAIL: ...]` placeholder under "Contact"; an HTML comment marks it). Use an address you check. Portals and app stores ask for one. Then rebuild (`npm run build:all`).
+3. **Create the portal account(s) yourself** and accept their terms: [CrazyGames developer portal](https://developer.crazygames.com/) (and later Poki / GameDistribution / itch.io). Fill in the payout and tax forms when asked. Nobody else can do this for you.
+4. **Capture the store media** from the shot list in `docs/STORE_LISTING.md`: five 1920×1080 screenshots, and for CrazyGames a 15–20 s silent video in 16:9 and 2:3 (Poki later needs a 4–6 s square loop). The covers and thumbnails are already in `release/store-assets/`.
+5. **Test the portal build in the portal's own tool** before submitting: CrazyGames' Preview/QA tool (or `localhost` with `?useLocalSdk=true`), Poki Inspector for Poki. Check a full match, a rewarded ad, mute during ads, and the phone layouts.
+6. **Submit** `release/blocky-league-crazygames-v0.1.0.zip` with the three CrazyGames covers and the copy from `docs/STORE_LISTING.md`. At submission, switch on **Automatic Progress Save** (no code needed; the game has no purchases).
+7. **While in Basic Launch** (at least 7 days and 500 plays): watch the portal's stats (conversion to gameplay, playtime, retention) and fix what they show before Full Launch review.
+8. **Optional, costs nothing:** upload the itch build as "$0 or donate", and put `dist-web` on Cloudflare Pages (§8) with `SITE_URL=https://your-site npm run build:web` so the social card works. Don't link to them from inside the portal builds.
+
+Not in v1 on purpose: online multiplayer (a separate branch, after launch), anything paid, GameDistribution's SDK (not written yet, §6), mobile stores (they cost money, §9).
+
+### 1.3 Unverified
+
+- **Load time on a throttled phone connection.** Not measured: no throttling tool was available on the build machine. What was measured (28 Sep, itch build served gzipped from localhost, an Apple-silicon Mac, no throttling): the page downloads **445 KB** in total (script 389 KB, styles 36 KB, two fonts 18 KB) and the title screen is up about **1.4 s** after navigation, most of it building the 3D scene (the studio splash also holds for at least 0.8 s). Estimate for Chrome's "Slow 4G" profile (about 1.6 Mbit/s, 150 ms latency): about 3 s to download plus the boot, so roughly **4 to 4.5 s on a laptop**, and possibly **over 5 s on a slow phone CPU**. On "Fast 4G" it should be about 2 to 3.5 s. Check it in Poki Inspector (it reports load time) or Chrome DevTools' network throttling before submitting.
+- **Goal clips on real devices.** Recording uses `MediaRecorder` on the canvas; it's off where the browser lacks it (the buttons are hidden then). SHARE uses the system share sheet only where the browser can share files (mostly phones); elsewhere it downloads.
+- **Portal SDK behaviour in the live environment** can only be checked on the portal (its Preview/QA tool or Poki Inspector).
+
+---
+
+## 2. Recommended path
 
 The first decision is **Poki or everyone else**. Poki's standard deal is *web-exclusive*: you can't also put the game on CrazyGames, GameDistribution or other web portals. Steam, app stores and consoles are still allowed. Discord and YouTube Playables count as web.
 
@@ -44,24 +91,6 @@ The first decision is **Poki or everyone else**. Poki's standard deal is *web-ex
    - **Poki:** apply first if you're happy with web exclusivity and a slower, curated process.
    - **CrazyGames (+ GameDistribution):** submit to CrazyGames if you'd rather go live fast and non-exclusive. GameDistribution can be added later. Its SDK adapter needs writing first, and CrazyGames' opt-in exclusivity bonus would rule it out for 2 months.
 3. **Later:** mobile stores (costs money; §9).
-
----
-
-## 2. What is already done in this repo
-
-| Item | Where | State |
-|---|---|---|
-| Build variants: web / crazygames / poki / itch | `scripts/release.mjs`, `npm run build:*` | Done. Each writes `dist-<variant>/` and `release/blocky-league-<variant>-v<version>.zip` with `index.html` at the zip root and relative paths only |
-| Zip size | see §3 | ~270 KB for the portal/itch zips, ~430 KB for web (budget 5 MB) |
-| Portal ad/SDK adapter | `src/platform/ads.ts` | Implemented. **Some corrections are required before a Full Launch / Poki QA** (§10) |
-| Store art (covers, thumbnails) | `release/store-assets/` (regenerate with `npm run assets`) | Done, sized per each portal's rules |
-| PWA: manifest, icons (192/512 + maskable), apple-touch-icon, service worker | `public/` | Done. Web build only; stripped from portal/itch builds |
-| Social preview image + tags | `public/og-image.png`, `index.html` head | Done. Set `SITE_URL` when building for a real domain (§3) |
-| Privacy policy | `public/privacy.html` | Done. **Add a contact email** before publishing |
-| Third-party licence notices (three.js MIT, fonts OFL) | `third-party-licenses.txt`, generated into every build | Done |
-| Store text | `docs/STORE_LISTING.md` | Done |
-
-**Things you must do yourself:** create each account, accept each platform's terms, fill in tax and payout forms, upload the files, and answer the platforms' emails.
 
 ---
 
@@ -84,14 +113,16 @@ npm run assets             # re-render icons, og image and store covers
   SITE_URL=https://your-domain.example npm run build:web
   ```
 
-Measured on 25 Sep 2026 (sizes grow as features land, so re-check the script's output each release):
+Measured on 28 Sep 2026 (sizes grow as features land, so re-check the script's output each release):
 
 | Variant | Files | Unpacked | Zip |
 |---|---:|---:|---:|
-| web | 20 | 1003.4 KB | 429.1 KB |
-| crazygames | 10 | 836.1 KB | 269.9 KB |
-| poki | 10 | 836.1 KB | 269.9 KB |
-| itch | 10 | 836.1 KB | 269.9 KB |
+| web | 22 | 1.63 MB | 642.7 KB |
+| crazygames | 12 | 1.46 MB | 483.0 KB |
+| poki | 12 | 1.46 MB | 482.9 KB |
+| itch | 12 | 1.46 MB | 482.7 KB |
+
+The game code is one 1.25 MB script (about 387 KB gzipped: three.js plus the game), the fonts are bundled, and there are no images to fetch at start-up: the stadium, players and crests are all generated in code.
 
 All of these are far below the published limits:
 
@@ -108,7 +139,7 @@ Developer portal: <https://developer.crazygames.com/> · Docs: <https://docs.cra
 ### 4.1 Steps
 
 1. **Create a developer account** at developer.crazygames.com. You do this yourself.
-2. **Fix the items in §10**, then run `npm run build:crazygames`.
+2. Run `npm run build:crazygames` (the old fix list in §10 is all done).
 3. **Test locally.** On `localhost` the SDK runs in *local* mode: ads show as overlay text and logging is on. Add `?useLocalSdk=true` to force this on any domain, and `?muteAudio=true` to test the mute setting.
 4. **Submit.** Upload `release/blocky-league-crazygames-v<version>.zip` and the three covers from `release/store-assets/`:
    - `crazygames-landscape-1920x1080.png`
@@ -129,39 +160,39 @@ Developer portal: <https://developer.crazygames.com/> · Docs: <https://docs.cra
 | Requirement (docs) | Repo status |
 |---|---|
 | Load `https://sdk.crazygames.com/crazygames-sdk-v3.js`, then `await window.CrazyGames.SDK.init()` before any call | Done |
-| Every SDK call throws when `SDK.environment === 'disabled'` (any non-CrazyGames domain) | **Fix:** check `environment` and wrap calls in try/catch (§10 #2) |
-| `game.loadingStart()` / `game.loadingStop()`: optional pair for load-time stats | **Fix:** only `loadingStop` is called (§10 #3) |
+| Every SDK call throws when `SDK.environment === 'disabled'` (any non-CrazyGames domain) | Done: `'disabled'` counts as no portal, and every call is wrapped |
+| `game.loadingStart()` / `game.loadingStop()`: optional pair for load-time stats | Done |
 | `game.gameplayStart()` on every start/resume; `gameplayStop()` on menus, pause, match end | Done (deduplicated) |
 | Don't call `gameplayStop` just because focus/visibility changed | Only called when the game really shows the pause menu. OK |
-| `game.happytime()`: rarely, for real achievements | Called on every win. Consider limiting it (§10 #8) |
+| `game.happytime()`: rarely, for real achievements | Done: only for a win by three goals or more |
 | `ad.requestAd('midgame' \| 'rewarded', { adStarted, adFinished, adError })`; mute in `adStarted`, resume in `adFinished`/`adError`; never reward on `adError` | Done |
-| Midgame only at natural breaks; **never on a navigation button** (main menu, settings, shop); no own cooldown (the SDK caps at 1 per 3 min) | **Fix:** currently fired by the full-time "Continue" button that returns to the menu, with a local 3-min limiter (§10 #5, #6) |
-| Full Implementation **must support `SDK.game.settings.muteAudio`** + `addSettingsChangeListener` | **Fix** (§10 #4) |
+| Midgame only at natural breaks; **never on a navigation button** (main menu, settings, shop); no own cooldown (the SDK caps at 1 per 3 min) | Done: just before a new kick-off, never during the basics or before the first match, no local limiter |
+| Full Implementation **must support `SDK.game.settings.muteAudio`** + `addSettingsChangeListener` | Done |
 | Cloud progress save for Full Launch: `SDK.data` (plus the Progress Save toggle) **or** *Automatic Progress Save* | No code needed if you enable **Automatic Progress Save** at submission (allowed because the game has no purchases) |
 | User/account module | Not needed: the game has no user accounts |
 
 ### 4.3 QA checklist (from the requirements pages)
 
 **Technical**
-- [ ] Relative paths only. *Verified by `release.mjs`.*
-- [ ] Works on Chrome, Edge and 4 GB Chromebooks.
-- [ ] Touch controls on mobile, plus `user-select: none` on `body`. *Already in `src/style.css`.*
+- [x] Relative paths only. *Verified by `release.mjs` on every build.*
+- [ ] Works on Chrome, Edge and 4 GB Chromebooks. *Chrome checked; Edge and a Chromebook not tested.*
+- [x] Touch controls on mobile (floating or fixed stick), plus `user-select: none` on `body`. *In `src/style.css`.*
 
 **Rules**
-- [ ] **No custom fullscreen button.** *There isn't one.*
-- [ ] **No external links or cross-promotion.** App-store links are never allowed. *The game has no links.*
-- [ ] **Only CrazyGames SDK ads.** No other ad scripts. *See §10 #1: remove the Poki code from this build.*
-- [ ] In-game purchases are invite-only (Xsolla). *The game has none.*
+- [x] **No custom fullscreen button.** *There isn't one.*
+- [x] **No external links or cross-promotion.** App-store links are never allowed. *The game has no links (checked: no `href` or `window.open` in the game code; SAVE CLIP is a local download).*
+- [x] **Only CrazyGames SDK ads.** No other ad scripts. *The CrazyGames zip names only `sdk.crazygames.com` (checked 28 Sep).*
+- [x] In-game purchases are invite-only (Xsolla). *The game has none.*
 
 **Ads**
-- [ ] Game paused and **all audio muted** during ads. *See §10 #7: SFX/crowd currently keep playing.*
-- [ ] UI blocked while an ad request is in flight.
-- [ ] Adblock users can still play normally. *Yes: everything fails soft.*
-- [ ] Rewarded offer is clearly optional, and the skip option isn't hidden or delayed. *"Continue" sits next to the reward button.*
+- [x] Game paused and **all audio muted** during ads. *One master gain carries music, effects and crowd.*
+- [x] UI blocked while an ad request is in flight. *CONTINUE is disabled while the rewarded ad runs; the interstitial plays before the match is built.*
+- [x] Adblock users can still play normally. *Everything fails soft; the SDK wait is capped at 3 s.*
+- [x] Rewarded offer is clearly optional, and the skip option isn't hidden or delayed. *"Continue" sits next to the reward button, and is bigger.*
 
 **Content**
-- [ ] English text; content PEGI-12 compliant.
-- [ ] Full Launch: new players reach gameplay immediately or within 1 click. *Currently: Tap to play → Quick match → Kick off. Consider a one-click "Play" (§10 #9).*
+- [x] English text; content PEGI-12 compliant.
+- [x] Full Launch: new players reach gameplay immediately or within 1 click. *A first visit's TAP TO PLAY goes straight into the first basics drill.*
 
 ### 4.4 Money and timing
 
@@ -179,7 +210,7 @@ Developer guide: <https://developers.poki.com/> · Apply: <https://developers.po
 ### 5.1 Steps
 
 1. **Apply** via the "Request access to Poki for Developers" form. You'll need your name, email, team name, country and previous games. Poki hand-picks every game; there's no guarantee of acceptance.
-2. **Build** with `npm run build:poki` once the §10 fixes are in.
+2. **Build** with `npm run build:poki`.
 3. **Poki Inspector.** Drag the `dist-poki/` folder into it. You get:
    - a QA checklist and an SDK event log;
    - load time and file size;
@@ -200,13 +231,13 @@ Developer guide: <https://developers.poki.com/> · Apply: <https://developers.po
 | Script `https://game-cdn.poki.com/scripts/v2/poki-sdk.js`; `PokiSDK.init()` returns a Promise. If it rejects, load the game anyway | Done (fails soft, with a timeout). init/commercialBreak can hang if an adblocker blocks the core script, so the adapter's timeouts are needed |
 | `gameLoadingFinished()` when loading is done, before the first `gameplayStart()` | Done |
 | `gameplayStart()` on the player's first input (not on load); `gameplayStop()` on every pause/menu/match end; never the same event twice in a row; no events during ads | Done (starts at kick-off, deduplicated) |
-| `commercialBreak()` before each `gameplayStart()` after the first, when the player is heading back into play (not when going to menus); Poki decides whether an ad plays; no own ad timers | **Fix:** currently called on the way *to* the main menu, with a local 3-min limiter (§10 #5, #6) |
+| `commercialBreak()` before each `gameplayStart()` after the first, when the player is heading back into play (not when going to menus); Poki decides whether an ad plays; no own ad timers | Done: just before a new kick-off, no local limiter |
 | `rewardedBreak()` resolves `true` only when watched; grant only then | Done |
-| Rewarded button must show 🎬, must not be green, and the normal continue button must be the same size or larger, next to or above it | **Fix:** label is "▶ WATCH AD · 2× COINS" and needs 🎬 (§10 #10). Yellow (not green) and a larger Continue button already comply |
-| No external requests (Poki applies a CSP); no other ad systems; no outgoing links; no IAP | **Fix:** remove the CrazyGames SDK code from the Poki build (§10 #1) |
+| Rewarded button must show 🎬, must not be green, and the normal continue button must be the same size or larger, next to or above it | Done: "🎬 2× COINS", yellow, beside a larger CONTINUE |
+| No external requests (Poki applies a CSP); no other ad systems; no outgoing links; no IAP | Done: the Poki zip names only `game-cdn.poki.com` (checked 28 Sep) |
 | Works in incognito: localStorage wrapped in try/catch | Done (`src/core/save.ts`) |
 | Desktop + mobile + tablet; 16:9 scaling | Test with Poki Inspector |
-| `happyTime` | Not in the HTML5 docs, and a no-op in the current SDK. Remove the call (§10 #8) |
+| `happyTime` | Not called on Poki |
 
 ### 5.3 Money
 
@@ -343,21 +374,21 @@ Both stores also need a privacy policy URL (use `privacy.html` on your site) and
 
 ---
 
-## 10. Fix list before any ad-portal submission
+## 10. The old fix list (all done)
 
-These changes are in `src/` (engine and UI code), which the lead engineer owns. The exact code-level changes were handed over with this release tooling; tick items off here as they land.
+Kept for the record: every item was checked against the code on 28 Sep 2026.
 
-1. [ ] **One SDK per build.** Gate the portal branches in `ads.ts` on `import.meta.env.VITE_PORTAL` so the other portal's SDK code and URL are removed at build time, and ignore `?portal=` in portal builds. Poki blocks external requests, and CrazyGames forbids other portals' branding.
-2. [ ] **CrazyGames `disabled` environment:** check `SDK.environment` after `init()`, treat `'disabled'` as no portal, and wrap every SDK call in try/catch.
-3. [ ] **CrazyGames `loadingStart()`:** call it right after `init()`, paired with the existing `loadingStop()`.
-4. [ ] **CrazyGames `muteAudio`:** read `SDK.game.settings.muteAudio` and subscribe with `addSettingsChangeListener`. Required for Full Launch.
-5. [ ] **Move the midgame / commercialBreak** from the full-time "Continue" button (which navigates to the menu) to just **before kick-off of the next match**, and optionally before the second half.
-6. [ ] **Remove the local 3-minute limiter** in `ads.midgame()`. Both portals pace ads themselves and ask you not to add timers.
-7. [ ] **Mute all audio during ads and restore it afterwards.** Today only the music stops, and it's never restarted. SFX and crowd keep playing.
-8. [ ] **happytime:** drop Poki's `happyTime` (not in the HTML5 docs; a no-op). Consider calling CrazyGames' `happytime()` only for bigger moments, such as a win on Hard/Legend or a trophy, not every win.
-9. [ ] **(Recommended) One-click play** for new players on CrazyGames Full Launch, for example a "Play" that goes straight to a quick match.
-10. [ ] **Rewarded button:** add the 🎬 icon (Poki requirement), and disable "Continue" while a rewarded request is in flight (CrazyGames: block the UI until `adFinished`/`adError`).
-11. [ ] **Cap total ad-SDK start-up wait** at about 3 s so a slow or blocked SDK can't delay the title screen by up to 12 s. Poki notes players leave after about 10 s of loading.
+1. [x] **One SDK per build.** Gate the portal branches in `ads.ts` on `import.meta.env.VITE_PORTAL` so the other portal's SDK code and URL are removed at build time, and ignore `?portal=` in portal builds. Poki blocks external requests, and CrazyGames forbids other portals' branding.
+2. [x] **CrazyGames `disabled` environment:** check `SDK.environment` after `init()`, treat `'disabled'` as no portal, and wrap every SDK call in try/catch.
+3. [x] **CrazyGames `loadingStart()`:** call it right after `init()`, paired with the existing `loadingStop()`.
+4. [x] **CrazyGames `muteAudio`:** read `SDK.game.settings.muteAudio` and subscribe with `addSettingsChangeListener`. Required for Full Launch.
+5. [x] **Move the midgame / commercialBreak** from the full-time "Continue" button (which navigates to the menu) to just **before kick-off of the next match**, and optionally before the second half.
+6. [x] **Remove the local 3-minute limiter** in `ads.midgame()`. Both portals pace ads themselves and ask you not to add timers.
+7. [x] **Mute all audio during ads and restore it afterwards.** Today only the music stops, and it's never restarted. SFX and crowd keep playing.
+8. [x] **happytime:** drop Poki's `happyTime` (not in the HTML5 docs; a no-op). Consider calling CrazyGames' `happytime()` only for bigger moments, such as a win on Hard/Legend or a trophy, not every win.
+9. [x] **(Recommended) One-click play** for new players on CrazyGames Full Launch, for example a "Play" that goes straight to a quick match.
+10. [x] **Rewarded button:** add the 🎬 icon (Poki requirement), and disable "Continue" while a rewarded request is in flight (CrazyGames: block the UI until `adFinished`/`adError`).
+11. [x] **Cap total ad-SDK start-up wait** at about 3 s so a slow or blocked SDK can't delay the title screen by up to 12 s. Poki notes players leave after about 10 s of loading.
 
 ---
 

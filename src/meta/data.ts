@@ -1,7 +1,7 @@
 import { Rng, hashString } from '../core/rng';
 import { FORMATIONS } from '../sim/formations';
 import { preferredFoot, weakFootRating } from '../sim/player';
-import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDef } from '../sim/types';
+import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDef, TeamStyle } from '../sim/types';
 
 /**
  * Every generated player has a stronger foot (fixed by his name, ~78% right-footed) and a weak-foot rating
@@ -86,26 +86,56 @@ export interface ClubSeed {
   kit: Kit;
   formation: FormationId;
   level: number;
+  /** How the AI plays the club (TeamDef.style); undefined = 'balanced'. */
+  style?: TeamStyle;
 }
 
 function kit(shirt: number, shirt2: number, pattern: KitPattern, shorts: number, socks: number, gk: number): Kit {
   return { shirt, shirt2, pattern, shorts, socks, gk };
 }
 
-/** Hand-authored rivals for quick matches, from park football to superstars. */
+/**
+ * Hand-authored rivals for quick matches, from park football to superstars, each with a way of playing (round 13, the
+ * owner: "a 'park the bus' defensive team vs. a 'high press' attacking team"): the Mossvale mud-and-graft side and the
+ * five-at-the-back Harbourne sit deep; the waspish Duckworth, Redcliff and the Northwick pack hunt the ball high; Lakemoor
+ * Sporting and the Brickfield Royale keep it; foxes and a port town's long balls break at pace; Crumbleton and Stonehaven
+ * play it straight.
+ */
 export const PRESET_CLUBS: ClubSeed[] = [
-  { name: 'Mossvale Rovers', short: 'MOS', kit: kit(C.green, C.white, 'hoops', C.white, C.green, C.yellow), formation: '4-4-2', level: 42 },
-  { name: 'Pebbleport Town', short: 'PEB', kit: kit(C.sky, C.white, 'sleeves', C.navy, C.sky, C.orange), formation: '4-4-2', level: 48 },
-  { name: 'Duckworth Albion', short: 'DUC', kit: kit(C.yellow, C.black, 'plain', C.black, C.yellow, C.purple), formation: '4-3-3', level: 54 },
-  { name: 'Crumbleton City', short: 'CRU', kit: kit(C.maroon, C.gold, 'sash', C.white, C.maroon, C.lime), formation: '4-2-3-1', level: 60 },
-  { name: 'Foxhollow Athletic', short: 'FOX', kit: kit(C.orange, C.white, 'halves', C.black, C.orange, C.teal), formation: '3-5-2', level: 65 },
-  { name: 'Stonehaven United', short: 'STO', kit: kit(C.navy, C.red, 'stripes', C.navy, C.red, C.lime), formation: '4-4-2', level: 70 },
-  { name: 'Lakemoor Sporting', short: 'LAK', kit: kit(C.teal, C.white, 'plain', C.white, C.teal, C.pink), formation: '4-3-3', level: 75 },
-  { name: 'Redcliff Rangers', short: 'RED', kit: kit(C.red, C.white, 'stripes', C.white, C.red, C.green), formation: '4-2-3-1', level: 80 },
-  { name: 'Harbourne FC', short: 'HAR', kit: kit(C.purple, C.gold, 'sleeves', C.purple, C.gold, C.lime), formation: '5-3-2', level: 84 },
-  { name: 'Northwick Wanderers', short: 'NOR', kit: kit(C.white, C.black, 'halves', C.black, C.white, C.orange), formation: '4-3-3', level: 88 },
-  { name: 'Brickfield Royale', short: 'BRK', kit: kit(C.gold, C.navy, 'plain', C.navy, C.gold, C.pink), formation: '4-2-3-1', level: 92 },
+  { name: 'Mossvale Rovers', short: 'MOS', kit: kit(C.green, C.white, 'hoops', C.white, C.green, C.yellow), formation: '4-4-2', level: 42, style: 'park-bus' },
+  { name: 'Pebbleport Town', short: 'PEB', kit: kit(C.sky, C.white, 'sleeves', C.navy, C.sky, C.orange), formation: '4-4-2', level: 48, style: 'counter' },
+  { name: 'Duckworth Albion', short: 'DUC', kit: kit(C.yellow, C.black, 'plain', C.black, C.yellow, C.purple), formation: '4-3-3', level: 54, style: 'high-press' },
+  { name: 'Crumbleton City', short: 'CRU', kit: kit(C.maroon, C.gold, 'sash', C.white, C.maroon, C.lime), formation: '4-2-3-1', level: 60, style: 'balanced' },
+  { name: 'Foxhollow Athletic', short: 'FOX', kit: kit(C.orange, C.white, 'halves', C.black, C.orange, C.teal), formation: '3-5-2', level: 65, style: 'counter' },
+  { name: 'Stonehaven United', short: 'STO', kit: kit(C.navy, C.red, 'stripes', C.navy, C.red, C.lime), formation: '4-4-2', level: 70, style: 'balanced' },
+  { name: 'Lakemoor Sporting', short: 'LAK', kit: kit(C.teal, C.white, 'plain', C.white, C.teal, C.pink), formation: '4-3-3', level: 75, style: 'possession' },
+  { name: 'Redcliff Rangers', short: 'RED', kit: kit(C.red, C.white, 'stripes', C.white, C.red, C.green), formation: '4-2-3-1', level: 80, style: 'high-press' },
+  { name: 'Harbourne FC', short: 'HAR', kit: kit(C.purple, C.gold, 'sleeves', C.purple, C.gold, C.lime), formation: '5-3-2', level: 84, style: 'park-bus' },
+  { name: 'Northwick Wanderers', short: 'NOR', kit: kit(C.white, C.black, 'halves', C.black, C.white, C.orange), formation: '4-3-3', level: 88, style: 'high-press' },
+  { name: 'Brickfield Royale', short: 'BRK', kit: kit(C.gold, C.navy, 'plain', C.navy, C.gold, C.pink), formation: '4-2-3-1', level: 92, style: 'possession' },
 ];
+
+/** Every TeamStyle, 'balanced' first. */
+export const TEAM_STYLES: readonly TeamStyle[] = ['balanced', 'high-press', 'park-bus', 'possession', 'counter'];
+
+/**
+ * A style for a generated club (career, cup), fixed by `seed` (its name, say): the name's hints first (a Sporting or a
+ * Royal keeps the ball, Rovers and Wanderers break, Athletic sides press, a Town digs in), else a draw weighted towards
+ * 'balanced'. Always the same style for the same seed.
+ */
+export function styleFor(seed: string): TeamStyle {
+  const h = hashString(`${seed}|style`) >>> 0;
+  const roll = (h % 1000) / 1000;
+  const hints: [RegExp, TeamStyle][] = [
+    [/sporting|royal|academ|real\b/i, 'possession'],
+    [/rovers|wanderers|harriers|foxes|port\b/i, 'counter'],
+    [/athletic|rangers|hornets|wasps/i, 'high-press'],
+    [/town|albion|castle|fort|stone|wall/i, 'park-bus'],
+  ];
+  for (const [re, st] of hints) if (re.test(seed) && roll < 0.55) return st;
+  const r = ((h >>> 10) % 1000) / 1000;
+  return r < 0.36 ? 'balanced' : r < 0.52 ? 'high-press' : r < 0.68 ? 'park-bus' : r < 0.84 ? 'possession' : 'counter';
+}
 
 const STAT_KEYS: (keyof PlayerStats)[] = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'keeping', 'stamina'];
 
@@ -239,7 +269,7 @@ function buildTeam(seed: ClubSeed, id: string, names: Set<string>): TeamDef {
     used.add(n);
     return makePlayer(rng, role, seed.level - 3, n, `${id}-b${i}`, names);
   });
-  return { id, name: seed.name, short: seed.short, kit: seed.kit, formation: seed.formation, players, bench };
+  return { id, name: seed.name, short: seed.short, kit: seed.kit, formation: seed.formation, players, bench, ...(seed.style ? { style: seed.style } : {}) };
 }
 
 export function randomClubSeed(rng: Rng, level: number): ClubSeed {

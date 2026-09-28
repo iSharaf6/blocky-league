@@ -1,7 +1,7 @@
 import { angleDiff, clamp, dist2, pointSegDist } from '../core/math';
 import { Ball, groundPassSpeed, rollTime, solveLob, type BallHit } from './ball';
 import {
-  AIR_DRAG, BALL_R, BOUNCE, BOX_W, DECEL, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SPIN_DECAY,
+  AIR_DRAG, BALL_R, BOUNCE, BOX_W, DDA_FINISH, DECEL, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SPIN_DECAY,
   SPRINT_SPEED, TEMPO,
 } from './constants';
 import type { Match } from './match';
@@ -20,6 +20,8 @@ export interface Launch {
   target: number;
   kind: KickKind;
   power: number;
+  /** A ground pass's rolling curl (naturalPass; Match.rollCurl): its sideways pull per m/s of pace, dying away. */
+  roll?: number;
   /** A shot struck as a chip or a finesse one. */
   style?: ShotStyle;
   /** Shots with the foot: struck with his weaker foot, and how far off balance (0 steady .. 1 all over the place). */
@@ -165,14 +167,22 @@ const OFF_BALANCE_PACE = 0.15;
 export const AI_SHAPE = 0.5;
 /** A mistimed second tap (timed finishing): this much more height (m) at the line. */
 export const WILD_LIFT = 0.6;
-/** How much steadier a header is than it used to be (1 = as precise as a shot with the foot). */
-const HEADER_COMPOSURE = 0.72;
+/**
+ * How much steadier a header is than it used to be (1 = as precise as a shot with the foot). Round 13: the AI's 0.72 ->
+ * 0.52 (its headers were 55-65% of its goals); the human's stays (HUMAN_HEADER_COMPOSURE), as do his aim and pace.
+ */
+const HEADER_COMPOSURE = 0.52;
+const HUMAN_HEADER_COMPOSURE = 0.72;
+const HUMAN_HEADER_AIM = 0.75;
 /**
  * A headed shot's pace (m/s) is 11 + power x 8 + heading x 3, but at most HEADER_SPEED_AT + HEADER_SPEED_SLOPE
  * x (HEADER_SPEED_FROM - distance) (and at least HEADER_SPEED_MIN): a header from 16 m is a 12 m/s nod, one from
  * 20 m 8 m/s, while close in (8 m or nearer) it's as firm as ever. (Round 8: 12 of 25 AI headers from 20-25 m went in.)
  */
-const HEADER_SPEED_AT = 12;
+const HEADER_SPEED_AT = 10;
+/** An AI header's pace before those caps: HEADER_PACE + power x HEADER_PACE_POWER + heading x 3 (it was, and the human's is, 11 + power x 8; at most 12 + ... close in). */
+const HEADER_PACE = 9;
+const HEADER_PACE_POWER = 6;
 const HEADER_SPEED_SLOPE = 0.9;
 const HEADER_SPEED_FROM = 16;
 const HEADER_SPEED_MIN = 7;
@@ -183,6 +193,11 @@ const HEADER_SPEED_MIN = 7;
  */
 const HEADER_FAR_D = 8;
 const HEADER_FAR = 0.85;
+/** A header at goal with an opponent within HEADER_CONTEST_R m: its composure (and its pace) times HEADER_CONTEST. */
+const HEADER_CONTEST_R = 1.6;
+const HEADER_CONTEST = 0.6;
+/** How far towards the post (share of the usual aim) a header at goal is placed. */
+const HEADER_AIM = 0.6;
 /** A header is aimed at goal only from inside HEADER_AT_GOAL_D m with a sight of goal of at least HEADER_AT_GOAL_Q. */
 export const HEADER_AT_GOAL_D = 14;
 export const HEADER_AT_GOAL_Q = 0.3;
@@ -632,9 +647,25 @@ export function skillErr(m: Match, p: Player): number {
  * An AI shooter's finishing error on top of skillErr: a touch steadier than before, since keepers now
  * hold more of the long shots they used to spill (the AI's goal rate was tuned against those rebounds).
  */
-const AI_FINISH = 0.8;
-function aiFinish(m: Match, p: Player): number {
-  return m.isHumanControlled(p) ? 1 : AI_FINISH;
+const AI_FINISH = 0.45;
+/**
+ * ... and his headers' (round 13: the strike with the foot went from 0.8 to AI_FINISH, and headers kept 0.8, so that
+ * headers, 55-65% of the AI's goals, came down towards 40% and goals with the foot made up the rest).
+ */
+const AI_HEADER_FINISH = 0.8;
+/**
+ * In a match with a human in it, the AI's strike with the foot (both sides' AI men: the round-12 AI_FINISH, kept, so
+ * the game against him is as hard as it was; the human's own AI teammates' corners and volleys score as before).
+ */
+const HUMAN_SIDE_FINISH = 0.8;
+function aiFinish(m: Match, p: Player, header = false): number {
+  if (m.isHumanControlled(p)) return 1;
+  // (The human's own AI teammates finish as they always did: HUMAN_SIDE_FINISH.)
+  if (m.human[p.side]) return header ? AI_HEADER_FINISH : HUMAN_SIDE_FINISH;
+  // (Against the human his strike is as it was, HUMAN_SIDE_FINISH: the steadier AI_FINISH is AI v AI's. Dynamic
+  // difficulty: an AI shooter at the human's goal is that much wilder, MatchConfig.assist.)
+  const foot = m.anyHuman ? HUMAN_SIDE_FINISH : AI_FINISH;
+  return (header ? AI_HEADER_FINISH : foot) * (1 + DDA_FINISH * m.assistEase(p.side));
 }
 
 /** Being closed down makes every kick a little less clean. */
@@ -812,6 +843,8 @@ function humanPass(m: Match, p: Player, order: KickOrder, dir: { x: number; z: n
  * lead may be cut out (LEAD_RISKY, the lane models' risk).
  */
 const HUMAN_LEADS = [1, 0.7, 0.45, 0.25, 0.1, 0];
+/** A human's pass is led at most this far (m) ahead of the runner (round 13: the man he steers onto it). */
+const HUMAN_LEAD_MAX = 4;
 const LEAD_EARLY = 0.25;
 export const LEAD_IN = 1.5;
 const LEAD_RISKY = 0.45;
@@ -913,8 +946,10 @@ function humanLead(m: Match, p: Player, r: Player, over: number | undefined): { 
       tx = clamp(r.pos.x + r.vel.x * t * f + foot.x, -HALF_L + 1, HALF_L - 1);
       tz = clamp(r.pos.z + r.vel.z * t * f + foot.z, -HALF_W + LEAD_IN, HALF_W - LEAD_IN);
     }
-    // (Never led into the man in front of him: a lead beyond the room is not an option, to feet always is.)
-    if (f > 0 && rs * t * f > room) continue;
+    // (Never led into the man in front of him: a lead beyond the room is not an option, to feet always is. Nor
+    // further than HUMAN_LEAD_MAX ahead of him: he's the human's to steer once it's played, and a long lead is a
+    // guess at a run he may not make.)
+    if (f > 0 && rs * t * f > Math.min(room, HUMAN_LEAD_MAX)) continue;
     // His time to the point: a run at it, or a stop and a step back when he's going the other way.
     const dx = tx - r.pos.x;
     const dz = tz - r.pos.z;
@@ -1377,7 +1412,7 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   const acc = p.stat.shooting / 100;
   const power = clamp(order.power, 0, 1);
   const hw = GOAL_W / 2;
-  const sk = skillErr(m, p) * aiFinish(m, p);
+  const sk = skillErr(m, p) * aiFinish(m, p, header);
   const press = pressureErr(m, p);
 
   // Aim: an explicit point on the goal line (a free kick aimed with the arrow), else the stick across
@@ -1424,14 +1459,20 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
     // HUMAN_AUTO_LEVEL m is it either.)
     if (flip && (!assist || Math.abs(gapR - gapL) < HUMAN_AUTO_LEVEL)) dir = -dir;
     aimZ = dir * (human ? hw - 0.35 - m.rng.next() * spread : hw - AI_POST_AIM - m.rng.next() * 0.5);
-    if (header) aimZ *= 0.75;
+    // (A header is placed less fine than a strike: round 13, headers were 55-65% of the AI's goals, 63% of those from
+    // inside 6 m going in and 26% from 6-9 m. HEADER_AIM of the way to the post.)
+    if (header) aimZ *= human ? HUMAN_HEADER_AIM : HEADER_AIM;
   }
   const d = Math.max(2, dist2(b.x, b.z, gx, aimZ));
   // Headers are less precise than a strike with the foot (but a free header is still a chance);
   // a header from a set-piece delivery, in traffic, less so again.
   const sp = m.setPieceKick === m.kickId;
   const far = header && !sp && d >= HEADER_FAR_D ? HEADER_FAR : 1;
-  const composure = header ? HEADER_COMPOSURE * far * (sp ? SET_PIECE_HEADER * (m.setPieceDriven ? DRIVEN_HEADER : 1) : 1) : 1;
+  // (A header with a man on him, going up with him for it, is rougher again: HEADER_CONTEST.)
+  const contested = header && nearestOppDist(m, p) < HEADER_CONTEST_R;
+  const composure = header
+    ? (human ? HUMAN_HEADER_COMPOSURE : HEADER_COMPOSURE) * far * (sp ? SET_PIECE_HEADER * (m.setPieceDriven ? DRIVEN_HEADER : 1) : 1) * (contested ? HEADER_CONTEST : 1)
+    : 1;
   // Coming in at an angle the same miss in the air lands further along the goal line (1 / cos).
   const obl = Math.pow(clamp(Math.abs(gx - b.x) / d, 0.45, 1), 0.8);
   // The body shape (weak foot, off balance: open play only) and a timed-finish tap scale the error.
@@ -1476,7 +1517,9 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   // (A header dies with distance: no more than HEADER_SPEED_AT + HEADER_SPEED_SLOPE m/s per metre inside
   // HEADER_SPEED_FROM m, so a keeper has one from the edge of the box covered.)
   let speed = header
-    ? Math.max(HEADER_SPEED_MIN, Math.min(11 + power * 8 + acc * 3, HEADER_SPEED_AT + HEADER_SPEED_SLOPE * (HEADER_SPEED_FROM - d)) * far)
+    ? Math.max(HEADER_SPEED_MIN, Math.min(human ? 11 + power * 8 + acc * 3 : HEADER_PACE + power * HEADER_PACE_POWER + acc * 3,
+      (human ? 12 : HEADER_SPEED_AT) + HEADER_SPEED_SLOPE * (HEADER_SPEED_FROM - d)) * far *
+      (contested ? 0.5 + HEADER_CONTEST * 0.5 : 1))
     : (strike
       ? STRIKE_SPEED_BASE + (softMiss ? Math.max(power, HUMAN_TAP_PACE) : power) * STRIKE_SPEED_POWER * (0.78 + acc * 0.3)
       : SHOT_SPEED_BASE + power * SHOT_SPEED_POWER * (0.78 + acc * 0.3)) * (shape?.pace ?? 1);
@@ -1707,6 +1750,172 @@ function resolveChip(m: Match, p: Player, order: KickOrder): Launch {
     L.balance = shape.balance;
   }
   return L;
+}
+
+// ------------------------------------------------------------------ natural passes (round 13)
+
+/**
+ * Passes that aren't laser-straight (round 13, the owner: "most of the time the pass from a player to another are
+ * exactly straight, not sure if thats ideal"). A ground pass (or through ball) of PASS_CURL_FROM m or more is struck
+ * with the inside of the boot (now and then the outside, PASS_OUTSIDE): a rolling sidespin
+ * (Launch.roll: a sideways pull of roll x its speed, dying away at ROLL_CURL_DECAY a second: Match.rollCurl) that
+ * bows its path PASS_BOW_MIN..PASS_BOW_MAX of its length off the straight line (0.3-0.8 m over 20 m), and the launch
+ * is re-aimed so the bend still brings it to the point it was solved for. Its pace varies a touch (PASS_PACE_VAR, half
+ * that on an assisted human ball), and one of PASS_SKIM_FROM m or more skims off the turf (a low hop, up to
+ * PASS_SKIM_VY m/s). The variety comes from the kick's number, the passer and the spot (natural), not the match rng.
+ */
+export const PASS_CURL_FROM = 12;
+export const ROLL_CURL_DECAY = 1.2;
+const PASS_BOW_MIN = 0.015;
+const PASS_BOW_MAX = 0.04;
+const PASS_PACE_VAR = 0.03;
+const PASS_SKIM_FROM = 24;
+const PASS_SKIM_VY = 1.1;
+/** How often a pass is struck with the outside of the boot (it curls the other way). */
+const PASS_OUTSIDE = 0.3;
+/** The most roll a pass is given (its bow is linear in it; a ball that barely bends at 0.2 isn't forced to). */
+const PASS_ROLL_MAX = 0.6;
+
+/** A number in [0, 1) fixed by the kick's number and a salt (integer hash: the same on every machine). */
+export function natural(kick: number, salt: number): number {
+  let h = Math.imul((kick + 1) ^ Math.imul(salt + 7, 0x9e3779b1), 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * A curled ground ball from (bx, by, bz) at (vx, vy, vz) with roll `c`, the same model as Ball.step with
+ * Match.rollCurl, followed until it has come `d` m along the line to (tx, tz): how far off that line it is then
+ * (signed, + towards the line's left) and the most it bowed off it on the way. Null if it stops short.
+ */
+function curlRun(
+  bx: number, by: number, bz: number, vx: number, vy: number, vz: number, c: number, tx: number, tz: number,
+): { lat: number; bow: number } | null {
+  const dt = 1 / 60;
+  const d = Math.hypot(tx - bx, tz - bz) || 1;
+  const ux = (tx - bx) / d;
+  const uz = (tz - bz) / d;
+  let x = bx;
+  let y = by;
+  let z = bz;
+  let bow = 0;
+  for (let i = 0; i < 300; i++) {
+    const t = i * dt;
+    const grounded = y <= BALL_R + 0.005 && Math.abs(vy) < 0.9;
+    if (grounded) {
+      y = BALL_R;
+      vy = 0;
+      const sh = Math.hypot(vx, vz);
+      if (sh < 0.3) return null;
+      const k = Math.max(0, sh - (ROLL_A + ROLL_B * sh) * dt) / sh;
+      vx *= k;
+      vz *= k;
+      const cc = c * Math.exp(-ROLL_CURL_DECAY * t) * dt;
+      const nvx = vx - cc * vz;
+      vz += cc * vx;
+      vx = nvx;
+    } else {
+      vy -= GRAVITY * dt;
+      const drag = AIR_DRAG * Math.sqrt(vx * vx + vy * vy + vz * vz) * dt;
+      vx -= vx * drag;
+      vy -= vy * drag;
+      vz -= vz * drag;
+    }
+    x += vx * dt;
+    y += vy * dt;
+    z += vz * dt;
+    if (y < BALL_R) {
+      y = BALL_R;
+      if (vy < -1.1) {
+        vy = -vy * BOUNCE;
+        vx *= 0.86;
+        vz *= 0.86;
+      } else vy = 0;
+    }
+    const along = (x - bx) * ux + (z - bz) * uz;
+    const lat = -(x - bx) * uz + (z - bz) * ux;
+    if (along >= d) return { lat, bow: Math.max(bow, Math.abs(lat)) };
+    bow = Math.max(bow, Math.abs(lat));
+  }
+  return null;
+}
+
+/**
+ * Round 13's natural pass (see PASS_CURL_FROM): the pace variety, the skim and the curl for a ground pass or through
+ * ball `L` struck by `p` as kick number `kickNo` (the one it will be), re-aimed onto the point it was solved for (where
+ * its line meets the man it's for, or 20 m on). Sets L.roll; leaves anything else alone.
+ */
+export function naturalPass(m: Match, p: Player, L: Launch, kickNo: number): void {
+  if ((L.kind !== 'pass' && L.kind !== 'through') || Math.abs(L.vy) > 0.05) return;
+  const b = m.ball.pos;
+  // (The kick's number, who struck it and where: the same pass, the same curl.)
+  const kick = kickNo + p.idx * 131 + Math.round(b.x * 4) * 7919 + Math.round(b.z * 4) * 104729;
+  let sp = Math.hypot(L.vx, L.vz);
+  if (sp < 6) return;
+  const human = m.isHumanControlled(p);
+  // (A manual human ball goes exactly where the stick says: that's what manual is for.)
+  const level = human ? assistLevel(m, L.kind === 'through' ? 'through' : 'pass', p.side) : null;
+  if (level === 'manual') return;
+  // Pace: a touch firmer or softer.
+  const pace = 1 + (natural(kick, 3) * 2 - 1) * PASS_PACE_VAR * (level === 'assisted' ? 0.5 : 1);
+  L.vx *= pace;
+  L.vz *= pace;
+  sp *= pace;
+  const ux = L.vx / sp;
+  const uz = L.vz / sp;
+  // Where it's meant to arrive: its line level with where the man it's for will be when it gets there (or 20 m on).
+  const r = L.target >= 0 ? m.players[L.target] : null;
+  let along = 20;
+  if (r) {
+    let t = 0;
+    for (let i = 0; i < 3; i++) {
+      const fx = r.pos.x + r.vel.x * t;
+      const fz = r.pos.z + r.vel.z * t;
+      along = Math.max(1, (fx - b.x) * ux + (fz - b.z) * uz);
+      t = Math.min(3, rollTime(sp, along));
+      if (!Number.isFinite(t)) t = 3;
+    }
+  }
+  const d = clamp(along, 4, 48);
+  if (d >= PASS_SKIM_FROM) L.vy = PASS_SKIM_VY * natural(kick, 4);
+  if (d < PASS_CURL_FROM) return;
+  const tx = b.x + ux * d;
+  const tz = b.z + uz * d;
+  // Inside of the boot: a right-footer's curls one way, a left-footer's the other; now and then the outside.
+  const outside = natural(kick, 1) < PASS_OUTSIDE;
+  const sgn = p.foot * (outside ? -1 : 1);
+  const want = d * (PASS_BOW_MIN + (PASS_BOW_MAX - PASS_BOW_MIN) * natural(kick, 2)) * clamp((d - PASS_CURL_FROM) / 6, 0, 1);
+  if (want < 0.05) return;
+  // The bow is near enough linear in the roll: try one, scale it, then aim it back onto the point.
+  const aimed = (c: number): { vx: number; vz: number; bow: number } | null => {
+    let vx = L.vx;
+    let vz = L.vz;
+    let bow = 0;
+    for (let i = 0; i < 3; i++) {
+      const run = curlRun(b.x, b.y, b.z, vx, L.vy, vz, c, tx, tz);
+      if (!run) return null;
+      bow = run.bow;
+      const err = Math.atan2(run.lat, d);
+      if (Math.abs(err) < 1e-4) break;
+      const cs = Math.cos(-err);
+      const sn = Math.sin(-err);
+      const nvx = vx * cs - vz * sn;
+      vz = vx * sn + vz * cs;
+      vx = nvx;
+    }
+    return { vx, vz, bow };
+  };
+  const c0 = 0.2 * sgn;
+  const t0 = aimed(c0);
+  if (!t0 || t0.bow < 0.05) return;
+  const c = clamp(c0 * (want / t0.bow), -PASS_ROLL_MAX, PASS_ROLL_MAX);
+  const t = aimed(c);
+  if (!t) return;
+  L.vx = t.vx;
+  L.vz = t.vz;
+  L.roll = c;
 }
 
 /** Sidespin (rad/s) of a full-curl strike: bends a 25 m free kick ~2 m. */

@@ -252,6 +252,7 @@ function playTie(app: AppContext, st: CupState): void {
   };
   closeMeta();
   app.startMatch({
+    kind: 'cup',
     home,
     away,
     kits: [home.kit, resolveKitClash(home.kit, away.kit)],

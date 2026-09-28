@@ -58,3 +58,14 @@ export const KICK_WINDUP = 0.11;
 export const STRIDE = 1.05; // metres per full run cycle / 2
 
 export const PLAYERS_PER_TEAM = 11;
+
+/**
+ * Dynamic difficulty (MatchConfig.assist, 0..1; Match.assistEase): at full assist the AI's press and chase slides on the
+ * human's carrier are DDA_PRESS less keen, its tackles on him DDA_TACKLE less sure and its finishing at his goal
+ * DDA_FINISH wilder (0.5 is about a menu notch easier). Against the human side only; AI v AI never.
+ */
+export const DDA_PRESS = 0.6;
+export const DDA_TACKLE = 0.45;
+export const DDA_FINISH = 0.7;
+/** Club Run's sharper keeper (MatchConfig.keeperBoost, 0..1): this much on his keeperBonus (reach, reactions) at 1. */
+export const KEEPER_BOOST = 0.06;

@@ -13,7 +13,11 @@ import type { MatchEvent } from '../src/sim/types';
  */
 
 function scenario(seed: number, difficulty = 1.8): Match {
-  const m = new Match({ home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 150, difficulty, humanSide: 0, seed });
+  // (The human's tackles against a plain side: round 13 gave Lakemoor, the presets' 6, a possession style whose carrier
+  // holds the ball longer and picks a pass sooner under a challenge; these duels are about the tackle, not the style.)
+  const away = makeTeam(PRESET_CLUBS[6]);
+  away.style = 'balanced';
+  const m = new Match({ home: makeTeam(PRESET_CLUBS[5]), away, halfLength: 150, difficulty, humanSide: 0, seed });
   m.phase = 'play';
   m.restart = null;
   m.phaseT = 0;

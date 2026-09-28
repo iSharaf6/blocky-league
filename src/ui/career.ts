@@ -245,6 +245,7 @@ function playMatchday(app: AppContext, st: CareerState): void {
   st.notice = null;
   closeMeta();
   app.startMatch({
+    kind: 'career',
     home: nm.home,
     away: nm.away,
     kits: nm.kits,
