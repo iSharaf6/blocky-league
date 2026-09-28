@@ -2,7 +2,7 @@
 
 _Checked against the build on **28 September 2026**. Portal rules were last read on 25 September 2026; they change, so re-read the linked pages (§12) before each submission._
 
-**Where things stand:** the game is feature-complete for a v1 web-portal launch and `npm run build:all` produces the four upload zips. What's left is the owner's part: accounts, a contact email, screenshots and a video, and the submissions themselves (§1.2).
+**Where things stand:** the game is feature-complete for a v1 web-portal launch and `npm run build:all` produces the four upload zips. What's left is the owner's part: accounts, screenshots and a video, and the submissions themselves (§1.2). The contact email (calynx@zohomail.com.au) is in the privacy policy.
 
 **Playtest deployment:** [GitHub Pages](https://isharaf6.github.io/blocky-league/) is configured for this repository. `.github/workflows/pages.yml` tests and packages the web game on pushes to `main`, then deploys `dist-web`. The source repository remains private; the playable site is public. Portal submissions and monetisation are separate from this playtest deployment.
 
@@ -44,7 +44,7 @@ _Checked against the build on **28 September 2026**. Portal rules were last read
 | Rewarded button reads "🎬 2× COINS", yellow, beside a larger CONTINUE; CONTINUE is disabled while the ad runs | `src/ui/menus.ts` `fulltime` | Code review |
 | Works in incognito / with storage blocked (every `localStorage` call is wrapped) | `src/core/save.ts` | Code review |
 | Store text, covers and thumbnails | `docs/STORE_LISTING.md`, `release/store-assets/` (`npm run assets`) | Store text rewritten on 28 Sep to match the v1 features |
-| Privacy policy (web build) | `public/privacy.html` | Updated 28 Sep: goal clips, key bindings. **Needs the owner's contact email** (§1.2) |
+| Privacy policy (web build) | `public/privacy.html` | Updated 29 Sep: goal clips, key bindings, contact calynx@zohomail.com.au |
 | Third-party licence notices (three.js MIT, fonts OFL, supabase-js MIT) | `third-party-licenses.txt`, generated into every build | Present in every zip |
 
 What the v1 game has (so the listing stays honest): LEARN THE BASICS (three drills), then the first match; the first goal unlocks CAREER, MOMENTS, CLUB RUN and BLITZ. Quick Match, Blocky Cup, Career (six divisions, transfer market, stadium), Club Run (seven matches, perks), eight Football Moments, Blitz power-ups, XP levels, mastery badges, a monthly season track, daily challenges and gift, unlockable balls and celebrations. Text commentary (the spoken voice was removed). Settings: key and gamepad remapping, fixed or floating touch stick, colour-blind shape cues. Goal clips (SAVE CLIP / SHARE, a WebM) where the browser can record the canvas.
@@ -54,7 +54,7 @@ What the v1 game has (so the listing stays honest): LEARN THE BASICS (three dril
 ### 1.2 What the owner must do (in this order)
 
 1. **Pick the first portal.** Recommended: **CrazyGames first** (open submission, non-exclusive, fast Basic Launch), then GameDistribution later. Choose **Poki** instead only if you're happy with web exclusivity and a slower, curated process (they rule out the others; §2).
-2. **Add a contact email** to `public/privacy.html` (the `[CONTACT EMAIL: ...]` placeholder under "Contact"; an HTML comment marks it). Use an address you check. Portals and app stores ask for one. Then rebuild (`npm run build:all`).
+2. ~~Add a contact email~~ Done: calynx@zohomail.com.au is in `public/privacy.html`.
 3. **Create the portal account(s) yourself** and accept their terms: [CrazyGames developer portal](https://developer.crazygames.com/) (and later Poki / GameDistribution / itch.io). Fill in the payout and tax forms when asked. Nobody else can do this for you.
 4. **Capture the store media** from the shot list in `docs/STORE_LISTING.md`: five 1920×1080 screenshots, and for CrazyGames a 15–20 s silent video in 16:9 and 2:3 (Poki later needs a 4–6 s square loop). The covers and thumbnails are already in `release/store-assets/`.
 5. **Test the portal build in the portal's own tool** before submitting: CrazyGames' Preview/QA tool (or `localhost` with `?useLocalSdk=true`), Poki Inspector for Poki. Check a full match, a rewarded ad, mute during ads, and the phone layouts.

@@ -86,7 +86,7 @@ body {
   animation: fade 0.5s ease both;
 }
 
-.boot-brand .lynx {
+.boot-brand .lynx, .boot-brand .logo {
   filter: drop-shadow(0 5px 0 rgba(34, 48, 214, 0.18));
 }
 
@@ -5009,7 +5009,7 @@ button.mc-pl:active {
   text-shadow: 0 2px 0 var(--ink);
   animation: fade 0.6s ease 0.5s both;
 }
-.credit .lynx { filter: drop-shadow(0 2px 0 var(--ink)); }
+.credit .lynx, .credit .logo { filter: drop-shadow(0 2px 0 var(--ink)); }
 .set-about {
   margin: 12px 0 0;
   display: flex;
