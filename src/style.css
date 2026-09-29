@@ -89,7 +89,7 @@ body {
   gap: 16px;
   padding: 18px 22px;
   overflow: hidden;
-  animation: boot-lockup 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: boot-lockup 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both, boot-kick 0.5s 0.72s cubic-bezier(0.2, 0.9, 0.25, 1) both;
 }
 
 .boot-brand .lynx, .boot-brand .logo {
@@ -97,7 +97,33 @@ body {
 }
 
 .boot-brand .logo {
-  animation: boot-logo-settle 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: visible;
+  animation: boot-logo-settle 0.6s 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Each run of the pixel logo drops into place, left to right (its delay is set inline from its column), so the
+   mark builds like blocks being laid; the wordmark is readable by 0.5 s. */
+.boot-brand .logo rect {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  opacity: 0;
+  animation: boot-cell 0.42s cubic-bezier(0.2, 0.9, 0.25, 1.18) both;
+  animation-delay: var(--d, 0s);
+}
+
+@keyframes boot-cell {
+  from { opacity: 0; transform: translateY(-9px) scale(0.5, 1.6); }
+  55% { opacity: 1; transform: translateY(1px) scale(1.15, 0.85); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The ball rolls in from the left, bumps the lockup (boot-kick: a squash and a nudge), then hops in place
+   under it as the loading indicator. */
+@keyframes boot-kick {
+  0% { transform: none; }
+  35% { transform: translateX(9px) scale(1.04, 0.95); }
+  70% { transform: translateX(-2px) scale(0.99, 1.02); }
+  100% { transform: none; }
 }
 
 .boot-brand::after {
@@ -108,19 +134,26 @@ body {
   transform: skewX(-18deg);
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
   mix-blend-mode: screen;
-  animation: boot-shine 1.05s 0.28s ease-out both;
+  animation: boot-shine 0.9s 0.75s ease-out both;
 }
 
 .boot-ball {
   position: relative;
   width: 32px;
   height: 32px;
-  background:
-    linear-gradient(var(--studio), var(--studio)) 11px 11px / 10px 10px no-repeat,
-    #fff;
-  border: 3px solid var(--studio);
-  box-shadow: 0 5px 0 var(--studio);
-  animation: hop 0.52s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 4px 0 rgba(34, 48, 214, 0.28));
+  animation: boot-rollin 0.62s 0.18s cubic-bezier(0.25, 0.8, 0.3, 1) both, hop 0.52s 0.86s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
+}
+
+.boot-ball svg { display: block; }
+
+@keyframes boot-rollin {
+  from { transform: translateX(-62vw) rotate(-900deg); }
+  to { transform: translateX(0) rotate(0); }
 }
 
 .boot-ball::after {
@@ -132,8 +165,13 @@ body {
   height: 7px;
   background: rgba(34, 48, 214, 0.2);
   transform: translateX(-50%);
-  animation: boot-shadow 0.52s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
+  animation: boot-shadow 0.52s 0.86s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
 }
+
+/* Out: a quick punch up and away as the title comes in. */
+#boot .boot-brand, #boot .boot-ball { transition: transform 0.32s cubic-bezier(0.3, 0, 0.7, 0.2), opacity 0.3s ease; }
+#boot.gone .boot-brand { transform: scale(1.12) translateY(-10px); opacity: 0; }
+#boot.gone .boot-ball { transform: translateY(60px); opacity: 0; }
 
 @keyframes hop {
   from { transform: translateY(0) rotate(0) scale(1.1, 0.9); }
@@ -162,7 +200,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .boot-brand, .boot-brand .logo, .boot-brand::after, .boot-ball, .boot-ball::after { animation: none; }
+  .boot-brand, .boot-brand .logo, .boot-brand .logo rect, .boot-brand::after, .boot-ball, .boot-ball::after { animation: none; opacity: 1; }
+  #boot .boot-brand, #boot .boot-ball { transition: opacity 0.3s ease; }
+  #boot.gone .boot-brand, #boot.gone .boot-ball { transform: none; }
 }
 
 /* ---------------------------------------------------------------- buttons */

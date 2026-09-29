@@ -47,7 +47,7 @@ import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cl
 
 /** When the script started: the studio splash stays up at least SPLASH_MS from here. */
 const bootAt = performance.now();
-const SPLASH_MS = 800;
+const SPLASH_MS = 1250;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const world = new World(canvas);
 const input = new Input();
