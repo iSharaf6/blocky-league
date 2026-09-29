@@ -1,17 +1,22 @@
 #!/usr/bin/env node
-// Generates every raster asset the release needs, with no dependencies:
-//   public/icons/*.png, public/apple-touch-icon.png, public/og-image.png  (shipped with the web build)
-//   store-assets/*.png                                                    (uploaded by hand to stores / portals)
+// Procedural FALLBACK art (a tiny voxel ray caster), with no dependencies. The real logo, icons, covers and
+// screenshots are designed and rendered from the game itself (src/ui/gameLogo.ts + the brand pipeline, see
+// docs/BRAND.md) and live in public/ and store-assets/. This script never overwrites them: every output below is
+// written only if that file does NOT exist yet (a fresh checkout missing its art gets a placeholder); an existing
+// file is left alone and reported as "kept". To see the procedural version of a file, pass --out <dir>: then
+// everything is written under that directory instead (e.g. --out /tmp/fallback), and nothing in the repo is touched.
+//   public/icons/*.png, public/apple-touch-icon.png, public/og-image.png, store-assets/*.png
 //
 // Renders a tiny orthographic voxel scene (ball, players, goal) with a DDA ray caster,
 // flat Crossy-style face shading and hard shadows, then stamps the title in a 5x7
 // bitmap font. Colours come from src/render/palette.ts and src/meta/data.ts.
 //
-//   node scripts/gen-assets.mjs            # everything
-//   node scripts/gen-assets.mjs --fast     # 1 sample/pixel preview
+//   node scripts/gen-assets.mjs                  # fill in any MISSING asset (existing files are kept)
+//   node scripts/gen-assets.mjs --out <dir>      # write every fallback under <dir> (the repo is not touched)
+//   node scripts/gen-assets.mjs --fast           # 1 sample/pixel preview
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { encodePNG, formatBytes } from './lib.mjs';
 
@@ -485,12 +490,22 @@ function camDir() {
 
 // ----------------------------------------------------------- outputs
 
+/** --out <dir>: write everything there instead of into the repo (for comparing the fallbacks with the real art). */
+const OUT_AT = process.argv.indexOf('--out');
+const OUT_DIR = OUT_AT > 0 ? process.argv[OUT_AT + 1] : null;
+if (OUT_AT > 0 && !OUT_DIR) throw new Error('--out needs a directory');
+
+/** Write a fallback PNG, unless the (designed) file is already there: then it is kept, never overwritten. */
 function writePNG(rel, img) {
-  const file = join(ROOT, rel);
+  const file = OUT_DIR ? join(OUT_DIR, rel) : join(ROOT, rel);
+  if (!OUT_DIR && existsSync(file)) {
+    console.log(`  ${rel.padEnd(52)} kept (designed art, see docs/BRAND.md)`);
+    return;
+  }
   mkdirSync(dirname(file), { recursive: true });
   const png = encodePNG(img.W, img.H, toBytes(img), 3);
   writeFileSync(file, png);
-  console.log(`  ${rel.padEnd(44)} ${String(img.W).padStart(4)}x${String(img.H).padEnd(4)} ${formatBytes(png.length)}`);
+  console.log(`  ${(OUT_DIR ? file : relative(ROOT, file)).padEnd(52)} ${String(img.W).padStart(4)}x${String(img.H).padEnd(4)} ${formatBytes(png.length)}`);
 }
 
 function icon(size, { maskable = false } = {}) {
@@ -544,8 +559,7 @@ const brandCard = cover(1200, 630, {
 writePNG('public/og-image.png', brandCard);
 writePNG('store-assets/blocky-league-logo-1200x630.png', brandCard);
 
-// Store and portal artwork (NOT shipped in builds — upload by hand). Keeping these tracked makes the exact
-// submission art reviewable and prevents a release from depending on a developer's ignored `release/` folder.
+// Store and portal artwork (procedural fallbacks; the designed versions in store-assets/ are the ones to upload).
 // Rules checked 2026-09:
 //  - Apple App Store: 1024x1024 icon, opaque and square (the store applies the corner mask).
 //  - Google Play: 512x512 icon and 1024x500 feature graphic.

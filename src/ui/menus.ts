@@ -1,4 +1,5 @@
 import { sfx } from '../audio/sfx';
+import { logoSvg } from './gameLogo';
 import {
   ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData, BALL_SKIN_IDS,
   BALL_SKIN_LEVEL, BALL_SKIN_NAMES, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, type BallSkinId, CELEBRATION_IDS, CELEBRATION_LEVEL,
@@ -441,7 +442,7 @@ export class Menus {
   title(onStart: () => void): void {
     const d = this.mount(`
       <div class="title-wrap">
-        <h1 class="logo"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
+        <h1 class="logo lockup">${logoSvg('stacked', 320, {}, 'bl-logo lock-s', { markWidth: 0.5, markOutline: 0.25 })}${logoSvg('horizontal', 120, {}, 'bl-logo lock-h', { markOutline: 0.25 })}</h1>
         ${creditHtml()}
         <button class="btn btn-go btn-xl pulse" data-a="start">TAP TO PLAY</button>
         <p class="fine">Keyboard${sep()}Gamepad${sep()}Touch</p>

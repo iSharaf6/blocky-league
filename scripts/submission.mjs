@@ -7,7 +7,7 @@
 //
 // Inputs (never modified):
 //   release/blocky-league-<variant>-v<version>.zip   from `npm run build:all`
-//   release/store-assets/*.png                       from `npm run assets`
+//   store-assets/*.png                               the designed store art (docs/BRAND.md)
 //   release/submission/media/                        screenshots + videos captured from the game
 //   docs/STORE_LISTING.md                            the store copy
 // Output: release/submission/{crazygames,poki,gamedistribution,itch}/ and release/submission/README.txt.
@@ -25,7 +25,7 @@ const V = pkg.version;
 const REL = join(ROOT, 'release');
 const OUT = join(REL, 'submission');
 const MEDIA = join(OUT, 'media');
-const STORE = join(REL, 'store-assets');
+const STORE = join(ROOT, 'store-assets');
 const LISTING_MD = join(ROOT, 'docs', 'STORE_LISTING.md');
 const MB = 1024 * 1024;
 
@@ -84,8 +84,8 @@ const PORTALS = {
       { dir: 'thumbnails', src: [STORE, 'gamedistribution-512x512.png'], w: 512, h: 512 },
       { dir: 'thumbnails', src: [STORE, 'gamedistribution-512x384.png'], w: 512, h: 384 },
       { dir: 'thumbnails', src: [STORE, 'gamedistribution-200x120.png'], w: 200, h: 120 },
-      { dir: 'thumbnails/optional', src: [MEDIA, 'extra-sizes/gamedistribution-1280x720.png'], w: 1280, h: 720 },
-      { dir: 'thumbnails/optional', src: [MEDIA, 'extra-sizes/gamedistribution-1280x550.png'], w: 1280, h: 550 },
+      { dir: 'thumbnails/optional', src: [STORE, 'gamedistribution-1280x720.png'], w: 1280, h: 720 },
+      { dir: 'thumbnails/optional', src: [STORE, 'gamedistribution-1280x550.png'], w: 1280, h: 550 },
     ],
     videos: [{ dir: 'video-optional', src: VIDEO_16x9, w: 1920, h: 1080, silent: true }],
     screenshots: 'screenshots',
@@ -550,7 +550,7 @@ writeFileSync(join(OUT, 'README.txt'), [
   'poki/ only if you choose Poki\'s web-exclusive deal instead of the others, gamedistribution/ once it has an SDK build.',
   '',
   'media/ holds the source screenshots and videos (captured from the game). The portal folders are rebuilt from it',
-  'and from release/*.zip + release/store-assets/ every time you run the script; nothing in media/ is changed.',
+  'and from release/*.zip + store-assets/ every time you run the script; nothing in media/ is changed.',
   'release/ is not in git: keep a backup of media/.',
   '',
 ].join('\n'));

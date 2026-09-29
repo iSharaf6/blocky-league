@@ -319,6 +319,29 @@ body {
   font-size: clamp(38px, 6vw, 76px);
 }
 
+/* The title's lockup (src/ui/gameLogo.ts: the voxel-ball mark over the pixel wordmark, one crisp SVG). */
+.logo.lockup {
+  line-height: 0;
+  letter-spacing: 0;
+}
+
+.logo.lockup .bl-logo {
+  display: block;
+  width: min(86vw, 58vh, 620px);
+  height: auto;
+  animation: drop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+.logo.lockup .lock-h {
+  display: none;
+}
+
+/* Short landscape screens (phones on their side): the mark beside the wordmark keeps the letters readable. */
+@media (max-height: 480px) and (orientation: landscape) {
+  .logo.lockup .lock-s { display: none; }
+  .logo.lockup .lock-h { display: block; width: min(64vw, 620px); }
+}
+
 @keyframes drop {
   from { transform: translateY(-60px) scale(0.8); opacity: 0; }
 }

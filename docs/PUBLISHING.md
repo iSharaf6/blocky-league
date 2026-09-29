@@ -45,7 +45,7 @@ _Checked against the build on **28 September 2026**. Portal rules were last read
 | CrazyGames: `environment === 'disabled'` treated as no portal, `loadingStart/Stop`, `gameplayStart/Stop` deduplicated, `happytime` only for a 3-goal win. Poki: `gameLoadingFinished`, `commercialBreak` before kick-off, `rewardedBreak` rewards only when watched | `src/platform/ads.ts` | Code review |
 | Rewarded button reads "🎬 2× COINS", yellow, beside a larger CONTINUE; CONTINUE is disabled while the ad runs | `src/ui/menus.ts` `fulltime` | Code review |
 | Works in incognito / with storage blocked (every `localStorage` call is wrapped) | `src/core/save.ts` | Code review |
-| Store text, covers and thumbnails | `docs/STORE_LISTING.md`, `release/store-assets/` (`npm run assets`) | Store text rewritten on 28 Sep to match the v1 features |
+| Store text, covers and thumbnails | `docs/STORE_LISTING.md`, `store-assets/` (docs/BRAND.md) | Store text rewritten on 28 Sep to match the v1 features |
 | Privacy policy (web build) | `public/privacy.html` | Updated 29 Sep: goal clips, key bindings, contact calynx@zohomail.com.au |
 | Third-party licence notices (three.js MIT, fonts OFL, supabase-js MIT) | `third-party-licenses.txt`, generated into every build | Present in every zip |
 
@@ -105,7 +105,7 @@ npm run build:crazygames   # VITE_PORTAL=crazygames
 npm run build:poki         # VITE_PORTAL=poki
 npm run build:itch         # no ads, no PWA (itch.io runs games in an iframe)
 npm run build:all          # all four
-npm run assets             # re-render icons, og image and store covers
+npm run assets             # fill in MISSING icons / covers only (the designed art is never overwritten)
 ```
 
 - Each `build:*` runs `tsc --noEmit` first, so a type error anywhere stops the build. To package without the type check: `node scripts/release.mjs <variant>`.
@@ -143,7 +143,7 @@ Developer portal: <https://developer.crazygames.com/> · Docs: <https://docs.cra
 1. **Create a developer account** at developer.crazygames.com. You do this yourself.
 2. Run `npm run build:crazygames` (the old fix list in §10 is all done).
 3. **Test locally.** On `localhost` the SDK runs in *local* mode: ads show as overlay text and logging is on. Add `?useLocalSdk=true` to force this on any domain, and `?muteAudio=true` to test the mute setting.
-4. **Submit.** Upload `release/blocky-league-crazygames-v<version>.zip` and the three covers from `release/store-assets/`:
+4. **Submit.** Upload `release/blocky-league-crazygames-v<version>.zip` and the three covers from `store-assets/`:
    - `crazygames-landscape-1920x1080.png`
    - `crazygames-portrait-800x1200.png`
    - `crazygames-square-800x800.png`
@@ -222,7 +222,7 @@ Developer guide: <https://developers.poki.com/> · Apply: <https://developers.po
 4. **Testing stages:** upload → playtests → player fit test → web fit test (about 7 days) → final review (1–2 weeks).
 5. **If selected:** agreement → QA → Soft Release (2–3 weeks, can't be skipped) → Global Release. Poki estimates about 2–3 months from agreement to Global Release.
 6. **Thumbnails and video.**
-   - Static: `release/store-assets/poki-thumbnail-1024x1024.png`. It is full-bleed, text-free and at least 628×628; Poki rounds the corners itself.
+   - Static: `store-assets/poki-thumbnail-1024x1024.png`. It is full-bleed, text-free and at least 628×628; Poki rounds the corners itself.
    - Animated: a 1080×1080+ `.mp4`, 4–6 s, 50 fps or more, muted. It's needed before Global Release.
 7. **Payouts:** wire or PayPal, set up in the Poki for Developers platform. The payout threshold isn't stated in the docs.
 
@@ -268,7 +268,7 @@ Developer site: <https://developer.gamedistribution.com/> · Guidelines: <https:
 
 **Store text:** English. Description and instructions 200–500 characters each, 1–2 genres, 1–5 tags. See `docs/STORE_LISTING.md`.
 
-**Thumbnails (mandatory):** 512×512, 512×384 and 200×120, all in `release/store-assets/gamedistribution-*`.
+**Thumbnails (mandatory):** 512×512, 512×384 and 200×120, all in `store-assets/gamedistribution-*`.
 
 **Money:**
 - Developer gets **33% of net revenue** (net of ad-platform costs, invalid traffic, payment costs and VAT; terms updated 19 Jun 2025).
@@ -290,7 +290,7 @@ Docs: <https://itch.io/docs/creators/html5>
    - Tick **Mobile friendly** (landscape).
    - Optionally turn on itch's own *Fullscreen button*.
 4. **Pricing:** "$0 or donate" (pay-what-you-want with a free option) or "No payments". A fixed "Paid" minimum is also possible but is a hard sell for a web game.
-5. **Cover:** `release/store-assets/itch-cover-630x500.png`. Add screenshots from the shot list in `docs/STORE_LISTING.md`.
+5. **Cover:** `store-assets/itch-cover-630x500.png`. Add screenshots from the shot list in `docs/STORE_LISTING.md`.
 6. **Optional CLI uploads:** use [butler](https://itch.io/docs/butler/): `butler push dist-itch you/blocky-league:html5 --userversion 0.1.0`.
 
 **Limits:** ≤ 1,000 files, ≤ 500 MB extracted, ≤ 200 MB per file, paths ≤ 240 characters. The build is 10 files, well within all of these.
