@@ -51,7 +51,7 @@ The art style is Crossy Road's: chunky voxels, flat saturated colours, hard shad
 ## Files
 
 Every store and portal file is in the tracked `store-assets/` folder. Web icons are in `public/`. All were checked
-with a Python PNG header read on 29 and 30 Sep 2026: exact size, colour type (2 = RGB, 6 = RGBA), bit depth 8, file size.
+with a Python PNG header read on 29 and 30 Sep 2026 (the wide covers re-checked on 30 Sep): exact size, colour type (2 = RGB, 6 = RGBA), bit depth 8, file size.
 The icon safe zones were measured from the pixels (the content's bounding box or its radius over the flat sky).
 
 ### Logo (`store-assets/logo/`)
@@ -65,7 +65,7 @@ The icon safe zones were measured from the pixels (the content's bounding box or
 | `blocky-league-logo-stacked-on-sky-1600x1600.png` | 1600×1600 RGB, 49.1 KB | On `#5cc8f5` |
 | `blocky-league-logo-horizontal-on-sky-2400x800.png` | 2400×800 RGB, 39.5 KB | On `#5cc8f5` |
 | `blocky-league-mark-on-sky-1024.png` | 1024×1024 RGB, 38.7 KB | On `#5cc8f5` |
-| `../blocky-league-logo-1200x630.png` | 1200×630 RGB, 21.6 KB | Master logo and social card (horizontal lockup, 18 px per cell) |
+| `../blocky-league-logo-1200x630.png` | 1200×630 RGB, 249.3 KB | Master logo card: the full horizontal lockup (16 px per cell) over the wide cover scene |
 
 The SVGs are standalone (`xmlns`, a `viewBox`, `role="img"`) and scale to any size.
 
@@ -100,8 +100,14 @@ How it was staged on the dev snapshot:
 Every size was framed from that same frozen instant, with a camera solved for its aspect, and captured at its exact
 pixel size (DPR 1, the WebGL canvas supersampled 2× to 4× inside it, never upscaled). There are two viewpoints:
 
-- **Wide sizes** (16:9, 2:1, 1.9:1) use a side view: the striker on the left, the goal and keeper on the right, the
-  wordmark in the sky between the main stand's roof and the end stand.
+- **Wide sizes** (16:9, 2:1, 1.9:1, 2.3:1) use a low, close camera (0.6 m up, 44° lens) in front of the striker, so
+  the characters stay readable when a portal shrinks the cover to a 360 px tile. The striker stands in the left
+  foreground at about half the frame height, turned to the lens in three-quarter view with his kicking leg through.
+  The keeper dives at full stretch on the right, and the ball (about 6% of the frame height) is just past his glove
+  in the top corner. The wordmark sits in the sky above the end stand, and very little grass shows. For this view
+  only, the drawn striker is moved to 7 m from goal and turned to face the lens, and the drawn keeper is shifted
+  0.8 m along the line so his glove falls just short of the ball. The sim is untouched. Every wide cover was checked
+  shrunk to 360 px wide (`sips -Z 360`): the striker's face, the keeper and the ball all read.
 - **Square, 4:3 and portrait sizes** use an over-the-shoulder view: the striker in front, the goal and keeper filling
   the middle, the wordmark over the stand.
 
@@ -115,17 +121,17 @@ CrazyGames' title-only rule, and it keeps the feature graphic and key art free o
 
 | File | Size | Title | Spec met |
 |---|---|---|---|
-| `crazygames-landscape-1920x1080.png` | 1920×1080 RGB, 442.5 KB | Wordmark | CrazyGames 16:9; the title is the only text; no icons, logos or borders |
+| `crazygames-landscape-1920x1080.png` | 1920×1080 RGB, 446.6 KB | Wordmark | CrazyGames 16:9; the title is the only text; no icons, logos or borders |
 | `crazygames-portrait-800x1200.png` | 800×1200 RGB, 176.3 KB | Wordmark | CrazyGames 2:3 (same rules); the action fills the middle, the title overlaps the stand |
 | `crazygames-square-800x800.png` | 800×800 RGB, 129.6 KB | Wordmark | CrazyGames 1:1 (same rules) |
 | `poki-thumbnail-1024x1024.png` | 1024×1024 RGB, 194.3 KB | None | Poki: full-bleed square of 628 px or more, no text, a key gameplay moment filling the frame |
-| `google-play-feature-1024x500.png` | 1024×500 RGB (24-bit, no alpha), 203.0 KB | Wordmark | Play feature graphic 1024×500, JPEG or 24-bit PNG, no alpha |
-| `ios-product-page-1200x630.png` | 1200×630 RGB, 250.7 KB | Wordmark | Product page and social card |
-| `keyart-1920x1080.png` | 1920×1080 RGB, 442.5 KB | Wordmark | Key art (the same image as the CrazyGames landscape) |
+| `google-play-feature-1024x500.png` | 1024×500 RGB (24-bit, no alpha), 134.4 KB | Wordmark | Play feature graphic 1024×500, JPEG or 24-bit PNG, no alpha |
+| `ios-product-page-1200x630.png` | 1200×630 RGB, 237.2 KB | Wordmark | Product page and social card |
+| `keyart-1920x1080.png` | 1920×1080 RGB, 446.6 KB | Wordmark | Key art (the same image as the CrazyGames landscape) |
 | `itch-cover-630x500.png` | 630×500 RGB, 85.9 KB | Wordmark | itch.io cover 630×500 |
 | `gamedistribution-512x512.png`, `-512x384.png`, `-200x120.png` | RGB, 85.1 / 59.9 / 20.2 KB | Wordmark | GameDistribution's mandatory thumbnails |
-| `gamedistribution-1280x720.png`, `-1280x550.png` | RGB, 275.3 / 256.0 KB | Wordmark | GameDistribution's optional banners |
-| `public/og-image.png` | 1200×630 RGB, 250.7 KB | Wordmark | `og:image` / `twitter:image` (same file as the product page) |
+| `gamedistribution-1280x720.png`, `-1280x550.png` | RGB, 267.0 / 228.2 KB | Wordmark | GameDistribution's optional banners |
+| `public/og-image.png` | 1200×630 RGB, 237.2 KB | Wordmark | `og:image` / `twitter:image` (same file as the product page) |
 
 The in-world sponsor boards (calynx, CUBE COLA, HOP HOP, VOXEL BANK) are part of the scene.
 
