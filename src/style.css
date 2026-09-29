@@ -69,8 +69,11 @@ body {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 34px;
-  background: #fff;
+  gap: 42px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, transparent 49.75%, rgba(34, 48, 214, 0.055) 50%, transparent 50.25%),
+    linear-gradient(#fff 0 76%, #eef8ff 76% 100%);
   transition: opacity 0.5s ease 0.1s, visibility 0s linear 0.6s;
 }
 
@@ -80,17 +83,36 @@ body {
 }
 
 .boot-brand {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 16px;
-  animation: fade 0.5s ease both;
+  padding: 18px 22px;
+  overflow: hidden;
+  animation: boot-lockup 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .boot-brand .lynx, .boot-brand .logo {
   filter: drop-shadow(0 5px 0 rgba(34, 48, 214, 0.18));
 }
 
+.boot-brand .logo {
+  animation: boot-logo-settle 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.boot-brand::after {
+  content: '';
+  position: absolute;
+  inset: 4px auto 4px -28%;
+  width: 18%;
+  transform: skewX(-18deg);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  mix-blend-mode: screen;
+  animation: boot-shine 1.05s 0.28s ease-out both;
+}
+
 .boot-ball {
+  position: relative;
   width: 32px;
   height: 32px;
   background:
@@ -98,12 +120,49 @@ body {
     #fff;
   border: 3px solid var(--studio);
   box-shadow: 0 5px 0 var(--studio);
-  animation: hop 0.55s cubic-bezier(0.3, 0, 0.7, 1) infinite alternate;
+  animation: hop 0.52s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
+}
+
+.boot-ball::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 49px;
+  width: 42px;
+  height: 7px;
+  background: rgba(34, 48, 214, 0.2);
+  transform: translateX(-50%);
+  animation: boot-shadow 0.52s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
 }
 
 @keyframes hop {
-  from { transform: translateY(0) scale(1.08, 0.92); }
-  to { transform: translateY(-34px) scale(0.96, 1.04); }
+  from { transform: translateY(0) rotate(0) scale(1.1, 0.9); }
+  to { transform: translateY(-38px) rotate(90deg) scale(0.94, 1.06); }
+}
+
+@keyframes boot-shadow {
+  from { opacity: 0.75; transform: translateX(-50%) scaleX(1); }
+  to { opacity: 0.2; transform: translateX(-50%) scaleX(0.45); }
+}
+
+@keyframes boot-lockup {
+  from { opacity: 0; transform: translateY(18px); clip-path: inset(0 50% 0 50%); }
+  to { opacity: 1; transform: translateY(0); clip-path: inset(0); }
+}
+
+@keyframes boot-logo-settle {
+  0% { transform: scale(0.92); }
+  65% { transform: scale(1.025); }
+  100% { transform: scale(1); }
+}
+
+@keyframes boot-shine {
+  from { left: -28%; }
+  to { left: 112%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-brand, .boot-brand .logo, .boot-brand::after, .boot-ball, .boot-ball::after { animation: none; }
 }
 
 /* ---------------------------------------------------------------- buttons */

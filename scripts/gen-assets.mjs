@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Generates every raster asset the release needs, with no dependencies:
 //   public/icons/*.png, public/apple-touch-icon.png, public/og-image.png  (shipped with the web build)
-//   release/store-assets/*.png                                            (uploaded by hand to portals)
+//   store-assets/*.png                                                    (uploaded by hand to stores / portals)
 //
 // Renders a tiny orthographic voxel scene (ball, players, goal) with a DDA ray caster,
 // flat Crossy-style face shading and hard shadows, then stamps the title in a 5x7
@@ -537,12 +537,18 @@ writePNG('public/icons/icon-512.png', icon(512));
 writePNG('public/icons/maskable-192.png', icon(192, { maskable: true }));
 writePNG('public/icons/maskable-512.png', icon(512, { maskable: true }));
 writePNG('public/apple-touch-icon.png', icon(180));
-writePNG('public/og-image.png', cover(1200, 630, {
+const brandCard = cover(1200, 630, {
   worldWidth: 50, fx: 0.7, fy: 0.5,
   title: (img) => stackedTitle(img, 300, 170, 14),
-}));
+});
+writePNG('public/og-image.png', brandCard);
+writePNG('store-assets/blocky-league-logo-1200x630.png', brandCard);
 
-// Portal store assets (NOT shipped in builds — upload by hand). Rules checked 2026-09:
+// Store and portal artwork (NOT shipped in builds — upload by hand). Keeping these tracked makes the exact
+// submission art reviewable and prevents a release from depending on a developer's ignored `release/` folder.
+// Rules checked 2026-09:
+//  - Apple App Store: 1024x1024 icon, opaque and square (the store applies the corner mask).
+//  - Google Play: 512x512 icon and 1024x500 feature graphic.
 //  - CrazyGames: 1920x1080, 800x1200, 800x800; no text except the game title, no borders/logos.
 //    https://docs.crazygames.com/requirements/game-covers/
 //  - Poki: full-bleed square >= 628x628, avoid text (titles included), no borders.
@@ -552,17 +558,24 @@ writePNG('public/og-image.png', cover(1200, 630, {
 //  - itch.io: cover image 630x500 (shown scaled down in listings).
 const titleOnly = (cx, top, p) => (img) => stackedTitle(img, cx, top, p, { banner: false });
 const covers = [
-  ['release/store-assets/crazygames-landscape-1920x1080.png', 1920, 1080, { worldWidth: 50, fx: 0.7, fy: 0.5, title: titleOnly(480, 360, 22) }],
-  ['release/store-assets/crazygames-portrait-800x1200.png', 800, 1200, { worldWidth: 36, fx: 0.5, fy: 0.62, title: titleOnly(400, 120, 18) }],
-  ['release/store-assets/crazygames-square-800x800.png', 800, 800, { worldWidth: 40, fx: 0.52, fy: 0.64, title: titleOnly(400, 70, 13) }],
-  ['release/store-assets/poki-thumbnail-1024x1024.png', 1024, 1024, { worldWidth: 27, fx: 0.47, fy: 0.5, title: () => {} }],
-  ['release/store-assets/gamedistribution-512x512.png', 512, 512, { worldWidth: 38, fx: 0.52, fy: 0.66, title: titleOnly(256, 34, 9) }],
-  ['release/store-assets/gamedistribution-512x384.png', 512, 384, { worldWidth: 38, fx: 0.55, fy: 0.66, title: titleOnly(256, 22, 8) }],
-  ['release/store-assets/gamedistribution-200x120.png', 200, 120, { worldWidth: 20, fx: 0.47, fy: 0.5, title: () => {} }],
-  ['release/store-assets/itch-cover-630x500.png', 630, 500, { worldWidth: 42, fx: 0.55, fy: 0.64, title: titleOnly(315, 30, 10) }],
+  ['store-assets/google-play-feature-1024x500.png', 1024, 500, { worldWidth: 49, fx: 0.7, fy: 0.52, title: titleOnly(255, 145, 12) }],
+  ['store-assets/ios-product-page-1200x630.png', 1200, 630, { worldWidth: 50, fx: 0.7, fy: 0.5, title: titleOnly(300, 190, 14) }],
+  ['store-assets/crazygames-landscape-1920x1080.png', 1920, 1080, { worldWidth: 50, fx: 0.7, fy: 0.5, title: titleOnly(480, 360, 22) }],
+  ['store-assets/crazygames-portrait-800x1200.png', 800, 1200, { worldWidth: 36, fx: 0.5, fy: 0.62, title: titleOnly(400, 120, 18) }],
+  ['store-assets/crazygames-square-800x800.png', 800, 800, { worldWidth: 40, fx: 0.52, fy: 0.64, title: titleOnly(400, 70, 13) }],
+  ['store-assets/poki-thumbnail-1024x1024.png', 1024, 1024, { worldWidth: 27, fx: 0.47, fy: 0.5, title: () => {} }],
+  ['store-assets/gamedistribution-512x512.png', 512, 512, { worldWidth: 38, fx: 0.52, fy: 0.66, title: titleOnly(256, 34, 9) }],
+  ['store-assets/gamedistribution-512x384.png', 512, 384, { worldWidth: 38, fx: 0.55, fy: 0.66, title: titleOnly(256, 22, 8) }],
+  ['store-assets/gamedistribution-200x120.png', 200, 120, { worldWidth: 20, fx: 0.47, fy: 0.5, title: () => {} }],
+  ['store-assets/itch-cover-630x500.png', 630, 500, { worldWidth: 42, fx: 0.55, fy: 0.64, title: titleOnly(315, 30, 10) }],
   // Generic 16:9 key art with tagline, for your own site / social posts / GameDistribution.
-  ['release/store-assets/keyart-1920x1080.png', 1920, 1080, { worldWidth: 50, fx: 0.7, fy: 0.5, title: (img) => stackedTitle(img, 480, 300, 22) }],
+  ['store-assets/keyart-1920x1080.png', 1920, 1080, { worldWidth: 50, fx: 0.7, fy: 0.5, title: (img) => stackedTitle(img, 480, 300, 22) }],
 ];
 for (const [rel, W, H, layout] of covers) writePNG(rel, cover(W, H, layout));
+
+// Store icons deliberately use the simple hero ball rather than tiny lettering: recognisable at home-screen size,
+// opaque, and with enough safe area for Android launchers to apply their own circle / squircle masks.
+writePNG('store-assets/ios-app-icon-1024.png', icon(1024));
+writePNG('store-assets/google-play-icon-512.png', icon(512, { maskable: true }));
 
 console.log(`Done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);

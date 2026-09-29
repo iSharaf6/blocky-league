@@ -71,7 +71,7 @@ npm run typecheck    # tsc --noEmit
 | `npm run build:poki` | `dist-poki/` + zip | Poki (`VITE_PORTAL=poki`) |
 | `npm run build:itch` | `dist-itch/` + zip | itch.io (no ads, no PWA) |
 | `npm run build:all` | all four | |
-| `npm run assets` | `public/icons/*`, `public/og-image.png`, `release/store-assets/*` | regenerate icons and portal covers |
+| `npm run assets` | `public/icons/*`, `public/og-image.png`, `store-assets/*` | regenerate web/store icons and portal covers |
 
 - **What `build:*` does:**
   - Type-checks first, then runs `scripts/release.mjs`.
