@@ -234,6 +234,18 @@ const CONTEST_LOSE = 0.5;
 /** A zonal defender at a corner heads away a delivery that passes this close (m) and this low (m). */
 const ZONAL_HEAD_R = 1.2;
 const ZONAL_HEAD_Y = 2.2;
+/**
+ * Defending a ball in the air into our end (their corner or free kick, a cross): the owner (2026-09-30) "it is very
+ * hard to clear there should be where u can just clear the ball". Any of PASS / SHOOT / THROUGH is a clearance:
+ * the human's man runs to meet it and heads (or hooks) it up field and wide, anything within CLEAR_REACH m of him
+ * below CLEAR_TOP m (plus his leap); the press holds while the ball is in the air, up to CLEAR_BUFFER s (a corner takes 1-1.5 s to come in). With no press, a ball that comes
+ * through within ZONAL_HEAD_R of him in our box is cleared anyway, as his zonal team-mates do. CLEAR_ZONE: how far
+ * (m) out from our goal line it applies.
+ */
+const CLEAR_ZONE = 30;
+const CLEAR_REACH = 2.4;
+const CLEAR_TOP = 2.7;
+const CLEAR_BUFFER = 2;
 /** ... unless an attacker is within this (m) of it too: then it's a contest for the first-time contact. */
 const ZONAL_CONTEST_R = 2;
 /**
@@ -328,6 +340,22 @@ const LOCK_TOUCH = 0.7;
 const LOCK_TOUCH_BACK = 0.45;
 const LOCK_SETTLE = 0.3;
 const LOCK_SETTLE_T = 0.5;
+/**
+ * The receive lock's catch: a ground ball (under LOCK_MAGNET_Y m) within this far (m) of the locked man's body is
+ * his, behind him too. Real-match trials (tests/passTrials.ts, 2026-09-30): with only RECV_MAGNET_R, passes of
+ * 15-21 m/s went by 1.3-2 m from a man turning out of his run, lock and magnet on, and weren't his (6% of passes
+ * with the keys let go: "the ball is behind him but it doesnt get attached to him").
+ */
+const LOCK_MAGNET_R = 3;
+const LOCK_MAGNET_Y = 0.9;
+/**
+ * The lock's catch dies on him: the share of the ball's pace (relative to him) it keeps, and how far (m) from his
+ * foot it may be while the touch spring brings it in (dribbleControl; 1.9 otherwise). A 2 m catch of a 20 m/s pass
+ * used to be his for one frame and then gone past him (0.4 s on he still had it only ~75% of the time).
+ */
+const LOCK_CATCH_KEEP = 0.12;
+const LOCK_GRACE = 0.35;
+const LOCK_CATCH_REACH = 4;
 /**
  * A teammate standing in the lane of the human's pass to someone else lets it run past him (a dummy) for this
  * long (s) after the strike, while the man it's for is set for it uncontested. (Round 10: 6 of 52 of the
@@ -525,6 +553,8 @@ export class HumanCtl {
   latch: { x: number; z: number } | null = null;
   /** PASS pressed while a pass was on its way to him (see PASS_BUFFER). */
   passBuffer = 0;
+  /** A button pressed under their ball in the air into our end: seconds his man is still going to clear it (CLEAR_BUFFER). */
+  clearT = 0;
   /** His man's committed meeting point for the ground pass on its way to him (receivePoint). */
   meet: { kick: number; player: number; x: number; z: number; race: boolean } | null = null;
   /** A locked receive settled with no stick (LOCK_SETTLE_T): his man turns to face `a` (up field) while it's left alone. */
@@ -813,6 +843,14 @@ export class Match {
   shotTiming: TimingGrade | null = null;
   /** How far (m) the last first touch came off the receiver (over TOUCH_SPILL: a heavy one he lost). */
   lastTouchD = 0;
+  /** The man whose locked catch is still being brought in to his feet (LOCK_CATCH_REACH), or -1. */
+  private lockCatchP = -1;
+  /**
+   * The last time a pass was locked on (receiveLocked): its kick, the man, and sinceKick then. The lock lets go as
+   * the ball goes by him (the rest of its path is out of his reach), which is the very moment the last-chance
+   * catch is for: it still counts for LOCK_GRACE s after.
+   */
+  private lockSeen = { kick: -1, p: -1, t: 0 };
   /** The last shot was struck by the human's man. */
   shotByHuman = false;
   /** kickId of the last shot struck straight from a direct free kick. */
@@ -1603,6 +1641,7 @@ export class Match {
       this.checkKeeperHands();
       this.checkWall();
       this.checkZonal();
+      this.checkHumanClear();
       this.checkPossession();
       this.checkGraze();
       for (const side of SIDES) {
@@ -2208,17 +2247,17 @@ export class Match {
   /** `side`'s human's pad for this step (this.h is his HumanCtl). */
   private applyHuman(dt: number, pad: Pad, side: Side): void {
     const hs = side;
-    const passP = pad.pass && !this.h.prev.pass;
+    let passP = pad.pass && !this.h.prev.pass;
     // Timed finishing: a SHOOT press while a strike is being timed is its second tap (judged, and used up:
     // it doesn't slide, charge or strike again until it's let go).
     this.finishTick(dt);
     if (pad.shoot && !this.h.prev.shoot && this.finishTap()) this.h.finishHeld = true;
-    const shootP = pad.shoot && !this.h.prev.shoot && !this.h.finishHeld;
+    let shootP = pad.shoot && !this.h.prev.shoot && !this.h.finishHeld;
     if (shootP) this.h.defendingShotHold = this.phase === 'play' && this.ball.owner >= 0 && this.players[this.ball.owner].side !== hs;
     const shootR = !pad.shoot && this.h.prev.shoot && !this.h.finishHeld && !this.h.defendingShotHold;
     if (!pad.shoot) this.h.defendingShotHold = false;
     if (!pad.shoot) this.h.finishHeld = false;
-    const throughP = pad.through && !this.h.prev.through;
+    let throughP = pad.through && !this.h.prev.through;
     const throughR = !pad.through && this.h.prev.through;
     const stickLen = Math.hypot(pad.mx, pad.mz);
     // Charge is measured while held and read on the release frame.
@@ -2455,6 +2494,40 @@ export class Match {
       // An early shot/through press belongs to the incoming ball. Queue it while it's still travelling,
       // instead of silently losing it outside the old four-metre first-time window.
       const incoming = loose && this.passTarget === p.idx;
+      // Their ball in the air into our end: any button is a clearance (checkHumanClear), and he goes to meet it.
+      const clearing = this.clearThreat(side);
+      if (clearing && (passP || shootP || throughP)) {
+        this.h.clearT = CLEAR_BUFFER;
+        passP = shootP = throughP = false;
+        // The man best placed to meet it takes over (the press is "clear it", not "him in particular").
+        let best = p;
+        let bt = intercept(this, p).t;
+        for (const q of this.bySide[side]) {
+          if (q.isKeeper || q.sentOff || q === p || q.state !== 'move') continue;
+          const t = intercept(this, q).t;
+          if (t < bt - 0.15) {
+            bt = t;
+            best = q;
+          }
+        }
+        if (best !== p) {
+          this.h.active = best.idx;
+          this.h.switchT = 0;
+        }
+      }
+      if (!clearing) this.h.clearT = 0;
+      else if (this.h.clearT > 0) {
+        this.h.clearT = Math.max(0, this.h.clearT - dt);
+        const i = intercept(this, p);
+        const tx = i.x - p.pos.x;
+        const tz = i.z - p.pos.z;
+        const tl = Math.hypot(tx, tz);
+        if (tl > 0.3) {
+          p.wantX = (tx / tl) * Math.min(1, tl / 1.2);
+          p.wantZ = (tz / tl) * Math.min(1, tl / 1.2);
+          p.sprint = tl > 1.5;
+        }
+      }
       if (incoming && !p.order) this.h.passPreview = pickPassMate(this, p, dirX, dirZ, 'pass');
       if (incoming && d >= 4 && (shootP || throughP)) {
         const o = this.order(p, shootP ? 'shot' : 'through', shootP && stickLen <= 0.25 ? 0 : dirX,
@@ -4053,7 +4126,7 @@ export class Match {
     const fz = p.footZ() + Math.sin(p.facing) * pulse;
     const ex = fx - b.pos.x;
     const ez = fz - b.pos.z;
-    if (Math.hypot(ex, ez) > 1.9) {
+    if (Math.hypot(ex, ez) > (p.touchT > 0 && this.lockCatchP === p.idx ? LOCK_CATCH_REACH : 1.9)) {
       b.owner = -1;
       return;
     }
@@ -4158,7 +4231,14 @@ export class Match {
       p.touchT = TOUCH_T;
       p.touchX = wx * dist;
       p.touchZ = wz * dist;
-      if (locked) this.lockSettle(p);
+      if (locked) {
+        // Its pace dies on him (a stretch, a cushion: it may have been met a stride or two off him, or behind
+        // him), and the touch spring brings it in to his feet however far out it was met.
+        b.vel.x = p.vel.x + (b.vel.x - p.vel.x) * LOCK_CATCH_KEEP;
+        b.vel.z = p.vel.z + (b.vel.z - p.vel.z) * LOCK_CATCH_KEEP;
+        this.lockCatchP = p.idx;
+        this.lockSettle(p);
+      }
       return;
     }
     // A heavy touch: off his shin, mostly on the way the ball was going, and loose.
@@ -4192,12 +4272,23 @@ export class Match {
     const mt = this.ctl[this.kickSide].meet;
     const dummy = this.humanPassKick === this.kickId && this.passTarget >= 0 && this.sinceKick < DUMMY_T &&
       mt !== null && mt.kick === this.kickId && mt.player === this.passTarget && !mt.race;
+    // A pass locked on to the human's man (receiveLocked, or it was a moment ago: lockSeen) is his: his
+    // team-mates let it run to him.
+    let lockedTo = -1;
+    if (this.passTarget >= 0 && this.receiveLocked(this.players[this.passTarget])) {
+      lockedTo = this.passTarget;
+      this.lockSeen = { kick: this.kickId, p: lockedTo, t: this.sinceKick };
+    } else if (this.lockSeen.kick === this.kickId && this.lockSeen.p === this.passTarget && this.sinceKick - this.lockSeen.t < LOCK_GRACE &&
+      b.lastTouchSide === this.players[this.lockSeen.p].side) {
+      lockedTo = this.lockSeen.p;
+    }
     for (const p of this.players) {
       if (p.state !== 'move' || p.kickCooldown > 0 || p.sentOff) continue;
       if (p.order?.firstTime) continue;
       if (p.blockKick === this.kickId) continue;
       if (wallLive && this.wall.includes(p.idx)) continue;
       if (dummy && p.side === this.kickSide && p.idx !== this.passTarget && !p.isKeeper) continue;
+      if (lockedTo >= 0 && p.side === this.kickSide && p.idx !== lockedTo && !p.isKeeper) continue;
       if (fresh && p.side !== this.kickSide && hs > 4) {
         const fx = p.footX() - b.pos.x;
         const fz = p.footZ() - b.pos.z;
@@ -4205,7 +4296,15 @@ export class Match {
       }
       let d = dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z);
       // (The receive magnet: the human's pass to his man, within RECV_MAGNET_R of him, is his, and cleanly.)
-      if (d >= p.controlRadius() && dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z) < RECV_MAGNET_R && this.magnetFor(p)) d = p.controlRadius() - 0.01;
+      // (The receive magnet, RECV_MAGNET_R. The receive lock's man, last chance: a ground ball going past him,
+      // in front or behind, within LOCK_MAGNET_R: at its closest to him, moving away from him, it's his. A ball
+      // still coming at him isn't grabbed early: he meets it the usual way.)
+      if (d >= p.controlRadius()) {
+        const body = dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z);
+        const passing = p.idx === lockedTo && b.pos.y < LOCK_MAGNET_Y && body < LOCK_MAGNET_R &&
+          (b.pos.x - p.pos.x) * (b.vel.x - p.vel.x) + (b.pos.z - p.pos.z) * (b.vel.z - p.vel.z) >= 0;
+        if (passing || (body < RECV_MAGNET_R && (p.idx === lockedTo || this.magnetFor(p)))) d = p.controlRadius() - 0.01;
+      }
       if (d < p.controlRadius() && d < bestD) {
         bestD = d;
         best = p;
@@ -4215,7 +4314,7 @@ export class Match {
     const rel = Math.hypot(b.vel.x - best.vel.x, b.vel.z - best.vel.z, b.vel.y);
     const trap = (16 + best.stat.dribbling * 0.1) * TEMPO;
     // (The receive lock's man: a clean touch the stick's way, firstTouch.)
-    const locked = this.receiveLocked(best);
+    const locked = best.idx === lockedTo;
     // A ball struck past an opponent at close range (or any shot) is a block attempt, not a
     // clean take: either it cannons off them or it's gone past before they can react.
     if (fresh && best.side !== this.kickSide && hs > 7 && (rel > 9 || this.shotClock < 1.2)) {
@@ -4268,6 +4367,7 @@ export class Match {
   /** `p` now has the ball at their feet. */
   private takePossession(p: Player): void {
     if (this.offsideTouch(p)) return;
+    this.lockCatchP = -1;
     const b = this.ball;
     b.owner = p.idx;
     b.lastTouch = p.idx;
@@ -4483,6 +4583,53 @@ export class Match {
       const aim = { x: p.pos.x + ad * 20, z: clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 11, -HALF_W + 4, HALF_W - 4) };
       const o = this.order(p, 'header', ad, 0, 1, -1, true, aim);
       if (!o) continue;
+      b.pos.x = cx;
+      b.pos.z = cz;
+      b.pos.y = Math.max(BALL_R, y);
+      this.firstTimeContact(p, y >= 1.05 ? 'head' : 'foot');
+      return;
+    }
+  }
+
+  /** Is `side`'s end under their ball in the air: loose, theirs, up (or rising), in our last CLEAR_ZONE m? */
+  private clearThreat(side: Side): boolean {
+    const b = this.ball;
+    if (this.phase !== 'play' || b.owner >= 0 || b.held || b.lastTouchSide === side) return false;
+    if (b.pos.y < 0.6 && b.vel.y < 1) return false;
+    const ad = this.attackDir(side);
+    return b.pos.x * ad < -(HALF_L - CLEAR_ZONE);
+  }
+
+  /**
+   * The human's man clears their ball in the air into our end (see CLEAR_*): pressed for (clearT), anything that
+   * comes within CLEAR_REACH of him this step below CLEAR_TOP plus his leap; not pressed, within ZONAL_HEAD_R of
+   * him in our box. Headed (or hooked, low) up field and out wide, like a zonal marker's.
+   */
+  private checkHumanClear(): void {
+    const b = this.ball;
+    if (b.owner >= 0 || b.held) return;
+    const a = this.ballPrev;
+    for (const side of SIDES) {
+      if (!this.human[side] || !this.clearThreat(side)) continue;
+      const hc = this.ctl[side];
+      const p = hc.active >= 0 ? this.players[hc.active] : null;
+      if (!p || p.isKeeper || p.sentOff || p.state !== 'move' || p.kickCooldown > 0 || p.blockKick === this.kickId) continue;
+      if (p.order && !p.order.firstTime) continue;
+      const { d, t } = pointSegDist(p.pos.x, p.pos.z, a.x, a.z, b.pos.x, b.pos.z);
+      const y = a.y + (b.pos.y - a.y) * t;
+      const pressed = hc.clearT > 0;
+      if (y < 0.3 || y > (pressed ? CLEAR_TOP : ZONAL_HEAD_Y) + p.y) continue;
+      if (d > (pressed ? CLEAR_REACH : ZONAL_HEAD_R)) continue;
+      if (!pressed && !inOwnBox(this, side, p.pos.x, p.pos.z)) continue;
+      const ad = this.attackDir(side);
+      const cx = a.x + (b.pos.x - a.x) * t;
+      const cz = a.z + (b.pos.z - a.z) * t;
+      const aim = { x: p.pos.x + ad * 26, z: clamp(p.pos.z * 0.4 + Math.sign(p.pos.z || 1) * 14, -HALF_W + 3, HALF_W - 3) };
+      p.order = null;
+      const o = this.order(p, 'header', ad, 0, 1, -1, true, aim);
+      if (!o) continue;
+      p.blockKick = this.kickId;
+      hc.clearT = 0;
       b.pos.x = cx;
       b.pos.z = cz;
       b.pos.y = Math.max(BALL_R, y);

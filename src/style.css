@@ -1880,6 +1880,12 @@ kbd {
   transition: opacity 0.2s;
 }
 
+/* Play under the minimap (or a set piece coming in over it): it stays, see-through, so it never vanishes. */
+.hud.radar-dim .hud-radar {
+  opacity: 0.38;
+  transition: opacity 0.2s;
+}
+
 /* Cinematic shots (the referee's card close-up; Hud.setCinematic): only the score bug, clock, booking chips,
    the booking plate and the pause button stay. The ticker, event flag ("FREE KICK"), set-piece hint, player
    chip, tips and minimap fade out in 0.15 s (and back at their own pace afterwards). */

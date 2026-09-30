@@ -1107,6 +1107,11 @@ export class Hud {
     this.root.classList.toggle('radar-off', hidden);
   }
 
+  /** The minimap stays up but goes see-through (play is under it, or a set piece is coming in over it). */
+  setRadarDim(dim: boolean): void {
+    this.root.classList.toggle('radar-dim', dim);
+  }
+
   /**
    * Cinematic shots (card close-ups): the ticker, the event flag ("FREE KICK"), the set-piece hint, the player
    * chip, tips and the minimap fade out (0.15 s, style.css ".hud.cinematic"); the score bug, clock, booking

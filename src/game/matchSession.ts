@@ -2303,9 +2303,13 @@ export class MatchSession {
     // ...and whenever the ball or the man we control is drawn under it (a close camera distance), and through
     // a goal celebration (it would sit on the scorer's feet).
     this.radarOccT = this.radarOccludes(dt) ? RADAR_OCCLUDE_HOLD : Math.max(0, this.radarOccT - dt);
-    hud.setRadarHidden(
-      setPiece || this.radarHoldT > 0 || m.phase === 'shootout' || this.cam.behindActive ||
-      this.cam.mode === 'penalty' || this.cam.mode === 'card' || this.cam.mode === 'celebrate' || m.phase === 'goal' ||
+    // The owner (2026-09-30): "the map isnt always there for the players keep it always there". So it stays up
+    // through open play, set pieces and goals; only the shots that need the whole screen take it away (the
+    // shootout, the penalty and behind-the-taker cameras, a card close-up). When the ball or our man is drawn
+    // under it, or play is on the near touchline it sits over, it goes see-through instead of vanishing.
+    hud.setRadarHidden(m.phase === 'shootout' || this.cam.behindActive || this.cam.mode === 'penalty' || this.cam.mode === 'card');
+    hud.setRadarDim(
+      setPiece || this.radarHoldT > 0 || this.cam.mode === 'celebrate' || m.phase === 'goal' ||
       m.ball.pos.z > HALF_W * 0.45 || this.radarOccT > 0,
     );
     hud.update(dt, this.view.frame);
