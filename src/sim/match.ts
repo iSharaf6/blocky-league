@@ -307,6 +307,28 @@ const RECV_BEND_D = 3;
 const RECV_BEND_ACC = 14;
 const RECV_AWAY = (150 * Math.PI) / 180;
 /**
+ * The receive lock (round 14, a playtester: "when you pass you have to wait for your player to receive the ball before you
+ * run ... i tried changing direction as im receiving the ball / but it doesnt work the guy just runs off without the
+ * ball"). While a ball of his side's is on its way to the man the human controls (receiveLocked), the sim runs him onto
+ * it (the assisted receive's meeting point, receivePoint) whatever the stick says, and the stick is his first touch's
+ * way (firstTouch / cushion). It lets go once he has it, one of theirs touches it, it's dead, it's been going LOCK_T s,
+ * it's slower than LOCK_MOVING m/s, or he can't get to it in play (lockReachable: at a sprint, within LOCK_REACH m of it,
+ * no more than LOCK_LATE s after it). (Before, with the stick let go after the tap and then held one of 8 ways: 92%
+ * taken, the touch within 35 degrees of the stick 71%: tests/receiveLock.test.ts.)
+ */
+const LOCK_T = 3;
+const LOCK_MOVING = 0.5;
+const LOCK_REACH = 0.55;
+const LOCK_LATE = 0.1;
+/**
+ * The locked first touch: pushed LOCK_TOUCH m the stick's way (LOCK_TOUCH_BACK m when it's back the way the ball came,
+ * so he keeps it); no stick, settled LOCK_SETTLE m up field and he turns to face up field over LOCK_SETTLE_T s.
+ */
+const LOCK_TOUCH = 0.7;
+const LOCK_TOUCH_BACK = 0.45;
+const LOCK_SETTLE = 0.3;
+const LOCK_SETTLE_T = 0.5;
+/**
  * A teammate standing in the lane of the human's pass to someone else lets it run past him (a dummy) for this
  * long (s) after the strike, while the man it's for is set for it uncontested. (Round 10: 6 of 52 of the
  * owner's balls out to the wing were taken by a man of ours a few metres from the passer, and the winger never
@@ -505,6 +527,8 @@ export class HumanCtl {
   passBuffer = 0;
   /** His man's committed meeting point for the ground pass on its way to him (receivePoint). */
   meet: { kick: number; player: number; x: number; z: number; race: boolean } | null = null;
+  /** A locked receive settled with no stick (LOCK_SETTLE_T): his man turns to face `a` (up field) while it's left alone. */
+  settle: { player: number; t: number; a: number } | null = null;
   /** His pad on the last step (press and release edges). */
   prev: Pad = { ...EMPTY_PAD };
   lastSprintTap = -9;
@@ -2364,6 +2388,13 @@ export class Match {
     p.sprint = pad.sprint && move === 1;
     // Dribble assists: close control, skill cuts, shielding, path assist (dribble.ts).
     if (hasBall && !b.held) humanDribble(this, p, pad, stickLen, dt);
+    // A locked receive settled with the stick left alone: he turns up field with it (LOCK_SETTLE_T).
+    const st = this.h.settle;
+    if (st) {
+      st.t -= dt;
+      if (st.t <= 0 || st.player !== p.idx || !hasBall || stickLen >= 0.2) this.h.settle = null;
+      else p.faceTarget = st.a;
+    }
 
     const dirX = stickLen > 0.25 ? pad.mx : Math.cos(p.facing);
     const dirZ = stickLen > 0.25 ? pad.mz : Math.sin(p.facing);
@@ -2476,8 +2507,16 @@ export class Match {
       // its line, flat out (a sprint when it's more than a stride off, or when a man is near where he meets
       // it), so a marker on his back doesn't get there first. Still holding the stick the way it was when
       // control came to him (he just played the pass along it) isn't steering, and nor, just after the
-      // switch, is a stick roughly along the run to it.
-      if (this.passTarget === p.idx && this.receiveAssisted(p, pad, stickLen)) {
+      // switch, is a stick roughly along the run to it. The receive lock (receiveLocked) runs him onto it whatever
+      // the stick says: the stick is his first touch's way.
+      const locked = this.receiveLocked(p);
+      if (locked || (this.passTarget === p.idx && this.receiveAssisted(p, pad, stickLen))) {
+        if (locked) {
+          // (Nothing else steers him: not the move assist's run, not the stick.)
+          p.wantX = p.wantZ = 0;
+          p.faceTarget = null;
+          p.sprint = pad.sprint;
+        }
         // (A ball in the air, a cross or a corner, he attacks as he always did: his aerial duels are as they were.)
         const ground = this.kickKind === 'pass' || this.kickKind === 'through';
         const i = this.receivePoint(p);
@@ -2590,10 +2629,13 @@ export class Match {
    * receive magnet applies (RECV_MAGNET_R, RECV_BEND_D).
    */
   private magnetFor(p: Player): boolean {
-    if (this.humanPassKick !== this.kickId || this.passTarget !== p.idx || !this.isHumanControlled(p)) return false;
-    if (this.kickKind !== 'pass' && this.kickKind !== 'through') return false;
+    if (this.passTarget !== p.idx || !this.isHumanControlled(p)) return false;
     const b = this.ball;
     if (b.owner >= 0 || b.held || b.pos.y > RECV_MAGNET_Y || p.state !== 'move' || p.kickCooldown > 0) return false;
+    // (Locked on: the stick is his first touch, not his run, so there's no steering away from it.)
+    if (this.receiveLocked(p)) return true;
+    if (this.humanPassKick !== this.kickId) return false;
+    if (this.kickKind !== 'pass' && this.kickKind !== 'through') return false;
     const pad = this.ctl[p.side].prev;
     const sl = Math.hypot(pad.mx, pad.mz);
     return sl < 0.3 || !this.steeringAway(p, pad.mx / sl, pad.mz / sl);
@@ -3016,6 +3058,40 @@ export class Match {
     return i;
   }
 
+  /**
+   * The receive lock (LOCK_T): is a ball of his side's on its way to `p`, the man his human controls? The pass is for him
+   * (passTarget), loose and last touched by his side, still moving (LOCK_MOVING), under LOCK_T s old, and he can get to it
+   * in play (lockReachable). The sim then runs him onto it (applyHuman) and the stick is his first touch (firstTouch).
+   */
+  receiveLocked(p: Player): boolean {
+    if (this.phase !== 'play' || this.passTarget !== p.idx || !this.human[p.side] || p.sentOff) return false;
+    if (this.ctl[p.side].active !== p.idx || p.isKeeper) return false;
+    const b = this.ball;
+    if (b.owner >= 0 || b.held || b.lastTouchSide !== p.side || this.kickSide !== p.side) return false;
+    if (this.sinceKick > LOCK_T || Math.hypot(b.vel.x, b.vel.y, b.vel.z) < LOCK_MOVING) return false;
+    return this.lockReachable(p);
+  }
+
+  /**
+   * Can `p` get to the ball in play: some point of its path (below head height) he'd reach at a sprint within LOCK_REACH m
+   * of it no more than LOCK_LATE s after it, before it's out of play; or it stops in play. (A path not yet predicted
+   * for this flight gives him the benefit of the doubt.)
+   */
+  private lockReachable(p: Player): boolean {
+    const path = this.ballPath;
+    if (this.pathKick !== this.kickId || path.length < 2) return true;
+    const top = p.sprintPace() * 0.92;
+    for (const s of path) {
+      if (Math.abs(s.x) > HALF_L + BALL_R || Math.abs(s.z) > HALF_W + BALL_R) return false;
+      if (s.y > 2.1) continue;
+      const d = Math.max(0, dist2(p.pos.x, p.pos.z, s.x, s.z) - LOCK_REACH);
+      if (d / top <= s.t + LOCK_LATE) return true;
+    }
+    const a = path[path.length - 1];
+    const c = path[path.length - 2];
+    return a.y < 1 && dist2(a.x, a.z, c.x, c.z) < 0.05;
+  }
+
   /** Does the assisted receive run the human's man onto a pass coming to him (see applyHuman)? */
   private receiveAssisted(p: Player, pad: Pad, stickLen: number): boolean {
     if (stickLen < 0.2 || this.h.latch) return true;
@@ -3041,7 +3117,9 @@ export class Match {
     const b = this.ball;
     const ad = this.attackDir(p.side);
     const steering = stickLen > CUSHION_STICK;
-    if (!steering && this.kickKind === 'lob' && this.kickSide === p.side && this.setPieceKick !== this.kickId && d < AUTO_VOLLEY_D &&
+    // (The receive lock's ball is his to meet and control: no auto header or volley, only SHOOT strikes it: applyHuman.)
+    const locked = this.receiveLocked(p);
+    if (!steering && !locked && this.kickKind === 'lob' && this.kickSide === p.side && this.setPieceKick !== this.kickId && d < AUTO_VOLLEY_D &&
       b.pos.y < AUTO_VOLLEY_Y && b.hspeed() > 3 &&
       dist2(p.pos.x, p.pos.z, ad * HALF_L, 0) < AUTO_VOLLEY_GOAL && shotQuality(p.pos.x, p.pos.z, ad) > AUTO_VOLLEY_Q) {
       this.order(p, 'shot', 0, 0, 0.7, -1, true);
@@ -3049,7 +3127,7 @@ export class Match {
     }
     if (d > AUTO_HEADER_D || b.pos.y < 1.05 || b.pos.y > 3 || b.vel.y > 3) return;
     // (The same call an AI teammate makes: close in, with a sight of goal, a header at it.)
-    if (!steering && headerAtGoal(this, p)) {
+    if (!steering && !locked && headerAtGoal(this, p)) {
       this.order(p, 'header', 0, 0, 0.75, -1, true);
       return;
     }
@@ -3062,9 +3140,10 @@ export class Match {
       this.h.cushionLost = contested && this.rng.chance(CONTEST_LOSE);
     }
     if (this.h.cushionLost) return;
-    const wx = steering ? pad.mx / stickLen : Math.cos(p.facing);
-    const wz = steering ? pad.mz / stickLen : Math.sin(p.facing);
+    const wx = steering ? pad.mx / stickLen : locked ? ad : Math.cos(p.facing);
+    const wz = steering ? pad.mz / stickLen : locked ? 0 : Math.sin(p.facing);
     this.cushion(p, wx, wz);
+    if (locked) this.lockSettle(p);
   }
 
   /** The human's man brings a ball in the air down into his stride, (wx, wz) his way (see crossControl). */
@@ -3189,6 +3268,13 @@ export class Match {
     const ad = this.attackDir(r.side);
     const gx = ad * HALF_L;
     const mates = this.bySide[r.side].filter((p) => p !== t && !p.sentOff);
+    if (!mates.length) {
+      // Nobody to find (a drill's lone keeper, a side down to one man): into space up the pitch and in off the
+      // line. (Picking a mate from an empty side used to throw every frame: the restart never happened.)
+      const b = this.ball.pos;
+      this.order(t, r.kind === 'throwin' ? 'throw' : 'pass', ad * 10, -Math.sign(b.z || 1) * 4, 0.6, -1, false);
+      return;
+    }
     const pick = (fn: (p: Player) => number): Player => {
       let best = mates[0];
       let bs = -Infinity;
@@ -3340,7 +3426,9 @@ export class Match {
   private pickTaker(r: Restart): Player {
     const team = this.bySide[r.side];
     if (r.kind === 'goalkick') return team[0];
-    let taker = team.find((p) => !p.isKeeper && !p.sentOff) ?? team[1];
+    // Nobody left but the keeper (a drill's staged side, or a side down to the bare minimum): the keeper takes
+    // it. Never a sent-off man: he is off the pitch, nothing drives him, and the restart would wait for ever.
+    let taker = team.find((p) => !p.isKeeper && !p.sentOff) ?? team[0];
     let best = Infinity;
     for (const p of team) {
       if (p.isKeeper || p.sentOff) continue;
@@ -3994,7 +4082,7 @@ export class Match {
    * (dribbleControl); a heavier one squirts off him loose (up to TOUCH_MAX m) for anyone to get to. The
    * distance is kept in lastTouchD.
    */
-  private firstTouch(p: Player, rel: number, clean = false): void {
+  private firstTouch(p: Player, rel: number, clean = false, locked = false): void {
     const b = this.ball;
     const human = this.isHumanControlled(p);
     const bs = Math.hypot(b.vel.x, b.vel.z);
@@ -4027,7 +4115,6 @@ export class Match {
     heavy *= human ? TOUCH_ASSIST[hc.groundAssist] : TOUCH_AI;
     let dist = Math.min(TOUCH_MAX, TOUCH_BASE + heavy * TOUCH_K * (0.6 + 0.8 * this.rng.next()));
     if (clean) dist = Math.min(dist, TOUCH_SPILL * 0.8);
-    this.lastTouchD = dist;
     // Where he means to take it: the stick (the human; no stick, in front of him), else into his run, or on
     // the way it was going, opened up towards goal and away from his marker.
     const ad = this.attackDir(p.side);
@@ -4037,6 +4124,13 @@ export class Match {
     if (stick > 0.3) {
       wx = hc.prev.mx / stick;
       wz = hc.prev.mz / stick;
+      // The receive lock's touch: short and the stick's way, shorter still back the way the ball came (LOCK_TOUCH).
+      if (locked) dist = wx * bx + wz * bz < -0.5 ? LOCK_TOUCH_BACK : LOCK_TOUCH;
+    } else if (locked) {
+      // (No stick, locked on: settled up field, and he turns to face up field with it: lockSettle.)
+      wx = ad;
+      wz = 0;
+      dist = LOCK_SETTLE;
     } else if (human) {
       // (No stick: cushioned in front of him, the way he's facing.)
       wx = Math.cos(p.facing);
@@ -4057,12 +4151,14 @@ export class Match {
       wx /= wl;
       wz /= wl;
     }
+    this.lastTouchD = dist;
     if (dist <= TOUCH_SPILL) {
       this.takePossession(p);
       if (b.owner !== p.idx) return;
       p.touchT = TOUCH_T;
       p.touchX = wx * dist;
       p.touchZ = wz * dist;
+      if (locked) this.lockSettle(p);
       return;
     }
     // A heavy touch: off his shin, mostly on the way the ball was going, and loose.
@@ -4118,6 +4214,8 @@ export class Match {
     if (!best) return;
     const rel = Math.hypot(b.vel.x - best.vel.x, b.vel.z - best.vel.z, b.vel.y);
     const trap = (16 + best.stat.dribbling * 0.1) * TEMPO;
+    // (The receive lock's man: a clean touch the stick's way, firstTouch.)
+    const locked = this.receiveLocked(best);
     // A ball struck past an opponent at close range (or any shot) is a block attempt, not a
     // clean take: either it cannons off them or it's gone past before they can react.
     if (fresh && best.side !== this.kickSide && hs > 7 && (rel > 9 || this.shotClock < 1.2)) {
@@ -4141,7 +4239,7 @@ export class Match {
     // An outfielder meeting a moving ball: a first touch (clean into his stride, or heavy and loose; the human's pass
     // that the receive magnet brings to his man, clean).
     if (!best.isKeeper && rel >= TOUCH_MIN_REL) {
-      this.firstTouch(best, rel, this.magnetFor(best) && dist2(best.pos.x, best.pos.z, b.pos.x, b.pos.z) < RECV_MAGNET_R);
+      this.firstTouch(best, rel, locked || (this.magnetFor(best) && dist2(best.pos.x, best.pos.z, b.pos.x, b.pos.z) < RECV_MAGNET_R), locked);
       return;
     }
     if (rel > trap) {
@@ -4157,6 +4255,14 @@ export class Match {
       return;
     }
     this.takePossession(best);
+    if (locked) this.lockSettle(best);
+  }
+
+  /** A locked receive taken with the stick left alone: he turns to face up field with it (LOCK_SETTLE_T). */
+  private lockSettle(p: Player): void {
+    const hc = this.ctl[p.side];
+    if (this.ball.owner !== p.idx || Math.hypot(hc.prev.mx, hc.prev.mz) >= 0.3) return;
+    hc.settle = { player: p.idx, t: LOCK_SETTLE_T, a: this.attackDir(p.side) > 0 ? 0 : Math.PI };
   }
 
   /** `p` now has the ball at their feet. */

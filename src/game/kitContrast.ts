@@ -10,8 +10,8 @@ import type { Kit } from '../sim/types';
  */
 
 /** Lightness gap (L*, 0..1) the two sides need; sides of about the same hue need the bigger one. */
-export const KIT_MIN_DL = 0.3;
-export const KIT_MIN_DL_SAME_HUE = 0.45;
+export const KIT_MIN_DL = 0.38;
+export const KIT_MIN_DL_SAME_HUE = 0.5;
 /** Hues closer than this (degrees) count as the same hue, for colours saturated enough to have one. */
 const SAME_HUE_DEG = 45;
 /** The change strips when neither of the side's own colours will do. */

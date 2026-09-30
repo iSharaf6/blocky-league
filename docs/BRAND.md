@@ -78,7 +78,7 @@ The SVGs are standalone (`xmlns`, a `viewBox`, `role="img"`) and scale to any si
 | `public/icons/icon-192.png`, `icon-512.png` | 192², 512² RGB | PWA "any" icons: the mark in the central 84% |
 | `public/icons/maskable-192.png`, `maskable-512.png` | 192², 512² RGB | PWA "maskable": the farthest mark pixel is 0.386 to 0.388 of the side from the centre, inside the 0.40 safe circle |
 | `public/apple-touch-icon.png` | 180×180 RGB | iOS home screen (web): mark in the central 84% |
-| `public/favicon.ico` (16, 32, 48) and `favicon-16/32/48.png` | RGB | The game's 10×10 pixel ball icon on a grass square with a touchline. The full mark does not read at 16 px |
+| `public/favicon.ico` (16, 32, 48) and `favicon-16/32/48.png` | RGBA, transparent | The mark itself (the voxel ball on its pitch tile, `store-assets/logo/blocky-league-mark.png`), squared and area-averaged down, as the owner asked (30 Sep 2026) |
 
 `index.html` links `favicon.ico`, `favicon-32.png` and `favicon-16.png` (the old inline data-URI icon is gone).
 It also links `apple-touch-icon.png` and `manifest.webmanifest`. The manifest points at the four `icons/` files.

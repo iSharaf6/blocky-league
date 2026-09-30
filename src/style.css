@@ -60,21 +60,18 @@ body {
 
 /* ---------------------------------------------------------------- boot */
 
-/* The studio splash: the Calynx lynx and wordmark (pixel SVGs in index.html, no font needed) on white, the
-   ball hopping underneath while the game loads. Shown for at least 0.8 s (main.ts), then fades to the title. */
+/* The studio splash, in the game's own world: its sky over a striped lawn with a white touchline, blocky
+   clouds, the Calynx wordmark in cream with an ink block shadow (like the game's title) dropping in letter by
+   letter, and the pixel ball rolling in to hop on the grass as the loader. Everything that moves is a
+   transform or opacity on its own element, so it runs on the compositor and stays smooth while the game builds
+   its first scene underneath (main.ts). Shown for at least SPLASH_MS, then fades into the title. */
 #boot {
   position: fixed;
   inset: 0;
   z-index: 10;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 42px;
   overflow: hidden;
-  background:
-    linear-gradient(90deg, transparent 49.75%, rgba(34, 48, 214, 0.055) 50%, transparent 50.25%),
-    linear-gradient(#fff 0 76%, #eef8ff 76% 100%);
-  transition: opacity 0.5s ease 0.1s, visibility 0s linear 0.6s;
+  background: linear-gradient(#6fc6f2 0%, #93d6f6 42%, #c6ebfb 62%, #d8f1ff 66%);
+  transition: opacity 0.45s ease 0.1s, visibility 0s linear 0.6s;
 }
 
 #boot.gone {
@@ -82,127 +79,154 @@ body {
   visibility: hidden;
 }
 
-.boot-brand {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: 16px;
-  padding: 18px 22px;
-  overflow: hidden;
-  animation: boot-lockup 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both, boot-kick 0.5s 0.72s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+.boot-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+.boot-grass {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 66%;
+  bottom: 0;
+  background:
+    linear-gradient(#fbfbf4 0 6px, rgba(38, 38, 46, 0.1) 6px 12px, transparent 12px),
+    repeating-linear-gradient(90deg, #a2d65c 0 72px, #88c247 72px 144px);
 }
 
-.boot-brand .lynx, .boot-brand .logo {
-  filter: drop-shadow(0 5px 0 rgba(34, 48, 214, 0.18));
+.boot-cloud {
+  position: absolute;
+  width: 104px;
+  height: 22px;
+  background: #fff;
+  box-shadow: 0 6px 0 rgba(38, 38, 46, 0.06);
+  animation: boot-drift 9s ease-in-out infinite alternate;
 }
 
-.boot-brand .logo {
-  overflow: visible;
-  animation: boot-logo-settle 0.6s 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+.boot-cloud::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  bottom: 100%;
+  width: 50px;
+  height: 16px;
+  background: #fff;
 }
 
-/* Each run of the pixel logo drops into place, left to right (its delay is set inline from its column), so the
-   mark builds like blocks being laid; the wordmark is readable by 0.5 s. */
-.boot-brand .logo rect {
-  transform-box: fill-box;
+.boot-cloud.c1 { top: 13%; left: 9%; }
+.boot-cloud.c2 { top: 24%; right: 10%; transform: scale(0.8); animation-delay: -4s; }
+.boot-cloud.c3 { top: 7%; right: 33%; transform: scale(0.6); animation-delay: -7s; opacity: 0.85; }
+
+@keyframes boot-drift {
+  from { translate: -18px 0; }
+  to { translate: 18px 0; }
+}
+
+/* The wordmark and the ball, standing on the touchline (the stage's bottom edge is the grass's top edge). */
+.boot-stage {
+  position: absolute;
+  left: 50%;
+  bottom: 34%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 62px;
+  transform: translateX(-50%);
+  transition: transform 0.32s cubic-bezier(0.3, 0, 0.7, 0.2), opacity 0.3s ease;
+}
+
+#boot.gone .boot-stage { transform: translateX(-50%) translateY(-12px) scale(1.08); opacity: 0; }
+
+.boot-logo {
+  display: flex;
+  align-items: flex-end;
+  animation: boot-bump 0.34s 0.98s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+/* Each letter falls in from above and lands with a squash, left to right, like blocks being stacked. */
+.boot-logo i {
+  display: block;
+  line-height: 0;
   transform-origin: 50% 100%;
-  opacity: 0;
-  animation: boot-cell 0.42s cubic-bezier(0.2, 0.9, 0.25, 1.18) both;
-  animation-delay: var(--d, 0s);
+  animation: boot-drop 0.5s cubic-bezier(0.3, 0.8, 0.35, 1) both;
+  animation-delay: calc(0.08s + var(--i) * 0.075s);
 }
 
-@keyframes boot-cell {
-  from { opacity: 0; transform: translateY(-9px) scale(0.5, 1.6); }
-  55% { opacity: 1; transform: translateY(1px) scale(1.15, 0.85); }
-  to { opacity: 1; transform: none; }
+/* Whole pixels per logo cell (46 rows): 3 px on a big screen, 2 on a phone, so every block edge stays crisp. */
+.boot-logo svg { display: block; width: auto; height: 138px; }
+
+@keyframes boot-drop {
+  from { transform: translateY(-75vh); }
+  58% { transform: translateY(0) scale(1.1, 0.84); }
+  78% { transform: translateY(-7px) scale(0.97, 1.04); }
+  to { transform: none; }
 }
 
-/* The ball rolls in from the left, bumps the lockup (boot-kick: a squash and a nudge), then hops in place
-   under it as the loading indicator. */
-@keyframes boot-kick {
+/* The ball's first hop taps the wordmark from below. */
+@keyframes boot-bump {
   0% { transform: none; }
-  35% { transform: translateX(9px) scale(1.04, 0.95); }
-  70% { transform: translateX(-2px) scale(0.99, 1.02); }
+  40% { transform: translateY(-7px); }
   100% { transform: none; }
 }
 
-.boot-brand::after {
-  content: '';
-  position: absolute;
-  inset: 4px auto 4px -28%;
-  width: 18%;
-  transform: skewX(-18deg);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
-  mix-blend-mode: screen;
-  animation: boot-shine 0.9s 0.75s ease-out both;
-}
-
 .boot-ball {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  filter: drop-shadow(0 4px 0 rgba(34, 48, 214, 0.28));
-  animation: boot-rollin 0.62s 0.18s cubic-bezier(0.25, 0.8, 0.3, 1) both, hop 0.52s 0.86s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
+  width: 48px;
+  height: 48px;
+  animation: boot-rollin 0.6s 0.38s cubic-bezier(0.2, 0.7, 0.3, 1) both, boot-hop 0.5s 0.98s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
 }
 
-.boot-ball svg { display: block; }
+.boot-ball svg { display: block; width: 100%; height: 100%; }
+
+.boot-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 50px;
+  height: 8px;
+  margin-left: -25px;
+  background: rgba(38, 38, 46, 0.22);
+  animation: boot-shadow-in 0.6s 0.38s cubic-bezier(0.2, 0.7, 0.3, 1) both, boot-shadow 0.5s 0.98s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
+}
 
 @keyframes boot-rollin {
   from { transform: translateX(-62vw) rotate(-900deg); }
-  to { transform: translateX(0) rotate(0); }
+  to { transform: none; }
 }
 
-.boot-ball::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 49px;
-  width: 42px;
-  height: 7px;
-  background: rgba(34, 48, 214, 0.2);
-  transform: translateX(-50%);
-  animation: boot-shadow 0.52s 0.86s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
+@keyframes boot-hop {
+  from { transform: translateY(0) scale(1.1, 0.9); }
+  to { transform: translateY(-52px) rotate(90deg) scale(0.95, 1.05); }
 }
 
-/* Out: a quick punch up and away as the title comes in. */
-#boot .boot-brand, #boot .boot-ball { transition: transform 0.32s cubic-bezier(0.3, 0, 0.7, 0.2), opacity 0.3s ease; }
-#boot.gone .boot-brand { transform: scale(1.12) translateY(-10px); opacity: 0; }
-#boot.gone .boot-ball { transform: translateY(60px); opacity: 0; }
-
-@keyframes hop {
-  from { transform: translateY(0) rotate(0) scale(1.1, 0.9); }
-  to { transform: translateY(-38px) rotate(90deg) scale(0.94, 1.06); }
+@keyframes boot-shadow-in {
+  from { transform: translateX(-62vw); }
+  to { transform: none; }
 }
 
 @keyframes boot-shadow {
-  from { opacity: 0.75; transform: translateX(-50%) scaleX(1); }
-  to { opacity: 0.2; transform: translateX(-50%) scaleX(0.45); }
+  from { opacity: 1; transform: scaleX(1); }
+  to { opacity: 0.35; transform: scaleX(0.5); }
 }
 
-@keyframes boot-lockup {
-  from { opacity: 0; transform: translateY(18px); clip-path: inset(0 50% 0 50%); }
-  to { opacity: 1; transform: translateY(0); clip-path: inset(0); }
+@media (max-width: 560px) {
+  .boot-logo svg { height: 92px; }
+  .boot-ball { width: 36px; height: 36px; }
+  .boot-shadow { width: 38px; margin-left: -19px; }
+  .boot-stage { gap: 52px; }
 }
 
-@keyframes boot-logo-settle {
-  0% { transform: scale(0.92); }
-  65% { transform: scale(1.025); }
-  100% { transform: scale(1); }
+@media (max-width: 330px) {
+  .boot-logo svg { height: 46px; }
 }
 
-@keyframes boot-shine {
-  from { left: -28%; }
-  to { left: 112%; }
+@media (max-height: 420px) {
+  .boot-grass { top: 72%; }
+  .boot-stage { bottom: 28%; gap: 44px; }
+  .boot-logo svg { height: 92px; }
+  .boot-ball { width: 36px; height: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .boot-brand, .boot-brand .logo, .boot-brand .logo rect, .boot-brand::after, .boot-ball, .boot-ball::after { animation: none; opacity: 1; }
-  #boot .boot-brand, #boot .boot-ball { transition: opacity 0.3s ease; }
-  #boot.gone .boot-brand, #boot.gone .boot-ball { transform: none; }
+  .boot-cloud, .boot-logo, .boot-logo i, .boot-ball, .boot-shadow { animation: none; }
+  #boot.gone .boot-stage { transform: translateX(-50%); }
 }
 
 /* ---------------------------------------------------------------- buttons */
@@ -4737,6 +4761,11 @@ button.mc-pl:active {
 .trainer-line-shadow { stroke: #26302c; stroke-width: 4; stroke-opacity: .28; stroke-dasharray: 5 9; }
 .trainer-line { stroke: #f7ffe2; stroke-width: 2; stroke-opacity: .8; stroke-dasharray: 5 9; }
 .trainer-card { position: absolute; top: 0; left: 0; width: max-content; max-width: calc(100vw - 20px); padding: 7px 10px 8px; background: #26262eef; color: #fbfbf4; border-top: 2px solid #ffd23a; box-shadow: 2px 3px 0 #0003; }
+/* Its pointer: a pixel tip under the card (over it when the card hangs below his feet) at --tip, over the player. */
+.trainer-card::after { content: ''; position: absolute; left: var(--tip, 50%); top: 100%; width: 0; height: 0; margin-left: -7px; border: 7px solid transparent; border-top-color: #26262eef; border-bottom: 0; }
+.trainer-card.below::after { top: auto; bottom: 100%; border-top: 0; border-bottom: 7px solid #ffd23a; }
+.trainer-card.teach.below::after { border-bottom-color: var(--go); }
+.trainer-card.lesson.below::after { border-bottom-color: var(--yellow); }
 .trainer-title { color: #ffd23a; font: 10px 'Silkscreen', monospace; letter-spacing: .25px; margin-bottom: 5px; }
 .trainer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; font: 13px 'Lilita One', sans-serif; }
 .trainer-actions span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }

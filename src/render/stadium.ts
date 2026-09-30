@@ -773,7 +773,20 @@ export class Stadium {
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     const name = this.opt.homeName.toUpperCase();
-    g.fillText(`${name}   ·   BLOCKY LEAGUE   ·   ${name}   ·   BLOCKY LEAGUE`, 1024, 34);
+    // A thin bar between the words, drawn (Silkscreen has no middle dot: the canvas fell back to a fat bullet).
+    const parts = [name, 'BLOCKY LEAGUE', name, 'BLOCKY LEAGUE'];
+    const gap = 96;
+    const widths = parts.map((t) => g.measureText(t).width);
+    let x = 1024 - (widths.reduce((sum, w) => sum + w, 0) + gap * (parts.length - 1)) / 2;
+    g.textAlign = 'left';
+    parts.forEach((t, i) => {
+      g.fillText(t, x, 34);
+      x += widths[i];
+      if (i < parts.length - 1) {
+        g.fillRect(Math.round(x + gap / 2 - 2), 18, 4, 30);
+        x += gap;
+      }
+    });
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
@@ -1692,7 +1705,7 @@ export class Stadium {
     g.fillText(this.opt.homeName.slice(0, 3).toUpperCase(), 91, 62);
     g.fillText(this.opt.awayName.slice(0, 3).toUpperCase(), c.width - 91, 62);
     g.font = '900 84px "Lilita One", "Arial Black", sans-serif';
-    g.fillText(`${h}-${a}`, c.width / 2, 66);
+    g.fillText(`${h}:${a}`, c.width / 2, 66);
     g.font = '700 30px "Lilita One", "Arial Black", sans-serif';
     g.fillStyle = '#ffd23a';
     g.fillText(clock, c.width / 2, 134);

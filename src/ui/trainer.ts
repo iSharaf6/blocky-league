@@ -20,6 +20,10 @@ export interface TeachControls {
   /** Read by the SPRINT lesson (LEARN THE BASICS); optional for older feeds. */
   sprint?: boolean;
 }
+/** Gap (px) between the trainer card and the player's head (or feet), room for its pointer tip. */
+const CARD_GAP = 26;
+/** When the card slides beside the player, this much of it (px) stays over him, so the tip still reaches. */
+const CARD_TIP_IN = 34;
 /** A teaching wait that nothing clears (no input source wired) lets go after this long, so the game can never soft-lock. */
 const TEACH_TIMEOUT_MS = 25_000;
 export interface TrainerCue {
@@ -329,21 +333,29 @@ export class Trainer {
       // Two facts in one line ("Hold L to cross · SHIFT sprint") are split with the divider element.
       this.detail.innerHTML = sepsOfText(cue.detail);
     }
-    // Place above the head, unless that puts the card within 120 px of the ball (it used to sit on the carrier,
-    // and on a pickup he was running for): then it goes to the side of the screen away from the ball, just
-    // under the HUD, off the play. Never the score, or the bottom touch controls.
+    // The card rides on the controlled player (the owner: "keep the trainer on top of the player controlled"),
+    // never off in a corner. Above his head, its tip pointing down at him; if the ball is where the card
+    // would be, it slides to his side away from the ball (still touching him); near the top of the screen it
+    // hangs under his feet instead. Never over the score, or the bottom touch controls.
     const cw = this.card.offsetWidth, ch = this.card.offsetHeight;
-    let x = clamp(at.x - cw / 2, 10, w - cw - 10);
-    let y = at.y - ch - 22;
-    const ball = project(frame[BALL_OFS], 0.14, frame[BALL_OFS + 2]);
-    if (ball.visible && ball.x > x - 120 && ball.x < x + cw + 120 && ball.y > y - 120 && ball.y < y + ch + 120) {
-      x = ball.x > w / 2 ? 12 : w - cw - 12;
-      y = 80;
+    const feet = project(frame[a], 0, frame[a + 1]);
+    let x = at.x - cw / 2;
+    let y = at.y - ch - CARD_GAP;
+    let below = false;
+    if (y < 70) {
+      y = feet.y + CARD_GAP;
+      below = true;
     }
-    // Visibility keeps its dimensions measurable near the score bug; display:none would alternate
-    // between a zero-height and full-height card every frame at that boundary.
-    const cardVisible = y >= 66;
-    this.card.style.visibility = cardVisible ? 'visible' : 'hidden';
+    const ball = project(frame[BALL_OFS], 0.14, frame[BALL_OFS + 2]);
+    if (ball.visible && ball.x > x - 24 && ball.x < x + cw + 24 && ball.y > y - 24 && ball.y < y + ch + 24) {
+      x = ball.x > at.x ? at.x - cw + CARD_TIP_IN : at.x - CARD_TIP_IN;
+    }
+    x = clamp(x, 10, w - cw - 10);
+    y = clamp(y, 70, h - ch - 90);
+    // The tip sits over the player, wherever the card had to slide.
+    this.card.style.setProperty('--tip', `${Math.round(clamp(at.x - x, 12, cw - 12))}px`);
+    this.card.classList.toggle('below', below);
+    this.card.style.visibility = 'visible';
     this.card.style.transform = `translate(${Math.round(x)}px,${Math.round(y)}px)`;
     const idx = m.passCharge >= 0 ? m.passAim : m.passPreview;
     const valid = m.ball.owner === m.active && m.shootCharge < 0.06 && m.throughCharge < 0.08 &&
@@ -360,7 +372,7 @@ export class Trainer {
       line.setAttribute('x2', to.x.toFixed(1)); line.setAttribute('y2', to.y.toFixed(1));
     }
     this.recipient.hidden = !tag.visible || tag.x < 38 || tag.x > w - 38 || tag.y < 80 || tag.y > h - 85 ||
-      (cardVisible && tag.x > x - 30 && tag.x < x + cw + 30 && tag.y > y - 15 && tag.y < at.y - 10);
+      (tag.x > x - 30 && tag.x < x + cw + 30 && tag.y > y - 15 && tag.y < at.y - 10);
     this.recipient.style.transform = `translate(${Math.round(tag.x)}px,${Math.round(tag.y - 12)}px) translate(-50%,-100%)`;
     if (this.target !== idx || this.recipient.dataset.device !== device) {
       this.target = idx;

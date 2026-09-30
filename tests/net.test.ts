@@ -21,24 +21,26 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * tests/netBaseline.ts's table (end-state hash, a fold of the hash every 60 steps, steps, score, shootout),
  * recorded on main at 11c4bed (v1: round 13 plus the placed penalty aim) before MatchConfig.humanSides / Match.ctl
  * were merged onto it, by the very same drivers. (29 rows were recorded and all 29 matched; these are pinned.)
+ * Round 14's receive lock (Match.receiveLocked) changed how the human's man takes a pass, so the rows with a human
+ * in them (bot*, fuzz*, pen*, ko*) were re-recorded on it; the AI v AI rows (ai*) came out exactly as before.
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2262850705, 2447626034, 19417, 2, 3, 0],
   aiBlitz: [513065991, 663489125, 11382, 0, 2, 0],
   aiStyles: [2891120658, 2774569015, 11673, 1, 2, 0],
-  botSide0: [968774606, 4002283040, 15685, 5, 0, 0],
-  botPerks: [3751426527, 3709179552, 11857, 3, 1, 0],
-  botFirstMatch: [4178294758, 4099178923, 11761, 3, 0, 0],
-  fuzzSide1: [564545257, 66790653, 11302, 2, 0, 0],
-  fuzzBlitz0: [330126010, 2987368122, 11796, 0, 4, 0],
-  fuzzBlitzPerks1: [3596118942, 2629035978, 11761, 3, 0, 0],
-  penTaker0: [3053883865, 1881196537, 8136, 1, 3, 0],
-  penTaker1Low: [3199996930, 80591715, 7395, 0, 1, 0],
-  penTimeout1: [2797593929, 2649676874, 8497, 2, 1, 0],
-  penKeeper1: [1295567434, 3269572079, 7737, 1, 0, 0],
-  ko1: [3289689461, 3138158849, 6939, 0, 0, 1],
-  ko3: [2122207129, 3367927030, 3305, 1, 0, 0],
-  ko6: [2729493649, 51519168, 5296, 0, 0, 1],
+  botSide0: [416398424, 2745202177, 16086, 3, 0, 0],
+  botPerks: [637019739, 822925429, 12208, 4, 1, 0],
+  botFirstMatch: [1469836699, 2213210615, 12038, 3, 0, 0],
+  fuzzSide1: [413838355, 1829557212, 12836, 5, 0, 0],
+  fuzzBlitz0: [2607079517, 1240368308, 12251, 0, 4, 0],
+  fuzzBlitzPerks1: [3842305433, 2187391335, 11893, 2, 0, 0],
+  penTaker0: [1279623504, 840980561, 8630, 1, 2, 0],
+  penTaker1Low: [2074443024, 295345332, 8271, 2, 1, 0],
+  penTimeout1: [4184106783, 453148840, 7983, 1, 1, 0],
+  penKeeper1: [4262532656, 4184057239, 8234, 2, 0, 0],
+  ko1: [1037567079, 2049331910, 6278, 0, 0, 1],
+  ko3: [822714044, 1019081318, 5218, 0, 0, 1],
+  ko6: [2251246690, 1615050524, 3640, 1, 0, 0],
   aiKo1: [47845968, 1192999698, 5817, 0, 0, 1],
   aiKo4: [2291840460, 860824426, 3346, 0, 1, 0],
   aiKo7: [4112032605, 1756315151, 5108, 0, 0, 1],
@@ -466,8 +468,12 @@ describe('lockstep engine', () => {
     const b1 = new SimPeer(tb, 1, s1, net);
     runPeers(net, a1, b1);
     expect(a1.m.phase).toBe('fulltime');
-    agree(a1, b1);
-    expect(stateHash(a1.m)).toBe(stateHash(b1.m));
+    expect(b1.m.phase).toBe('fulltime');
+    // (Every tick both stepped is identical. One may step a tick further into full time than the other before the
+    // run stops, which only runs its phaseT on: the final states are compared at the last tick they share.)
+    const n = agree(a1, b1);
+    expect(n).toBeGreaterThan(60 * 20);
+    expect(a1.hashes[n - 1]).toBe(b1.hashes[n - 1]);
   }, 60_000);
 
   it('pads survive the wire exactly as the local sim used them', () => {

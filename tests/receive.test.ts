@@ -155,9 +155,10 @@ describe('steering onto the pass (round 13)', () => {
     }, 120_000);
   }
 
-  it('a man steering clearly away from the ball is not magnetised onto it', () => {
+  it('a man steering clearly away from the ball still takes it: the receive lock makes the stick his touch, not his run', () => {
     // The ball rolls past 1.1 m to the side of him (inside the magnet's RECV_MAGNET_R, outside his normal reach when
-    // he's facing away from it): steering along its line he takes it; steering straight away from its line he doesn't.
+    // he's facing away from it): steering along its line he takes it; steering straight away from its line he takes it
+    // too (round 14's receive lock; before it, he let it go by: away 0/12, the pinned bar was at most 20%).
     let along = 0;
     let away = 0;
     const n = 12;
@@ -208,7 +209,7 @@ describe('steering onto the pass (round 13)', () => {
     // eslint-disable-next-line no-console
     console.log(`ball 1.1 m to his side (magnet ${RECV_MAGNET_R} m): steering along its line ${along}/${n} taken, steering away ${away}/${n}`);
     expect(along / n).toBeGreaterThanOrEqual(0.9);
-    expect(away / n).toBeLessThanOrEqual(0.2);
+    expect(away / n).toBeGreaterThanOrEqual(0.9);
   }, 60_000);
 });
 

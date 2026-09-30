@@ -237,47 +237,64 @@ describe('teammates move on the press', () => {
 });
 
 describe('crosses', () => {
-  it('THROUGH held from wide in the final third locks onto the box runner and drops onto him; control goes to him and he goes for goal', () => {
+  it('THROUGH held from wide in the final third locks onto the box runner and drops onto him; control goes to him, he meets it, and SHOOT goes for goal', () => {
+    // (Round 14, the owner doesn't want auto headers: with nothing pressed he meets the cross and brings it down (the
+    // receive lock); SHOOT as it comes is the header / volley at goal. Before, with nothing pressed, it was headed or
+    // volleyed at goal automatically, 6+ of 10.)
     let locked = 0;
     let met = 0;
-    let shots = 0;
+    const shots = { none: 0, shoot: 0 };
+    let controlled = 0;
     const n = 10;
     for (let seed = 1; seed <= n; seed++) {
-      const m = scenario(seed * 17);
-      const ad = m.attackDir(0);
-      const gx = ad * HALF_L;
-      const w = m.players[7];
-      const fw = m.players[9];
-      const short = m.players[8];
-      const zs = seed % 2 ? 1 : -1;
-      place(w, gx - ad * 14, zs * 19);
-      w.facing = Math.atan2(-zs, ad * 0.3);
-      // The striker in the box, a midfielder showing short for it, a centre-back on the striker's shoulder.
-      place(fw, gx - ad * 11, -zs * 1);
-      place(short, gx - ad * 22, zs * 14);
-      place(m.players[14], gx - ad * 7, -zs * 2.5);
-      place(m.keeperOf(1)!, gx - ad * 1, 0);
-      giveBall(m, w);
-      const stick = pad(ad * 0.25, -zs * 0.97);
-      const k = untilKick(m, (i) => (i < 20 ? { ...stick, through: true } : EMPTY_PAD));
-      expect(k).not.toBeNull();
-      expect(k!.kind).toBe('lob');
-      if (m.passTarget === fw.idx) locked++;
-      expect(m.active).toBe(m.passTarget);
-      const s0 = m.stats.shots[0];
-      for (let i = 0; i < 150; i++) {
-        m.step(DT, EMPTY_PAD);
-        for (const e of m.drainEvents()) {
-          if ((e.type === 'kick' && m.ball.lastTouch === fw.idx) || (e.type === 'control' && e.player === fw.idx)) met++;
+      for (const mode of ['none', 'shoot'] as const) {
+        const m = scenario(seed * 17);
+        const ad = m.attackDir(0);
+        const gx = ad * HALF_L;
+        const w = m.players[7];
+        const fw = m.players[9];
+        const short = m.players[8];
+        const zs = seed % 2 ? 1 : -1;
+        place(w, gx - ad * 14, zs * 19);
+        w.facing = Math.atan2(-zs, ad * 0.3);
+        // The striker in the box, a midfielder showing short for it, a centre-back on the striker's shoulder.
+        place(fw, gx - ad * 11, -zs * 1);
+        place(short, gx - ad * 22, zs * 14);
+        place(m.players[14], gx - ad * 7, -zs * 2.5);
+        place(m.keeperOf(1)!, gx - ad * 1, 0);
+        giveBall(m, w);
+        const stick = pad(ad * 0.25, -zs * 0.97);
+        const k = untilKick(m, (i) => (i < 20 ? { ...stick, through: true } : EMPTY_PAD));
+        expect(k).not.toBeNull();
+        expect(k!.kind).toBe('lob');
+        if (mode === 'none' && m.passTarget === fw.idx) locked++;
+        expect(m.active).toBe(m.passTarget);
+        const s0 = m.stats.shots[0];
+        let pressed = false;
+        for (let i = 0; i < 150; i++) {
+          const near = Math.hypot(m.ball.pos.x - fw.pos.x, m.ball.pos.z - fw.pos.z) < 3.5;
+          const press = mode === 'shoot' && near && !pressed;
+          if (press) pressed = true;
+          m.step(DT, press ? pad(0, 0, { shoot: true }) : EMPTY_PAD);
+          for (const e of m.drainEvents()) {
+            if ((e.type === 'kick' && m.ball.lastTouch === fw.idx) || (e.type === 'control' && e.player === fw.idx)) {
+              if (mode === 'none') met++;
+              if (mode === 'none' && e.type === 'control') controlled++;
+            }
+          }
+          if (m.stats.shots[0] > s0 || m.phase !== 'play') break;
+          if (mode === 'none' && m.ball.owner === fw.idx && i > 30) break;
         }
-        if (m.stats.shots[0] > s0 || m.phase !== 'play') break;
+        if (m.stats.shots[0] > s0) shots[mode]++;
       }
-      if (m.stats.shots[0] > s0) shots++;
     }
     // eslint-disable-next-line no-console
-    console.log(`crosses from wide: locked onto the box runner ${locked}/${n}, met by him ${met}, a shot (auto header / volley) ${shots}/${n}`);
+    console.log(`crosses from wide: locked onto the box runner ${locked}/${n}, nothing pressed: met by him ${met}, brought down ${controlled}, ` +
+      `a shot ${shots.none}/${n}; SHOOT as it comes: a shot ${shots.shoot}/${n}`);
     expect(locked).toBe(n);
-    expect(shots).toBeGreaterThanOrEqual(n * 0.6);
+    expect(shots.none).toBe(0);
+    expect(controlled).toBeGreaterThanOrEqual(n * 0.6);
+    expect(shots.shoot).toBeGreaterThanOrEqual(n * 0.6);
   });
 });
 

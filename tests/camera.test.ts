@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import type { CamZoom } from '../src/core/save';
 import { playFocus } from '../src/game/camFocus';
-import { KIT_MIN_DL, contrastAwayKit, kitLightnessGap, readKit, readsApart } from '../src/game/kitContrast';
+import { KIT_MIN_DL, KIT_MIN_DL_SAME_HUE, contrastAwayKit, kitLightnessGap, readKit, readsApart } from '../src/game/kitContrast';
 import { PRESENTATION } from '../src/game/matchSession';
 import { MatchTally } from '../src/game/ratings';
 import { BALL_OFS, FRAME_LEN, LUNGE_KICK_T0, LUNGE_S, LUNGE_STATE_T0, PF, STATE_CODE, writeFrame } from '../src/game/replay';
@@ -804,6 +804,27 @@ describe('kit contrast (render / session)', () => {
         expect(kitLightnessGap(home, away), tag).toBeGreaterThanOrEqual(KIT_MIN_DL);
         // A change strip is never lawn-green (a kit left as it was keeps whatever grassSafeKit allowed).
         if (away !== before) expect(grassLike(away.shirt), tag).toBe(false);
+      }
+    }
+  });
+
+  it('the gaps are wide enough to tell dark kits apart (playtest: "too hard to tell who is who")', () => {
+    expect(KIT_MIN_DL).toBeGreaterThanOrEqual(0.38);
+    expect(KIT_MIN_DL_SAME_HUE).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('any home kit gets an away kit that reads apart (a sweep of hues and lightnesses, same-colour away)', () => {
+    const c = new THREE.Color();
+    for (let h = 0; h < 360; h += 15) {
+      for (let l = 0.05; l <= 0.96; l += 0.05) {
+        for (const sat of [0, 0.35, 0.8]) {
+          const shirt = c.setHSL(h / 360, sat, l).getHex();
+          const home = { shirt, shirt2: shirt, pattern: 'plain' as const, shorts: shirt, socks: shirt, gk: 0xff8a2b };
+          const away = contrastAwayKit(home, { ...home });
+          const tag = `#${shirt.toString(16).padStart(6, '0')}`;
+          expect(readsApart(readKit(home), readKit(away)), tag).toBe(true);
+          expect(kitLightnessGap(home, away), tag).toBeGreaterThanOrEqual(KIT_MIN_DL);
+        }
       }
     }
   });

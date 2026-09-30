@@ -47,7 +47,7 @@ import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cl
 
 /** When the script started: the studio splash stays up at least SPLASH_MS from here. */
 const bootAt = performance.now();
-const SPLASH_MS = 1250;
+const SPLASH_MS = 1100;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const world = new World(canvas);
 const input = new Input();
@@ -972,21 +972,31 @@ window.addEventListener('resize', () => {
 
 /** LEARN THE BASICS: once the other side has kept the ball this long (s), the drill restarts at once. */
 const BASICS_LOST_S = 2.5;
+/**
+ * A drill has only the players it needs (no one to take a throw-in, nobody to find from a goal kick), so the
+ * ball going dead or the keeper holding it ends the attempt: AGAIN!, and the step starts over. A beat first,
+ * so the whistle or the catch reads.
+ */
+const BASICS_DEAD_S = 0.9;
 let basicsLostT = 0;
+let basicsDeadT = 0;
 
 /** No chasing an AI player round the pitch for half a minute in a lesson: lose it, and the step starts again. */
 function basicsWatch(dt: number): void {
   const s = session;
   if (!basicsNow || !s || s.paused) {
-    basicsLostT = 0;
+    basicsLostT = basicsDeadT = 0;
     return;
   }
   const m = s.match;
   const own = m.ball.owner;
   const theirs = m.phase === 'play' && own >= 0 && m.players[own].side !== m.cfg.humanSide && !m.players[own].isKeeper;
+  const caught = m.phase === 'play' && own >= 0 && m.players[own].side !== m.cfg.humanSide && m.players[own].isKeeper && m.ball.held;
+  const dead = m.phase === 'out' || m.phase === 'restart';
   basicsLostT = theirs ? basicsLostT + dt : 0;
-  if (basicsLostT > BASICS_LOST_S) {
-    basicsLostT = 0;
+  basicsDeadT = dead || caught ? basicsDeadT + dt : 0;
+  if (basicsLostT > BASICS_LOST_S || basicsDeadT > BASICS_DEAD_S) {
+    basicsLostT = basicsDeadT = 0;
     // The session sees the whistle and ends the drill unsettled: AGAIN!, then main.ts restarts the step.
     finishScenario(m);
   }
@@ -1018,12 +1028,33 @@ async function boot(): Promise<void> {
   // (The whole page: menus, the HUD, the trainer card and anything else that writes text.)
   installSepGuard(document.body);
   // Never let a slow or blocked portal SDK hold the title screen hostage; the studio splash gets its moment.
-  await Promise.all([
+  // Both UI fonts are asked for now (the pixel face used to arrive only once the title drew with it, a swap
+  // after the splash had gone).
+  const ready = Promise.all([
     Promise.race([ads.init(), new Promise<void>((r) => setTimeout(r, 3000))]),
     document.fonts?.ready,
+    document.fonts?.load("16px 'Silkscreen'").catch(() => []),
+    document.fonts?.load("16px 'Lilita One'").catch(() => []),
     new Promise<void>((r) => setTimeout(r, Math.max(0, SPLASH_MS - (performance.now() - bootAt)))),
   ]);
+  // The menu's live pitch is built, and drawn once (compiling its shaders), UNDER the splash while it plays:
+  // the splash only moves on the compositor, so this work doesn't stall it, and the title then comes in on a
+  // ready scene instead of the build (and a frozen first frame) coming after the splash. One frame first, so
+  // the splash is on screen and animating before the main thread gets busy. (Or a moment, in a background tab
+  // or a portal's hidden preload: no frames come there, and the boot must not wait for one.)
+  await new Promise<void>((r) => {
+    requestAnimationFrame(() => r());
+    setTimeout(r, 60);
+  });
+  const t0 = performance.now();
   startDemo();
+  const t1 = performance.now();
+  world.render();
+  const t2 = performance.now();
+  performance.measure('bl:demo', { start: t0, end: t1 });
+  performance.measure('bl:firstRender', { start: t1, end: t2 });
+  await ready;
+  performance.mark('bl:ready');
   requestAnimationFrame(frame);
   document.getElementById('boot')?.classList.add('gone');
   ads.loadingDone();

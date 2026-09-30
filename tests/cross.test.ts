@@ -9,8 +9,8 @@ import type { MatchEvent } from '../src/sim/types';
 /**
  * Cross control (src/sim/match.ts autoHeader / cushion): a cross or lofted ball dropping onto the human's man.
  * With the stick pushed he brings it down (a chest / thigh cushion into the stick, a first touch) and keeps it;
- * with the stick neutral and a sight of goal he heads at goal (what a casual player expects when he isn't
- * steering); SHOOT is a header / volley at goal; PASS a headed ball to the previewed mate; THROUGH a knock-down
+ * with the stick neutral he brings it down too (round 14's receive lock: no auto header; it used to head at goal
+ * with a sight of it); SHOOT is a header / volley at goal; PASS a headed ball to the previewed mate; THROUGH a knock-down
  * into space. (Round 9: every cross that dropped on him used to be headed or volleyed automatically.)
  */
 
@@ -146,18 +146,23 @@ describe('cross control', () => {
     expect(kept / n).toBeGreaterThanOrEqual(0.85);
   }, 60_000);
 
-  it('stick neutral, in sight of goal: a header at goal, as before', () => {
+  it('stick neutral, in sight of goal: no auto header, he meets it and brings it down (the receive lock)', () => {
+    // (Round 14, the owner doesn't want auto headers: the cross is his to meet and control, or to strike with SHOOT.
+    // Before the receive lock, 12/12 of these were headed at goal with nothing pressed.)
     let headed = 0;
+    let kept = 0;
     let n = 0;
     for (let seed = 1; seed <= 12; seed++) {
       const { m, p } = cross(seed * 17, 10, 1.9, (seed % 3) - 1);
       const r = play(m, p, () => pad(0, 0));
       n++;
       if (r.shot) headed++;
+      if (r.kept) kept++;
     }
     // eslint-disable-next-line no-console
-    console.log(`cross, stick neutral: headed at goal ${headed}/${n}`);
-    expect(headed / n).toBeGreaterThanOrEqual(0.7);
+    console.log(`cross, stick neutral: headed at goal ${headed}/${n}, brought down and kept ${kept}/${n}`);
+    expect(headed).toBe(0);
+    expect(kept / n).toBeGreaterThanOrEqual(0.8);
   }, 60_000);
 
   it('SHOOT as it comes: a header / volley at goal, stick or no stick', () => {

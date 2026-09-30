@@ -38,17 +38,28 @@ const TEAM_RING_IN = 0.4;
 const TEAM_RING_OUT = 0.56;
 const TEAM_RING_ALPHA = 0.45;
 /**
- * With a human side: his team-mates stand on a bright, thick ring in the team colour inside a white edge;
- * the opponents on a thin, darker, fainter one. (The controlled player's yellow marker stays the strongest.)
+ * With a human side, "us" and "them" read at a glance whatever the kits: his team-mates stand on a vivid
+ * azure ring inside a white edge (and wear chevron pips in the same blue), the opponents on a vivid red ring
+ * just as thick, rimmed thin and dark inside and out so it holds on both grass stripes. Both sit under the
+ * yellow control marker and the teal pass rings (the blue is kept well clear of that teal).
  */
+const US_BLUE = 0x2b80ff;
+const US_EDGE = 0xffffff;
+const THEM_RED = 0xff2e2e;
+const THEM_EDGE = 0x2a0c0e;
 const OUR_RING_IN = 0.42;
 const OUR_RING_OUT = 0.64;
 const OUR_EDGE_OUT = 0.76;
 const OUR_RING_ALPHA = 0.95;
 const OUR_EDGE_ALPHA = 0.9;
-const THEIR_RING_IN = 0.44;
-const THEIR_RING_OUT = 0.54;
-const THEIR_RING_ALPHA = 0.75;
+const THEIR_RING_IN = 0.42;
+const THEIR_RING_OUT = 0.64;
+const THEIR_EDGE_IN = 0.37;
+const THEIR_EDGE_OUT = 0.7;
+const THEIR_RING_ALPHA = 0.9;
+const THEIR_EDGE_ALPHA = 0.75;
+/** Render order of the square markers (ours, the rival's, the receiver's): after every team ring (2, 3). */
+const MARKER_ORDER = 6;
 /** Team pip over each of the human's team-mates: this far (m) over the head, drawn over everything. */
 const PIP_UP = 0.36;
 /** The referee's card (the chunky 1.4x mesh), scaled down so the close-up reads as a card, not a sign. */
@@ -138,28 +149,13 @@ function arcRing(inner: number, outer: number, n: number, fill: number, start = 
   return g;
 }
 
-/**
- * Ring / pip colours per side: `bright` (the human's team: the shirt colour, lifted and saturated so it glows
- * on the lawn) with its `edge` (white; dark round a white kit's ring), `dim` (the opponents: the same hue,
- * darkened) and `mid` (AI v AI: lifted to at least mid lightness).
- */
-function teamStyles(kits: [Kit, Kit]): { bright: THREE.Color; edge: THREE.Color; dim: THREE.Color; mid: THREE.Color }[] {
-  return kits.map((k) => {
-    const hsl = { h: 0, s: 0, l: 0 };
-    new THREE.Color(k.shirt).getHSL(hsl);
-    // Whites, greys and blacks (low chroma, whatever HSL makes of an off-white) get neutral rings.
-    const r = (k.shirt >> 16) & 255, g = (k.shirt >> 8) & 255, b = k.shirt & 255;
-    const grey = Math.max(r, g, b) - Math.min(r, g, b) < 30;
-    const bright = grey
-      ? new THREE.Color().setHSL(hsl.h, 0, hsl.l > 0.6 ? 0.95 : 0.62)
-      : new THREE.Color().setHSL(hsl.h, Math.max(hsl.s, 0.6), clamp01(Math.min(0.66, Math.max(0.5, hsl.l))));
-    const light = grey && hsl.l > 0.6;
-    const edge = new THREE.Color(light ? 0x26262e : 0xffffff);
-    const dim = new THREE.Color().setHSL(hsl.h, grey ? 0 : Math.max(hsl.s, 0.45), Math.min(hsl.l, 0.2));
-    const mid = new THREE.Color(k.shirt);
-    if (hsl.l < 0.5) mid.setHSL(hsl.h, hsl.s, 0.5);
-    return { bright, edge, dim, mid };
-  });
+/** AI v AI ring colour for a side: its shirt colour, lifted to at least mid lightness. */
+function midRingColor(k: Kit): THREE.Color {
+  const hsl = { h: 0, s: 0, l: 0 };
+  const mid = new THREE.Color(k.shirt);
+  mid.getHSL(hsl);
+  if (hsl.l < 0.5) mid.setHSL(hsl.h, hsl.s, 0.5);
+  return mid;
 }
 
 /** Everything that draws a match: 22 voxel footballers, the ball, and the control marker. */
@@ -333,12 +329,13 @@ export class MatchView {
 
     // Team rings: flat, see-through rings on the lawn (instanced; lifted off the grass and polygon-offset, so
     // no z-fighting). AI v AI: one ring style in each side's colour. With a human side his team stands out.
-    const ringSet = (inner: number, outer: number, idx: number[], color: (i: number) => THREE.Color, opacity: number, order: number, dashed = false) => {
+    // (`dash`: 0 a solid ring, else CB_DASHES arcs each filling that share of its slot.)
+    const ringSet = (inner: number, outer: number, idx: number[], color: (i: number) => THREE.Color, opacity: number, order: number, dash = 0) => {
       const mat = new THREE.MeshBasicMaterial({
         color: 0xffffff, transparent: true, opacity, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
       });
-      const geo = dashed ? arcRing(inner, outer, CB_DASHES, 0.55) : new THREE.RingGeometry(inner, outer, 24).rotateX(-Math.PI / 2);
+      const geo = dash > 0 ? arcRing(inner, outer, CB_DASHES, dash) : new THREE.RingGeometry(inner, outer, 24).rotateX(-Math.PI / 2);
       const mesh = new THREE.InstancedMesh(geo, mat, idx.length);
       mesh.frustumCulled = false;
       mesh.renderOrder = order;
@@ -347,17 +344,19 @@ export class MatchView {
       this.group.add(mesh);
       this.ringSets.push({ mesh, idx });
     };
-    const style = teamStyles(kits);
     if (humanSide === 0 || humanSide === 1) {
       const ours = RING_IDX.filter((i) => (i < 11 ? 0 : 1) === humanSide);
       const theirs = RING_IDX.filter((i) => (i < 11 ? 0 : 1) !== humanSide);
-      const us = style[humanSide];
-      const them = style[humanSide === 0 ? 1 : 0];
-      // Their ring first (under), then our edge and fill on top. (Colour-blind: theirs dashed, a touch wider.)
-      if (colorblind) ringSet(THEIR_RING_IN - 0.02, THEIR_RING_OUT + 0.04, theirs, () => them.dim, Math.max(THEIR_RING_ALPHA, 0.85), 2, true);
-      else ringSet(THEIR_RING_IN, THEIR_RING_OUT, theirs, () => them.dim, THEIR_RING_ALPHA, 2);
-      ringSet(OUR_RING_OUT - 0.02, OUR_EDGE_OUT, ours, () => us.edge, OUR_EDGE_ALPHA, 2);
-      ringSet(OUR_RING_IN, OUR_RING_OUT, ours, () => us.bright, OUR_RING_ALPHA, 3);
+      const blue = new THREE.Color(US_BLUE);
+      const white = new THREE.Color(US_EDGE);
+      const red = new THREE.Color(THEM_RED);
+      const dark = new THREE.Color(THEM_EDGE);
+      // Each side's edge first (under), then its fill on top. Colour-blind: theirs dashed (the dark rim a
+      // slightly longer dash, so each red dash is outlined), ours solid.
+      ringSet(THEIR_EDGE_IN, THEIR_EDGE_OUT, theirs, () => dark, THEIR_EDGE_ALPHA, 2, colorblind ? 0.62 : 0);
+      ringSet(THEIR_RING_IN, THEIR_RING_OUT, theirs, () => red, THEIR_RING_ALPHA, 3, colorblind ? 0.55 : 0);
+      ringSet(OUR_RING_OUT - 0.02, OUR_EDGE_OUT, ours, () => white, OUR_EDGE_ALPHA, 2);
+      ringSet(OUR_RING_IN, OUR_RING_OUT, ours, () => blue, OUR_RING_ALPHA, 3);
       // Pips over his team-mates (keeper too): a little voxel chevron in the team colour with a white rim.
       this.pipIdx = Array.from({ length: 11 }, (_, k) => k + (humanSide === 0 ? 0 : 11));
       const chevron = (w: number, color: number) => {
@@ -382,17 +381,18 @@ export class MatchView {
         im.visible = false;
         this.group.add(im);
       }
-      this.pipColor.copy(us.bright);
-      this.teamColor.fill = us.bright.getHex();
-      this.teamColor.edge = us.edge.getHex();
+      this.pipColor.copy(blue);
+      this.teamColor.fill = US_BLUE;
+      this.teamColor.edge = US_EDGE;
       for (let k = 0; k < 11; k++) {
-        this.pipFill.setColorAt(k, us.bright);
-        this.pipEdge.setColorAt(k, us.edge);
+        this.pipFill.setColorAt(k, blue);
+        this.pipEdge.setColorAt(k, white);
       }
       this.pipFill.instanceColor!.needsUpdate = true;
       this.pipEdge.instanceColor!.needsUpdate = true;
     } else {
-      ringSet(TEAM_RING_IN, TEAM_RING_OUT, RING_IDX, (i) => style[i < 11 ? 0 : 1].mid, TEAM_RING_ALPHA, 2);
+      const mid = [midRingColor(kits[0]), midRingColor(kits[1])];
+      ringSet(TEAM_RING_IN, TEAM_RING_OUT, RING_IDX, (i) => mid[i < 11 ? 0 : 1], TEAM_RING_ALPHA, 2);
     }
 
     // Control marker: a chunky square ring + bobbing arrow in the human's colour.
@@ -416,7 +416,9 @@ export class MatchView {
         }
       }
     }
-    this.markerRing = new THREE.Mesh(rb.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
+    // (Drawn after the team rings, still depth-tested so his boots stand in front of it: always on top of them.)
+    this.markerRing = new THREE.Mesh(rb.build(), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true }));
+    this.markerRing.renderOrder = MARKER_ORDER;
     this.markerRing.position.y = 0.04;
     this.marker.add(this.markerRing);
     const ab = new BoxBuilder();
@@ -447,6 +449,7 @@ export class MatchView {
     tb.box(-tr, 0, 0, tt, 0.02, tr * 2, 0xffffff);
     tb.box(tr, 0, 0, tt, 0.02, tr * 2, 0xffffff);
     this.targetRing = new THREE.Mesh(tb.build(), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 }));
+    this.targetRing.renderOrder = MARKER_ORDER;
     this.targetRing.position.y = 0.05;
     this.targetRing.visible = false;
     this.group.add(this.targetRing);
@@ -1124,7 +1127,8 @@ export class MatchView {
       b.box(0, 0, r, r * 2 + t, 0.03, t, c);
       b.box(-r, 0, 0, t, 0.03, r * 2, c);
       b.box(r, 0, 0, t, 0.03, r * 2, c);
-      this.rivalRing = new THREE.Mesh(b.build(), new THREE.MeshBasicMaterial({ vertexColors: true }));
+      this.rivalRing = new THREE.Mesh(b.build(), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true }));
+      this.rivalRing.renderOrder = MARKER_ORDER;
       this.rivalRing.position.y = 0.035;
       this.group.add(this.rivalRing);
     }
