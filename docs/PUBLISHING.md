@@ -42,6 +42,7 @@ _CrazyGames integration requirements rechecked on **2 October 2026**. Earlier br
 | **One click to gameplay** for a new player on a portal: TAP TO PLAY goes straight into the first LEARN THE BASICS drill | `src/main.ts` boot, `src/core/onboarding.ts` `straightToBasics` | Browser, `?portal=crazygames` on a fresh save |
 | Untimed teaching drills: PASS completes on reception; SHOOT and CROSS teach finishes into an open goal; initial cues wait for input and never swallow the first action | `src/meta/moments.ts`, `src/ui/trainer.ts`, `src/game/matchSession.ts`, `src/sim/scenario.ts` | `tests/basicsPassing.test.ts`, `tests/basicsFinishing.test.ts`, `tests/lesson.test.ts`; fresh browser play |
 | Tap SHOOT early on a reachable incoming rebound to strike first time. Movement assist can take a small step to meet it; aim, opposition and contact still decide the outcome. Contact triggers impact feedback; expired/intercepted attempts cannot fire later | `src/sim/match.ts`, `src/game/matchSession.ts`, `src/ui/trainer.ts` | `tests/reboundStrikes.test.ts`, `tests/netCompatibility.test.ts`; real keyboard/touch browser inputs |
+| A foul stays in the wide shot for about 0.6 seconds so the tackle/fall can read before the referee decision. Pause preserves the remaining beat, advantage keeps play live and superseded decisions cannot cut away later | `src/game/foulPresentation.ts`, `src/game/matchSession.ts` | `tests/foulPresentation.test.ts`; desktop/touch foul, penalty and pause/resume browser checks |
 | **No ads during onboarding or the first match.** Interstitials only at a natural break: just before a new kick-off, never the first thing in a visit, never before or during the basics, never before the first real match; no 2× COINS offer on the first match's result | `src/main.ts` `startMatch` / `onFinish` | Code review; the gating conditions are `finishedThisVisit > 0 && kind !== 'basics' && !firstMatch && played > 0` |
 | **All audio muted during ads** (music, effects, crowd: one master gain) and on CrazyGames' `muteAudio` setting | `src/platform/ads.ts` → `sfx.setMuted` | Code review of `src/audio/sfx.ts` (every bus goes through the master gain) |
 | **Pause on focus loss:** switching tab or clicking outside the portal frame pauses the match and shows the pause menu | `src/main.ts` `autoPause` (visibilitychange + blur) | Browser |
@@ -127,12 +128,12 @@ Measured on 2 Oct 2026 after the release fixes (re-check the script's output eac
 
 | Variant | Files | Unpacked | Zip |
 |---|---:|---:|---:|
-| web | 30 | 1.88 MB | 823.6 KB |
-| crazygames | 18 | 1.53 MB | 508.3 KB |
-| poki | 18 | 1.53 MB | 508.2 KB |
-| itch | 20 | 1.57 MB | 524.1 KB |
+| web | 30 | 1.88 MB | 824.2 KB |
+| crazygames | 18 | 1.54 MB | 508.9 KB |
+| poki | 18 | 1.54 MB | 508.8 KB |
+| itch | 20 | 1.58 MB | 524.8 KB |
 
-The main portal game script is about 1.29 MB (about 399 KB compressed: Three.js plus the game). A small separate boot module can display a retry screen if that script or WebGL initialization fails. Fonts are bundled; the stadium, players and crests are generated in code.
+The main portal game script is about 1.30 MB (about 400 KB compressed: Three.js plus the game). A small separate boot module can display a retry screen if that script or WebGL initialization fails. Fonts are bundled; the stadium, players and crests are generated in code.
 
 All of these are far below the published limits:
 

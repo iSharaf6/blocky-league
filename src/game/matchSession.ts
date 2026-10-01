@@ -31,6 +31,7 @@ import { Trainer } from '../ui/trainer';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { playFocus } from './camFocus';
 import { ClipRecorder, clipSupported, type Clip } from './clip';
+import { FOUL_BEAT_S, FoulPresentation, type BookingShot } from './foulPresentation';
 import { GHOST_MAX_PTS, flyGhost, lobLaunch, penaltyGhost, strikeLaunch, type GhostLaunch } from './ghostArc';
 import { contrastAwayKit } from './kitContrast';
 import { MatchTally, type PlayerRating } from './ratings';
@@ -71,6 +72,8 @@ export interface SessionOptions extends MatchConfig {
  * replays and shows no half-time menu (either would hold one screen and not the other).
  */
 export interface StepDriver {
+  /** An online pause or stopped connection also holds local decision presentation. */
+  readonly paused?: boolean;
   /** Both sides' pads for the next step, or null to wait (the network hasn't brought them; paused). */
   next(sample: () => Pad): readonly [Pad, Pad] | null;
   /** After every step (the stoppages it resumes itself, the desync check). */
@@ -236,6 +239,7 @@ export const PRESENTATION = {
   buildRate: REPLAY_BUILD_RATE, slowRate: REPLAY_SLOW_RATE, slowFromS: REPLAY_SLOW_FROM, halftimeHoldS: HALFTIME_HOLD_S,
   fulltimeHoldS: FULLTIME_HOLD_S, hitStopTackle: HIT_STOP_TACKLE, hitStopGoal: HIT_STOP_GOAL,
   hitStopPost: HIT_STOP.post, hitStopPostSlow: HIT_STOP.postSlow, hitStopSlide: HIT_STOP.slide, hitStopSave: HIT_STOP.save,
+  foulBeatS: FOUL_BEAT_S,
 } as const;
 
 /** White chips off the woodwork. */
@@ -332,6 +336,9 @@ export class MatchSession {
   private so: ShootoutHud | null = null;
   /** Seconds left on the referee close-up for a card. */
   private cardT = 0;
+  private cardRestart: Match['restart'] = null;
+  private cardIdentity: string | null = null;
+  private readonly foulPresentation = new FoulPresentation();
   /** Where the last foul happened (a sent-off player is already by his dugout when the card is shown). */
   private foulAt = { x: 0, z: 0 };
   /** Where the fouler stood when he committed it (the booked player's mark in the close-up if he's sent off). */
@@ -672,6 +679,8 @@ export class MatchSession {
     const m = this.match;
     // (Online: the link is kept up every frame, whatever the screen is doing.)
     this.driver?.frame();
+    const presentationPaused = this.paused || !!this.driver?.paused;
+    if (!presentationPaused) this.foulPresentation.tick(dt);
     // Hit flashes count rendered frames, before this frame's events (see MatchView.tickFlashes).
     if (!this.paused) this.view.tickFlashes(dt);
 
@@ -766,10 +775,14 @@ export class MatchSession {
       this.updateBlitz(dt);
       this.flow(dt);
       if (this.cardT > 0) {
-        this.cardT -= dt;
-        // Back to the game when the close-up is done, or at once if play restarts under it.
-        if (this.cardT <= 0 || m.phase === 'play' || m.phase === 'goal') {
+        if (!presentationPaused) this.cardT -= dt;
+        // The shot belongs to this stoppage and this footballer, even if a kick and another whistle
+        // arrive in the same rendered frame or the manager substitutes him while paused.
+        if (this.cardT <= 0 || (m.phase !== 'out' && m.phase !== 'restart') || m.restart !== this.cardRestart ||
+          m.players[this.cardPlayer]?.def.id !== this.cardIdentity) {
           this.cardT = 0;
+          this.cardRestart = null;
+          this.cardIdentity = null;
           this.view.pinPlayer(null);
           this.view.setBallHidden(false);
           this.cardPlayer = -1;
@@ -779,10 +792,24 @@ export class MatchSession {
       }
     }
 
+    if (!presentationPaused) {
+      const decision = this.foulPresentation.take(m.phase, m.restart);
+      if (decision?.booking) this.showBooking(decision.booking);
+      if (decision?.verdict) this.showRestart(decision.verdict.kind);
+    }
+
     // Camera: the live-play focus (ball, controlled player, possession lean, set piece; see camFocus), with
     // the subject swapped for the celebrating scorer / the shootout winners.
     const f = this.view.frame;
     const focus = playFocus(m, f, this.view.headTop, this.focusOut);
+    if (this.foulPresentation.impact(m.phase, m.restart)) {
+      // Stay with the fallen player while the impact settles, rather than framing the new taker early.
+      focus.bx = focus.ax = this.foulAt.x;
+      focus.bz = focus.az = this.foulAt.z;
+      focus.bvx = focus.bvz = 0;
+      focus.setPiece = null;
+      focus.hold = false;
+    }
     let ax = focus.ax;
     let az = focus.az;
     let avx = 0;
@@ -905,7 +932,7 @@ export class MatchSession {
     this.stadium.updateGlare(this.world.camera);
     if (this.weather.kind === 'rain' && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ, 22, 15, 90, this.world.camera.position);
     this.view.faceCamera(this.world.camera);
-    this.view.updateReferee(this.paused ? 0 : dt, this.time, !this.replay);
+    this.view.updateReferee(presentationPaused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
     this.effects.update(held || this.paused ? 0 : dt);
     this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time, this.world.camera.position);
@@ -1125,6 +1152,7 @@ export class MatchSession {
 
   /** Players were just reset (kick-off): show the new positions this frame and cut the camera to them. */
   private resetView(): void {
+    this.foulPresentation.clear();
     writeFrame(this.match, this.cur, this.time);
     this.prev.set(this.cur);
     this.acc = 0;
@@ -1722,8 +1750,7 @@ export class MatchSession {
           sfx.ooh();
           break;
         case 'restart':
-          if (e.kind !== 'kickoff') this.hud?.toastMsg(RESTART_LABEL[e.kind], 1.2);
-          if (e.kind === 'penalty') this.hud?.show('PENALTY!', '', 'small', 1.8);
+          if (!this.foulPresentation.queueRestart(e, m.restart)) this.showRestart(e.kind);
           break;
         case 'setpiece':
           // A new set-piece framing: cut if it is far from where we are, otherwise glide there.
@@ -1747,7 +1774,6 @@ export class MatchSession {
           const color: string = e.color ?? 'yellow';
           const red = color === 'red';
           const second = 'second' in e && !!e.second;
-          this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', second ? `${p.def.name} · 2nd yellow` : p.def.name, red ? 'small card red' : 'small card', red ? 2.2 : 1.8);
           // One call per card: the HUD swaps that player's yellow for the red on a second booking.
           this.hud?.card(p.side, red ? 'red' : 'yellow', p.idx);
           // The referee holds the card up at the offender; at a stoppage we cut to a close-up of it (in
@@ -1765,13 +1791,16 @@ export class MatchSession {
             z = this.foulAt.z + uz * 1.3;
           }
           const close = !live && !this.demo && !this.replay && this.cam.mode === 'broadcast';
-          this.view.showCard(red ? 'red' : 'yellow', x, z, close ? CARD_CAM_S : red ? 2.2 : 1.8, close);
-          if (close) this.startCardShot(p.idx, x, z);
+          const shot: BookingShot = { player: p.idx, playerId: p.def.id, name: p.def.name,
+            color: red ? 'red' : 'yellow', second, x, z, close, restart: m.restart };
+          if (close && this.foulPresentation.waiting) this.foulPresentation.queueBooking(shot);
+          else this.showBooking(shot);
           break;
         }
         case 'foul': {
           const on = m.players[e.on];
           const by = m.players[e.by];
+          this.foulPresentation.contact(on.side);
           // The contact: a thump and a grunt (the sim blows the whistle), the man brought down flashing white; a
           // slide that connects holds the picture and shakes it.
           const slide = by.state === 'slide';
@@ -1829,9 +1858,11 @@ export class MatchSession {
           // Newer sim events (typed loosely so this compiles whichever sim version it meets).
           const t = (e as { type: string }).type;
           if (t === 'offside') {
+            this.foulPresentation.clear();
             this.hud?.toastMsg('OFFSIDE', 1.4);
             this.view.refSignal(1.4, 'arm');
           } else if (t === 'advantage') {
+            this.foulPresentation.clear();
             this.hud?.toastMsg('ADVANTAGE', 1.4);
             this.view.refSignal(1.6, 'advantage');
           } else if (t === 'powerupTaken' || t === 'powerupUsed' || t === 'powerupEnd') {
@@ -2094,6 +2125,21 @@ export class MatchSession {
     bz.updateSideGlow(f, PF, k, time);
   }
 
+  private showRestart(kind: RestartKind): void {
+    if (kind !== 'kickoff') this.hud?.toastMsg(RESTART_LABEL[kind], 1.2);
+    if (kind === 'penalty') this.hud?.show('PENALTY!', '', 'small', 1.8);
+  }
+
+  private showBooking(shot: BookingShot): void {
+    const p = this.match.players[shot.player];
+    const red = shot.color === 'red';
+    const close = shot.close && p.def.id === shot.playerId;
+    this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', shot.second ? `${shot.name} · 2nd yellow` : shot.name,
+      red ? 'small card red' : 'small card', red ? 2.2 : 1.8);
+    this.view.showCard(shot.color, shot.x, shot.z, close ? CARD_CAM_S : red ? 2.2 : 1.8, close);
+    if (close) this.startCardShot(shot.player, shot.x, shot.z);
+  }
+
   /**
    * Referee close-up for a card at a stoppage: the booked player stands on his mark (x, z) facing the
    * referee, the lens picks its side of the pair (CameraRig.cardLens), and the man he brought down is held
@@ -2102,6 +2148,8 @@ export class MatchSession {
    */
   private startCardShot(booked: number, x: number, z: number): void {
     this.cardT = CARD_CAM_S;
+    this.cardRestart = this.match.restart;
+    this.cardIdentity = this.match.players[booked].def.id;
     this.cardPlayer = booked;
     this.view.clearFades();
     this.view.pinPlayer(null);
@@ -2716,6 +2764,7 @@ export class MatchSession {
   }
 
   dispose(): void {
+    this.foulPresentation.clear();
     this.world.scene.remove(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
     if (!this.demo) document.body.classList.remove('night');
     // The night fill is shared by every footballer drawn (menu kit previews too): off until a match sets it.
