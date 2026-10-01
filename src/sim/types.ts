@@ -142,7 +142,7 @@ export interface PowerUp {
 
 export type MatchEvent =
   /** A strike of the ball. `style`: a shot played as a chip or a finesse (curled, placed) one. */
-  | { type: 'kick'; power: number; x: number; y: number; z: number; kind: KickKind; style?: ShotStyle }
+  | { type: 'kick'; power: number; x: number; y: number; z: number; kind: KickKind; style?: ShotStyle; player?: number; firstTime?: boolean }
   | { type: 'goal'; side: Side; scorer: number; own: boolean }
   | { type: 'whistle'; kind: 'short' | 'long' | 'end' }
   | { type: 'post'; x: number; y: number; z: number; speed: number }

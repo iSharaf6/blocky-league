@@ -148,6 +148,7 @@ export class OnlineLink {
   // ---------------------------------------------------------------- internals
 
   private receive(d: NetData): void {
+    if (this.gone) return;
     this.lastHeard = performance.now();
     if (this.lock?.receive(d)) return;
     if (typeof d !== 'string') return;

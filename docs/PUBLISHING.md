@@ -41,6 +41,7 @@ _CrazyGames integration requirements rechecked on **2 October 2026**. Earlier br
 | **One ad SDK per portal build.** CrazyGames' zip names only `sdk.crazygames.com`, Poki's only `game-cdn.poki.com`. Their builds omit online play and external account/cloud-save code. Web and itch have no ad SDK; optional online friendlies make WebRTC/STUN requests after the player hosts or joins a game. (`www.w3.org` is an SVG namespace and `jcgt.org` a shader comment, not requests.) Fonts are bundled | `src/platform/ads.ts`, `scripts/release.mjs`, `src/main.ts` online gate | Release host checks and build-branch inspection |
 | **One click to gameplay** for a new player on a portal: TAP TO PLAY goes straight into the first LEARN THE BASICS drill | `src/main.ts` boot, `src/core/onboarding.ts` `straightToBasics` | Browser, `?portal=crazygames` on a fresh save |
 | Untimed teaching drills: PASS completes on reception; SHOOT and CROSS teach finishes into an open goal; initial cues wait for input and never swallow the first action | `src/meta/moments.ts`, `src/ui/trainer.ts`, `src/game/matchSession.ts`, `src/sim/scenario.ts` | `tests/basicsPassing.test.ts`, `tests/basicsFinishing.test.ts`, `tests/lesson.test.ts`; fresh browser play |
+| Tap SHOOT early on a reachable incoming rebound to strike first time. Movement assist can take a small step to meet it; aim, opposition and contact still decide the outcome. Contact triggers impact feedback; expired/intercepted attempts cannot fire later | `src/sim/match.ts`, `src/game/matchSession.ts`, `src/ui/trainer.ts` | `tests/reboundStrikes.test.ts`, `tests/netCompatibility.test.ts`; real keyboard/touch browser inputs |
 | **No ads during onboarding or the first match.** Interstitials only at a natural break: just before a new kick-off, never the first thing in a visit, never before or during the basics, never before the first real match; no 2× COINS offer on the first match's result | `src/main.ts` `startMatch` / `onFinish` | Code review; the gating conditions are `finishedThisVisit > 0 && kind !== 'basics' && !firstMatch && played > 0` |
 | **All audio muted during ads** (music, effects, crowd: one master gain) and on CrazyGames' `muteAudio` setting | `src/platform/ads.ts` → `sfx.setMuted` | Code review of `src/audio/sfx.ts` (every bus goes through the master gain) |
 | **Pause on focus loss:** switching tab or clicking outside the portal frame pauses the match and shows the pause menu | `src/main.ts` `autoPause` (visibilitychange + blur) | Browser |
@@ -126,10 +127,10 @@ Measured on 2 Oct 2026 after the release fixes (re-check the script's output eac
 
 | Variant | Files | Unpacked | Zip |
 |---|---:|---:|---:|
-| web | 30 | 1.87 MB | 821.8 KB |
-| crazygames | 18 | 1.53 MB | 507.1 KB |
-| poki | 18 | 1.53 MB | 507.0 KB |
-| itch | 20 | 1.57 MB | 522.7 KB |
+| web | 30 | 1.88 MB | 823.6 KB |
+| crazygames | 18 | 1.53 MB | 508.3 KB |
+| poki | 18 | 1.53 MB | 508.2 KB |
+| itch | 20 | 1.57 MB | 524.1 KB |
 
 The main portal game script is about 1.29 MB (about 399 KB compressed: Three.js plus the game). A small separate boot module can display a retry screen if that script or WebGL initialization fails. Fonts are bundled; the stadium, players and crests are generated in code.
 

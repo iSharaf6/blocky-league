@@ -59,6 +59,11 @@ export function trainerCue(m: Match, device: Device): TrainerCue {
     title: 'MEET THE PASS', actions: [[pass, 'First-time pass'], [shoot, 'Finish']],
     detail: 'Let go of movement to meet the ball',
   };
+  if (m.canStrikeLoose()) return {
+    title: m.players[m.active].order?.looseStrike !== undefined ? 'STRIKE READY' : 'FIRST-TIME SHOT',
+    actions: [[shoot, m.players[m.active].order?.looseStrike !== undefined ? 'Strike on arrival' : 'Tap to strike first time']],
+    detail: 'Let go of movement to meet the ball',
+  };
   if (own >= 0 && m.players[own].side !== m.cfg.humanSide) return {
     title: 'WIN IT BACK', actions: [[device === 'touch' ? 'TACKLE' : shoot, 'Tackle'], [device === 'touch' ? 'PRESS' : through, 'Hold to press'], [device === 'touch' ? 'SWITCH' : pass, 'Switch']],
     detail: `Hold ${device === 'touch' ? 'TACKLE' : shoot} to slide · aim away to cancel`,
@@ -123,7 +128,7 @@ export class Lesson {
     }
     if (e.type !== 'kick') return;
     const hs = m.cfg.humanSide;
-    const by = m.players[m.ball.lastTouch];
+    const by = m.players[e.player ?? m.ball.lastTouch];
     if (!by || by.side !== hs) return;
     if (e.kind === 'shot' || e.kind === 'header') this.done('shot');
     else if (e.kind === 'lob') this.done('cross');

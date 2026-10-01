@@ -1494,10 +1494,10 @@ export class MatchSession {
       }
       switch (e.type) {
         case 'kick': {
-          const kicker = m.ball.lastTouch;
+          const kicker = e.player ?? m.ball.lastTouch;
           // A strike he never had under control first (a volley, a one-touch finish): the sim executes it at
           // the contact, with the ball still loose.
-          const firstTime = kicker >= 0 && this.ownerBefore !== kicker;
+          const firstTime = e.firstTime ?? (kicker >= 0 && this.ownerBefore !== kicker);
           // Sound: the layered strike for a shot (with the crowd's "oooh" if it's on target), the header's own
           // thock, the plain boot for everything else.
           if (e.kind === 'header') sfx.header(e.power);
@@ -1508,6 +1508,10 @@ export class MatchSession {
           this.logKick(this.trailStyle);
           // Struck hard: the ball flashes white and pops (a throw is no strike).
           if (e.power >= HARD_STRIKE && e.kind !== 'throw' && e.kind !== 'keeper') this.view.flashBall();
+          if (firstTime && e.kind === 'shot' && e.power >= HARD_STRIKE && kicker >= 0 && m.players[kicker].side === m.cfg.humanSide) {
+            this.hold(HIT_STOP.firstTime);
+            this.cam.shakePx(SHAKE_PX.firstTime);
+          }
           if (e.kind === 'header' && kicker >= 0) {
             // Off the head: chunky bits in his kit colour.
             const kit = this.opt.kits[m.players[kicker].side];
@@ -1515,15 +1519,15 @@ export class MatchSession {
           }
           // The mega ball struck (blitz: its powerupEnd came just before this kick): the picture jolts.
           if (e.kind === 'shot' && this.time - this.megaShotT < 0.05) this.cam.shakePx(SHAKE_PX.mega);
-          if (m.ball.lastTouch >= 0) {
-            const kp = m.players[m.ball.lastTouch];
+          if (kicker >= 0) {
+            const kp = m.players[kicker];
             if (e.kind === 'shot' || (e.kind === 'header' && m.shotClock < 0.05)) this.tally.get(kp.idx).shots++;
             else if (e.kind !== 'clear') {
               this.tally.get(kp.idx).passes++;
               this.lastPasser[kp.side] = kp.idx;
             }
           }
-          if (m.ball.lastTouch >= 0 && m.players[m.ball.lastTouch].side === m.cfg.humanSide) {
+          if (kicker >= 0 && m.players[kicker].side === m.cfg.humanSide) {
             if (e.kind === 'shot' || e.kind === 'header') this.tut.shot = true;
             else this.tut.passed = true;
             // (The sim tags a chip / finesse strike on the kick event; typed loosely for older sims.)
@@ -2354,7 +2358,7 @@ export class MatchSession {
     const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
     const incoming = m.ball.owner < 0 && m.passTarget >= 0 && m.players[m.passTarget].side === hs && m.kickSide === hs;
     // The context the touch buttons are labelled for right now: hints name the button on screen.
-    const ctx: HintCtx = so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine || incoming ? 'attack' : 'defend';
+    const ctx: HintCtx = so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine || incoming || m.canStrikeLoose() ? 'attack' : 'defend';
     this.hintCtx = ctx;
     const key = this.keyName;
     let hint = '';

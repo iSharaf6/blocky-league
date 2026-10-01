@@ -14,6 +14,8 @@ import { clamp, smoothstep } from '../core/math';
 
 /** Hit-stop lengths, in 60 Hz frames (run as time, so a 120 Hz display holds just as long). */
 export const HIT_STOP = {
+  /** A firm first-time foot strike: a short pause on contact. */
+  firstTime: 2,
   /** A shot off the post / bar (SLOW_POST m/s or less: a softer knock). */
   post: 3,
   postSlow: 2,
@@ -30,6 +32,7 @@ export const SLOW_POST = 16;
 
 /** Screen shake (CSS px of peak displacement) per impact; never more than SHAKE_MAX_PX all together. */
 export const SHAKE_PX = {
+  firstTime: 2,
   goal: 8,
   post: 6,
   postSlow: 4,

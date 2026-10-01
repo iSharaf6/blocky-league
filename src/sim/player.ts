@@ -66,6 +66,8 @@ export interface KickOrder {
   /** Seconds this order stays valid while waiting for a loose ball to arrive. */
   expires: number;
   firstTime: boolean;
+  /** A human's loose-ball strike belongs to this kick; another kick or possession cancels it. */
+  looseStrike?: number;
   /**
    * Shots only: sidespin, -1..1 (world z sign = the way it bends). The launch is re-aimed so the
    * bend brings it back onto the target: it starts outside the aim point and swings in.

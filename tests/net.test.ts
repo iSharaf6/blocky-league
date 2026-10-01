@@ -12,7 +12,7 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
 
 /**
  * Online play is deterministic lockstep: both peers run the same sim on the same pads. These tests pin that
- * down: single-player is bit-identical to what it was before two-human support, two sims fed the same pads stay
+ * down: fixed single-player drivers reproduce the versioned physics baselines below, two sims fed the same pads stay
  * identical every tick (whichever side each one views), and (below) the lockstep engine keeps two peers identical
  * over a bad network and notices when they aren't.
  */
@@ -23,6 +23,10 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * were merged onto it, by the very same drivers. (29 rows were recorded and all 29 matched; these are pinned.)
  * Round 14's receive lock (Match.receiveLocked) changed how the human's man takes a pass, so the rows with a human
  * in them (bot*, fuzz*, pen*, ko*) were re-recorded on it; the AI v AI rows (ai*) came out exactly as before.
+ * Physics revision 2026-10-02 (NET_VERSION 2) adds early human first-time strikes on untargeted incoming balls.
+ * Only the nine human-input rows whose drivers queue that action were re-recorded. Their queue/contact counts
+ * are noted below; even a cancelled queue can change movement and possession before contact. All AI rows, the
+ * three scripted-bot rows and ko1 keep their exact prior hashes, ticks, scores and shootout flags.
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2262850705, 2447626034, 19417, 2, 3, 0],
@@ -31,16 +35,16 @@ const BEFORE: Record<string, Row> = {
   botSide0: [4291927938, 1091955903, 15525, 1, 1, 0],
   botPerks: [2431068158, 403911831, 11880, 4, 1, 0],
   botFirstMatch: [3953689325, 351485200, 11657, 1, 0, 0],
-  fuzzSide1: [1192574757, 231329995, 11814, 3, 0, 0],
-  fuzzBlitz0: [1959926094, 3861764152, 12002, 0, 4, 0],
-  fuzzBlitzPerks1: [1250983517, 1751984043, 11570, 2, 0, 0],
-  penTaker0: [2182178342, 2810401205, 7420, 1, 0, 0],
-  penTaker1Low: [2775666639, 236179243, 7711, 1, 1, 0],
-  penTimeout1: [3943698554, 3334280317, 7479, 0, 1, 0],
-  penKeeper1: [2737753691, 2607639937, 7381, 1, 0, 0],
+  fuzzSide1: [399059712, 1308671870, 11258, 1, 0, 0], // 1 new queue, 0 contacts
+  fuzzBlitz0: [594496695, 1168062696, 11302, 0, 2, 0], // 3 new queues, 1 contact
+  fuzzBlitzPerks1: [4063850517, 1852493949, 11103, 1, 0, 0], // 7 new queues, 2 contacts
+  penTaker0: [626915086, 958774721, 7537, 1, 1, 0], // 2 new queues, 1 contact
+  penTaker1Low: [790814125, 3196858246, 7590, 0, 1, 0], // 2 new queues, 0 contacts
+  penTimeout1: [2721849617, 965648269, 7411, 0, 1, 0], // 3 new queues, 2 contacts
+  penKeeper1: [483959362, 1474512133, 7381, 1, 0, 0], // 3 new queues, 0 contacts
   ko1: [4291486144, 3361617526, 3773, 1, 0, 0],
-  ko3: [2398812138, 3920665453, 5728, 0, 0, 1],
-  ko6: [2656588071, 2398866969, 5902, 0, 0, 1],
+  ko3: [1812744883, 1974716986, 3603, 1, 0, 0], // 1 new queue, 1 contact
+  ko6: [1838196313, 3688112271, 5716, 0, 0, 1], // 5 new queues, 1 contact
   aiKo1: [47845968, 1192999698, 5817, 0, 0, 1],
   aiKo4: [2291840460, 860824426, 3346, 0, 1, 0],
   aiKo7: [4112032605, 1756315151, 5108, 0, 0, 1],

@@ -172,7 +172,7 @@ const matchAt = (m: Match) => (m.half - 1) * m.cfg.halfLength + m.clock;
 function track(t: Tally, e: MatchEvent, m: Match, hs: Side): void {
   switch (e.type) {
     case 'kick':
-      if (e.kind === 'shot' || e.kind === 'header') t.lastShot = { player: m.ball.lastTouch, kind: e.kind, x: e.x, z: e.z, at: matchAt(m) };
+      if (e.kind === 'shot' || e.kind === 'header') t.lastShot = { player: e.player ?? m.ball.lastTouch, kind: e.kind, x: e.x, z: e.z, at: matchAt(m) };
       break;
     case 'goal': {
       if (e.side !== hs || e.own) break;
