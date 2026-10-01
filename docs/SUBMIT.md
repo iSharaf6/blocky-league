@@ -1,6 +1,6 @@
 # Submitting Blocky League: the click-by-click guide
 
-_Written 29 September 2026. Portal rules were re-read that day (sources in §8). Portals change their forms, so if a button has a different name, look for the nearest match and trust the portal's own wording over this page._
+_Release instructions refreshed 2 October 2026. Historical research and browser observations below retain their recorded dates; current CrazyGames integration requirements were rechecked on 2 October (see PUBLISHING.md). Portals change their forms, so if a button has a different name, look for the nearest match and trust the portal's own wording over this page._
 
 Everything you upload is already made and checked. Your part: create the accounts, accept the terms, click upload and paste. Nobody else can do those for you.
 
@@ -11,7 +11,7 @@ npm run build:all      # rebuild the four zips from the latest code
 npm run submission     # rebuild release/submission/ and re-check everything
 ```
 
-`npm run submission` must end with **All checks passed**, and it should print no warning saying a zip is older than the source. It rebuilds one folder per portal:
+`npm run submission` must end with **All checks passed**. Every ZIP needs its matching release record; changed source or a replaced ZIP now fails validation. Rebuild rather than uploading a stale package. It rebuilds one folder per portal:
 
 ```
 release/submission/
@@ -30,7 +30,7 @@ release/submission/
 
 **Recommended: CrazyGames first, and itch.io at the same time.** You can add GameDistribution later.
 
-- **CrazyGames** takes open submissions and is not exclusive. The game goes live quickly in a *Basic Launch*: a small audience, no ads and no money yet, for at least 7 days and 500 plays. After that, CrazyGames decides on a *Full Launch* (ads and revenue share) from how long people play, how many come back the next day, and how many new visitors actually start playing. The CrazyGames build already has the SDK integrated, so it is ready for Full Launch.
+- **CrazyGames** takes open submissions and is not exclusive. The game goes live quickly in a *Basic Launch*: a small audience, no ads and no money yet, for at least 7 days and 500 plays. After that, CrazyGames decides on a *Full Launch* (ads and revenue share) from how long people play, how many come back the next day, and how many new visitors actually start playing. The CrazyGames build already has the SDK integrated. Full Launch still requires CrazyGames selection, live SDK checks, and progress-save verification.
 - **itch.io** is free and self-serve, with no review. It's a good place to share a link and get feedback while CrazyGames runs its Basic Launch.
 - **Poki** is the biggest audience but the hardest door. It hand-picks games, testing takes weeks, and its standard deal is **web-exclusive for about 5 years**. That exclusivity covers the whole open web, including Discord and YouTube Playables, so you'd have to take the game off CrazyGames, itch.io and GameDistribution. Steam, the app stores and consoles stay yours. Poki pays 100% of ad revenue from players who come to the game directly and 50/50 on players Poki brings. The only non-exclusive option is a one-time flat fee with no revenue share.
 
@@ -42,7 +42,7 @@ release/submission/
 
 Tick every line for the portal you're on.
 
-- [ ] `npm run build:all`, then `npm run submission`: **All checks passed**, and no "zip is older than the source" warning.
+- [ ] `npm run build:all`, then `npm run submission`: **All checks passed**, with current source and ZIP hashes matching.
 - [ ] You played the zip you're about to upload, start to finish (the first drill, then a quick match), on a computer and on a phone. The quickest way is the portal's own test tool (step 3 of each portal below).
 - [ ] In that test tool, you checked all of these:
   - The game loads.
@@ -68,7 +68,7 @@ Folder: `release/submission/crazygames/`
 
 1. **Sign up.** Go to <https://developer.crazygames.com/> and create a developer account. Accept the developer terms yourself.
 2. **Start a submission.** Click **Submit a game** (or the portal's equivalent, such as *Add game* or *Upload*).
-3. **Upload the build.** Upload `upload/blocky-league-crazygames-v1.0.0.zip`. Its `index.html` is at the root of the zip, all paths are relative, and there are 12 files (1.5 MB), well under CrazyGames' limits. _CrazyGames' docs don't say whether the portal wants a zip or loose files. If it asks for files, unzip the zip and upload the contents._
+3. **Upload the build.** Upload `upload/blocky-league-crazygames-v1.0.0.zip`. Its `index.html` is at the root of the zip, all paths are relative, and there are 18 files (about 1.53 MB extracted), well under CrazyGames' limits. _CrazyGames' docs don't say whether the portal wants a zip or loose files. If it asks for files, unzip the zip and upload the contents._
 4. **Test in the Preview tool.** The portal opens your build in the **Preview** (QA) tool. Check all of these:
    - TAP TO PLAY goes straight into the first drill (one click).
    - A quick match plays through to full time.
@@ -200,7 +200,11 @@ GameDistribution is non-exclusive and pays the developer 33% of net revenue, mon
 
 ---
 
-## 7. What was checked on 29 September 2026
+## 7. Current release checks and historical observations
+
+**2 October 2026:** the startup loader, pause/menu/input lifecycle, restricted gamepad access, save repair and portal SDK failure paths were improved. `build:all` now verifies upload paths/assets and writes content hashes; `submission` rejects stale source or modified ZIPs. Current portal sizes are about 507 KB zipped (CrazyGames and Poki); itch is about 523 KB. Re-run the commands above after any source changes.
+
+The observations below are the previous 29 September run, retained as historical evidence; they do not replace current Preview/QA testing.
 
 **Zips** (the `release/*.zip` files from `npm run build:all` on 28 Sep, 01:44). `npm run submission` re-checks these on every run:
 
@@ -223,7 +227,7 @@ GameDistribution is non-exclusive and pays the developer 33% of net revenue, mon
 - Portal SDK behaviour on the real sites: ads actually filling, and CrazyGames' `muteAudio` setting.
 - Load time on a slow phone (`docs/PUBLISHING.md` §1.3).
 - Browsers other than Chrome, and a 4 GB Chromebook (CrazyGames asks for Chrome, Edge and 4 GB Chromebooks).
-- **Online multiplayer is being merged into the web build right now.** The script fails a portal zip that contains a `wss://` address. Still check, after the next `build:all`, that the portal and itch builds have no online button.
+- **Online multiplayer is confined to web and itch builds.** CrazyGames and Poki submissions compile out the online mode and external account login. The portal ZIP validator checks for unauthorized hosts.
 
 ---
 

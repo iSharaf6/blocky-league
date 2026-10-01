@@ -1,4 +1,5 @@
 import { normalizeMastery, type MasteryState } from '../meta/mastery';
+import { PRESET_CLUBS } from '../meta/data';
 import { normalizeRun, type RunState } from '../meta/run';
 import { normalizeSeason, type SeasonState } from '../meta/season';
 import type { Quality, TimeOfDay } from '../render/world';
@@ -97,6 +98,12 @@ export function controlsOf(s: Settings): ControlSettings {
 export function normalizeSettings(raw: unknown): Settings {
   const base = defaultSave().settings;
   const s: Settings = { ...base, ...(raw && typeof raw === 'object' ? (raw as Partial<Settings>) : {}) };
+  for (const k of ['sfx', 'music', 'crowd'] as const) if (typeof s[k] !== 'boolean') s[k] = base[k];
+  if (s.quality !== 'high' && s.quality !== 'medium' && s.quality !== 'low') s.quality = base.quality;
+  if (!Number.isInteger(s.difficulty) || s.difficulty < 0 || s.difficulty > 3) s.difficulty = base.difficulty;
+  if (typeof s.halfMinutes !== 'number' || !Number.isFinite(s.halfMinutes) || s.halfMinutes < 0.5 || s.halfMinutes > 10) s.halfMinutes = base.halfMinutes;
+  if (!['day', 'sunset', 'night', 'random'].includes(s.timeOfDay)) s.timeOfDay = base.timeOfDay;
+  if (!['clear', 'rain', 'snow', 'random'].includes(s.weather)) s.weather = base.weather;
   if (!CAM_ZOOMS.includes(s.camZoom as CamZoom)) s.camZoom = 'normal';
   if (s.lastMode !== 'classic' && s.lastMode !== 'blitz') s.lastMode = 'classic';
   // The spoken commentary is gone: an old save's switch for it is dropped.
@@ -180,6 +187,15 @@ export interface DailyState {
 
 const KEY = 'blocky-league-save-v1';
 
+/** Start phones with fewer shadow casters and pixels; a saved graphics choice always takes precedence. */
+function defaultQuality(): Quality {
+  try {
+    return typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 'medium' : 'high';
+  } catch {
+    return 'high';
+  }
+}
+
 export function defaultSave(): SaveData {
   return {
     version: 1,
@@ -187,7 +203,7 @@ export function defaultSave(): SaveData {
     clubIdx: 5,
     opponentIdx: 6,
     settings: {
-      sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, timeOfDay: 'random', weather: 'random',
+      sfx: true, music: true, crowd: true, quality: defaultQuality(), difficulty: 1, halfMinutes: 2, timeOfDay: 'random', weather: 'random',
       commentary: true, camZoom: 'normal', ...CONTROL_DEFAULTS,
       keys: normalizeKeyMap(undefined), pad: normalizePadMap(undefined), stick: 'floating', colorblind: false,
     },
@@ -211,7 +227,8 @@ export function defaultProgress(): Progress {
   return { xp: 0, streak: 0, bestStreak: 0, stars: 0, daily: { day: '', progress: [0, 0, 0], claimed: [false, false, false], fresh: true } };
 }
 
-const num = (v: unknown, d = 0): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : d);
+const num = (v: unknown, d = 0): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(v)) : d);
+const clubIndex = (v: unknown, d: number): number => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < PRESET_CLUBS.length ? v : d);
 
 /** Progress as stored by any build made whole: missing or damaged fields get the defaults, nothing else is lost. */
 export function normalizeProgress(raw: unknown): Progress {
@@ -236,23 +253,38 @@ export function normalizeProgress(raw: unknown): Progress {
 }
 
 /** A stored save (any build's) made whole over this build's defaults: see loadSave and importSave. */
-function mergeSave(d: Partial<SaveData>): SaveData {
+function mergeSave(raw: unknown): SaveData {
   const base = defaultSave();
+  const d = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Partial<SaveData> : {};
   // Saves from before the camera / assist settings (or with values this build doesn't know) get the defaults.
   const settings = normalizeSettings(d.settings);
+  const record = { ...base.record };
+  for (const k of ['played', 'won', 'drawn', 'lost', 'goalsFor', 'goalsAgainst'] as const) record[k] = num(d.record?.[k]);
+  const clubIdx = clubIndex(d.clubIdx, base.clubIdx);
+  const opponentIdx = clubIndex(d.opponentIdx, clubIdx === base.opponentIdx ? base.clubIdx : base.opponentIdx);
+  const gift = d.gift;
   return {
     ...base,
     ...d,
+    version: 1,
+    coins: num(d.coins, base.coins),
+    clubIdx,
+    opponentIdx: opponentIdx === clubIdx ? (clubIdx + 1) % PRESET_CLUBS.length : opponentIdx,
+    seenTutorial: d.seenTutorial === true,
     settings,
-    record: { ...base.record, ...(d.record ?? {}) },
+    record,
+    career: d.career && typeof d.career === 'object' && !Array.isArray(d.career) ? d.career : null,
+    gift: gift && typeof gift === 'object' && typeof gift.last === 'string'
+      ? { last: gift.last, streak: Math.max(1, Math.min(7, num(gift.streak, 1))) } : undefined,
+    updatedAt: typeof d.updatedAt === 'string' && Number.isFinite(Date.parse(d.updatedAt)) ? d.updatedAt : base.updatedAt,
     // Saves from before the cup existed (or a blob that isn't an object) start with no cup.
-    cup: typeof d.cup === 'object' ? d.cup : null,
+    cup: d.cup && typeof d.cup === 'object' && !Array.isArray(d.cup) ? d.cup : null,
     // Saves from before progression start at level 1 with no streak; a damaged blob does too.
     progress: normalizeProgress(d.progress),
     // Saves from before Football Moments (or a damaged blob) have no stars yet.
     moments: normalizeMoments(d.moments),
     // Saves from before the basics campaign: a player with matches behind him has everything open.
-    onboarding: normalizeOnboarding(d.onboarding, d.record),
+    onboarding: normalizeOnboarding(d.onboarding, record),
     dda: normalizeDda(d.dda),
     run: normalizeRun(d.run),
     mastery: normalizeMastery(d.mastery),
@@ -325,20 +357,7 @@ export function importSave(raw: unknown): SaveData | null {
     if (!src || typeof src !== 'object' || Array.isArray(src)) return null;
     const d = src as Partial<SaveData>;
     if (d.version !== 1 || typeof d.coins !== 'number' || !d.settings || typeof d.settings !== 'object') return null;
-    const base = defaultSave();
-    const s = mergeSave(d);
-    s.coins = num(d.coins, base.coins);
-    s.clubIdx = num(d.clubIdx, base.clubIdx);
-    s.opponentIdx = num(d.opponentIdx, base.opponentIdx);
-    s.seenTutorial = d.seenTutorial === true;
-    s.career = d.career && typeof d.career === 'object' ? d.career : null;
-    const r = s.record;
-    for (const k of ['played', 'won', 'drawn', 'lost', 'goalsFor', 'goalsAgainst'] as const) r[k] = num(r[k]);
-    const g = d.gift;
-    s.gift = g && typeof g === 'object' && typeof g.last === 'string' ? { last: g.last, streak: num(g.streak, 1) } : undefined;
-    s.moments = normalizeMoments(d.moments);
-    s.updatedAt = typeof d.updatedAt === 'string' ? d.updatedAt : new Date().toISOString();
-    return s;
+    return mergeSave(d);
   } catch {
     return null;
   }

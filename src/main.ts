@@ -45,7 +45,7 @@ import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
 
-/** When the script started: the studio splash stays up at least SPLASH_MS from here. */
+/** A brief studio entrance on the standalone site; portals only wait for actual loading. */
 const bootAt = performance.now();
 const SPLASH_MS = 1100;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -946,6 +946,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
 }
 
 function pauseKey(e: KeyboardEvent): void {
+  if (e.repeat || (e.target instanceof HTMLElement && (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)))) return;
   if (isKey('pause', e.code) && session && !session.paused && !menus.open) session.requestPause();
 }
 
@@ -1032,10 +1033,15 @@ async function boot(): Promise<void> {
   // after the splash had gone).
   const ready = Promise.all([
     Promise.race([ads.init(), new Promise<void>((r) => setTimeout(r, 3000))]),
-    document.fonts?.ready,
-    document.fonts?.load("16px 'Silkscreen'").catch(() => []),
-    document.fonts?.load("16px 'Lilita One'").catch(() => []),
-    new Promise<void>((r) => setTimeout(r, Math.max(0, SPLASH_MS - (performance.now() - bootAt)))),
+    // Fonts must not strand the player on the loader when a font request hangs.
+    Promise.race([
+      Promise.all([
+        document.fonts?.load("16px 'Silkscreen'").catch(() => []),
+        document.fonts?.load("16px 'Lilita One'").catch(() => []),
+      ]),
+      new Promise<void>((r) => setTimeout(r, 3000)),
+    ]),
+    new Promise<void>((r) => setTimeout(r, PORTAL ? 0 : Math.max(0, SPLASH_MS - (performance.now() - bootAt)))),
   ]);
   // The menu's live pitch is built, and drawn once (compiling its shaders), UNDER the splash while it plays:
   // the splash only moves on the compositor, so this work doesn't stall it, and the title then comes in on a
@@ -1046,6 +1052,8 @@ async function boot(): Promise<void> {
     requestAnimationFrame(() => r());
     setTimeout(r, 60);
   });
+  const status = document.getElementById('boot-status');
+  if (status) status.textContent = 'GETTING THE PITCH READY';
   const t0 = performance.now();
   startDemo();
   const t1 = performance.now();
@@ -1056,6 +1064,7 @@ async function boot(): Promise<void> {
   await ready;
   performance.mark('bl:ready');
   requestAnimationFrame(frame);
+  document.getElementById('boot')?.setAttribute('aria-busy', 'false');
   document.getElementById('boot')?.classList.add('gone');
   ads.loadingDone();
   const params = new URLSearchParams(location.search);
@@ -1108,4 +1117,4 @@ if (import.meta.env.DEV) {
   };
 }
 
-void boot();
+export const ready = boot();

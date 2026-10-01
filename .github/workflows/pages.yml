@@ -31,6 +31,7 @@ jobs:
           tests/tackle.test.ts tests/camera.test.ts tests/throwin.test.ts tests/rules.test.ts
           tests/moments.test.ts tests/firstmatch.test.ts tests/market.test.ts
           tests/career.test.ts tests/progress.test.ts
+          tests/inputLifecycle.test.ts tests/ads.test.ts tests/releaseChecks.test.ts
       - name: Type-check and package the web game
         run: npm run build:web
         env:

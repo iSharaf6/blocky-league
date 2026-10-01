@@ -18,6 +18,7 @@ import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 import { formatBytes, verifyZip } from './lib.mjs';
+import { fileFingerprint, isSafeBundlePath, sourceFingerprint } from './release-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
@@ -243,6 +244,7 @@ function parseListing() {
   }
   L.age = plain((tags.match(/\*\*Age \/ content:\*\*([^\n]+)/) ?? [])[1] ?? '');
   L.accessibility = plain((tags.match(/\*\*Accessibility[^*]*\*\*([^\n]+)/) ?? [])[1] ?? '');
+  L.itchContent = quote(section('itch.io content'));
   const links = section('Links and contact');
   const link = (label) => {
     const v = (links.match(new RegExp(`- \\*\\*${label}:\\*\\*\\s*([^\\n]+)`)) ?? [])[1];
@@ -274,7 +276,10 @@ function checkZip(portal, cfg, zipPath) {
   res.bytes = entries.reduce((n, e) => n + e.data.length, 0);
   const names = entries.map((e) => e.name);
   if (!names.includes('index.html')) problem(portal, 'index.html is not at the zip root');
-  if (names.some((n) => n.startsWith('/') || n.includes('..') || n.includes('\\'))) problem(portal, 'zip has an absolute, "..", or backslash path');
+  if (names.some((n) => !isSafeBundlePath(n))) {
+    problem(portal, 'zip has an unsafe path (absolute, traversal, or backslash)');
+    return res; // never extract unsafe entries, even into the local Inspector folder
+  }
   const L = cfg.limits ?? {};
   if (L.files && res.files > L.files) problem(portal, `${res.files} files, over the limit of ${L.files}`);
   if (L.bytes && res.bytes > L.bytes) problem(portal, `${formatBytes(res.bytes)} unpacked, over ${formatBytes(L.bytes)}`);
@@ -290,7 +295,7 @@ function checkZip(portal, cfg, zipPath) {
       if (/serviceWorker/.test(text)) problem(portal, 'index.html registers a service worker (web build only)');
       if (/web-only:start/.test(text)) problem(portal, 'the web-only block was not stripped from index.html');
     } else if (/["'`]\/assets\//.test(text)) problem(portal, `${e.name} references /assets/ root-absolute`);
-    if (/wss:\/\//i.test(text)) problem(portal, `${e.name} contains a wss:// URL: online multiplayer must stay in the web build only`);
+    if (['crazygames', 'poki'].includes(portal) && /\bRTCPeerConnection\b|["'`](?:stun:|turn:|wss:\/\/)/i.test(text)) problem(portal, `${e.name} contains online networking code: it must be excluded from the CrazyGames/Poki builds`);
     for (const m of text.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)) {
       const h = m[1].toLowerCase();
       if (NOT_REQUESTS.has(h)) continue;
@@ -305,25 +310,13 @@ function checkZip(portal, cfg, zipPath) {
   return res;
 }
 
-/** The newest change to anything that goes into a build, to catch a zip that predates the source. */
-function newestSource() {
-  let t = 0;
-  let which = '';
-  for (const f of [...walk(join(ROOT, 'src')), ...walk(join(ROOT, 'public')), join(ROOT, 'index.html'), join(ROOT, 'package-lock.json'), join(ROOT, 'vite.config.ts')]) {
-    if (!existsSync(f)) continue;
-    const m = statSync(f).mtimeMs;
-    if (m > t) { t = m; which = f; }
-  }
-  return { t, which };
-}
-
 // ------------------------------------------------------------------ listing.txt per portal
 
 /** Local date and time, YYYY-MM-DD HH:MM (the owner reads these, not UTC). */
 function local(ms) {
-  const d = new Date(ms);
-  const z = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`;
+  const parts = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(ms);
+  const part = (type) => parts.find((p) => p.type === type).value;
+  return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')} Australia/Sydney`;
 }
 
 const hr = (t) => `\n=== ${t} ${'='.repeat(Math.max(3, 66 - t.length))}\n`;
@@ -358,6 +351,9 @@ function listingText(portal, L0, zipName) {
     add('Made with', L.madeWith);
     add('Settings to switch on', [
       'Automatic Progress Save: ON (the game has no purchases, so no SDK data code is needed)',
+      'Launch phase: Basic Launch first (ads disabled). Full Launch/monetization requires CrazyGames approval.',
+      'Before Full Launch: test progress restoration for a signed-in CrazyGames user on a second device.',
+      'Preview QA: check loading/gameplay events, portal muteAudio, ad success/error/adblock, and touch controls.',
       'Multiplayer: NO (single player; online play is web-build only and is not in this zip)',
       'In-game purchases: NO. External links: NO. Custom fullscreen button: NO.',
     ].join('\n'));
@@ -424,7 +420,7 @@ function listingText(portal, L0, zipName) {
     add('Tags (up to 10)', t['itch.io'].tags);
     add('Made with', L.madeWith);
     add('AI generation disclosure (OWNER DECIDES)', 'itch asks you to tag a project that contains material produced by generative AI. The game\'s code (which also generates every model, texture and sound) was written with an AI coding assistant. Answer honestly; if unsure, disclose it.');
-    add('Age / content', L.age);
+    add('Age / content', L.itchContent);
     add('Privacy / contact', `${L.privacy}\n${L.contact}`);
     add('Files', [
       'Cover image:  cover/itch-cover-630x500.png',
@@ -461,7 +457,7 @@ if (/voiced|spoken commentary|voice commentary/i.test(L.long + L.short)) warning
 if (/online|multiplayer/i.test(L.long + L.short + L.gdDescription)) warnings.push('[listing] the portal copy mentions online play, which is not in the portal builds');
 
 mkdirSync(OUT, { recursive: true });
-const src = newestSource();
+const sourceHash = sourceFingerprint(ROOT);
 const summary = [];
 for (const [portal, cfg] of Object.entries(PORTALS)) {
   const dir = join(OUT, portal);
@@ -474,14 +470,21 @@ for (const [portal, cfg] of Object.entries(PORTALS)) {
     const zipPath = join(REL, zipName);
     if (!existsSync(zipPath)) problem(portal, `${rel(zipPath)} not found: run npm run build:all`);
     else {
-      const age = statSync(zipPath).mtimeMs;
-      if (src.t > age + 1000) {
-        warn(portal, `the zip (built ${local(age)}) is older than the source (${rel(src.which)}, changed ${local(src.t)}): run npm run build:all, then npm run submission again`);
+      const metadataPath = zipPath.replace(/\.zip$/, '.json');
+      let current = false;
+      try {
+        const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+        current = metadata.sourceHash === sourceHash && metadata.zipHash === fileFingerprint(zipPath) && metadata.variant === cfg.zip && metadata.version === V;
+        if (!current) {
+          problem(portal, 'the ZIP does not match the current source/version or its release metadata: run npm run build:all, then npm run submission again');
+        }
+      } catch {
+        problem(portal, `release metadata ${rel(metadataPath)} is missing or invalid: run npm run build:all, then npm run submission again`);
       }
-      copyTo(zipPath, join(dir, 'upload'), portal, 'zip');
+      if (current) copyTo(zipPath, join(dir, 'upload'), portal, 'zip');
       const z = checkZip(portal, cfg, zipPath);
-      Object.assign(row, { zip: zipName, files: z.files, bytes: z.bytes, hosts: [...z.hosts.keys()] });
-      if (cfg.inspectorFolder && z.entries) {
+      Object.assign(row, { zip: current ? zipName : null, files: z.files, bytes: z.bytes, hosts: [...z.hosts.keys()] });
+      if (current && cfg.inspectorFolder && z.entries) {
         const f = join(dir, 'upload', 'inspector-folder');
         for (const e of z.entries) {
           const p = join(f, e.name);
@@ -547,7 +550,8 @@ writeFileSync(join(OUT, 'README.txt'), [
   'and listing.txt with every field to paste. The click-by-click guide is docs/SUBMIT.md.',
   '',
   'Recommended order: crazygames/ first (open submission, Basic Launch), itch/ any time (free, no review),',
-  'poki/ only if you choose Poki\'s web-exclusive deal instead of the others, gamedistribution/ once it has an SDK build.',
+  'poki/ after a curated publishing agreement (the preferred exclusive deal conflicts with other web portals;',
+  'a non-exclusive license-fee option may be offered instead). gamedistribution/ once it has an SDK build.',
   '',
   'media/ holds the source screenshots and videos (captured from the game). The portal folders are rebuilt from it',
   'and from release/*.zip + store-assets/ every time you run the script; nothing in media/ is changed.',
@@ -574,7 +578,7 @@ for (const r of summary) {
 console.log('\nStill yours to do (nobody else can):');
 console.log('  [ ] CrazyGames: create the developer account, upload crazygames/upload/*.zip, add covers + videos, paste listing.txt, test in the Preview tool, submit');
 console.log('  [ ] itch.io: create the account, new project (Kind: HTML), upload itch/upload/*.zip, paste listing.txt, answer the AI disclosure, publish');
-console.log('  [ ] Poki: only if you choose web exclusivity; apply first, then test poki/upload/inspector-folder in Poki Inspector');
+console.log('  [ ] Poki: apply first, review the offered exclusivity/license terms, then test poki/upload/inspector-folder in Poki Inspector');
 console.log('  [ ] GameDistribution: wait for an SDK build');
 if (warnings.length) {
   console.log('\nWarnings:');
@@ -585,4 +589,4 @@ if (problems.length) {
   for (const p of problems) console.log(`  - ${p}`);
   process.exit(1);
 }
-console.log('\nAll checks passed.');
+console.log('\nAll packaged-variant checks passed. GameDistribution remains unavailable until its SDK build exists.');

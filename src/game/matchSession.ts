@@ -276,6 +276,7 @@ export class MatchSession {
   readonly touch: TouchControls | null;
   private trainer: Trainer | null = null;
   paused = false;
+  private padPauseHeld = false;
   /** Online: the lockstep driver (see StepDriver); null for a local match. */
   driver: StepDriver | null = null;
   /** Online: seconds the sim has been waiting on the driver (the other machine's pads), 0 while stepping. */
@@ -574,6 +575,9 @@ export class MatchSession {
   requestPause(): void {
     if (this.demo || this.paused) return;
     this.paused = true;
+    this.input.reset();
+    this.touch?.setVisible(false);
+    this.clearLatch();
     sfx.setAmbienceActive(false);
     this.onPause?.();
   }
@@ -2399,12 +2403,13 @@ export class MatchSession {
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
       // Off for the referee close-up too (the buttons would sit on the booked player).
-      this.touch.setVisible(!(this.introLeft > 0 || this.replay || this.cam.mode === 'card' || m.phase === 'goal' || m.phase === 'halftime' || m.phase === 'fulltime'));
+      this.touch.setVisible(!(this.paused || this.introLeft > 0 || this.replay || this.cam.mode === 'card' || m.phase === 'goal' || m.phase === 'halftime' || m.phase === 'fulltime'));
       this.touch.setContext(ctx);
     }
     // Pause via keyboard / gamepad.
     const c = this.input.gamepadPause();
-    if (c && !this.paused) this.requestPause();
+    if (c && !this.padPauseHeld && !this.paused) this.requestPause();
+    this.padPauseHeld = c;
   }
 
   /** The touch-button context the hints are worded for this frame (see updateHud). */
@@ -2705,7 +2710,7 @@ export class MatchSession {
     this.blitz?.dispose();
     this.blitz = null;
     this.hud?.dispose();
-    this.touch?.root.remove();
+    this.touch?.dispose();
     this.input.touch.enabled = false;
     this.stadium.group.traverse((o) => {
       const mesh = o as THREE.Mesh;

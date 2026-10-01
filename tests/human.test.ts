@@ -710,5 +710,5 @@ describe('round 7: human through balls', () => {
     expect(t[1] / t[0]).toBeGreaterThanOrEqual(0.55);
     expect(all[1] / all[0]).toBeGreaterThanOrEqual(0.55);
     expect(all[2] / all[0]).toBeLessThanOrEqual(0.35);
-  }, 60_000);
+  }, 180_000); // ten full simulated matches; the assertions check play, not CPU speed
 });

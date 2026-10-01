@@ -14,6 +14,7 @@ import { dirname, extname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { formatBytes, verifyZip, zipDirectory } from './lib.mjs';
+import { fileFingerprint, sourceFingerprint } from './release-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
@@ -34,6 +35,8 @@ const VARIANTS = {
 const WEB_ONLY_FILES = ['sw.js', 'manifest.webmanifest', 'icons', 'apple-touch-icon.png', 'og-image.png', 'robots.txt', 'privacy.html'];
 const WEB_ONLY_BLOCK = /[ \t]*<!-- web-only:start[\s\S]*?<!-- web-only:end -->\n?/;
 const TEXT_EXT = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.txt', '.svg']);
+const PORTAL_HOSTS = { crazygames: ['sdk.crazygames.com'], poki: ['game-cdn.poki.com'], itch: [] };
+const NOT_REQUESTS = new Set(['www.w3.org', 'jcgt.org']);
 
 // three.js (MIT) and the two fonts (SIL OFL 1.1) require their notices to travel with every copy.
 // The minified bundle drops comments, so each build ships this file, generated from the
@@ -68,7 +71,14 @@ function checkOutput(outDir, variant) {
   if (!existsSync(indexPath)) problems.push('index.html missing at the build root');
   const html = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : '';
   // Root-absolute URLs break when a portal serves the game from a sub-path.
-  for (const m of html.matchAll(/\b(?:src|href)="(\/(?!\/)[^"]*)"/g)) problems.push(`root-absolute URL in index.html: ${m[1]}`);
+  for (const m of html.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) {
+    const url = m[1];
+    if (/^\/(?!\/)/.test(url)) problems.push(`root-absolute URL in index.html: ${url}`);
+    else if (!/^(?:[a-z]+:|\/\/|#)/i.test(url)) {
+      const asset = url.split(/[?#]/)[0];
+      if (asset && !existsSync(join(outDir, asset))) problems.push(`missing asset referenced by index.html: ${url}`);
+    }
+  }
   if (!VARIANTS[variant].webOnly) {
     if (html.includes('web-only:start')) problems.push('web-only block was not stripped');
     if (html.includes('serviceWorker')) problems.push('service worker registration left in a portal build');
@@ -78,11 +88,16 @@ function checkOutput(outDir, variant) {
   for (const f of walk(outDir)) {
     if (!TEXT_EXT.has(extname(f)) || f.endsWith(LICENSES_FILE)) continue; // licence URLs are not requests
     const text = readFileSync(f, 'utf8');
-    if (extname(f) !== '.html' && /["'`]\/assets\//.test(text)) warnings.push(`${relative(outDir, f)} references /assets/ root-absolute`);
+    if (extname(f) !== '.html' && /["'`]\/assets\//.test(text)) problems.push(`${relative(outDir, f)} references /assets/ root-absolute`);
     for (const m of text.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)) {
       const h = m[1].toLowerCase();
       hosts.set(h, (hosts.get(h) ?? 0) + 1);
     }
+  }
+  if (!VARIANTS[variant].webOnly) {
+    const allowed = PORTAL_HOSTS[variant];
+    for (const host of hosts.keys()) if (!NOT_REQUESTS.has(host) && !allowed.includes(host)) problems.push(`unexpected external host in ${variant}: ${host}`);
+    for (const host of allowed) if (!hosts.has(host)) problems.push(`${variant} SDK host missing: ${host}`);
   }
   return { problems, warnings, hosts };
 }
@@ -95,6 +110,7 @@ async function buildVariant(variant) {
   // Vite exposes VITE_* vars from process.env to import.meta.env; ads.ts reads VITE_PORTAL.
   process.env.VITE_PORTAL = cfg.portal;
   [process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY] = cfg.webOnly ? CLOUD_ENV : ['', '']; // cloud saves never ship in portal / itch zips
+  const sourceHash = sourceFingerprint(ROOT);
   await build({
     root: ROOT,
     mode: 'production',
@@ -127,13 +143,19 @@ async function buildVariant(variant) {
   const zip = zipDirectory(outDir, zipPath);
   const names = verifyZip(zipPath);
   if (!names.includes('index.html')) problems.push('index.html is not at the zip root');
+  if (sourceFingerprint(ROOT) !== sourceHash) problems.push('source changed during the build; rebuild before uploading');
+  // Kept beside the ZIP, outside the game bundle. Submission verifies both source
+  // and ZIP hashes, so changing a checkout timestamp cannot make a stale build pass.
+  writeFileSync(zipPath.replace(/\.zip$/, '.json'), JSON.stringify({
+    variant, version: pkg.version, builtAt: new Date().toISOString(), sourceHash, zipHash: fileFingerprint(zipPath),
+  }, null, 2) + '\n');
 
   console.log(`  files: ${files.length}   unpacked: ${formatBytes(raw)}   zip: ${formatBytes(zip.zipSize)}  (${relative(ROOT, zipPath)}, verified)`);
   const big = zip.entries.filter((e) => e.size > 300 * 1024).sort((a, b) => b.size - a.size);
   for (const e of big) console.log(`  large: ${e.name.split('/').join(sep)}  ${formatBytes(e.size)} → ${formatBytes(e.packed)}`);
   console.log(`  external hosts referenced: ${hosts.size ? [...hosts].map(([h, n]) => `${h} (${n})`).join(', ') : 'none'}`);
-  for (const w of warnings) console.log(`  warning: ${w}`);
   if (zip.zipSize > ZIP_BUDGET) warnings.push(`zip is ${formatBytes(zip.zipSize)}, over the 5 MB budget`);
+  for (const w of warnings) console.log(`  warning: ${w}`);
   for (const p of problems) console.error(`  PROBLEM: ${p}`);
   return { variant, files: files.length, raw, zip: zip.zipSize, zipPath, ok: problems.length === 0 };
 }
