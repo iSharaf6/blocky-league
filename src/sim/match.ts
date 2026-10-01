@@ -2532,7 +2532,8 @@ export class Match {
       if (incoming && d >= 4 && (shootP || throughP)) {
         const o = this.order(p, shootP ? 'shot' : 'through', shootP && stickLen <= 0.25 ? 0 : dirX,
           shootP && stickLen <= 0.25 ? 0 : dirZ, shootP ? 0.65 : 0.7, -1, true);
-        if (o) o.expires = 1.4;
+        // An early tap belongs to this flight: keep it through the predicted arrival, with a bounded grace.
+        if (o) o.expires = clamp(intercept(this, p).t + 0.5, 1.4, 3.2);
       }
       if (loose && d < 4) {
         if (passP || (this.h.passBuffer > 0 && this.passTarget === p.idx)) {

@@ -214,7 +214,7 @@ function applySettings(): void {
   if (session) {
     // (Not online: each side's controls there were agreed before the kick-off, and a change on one machine
     // only would split the two games apart.)
-    if (!session.driver) applyControls(session.match);
+    if (!session.driver) applyControls(session.match, basicsNow ? CONTROL_DEFAULTS : controlsOf(save.settings));
     if (basicsNow) session.match.trainer = true;
     session.hud?.setCommentary(s.commentary);
     session.hud?.setColorblind(!!s.colorblind);
@@ -533,8 +533,8 @@ let basicsNow = false;
 
 /**
  * LEARN THE BASICS step `step` (meta/moments.ts BASICS): a tiny staged drill on the Moments engine, with the
- * trainer's one-at-a-time prompts. No result screen: a miss restarts it at once (`again`), a goal goes to the
- * next step, and after the last one the YOU'RE READY card offers the first match.
+ * trainer's one-at-a-time prompts. No result screen: a miss restarts it at once (`again`), a completed pass
+ * or scoring drill goes to the next step, then the YOU'RE READY card offers the first match.
  */
 function startBasics(step: number, again = false): void {
   const b = BASICS[Math.max(0, Math.min(BASICS.length - 1, step))];
@@ -721,7 +721,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     startPower: req.startPower,
     sideDifficulty: req.sideDifficulty,
   });
-  applyControls(session.match);
+  applyControls(session.match, basics ? CONTROL_DEFAULTS : controlsOf(save.settings));
   // The basics prompts live in the trainer: it is on for them whatever Settings says.
   if (basics) session.match.trainer = true;
   session.hud?.setCommentary(save.settings.commentary && !basics);
@@ -985,7 +985,7 @@ let basicsDeadT = 0;
 /** No chasing an AI player round the pitch for half a minute in a lesson: lose it, and the step starts again. */
 function basicsWatch(dt: number): void {
   const s = session;
-  if (!basicsNow || !s || s.paused) {
+  if (!basicsNow || !s || s.paused || s.teachingHeld) {
     basicsLostT = basicsDeadT = 0;
     return;
   }

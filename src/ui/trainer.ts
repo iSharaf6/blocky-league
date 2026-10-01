@@ -88,7 +88,7 @@ function teachCue(step: TeachStep, device: Device): TrainerCue {
  * LEARN THE BASICS: a drill's prompts (meta/moments.ts BasicsStep.lesson), one at a time. main.ts puts the
  * step's lesson in Trainer.lesson and forwards the match events to event(); the trainer card shows `cue`.
  * A cue waits `after` seconds of play (from the start, or from the previous cue being done) and for its
- * `when` to hold; the action it teaches clears it, even one done early (a quick pass skips the PASS card).
+ * `when` to hold. Cues advance in order; PASS waits for reception, CROSS for a lofted delivery.
  */
 export class Lesson {
   private i = 0;
@@ -96,6 +96,9 @@ export class Lesson {
   private from = -1;
   private sprintT = 0;
   private lastClock = -1;
+  private released = false;
+  private receiver = -1;
+  private receiveKick = -1;
   constructor(readonly cues: readonly LessonCue[]) {}
 
   /** The cue waiting to be learned (null: all done). */
@@ -104,25 +107,37 @@ export class Lesson {
   }
 
   private done(what: LessonCue['done']): void {
-    // An action done early counts for its cue, and for any cue before it that taught the same thing.
-    const at = this.cues.findIndex((c, k) => k >= this.i && c.done === what);
-    if (at < 0) return;
-    this.i = at + 1;
+    // Learn in order: a direct shot must not skip the PASS or CROSS instruction.
+    if (this.current?.done !== what) return;
+    this.i++;
     this.from = -1;
     this.sprintT = 0;
+    this.released = false;
   }
 
   /** Every match event (main.ts): our kicks clear PASS / SHOOT / CROSS cues. */
   event(e: MatchEvent, m: Match): void {
+    if (e.type === 'control' && e.player === this.receiver && m.kickId === this.receiveKick && m.players[e.player]?.side === m.cfg.humanSide) {
+      this.done('pass');
+      this.receiver = -1;
+    }
     if (e.type !== 'kick') return;
     const hs = m.cfg.humanSide;
     const by = m.players[m.ball.lastTouch];
     if (!by || by.side !== hs) return;
     if (e.kind === 'shot' || e.kind === 'header') this.done('shot');
-    else if (e.kind === 'through' || e.kind === 'lob') {
-      this.done('cross');
-      this.done('pass');
-    } else if (e.kind === 'pass') this.done('pass');
+    else if (e.kind === 'lob') this.done('cross');
+    else if (e.kind === 'pass' && this.current?.done === 'pass') {
+      this.receiver = m.passTarget;
+      this.receiveKick = m.kickId;
+    }
+  }
+
+  /** Give a beginner time to read each cue. The same fresh action then starts live play. */
+  hold(m: Match, c: TeachControls & { shoot?: boolean; through?: boolean }): boolean {
+    if (this.released || !this.current || !this.show(m, c)) return false;
+    if (c.pass || c.shoot || c.through || c.sprint || Math.hypot(c.sx, c.sy) > 0.3) this.released = true;
+    return !this.released;
   }
 
   /** The cue to show now, if its time and moment have come (called by the trainer each frame). */
@@ -309,12 +324,12 @@ export class Trainer {
     const teaching = !lesson && this.teach(m, frame, device, controls);
     let cue: TrainerCue | null = null;
     if (lesson) {
-      // A basics drill: its one prompt (or nothing, while the next one waits its turn).
+      // In flight, after a miss, or once the taught action is done, keep useful recovery guidance visible.
       const lc = lesson.show(m, controls ?? this.fed ?? Trainer.input?.read() ?? null);
-      cue = lc ? { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveKeys(device).split(' / ')[0] : actionKey(lc.key, device), lc.text]], detail: '' } : null;
+      cue = lc ? { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveKeys(device).split(' / ')[0] : actionKey(lc.key, device), lc.text]], detail: '' } : trainerCue(m, device);
       this.card.classList.toggle('lesson', !!lc);
       this.card.classList.toggle('teach', !!lc);
-      this.card.hidden = !lc;
+      this.card.hidden = false;
     } else {
       this.card.hidden = false;
       cue = teaching ? null : trainerCue(m, device);

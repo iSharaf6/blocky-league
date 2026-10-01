@@ -449,7 +449,7 @@ export class MatchSession {
     // recorded; no fly-in, the brief instead of the fixture card.
     if (opt.scenario && !this.demo) {
       applyScenario(this.match, opt.scenario);
-      this.moment = { spec: opt.scenario, briefT: MOMENT_BRIEF_S, outcome: null, endT: -1, count: -1 };
+      this.moment = { spec: opt.scenario, briefT: opt.scenario.untimed ? 0 : MOMENT_BRIEF_S, outcome: null, endT: -1, count: -1 };
     }
     const teams = this.match.teams;
     const level = Math.max(0, Math.min(5, Math.round(opt.stadiumLevel ?? 5)));
@@ -531,7 +531,8 @@ export class MatchSession {
     sfx.setAmbienceActive(!this.demo);
     if (this.hud && this.moment) {
       const s = this.moment.spec;
-      this.hud.show(s.title, s.brief, 'small intro', MOMENT_BRIEF_S - 0.1);
+      // Practice waits on its teaching cue, never on a timed intro that swallows the first action.
+      if (!s.untimed) this.hud.show(s.title, s.brief, 'small intro', MOMENT_BRIEF_S - 0.1);
       this.hud.setScore(this.match.score[0], this.match.score[1]);
       this.stadium.setScore(this.match.score[0], this.match.score[1], `${this.match.minute()}'`);
       this.prevButtons = true;
@@ -715,6 +716,9 @@ export class MatchSession {
       this.firstMatchHold(dt);
     } else if (this.replay) {
       this.stepReplay(dt);
+    } else if (this.holdLesson()) {
+      this.acc = 0;
+      this.view.apply(this.prev, this.cur, 1, this.time, dt);
     } else {
       const drv = this.driver;
       this.acc += drv ? dt * drv.pace() : dt;
@@ -919,6 +923,24 @@ export class MatchSession {
     if (this.clipLive && this.clips.recording && m.phase !== 'goal') this.endClip();
     if (this.posterWanted) this.takePoster();
     this.anyPress = false;
+  }
+
+  /** Untimed teaching cards hold players and the ball, rather than letting the AI spoil the setup. */
+  private holdLesson(): boolean {
+    const lesson = this.moment?.spec.untimed ? Trainer.lesson : null;
+    if (!lesson || this.match.phase !== 'play') return false;
+    const c = this.input.read();
+    if (this.eatButtons) {
+      if (c.pass || c.shoot || c.through) { this.clearLatch(); return true; }
+      this.eatButtons = false;
+    }
+    return lesson.hold(this.match, { ...c, pass: c.pass || this.latch.pass,
+      shoot: c.shoot || this.latch.shoot, through: c.through || this.latch.through });
+  }
+
+  /** Recovery timers use live simulation time, so reading a cue never causes an unexplained retry. */
+  get teachingHeld(): boolean {
+    return !!this.moment?.spec.untimed && this.match.phase === 'play' && this.holdLesson();
   }
 
   /** Goal → celebration → replay → kick-off; half/full time callbacks. */
@@ -2279,8 +2301,8 @@ export class MatchSession {
       if (s !== this.lastMinute) {
         this.lastMinute = s;
         hud.setCountdown(s);
-        this.stadium.setScore(m.score[0], m.score[1], `${s}s`);
-        if (s > 0 && s <= MOMENT_COUNT_S && !mo.outcome && mo.briefT <= 0 && m.phase !== 'goal' && s !== mo.count) {
+        this.stadium.setScore(m.score[0], m.score[1], mo.spec.untimed ? hud.countdownLabel ?? 'PRACTICE' : `${s}s`);
+        if (!mo.spec.untimed && s > 0 && s <= MOMENT_COUNT_S && !mo.outcome && mo.briefT <= 0 && m.phase !== 'goal' && s !== mo.count) {
           mo.count = s;
           hud.show(String(s), '', 'small', 0.85);
         }

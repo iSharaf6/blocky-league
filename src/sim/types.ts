@@ -92,6 +92,10 @@ export interface ScenarioSpec {
   /** Match clock at the start (s) and how long the moment runs (s). */
   clock: number;
   seconds: number;
+  /** Practice drills wait for the skill, with no countdown or time-up failure. */
+  untimed?: boolean;
+  /** Small teaching drills can omit offside; ordinary moments retain the match's rules. */
+  offside?: boolean;
   score: [number, number];
   humanSide: Side;
   /** DIFFICULTIES index (0 easy .. 3 legend), converted by the match request. */
@@ -109,7 +113,9 @@ export interface ScenarioSpec {
   /** A restart to begin from instead of open play (a corner, a penalty…). */
   restart?: RestartKind | null;
   /** What wins it, judged when the time is up or the moment ends early. */
-  goal: 'score' | 'lead' | 'no-concede' | 'draw-or-better' | 'win-shootout';
+  goal: 'score' | 'complete-pass' | 'lead' | 'no-concede' | 'draw-or-better' | 'win-shootout';
+  /** A scoring drill must first perform this kind of kick (e.g. a cross, not a direct shot). */
+  requireKick?: 'lob';
   /** Star thresholds, meaning depends on `goal` (e.g. seconds left on scoring, goals margin). */
   stars?: [number, number, number];
 }
