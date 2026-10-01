@@ -316,11 +316,14 @@ export class Trainer {
     };
     const a = m.active * PF;
     const at = project(frame[a], head + frame[a + 2], frame[a + 1]);
-    if (!at.visible || at.x < 0 || at.x > w || at.y < 65 || at.y > h - 25) { this.hide(); return; }
+    const lesson = Trainer.lesson;
+    const docked = !at.visible || at.x < 0 || at.x > w || at.y < 65 || at.y > h - 25;
+    // A teaching hold can switch control to a runner near the screen edge. Keep its instruction visible:
+    // hiding it would freeze the ball while the player has no cue telling them how to continue.
+    if (docked && !lesson) { this.hide(); return; }
     this.root.hidden = false;
     const goal = project(m.attackDir(m.players[m.active].side) * HALF_L, 0, 0);
     const direction = Math.abs(goal.x - at.x) > 70 ? (goal.x > at.x ? ' →' : ' ←') : ' ↑';
-    const lesson = Trainer.lesson;
     const teaching = !lesson && this.teach(m, frame, device, controls);
     let cue: TrainerCue | null = null;
     if (lesson) {
@@ -354,15 +357,15 @@ export class Trainer {
     // hangs under his feet instead. Never over the score, or the bottom touch controls.
     const cw = this.card.offsetWidth, ch = this.card.offsetHeight;
     const feet = project(frame[a], 0, frame[a + 1]);
-    let x = at.x - cw / 2;
-    let y = at.y - ch - CARD_GAP;
+    let x = docked ? (w - cw) / 2 : at.x - cw / 2;
+    let y = docked ? 70 : at.y - ch - CARD_GAP;
     let below = false;
-    if (y < 70) {
+    if (!docked && y < 70) {
       y = feet.y + CARD_GAP;
       below = true;
     }
     const ball = project(frame[BALL_OFS], 0.14, frame[BALL_OFS + 2]);
-    if (ball.visible && ball.x > x - 24 && ball.x < x + cw + 24 && ball.y > y - 24 && ball.y < y + ch + 24) {
+    if (!docked && ball.visible && ball.x > x - 24 && ball.x < x + cw + 24 && ball.y > y - 24 && ball.y < y + ch + 24) {
       x = ball.x > at.x ? at.x - cw + CARD_TIP_IN : at.x - CARD_TIP_IN;
     }
     x = clamp(x, 10, w - cw - 10);
@@ -370,6 +373,7 @@ export class Trainer {
     // The tip sits over the player, wherever the card had to slide.
     this.card.style.setProperty('--tip', `${Math.round(clamp(at.x - x, 12, cw - 12))}px`);
     this.card.classList.toggle('below', below);
+    this.card.classList.toggle('docked', docked);
     this.card.style.visibility = 'visible';
     this.card.style.transform = `translate(${Math.round(x)}px,${Math.round(y)}px)`;
     const idx = m.passCharge >= 0 ? m.passAim : m.passPreview;

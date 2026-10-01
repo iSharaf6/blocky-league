@@ -4598,6 +4598,7 @@ button.mc-pl:active {
 .trainer-card { position: absolute; top: 0; left: 0; width: max-content; max-width: calc(100vw - 20px); padding: 7px 10px 8px; background: #26262eef; color: #fbfbf4; border-top: 2px solid #ffd23a; box-shadow: 2px 3px 0 #0003; }
 /* Its pointer: a pixel tip under the card (over it when the card hangs below his feet) at --tip, over the player. */
 .trainer-card::after { content: ''; position: absolute; left: var(--tip, 50%); top: 100%; width: 0; height: 0; margin-left: -7px; border: 7px solid transparent; border-top-color: #26262eef; border-bottom: 0; }
+.trainer-card.docked::after { display: none; }
 .trainer-card.below::after { top: auto; bottom: 100%; border-top: 0; border-bottom: 7px solid #ffd23a; }
 .trainer-card.teach.below::after { border-bottom-color: var(--go); }
 .trainer-card.lesson.below::after { border-bottom-color: var(--yellow); }

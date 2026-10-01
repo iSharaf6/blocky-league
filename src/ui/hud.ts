@@ -233,7 +233,14 @@ export class Hud {
       this.radarObs = new ResizeObserver(() => (this.radarDirty = true));
       this.radarObs.observe(this.radar);
     }
-    this.root.querySelector('.hud-pause')!.addEventListener('click', () => this.onPause?.());
+    const pause = this.root.querySelector('.hud-pause')!;
+    // A second finger does not synthesize click while the first is still holding the stick.
+    pause.addEventListener('pointerdown', (e) => {
+      if ((e as PointerEvent).pointerType !== 'touch') return;
+      e.preventDefault();
+      this.onPause?.();
+    });
+    pause.addEventListener('click', () => this.onPause?.());
     if (humanSide < 0) this.chip.style.display = 'none';
   }
 
