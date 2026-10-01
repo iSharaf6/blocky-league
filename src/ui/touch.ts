@@ -48,8 +48,14 @@ export class TouchControls {
   onPower: (() => void) | null = null;
   private powerTimer = 0;
   private powerHeld = false;
+  private readonly blur = () => this.releaseAll();
+  private readonly visibility = () => {
+    if (document.hidden) this.releaseAll();
+  };
 
   constructor(private input: Input) {
+    window.addEventListener('blur', this.blur);
+    document.addEventListener('visibilitychange', this.visibility);
     this.root = document.createElement('div');
     this.root.className = 'touch';
     this.root.innerHTML = `
@@ -215,12 +221,23 @@ export class TouchControls {
   private releaseAll(): void {
     const t = this.input.touch;
     t.pass = t.shoot = t.through = t.sprint = t.power = false;
+    window.clearTimeout(this.skipTimer);
+    this.skipTimer = 0;
     window.clearTimeout(this.powerTimer);
     this.powerTimer = 0;
     this.powerHeld = false;
     this.btns.forEach((b) => b.classList.remove('down'));
     this.root.querySelector('.tb-power')?.classList.remove('down');
-    if (this.stickId !== null) this.releaseStick();
+    this.releaseStick();
+  }
+
+  /** A new match shares Input; leave no held control or timer behind when this overlay is removed. */
+  dispose(): void {
+    this.releaseAll();
+    this.input.touch.enabled = false;
+    window.removeEventListener('blur', this.blur);
+    document.removeEventListener('visibilitychange', this.visibility);
+    this.root.remove();
   }
 
   setEnabled(v: boolean): void {

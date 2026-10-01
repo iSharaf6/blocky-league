@@ -58,177 +58,6 @@ body {
   pointer-events: auto;
 }
 
-/* ---------------------------------------------------------------- boot */
-
-/* The studio splash, in the game's own world: its sky over a striped lawn with a white touchline, blocky
-   clouds, the Calynx wordmark in cream with an ink block shadow (like the game's title) dropping in letter by
-   letter, and the pixel ball rolling in to hop on the grass as the loader. Everything that moves is a
-   transform or opacity on its own element, so it runs on the compositor and stays smooth while the game builds
-   its first scene underneath (main.ts). Shown for at least SPLASH_MS, then fades into the title. */
-#boot {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  overflow: hidden;
-  background: linear-gradient(#6fc6f2 0%, #93d6f6 42%, #c6ebfb 62%, #d8f1ff 66%);
-  transition: opacity 0.45s ease 0.1s, visibility 0s linear 0.6s;
-}
-
-#boot.gone {
-  opacity: 0;
-  visibility: hidden;
-}
-
-.boot-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
-
-.boot-grass {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 66%;
-  bottom: 0;
-  background:
-    linear-gradient(#fbfbf4 0 6px, rgba(38, 38, 46, 0.1) 6px 12px, transparent 12px),
-    repeating-linear-gradient(90deg, #a2d65c 0 72px, #88c247 72px 144px);
-}
-
-.boot-cloud {
-  position: absolute;
-  width: 104px;
-  height: 22px;
-  background: #fff;
-  box-shadow: 0 6px 0 rgba(38, 38, 46, 0.06);
-  animation: boot-drift 9s ease-in-out infinite alternate;
-}
-
-.boot-cloud::before {
-  content: '';
-  position: absolute;
-  left: 22px;
-  bottom: 100%;
-  width: 50px;
-  height: 16px;
-  background: #fff;
-}
-
-.boot-cloud.c1 { top: 13%; left: 9%; }
-.boot-cloud.c2 { top: 24%; right: 10%; transform: scale(0.8); animation-delay: -4s; }
-.boot-cloud.c3 { top: 7%; right: 33%; transform: scale(0.6); animation-delay: -7s; opacity: 0.85; }
-
-@keyframes boot-drift {
-  from { translate: -18px 0; }
-  to { translate: 18px 0; }
-}
-
-/* The wordmark and the ball, standing on the touchline (the stage's bottom edge is the grass's top edge). */
-.boot-stage {
-  position: absolute;
-  left: 50%;
-  bottom: 34%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 62px;
-  transform: translateX(-50%);
-  transition: transform 0.32s cubic-bezier(0.3, 0, 0.7, 0.2), opacity 0.3s ease;
-}
-
-#boot.gone .boot-stage { transform: translateX(-50%) translateY(-12px) scale(1.08); opacity: 0; }
-
-.boot-logo {
-  display: flex;
-  align-items: flex-end;
-  animation: boot-bump 0.34s 0.98s cubic-bezier(0.2, 0.9, 0.3, 1) both;
-}
-
-/* Each letter falls in from above and lands with a squash, left to right, like blocks being stacked. */
-.boot-logo i {
-  display: block;
-  line-height: 0;
-  transform-origin: 50% 100%;
-  animation: boot-drop 0.5s cubic-bezier(0.3, 0.8, 0.35, 1) both;
-  animation-delay: calc(0.08s + var(--i) * 0.075s);
-}
-
-/* Whole pixels per logo cell (46 rows): 3 px on a big screen, 2 on a phone, so every block edge stays crisp. */
-.boot-logo svg { display: block; width: auto; height: 138px; }
-
-@keyframes boot-drop {
-  from { transform: translateY(-75vh); }
-  58% { transform: translateY(0) scale(1.1, 0.84); }
-  78% { transform: translateY(-7px) scale(0.97, 1.04); }
-  to { transform: none; }
-}
-
-/* The ball's first hop taps the wordmark from below. */
-@keyframes boot-bump {
-  0% { transform: none; }
-  40% { transform: translateY(-7px); }
-  100% { transform: none; }
-}
-
-.boot-ball {
-  width: 48px;
-  height: 48px;
-  animation: boot-rollin 0.6s 0.38s cubic-bezier(0.2, 0.7, 0.3, 1) both, boot-hop 0.5s 0.98s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
-}
-
-.boot-ball svg { display: block; width: 100%; height: 100%; }
-
-.boot-shadow {
-  position: absolute;
-  left: 50%;
-  bottom: -4px;
-  width: 50px;
-  height: 8px;
-  margin-left: -25px;
-  background: rgba(38, 38, 46, 0.22);
-  animation: boot-shadow-in 0.6s 0.38s cubic-bezier(0.2, 0.7, 0.3, 1) both, boot-shadow 0.5s 0.98s cubic-bezier(0.35, 0, 0.65, 1) infinite alternate;
-}
-
-@keyframes boot-rollin {
-  from { transform: translateX(-62vw) rotate(-900deg); }
-  to { transform: none; }
-}
-
-@keyframes boot-hop {
-  from { transform: translateY(0) scale(1.1, 0.9); }
-  to { transform: translateY(-52px) rotate(90deg) scale(0.95, 1.05); }
-}
-
-@keyframes boot-shadow-in {
-  from { transform: translateX(-62vw); }
-  to { transform: none; }
-}
-
-@keyframes boot-shadow {
-  from { opacity: 1; transform: scaleX(1); }
-  to { opacity: 0.35; transform: scaleX(0.5); }
-}
-
-@media (max-width: 560px) {
-  .boot-logo svg { height: 92px; }
-  .boot-ball { width: 36px; height: 36px; }
-  .boot-shadow { width: 38px; margin-left: -19px; }
-  .boot-stage { gap: 52px; }
-}
-
-@media (max-width: 330px) {
-  .boot-logo svg { height: 46px; }
-}
-
-@media (max-height: 420px) {
-  .boot-grass { top: 72%; }
-  .boot-stage { bottom: 28%; gap: 44px; }
-  .boot-logo svg { height: 92px; }
-  .boot-ball { width: 36px; height: 36px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .boot-cloud, .boot-logo, .boot-logo i, .boot-ball, .boot-shadow { animation: none; }
-  #boot.gone .boot-stage { transform: translateX(-50%); }
-}
-
 /* ---------------------------------------------------------------- buttons */
 
 .btn {
@@ -4769,6 +4598,7 @@ button.mc-pl:active {
 .trainer-card { position: absolute; top: 0; left: 0; width: max-content; max-width: calc(100vw - 20px); padding: 7px 10px 8px; background: #26262eef; color: #fbfbf4; border-top: 2px solid #ffd23a; box-shadow: 2px 3px 0 #0003; }
 /* Its pointer: a pixel tip under the card (over it when the card hangs below his feet) at --tip, over the player. */
 .trainer-card::after { content: ''; position: absolute; left: var(--tip, 50%); top: 100%; width: 0; height: 0; margin-left: -7px; border: 7px solid transparent; border-top-color: #26262eef; border-bottom: 0; }
+.trainer-card.docked::after { display: none; }
 .trainer-card.below::after { top: auto; bottom: 100%; border-top: 0; border-bottom: 7px solid #ffd23a; }
 .trainer-card.teach.below::after { border-bottom-color: var(--go); }
 .trainer-card.lesson.below::after { border-bottom-color: var(--yellow); }
@@ -5254,6 +5084,13 @@ button.mc-pl:active {
   .tile.tile-wide .picon { width: 36px; height: 36px; }
 }
 /* Landscape phones: the footer is one row (HOW TO PLAY beside a two-column badge) and the gaps are tighter. */
+/* Portrait phones: the gift/coins bar takes its own row. The title has already shown the logo;
+   repeating it here used to cover DAILY GIFT on taller phones. */
+@media (max-width: 600px) and (min-height: 451px) {
+  .screen.main { padding-top: max(16px, env(safe-area-inset-top)); }
+  .screen.main .topbar { position: static; width: 100%; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .screen.main .logo.small { display: none; }
+}
 @media (max-height: 400px) {
   .main-col { gap: 6px; }
   .main-foot { flex-wrap: nowrap; }

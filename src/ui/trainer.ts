@@ -59,6 +59,11 @@ export function trainerCue(m: Match, device: Device): TrainerCue {
     title: 'MEET THE PASS', actions: [[pass, 'First-time pass'], [shoot, 'Finish']],
     detail: 'Let go of movement to meet the ball',
   };
+  if (m.canStrikeLoose()) return {
+    title: m.players[m.active].order?.looseStrike !== undefined ? 'STRIKE READY' : 'FIRST-TIME SHOT',
+    actions: [[shoot, m.players[m.active].order?.looseStrike !== undefined ? 'Strike on arrival' : 'Tap to strike first time']],
+    detail: 'Let go of movement to meet the ball',
+  };
   if (own >= 0 && m.players[own].side !== m.cfg.humanSide) return {
     title: 'WIN IT BACK', actions: [[device === 'touch' ? 'TACKLE' : shoot, 'Tackle'], [device === 'touch' ? 'PRESS' : through, 'Hold to press'], [device === 'touch' ? 'SWITCH' : pass, 'Switch']],
     detail: `Hold ${device === 'touch' ? 'TACKLE' : shoot} to slide · aim away to cancel`,
@@ -88,7 +93,7 @@ function teachCue(step: TeachStep, device: Device): TrainerCue {
  * LEARN THE BASICS: a drill's prompts (meta/moments.ts BasicsStep.lesson), one at a time. main.ts puts the
  * step's lesson in Trainer.lesson and forwards the match events to event(); the trainer card shows `cue`.
  * A cue waits `after` seconds of play (from the start, or from the previous cue being done) and for its
- * `when` to hold; the action it teaches clears it, even one done early (a quick pass skips the PASS card).
+ * `when` to hold. Cues advance in order; PASS waits for reception, CROSS for a lofted delivery.
  */
 export class Lesson {
   private i = 0;
@@ -96,6 +101,9 @@ export class Lesson {
   private from = -1;
   private sprintT = 0;
   private lastClock = -1;
+  private released = false;
+  private receiver = -1;
+  private receiveKick = -1;
   constructor(readonly cues: readonly LessonCue[]) {}
 
   /** The cue waiting to be learned (null: all done). */
@@ -104,25 +112,37 @@ export class Lesson {
   }
 
   private done(what: LessonCue['done']): void {
-    // An action done early counts for its cue, and for any cue before it that taught the same thing.
-    const at = this.cues.findIndex((c, k) => k >= this.i && c.done === what);
-    if (at < 0) return;
-    this.i = at + 1;
+    // Learn in order: a direct shot must not skip the PASS or CROSS instruction.
+    if (this.current?.done !== what) return;
+    this.i++;
     this.from = -1;
     this.sprintT = 0;
+    this.released = false;
   }
 
   /** Every match event (main.ts): our kicks clear PASS / SHOOT / CROSS cues. */
   event(e: MatchEvent, m: Match): void {
+    if (e.type === 'control' && e.player === this.receiver && m.kickId === this.receiveKick && m.players[e.player]?.side === m.cfg.humanSide) {
+      this.done('pass');
+      this.receiver = -1;
+    }
     if (e.type !== 'kick') return;
     const hs = m.cfg.humanSide;
-    const by = m.players[m.ball.lastTouch];
+    const by = m.players[e.player ?? m.ball.lastTouch];
     if (!by || by.side !== hs) return;
     if (e.kind === 'shot' || e.kind === 'header') this.done('shot');
-    else if (e.kind === 'through' || e.kind === 'lob') {
-      this.done('cross');
-      this.done('pass');
-    } else if (e.kind === 'pass') this.done('pass');
+    else if (e.kind === 'lob') this.done('cross');
+    else if (e.kind === 'pass' && this.current?.done === 'pass') {
+      this.receiver = m.passTarget;
+      this.receiveKick = m.kickId;
+    }
+  }
+
+  /** Give a beginner time to read each cue. The same fresh action then starts live play. */
+  hold(m: Match, c: TeachControls & { shoot?: boolean; through?: boolean }): boolean {
+    if (this.released || !this.current || !this.show(m, c)) return false;
+    if (c.pass || c.shoot || c.through || c.sprint || Math.hypot(c.sx, c.sy) > 0.3) this.released = true;
+    return !this.released;
   }
 
   /** The cue to show now, if its time and moment have come (called by the trainer each frame). */
@@ -301,20 +321,23 @@ export class Trainer {
     };
     const a = m.active * PF;
     const at = project(frame[a], head + frame[a + 2], frame[a + 1]);
-    if (!at.visible || at.x < 0 || at.x > w || at.y < 65 || at.y > h - 25) { this.hide(); return; }
+    const lesson = Trainer.lesson;
+    const docked = !at.visible || at.x < 0 || at.x > w || at.y < 65 || at.y > h - 25;
+    // A teaching hold can switch control to a runner near the screen edge. Keep its instruction visible:
+    // hiding it would freeze the ball while the player has no cue telling them how to continue.
+    if (docked && !lesson) { this.hide(); return; }
     this.root.hidden = false;
     const goal = project(m.attackDir(m.players[m.active].side) * HALF_L, 0, 0);
     const direction = Math.abs(goal.x - at.x) > 70 ? (goal.x > at.x ? ' →' : ' ←') : ' ↑';
-    const lesson = Trainer.lesson;
     const teaching = !lesson && this.teach(m, frame, device, controls);
     let cue: TrainerCue | null = null;
     if (lesson) {
-      // A basics drill: its one prompt (or nothing, while the next one waits its turn).
+      // In flight, after a miss, or once the taught action is done, keep useful recovery guidance visible.
       const lc = lesson.show(m, controls ?? this.fed ?? Trainer.input?.read() ?? null);
-      cue = lc ? { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveKeys(device).split(' / ')[0] : actionKey(lc.key, device), lc.text]], detail: '' } : null;
+      cue = lc ? { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveKeys(device).split(' / ')[0] : actionKey(lc.key, device), lc.text]], detail: '' } : trainerCue(m, device);
       this.card.classList.toggle('lesson', !!lc);
       this.card.classList.toggle('teach', !!lc);
-      this.card.hidden = !lc;
+      this.card.hidden = false;
     } else {
       this.card.hidden = false;
       cue = teaching ? null : trainerCue(m, device);
@@ -339,15 +362,15 @@ export class Trainer {
     // hangs under his feet instead. Never over the score, or the bottom touch controls.
     const cw = this.card.offsetWidth, ch = this.card.offsetHeight;
     const feet = project(frame[a], 0, frame[a + 1]);
-    let x = at.x - cw / 2;
-    let y = at.y - ch - CARD_GAP;
+    let x = docked ? (w - cw) / 2 : at.x - cw / 2;
+    let y = docked ? 70 : at.y - ch - CARD_GAP;
     let below = false;
-    if (y < 70) {
+    if (!docked && y < 70) {
       y = feet.y + CARD_GAP;
       below = true;
     }
     const ball = project(frame[BALL_OFS], 0.14, frame[BALL_OFS + 2]);
-    if (ball.visible && ball.x > x - 24 && ball.x < x + cw + 24 && ball.y > y - 24 && ball.y < y + ch + 24) {
+    if (!docked && ball.visible && ball.x > x - 24 && ball.x < x + cw + 24 && ball.y > y - 24 && ball.y < y + ch + 24) {
       x = ball.x > at.x ? at.x - cw + CARD_TIP_IN : at.x - CARD_TIP_IN;
     }
     x = clamp(x, 10, w - cw - 10);
@@ -355,6 +378,7 @@ export class Trainer {
     // The tip sits over the player, wherever the card had to slide.
     this.card.style.setProperty('--tip', `${Math.round(clamp(at.x - x, 12, cw - 12))}px`);
     this.card.classList.toggle('below', below);
+    this.card.classList.toggle('docked', docked);
     this.card.style.visibility = 'visible';
     this.card.style.transform = `translate(${Math.round(x)}px,${Math.round(y)}px)`;
     const idx = m.passCharge >= 0 ? m.passAim : m.passPreview;

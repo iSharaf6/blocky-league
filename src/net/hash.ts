@@ -72,6 +72,17 @@ export function stateHash(m: Match): number {
   h.word(b.owner).bool(b.held).word(b.lastTouch);
   for (const p of m.players) {
     h.num(p.pos.x).num(p.pos.z).num(p.y).num(p.vel.x).num(p.vel.z).num(p.facing).num(p.stamina).str(p.state).bool(p.sentOff);
+    // A queued loose-ball strike changes future contacts before it changes position or velocity. Detect a
+    // different flight binding, expiry or aim immediately. No tag for other orders preserves legacy hashes.
+    const o = p.order;
+    if (o?.looseStrike !== undefined) {
+      h.word(0x4c535452).word(p.idx).word(o.looseStrike).str(o.kind);
+      h.num(o.dirX).num(o.dirZ).num(o.power).word(o.target).num(o.expires).bool(o.firstTime);
+      for (const n of [o.aimX, o.aimZ, o.land, o.curl, o.hang, o.finish, o.charge, o.runSpeed, o.bodyOff]) {
+        h.bool(n !== undefined).num(n ?? 0);
+      }
+      h.str(o.style).bool(!!o.driven).bool(!!o.wild).bool(!!o.toFeet);
+    }
   }
   h.word(m.powerups.length);
   for (const pu of m.powerups) h.word(pu.id).str(pu.kind).num(pu.x).num(pu.z).num(pu.t);

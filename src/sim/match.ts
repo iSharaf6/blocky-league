@@ -428,6 +428,11 @@ const AUTO_VOLLEY_Q = 0.22;
 const AUTO_VOLLEY_GOAL = 16;
 /** PASS pressed while a pass is on its way to him is a first-time ball when it arrives (a one-two), for up to this long (s). */
 const PASS_BUFFER = 1.5;
+/** An incoming rebound may be struck on a tap before it reaches the old four-metre loose-ball window. */
+const LOOSE_STRIKE_RANGE = 14;
+const LOOSE_STRIKE_WAIT = 2;
+const LOOSE_STRIKE_STEP = 3;
+const LOOSE_STRIKE_POWER = 0.9;
 /**
  * Move assist: for MOVE_ASSIST_T s after a switch, with the stick neutral (or still held the way it was at the
  * switch) or within MOVE_ASSIST_CONE (rad) of the AI's run, the new man keeps making that run...
@@ -518,7 +523,7 @@ export class HumanCtl {
   /** The shot power bar while SHOOT is held: shootCharge / SHOOT_BAR is 0..1 (full after SHOOT_FULL_T s). */
   shootCharge = 0;
   throughCharge = 0;
-  /** A tackle hold stays a defensive action even if that tackle wins possession. */
+  /** A tackle or first-time strike consumes this hold; receiving the ball never turns its release into another shot. */
   defendingShotHold = false;
   /** 0..1 while the human is charging a pass (PASS held), -1 otherwise. */
   passCharge = -1;
@@ -1744,6 +1749,15 @@ export class Match {
       }
       return;
     }
+    this.predictLooseFlight((x, y, z, t) => {
+      path.push({ x, y, z, t });
+      return false;
+    });
+  }
+
+  /** Read-only flight prediction, shared by the AI's cached path and a rebound's immediate contact check. */
+  private predictLooseFlight(visit: (x: number, y: number, z: number, t: number) => boolean): void {
+    const b = this.ball;
     let x = b.pos.x, y = b.pos.y, z = b.pos.z;
     let vx = b.vel.x, vy = b.vel.y, vz = b.vel.z;
     const dt = 0.05;
@@ -1783,7 +1797,7 @@ export class Match {
         vx *= 0.86;
         vz *= 0.86;
       }
-      if (i % 2 === 0) path.push({ t: i * dt, x, y, z });
+      if (i % 2 === 0 && visit(x, y, z, i * dt)) return;
     }
   }
 
@@ -1895,6 +1909,11 @@ export class Match {
       if (!o) continue;
       o.expires -= dt;
       if (o.firstTime) {
+        if (o.looseStrike !== undefined && (o.looseStrike !== this.kickId || this.phase !== 'play' ||
+          this.ball.held || (this.ball.owner >= 0 && this.ball.owner !== p.idx))) {
+          p.order = null;
+          continue;
+        }
         if (p.state !== 'move' || o.expires < 0) {
           p.order = null;
           continue;
@@ -2112,7 +2131,8 @@ export class Match {
       }
       if (off.length) this.offWatch = { kick: this.kickId, side: p.side, passer: p.idx, players: off };
     }
-    this.events.push({ type: 'kick', power: L.power, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: L.kind, ...(L.style ? { style: L.style } : {}) });
+    this.events.push({ type: 'kick', power: L.power, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: L.kind,
+      player: p.idx, firstTime: o.firstTime, ...(L.style ? { style: L.style } : {}) });
     if (this.human[p.side] && L.target >= 0 && !isShot) {
       const r = this.players[L.target];
       if (r.side === p.side) this.ctl[p.side].active = r.idx;
@@ -2529,10 +2549,25 @@ export class Match {
         }
       }
       if (incoming && !p.order) this.h.passPreview = pickPassMate(this, p, dirX, dirZ, 'pass');
+      if (!incoming && !clearing && shootP) {
+        const arrival = this.looseStrikeArrival(p);
+        if (arrival) {
+          const o = this.order(p, 'shot', stickLen > 0.25 ? pad.mx : 0, stickLen > 0.25 ? pad.mz : 0,
+            LOOSE_STRIKE_POWER, -1, true);
+          if (o) {
+            o.looseStrike = this.kickId;
+            o.expires = clamp(arrival.t + 0.35, 0.6, LOOSE_STRIKE_WAIT + 0.35);
+            this.h.defendingShotHold = true;
+            this.h.shootCharge = 0;
+            shootP = false;
+          }
+        }
+      }
       if (incoming && d >= 4 && (shootP || throughP)) {
         const o = this.order(p, shootP ? 'shot' : 'through', shootP && stickLen <= 0.25 ? 0 : dirX,
           shootP && stickLen <= 0.25 ? 0 : dirZ, shootP ? 0.65 : 0.7, -1, true);
-        if (o) o.expires = 1.4;
+        // An early tap belongs to this flight: keep it through the predicted arrival, with a bounded grace.
+        if (o) o.expires = clamp(intercept(this, p).t + 0.5, 1.4, 3.2);
       }
       if (loose && d < 4) {
         if (passP || (this.h.passBuffer > 0 && this.passTarget === p.idx)) {
@@ -2552,7 +2587,20 @@ export class Match {
         else if (passP) this.switchPlayer(stickLen > 0.3 ? pad.mx : 0, stickLen > 0.3 ? pad.mz : 0);
       }
       // Move assist: the run the AI had him making, just after a switch or with the stick left alone.
-      this.moveAssistRun(p, pad, stickLen);
+      if (p.order?.looseStrike !== undefined) {
+        // A small step onto this flight, never a chase after a ball that has gone away. Steering remains manual.
+        if (this.h.moveAssist && stickLen < 0.25) {
+          const arrival = this.looseStrikeArrival(p);
+          if (arrival) {
+            const tx = arrival.x - p.pos.x, tz = arrival.z - p.pos.z;
+            const tl = Math.hypot(tx, tz);
+            p.wantX = tl > 0.1 ? (tx / tl) * Math.min(1, tl / 1.2) : 0;
+            p.wantZ = tl > 0.1 ? (tz / tl) * Math.min(1, tl / 1.2) : 0;
+            p.sprint = false;
+            p.faceTarget = Math.atan2(-p.pos.z * 0.5, this.attackDir(p.side) * HALF_L - p.pos.x);
+          }
+        }
+      } else this.moveAssistRun(p, pad, stickLen);
       // Hold "press" to have your player close the carrier down automatically: goal-side of the ball, reading
       // his run and mirroring it (his velocity, plus PRESS_GAIN of the gap to the spot every second), facing it;
       // an exposed touch is poked away (pressSteal).
@@ -2614,6 +2662,32 @@ export class Match {
         this.steerReceive(p, pad, stickLen);
       }
     }
+  }
+
+  /** A nearby incoming loose flight with a reachable contact; keeper touches and woodwork need no pass target. */
+  private looseStrikeArrival(p: Player): { x: number; z: number; t: number } | null {
+    const b = this.ball;
+    if (this.phase !== 'play' || b.owner >= 0 || b.held || p.isKeeper || p.sentOff || p.state !== 'move' || p.kickCooldown > 0) return null;
+    const dx = p.pos.x - b.pos.x, dz = p.pos.z - b.pos.z;
+    const d = Math.hypot(dx, dz), speed = b.hspeed();
+    if (d > LOOSE_STRIKE_RANGE || speed < 2 || (dx * b.vel.x + dz * b.vel.z) < d * speed * 0.25) return null;
+    let arrival: { x: number; z: number; t: number } | null = null;
+    this.predictLooseFlight((x, y, z, t) => {
+      if (t > LOOSE_STRIKE_WAIT) return true;
+      if (y > 2.1 + p.y || Math.abs(x) >= HALF_L || Math.abs(z) >= HALF_W) return false;
+      const travel = dist2(p.pos.x, p.pos.z, x, z);
+      if (travel > LOOSE_STRIKE_STEP || Math.max(0, travel - 0.6) / (p.jogPace() * 0.92) + 0.05 > t) return false;
+      arrival = { x, z, t };
+      return true;
+    });
+    return arrival;
+  }
+
+  /** Local control hint; simulation eligibility always uses the explicit player above, independent of the view. */
+  canStrikeLoose(): boolean {
+    const p = this.players[this.active];
+    return this.phase === 'play' && this.ball.owner < 0 && !this.ball.held && !!p && !this.clearThreat(p.side) &&
+      (p.order?.looseStrike === this.kickId || this.looseStrikeArrival(p) !== null);
   }
 
   /**
@@ -3284,6 +3358,7 @@ export class Match {
     if (this.h.switchT < AUTO_SWITCH_GAP || this.h.active < 0) return;
     const cur = this.players[this.h.active];
     if (cur.sentOff) return;
+    if (cur.order?.looseStrike === this.kickId && b.owner < 0) return;
     // A man on the floor (or just gone to ground) is out of it for a moment.
     const down = cur.state !== 'move' && cur.state !== 'kick' && cur.stateT > 0.3;
     const ci = intercept(this, cur);

@@ -97,6 +97,7 @@ scripts/                release tooling: gen-assets.mjs, release.mjs, lib.mjs
 docs/                   PUBLISHING.md (portals, costs, checklists), STORE_LISTING.md (copy, tags, shot list)
 tests/                  vitest suites (ball, match metrics, human control, career, cup, shootout, subs, voxel)
 src/
+  boot.ts / boot.css    small loading entry, intact studio art and reload recovery for startup failures
   main.ts               boot, main loop, menu → match flow, rewards, ad hooks
   app.ts                AppContext / MatchRequest types shared by the UI modules
   audio/sfx.ts          WebAudio synth: crowd bed and reactions, whistle, kicks, woodwork, net, UI, chiptune loop

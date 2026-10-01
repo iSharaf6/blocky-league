@@ -1,0 +1,188 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Input, setBindings } from '../src/core/input';
+import { Menus } from '../src/ui/menus';
+import { TouchControls } from '../src/ui/touch';
+
+/** Event-capable elements for testing focus and pointer lifecycles without a WebGL renderer. */
+class Element extends EventTarget {
+  tagName = 'DIV';
+  dataset: Record<string, string> = {};
+  innerHTML = '';
+  textContent = '';
+  className = '';
+  hidden = false;
+  removed = false;
+  children: Element[] = [];
+  private matches = new Map<string, Element>();
+  private classes = new Set<string>();
+  classList = {
+    add: (c: string) => { this.classes.add(c); },
+    remove: (c: string) => { this.classes.delete(c); },
+    contains: (c: string) => this.classes.has(c),
+    toggle: (c: string, on?: boolean) => {
+      const v = on ?? !this.classes.has(c);
+      if (v) this.classes.add(c); else this.classes.delete(c);
+      return v;
+    },
+  };
+  style = { left: '', top: '', transform: '', setProperty: vi.fn() };
+  querySelector(selector: string): Element {
+    let el = this.matches.get(selector);
+    if (!el) {
+      el = new Element();
+      this.matches.set(selector, el);
+    }
+    return el;
+  }
+  querySelectorAll(selector: string): Element[] {
+    if (selector !== '.tb:not(.tb-power)') return [];
+    return ['pass', 'shoot', 'through', 'sprint'].map((k) => {
+      const el = this.querySelector(`.tb-${k}`);
+      el.dataset.k = k;
+      return el;
+    });
+  }
+  appendChild(el: Element): void { this.children.push(el); }
+  remove(): void { this.removed = true; }
+  focus(): void {}
+  setAttribute(): void {}
+  setPointerCapture(): void {}
+  getBoundingClientRect() { return { left: 0, top: 0, width: 112, height: 112 }; }
+}
+
+let win: EventTarget;
+let doc: EventTarget & { hidden: boolean };
+let root: Element;
+
+function key(code: string, repeat = false): void {
+  const e = new Event('keydown', { cancelable: true });
+  Object.assign(e, { code, repeat });
+  win.dispatchEvent(e);
+}
+
+function pointer(el: Element, type: string, pointerId = 1, clientX = 0, clientY = 0): void {
+  const e = new Event(type, { cancelable: true });
+  Object.assign(e, { pointerId, clientX, clientY });
+  el.dispatchEvent(e);
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  root = new Element();
+  win = Object.assign(new EventTarget(), { setTimeout, clearTimeout });
+  doc = Object.assign(new EventTarget(), {
+    hidden: false,
+    getElementById: () => root,
+    createElement: () => new Element(),
+  });
+  vi.stubGlobal('window', win);
+  vi.stubGlobal('document', doc);
+  vi.stubGlobal('navigator', {});
+  setBindings();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe('embedded input and focus', () => {
+  it('keeps keyboard play working when frame policy denies gamepad access', () => {
+    vi.stubGlobal('navigator', { getGamepads: () => { throw new DOMException('Denied', 'SecurityError'); } });
+    const input = new Input();
+    key('KeyW');
+    expect(input.read().sy).toBe(1);
+    expect(input.gamepadPause()).toBe(false);
+    expect(Input.padButtonDown(new Set())).toBe(-1);
+    expect(Input.padButtonsHeld().size).toBe(0);
+  });
+
+  it('clears keyboard and touch holds on blur and hidden-tab transitions', () => {
+    const input = new Input();
+    key('KeyW');
+    Object.assign(input.touch, { enabled: true, sx: 1, sy: 0, shoot: true });
+    win.dispatchEvent(new Event('blur'));
+    expect(input.read()).toEqual({ sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false, power: false });
+    key('Space');
+    input.touch.through = true;
+    doc.hidden = true;
+    doc.dispatchEvent(new Event('visibilitychange'));
+    expect(input.read().pass).toBe(false);
+    expect(input.read().through).toBe(false);
+  });
+
+  it('reports a d-pad as a gamepad and limits diagonals to the stick maximum', () => {
+    const buttons = Array.from({ length: 18 }, (_, i) => ({ pressed: i === 12 || i === 15, value: 0 }));
+    vi.stubGlobal('navigator', { getGamepads: () => [{ axes: [0, 0], buttons }] });
+    const input = new Input();
+    const c = input.read();
+    expect(Math.hypot(c.sx, c.sy)).toBeCloseTo(1);
+    expect(c.sx).toBeGreaterThan(0);
+    expect(c.sy).toBeGreaterThan(0);
+    expect(input.lastDevice).toBe('gamepad');
+  });
+});
+
+describe('menu keyboard lifecycle', () => {
+  it('retiring a pause screen removes its Escape handler before controls open', () => {
+    const menus = new Menus();
+    const resume = vi.fn();
+    menus.pause({ resume, howto: () => menus.howTo(() => {}, 'keyboard'), quit: vi.fn(), settings: vi.fn() });
+    root.children.at(-1)!.querySelector('[data-a=howto]').dispatchEvent(new Event('click'));
+    key('Escape');
+    expect(resume).not.toHaveBeenCalled();
+    expect(menus.open).toBe(true);
+    menus.close();
+  });
+
+  it('ignores held pause repeats and removes shortcuts when closed or resumed', () => {
+    const menus = new Menus();
+    const resume = vi.fn(() => menus.close());
+    menus.pause({ resume, howto: vi.fn(), quit: vi.fn(), settings: vi.fn() });
+    key('Escape', true);
+    expect(resume).not.toHaveBeenCalled();
+    key('Escape');
+    key('Escape');
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('touch lifecycle', () => {
+  it('drops stick and action holds on blur, then accepts a fresh touch', () => {
+    const input = new Input();
+    const touch = new TouchControls(input);
+    touch.setEnabled(true);
+    const el = touch.root as unknown as Element;
+    const stick = el.querySelector('.touch-stick-zone');
+    pointer(stick, 'pointerdown', 1);
+    pointer(stick, 'pointermove', 1, 50, 0);
+    pointer(el.querySelector('.tb-shoot'), 'pointerdown', 2);
+    expect(input.read().sx).toBeGreaterThan(0);
+    expect(input.read().shoot).toBe(true);
+    win.dispatchEvent(new Event('blur'));
+    expect(input.read().sx).toBe(0);
+    expect(input.read().shoot).toBe(false);
+    pointer(stick, 'pointerdown', 3);
+    pointer(stick, 'pointermove', 3, 30, 0);
+    expect(input.read().sx).toBeGreaterThan(0);
+    touch.dispose();
+  });
+
+  it('disposes held controls and tap timers before the next match reuses Input', () => {
+    const input = new Input();
+    const touch = new TouchControls(input);
+    touch.setEnabled(true);
+    const el = touch.root as unknown as Element;
+    pointer(el.querySelector('.tb-shoot'), 'pointerdown');
+    pointer(el.querySelector('.tb-power'), 'pointerdown');
+    pointer(el.querySelector('.touch-skip'), 'pointerdown');
+    touch.dispose();
+    expect(input.touch.enabled).toBe(false);
+    expect(el.removed).toBe(true);
+    input.touch.enabled = true;
+    vi.runAllTimers();
+    expect(input.read().shoot).toBe(false);
+    expect(input.read().pass).toBe(false);
+    expect(input.read().power).toBe(false);
+  });
+});

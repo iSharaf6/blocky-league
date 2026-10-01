@@ -1,10 +1,12 @@
 # Publishing Blocky League: the v1 checklist
 
-_Checked against the build on **28 September 2026**. Portal rules were last read on 25 September 2026; they change, so re-read the linked pages (§12) before each submission._
+_CrazyGames integration requirements rechecked on **2 October 2026**. Earlier browser measurements and other portals' research retain their recorded dates below; use the current build and the portal's QA tool before each submission._
 
 **Ready to submit?** Follow **[docs/SUBMIT.md](SUBMIT.md)**, the click-by-click guide for each portal. `npm run build:all`, then `npm run submission`, builds the submission kit in `release/submission/`: the zip, images, videos and a `listing.txt` of fields to paste for each portal, all re-checked on every run.
 
-**Where things stand:** the game is feature-complete for a v1 web-portal launch and `npm run build:all` produces the four upload zips. What's left is the owner's part: accounts, screenshots and a video, and the submissions themselves (§1.2). The contact email (calynx@zohomail.com.au) is in the privacy policy.
+**Where things stand:** `npm run build:all` produces four upload zips, and store covers, screenshots and preview videos have already been prepared. CrazyGames **Basic Launch** is the first submission target; its live Preview/QA pass, dashboard settings and account acceptance remain necessary before publishing. Full Launch is a separate review by CrazyGames. The contact email (calynx@zohomail.com.au) is in the privacy policy.
+
+**Tutorial playtest:** the first PASS drill's offside failure, hidden timeout and swallowed first actions were repaired. See [the 2 October playtest](PLAYTEST-2026-10-02.md) for actual reception, tutorial completion and packaged-build evidence. The earlier action-only checks did not establish tutorial completion.
 
 **Playtest deployment:** [GitHub Pages](https://isharaf6.github.io/blocky-league/) is configured for this repository. `.github/workflows/pages.yml` tests and packages the web game on pushes to `main`, then deploys `dist-web`. The source repository remains private; the playable site is public. Portal submissions and monetisation are separate from this playtest deployment.
 
@@ -36,13 +38,18 @@ _Checked against the build on **28 September 2026**. Portal rules were last read
 | Item | Where | How it was checked |
 |---|---|---|
 | Four release zips (web, crazygames, poki, itch), `index.html` at the zip root, relative paths only | `scripts/release.mjs`, `npm run build:all` | `build:all` passes; the script re-opens each zip and checks every entry |
-| **One SDK per build, no other external requests.** CrazyGames' zip names only `sdk.crazygames.com`, Poki's only `game-cdn.poki.com`, web and itch none. (The other two "hosts" the script lists are not requests: `www.w3.org` is the SVG namespace string and `jcgt.org` is a comment inside a three.js shader.) Fonts are bundled. Cloud saves are compiled out of portal and itch builds | `src/platform/ads.ts`, `scripts/release.mjs` | `grep` of every built file for `http(s)://` on 28 Sep |
+| **One ad SDK per portal build.** CrazyGames' zip names only `sdk.crazygames.com`, Poki's only `game-cdn.poki.com`. Their builds omit online play and external account/cloud-save code. Web and itch have no ad SDK; optional online friendlies make WebRTC/STUN requests after the player hosts or joins a game. (`www.w3.org` is an SVG namespace and `jcgt.org` a shader comment, not requests.) Fonts are bundled | `src/platform/ads.ts`, `scripts/release.mjs`, `src/main.ts` online gate | Release host checks and build-branch inspection |
 | **One click to gameplay** for a new player on a portal: TAP TO PLAY goes straight into the first LEARN THE BASICS drill | `src/main.ts` boot, `src/core/onboarding.ts` `straightToBasics` | Browser, `?portal=crazygames` on a fresh save |
+| Untimed teaching drills: PASS completes on reception; SHOOT and CROSS teach finishes into an open goal; initial cues wait for input and never swallow the first action | `src/meta/moments.ts`, `src/ui/trainer.ts`, `src/game/matchSession.ts`, `src/sim/scenario.ts` | `tests/basicsPassing.test.ts`, `tests/basicsFinishing.test.ts`, `tests/lesson.test.ts`; fresh browser play |
+| Tap SHOOT early on a reachable incoming rebound to strike first time. Movement assist can take a small step to meet it; aim, opposition and contact still decide the outcome. Contact triggers impact feedback; expired/intercepted attempts cannot fire later | `src/sim/match.ts`, `src/game/matchSession.ts`, `src/ui/trainer.ts` | `tests/reboundStrikes.test.ts`, `tests/netCompatibility.test.ts`; real keyboard/touch browser inputs |
+| A foul stays in the wide shot for about 0.6 seconds so the tackle/fall can read before the referee decision. Pause preserves the remaining beat, advantage keeps play live and superseded decisions cannot cut away later | `src/game/foulPresentation.ts`, `src/game/matchSession.ts` | `tests/foulPresentation.test.ts`; desktop/touch foul, penalty and pause/resume browser checks |
 | **No ads during onboarding or the first match.** Interstitials only at a natural break: just before a new kick-off, never the first thing in a visit, never before or during the basics, never before the first real match; no 2× COINS offer on the first match's result | `src/main.ts` `startMatch` / `onFinish` | Code review; the gating conditions are `finishedThisVisit > 0 && kind !== 'basics' && !firstMatch && played > 0` |
 | **All audio muted during ads** (music, effects, crowd: one master gain) and on CrazyGames' `muteAudio` setting | `src/platform/ads.ts` → `sfx.setMuted` | Code review of `src/audio/sfx.ts` (every bus goes through the master gain) |
 | **Pause on focus loss:** switching tab or clicking outside the portal frame pauses the match and shows the pause menu | `src/main.ts` `autoPause` (visibilitychange + blur) | Browser |
 | SDK start-up capped at 3 s so a slow or blocked SDK never holds the title screen; everything fails soft (adblock users play normally) | `src/main.ts` boot, `src/platform/ads.ts` | Code review |
 | CrazyGames: `environment === 'disabled'` treated as no portal, `loadingStart/Stop`, `gameplayStart/Stop` deduplicated, `happytime` only for a 3-goal win. Poki: `gameLoadingFinished`, `commercialBreak` before kick-off, `rewardedBreak` rewards only when watched | `src/platform/ads.ts` | Code review |
+| SDK initialization can finish after the title becomes playable: the current gameplay state is sent after initialization and loading completion. Overlapping ad requests are rejected; callbacks arriving after an ad timeout cannot mute the game or grant a reward. Basic Launch / adblock errors disable further ad offers for the visit | `src/platform/ads.ts` | `tests/ads.test.ts` |
+| Upload ZIPs are tied to the exact source/version with SHA-256 metadata. Submission rejects stale/replaced ZIPs; packaging checks SDK hosts and missing HTML assets, and Inspector extraction rejects unsafe paths | `scripts/release.mjs`, `scripts/submission.mjs`, `scripts/release-checks.mjs` | `tests/releaseChecks.test.ts`; release/submission checks |
 | Rewarded button reads "🎬 2× COINS", yellow, beside a larger CONTINUE; CONTINUE is disabled while the ad runs | `src/ui/menus.ts` `fulltime` | Code review |
 | Works in incognito / with storage blocked (every `localStorage` call is wrapped) | `src/core/save.ts` | Code review |
 | Store text, covers and thumbnails | `docs/STORE_LISTING.md`, `store-assets/` (docs/BRAND.md) | Store text rewritten on 28 Sep to match the v1 features |
@@ -60,11 +67,11 @@ What the v1 game has (so the listing stays honest): LEARN THE BASICS (three dril
 3. **Create the portal account(s) yourself** and accept their terms: [CrazyGames developer portal](https://developer.crazygames.com/) (and later Poki / GameDistribution / itch.io). Fill in the payout and tax forms when asked. Nobody else can do this for you.
 4. ~~Capture the store media~~ Done 29 Sep. The screenshots (8 at 1920×1080, 2 phone shots at 1080×1920) and videos (CrazyGames 16:9 and 2:3, Poki's 1080×1080 loop) are in `release/submission/media/`, and `npm run submission` sorts them into each portal's folder (`docs/SUBMIT.md`).
 5. **Test the portal build in the portal's own tool** before submitting: CrazyGames' Preview/QA tool (or `localhost` with `?useLocalSdk=true`), Poki Inspector for Poki. Check a full match, a rewarded ad, mute during ads, and the phone layouts.
-6. **Submit** `release/blocky-league-crazygames-v0.1.0.zip` with the three CrazyGames covers and the copy from `docs/STORE_LISTING.md`. At submission, switch on **Automatic Progress Save** (no code needed; the game has no purchases).
+6. **Submit** `release/blocky-league-crazygames-v<version>.zip` (the version is in `package.json`) with the three CrazyGames covers and the copy from `docs/STORE_LISTING.md`. At submission, switch on **Automatic Progress Save** (no code needed; the game has no purchases). Test that it restores progression for a signed-in CrazyGames player on another device before Full Launch.
 7. **While in Basic Launch** (at least 7 days and 500 plays): watch the portal's stats (conversion to gameplay, playtime, retention) and fix what they show before Full Launch review.
 8. **Optional, costs nothing:** upload the itch build as "$0 or donate", and put `dist-web` on Cloudflare Pages (§8) with `SITE_URL=https://your-site npm run build:web` so the social card works. Don't link to them from inside the portal builds.
 
-Not in v1 on purpose: online multiplayer (a separate branch, after launch), anything paid, GameDistribution's SDK (not written yet, §6), mobile stores (they cost money, §9).
+The CrazyGames and Poki builds are single player. Both the own-site web build and itch build include optional peer-to-peer online friendlies, using manually exchanged connection codes and a public STUN server; there is no relay, so some networks cannot connect. External account/cloud saves are confined to the own-site web build and compiled out of itch, CrazyGames and Poki. GameDistribution still needs its own SDK integration (§6); its prepared artwork alone does not make it publishable.
 
 ### 1.3 Unverified
 
@@ -110,21 +117,23 @@ npm run assets             # fill in MISSING icons / covers only (the designed a
 
 - Each `build:*` runs `tsc --noEmit` first, so a type error anywhere stops the build. To package without the type check: `node scripts/release.mjs <variant>`.
 - The release script prints the file count, unpacked and zipped size, any file over 300 KB, and every external host named in the shipped code. It then re-opens each zip and checks every entry's CRC.
+- Each ZIP has a matching `.json` release record beside it containing the source/version and ZIP hashes. Keep them together locally and run `npm run submission` after building. A missing record, changed source, or replaced ZIP fails submission checks; upload only the ZIP and the requested store media, not the release record.
+- Portal builds fail packaging if the wrong SDK/external host is present, an HTML asset is missing, or an asset path is root-absolute. Each build is standalone under a portal sub-path.
 - For the web build on a real domain, pass the site URL so social cards get an absolute image URL:
   ```bash
   SITE_URL=https://your-domain.example npm run build:web
   ```
 
-Measured on 28 Sep 2026 (sizes grow as features land, so re-check the script's output each release):
+Measured on 2 Oct 2026 after the release fixes (re-check the script's output each release):
 
 | Variant | Files | Unpacked | Zip |
 |---|---:|---:|---:|
-| web | 22 | 1.63 MB | 642.7 KB |
-| crazygames | 12 | 1.46 MB | 483.0 KB |
-| poki | 12 | 1.46 MB | 482.9 KB |
-| itch | 12 | 1.46 MB | 482.7 KB |
+| web | 30 | 1.88 MB | 824.2 KB |
+| crazygames | 18 | 1.54 MB | 508.9 KB |
+| poki | 18 | 1.54 MB | 508.8 KB |
+| itch | 20 | 1.58 MB | 524.8 KB |
 
-The game code is one 1.25 MB script (about 387 KB gzipped: three.js plus the game), the fonts are bundled, and there are no images to fetch at start-up: the stadium, players and crests are all generated in code.
+The main portal game script is about 1.30 MB (about 400 KB compressed: Three.js plus the game). A small separate boot module can display a retry screen if that script or WebGL initialization fails. Fonts are bundled; the stadium, players and crests are generated in code.
 
 All of these are far below the published limits:
 
@@ -164,10 +173,11 @@ Developer portal: <https://developer.crazygames.com/> · Docs: <https://docs.cra
 | Load `https://sdk.crazygames.com/crazygames-sdk-v3.js`, then `await window.CrazyGames.SDK.init()` before any call | Done |
 | Every SDK call throws when `SDK.environment === 'disabled'` (any non-CrazyGames domain) | Done: `'disabled'` counts as no portal, and every call is wrapped |
 | `game.loadingStart()` / `game.loadingStop()`: optional pair for load-time stats | Done |
-| `game.gameplayStart()` on every start/resume; `gameplayStop()` on menus, pause, match end | Done (deduplicated) |
+| `game.gameplayStart()` on every start/resume; `gameplayStop()` on menus, pause, match end | Done (deduplicated, including SDK initialization finishing after the player has started) |
 | Don't call `gameplayStop` just because focus/visibility changed | Only called when the game really shows the pause menu. OK |
 | `game.happytime()`: rarely, for real achievements | Done: only for a win by three goals or more |
 | `ad.requestAd('midgame' \| 'rewarded', { adStarted, adFinished, adError })`; mute in `adStarted`, resume in `adFinished`/`adError`; never reward on `adError` | Done |
+| Basic Launch disables ads (`adsDisabledBasicLaunch`); players with adblock must still be able to play | Done: no reward on errors, normal play continues, further ad offers stop after a Basic Launch/adblock error. Local SDK demo ads do not prove monetization is enabled on the live portal |
 | Midgame only at natural breaks; **never on a navigation button** (main menu, settings, shop); no own cooldown (the SDK caps at 1 per 3 min) | Done: just before a new kick-off, never during the basics or before the first match, no local limiter |
 | Full Implementation **must support `SDK.game.settings.muteAudio`** + `addSettingsChangeListener` | Done |
 | Cloud progress save for Full Launch: `SDK.data` (plus the Progress Save toggle) **or** *Automatic Progress Save* | No code needed if you enable **Automatic Progress Save** at submission (allowed because the game has no purchases) |
@@ -291,7 +301,7 @@ Docs: <https://itch.io/docs/creators/html5>
    - Optionally turn on itch's own *Fullscreen button*.
 4. **Pricing:** "$0 or donate" (pay-what-you-want with a free option) or "No payments". A fixed "Paid" minimum is also possible but is a hard sell for a web game.
 5. **Cover:** `store-assets/itch-cover-630x500.png`. Add screenshots from the shot list in `docs/STORE_LISTING.md`.
-6. **Optional CLI uploads:** use [butler](https://itch.io/docs/butler/): `butler push dist-itch you/blocky-league:html5 --userversion 0.1.0`.
+6. **Optional CLI uploads:** use [butler](https://itch.io/docs/butler/): `butler push dist-itch you/blocky-league:html5 --userversion <version>` (use the version in `package.json`).
 
 **Limits:** ≤ 1,000 files, ≤ 500 MB extracted, ≤ 200 MB per file, paths ≤ 240 characters. The build is 10 files, well within all of these.
 
@@ -418,7 +428,7 @@ Everything in the web plan is **$0 up front**. Money only flows *to* you (after 
 
 ## 12. Sources
 
-All pages were fetched on 25 Sep 2026.
+The original research was fetched on 25 Sep 2026. CrazyGames SDK intro, game events/settings, video ads, technical requirements, account integration and Data module were rechecked on 2 Oct 2026. Poki's partnership terms and web-engine size guidance were also rechecked on 2 Oct 2026; indicative terms can differ from the agreement offered for a particular game.
 
 **CrazyGames**
 - SDK intro / environment: <https://docs.crazygames.com/sdk/intro/>

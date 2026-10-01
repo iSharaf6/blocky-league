@@ -12,7 +12,7 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  */
 
 /** Wire version of the lobby and lockstep protocol: peers on different versions don't start a match. */
-export const NET_VERSION = 1;
+export const NET_VERSION = 2;
 
 /** A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local). */
 export type NetControls = Omit<ControlSettings, 'trainer'>;

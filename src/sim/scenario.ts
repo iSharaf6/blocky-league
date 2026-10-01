@@ -21,6 +21,7 @@
  * Determinism: only `m.rng` (and only through the sim's own restart set-up).
  */
 import { blitzClear, blitzState } from './blitz';
+import { pickReceiver } from './actions';
 import { BALL_R, HALF_L, HALF_W, PEN_SPOT, SIX_DEPTH, SIX_W } from './constants';
 import type { Match, Restart } from './match';
 import type { Player } from './player';
@@ -50,6 +51,7 @@ const HALF_SLACK_S = 30;
 /** Default star thresholds by goal (see judgeScenario). */
 const DEFAULT_STARS: Record<ScenarioSpec['goal'], (spec: ScenarioSpec) => [number, number, number]> = {
   score: (s) => [0, s.seconds * 0.4, s.seconds * 0.65],
+  'complete-pass': () => [0, 0, 0],
   lead: () => [1, 2, 3],
   'no-concede': () => [0, 30, 50],
   'draw-or-better': () => [0, 1, 2],
@@ -68,6 +70,10 @@ interface JudgeState {
   /** Match clock when the time-up grace began (-1: not waiting). */
   graceFrom: number;
   done: ScenarioOutcome | null;
+  initialKick: number;
+  passKick: number;
+  passTarget: number;
+  requiredKick: boolean;
 }
 
 const STATES = new WeakMap<Match, JudgeState>();
@@ -75,7 +81,8 @@ const STATES = new WeakMap<Match, JudgeState>();
 function stateOf(m: Match, spec: ScenarioSpec): JudgeState {
   let st = STATES.get(m);
   if (!st) {
-    st = { played: 0, lastClock: m.clock, score0: [spec.score[0], spec.score[1]], poss: [0, 0], graceFrom: -1, done: null };
+    st = { played: 0, lastClock: m.clock, score0: [spec.score[0], spec.score[1]], poss: [0, 0], graceFrom: -1, done: null,
+      initialKick: m.kickId, passKick: -1, passTarget: -1, requiredKick: false };
     STATES.set(m, st);
   }
   return st;
@@ -125,6 +132,7 @@ function giveBall(m: Match, p: Player): void {
  */
 export function applyScenario(m: Match, spec: ScenarioSpec): void {
   const hs = spec.humanSide;
+  m.offside = spec.offside ?? m.cfg.offside ?? true;
   const ad = m.attackDir(hs);
   // World point / facing from the human frame.
   const W = (px: number, pz: number): { x: number; z: number } => ({ x: px * ad, z: pz * ad });
@@ -137,7 +145,7 @@ export function applyScenario(m: Match, spec: ScenarioSpec): void {
   // (Match.clock runs while the ball is dead; the judge's count doesn't). Fatigue and the foul scale were set
   // from the configured length at construction and stay as they are; only the half-time trigger, the minute
   // shown and the Blitz AI's end-game item use read it from here on.
-  m.cfg.halfLength = Math.max(m.cfg.halfLength, spec.clock + spec.seconds * 2 + HALF_SLACK_S);
+  m.cfg.halfLength = spec.untimed ? Number.MAX_SAFE_INTEGER : Math.max(m.cfg.halfLength, spec.clock + spec.seconds * 2 + HALF_SLACK_S);
   m.events.length = 0; // the constructor's kick-off notice: the moment starts its own way
   m.phase = 'play';
   m.phaseT = 0;
@@ -273,6 +281,9 @@ export function applyScenario(m: Match, spec: ScenarioSpec): void {
   // The human's man: the ball carrier, else the man a rolling ball is going to, else whoever's nearest it.
   if (m.human[hs]) {
     m.ctl[hs].active = owner && owner.side === hs && !owner.sentOff ? owner.idx : m.passTarget >= 0 ? m.passTarget : nearest(m, hs, b.pos.x, b.pos.z, true);
+    if (owner && owner.side === hs && !owner.sentOff) {
+      m.ctl[hs].passPreview = pickReceiver(m, owner, Math.cos(owner.facing), Math.sin(owner.facing), 'pass');
+    }
   }
   m.updateBallPath();
 
@@ -301,7 +312,7 @@ function nearest(m: Match, side: Side, x: number, z: number, skipKeeper: boolean
 /** Seconds of the moment still to play (live play only: see the header). */
 export function scenarioSecondsLeft(m: Match, spec: ScenarioSpec): number {
   const st = STATES.get(m);
-  return st ? Math.max(0, spec.seconds - st.played) : spec.seconds;
+  return spec.untimed || !st ? spec.seconds : Math.max(0, spec.seconds - st.played);
 }
 
 /** Live seconds each side has had the ball at a man's feet during the moment (for a possession read-out). */
@@ -348,7 +359,7 @@ export function judgeScenario(m: Match, spec: ScenarioSpec): ScenarioOutcome | n
     const o = m.ball.owner;
     if (o >= 0 && !m.ball.held) st.poss[m.players[o].side] += d;
   }
-  const left = Math.max(0, spec.seconds - st.played);
+  const left = spec.untimed ? spec.seconds : Math.max(0, spec.seconds - st.played);
   const goalsFor = m.score[hs] - st.score0[hs];
   const against = m.score[os] - st.score0[os];
   const margin = m.score[hs] - m.score[os];
@@ -357,10 +368,24 @@ export function judgeScenario(m: Match, spec: ScenarioSpec): ScenarioOutcome | n
     return st.done;
   };
 
+  if (m.kickId !== st.initialKick && m.kickSide === hs && m.kickKind === spec.requireKick) st.requiredKick = true;
+
   switch (spec.goal) {
     case 'score':
-      if (goalsFor > 0) return finish(true, starsFor(left, th, 1));
+      if (goalsFor > 0) return finish(!spec.requireKick || st.requiredKick, starsFor(left, th, 1));
       if (against > 0) return finish(false, 0);
+      break;
+    case 'complete-pass':
+      // A kick alone is not a completed pass. Remember its intended receiver while it is travelling,
+      // then require that same teammate to control it, without an intervening kick or lost possession.
+      if (m.kickId !== st.initialKick && m.kickKind === 'pass' && m.kickSide === hs && m.passTarget >= 0 && m.ball.owner < 0 && m.ball.lastTouchSide === hs) {
+        st.passKick = m.kickId;
+        st.passTarget = m.passTarget;
+      }
+      if (st.passTarget >= 0 && m.kickId === st.passKick && m.ball.owner === st.passTarget &&
+        m.players[st.passTarget]?.side === hs && m.ball.lastTouchSide === hs) return finish(true, 3);
+      if (m.ball.lastTouchSide !== hs) st.passTarget = -1;
+      if (against > 0 || goalsFor > 0) return finish(false, 0);
       break;
     case 'no-concede':
       if (against > 0) return finish(false, 0);
@@ -377,7 +402,7 @@ export function judgeScenario(m: Match, spec: ScenarioSpec): ScenarioOutcome | n
     default:
       break;
   }
-  if (left > 0) return null;
+  if (spec.untimed || left > 0) return null;
 
   // Time-up. A shot live or the ball in the air: give it SETTLE_S to land or go dead (a goal then counts).
   const b = m.ball.pos;

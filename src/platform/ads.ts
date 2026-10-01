@@ -64,7 +64,10 @@ function loadScript(src: string): Promise<void> {
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    p.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
 }
 
 /** true if the promise resolved in time, false if it rejected or timed out (e.g. blocked by an adblocker). */
@@ -85,6 +88,10 @@ export class Ads {
   portal: Portal = 'none';
   private ok = false;
   private playing = false;
+  private wantsGameplay = false;
+  private initPromise: Promise<void> | null = null;
+  private adsAllowed = true;
+  private adInFlight = false;
   private loaded = false;
   private loadedSent = false;
   private adMuted = false;
@@ -93,7 +100,12 @@ export class Ads {
   /** true = all game audio must be silent (ad playing, or CrazyGames muteAudio setting); false = may play. */
   onMute: (muted: boolean) => void = () => {};
 
-  async init(): Promise<void> {
+  init(): Promise<void> {
+    // Boot and previews may both ask to initialize. Load just one SDK/listener.
+    return this.initPromise ??= this.initPortal();
+  }
+
+  private async initPortal(): Promise<void> {
     const q = new URLSearchParams(location.search).get('portal');
     try {
       if (import.meta.env.VITE_PORTAL === 'crazygames' || (!import.meta.env.VITE_PORTAL && q === 'crazygames')) {
@@ -126,17 +138,19 @@ export class Ads {
       this.portal = 'none';
     }
     if (this.loaded) this.sendLoaded();
+    this.syncGameplay();
   }
 
   /** Rewarded ads only exist on portals. */
   get rewardedAvailable(): boolean {
-    return this.ok;
+    return this.ok && this.adsAllowed;
   }
 
   /** Call once the title screen is interactive. Safe to call before init() has finished. */
   loadingDone(): void {
     this.loaded = true;
     if (this.ok) this.sendLoaded();
+    this.syncGameplay();
   }
 
   private sendLoaded(): void {
@@ -147,17 +161,22 @@ export class Ads {
   }
 
   gameplayStart(): void {
-    if (!this.ok || this.playing) return;
-    this.playing = true;
-    if (this.portal === 'poki') safe(() => window.PokiSDK!.gameplayStart());
-    if (this.portal === 'crazygames') safe(() => window.CrazyGames!.SDK.game.gameplayStart());
+    // The title remains playable if SDK initialization takes longer than boot's
+    // deadline. Remember the current state so its first gameplay event is not lost.
+    this.wantsGameplay = true;
+    this.syncGameplay();
   }
 
   gameplayStop(): void {
-    if (!this.ok || !this.playing) return;
-    this.playing = false;
-    if (this.portal === 'poki') safe(() => window.PokiSDK!.gameplayStop());
-    if (this.portal === 'crazygames') safe(() => window.CrazyGames!.SDK.game.gameplayStop());
+    this.wantsGameplay = false;
+    this.syncGameplay();
+  }
+
+  private syncGameplay(): void {
+    if (!this.ok || !this.loadedSent || this.adInFlight || this.playing === this.wantsGameplay) return;
+    this.playing = this.wantsGameplay;
+    if (this.portal === 'poki') safe(() => this.playing ? window.PokiSDK!.gameplayStart() : window.PokiSDK!.gameplayStop());
+    if (this.portal === 'crazygames') safe(() => this.playing ? window.CrazyGames!.SDK.game.gameplayStart() : window.CrazyGames!.SDK.game.gameplayStop());
   }
 
   /** CrazyGames celebration for a real achievement; use sparingly. Poki has no HTML5 equivalent. */
@@ -170,66 +189,81 @@ export class Ads {
    * No local cooldown: both SDKs decide whether an ad actually plays (CrazyGames caps at 1 per 3 min).
    */
   async midgame(): Promise<void> {
-    if (!this.ok) return;
+    if (!this.ok || !this.adsAllowed || this.adInFlight) return;
     this.gameplayStop();
+    this.adInFlight = true;
+    let active = true;
     try {
       if (this.portal === 'poki') {
-        await withTimeout(window.PokiSDK!.commercialBreak(() => this.setAdMute(true)), 45_000, undefined);
+        await withTimeout(window.PokiSDK!.commercialBreak(() => { if (active) this.setAdMute(true); }), 45_000, undefined);
       } else if (this.portal === 'crazygames') {
-        await withTimeout(
-          new Promise<void>((resolve) => {
-            try {
-              window.CrazyGames!.SDK.ad.requestAd('midgame', {
-                adStarted: () => this.setAdMute(true),
-                adFinished: () => resolve(),
-                adError: () => resolve(),
-              });
-            } catch {
-              resolve();
-            }
-          }),
-          45_000,
-          undefined,
-        );
+        await this.crazyAd('midgame');
       }
     } catch {
       /* an ad failure never blocks play */
     } finally {
+      active = false;
+      this.adInFlight = false;
       this.setAdMute(false);
+      this.syncGameplay();
     }
   }
 
   /** Opt-in rewarded ad. Resolves true only if the player watched it through. */
   async rewarded(): Promise<boolean> {
-    if (!this.ok) return false;
+    if (!this.ok || !this.adsAllowed || this.adInFlight) return false;
     this.gameplayStop();
+    this.adInFlight = true;
+    let active = true;
     try {
       if (this.portal === 'poki') {
-        return await withTimeout(window.PokiSDK!.rewardedBreak(() => this.setAdMute(true)), 60_000, false);
+        return await withTimeout(window.PokiSDK!.rewardedBreak(() => { if (active) this.setAdMute(true); }), 60_000, false);
       }
       if (this.portal === 'crazygames') {
-        return await withTimeout(
-          new Promise<boolean>((resolve) => {
-            try {
-              window.CrazyGames!.SDK.ad.requestAd('rewarded', {
-                adStarted: () => this.setAdMute(true),
-                adFinished: () => resolve(true),
-                adError: () => resolve(false), // never reward on error
-              });
-            } catch {
-              resolve(false);
-            }
-          }),
-          60_000,
-          false,
-        );
+        return await this.crazyAd('rewarded');
       }
       return false;
     } catch {
       return false;
     } finally {
+      active = false;
+      this.adInFlight = false;
       this.setAdMute(false);
+      this.syncGameplay();
     }
+  }
+
+  private crazyAd(type: 'midgame' | 'rewarded'): Promise<boolean> {
+    return new Promise((resolve) => {
+      let finished = false;
+      // Give a started video time to finish. A missing SDK callback must still
+      // release the UI, without allowing a later callback to mute it forever.
+      let timer = setTimeout(() => finish(false), 15_000);
+      const finish = (watched: boolean) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        resolve(watched);
+      };
+      try {
+        window.CrazyGames!.SDK.ad.requestAd(type, {
+          adStarted: () => {
+            if (finished) return;
+            clearTimeout(timer);
+            timer = setTimeout(() => finish(false), 120_000);
+            this.setAdMute(true);
+          },
+          adFinished: () => finish(true),
+          adError: (error) => {
+            if (finished) return;
+            if (error.code === 'adsDisabledBasicLaunch' || error.code === 'adblock') this.adsAllowed = false;
+            finish(false); // never grant a reward for an error
+          },
+        });
+      } catch {
+        finish(false);
+      }
+    });
   }
 
   private setAdMute(m: boolean): void {

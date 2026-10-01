@@ -354,6 +354,15 @@ function editable(t: EventTarget | null): boolean {
 
 const MOVE_DIRS: [KeyAction, number, number][] = [['up', 0, 1], ['down', 0, -1], ['left', -1, 0], ['right', 1, 0]];
 
+/** Some embedded browsers deny the gamepad API through their frame permissions policy. */
+function gamepads(): readonly (Gamepad | null)[] {
+  try {
+    return typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
+  } catch {
+    return [];
+  }
+}
+
 export class Input {
   private keys = new Set<string>();
   readonly touch: TouchState = { enabled: false, sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false, power: false };
@@ -371,7 +380,18 @@ export class Input {
       for (const l of this.listeners) l(code);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(normCode(e.code)));
-    window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('blur', () => this.reset());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.reset();
+    });
+  }
+
+  /** Drop held controls when focus is lost or a match is interrupted. */
+  reset(): void {
+    this.keys.clear();
+    const t = this.touch;
+    t.sx = t.sy = 0;
+    t.pass = t.shoot = t.through = t.sprint = t.power = false;
   }
 
   onKey(fn: (code: string) => void): () => void {
@@ -410,7 +430,7 @@ export class Input {
       power: this.any(k.power),
     };
     // Gamepad
-    const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
+    const pads = gamepads();
     const pm = padNow;
     for (const gp of pads) {
       if (!gp) continue;
@@ -443,6 +463,7 @@ export class Input {
       if (b(13)) out.sy = -1;
       if (b(14)) out.sx = -1;
       if (b(15)) out.sx = 1;
+      if (b(12) || b(13) || b(14) || b(15)) this.lastDevice = 'gamepad';
     }
     const t = this.touch;
     if (t.enabled) {
@@ -456,11 +477,17 @@ export class Input {
       out.sprint ||= t.sprint;
       out.power ||= t.power;
     }
+    // D-pad diagonals and mixed keyboard / pad movement must have the same top speed as a stick.
+    const length = Math.hypot(out.sx, out.sy);
+    if (length > 1) {
+      out.sx /= length;
+      out.sy /= length;
+    }
     return out;
   }
 
   gamepadPause(): boolean {
-    const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
+    const pads = gamepads();
     for (const gp of pads) if (gp && padNow.pause.some((i) => gp.buttons[i]?.pressed)) return true;
     return false;
   }
@@ -470,7 +497,7 @@ export class Input {
    * or -1. Reserved buttons (the d-pad, home) never count.
    */
   static padButtonDown(ignore: ReadonlySet<number>): number {
-    const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
+    const pads = gamepads();
     for (const gp of pads) {
       if (!gp) continue;
       for (let i = 0; i < gp.buttons.length; i++) {
@@ -484,7 +511,7 @@ export class Input {
   /** Every gamepad button down right now (so a held button isn't taken as the new binding). */
   static padButtonsHeld(): Set<number> {
     const held = new Set<number>();
-    const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
+    const pads = gamepads();
     for (const gp of pads) {
       if (!gp) continue;
       gp.buttons.forEach((b, i) => b?.pressed && held.add(i));

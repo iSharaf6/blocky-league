@@ -6,15 +6,13 @@ import {
 import { defaultSave, importSave } from '../src/core/save';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { BASICS, MOMENTS } from '../src/meta/moments';
-import { DT } from '../src/sim/constants';
 import { Match } from '../src/sim/match';
-import { applyScenario, judgeScenario, type ScenarioOutcome } from '../src/sim/scenario';
-import { HumanBot } from './humanBot';
+import { applyScenario, judgeScenario } from '../src/sim/scenario';
 
 /**
  * The first-visit campaign (LEARN THE BASICS → the first match → the first goal unlocks the modes), the
- * hidden ease (core/dda.ts), and the three basics drills played by the scripted human: each must be
- * completable most of the time, since a drill is replayed until it is done.
+ * hidden ease (core/dda.ts), and staged drill setup. Actual taught-input completion is checked in
+ * basicsPassing.test.ts and basicsFinishing.test.ts; a general match bot does not follow lesson cues.
  */
 
 describe('onboarding state', () => {
@@ -127,30 +125,12 @@ describe('LEARN THE BASICS drills', () => {
       expect(ids.has(b.id)).toBe(false);
       expect(b.spec.id).toBe(b.id);
       expect(b.lesson.length).toBeGreaterThan(0);
-      expect(b.spec.goal).toBe('score');
+      expect(b.spec.untimed).toBe(true);
+      expect(b.spec.offside).toBe(false);
     }
     expect(BASICS.map((b) => b.lesson[0].key)).toEqual(['pass', 'shoot', 'through']);
+    expect(BASICS.map((b) => b.spec.goal)).toEqual(['complete-pass', 'score', 'score']);
   });
-
-  const play = (i: number, seed: number): ScenarioOutcome | null => {
-    const b = BASICS[i];
-    const m = new Match({
-      home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 600, difficulty: 0.6, humanSide: 0, seed, assist: 0.8,
-    });
-    applyScenario(m, b.spec);
-    const bot = new HumanBot(seed);
-    for (let s = 0; s < (b.spec.seconds + 20) * 60; s++) {
-      const pad = bot.pad(m);
-      const before = m.ball.owner;
-      m.step(DT, pad);
-      bot.observe(m, m.drainEvents(), before);
-      const o = judgeScenario(m, b.spec);
-      if (o) return o;
-      if (m.phase === 'goal' && m.phaseT > 3) m.resumeAfterGoal();
-      if (m.phase === 'halftime' || m.phase === 'fulltime') break;
-    }
-    return null;
-  };
 
   it('the drills set up clean: only the players they need on the pitch, our man on the ball', () => {
     for (const b of BASICS) {
@@ -163,15 +143,4 @@ describe('LEARN THE BASICS drills', () => {
     }
   });
 
-  it('a decent player (the scripted bot) completes each drill most of the time', () => {
-    const N = 10;
-    const rows: string[] = [];
-    BASICS.forEach((b, i) => {
-      let won = 0;
-      for (let seed = 1; seed <= N; seed++) if (play(i, seed * 37 + 5)?.won) won++;
-      rows.push(`${b.id}: ${won}/${N}`);
-      expect(won, b.id).toBeGreaterThanOrEqual(5);
-    });
-    console.log(`Basics drills, scripted bot:\n${rows.join('\n')}`);
-  }, 60_000);
 });

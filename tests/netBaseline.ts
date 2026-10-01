@@ -8,7 +8,10 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
 /**
  * The single-player bit-identity table (tests/net.test.ts): whole matches run by fixed drivers, summarised as
  * [end-state hash, a fold of the hash every 60 steps, steps, score home, score away, went to a shootout (1/0)].
- * The same table was recorded on the sim before two-human support; after it, every row must come out the same.
+ * Originally recorded before two-human support, the table still pins exact outcomes after reviewed physics
+ * revisions. The 2026-10-02 incoming first-time-strike revision (network protocol v2) re-recorded only nine human
+ * drivers that queue the new action; queue/contact counts are beside those rows in tests/net.test.ts. All AI rows,
+ * three scripted-bot rows and ko1 remain bit-identical. No drivers or exact comparisons were relaxed.
  * Covers AI v AI (classic, blitz, contrasting team styles), a scripted human (the bot: side 0), a masher on either
  * side with non-default controls, dynamic difficulty and the Club Run perks, the first-match onboarding, blitz with
  * starting power-ups, and knockout ties through penalty shootouts.

@@ -4,9 +4,11 @@ Copy for CrazyGames, Poki, GameDistribution, itch.io and your own site. Paste as
 
 > **Keep it honest.** Everything below is in the v1 build (checked 29 Sep 2026). If a feature is cut before you upload, delete its line. Two things are browser-dependent and are worded that way: goal clips (recorded only where the browser supports canvas recording) and cloud saves (web build only, and only once the owner has set up the backend: `docs/CLOUD.md`). Neither is mentioned in the portal copy.
 >
-> **Web-build-only features stay out of the portal copy.** Online multiplayer is in the web build only (your own site), not in the CrazyGames, Poki or itch zips, so none of the text below mentions it. Commentary is **text only**: the spoken voice was removed, so never write "voiced" or "spoken" commentary.
+> **Keep build-specific features out of shared copy.** Online friendlies are included in the own-site web and itch builds, and omitted from CrazyGames and Poki. The shared descriptions below focus on single-player modes so they can be reused across those builds. External account/cloud saves are own-site-only. Commentary is **text only**: the spoken voice was removed, so never write "voiced" or "spoken" commentary.
 >
 > `npm run submission` reads this file to write each portal's `listing.txt` (`release/submission/<portal>/`). Keep the headings as they are; the script stops with an error if one goes missing.
+
+**CrazyGames release notes (2 Oct 2026):** submit the CrazyGames build for Basic Launch first. Ads are disabled during Basic Launch; an unavailable 2× reward leaves the normal reward intact and never blocks playing. Full Launch and monetization require CrazyGames' approval. Enable **Automatic Progress Save** in the dashboard and test it with a signed-in player before Full Launch; avoid claiming cross-device saves in listing copy until that check passes. The existing local demo ads are only SDK tests.
 
 ---
 
@@ -104,13 +106,17 @@ Each portal has its own taxonomy, so pick from their list when you submit. These
 | CrazyGames | Sports, Soccer / Football | football, soccer, 3d, voxel, arcade, 1 player, mobile |
 | Poki | Sports, Soccer | football, soccer, 3D, blocky, arcade |
 | GameDistribution | Sports, Arcade | football, soccer, 3d, sports, arcade |
-| itch.io | Genre: Sports. Made with: Three.js | football, soccer, voxel, low-poly, 3d, arcade, browser, singleplayer |
+| itch.io | Genre: Sports. Made with: Three.js | football, soccer, voxel, low-poly, 3d, arcade, browser, singleplayer, multiplayer |
 
 **Age / content:** no violence beyond slide tackles, no chat, no purchases, no accounts, no outgoing links. The only text a player can type is a club name and a three-letter code, both run through a profanity filter and never shown to other players. Progression (XP, levels, badges, the season track, stars, streaks, daily challenges) is earned by playing only. Progress is saved in the browser; the game itself collects no personal data. Suitable for all ages. This meets CrazyGames' PEGI-12 requirement.
 
-_(True for the CrazyGames, Poki and itch builds. The web build's online mode is not covered: check what it shows other players before you reuse this line on your own site.)_
+_(Use this content paragraph for CrazyGames and Poki. It describes their single-player builds. The own-site web and itch online mode uses manual connection codes and can show club details to the opponent; use the itch-specific paragraph below for that build.)_
 
 **Accessibility (for the portals' feature fields):** remappable keyboard and gamepad controls, fixed or floating touch stick, colour-blind shape cues, text-only commentary (no voice), every mode playable with keyboard, gamepad or touch.
+
+## itch.io content
+
+> No violence beyond slide tackles, no chat, no purchases and no external accounts. Single-player progression is earned by playing and saved in the browser. Optional online friendlies connect two players directly through WebRTC using manually exchanged connection codes and a public Google STUN server; players can see their opponent's club details. There is no relay server, so some networks cannot connect. Online friendlies do not change coins, XP or the single-player record.
 
 ---
 

@@ -330,6 +330,8 @@ export function starRules(spec: ScenarioSpec): [string, string, string] {
   const th = spec.stars;
   const s = (n: number) => `${Math.round(n)} s`;
   switch (spec.goal) {
+    case 'complete-pass':
+      return ['find your team-mate', 'find your team-mate', 'find your team-mate'];
     case 'score':
       return ['score', th ? `score with ${s(th[1])} left` : 'score fast', th ? `score with ${s(th[2])} left` : 'score faster'];
     case 'lead':
@@ -376,46 +378,47 @@ const allBut = (side: Side, keep: number[]): { side: Side; slot: number }[] =>
   Array.from({ length: 11 }, (_, slot) => slot).filter((s) => !keep.includes(s)).map((slot) => ({ side, slot }));
 
 /**
- * The three steps, in order: PASS (a 2 v 1: square it to the free man), SHOOT (an open shot from 12 m, then
- * SPRINT after a rebound) and CROSS (from the wing to a runner). Easy AI, generous clocks; they are replayed
+ * The three steps, in order: PASS (find a free teammate), SHOOT (an open shot from 12 m, then
+ * SPRINT after a rebound) and CROSS (from the wing to a runner). Untimed practice; they are replayed
  * until done (main.ts: a miss restarts the step at once, no result screen, no fail state).
  */
 export const BASICS: readonly BasicsStep[] = [
   {
     id: 'basics-pass',
     title: 'PASS',
-    brief: 'Two against one. Pass to your free team-mate, then score.',
+    brief: 'Tap PASS to your free team-mate. Let the ball reach him.',
     icon: '⇄',
     lesson: [
-      { key: 'pass', text: 'Pass to the free man', after: 0.5, when: 'onBall', done: 'pass' },
-      { key: 'shoot', text: 'Now shoot!', after: 0.3, when: 'onBall', done: 'shot' },
+      { key: 'pass', text: 'Tap to pass to the ringed team-mate', after: 0, when: 'onBall', done: 'pass' },
     ],
     spec: {
       id: 'basics-pass',
       title: 'PASS',
-      brief: 'Pass to the free man, then score.',
+      brief: 'Tap PASS. Your team-mate will meet the ball.',
       clock: 0,
       seconds: 30,
+      untimed: true,
+      offside: false,
       score: [0, 0],
       humanSide: HS,
       difficulty: 0,
       players: [
-        at(HS, 9, GOAL_X - 25, -7), at(HS, 10, GOAL_X - 13, 9),
-        AI_KEEPER, at(AI, 3, GOAL_X - 21.5, -5.5, Math.PI),
+        // Learn the transfer in midfield, out of the goalkeeper's collection range.
+        at(HS, 9, -8, -6), at(HS, 10, 7, 6), AI_KEEPER,
       ],
-      sentOff: [...allBut(HS, [0, 9, 10]), ...allBut(AI, [0, 3])],
+      sentOff: [...allBut(HS, [0, 9, 10]), ...allBut(AI, [0])],
       owner: { side: HS, slot: 9 },
-      goal: 'score',
+      goal: 'complete-pass',
       stars: [0, 15, 22],
     },
   },
   {
     id: 'basics-shoot',
     title: 'SHOOT',
-    brief: 'An open shot from twelve metres. Hold SHOOT, aim at a corner, let go.',
+    brief: 'An open goal from twelve metres. Hold SHOOT briefly, aim at a corner, let go.',
     icon: '⚽',
     lesson: [
-      { key: 'shoot', text: 'Hold, aim at a corner, let go', after: 0.5, when: 'onBall', done: 'shot' },
+      { key: 'shoot', text: 'Hold briefly, aim at a corner, let go', after: 0, when: 'onBall', done: 'shot' },
       { key: 'sprint', text: 'Sprint after the ball', after: 1.2, when: 'offBall', done: 'sprint' },
     ],
     spec: {
@@ -424,11 +427,13 @@ export const BASICS: readonly BasicsStep[] = [
       brief: 'Score from twelve metres.',
       clock: 0,
       seconds: 30,
+      untimed: true,
+      offside: false,
       score: [0, 0],
       humanSide: HS,
       difficulty: 0,
-      players: [at(HS, 9, GOAL_X - 12, -2), AI_KEEPER],
-      sentOff: [...allBut(HS, [0, 9]), ...allBut(AI, [0])],
+      players: [at(HS, 9, GOAL_X - 12, -2)],
+      sentOff: [...allBut(HS, [0, 9]), ...allBut(AI, [])],
       owner: { side: HS, slot: 9 },
       goal: 'score',
       stars: [0, 15, 22],
@@ -437,28 +442,30 @@ export const BASICS: readonly BasicsStep[] = [
   {
     id: 'basics-cross',
     title: 'CROSS',
-    brief: 'Your winger has it. Cross for the runner and score.',
+    brief: 'Cross into the open goalmouth, then finish with your runner.',
     icon: '↗',
     lesson: [
-      { key: 'through', text: 'Hold to cross to your runner', after: 0.5, when: 'onBall', done: 'cross' },
-      { key: 'shoot', text: 'Head it in!', after: 0, when: 'incoming', done: 'shot' },
+      { key: 'through', text: 'Hold, then let go to cross to your runner', after: 0, when: 'onBall', done: 'cross' },
+      { key: 'shoot', text: 'Tap to finish the incoming cross', after: 0, when: 'incoming', done: 'shot' },
     ],
     spec: {
       id: 'basics-cross',
       title: 'CROSS',
-      brief: 'Cross for the runner and score.',
+      brief: 'Hold to cross, then tap SHOOT to finish.',
       clock: 0,
       seconds: 30,
+      untimed: true,
+      offside: false,
       score: [0, 0],
       humanSide: HS,
       difficulty: 0,
       players: [
         at(HS, 8, GOAL_X - 15, 21), at(HS, 9, GOAL_X - 17, 1),
-        AI_KEEPER, at(AI, 2, GOAL_X - 9, 15, Math.PI),
       ],
-      sentOff: [...allBut(HS, [0, 8, 9]), ...allBut(AI, [0, 2])],
+      sentOff: [...allBut(HS, [0, 8, 9]), ...allBut(AI, [])],
       owner: { side: HS, slot: 8 },
       goal: 'score',
+      requireKick: 'lob',
       stars: [0, 15, 22],
     },
   },

@@ -45,7 +45,7 @@ import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
 
-/** When the script started: the studio splash stays up at least SPLASH_MS from here. */
+/** A brief studio entrance on the standalone site; portals only wait for actual loading. */
 const bootAt = performance.now();
 const SPLASH_MS = 1100;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -172,7 +172,7 @@ const matchAt = (m: Match) => (m.half - 1) * m.cfg.halfLength + m.clock;
 function track(t: Tally, e: MatchEvent, m: Match, hs: Side): void {
   switch (e.type) {
     case 'kick':
-      if (e.kind === 'shot' || e.kind === 'header') t.lastShot = { player: m.ball.lastTouch, kind: e.kind, x: e.x, z: e.z, at: matchAt(m) };
+      if (e.kind === 'shot' || e.kind === 'header') t.lastShot = { player: e.player ?? m.ball.lastTouch, kind: e.kind, x: e.x, z: e.z, at: matchAt(m) };
       break;
     case 'goal': {
       if (e.side !== hs || e.own) break;
@@ -214,7 +214,7 @@ function applySettings(): void {
   if (session) {
     // (Not online: each side's controls there were agreed before the kick-off, and a change on one machine
     // only would split the two games apart.)
-    if (!session.driver) applyControls(session.match);
+    if (!session.driver) applyControls(session.match, basicsNow ? CONTROL_DEFAULTS : controlsOf(save.settings));
     if (basicsNow) session.match.trainer = true;
     session.hud?.setCommentary(s.commentary);
     session.hud?.setColorblind(!!s.colorblind);
@@ -533,8 +533,8 @@ let basicsNow = false;
 
 /**
  * LEARN THE BASICS step `step` (meta/moments.ts BASICS): a tiny staged drill on the Moments engine, with the
- * trainer's one-at-a-time prompts. No result screen: a miss restarts it at once (`again`), a goal goes to the
- * next step, and after the last one the YOU'RE READY card offers the first match.
+ * trainer's one-at-a-time prompts. No result screen: a miss restarts it at once (`again`), a completed pass
+ * or scoring drill goes to the next step, then the YOU'RE READY card offers the first match.
  */
 function startBasics(step: number, again = false): void {
   const b = BASICS[Math.max(0, Math.min(BASICS.length - 1, step))];
@@ -721,7 +721,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     startPower: req.startPower,
     sideDifficulty: req.sideDifficulty,
   });
-  applyControls(session.match);
+  applyControls(session.match, basics ? CONTROL_DEFAULTS : controlsOf(save.settings));
   // The basics prompts live in the trainer: it is on for them whatever Settings says.
   if (basics) session.match.trainer = true;
   session.hud?.setCommentary(save.settings.commentary && !basics);
@@ -946,6 +946,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
 }
 
 function pauseKey(e: KeyboardEvent): void {
+  if (e.repeat || (e.target instanceof HTMLElement && (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)))) return;
   if (isKey('pause', e.code) && session && !session.paused && !menus.open) session.requestPause();
 }
 
@@ -984,7 +985,7 @@ let basicsDeadT = 0;
 /** No chasing an AI player round the pitch for half a minute in a lesson: lose it, and the step starts again. */
 function basicsWatch(dt: number): void {
   const s = session;
-  if (!basicsNow || !s || s.paused) {
+  if (!basicsNow || !s || s.paused || s.teachingHeld) {
     basicsLostT = basicsDeadT = 0;
     return;
   }
@@ -1032,10 +1033,15 @@ async function boot(): Promise<void> {
   // after the splash had gone).
   const ready = Promise.all([
     Promise.race([ads.init(), new Promise<void>((r) => setTimeout(r, 3000))]),
-    document.fonts?.ready,
-    document.fonts?.load("16px 'Silkscreen'").catch(() => []),
-    document.fonts?.load("16px 'Lilita One'").catch(() => []),
-    new Promise<void>((r) => setTimeout(r, Math.max(0, SPLASH_MS - (performance.now() - bootAt)))),
+    // Fonts must not strand the player on the loader when a font request hangs.
+    Promise.race([
+      Promise.all([
+        document.fonts?.load("16px 'Silkscreen'").catch(() => []),
+        document.fonts?.load("16px 'Lilita One'").catch(() => []),
+      ]),
+      new Promise<void>((r) => setTimeout(r, 3000)),
+    ]),
+    new Promise<void>((r) => setTimeout(r, PORTAL ? 0 : Math.max(0, SPLASH_MS - (performance.now() - bootAt)))),
   ]);
   // The menu's live pitch is built, and drawn once (compiling its shaders), UNDER the splash while it plays:
   // the splash only moves on the compositor, so this work doesn't stall it, and the title then comes in on a
@@ -1046,6 +1052,8 @@ async function boot(): Promise<void> {
     requestAnimationFrame(() => r());
     setTimeout(r, 60);
   });
+  const status = document.getElementById('boot-status');
+  if (status) status.textContent = 'GETTING THE PITCH READY';
   const t0 = performance.now();
   startDemo();
   const t1 = performance.now();
@@ -1056,6 +1064,7 @@ async function boot(): Promise<void> {
   await ready;
   performance.mark('bl:ready');
   requestAnimationFrame(frame);
+  document.getElementById('boot')?.setAttribute('aria-busy', 'false');
   document.getElementById('boot')?.classList.add('gone');
   ads.loadingDone();
   const params = new URLSearchParams(location.search);
@@ -1108,4 +1117,4 @@ if (import.meta.env.DEV) {
   };
 }
 
-void boot();
+export const ready = boot();

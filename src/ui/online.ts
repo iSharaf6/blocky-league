@@ -485,6 +485,7 @@ function play(host: OnlineHost, link: OnlineLink, setup: MatchSetup, lock: Locks
     return `<span class="net-chip">${rtt ? `PING ${rtt}${sep()}` : ''}DELAY ${lock.delay}</span>`;
   };
   const driver: StepDriver = {
+    get paused() { return lock.paused || !lock.running; },
     next: (sample) => lock.next(sample),
     after: (m) => {
       lock.stepped(m);

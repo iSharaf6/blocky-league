@@ -408,6 +408,8 @@ export class Menus {
   readonly root: HTMLElement;
   private screen: HTMLDivElement | null = null;
   private preview: KitPreview | null = null;
+  private cleanups: (() => void)[] = [];
+  private keyListeners = new Map<(e: KeyboardEvent) => void, (e: KeyboardEvent) => void>();
   /** The touch stick style (Settings), so HOW TO PLAY describes the one in use. */
   stick: 'floating' | 'fixed' = 'floating';
   /** Save and share a goal clip (main.ts wires ui/clips.ts; hidden when absent). */
@@ -429,10 +431,31 @@ export class Menus {
   }
 
   close(): void {
+    const cleanups = this.cleanups;
+    this.cleanups = [];
+    cleanups.forEach((cleanup) => cleanup());
     this.screen?.remove();
     this.screen = null;
     this.preview?.dispose();
     this.preview = null;
+  }
+
+  /** Keyboard shortcuts belong to one screen; replacing it must retire its shortcuts too. */
+  private listenKey(fn: (e: KeyboardEvent) => void): void {
+    const key = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (e.repeat || el?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el?.tagName ?? '')) return;
+      fn(e);
+    };
+    window.addEventListener('keydown', key);
+    this.keyListeners.set(fn, key);
+    this.cleanups.push(() => this.stopKey(fn));
+  }
+
+  private stopKey(fn: (e: KeyboardEvent) => void): void {
+    const key = this.keyListeners.get(fn);
+    if (key) window.removeEventListener('keydown', key);
+    this.keyListeners.delete(fn);
   }
 
   get open(): boolean {
@@ -448,13 +471,13 @@ export class Menus {
         <p class="fine">Keyboard${sep()}Gamepad${sep()}Touch</p>
       </div>`, 'title');
     const go = () => {
-      window.removeEventListener('keydown', key);
+      this.stopKey(key);
       onStart();
     };
     const key = (e: KeyboardEvent) => {
       if (e.code === 'Space' || e.code === 'Enter') go();
     };
-    window.addEventListener('keydown', key);
+    this.listenKey(key);
     $(d, '[data-a=start]').addEventListener('click', go);
   }
 
@@ -730,29 +753,29 @@ export class Menus {
     };
     $(d, '[data-a=stay]').addEventListener('click', () => asking(false));
     $(d, '[data-a=really]').addEventListener('click', () => {
-      window.removeEventListener('keydown', key);
+      this.stopKey(key);
       h.quit();
     });
     $(d, '[data-a=resume]').addEventListener('click', h.resume);
     d.querySelector('[data-a=tactics]')?.addEventListener('click', () => {
-      window.removeEventListener('keydown', key);
+      this.stopKey(key);
       h.tactics?.();
     });
     $(d, '[data-a=howto]').addEventListener('click', h.howto);
     $(d, '[data-a=settings]').addEventListener('click', h.settings);
     $(d, '[data-a=quit]').addEventListener('click', () => asking(true));
     d.querySelector('[data-a=skip]')?.addEventListener('click', () => {
-      window.removeEventListener('keydown', key);
+      this.stopKey(key);
       h.skip?.();
     });
     this.wireClip(d, h.clip);
     const key = (e: KeyboardEvent) => {
       if (isKey('pause', e.code)) {
-        window.removeEventListener('keydown', key);
+        this.stopKey(key);
         h.resume();
       }
     };
-    window.addEventListener('keydown', key);
+    this.listenKey(key);
   }
 
   statsTable(m: Match, kits?: [Kit, Kit]): string {
@@ -986,16 +1009,16 @@ export class Menus {
         </div>
       </div>`, 'ht');
     const go = () => {
-      window.removeEventListener('keydown', key);
+      this.stopKey(key);
       onContinue();
     };
     const key = (e: KeyboardEvent) => {
       if (e.code === 'Space' || e.code === 'Enter') go();
     };
-    window.addEventListener('keydown', key);
+    this.listenKey(key);
     $(d, '[data-a=go]').addEventListener('click', go);
     d.querySelector('[data-a=tactics]')?.addEventListener('click', () => {
-      window.removeEventListener('keydown', key);
+      this.stopKey(key);
       onTactics?.();
     });
   }
@@ -1177,16 +1200,16 @@ export class Menus {
         </div>
       </div>`, 'basics-screen');
     const go = () => {
-      window.removeEventListener('keydown', key);
+      this.stopKey(key);
       h.play();
     };
     const key = (e: KeyboardEvent) => {
       if (e.code === 'Space' || e.code === 'Enter') go();
     };
-    window.addEventListener('keydown', key);
+    this.listenKey(key);
     $(d, '[data-a=play]').addEventListener('click', go);
     $(d, '[data-a=menu]').addEventListener('click', () => {
-      window.removeEventListener('keydown', key);
+      this.stopKey(key);
       h.menu();
     });
   }
@@ -1520,6 +1543,7 @@ export class Menus {
       listening = null;
       drawKeys();
     };
+    this.cleanups.push(stopListening);
     const commitKeys = (km: KeyMap) => {
       s.keys = km;
       onChange();

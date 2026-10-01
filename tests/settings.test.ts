@@ -3,7 +3,8 @@ import {
   DEFAULT_KEYS, DEFAULT_PAD, actionKey, bindKey, bindPad, fillKeys, keyLabel, moveKeys, normalizeKeyMap, normalizePadMap, padLabel, remapKeys,
   setBindings, unbindKey,
 } from '../src/core/input';
-import { CONTROL_DEFAULTS, controlsOf, defaultSave, exportSave, importSave, loadSave, normalizeSettings } from '../src/core/save';
+import { CONTROL_DEFAULTS, controlsOf, defaultSave, exportSave, importSave, loadSave, normalizeSettings, writeSave } from '../src/core/save';
+import { PRESET_CLUBS } from '../src/meta/data';
 
 const KEY = 'blocky-league-save-v1';
 
@@ -22,6 +23,19 @@ afterEach(() => {
 });
 
 describe('settings: controls', () => {
+  it('starts a fresh touch device on medium graphics while preserving a saved high choice', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    expect(defaultSave().settings.quality).toBe('medium');
+    stubStorage(null);
+    expect(loadSave().settings.quality).toBe('medium');
+    stubStorage({ ...defaultSave(), settings: { ...defaultSave().settings, quality: 'high' } });
+    expect(loadSave().settings.quality).toBe('high');
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    expect(defaultSave().settings.quality).toBe('high');
+    vi.stubGlobal('matchMedia', () => { throw new Error('unavailable'); });
+    expect(defaultSave().settings.quality).toBe('high');
+  });
+
   it('new saves start on the default controls (ground assisted, through assisted, switches on)', () => {
     const s = defaultSave().settings;
     expect(controlsOf(s)).toEqual({ groundAssist: 'assisted', throughAssist: 'assisted', autoSwitch: true, moveAssist: true, timedFinish: true, trainer: true, quickPass: true });
@@ -68,6 +82,14 @@ describe('settings: controls', () => {
     expect(controlsOf(normalizeSettings(null))).toEqual(CONTROL_DEFAULTS);
   });
 
+  it('repairs damaged audio, graphics and match settings before starting a match', () => {
+    expect(normalizeSettings({ sfx: 'yes', music: null, crowd: 1, quality: 'ultra', difficulty: 999, halfMinutes: 'forever', weather: 'hail', timeOfDay: 'dawn' }))
+      .toMatchObject({ sfx: true, music: true, crowd: true, quality: 'high', difficulty: 1, halfMinutes: 2, weather: 'random', timeOfDay: 'random' });
+    for (const halfMinutes of [0, -1, NaN, Infinity, 10000]) expect(normalizeSettings({ halfMinutes }).halfMinutes).toBe(2);
+    expect(normalizeSettings({ sfx: false, music: false, crowd: false, quality: 'low', difficulty: 0, halfMinutes: 1.5, weather: 'snow', timeOfDay: 'night' }))
+      .toMatchObject({ sfx: false, music: false, crowd: false, quality: 'low', difficulty: 0, halfMinutes: 1.5, weather: 'snow', timeOfDay: 'night' });
+  });
+
   it('trainer and instant-pass preferences survive saving, including explicit OFF', () => {
     const saved = defaultSave();
     saved.seenTutorial = true;
@@ -80,6 +102,32 @@ describe('settings: controls', () => {
 });
 
 describe('save backup (Settings > BACKUP)', () => {
+  it('repairs corrupt local saves with the same rules as imported backups', () => {
+    const damaged = {
+      ...defaultSave(), coins: -5, clubIdx: PRESET_CLUBS.length, opponentIdx: -2, seenTutorial: 'true',
+      record: { played: 'many', won: -1, drawn: 2.9, lost: null, goalsFor: 10, goalsAgainst: 'none' },
+      gift: { last: '2026-09-20', streak: 'seven' }, updatedAt: 'not a date', career: [], cup: [],
+    };
+    stubStorage(damaged);
+    const loaded = loadSave();
+    const imported = importSave(damaged)!;
+    expect(loaded).toMatchObject({ coins: 500, clubIdx: 5, opponentIdx: 6, seenTutorial: false, career: null, cup: null });
+    expect(loaded.record).toEqual({ played: 0, won: 0, drawn: 2, lost: 0, goalsFor: 10, goalsAgainst: 0 });
+    expect(loaded.gift).toEqual({ last: '2026-09-20', streak: 1 });
+    expect(Number.isFinite(Date.parse(loaded.updatedAt))).toBe(true);
+    expect(imported).toMatchObject({ coins: loaded.coins, clubIdx: loaded.clubIdx, opponentIdx: loaded.opponentIdx, record: loaded.record });
+    stubStorage({ ...defaultSave(), clubIdx: 6, opponentIdx: 6 });
+    expect(loadSave().opponentIdx).not.toBe(6);
+  });
+
+  it('keeps play working when browser storage is blocked or full', () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('full'); } });
+    expect(loadSave().coins).toBe(500);
+    const save = defaultSave();
+    save.coins = 777;
+    expect(() => writeSave(save)).not.toThrow();
+    expect(save.coins).toBe(777);
+  });
   it('an exported save imports back whole, with the settings and progress it had', () => {
     const s = defaultSave();
     s.coins = 4321;
