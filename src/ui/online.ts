@@ -11,6 +11,7 @@ import { BroadcastTransport, broadcastAvailable, roomCode, type Transport } from
 import { APP_VERSION } from './brand';
 import { crestSvg } from './crest';
 import { shirtArt } from './menus';
+import { pixelIcon } from './pixelIcons';
 import { goalsOf } from '../sim/shootout';
 import { escHtml, scoreHtml, sep } from './text';
 
@@ -360,9 +361,9 @@ function clubCard(idx: number, label: string, mine: boolean, ready: boolean, kit
   return `
     <span class="tp-label">${label}</span>
     <div class="tp-body">
-      ${mine ? '<button class="arrow" data-d="-1" aria-label="Previous club">◀</button>' : ''}
+      ${mine ? '<button class="arrow" data-d="-1" aria-label="Previous club">←</button>' : ''}
       <div class="tp-kit">${shirtArt(kit, 9)}</div>
-      ${mine ? '<button class="arrow" data-d="1" aria-label="Next club">▶</button>' : ''}
+      ${mine ? '<button class="arrow" data-d="1" aria-label="Next club">→</button>' : ''}
     </div>
     <b class="tp-name">${crestSvg(c.name, c.short, c.kit, 2)}${escHtml(c.name)}</b>
     <span class="net-ready ${ready ? 'on' : ''}">${ready ? 'READY' : 'NOT READY'}</span>`;
@@ -414,7 +415,7 @@ function drawLobby(host: OnlineHost, link: OnlineLink, how: string): void {
       set(Number(b.dataset.i));
     }));
   };
-  seg('mode', ['CLASSIC', 'BLITZ ⚡'], r.mode === 'blitz' ? 1 : 0, (i) => link.setRules({ mode: i ? 'blitz' : 'classic' }));
+  seg('mode', ['CLASSIC', `BLITZ ${pixelIcon('bolt', 'currentColor', 1.6, 'inl')}`], r.mode === 'blitz' ? 1 : 0, (i) => link.setRules({ mode: i ? 'blitz' : 'classic' }));
   seg('len', NET_HALVES.map((m) => `${m} MIN`), Math.max(0, NET_HALVES.indexOf(r.halfMinutes as (typeof NET_HALVES)[number])), (i) => link.setRules({ halfMinutes: NET_HALVES[i] }));
   seg('tod', ['DAY', 'SUNSET', 'NIGHT'], Math.max(0, TODS.indexOf(r.timeOfDay)), (i) => link.setRules({ timeOfDay: TODS[i] }));
   seg('ko', ['DRAW', 'PENALTIES'], r.knockout ? 1 : 0, (i) => link.setRules({ knockout: i === 1 }));

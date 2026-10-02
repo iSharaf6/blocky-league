@@ -263,6 +263,8 @@ export class Player {
    */
   tellT = 0;
   tellSlide = false;
+  /** That tell came from the duel (skills.ts TELL_DUEL): its tackle, if he ignores it, is a soft one (DUEL_TACKLE). */
+  tellDuel = false;
   /** Seconds left of the committed challenge a tell led into (its tackle is the surer for it: skills.ts TOLD_TACKLE). */
   toldT = 0;
   /**

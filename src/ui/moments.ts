@@ -13,6 +13,7 @@ import { makeTeam, PRESET_CLUBS, resolveKitClash } from '../meta/data';
 import { MOMENT_XP_PER_STAR, MOMENTS, firstOpenMoment, momentStarTotals, momentUnlocked, nextMoment, starRules, type Moment } from '../meta/moments';
 import { closeMeta, esc, mountMeta, topBar, type MetaScreen } from './club';
 import { coachText } from './coach';
+import { pixelIcon } from './pixelIcons';
 import { scoreHtml, sep } from './text';
 
 /** Best stars by moment id (a save from before moments existed reads as none). */
@@ -90,7 +91,7 @@ function listScreen(app: AppContext, scr: MetaScreen, hl: string, back: () => vo
           ? '<em class="mo-chip done">DONE</em>'
           : '';
     return `<button class="mo-card ${open ? '' : 'locked'} ${mo.id === hl ? 'hl' : ''}" data-a="pick" data-id="${mo.id}" ${open ? '' : 'disabled'} aria-label="${esc(mo.title)}: ${esc(mo.brief)}">
-        <i class="mo-icon" aria-hidden="true">${mo.icon}</i>
+        <i class="mo-icon" aria-hidden="true">${pixelIcon(mo.icon, 'currentColor', 3)}</i>
         <span class="mo-body"><b>${i + 1}. ${esc(mo.title)}</b><small>${esc(mo.brief)}</small>${chip}</span>
         ${starsHtml(got)}
       </button>`;
@@ -131,7 +132,7 @@ function preplayScreen(app: AppContext, scr: MetaScreen, mo: Moment, back: () =>
   scr.render(
     `${topBar('MOMENTS', esc(mo.title), `MOMENT ${MOMENTS.indexOf(mo) + 1} OF ${MOMENTS.length}`, app.save.coins)}
     <div class="mo-pre">
-      <div class="mo-prehead"><i class="mo-icon big" aria-hidden="true">${mo.icon}</i><div><p class="mo-brief">${esc(mo.brief)}</p><p class="mo-facts">${facts.join(sep())}</p>${clubs}</div></div>
+      <div class="mo-prehead"><i class="mo-icon big" aria-hidden="true">${pixelIcon(mo.icon, 'currentColor', 4.4)}</i><div><p class="mo-brief">${esc(mo.brief)}</p><p class="mo-facts">${facts.join(sep())}</p>${clubs}</div></div>
       <ul class="mo-rules" aria-label="Star rules">
         ${rules.map((r, i) => `<li class="${got > i ? 'got' : ''}">${starsHtml(i + 1, false)}<span>${esc(r.charAt(0).toUpperCase() + r.slice(1))}</span></li>`).join('')}
       </ul>
@@ -139,7 +140,7 @@ function preplayScreen(app: AppContext, scr: MetaScreen, mo: Moment, back: () =>
       <div class="mo-best">${got ? `BEST ${starsHtml(got)}` : 'NOT YET PLAYED'}${sep()}${esc(mo.xpNote)}</div>
     </div>
     <div class="btn-row no-stick">
-      <button class="btn btn-white" data-a="back">◀ BACK</button>
+      <button class="btn btn-white" data-a="back">← BACK</button>
       <button class="btn btn-go btn-lg mo-play pulse" data-a="play">PLAY</button>
     </div>`,
     {
@@ -172,8 +173,10 @@ function ensureCss(): void {
 .mo-card.hl { border-color: var(--blue); box-shadow: 0 5px 0 var(--blue-d); }
 .mo-card.locked { opacity: 0.55; cursor: default; }
 .mo-card.locked:active { transform: none; box-shadow: 0 5px 0 var(--cream-2); }
-.mo-icon { display: grid; place-items: center; width: 48px; height: 48px; font: 400 26px/1 var(--round); font-style: normal; background: var(--cream-2); border: 3px solid var(--ink); }
-.mo-icon.big { width: 64px; height: 64px; font-size: 34px; }
+.mo-icon { display: grid; place-items: center; width: 48px; height: 48px; font-style: normal; color: var(--ink); background: var(--cream-2); border: 3px solid var(--ink); }
+.mo-icon .picon { width: 30px; height: 30px; filter: none; }
+.mo-icon.big { width: 64px; height: 64px; }
+.mo-icon.big .picon { width: 44px; height: 44px; }
 .mo-body { display: grid; gap: 3px; min-width: 0; }
 .mo-body b { font: 700 15px var(--px); letter-spacing: 0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mo-body small { font: 400 14px/1.25 var(--round); color: var(--ink-2); }
@@ -201,12 +204,14 @@ function ensureCss(): void {
 .mo-screen .btn-row { display: flex; gap: 10px; }
 @media (max-width: 420px) {
   .mo-card { grid-template-columns: 40px minmax(0, 1fr); }
-  .mo-icon { width: 40px; height: 40px; font-size: 22px; }
+  .mo-icon { width: 40px; height: 40px; }
+  .mo-icon .picon { width: 24px; height: 24px; }
   .mo-card .mo-stars { grid-column: 2; justify-self: start; font-size: 16px; }
 }
 @media (max-height: 420px) {
   .mo-prehead { grid-template-columns: 48px minmax(0, 1fr); }
-  .mo-icon.big { width: 48px; height: 48px; font-size: 26px; }
+  .mo-icon.big { width: 48px; height: 48px; }
+  .mo-icon.big .picon { width: 32px; height: 32px; }
   .mo-rules { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .mo-rules li { grid-template-columns: 1fr; gap: 2px; font-size: 13px; }
 }

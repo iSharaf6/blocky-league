@@ -189,9 +189,11 @@ function skillCut(m: Match, p: Player): void {
     near = true;
     if (d > CUT_REACH) continue;
     // Committed: going in for the tackle (or to ground), or closing on him at pace. (A man winding up a telegraphed
-    // challenge, skills.ts, is set, not yet going: the SKILL button is the answer to that.)
+    // challenge, skills.ts, is set, not yet going: the SKILL button is the answer to that. A duel's tell, skills.ts
+    // TELL_DUEL, is a man squaring up to go in: a cut on it catches him leaning, like the SKILL button.)
     const closing = (o.vel.x * dx + o.vel.z * dz) / Math.max(0.1, d);
-    const committed = o.tellT <= 0 && (o.commitT > 0 || o.state === 'slide' || closing > 2 || (o.tackleCooldown <= 0 && d < 1.8));
+    const committed = (o.tellT > 0 && o.tellDuel) ||
+      (o.tellT <= 0 && (o.commitT > 0 || o.state === 'slide' || closing > 2 || (o.tackleCooldown <= 0 && d < 1.8)));
     const edge = (p.stat.dribbling - o.stat.defending) / 100;
     const shift = vsHuman(m.aiSkill(o.side)).cut;
     const pWin = committed ? clamp(0.72 + edge * 0.9 + shift, 0.45, 0.92) : clamp(0.3 + edge * 0.6 + shift, 0.12, 0.5);

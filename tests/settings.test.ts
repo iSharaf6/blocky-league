@@ -191,6 +191,18 @@ describe('save backup: football moments', () => {
   });
 });
 
+describe('settings: ROAD TO GLORY intro flag', () => {
+  it('starts unseen, survives a round trip, and a damaged value reads as unseen', () => {
+    expect(defaultSave().settings.roadIntroSeen).toBe(false);
+    expect(normalizeSettings({}).roadIntroSeen).toBe(false);
+    expect(normalizeSettings({ roadIntroSeen: true }).roadIntroSeen).toBe(true);
+    expect(normalizeSettings({ roadIntroSeen: 'yes' }).roadIntroSeen).toBe(false);
+    const s = defaultSave();
+    s.settings.roadIntroSeen = true;
+    expect(importSave(exportSave(s))!.settings.roadIntroSeen).toBe(true);
+  });
+});
+
 describe('settings: the commentator (text stays, the voice is gone)', () => {
   it('an old save with the voice switch loads fine: the switch is dropped, the ticker setting kept', () => {
     const old = { ...defaultSave(), settings: { ...defaultSave().settings, commentary: false, commentaryVoice: true } };

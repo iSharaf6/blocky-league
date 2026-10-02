@@ -21,7 +21,7 @@ export interface Moment {
   title: string;
   /** One line under the title (and the pre-play card). */
   brief: string;
-  /** A glyph for the card. */
+  /** The card's pixel icon, by name (ui/pixelIcons.ts: ball, cross, run, flag, clock, shield, crown, bolt, swap). */
   icon: string;
   /** What a star pays, in words ("+25 XP a star"). */
   xpNote: string;
@@ -68,7 +68,7 @@ export const MOMENTS: Moment[] = [
     id: 'first-touch',
     title: 'FIRST TOUCH',
     brief: 'Take the pass and score from ten metres. 20 seconds.',
-    icon: '⚽',
+    icon: 'ball',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
     tip: 'The ball rolls to your striker. Let it come, aim at a corner and SHOOT ({shoot}). {Tap} SHOOT again as the foot meets the ball for a perfect finish.',
     difficulty: 0,
@@ -97,7 +97,7 @@ export const MOMENTS: Moment[] = [
     id: 'cross-finish',
     title: 'CROSS & SCORE',
     brief: 'Your winger has it. Cross for the runner and score. 25 seconds.',
-    icon: '↗',
+    icon: 'cross',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
     tip: 'Aim at the box, hold THROUGH ({through}) and let go to cross. You take the striker as it comes in: SHOOT ({shoot}) to head at goal.',
     difficulty: 0,
@@ -125,7 +125,7 @@ export const MOMENTS: Moment[] = [
     id: 'one-on-one',
     title: 'ONE ON ONE',
     brief: 'Through on goal from 25 metres, two defenders on your heels. 15 seconds.',
-    icon: '🏃',
+    icon: 'run',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
     tip: 'SPRINT ({sprint}) at goal and shoot before they catch you. Aim across the keeper and SHOOT ({shoot}), or hold SHOOT and {tap} THROUGH ({through}) to chip him.',
     difficulty: 1,
@@ -153,7 +153,7 @@ export const MOMENTS: Moment[] = [
     id: 'corner-kick',
     title: 'CORNER KICK',
     brief: 'Score from a corner. 30 seconds of play (the wait for the kick is free).',
-    icon: '⚑',
+    icon: 'flag',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
     tip: 'Hold THROUGH ({through}) to whip it in, or SHOOT ({shoot}) for a driven cross. As it drops, SHOOT to head at goal, or move to bring it down.',
     difficulty: 1,
@@ -177,7 +177,7 @@ export const MOMENTS: Moment[] = [
     id: 'two-down',
     title: 'TWO DOWN',
     brief: 'Two goals behind, a minute to play, the ball at your feet. Draw or better.',
-    icon: '⏱',
+    icon: 'clock',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
     tip: 'Move it fast: PASS ({pass}) to the ringed teammate, THROUGH ({through}) for a runner, SHOOT ({shoot}) near the box. Win the kick-off back after you score. A draw is one star, a win two.',
     difficulty: 0,
@@ -208,7 +208,7 @@ export const MOMENTS: Moment[] = [
     id: 'hold-the-fort',
     title: 'HOLD THE FORT',
     brief: 'One up, one man down, they are coming. Keep them out for 45 seconds.',
-    icon: '🛡',
+    icon: 'shield',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
     tip: 'Hold PRESS ({through}) to stay goal-side, {tap} TACKLE ({shoot}) when you are close, SWITCH ({pass}) to the nearest defender. Win it and keep it for more stars.',
     difficulty: 2,
@@ -239,7 +239,7 @@ export const MOMENTS: Moment[] = [
     id: 'giant-killing',
     title: 'GIANT KILLING',
     brief: 'Duckworth Albion against Northwick Wanderers, Hard. Be in front after 90 seconds.',
-    icon: '👑',
+    icon: 'crown',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
     tip: 'Their players are faster and sharper: keep it simple, PASS ({pass}) early, shoot when the lane is clear. A win is one star; a clean sheet or two clear goals makes two; both, three.',
     // Duckworth (54) against Northwick (88): the widest gap the scripted bot still wins now and then on Hard.
@@ -265,7 +265,7 @@ export const MOMENTS: Moment[] = [
     id: 'blitz-mega',
     title: 'BLITZ MEGA',
     brief: 'Grab the MEGA cube and score with the rocket. 40 seconds.',
-    icon: '⚡',
+    icon: 'bolt',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
     tip: 'Run over the cube, {tap} POWER ({power}) to arm it, wait a second for the ball to glow, then SHOOT ({shoot}) from range: a mega shot cannot be saved from inside twelve metres.',
     difficulty: 1,
@@ -372,6 +372,7 @@ export interface BasicsStep {
   /** Short: the brief banner's letters are huge. */
   title: string;
   brief: string;
+  /** The step's pixel icon, by name (ui/pixelIcons.ts). */
   icon: string;
   lesson: LessonCue[];
   spec: FullScenarioSpec;
@@ -391,7 +392,7 @@ export const BASICS: readonly BasicsStep[] = [
     id: 'basics-pass',
     title: 'PASS',
     brief: 'Pass to your free teammate and let the ball reach him.',
-    icon: '⇄',
+    icon: 'swap',
     lesson: [
       { key: 'pass', text: 'Pass to the ringed teammate', after: 0, when: 'onBall', done: 'pass' },
     ],
@@ -420,7 +421,7 @@ export const BASICS: readonly BasicsStep[] = [
     id: 'basics-shoot',
     title: 'SHOOT',
     brief: 'An open goal from twelve metres. Hold SHOOT, aim at a corner, let go.',
-    icon: '⚽',
+    icon: 'ball',
     lesson: [
       { key: 'shoot', text: 'Hold, aim at a corner, let go', after: 0, when: 'onBall', done: 'shot' },
       { key: 'sprint', text: 'Hold to chase the ball', after: 1.2, when: 'offBall', done: 'sprint' },
@@ -447,7 +448,7 @@ export const BASICS: readonly BasicsStep[] = [
     id: 'basics-cross',
     title: 'CROSS',
     brief: 'Cross into the open goalmouth, then finish with your runner.',
-    icon: '↗',
+    icon: 'cross',
     lesson: [
       { key: 'through', text: 'Hold, then let go to cross', after: 0, when: 'onBall', done: 'cross' },
       { key: 'shoot', text: '{Tap} as the cross arrives', after: 0, when: 'incoming', done: 'shot' },

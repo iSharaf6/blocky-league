@@ -160,7 +160,7 @@ export function coinsHtml(n: number): string {
 
 export function topBar(back: string, title: string, sub: string, coins: number): string {
   return `<header class="mc-top">
-    <button class="btn btn-white mc-back" data-a="back" aria-label="${esc(back)}">◀<span>${esc(back)}</span></button>
+    <button class="btn btn-white mc-back" data-a="back" aria-label="${esc(back)}">←<span>${esc(back)}</span></button>
     <div class="mc-title"><h2>${title}</h2><span>${sub}</span></div>
     ${coinsHtml(coins)}
   </header>`;
@@ -457,9 +457,9 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     }).join('');
     return `<div class="mc-tcard">
         <div class="mc-tchead">
-          <button class="arrow" data-a="tprev" aria-label="Previous player">◀</button>
+          <button class="arrow" data-a="tprev" aria-label="Previous player">←</button>
           <div class="mc-tcid">${faceHtml(p, club.kit, 'lg')}${roleBadge(p.role)}<b>${esc(p.name)}</b><span class="mc-num">#${p.number}</span>${ovrBadge(overall(p))}</div>
-          <button class="arrow" data-a="tnext" aria-label="Next player">▶</button>
+          <button class="arrow" data-a="tnext" aria-label="Next player">→</button>
         </div>
         <div class="mc-stats">${stats}</div>
         <p class="mc-hint">Each session adds +${TRAIN_STEP} and costs 40 + 3 × OVR coins. Green stats count most for a ${p.role}.</p>

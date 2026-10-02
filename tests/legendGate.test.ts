@@ -10,7 +10,10 @@ const LABELS = ['EASY', 'NORMAL', 'HARD', 'LEGEND'];
 describe('LEGEND is earned in the Cup and Club Run, as in Quick Match', () => {
   it('until 10 match stars: LEGEND reads locked with the stars it takes, and a pick of it stays on HARD', () => {
     const p = { stars: LEGEND_STARS - 1 };
-    expect(difficultyLabels(LABELS, p)).toEqual(['EASY', 'NORMAL', 'HARD', `LEGEND 🔒 ${LEGEND_STARS}★`]);
+    const labels = difficultyLabels(LABELS, p);
+    expect(labels.slice(0, 3)).toEqual(['EASY', 'NORMAL', 'HARD']);
+    // A pixel lock (inline SVG), never an emoji, then the stars it takes.
+    expect(labels[3]).toMatch(new RegExp(`^LEGEND <svg class="picon inl"[^>]*>.*</svg> ${LEGEND_STARS}★$`));
     expect(playableDifficulty(3, p)).toBe(2);
     for (const d of [0, 1, 2]) expect(playableDifficulty(d, p)).toBe(d);
   });
@@ -36,6 +39,6 @@ describe('LEGEND is earned in the Cup and Club Run, as in Quick Match', () => {
       expect(src, f).toMatch(/let diff = playableDifficulty\(/);
       expect(src, f).toMatch(/if \(playableDifficulty\(i, progress\) !== i\) return;/);
     }
-    expect(readFileSync('src/ui/menus.ts', 'utf8')).toContain('`${l} 🔒 ${LEGEND_STARS}★`');
+    expect(readFileSync('src/ui/menus.ts', 'utf8')).toContain("`${l} ${pixelIcon('lock', 'currentColor', 1.6, 'inl')} ${LEGEND_STARS}★`");
   });
 });

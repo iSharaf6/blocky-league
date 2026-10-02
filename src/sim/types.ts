@@ -191,7 +191,7 @@ export type MatchEvent =
    * man a PERFECT beat (-1). `skillGoal`: `side` scored within SKILL_GOAL_T s of a successful skill.
    */
   | { type: 'skillTell'; by: number; on: number; slide: boolean }
-  | { type: 'skillMove'; player: number; move: SkillMoveKind | 'cut' | 'knock'; grade: SkillGrade; combo: number; on: number }
+  | { type: 'skillMove'; player: number; move: SkillMoveKind | 'cut' | 'knock' | 'past'; grade: SkillGrade; combo: number; on: number }
   | { type: 'skillGoal'; side: Side; combo: number }
   /** Blitz mode: a pickup appeared / was collected / was activated / wore off. */
   | { type: 'powerupSpawn'; id: number; kind: PowerUpKind; x: number; z: number }

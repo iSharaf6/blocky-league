@@ -106,7 +106,10 @@ describe('SKILL: each move', () => {
     const evs = steps(m, 1, pad(0, 1, { skill: true }));
     steps(m, 29, pad(1, 0), evs);
     const mv = moveOf(evs);
-    expect(mv).toMatchObject({ move: 'roulette', grade: 'show', combo: 0, on: -1 });
+    // (A show-off is a link in the chain's "SKILL ×n" too, but beats nobody: no SKILL GOAL clock, no SKILL move counted.)
+    expect(mv).toMatchObject({ move: 'roulette', grade: 'show', combo: 1, on: -1 });
+    expect(m.ctl[0].skill.chainMoves).toBe(0);
+    expect(m.ctl[0].skill.lastBeat).toBe(-9);
     expect(p.pos.z - b0.pos.z).toBeGreaterThan(0.9);
     expect(p.pos.z - b0.pos.z).toBeLessThan(1.8);
     expect(m.ball.owner).toBe(p.idx);

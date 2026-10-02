@@ -1998,7 +1998,7 @@ export class MatchSession {
     const p = m.players[e.player];
     if (!p || p.side !== hs) return;
     this.skillHud?.show(e.player, e.grade, e.move, e.combo);
-    if (e.move === 'cut' || e.move === 'knock') {
+    if (e.move === 'cut' || e.move === 'knock' || e.move === 'past') {
       sfx.skillMove('good');
       return;
     }

@@ -16,6 +16,7 @@ import { cssHex } from '../render/palette';
 import { careerState, closeMeta, clubCreate, esc, fmt, mountMeta, openClub, topBar, type ToastKind } from './club';
 import { openMarket } from './market';
 import { DIFFICULTIES, shirtArt } from './menus';
+import { roadIntro } from './roadIntro';
 import { scoreHtml, sep } from './text';
 
 type HubTab = 'table' | 'fixtures';
@@ -44,9 +45,30 @@ function returnToCareer(app: AppContext, flash?: Flash): void {
   openCareer(app, flash);
 }
 
-/** Entry point from the main menu (and the return point after every career match). */
+/**
+ * Entry point from the main menu (and the return point after every ROAD TO GLORY match). The very first visit opens
+ * the "how it works" panel before anything else (a save already deep in a season has no use for it: it is marked
+ * seen); it stays one tap away on the hub.
+ */
 export function openCareer(app: AppContext, flash?: Flash, tab: HubTab = 'table'): void {
   const st = careerState(app);
+  if (!app.save.settings.roadIntroSeen) {
+    if (st.club && ((st.season?.matchday ?? 0) > 0 || st.history.length > 0)) {
+      app.save.settings.roadIntroSeen = true;
+      app.persist();
+    } else {
+      roadIntro(app, {
+        first: true,
+        onGo: () => {
+          app.save.settings.roadIntroSeen = true;
+          app.persist();
+          openCareer(app, flash, tab);
+        },
+        onBack: () => toMenu(app),
+      });
+      return;
+    }
+  }
   if (!st.club) {
     clubCreate(app, () => openCareer(app, { msg: 'CLUB FOUNDED! GOOD LUCK', kind: 'good' }), () => toMenu(app));
     return;
@@ -141,9 +163,9 @@ function fixturesHtml(season: SeasonState, info: Map<string, LeagueClub>, mdView
     })
     .join('');
   return `<div class="mc-pager">
-      <button class="arrow" data-a="mdprev" ${mdView <= 0 ? 'disabled' : ''} aria-label="Previous matchday">◀</button>
+      <button class="arrow" data-a="mdprev" ${mdView <= 0 ? 'disabled' : ''} aria-label="Previous matchday">←</button>
       <b>MATCHDAY ${mdView + 1}<small>${status}</small></b>
-      <button class="arrow" data-a="mdnext" ${mdView >= MATCHDAYS - 1 ? 'disabled' : ''} aria-label="Next matchday">▶</button>
+      <button class="arrow" data-a="mdnext" ${mdView >= MATCHDAYS - 1 ? 'disabled' : ''} aria-label="Next matchday">→</button>
     </div>
     <div class="mc-fxlist">${rows}</div>
     <h3 class="mc-h">YOUR SEASON</h3>
@@ -189,7 +211,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
     // Market news the club made itself and nobody has read (openMarket marks them seen, so a visit clears it).
     const unread = marketUnread(st);
     scr.render(
-      `${topBar('MENU', 'CAREER', `SEASON ${season.number}${sep()}${DIVISION_NAMES[season.division]}`, app.save.coins)}
+      `${topBar('MENU', 'ROAD TO GLORY', `SEASON ${season.number}${sep()}${DIVISION_NAMES[season.division]}`, app.save.coins)}
       ${st.notice ? `<div class="mc-notice"><p>${esc(st.notice)}</p><button class="btn btn-white" data-a="dismiss">OK</button></div>` : ''}
       ${next}
       <div class="mc-quick">
@@ -198,7 +220,10 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
         <button class="btn btn-white" data-a="stadium">STADIUM<span class="mc-lv">${sep()}LV ${st.stadium}</span></button>
         <button class="btn btn-white mc-marketbtn" data-a="market" aria-label="Transfer market${unread ? `, ${unread} unread` : ''}">MARKET${unread ? `<b class="mc-badge">${unread}</b>` : ''}</button>
       </div>
-      <div class="seg mc-tabs">${tabs.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}</button>`).join('')}</div>
+      <div class="mc-tabrow">
+        <div class="seg mc-tabs">${tabs.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}</button>`).join('')}</div>
+        <button class="btn btn-white mc-how" data-a="how">HOW IT WORKS</button>
+      </div>
       ${body}`,
       {
         back: () => toMenu(app),
@@ -208,11 +233,12 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
           draw();
         },
         play: () => playMatchday(app, st),
-        squad: () => openClub(app, { tab: 'squad', backLabel: 'CAREER', onBack: () => openCareer(app) }),
-        train: () => openClub(app, { tab: 'train', backLabel: 'CAREER', onBack: () => openCareer(app) }),
-        stadium: () => openClub(app, { tab: 'stadium', backLabel: 'CAREER', onBack: () => openCareer(app) }),
+        how: () => roadIntro(app, { first: false, onGo: () => openCareer(app, undefined, tab), onBack: () => openCareer(app, undefined, tab) }),
+        squad: () => openClub(app, { tab: 'squad', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app) }),
+        train: () => openClub(app, { tab: 'train', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app) }),
+        stadium: () => openClub(app, { tab: 'stadium', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app) }),
         // One market, one BACK: straight to the transfer market, and its BACK lands here.
-        market: () => openMarket(app, { backLabel: 'CAREER', onBack: () => openCareer(app) }),
+        market: () => openMarket(app, { backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app) }),
         tab: (el) => {
           tab = el.dataset.v as HubTab;
           draw();
@@ -265,7 +291,7 @@ export function playMatchday(app: AppContext, st: CareerState): void {
       const their = userHome ? r.score[1] : r.score[0];
       return matchReward(division, stadium, my, their);
     },
-    nextLabel: 'BACK TO CAREER',
+    nextLabel: 'BACK TO THE ROAD',
     onDone: (r) => {
       const [hg, ag] = r.score;
       app.persist();

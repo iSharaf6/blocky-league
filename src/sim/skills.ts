@@ -36,9 +36,12 @@ import type { MatchEvent, Side, SkillGrade, SkillMoveKind } from './types';
 /** How long each move plays (s): the animation, and the time the ball is off his foot. */
 export const SKILL_T: Readonly<Record<SkillMoveKind, number>> = { roulette: 0.42, rainbow: 0.36, stepover: 0.34, dragback: 0.32 };
 /** Names for the pop over him (Silkscreen: no hyphens). */
-export const SKILL_NAMES: Readonly<Record<SkillMoveKind | 'cut' | 'knock', string>> = {
+export const SKILL_NAMES: Readonly<Record<SkillMoveKind | ChainKind, string>> = {
   roulette: 'ROULETTE', rainbow: 'RAINBOW FLICK', stepover: 'STEPOVER', dragback: 'DRAG BACK', cut: 'SKILL CUT', knock: 'KNOCK ON',
+  past: 'SKINNED HIM',
 };
+/** The chain's other links: a skill cut and a knock-on (dribble.ts), and dribbling clean past a man (`past`: watchPast). */
+export type ChainKind = 'cut' | 'knock' | 'past';
 /** Frame code per move (replay.ts writeFrame: the render's skill pose). */
 export const SKILL_CODE: Readonly<Record<SkillMoveKind, number>> = { roulette: 1, rainbow: 2, stepover: 3, dragback: 4 };
 /** Seconds between the start of one move and the next, and the stamina each one costs (times Player.fatigue). */
@@ -62,7 +65,28 @@ export const PERFECT_GRACE = 0.06;
  */
 export const TELL_PRESS = 1.8;
 /** ... and the tackle a tell led into (Player.toldT, while it's committed) comes off this much more often. */
-export const TOLD_TACKLE = 1.3;
+export const TOLD_TACKLE = 1;
+/**
+ * The duel (the owner's favourite: "make it much more frequent"): a man in front of the human's dribbler, within
+ * TELL_REACH m, winds up a told challenge at TELL_DUEL a second on top of his usual press, so taking a man on almost
+ * always brings a tell. One at a time, and TELL_GAP s from the start of one to the next (never a wall of them).
+ * (32 bot matches, 2x90 s, NORMAL, SKILL never pressed: ~41 tells a match against ~16 before; W-D-L 22-6-4 against
+ * 22-10-0, goals 1.28-0.28 against 1.34-0.22, balls lost to tackles 2.5 against 2.35 a match.)
+ */
+export const TELL_REACH = 3.8;
+export const TELL_DUEL = 2.4;
+export const TELL_GAP = 0.9;
+/**
+ * A duel's tell barks more than it bites: ignored, its tackle comes off this much as often as a usual one. The
+ * duel is there for the SKILL counter (a PERFECT is the payoff); a player who never presses SKILL mustn't lose the
+ * ball every time he takes a man on, so it's no poke after the lunge either (ai.ts press).
+ */
+export const DUEL_TACKLE = 0.08;
+export const DUEL_SETTLE = 0.6;
+/** Dribbled past (watchPast): a man within PAST_AHEAD m goal-side and PAST_SIDE m of the line, beaten within PAST_T s. */
+const PAST_AHEAD = 3;
+const PAST_SIDE = 1.6;
+const PAST_T = 1.2;
 /** A challenge from further behind him than this (cos of the angle off his facing, negated) is out of view: untold. */
 const OUT_OF_VIEW = 0.35;
 /** A telegraphed challenge is called off with the carrier further away than this (m). */
@@ -86,8 +110,12 @@ const SPAM_T = 1.6;
 const SPAM_K = 0.5;
 /** Mid move (unprotected) tackles on him come off this much more often (dribble.ts carrierGuard). */
 export const SKILL_EXPOSED = 1.3;
-/** Successful skills this close together (s) chain; a goal this soon after one is a SKILL GOAL. */
-export const COMBO_T = 4;
+/**
+ * Skills this close together (s) chain: every move, cut, knock-on and man dribbled past adds a link (the "SKILL ×n"
+ * over him), show-offs too. A goal this soon (SKILL_GOAL_T) after one that beat a man, in a chain with a SKILL move
+ * that beat one, is a SKILL GOAL: the pops are free, the rewards are earned.
+ */
+export const COMBO_T = 5;
 export const SKILL_GOAL_T = 5;
 /** ROULETTE: the slip to the side (m), and his pace along the run meanwhile (share of his pace going in, at most m/s). */
 const ROULETTE_SLIP = 1.3;
@@ -151,6 +179,11 @@ export class SkillState {
   combo = 0;
   chainMoves = 0;
   lastWin = -9;
+  /** When a link last beat a man (the SKILL GOAL clock), and when the newest tell on his man started (TELL_GAP). */
+  lastBeat = -9;
+  tellAt = -9;
+  /** Per player: when he was last square in front of the dribbler (watchPast: once he's behind him, he's been skinned). */
+  readonly ahead: number[] = new Array(22).fill(-9);
   /** A defender a PERFECT beat, stumbling (the render): who, from when (skill clock), how long. */
   stumble: { idx: number; at: number; dur: number } | null = null;
   /** This match: tells shown, moves made, PERFECTs, the best chain, SKILL GOALs. */
@@ -164,15 +197,15 @@ export class SkillState {
    * A skill that beat a man (a move, or a skill cut / knock-on: dribble.ts): extends the chain (COMBO_T), and a chain
    * of two or more is shown ('skillMove' with `combo`). Returns the chain.
    */
-  chain(m: Match, p: Player, move: SkillMoveKind | 'cut' | 'knock', grade: SkillGrade = 'good', on = -1): number {
+  chain(m: Match, p: Player, move: SkillMoveKind | ChainKind, grade: SkillGrade = 'good', on = -1, beat = true): number {
     const going = this.t - this.lastWin <= COMBO_T;
     this.combo = going ? this.combo + 1 : 1;
-    this.chainMoves = (going ? this.chainMoves : 0) + (move === 'cut' || move === 'knock' ? 0 : 1);
+    if (!going) this.chainMoves = 0;
+    if (beat && move !== 'cut' && move !== 'knock' && move !== 'past') this.chainMoves++;
     this.lastWin = this.t;
+    if (beat) this.lastBeat = this.t;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
-    if (move === 'cut' || move === 'knock') {
-      if (this.combo >= 2) m.events.push({ type: 'skillMove', player: p.idx, move, grade, combo: this.combo, on });
-    }
+    if (move === 'cut' || move === 'knock' || move === 'past') m.events.push({ type: 'skillMove', player: p.idx, move, grade, combo: this.combo, on });
     return this.combo;
   }
 
@@ -197,15 +230,26 @@ export function telegraphs(m: Match, o: Player, c: Player): boolean {
   return (Math.cos(c.facing) * tx + Math.sin(c.facing) * tz) / tl > -OUT_OF_VIEW;
 }
 
+/**
+ * May a duel's tell go up on the human's carrier `c`: none winding up on him now, TELL_GAP s since the last began, and
+ * he has had it DUEL_SETTLE s (taking a man on, not a first-time pass: a man sprinting in to wind up stood in its lane).
+ */
+export function tellReady(m: Match, c: Player): boolean {
+  const st = m.ctl[c.side].skill;
+  return st.threat === null && st.t - st.tellAt >= TELL_GAP && c.ballT >= DUEL_SETTLE;
+}
+
 /** `o` winds up his challenge on the human's carrier `c` (a slide or a standing tackle): the tell, and the window. */
-export function startTell(m: Match, o: Player, c: Player, slide: boolean): void {
+export function startTell(m: Match, o: Player, c: Player, slide: boolean, duel = false): void {
   const st = m.ctl[c.side].skill;
   const t = tellTime(m.aiSkill(o.side));
   o.tellT = t;
   o.tellSlide = slide;
+  o.tellDuel = duel;
   o.commitT = 0;
   st.threat = { by: o.idx, on: c.idx, at: st.t, until: st.t + t + PERFECT_GRACE, slide };
   st.tells++;
+  st.tellAt = st.t;
   m.events.push({ type: 'skillTell', by: o.idx, on: c.idx, slide });
 }
 
@@ -268,6 +312,28 @@ export function humanSkill(m: Match, p: Player, pad: Pad, dt: number): void {
   if (st.threat && st.t > st.threat.until) st.threat = null;
   if (pad.skill && !h.prev.skill) trySkill(m, p, pad, st);
   if (st.move) stepMove(m, p, pad, st, dt);
+  watchPast(m, p, st);
+}
+
+/**
+ * Dribbling clean past a man: one who stood square between the dribbler and goal (PAST_AHEAD m on, within PAST_SIDE m
+ * of his line) and is goal-side of him no more within PAST_T s, the ball still at his feet, is a link in the chain
+ * ('past': SKINNED HIM). Measured towards goal, so turning back doesn't "beat" anyone.
+ */
+function watchPast(m: Match, p: Player, st: SkillState): void {
+  const b = m.ball;
+  if (b.owner !== p.idx || b.held || p.speed() < 2) return;
+  const ad = m.attackDir(p.side);
+  for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
+    if (o.isKeeper || o.sentOff) continue;
+    const along = (o.pos.x - p.pos.x) * ad;
+    const across = Math.abs(o.pos.z - p.pos.z);
+    if (along > 0.4 && along < PAST_AHEAD && across < PAST_SIDE) st.ahead[o.idx] = st.t;
+    else if (along < -0.6 && across < PAST_SIDE + 1 && st.t - st.ahead[o.idx] < PAST_T) {
+      st.ahead[o.idx] = -9;
+      st.chain(m, p, 'past', 'good', o.idx);
+    }
+  }
 }
 
 /** Which move the stick picks against his run (`ux, uz`), and the roulette's side (+1: the stick's turn is anticlockwise). */
@@ -341,12 +407,11 @@ function gradeMove(m: Match, p: Player, st: SkillState, since: number): SkillGra
   }
   if (perfect) st.threat = null;
   const grade: SkillGrade = perfect ? 'perfect' : beat ? 'good' : near ? 'plain' : 'show';
-  let combo = 0;
   if (beat) {
     p.protectT = Math.max(p.protectT, perfect ? PERFECT_PROTECT : PROTECT_T);
-    combo = st.chain(m, p, st.move!.kind, grade);
     m.events.push({ type: 'skill', player: p.idx });
   }
+  const combo = st.chain(m, p, st.move!.kind, grade, -1, beat);
   m.events.push({ type: 'skillMove', player: p.idx, move: st.move!.kind, grade, combo, on: perfect ? perfect.idx : -1 });
   return grade;
 }
@@ -471,13 +536,14 @@ function flick(m: Match, p: Player, mv: SkillMove): void {
 export function skillGoal(m: Match, side: Side, own: boolean): void {
   if (!m.human[side]) return;
   const st = m.ctl[side].skill;
-  if (!own && st.combo > 0 && st.chainMoves > 0 && st.t - st.lastWin <= SKILL_GOAL_T) {
+  if (!own && st.combo > 0 && st.chainMoves > 0 && st.t - st.lastBeat <= SKILL_GOAL_T) {
     st.skillGoals++;
     m.events.push({ type: 'skillGoal', side, combo: st.combo });
   }
   st.combo = 0;
   st.chainMoves = 0;
   st.lastWin = -9;
+  st.lastBeat = -9;
 }
 
 // ------------------------------------------------------------------ for the render and the HUD

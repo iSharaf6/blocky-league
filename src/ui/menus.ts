@@ -6,6 +6,7 @@ import {
   CELEBRATION_NAMES, celebrationUnlocked, type CelebrationId, exportSave, importSave, unlockLadder, xpAt } from '../core/save';
 import { APP_VERSION, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
+import { pixelIcon } from './pixelIcons';
 import { coachText } from './coach';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
@@ -22,6 +23,8 @@ import { FORMATIONS, FORMATION_IDS, type Slot } from '../sim/formations';
 import type { Match } from '../sim/match';
 import type { ScenarioOutcome } from '../sim/scenario';
 import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef, type ScenarioSpec } from '../sim/types';
+
+export { pixelIcon };
 
 export const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD', 'LEGEND'];
 
@@ -170,50 +173,6 @@ export function shirtArt(kit: Kit, size = 8): string {
     }
   }
   return `<div class="shirt" style="--px:${size}px;grid-template-columns:repeat(${W},var(--px))">${cells}</div>`;
-}
-
-const ICONS: Record<string, string[]> = {
-  ball: [
-    '..XXXXXX..', '.XX.XX.XX.', 'XX..XX..XX', 'X.XX..XX.X', 'XXX.XX.XXX',
-    'XXX.XX.XXX', 'X.XX..XX.X', 'XX..XX..XX', '.XX.XX.XX.', '..XXXXXX..',
-  ],
-  trophy: [
-    'XXXXXXXXXX', 'X.XXXXXX.X', 'X.XXXXXX.X', '.XXXXXXXX.', '..XXXXXX..',
-    '...XXXX...', '....XX....', '....XX....', '..XXXXXX..', '..XXXXXX..',
-  ],
-  shirt: [
-    '..XX..XX..', 'XXXX..XXXX', 'XXXXXXXXXX', 'XXXXXXXXXX', '.XXXXXXXX.',
-    '..XXXXXX..', '..XXXXXX..', '..XXXXXX..', '..XXXXXX..', '..XXXXXX..',
-  ],
-  gear: [
-    '....XX....', '.X.XXXX.X.', '..XXXXXX..', '.XXX..XXX.', 'XXX....XXX',
-    'XXX....XXX', '.XXX..XXX.', '..XXXXXX..', '.X.XXXX.X.', '....XX....',
-  ],
-  star: [
-    '....XX....', '....XX....', '...XXXX...', 'XXXXXXXXXX', '.XXXXXXXX.',
-    '..XXXXXX..', '..XXXXXX..', '.XXX..XXX.', 'XX......XX', 'X........X',
-  ],
-  /** Two players (ONLINE: play a friend). */
-  duo: [
-    '.XX....XX.', '.XX....XX.', '..........', 'XXXX..XXXX', 'XXXX..XXXX',
-    'XXXX..XXXX', '.XX....XX.', '.XX....XX.', '.XX....XX.', '..........',
-  ],
-  lock: [
-    '...XXXX...', '..XX..XX..', '..X....X..', '..X....X..', '.XXXXXXXX.',
-    '.XXXXXXXX.', '.XXXX.XXX.', '.XXXX.XXX.', '.XXXXXXXX.', '.XXXXXXXX.',
-  ],
-};
-
-/** Crisp pixel icon as inline SVG. */
-export function pixelIcon(name: string, color = '#fbfbf4', px = 5): string {
-  const rows = ICONS[name];
-  if (!rows) return '';
-  let rects = '';
-  rows.forEach((r, y) => [...r].forEach((c, x) => {
-    if (c === 'X') rects += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
-  }));
-  const n = rows.length;
-  return `<svg class="picon" width="${n * px}" height="${n * px}" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" fill="${color}" aria-hidden="true">${rects}</svg>`;
 }
 
 /** 1-5 stars from a squad OVR (the same teamRating number shown everywhere else). */
@@ -384,14 +343,14 @@ const howtoTouch = (): string => `
 /** Blitz mode, under every How to Play tab: the pickups and the button that uses them. `use` names that button. */
 const howtoBlitz = (use: string) => `
   <div class="ht-blitz">
-    <h3>⚡ BLITZ MODE</h3>
+    <h3>${pixelIcon('bolt', '#8a5cf6', 2, 'inl')}BLITZ MODE</h3>
     <p>Quick Match › MODE › BLITZ. Run over the glowing pickups on the pitch, then press ${use} to use the one you hold (one at a time, and it shows by the score):</p>
     <ul class="ht-pw">
-      <li><i>⚡</i><b>TURBO</b><span>a burst of pace</span></li>
-      <li><i>💥</i><b>MEGA SHOT</b><span>your next shot is a rocket</span></li>
-      <li><i>❄️</i><b>FREEZE</b><span>the other side slows for a few seconds</span></li>
-      <li><i>🧲</i><b>MAGNET</b><span>the ball sticks to your feet</span></li>
-      <li><i>🛡️</i><b>SHIELD</b><span>nobody can tackle you</span></li>
+      <li><i>${pixelIcon('bolt', '#1fb36b', 2)}</i><b>TURBO</b><span>a burst of pace</span></li>
+      <li><i>${pixelIcon('burst', '#e2501a', 2)}</i><b>MEGA SHOT</b><span>your next shot is a rocket</span></li>
+      <li><i>${pixelIcon('freeze', '#2a8fd0', 2)}</i><b>FREEZE</b><span>the other side slows for a few seconds</span></li>
+      <li><i>${pixelIcon('magnet', '#d99a00', 2)}</i><b>MAGNET</b><span>the ball sticks to your feet</span></li>
+      <li><i>${pixelIcon('shield', '#8a5cf6', 2)}</i><b>SHIELD</b><span>nobody can tackle you</span></li>
     </ul>
   </div>`;
 
@@ -496,10 +455,11 @@ export class Menus {
   }
 
   /**
-   * The main menu. PLAY NOW (when `h.playNow` is given) is the wide first tile: straight into a match, no
-   * setup; MOMENTS (when `h.moments` is given) the wide tile after it (short challenges); QUICK MATCH keeps the
-   * setup screen. ACCOUNT (cloud saves) shows beside the coins when `h.account` is given. The level badge opens
-   * the whole unlock ladder when `h.unlocks` is given.
+   * The main menu, most important first: PLAY NOW (when `h.playNow` is given: straight into a match, no setup) and
+   * ROAD TO GLORY are the two big tiles, then QUICK MATCH (the setup screen), MY CLUB, BLOCKY CUP, MOMENTS, CLUB RUN,
+   * BLITZ, ONLINE and a slim SETTINGS (src/style.css "round 14" lays that order out in two columns or four).
+   * ACCOUNT (cloud saves) shows beside the coins when `h.account` is given. The level badge opens the whole unlock
+   * ladder when `h.unlocks` is given.
    */
   main(
     save: SaveData,
@@ -529,7 +489,7 @@ export class Menus {
     const wdl = `W ${r.won}${sep()}D ${r.drawn}${sep()}L ${r.lost}${sep()}${r.goalsFor} GOALS`;
     // The level badge is a button when the ladder screen is offered: the whole list of unlocks sits behind it.
     const badgeBody = lv
-      ? `<b>LV ${lv.level}${sep()}${escHtml(lv.title.toUpperCase())}${info?.streak && info.streak >= 2 ? `${sep()}🔥${info.streak}` : ''}${info?.badgesPending ? `<em class="lvl-dot" aria-label="${info.badgesPending} rewards to claim">${info.badgesPending}</em>` : ''}${h.unlocks ? '<u class="chev" aria-hidden="true">▸</u>' : ''}</b><span>${info?.badgeGoal ? escHtml(info.badgeGoal) : wdl}</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()}${sep()}${info.unlock.xpLeft} XP</small>` : h.unlocks ? '<small class="lvl-next">EVERYTHING EARNED</small>' : ''}`
+      ? `<b>LV ${lv.level}${sep()}${escHtml(lv.title.toUpperCase())}${info?.streak && info.streak >= 2 ? `${sep()}${pixelIcon('fire', '#ff9a3a', 1.5, 'inl')}${info.streak}` : ''}${info?.badgesPending ? `<em class="lvl-dot" aria-label="${info.badgesPending} rewards to claim">${info.badgesPending}</em>` : ''}${h.unlocks ? '<u class="chev" aria-hidden="true">▸</u>' : ''}</b><span>${info?.badgeGoal ? escHtml(info.badgeGoal) : wdl}</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()}${sep()}${info.unlock.xpLeft} XP</small>` : h.unlocks ? '<small class="lvl-next">EVERYTHING EARNED</small>' : ''}`
       : '';
     const badge = lv
       ? h.unlocks
@@ -545,7 +505,7 @@ export class Menus {
       const side = html.includes('tile-side');
       return html
         .replace('class="btn ', `aria-disabled="true" data-locked="${f}" class="btn locked `)
-        .replace(/<svg class="picon"[\s\S]*?<\/svg>|<i class="picon bolt"[^>]*>[^<]*<\/i>/, pixelIcon('lock', '#f1efe8', side ? 5 : 6))
+        .replace(/<svg class="picon"[\s\S]*?<\/svg>/, pixelIcon('lock', '#f1efe8', side ? 5 : 6))
         .replace(/<small[^>]*>[\s\S]*?<\/small>/, '')
         .replace('</button>', '<small class="lock-note">SCORE YOUR FIRST GOAL</small></button>');
     };
@@ -556,24 +516,24 @@ export class Menus {
         ${info?.captain ? `<div class="captain"><canvas class="captain-3d"></canvas><div class="captain-tag"><b>${info.captain.club}</b><span>OVR ${info.captain.ovr}</span></div></div>` : ''}
         <div class="main-col">
         <div class="topbar">
-          ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">🎁 <span class="gift-w">DAILY </span>GIFT <b>+${info.gift.amount}</b></button>` : ''}
+          ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">${pixelIcon('gift', '#26262e', 2, 'inl')}<span class="gift-w">DAILY </span>GIFT <b>+${info.gift.amount}</b></button>` : ''}
           ${h.account ? `<button class="btn btn-white acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
           ${h.shop
             ? `<button class="coins shop-btn" data-a="shop" aria-label="Shop: ${save.coins.toLocaleString()} coins${info?.shopNew ? `, ${info.shopNew} new` : ''}"><i></i><span>${save.coins.toLocaleString()}</span><b class="shop-tag">SHOP</b>${info?.shopNew ? `<em class="shop-new">${info.shopNew > 9 ? '9+' : info.shopNew}</em>` : ''}</button>`
             : `<div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>`}
         </div>
         <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
-        <div class="tiles t13 ${info?.hero && info.hero.kind !== 'play' ? 'campaign' : ''} ${h.online ? 'has-online' : ''}">
+        <div class="tiles t14 ${info?.hero && info.hero.kind !== 'play' ? 'campaign' : ''} ${h.online ? 'has-online' : ''}">
           ${h.playNow ? `<button class="btn btn-go tile tile-wide ${info?.hero && info.hero.kind !== 'play' ? 'pulse' : ''}" data-a="playnow">${pixelIcon('ball', '#fff', 6)}<span>${escHtml(info?.hero?.title ?? 'PLAY NOW')}</span>${sub(info?.playNow)}</button>` : ''}
+          ${lockable('career', `<button class="btn btn-blue tile tile-wide tile-road" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>ROAD TO GLORY</span>${sub(info?.career)}</button>`)}
+          <button class="btn ${h.playNow ? 'btn-white' : 'btn-go'} tile" data-a="quick">${pixelIcon('ball', h.playNow ? '#26262e' : '#fff', 6)}<span>QUICK MATCH</span>${sub(info?.quick)}</button>
+          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${sub(info?.club)}</button>
+          <button class="btn btn-red tile tile-side tile-cup" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${sub(info?.cup)}</button>
           ${h.moments ? lockable('moments', `<button class="btn btn-teal tile tile-side tile-moments" data-a="moments">${pixelIcon('star', '#ffd23a', 5)}<span>MOMENTS</span>${sub(info?.moments ?? 'SHORT CHALLENGES')}</button>`) : ''}
           ${h.run ? lockable('run', `<button class="btn btn-orange tile tile-side tile-run" data-a="run">${pixelIcon('trophy', '#fff', 5)}<span>CLUB RUN</span>${sub(info?.run ?? 'ONE MORE RUN')}</button>`) : ''}
-          <button class="btn ${h.playNow ? 'btn-white' : 'btn-go'} tile" data-a="quick">${pixelIcon('ball', h.playNow ? '#26262e' : '#fff', 6)}<span>QUICK MATCH</span>${sub(info?.quick)}</button>
-          ${lockable('career', `<button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${sub(info?.career)}</button>`)}
-          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${sub(info?.club)}</button>
-          <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
-          ${lockable('blitz', `<button class="btn btn-purple tile tile-side" data-a="blitz"><i class="picon bolt" aria-hidden="true">⚡</i><span>BLITZ</span><small>POWER UPS</small></button>`)}
-          <button class="btn btn-red tile tile-side" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${sub(info?.cup)}</button>
+          ${lockable('blitz', `<button class="btn btn-purple tile tile-side tile-blitz" data-a="blitz">${pixelIcon('bolt', '#ffd23a', 5)}<span>BLITZ</span><small>POWER UPS</small></button>`)}
           ${h.online ? `<button class="btn btn-blue tile tile-side tile-online" data-a="online">${pixelIcon('duo', '#fff', 5)}<span>ONLINE</span><small>PLAY A FRIEND</small></button>` : ''}
+          <button class="btn btn-white tile tile-side tile-set" data-a="settings">${pixelIcon('gear', '#26262e', 5)}<span>SETTINGS</span></button>
         </div>
         ${daily}
         <div class="main-foot">
@@ -653,9 +613,9 @@ export class Menus {
       el.innerHTML = `
         <span class="tp-label">${side === 'home' ? 'YOU' : 'RIVAL'}</span>
         <div class="tp-body">
-          <button class="arrow" data-d="-1">◀</button>
+          <button class="arrow" data-d="-1">←</button>
           <div class="tp-kit">${preview.ok ? '<canvas class="tp-3d"></canvas>' : shirtArt(c.kit, 9)}</div>
-          <button class="arrow" data-d="1">▶</button>
+          <button class="arrow" data-d="1">→</button>
         </div>
         <b class="tp-name">${crestSvg(c.name, c.short, c.kit, 2)}${c.name}</b>
         <span class="tp-stars">${stars(ovr)}</span>
@@ -702,7 +662,7 @@ export class Menus {
       why.textContent = nope ? 'BLITZ opens with your first goal.' : MODE_WHY[cur];
       d.classList.toggle('blitz', cur === 'blitz');
     };
-    seg('mode', ['CLASSIC', blitzLocked ? 'BLITZ 🔒' : 'BLITZ ⚡'], () => modes.indexOf(cur), (i) => {
+    seg('mode', ['CLASSIC', `BLITZ ${pixelIcon(blitzLocked ? 'lock' : 'bolt', 'currentColor', 1.6, 'inl')}`], () => modes.indexOf(cur), (i) => {
       if (blitzLocked && modes[i] === 'blitz') return drawWhy(true);
       cur = modes[i];
       save.settings.lastMode = cur;
@@ -712,7 +672,7 @@ export class Menus {
     // LEGEND is earned: LEGEND_STARS match stars open it (an old save sitting on it drops to HARD until then).
     const legendOk = legendUnlocked(save.progress);
     if (!legendOk && save.settings.difficulty === 3) save.settings.difficulty = 2;
-    seg('diff', DIFFICULTIES.map((l, i) => (i === 3 && !legendOk ? `${l} 🔒 ${LEGEND_STARS}★` : l)), () => save.settings.difficulty, (i) => {
+    seg('diff', DIFFICULTIES.map((l, i) => (i === 3 && !legendOk ? `${l} ${pixelIcon('lock', 'currentColor', 1.6, 'inl')} ${LEGEND_STARS}★` : l)), () => save.settings.difficulty, (i) => {
       if (i === 3 && !legendOk) return;
       save.settings.difficulty = i;
     });
@@ -1085,7 +1045,7 @@ export class Menus {
             <div class="ft-levelup" aria-live="polite"></div>
             ${(() => { const nu = nextUnlock(prog.xpTo, prog.owned); return nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''; })()}
           </div>
-          ${prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">🔥 ${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : ''}
+          ${prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">${pixelIcon('fire', '#ff9a3a', 2, 'inl')}${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : ''}
           ${prog.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : ''}
           ${extra.tierUps?.length ? `<ul class="ft-tiers">${extra.tierUps.map((t) => `<li>${escHtml(t)}</li>`).join('')}</ul>` : ''}
           ${extra.shopReach ? `<p class="ft-shop">NOW IN REACH IN THE SHOP: <b>${escHtml(extra.shopReach.name.toUpperCase())}</b> ${escHtml(extra.shopReach.kind.toLowerCase())}</p>` : ''}
@@ -1106,7 +1066,7 @@ export class Menus {
           ${this.statsTable(m, kits)}
           <div class="btn-row ft-foot">
             <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
-            ${canDouble ? '<button class="btn btn-yellow" data-a="double">🎬 2× COINS</button>' : ''}
+            ${canDouble ? `<button class="btn btn-yellow" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× COINS</button>` : ''}
             ${h.rematch ? '<button class="btn btn-white btn-lg" data-a="rematch">⟳ REMATCH</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="next">${h.nextLabel ?? 'CONTINUE'}</button>
           </div>
@@ -1211,7 +1171,7 @@ export class Menus {
           <ul class="bd-steps">
             <li><b>✓</b>PASS</li><li><b>✓</b>SHOOT</li><li><b>✓</b>CROSS</li>
           </ul>
-          <p class="fine big">Now your first match. Score a goal to unlock <b>CAREER</b>, <b>MOMENTS</b>, <b>CLUB RUN</b> and <b>BLITZ</b>.</p>
+          <p class="fine big">Now your first match. Score a goal to unlock <b>ROAD TO GLORY</b>, <b>MOMENTS</b>, <b>CLUB RUN</b> and <b>BLITZ</b>.</p>
           <div class="btn-row">
             <button class="btn btn-white" data-a="menu">MENU</button>
             <button class="btn btn-go btn-lg pulse" data-a="play">FIRST MATCH ▸</button>
@@ -1241,10 +1201,10 @@ export class Menus {
           <h2 class="verdict win">UNLOCKED!</h2>
           <p class="fine big">Your first goal. The whole game is open:</p>
           <ul class="ul-new">
-            <li>${pixelIcon('trophy', '#ffd23a', 3)}<b>CAREER</b><span>build a club, climb six divisions</span></li>
+            <li>${pixelIcon('trophy', '#ffd23a', 3)}<b>ROAD TO GLORY</b><span>build a club, climb six divisions</span></li>
             <li>${pixelIcon('star', '#ffd23a', 3)}<b>MOMENTS</b><span>short challenges for stars</span></li>
             <li>${pixelIcon('trophy', '#fff', 3)}<b>CLUB RUN</b><span>seven matches, one life, a perk a win</span></li>
-            <li><i class="ul-bolt" aria-hidden="true">⚡</i><b>BLITZ</b><span>football with power-ups</span></li>
+            <li><i class="ul-bolt" aria-hidden="true">${pixelIcon('bolt', '#8a5cf6', 2.2)}</i><b>BLITZ</b><span>football with power-ups</span></li>
           </ul>
           <div class="btn-row"><button class="btn btn-go btn-lg" data-a="ok">LET'S GO</button></div>
         </div>
@@ -1692,7 +1652,7 @@ export class Menus {
           const lvl = levelOf(save.progress.xp).level;
           const id = (s.ballSkin ?? 'classic') as BallSkinId;
           const locked = BALL_SKIN_IDS.find((x) => !skinUnlocked(x, lvl) && !owns(save, 'ball', x));
-          b.innerHTML = `<span>${labels[k]}</span><b>${BALL_SKIN_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}🔒 ${BALL_SKIN_NAMES[locked].toUpperCase()} LV${BALL_SKIN_LEVEL[locked]}</small>` : ''}</b>`;
+          b.innerHTML = `<span>${labels[k]}</span><b>${BALL_SKIN_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}${pixelIcon('lock', 'currentColor', 1.2, 'inl')}${BALL_SKIN_NAMES[locked].toUpperCase()} LV${BALL_SKIN_LEVEL[locked]}</small>` : ''}</b>`;
           return;
         }
         if (k === 'celebration') {
@@ -1700,7 +1660,7 @@ export class Menus {
           const lvl = levelOf(save.progress.xp).level;
           const id = (s.celebration ?? 'classic') as CelebrationId;
           const locked = CELEBRATION_IDS.find((x) => !celebrationUnlocked(x, lvl) && !owns(save, 'celebration', x));
-          b.innerHTML = `<span>${labels[k]}</span><b>${CELEBRATION_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}🔒 ${CELEBRATION_NAMES[locked].toUpperCase()} LV${CELEBRATION_LEVEL[locked]}</small>` : ''}</b>`;
+          b.innerHTML = `<span>${labels[k]}</span><b>${CELEBRATION_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}${pixelIcon('lock', 'currentColor', 1.2, 'inl')}${CELEBRATION_NAMES[locked].toUpperCase()} LV${CELEBRATION_LEVEL[locked]}</small>` : ''}</b>`;
           return;
         }
         const on = k === 'colorblind' ? v === true : k === 'quickSubs' ? v !== false : v;
@@ -1863,7 +1823,7 @@ export class Menus {
         b.setAttribute('aria-selected', String(on));
       });
       body.innerHTML = (dev === 'touch' ? howtoTouch() : dev === 'gamepad' ? howtoPad() : howtoKeys())
-        + howtoBlitz(dev === 'touch' ? 'the <b>⚡</b> button' : kc('power', dev));
+        + howtoBlitz(dev === 'touch' ? `the <b class="inl-ic">${pixelIcon('bolt', '#8a5cf6', 1.6, 'inl')}</b> button` : kc('power', dev));
     };
     d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) =>
       b.addEventListener('click', () => {
@@ -1889,7 +1849,7 @@ export class Menus {
           <div class="reward"><i></i><span>+${amount}</span><em>DAY ${streak} STREAK</em></div>
           <p class="fine">Spend it in the SHOP: celebrations, balls, goal effects and scout packs. Come back tomorrow to keep the streak going.</p>
           <div class="btn-row">
-            ${canDouble ? '<button class="btn btn-white" data-a="double">🎬 2× GIFT</button>' : ''}
+            ${canDouble ? `<button class="btn btn-white" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× GIFT</button>` : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>
           </div>
         </div>

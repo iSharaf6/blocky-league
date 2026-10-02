@@ -3,7 +3,7 @@ import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_
 import { headerAtGoal, throughLead } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, DDA_PRESS, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
 import { readsHuman, takeOnVsHuman, vsHuman } from './dribble';
-import { startTell, telegraphs, TELL_PRESS, TOLD_TACKLE } from './skills';
+import { DUEL_TACKLE, startTell, telegraphs, tellReady, TELL_DUEL, TELL_PRESS, TELL_REACH, TOLD_TACKLE } from './skills';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import { FIRST_MATCH_PRESS, type Match } from './match';
 import type { Player } from './player';
@@ -1194,7 +1194,8 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   if (hasBall && d < 3.2) p.jockeyT += dt;
   if (commit) p.commitT -= dt;
   // (Winding up a telegraphed challenge, Player.tellT: skills.ts sends him in when it's up.)
-  else if (hasBall && d < 2.7 && p.tackleCooldown <= 0 && !guarded && p.tellT <= 0) {
+  // (At the human's man from in front or beside him, a told challenge can start further out, TELL_REACH: the duel.)
+  else if (hasBall && p.tackleCooldown <= 0 && !guarded && p.tellT <= 0 && (d < 2.7 || (vsHuman && d < TELL_REACH && telegraphs(m, p, c)))) {
     const exposed = dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.8 ? 2.2 : 1;
     const backToGoal = Math.cos(c.facing) * ad > 0.3 ? 1.5 : 1;
     const covered = brain.cover >= 0 ? 1.3 : 0.8;
@@ -1213,8 +1214,15 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     // At the human's man from in front of him or beside him it's telegraphed first: the SKILL counter (skills.ts). (A
     // told challenge comes TELL_PRESS x as often: the warning it gives him costs it the surprise.)
     const told = vsHuman && telegraphs(m, p, c);
-    if (m.rng.chance(rate * (told ? TELL_PRESS : 1) * dt)) {
-      if (told) startTell(m, p, c, false);
+    // (And taking a man on brings one most of the time: TELL_DUEL a second more while a tell may go up, eased like
+    // the press for a new player.)
+    const duel = told && tellReady(m, c) ? TELL_DUEL * ease * (1 - DDA_PRESS * m.assistEase(p.side)) : 0;
+    // (Beyond a standing tackle's 2.7 m only the duel's own tell starts.)
+    const press = d < 2.7 ? rate * (told ? TELL_PRESS : 1) : 0;
+    // (No draw when nothing can start: past 2.7 m with no duel open, the dice are left alone.)
+    if (press + duel > 0 && m.rng.chance((press + duel) * dt)) {
+      // (Which of the two it was: the duel's share of the chance.)
+      if (told) startTell(m, p, c, false, duel > 0 && m.rng.next() * (press + duel) < duel);
       else {
         p.commitT = 0.55;
         commit = true;
@@ -1237,10 +1245,10 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   const footD = dist2(p.footX(), p.footZ(), b.x, b.z);
   if (commit && hasBall && p.tackleCooldown <= 0 && footD < 1.15) {
     // (Going in out of a tell, skills.ts, the man ignored it: the tackle is the surer for it.)
-    m.tryTackle(p, c, aggression * (p.toldT > 0 ? TOLD_TACKLE : 1));
+    m.tryTackle(p, c, aggression * (p.toldT > 0 ? (p.tellDuel ? DUEL_TACKLE : TOLD_TACKLE) : 1));
     p.commitT = 0;
     p.jockeyT = 0;
-  } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded && p.tellT <= 0 &&
+  } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded && p.tellT <= 0 && !(p.toldT > 0 && p.tellDuel) &&
     dist2(b.x, b.z, c.pos.x, c.pos.z) > (vsHuman ? HUMAN_POKE_EXPOSED : 0.95)) {
     // Poke it away when the carrier's touch takes it too far from his feet.
     m.tryTackle(p, c, aggression * 1.25);

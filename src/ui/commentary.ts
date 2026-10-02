@@ -7,15 +7,16 @@ import { GOAL_H, HALF_L } from '../sim/constants';
 import type { Match } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { MatchEvent, PowerUpKind, ShotStyle, Side, TeamDef } from '../sim/types';
+import type { IconName } from './pixelIcons';
 
-/** Blitz power-ups as the commentator, the HUD slot and the banners name them. */
-export const POWER_INFO: Record<PowerUpKind, { name: string; banner: string; icon: string; color: string }> = {
-  turbo: { name: 'turbo', banner: 'TURBO!', icon: '⚡', color: '#3aff9e' },
-  mega: { name: 'mega shot', banner: 'MEGA SHOT!', icon: '💥', color: '#ff6a3a' },
-  freeze: { name: 'freeze', banner: 'FREEZE!', icon: '❄️', color: '#5cc8f5' },
-  magnet: { name: 'magnet', banner: 'MAGNET!', icon: '🧲', color: '#ffd23a' },
-  shield: { name: 'shield', banner: 'SHIELD!', icon: '🛡️', color: '#c69cff' },
-  golden: { name: 'golden goal', banner: 'GOLDEN GOAL! ×2', icon: '⭐', color: '#ffd166' },
+/** Blitz power-ups as the commentator, the HUD slot and the banners name them. `icon` is a pixel icon name (ui/pixelIcons.ts). */
+export const POWER_INFO: Record<PowerUpKind, { name: string; banner: string; icon: IconName; color: string }> = {
+  turbo: { name: 'turbo', banner: 'TURBO!', icon: 'bolt', color: '#3aff9e' },
+  mega: { name: 'mega shot', banner: 'MEGA SHOT!', icon: 'burst', color: '#ff6a3a' },
+  freeze: { name: 'freeze', banner: 'FREEZE!', icon: 'freeze', color: '#5cc8f5' },
+  magnet: { name: 'magnet', banner: 'MAGNET!', icon: 'magnet', color: '#ffd23a' },
+  shield: { name: 'shield', banner: 'SHIELD!', icon: 'shield', color: '#c69cff' },
+  golden: { name: 'golden goal', banner: 'GOLDEN GOAL! ×2', icon: 'star', color: '#ffd166' },
 };
 
 /** 5 = goals, reds, penalties, half / full time · 4 = saves, woodwork, bookings · 3 = chances, flags, subs · 2 = fouls, corners · 1 = colour. */

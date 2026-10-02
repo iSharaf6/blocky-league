@@ -20,6 +20,7 @@ import { MatchSession, type MatchResult, type SessionOptions } from './game/matc
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
 import { CAT_LABEL, DEFAULT_ID, equippedId, inReach, newInShop, shopOf, type ShopCat, type ShopItem } from './meta/shop';
 import { ads } from './platform/ads';
+import { adFree, iap } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
 import { BOX_DEPTH, BOX_W, HALF_L } from './sim/constants';
@@ -33,7 +34,7 @@ import { overall } from './sim/types';
 import { openCareer } from './ui/career';
 import { openCup } from './ui/cup';
 import { careerState, closeMeta, openClub } from './ui/club';
-import { openShop } from './ui/shop';
+import { openShop, shopOpen } from './ui/shop';
 import type { Projector } from './ui/hud';
 import { openMoments } from './ui/moments';
 import type { OnlineHost } from './ui/online';
@@ -73,6 +74,15 @@ let atMenu = false;
 function persist(): void {
   writeSave(save);
 }
+
+// Store purchases (platform/iap.ts) pay out into the one save and store it before the store is told it arrived.
+// NO ADS switches the interstitials off (rewarded ads stay: they are the player's choice). Both read the live save.
+ads.adFree = () => adFree(save);
+iap.bind({ save, persist });
+iap.onGrant((g) => {
+  // A purchase that completes while the shop is shut (a family approval, one the store re-delivers at launch) still says so.
+  if (!shopOpen() && !g.restored) menus.toast(`PURCHASE ARRIVED${g.coins ? `: +${g.coins.toLocaleString('en-US')} COINS` : ''}`);
+});
 
 /**
  * Replace the running save with another (a file the player imported, or the cloud copy): every module holds
@@ -322,7 +332,7 @@ function mainInfo(): MainInfo {
       const star = [...club.squad.slice(0, 11)].sort((a, b) => overall(b) - overall(a))[0];
       if (star) info.captain = { def: star, kit: club.kit, club: club.name.toUpperCase(), ovr: clubRating(club) };
     } else {
-      info.career = 'START YOUR CLUB';
+      info.career = 'START AT THE BOTTOM';
       info.club = `KIT ${SEP_MARK} SQUAD`;
     }
     const cup = migrateCup(save.cup);
@@ -371,7 +381,7 @@ function onboarding(): NonNullable<typeof save.onboarding> {
 /** What the daily gift just brought into the SHOP's reach (said once, back on the menu). */
 let giftReach: ShopItem | null = null;
 
-const FEATURE_NAMES: Record<LockedFeature, string> = { career: 'CAREER', moments: 'MOMENTS', run: 'CLUB RUN', blitz: 'BLITZ' };
+const FEATURE_NAMES: Record<LockedFeature, string> = { career: 'ROAD TO GLORY', moments: 'MOMENTS', run: 'CLUB RUN', blitz: 'BLITZ' };
 
 function mainMenu(): void {
   atMenu = true;
@@ -1102,6 +1112,8 @@ async function boot(): Promise<void> {
   TouchControls.stickMode = save.settings.stick === 'fixed' ? 'fixed' : 'floating';
   menus.stick = TouchControls.stickMode;
   ads.onMute = (m) => sfx.setMuted(m);
+  // The store (the apps' native one, or the dev fake): loads in the background, the shop looks when it opens.
+  void iap.init();
   // Every screen's text goes through the divider guard (see ui/text.ts): no glyph the fonts lack.
   // (The whole page: menus, the HUD, the trainer card and anything else that writes text.)
   installSepGuard(document.body);

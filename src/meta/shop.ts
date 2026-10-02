@@ -7,14 +7,16 @@
  * - SCOUT PACKS: a random player card for MY CLUB (meta/career.ts ClubState, the club PLAY NOW and CAREER field)
  *   at a fixed price with the odds on show. A card signs into the squad (squad limit and all) or is sold on.
  *
- * Fair by construction: coins only ever come from playing (no real money anywhere), cosmetics are looks, and
- * ONLINE friendlies use the preset clubs, so nothing bought here wins a match against a friend. Everything
- * persists in SaveData.shop (core/save.ts normalizeShop) and Settings.
+ * Where coins come from: playing (matches, challenges, the daily gift), rewarded ads on the web portals (FREE
+ * COINS below: a few a day) and, in the iOS and Android apps only, store purchases (platform/iap.ts). Cosmetics
+ * are looks, and ONLINE friendlies use the preset clubs, so nothing bought here wins a match against a friend.
+ * Scout packs are random cards whoever earned or bought the coins, so their odds are always on show.
+ * Everything persists in SaveData.shop and SaveData.iap (core/save.ts normalizeShop / normalizeIap) and Settings.
  */
 import { Rng, hashString } from '../core/rng';
 import {
   BALL_SKIN_IDS, BALL_SKIN_LEVEL, BALL_SKIN_NAMES, CELEBRATION_IDS, CELEBRATION_LEVEL, CELEBRATION_NAMES, GOAL_FX_IDS, TRAIL_IDS, levelOf,
-  normalizeShop, type SaveData, type ShopState,
+  normalizeIap, normalizeShop, type IapState, type SaveData, type ShopState,
 } from '../core/save';
 import { FORMATIONS } from '../sim/formations';
 import { overall, type PlayerDef, type Role } from '../sim/types';
@@ -134,6 +136,15 @@ export function shopOf(save: Pick<SaveData, 'shop'>): ShopState {
   return save.shop!;
 }
 
+/** The save's store-purchase state, made whole in place first if it isn't (like shopOf). */
+export function iapOf(save: Pick<SaveData, 'iap'>): IapState {
+  const s = save.iap;
+  if (!s || !Array.isArray(s.owned) || !Array.isArray(s.applied) || !s.freeAds || typeof s.freeAds.day !== 'string' || !Number.isFinite(s.freeAds.count)) {
+    save.iap = normalizeIap(s);
+  }
+  return save.iap!;
+}
+
 /** Whole coins in the wallet (a damaged number counts as none). */
 function wallet(save: Pick<SaveData, 'coins'>): number {
   return Number.isFinite(save.coins) ? Math.max(0, Math.floor(save.coins)) : 0;
@@ -171,6 +182,26 @@ export function buyItem(save: Pick<SaveData, 'shop' | 'progress' | 'coins'>, cat
   shop.owned.push(key);
   if (!shop.seen.includes(key)) shop.seen.push(key);
   return { ok: true, item: it, coins: save.coins };
+}
+
+/** Coins into the wallet (never a negative or damaged amount); the new total. */
+export function creditCoins(save: Pick<SaveData, 'coins'>, amount: number): number {
+  save.coins = wallet(save) + (Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0);
+  return save.coins;
+}
+
+/**
+ * An item handed over without coins (a store purchase's bundle, e.g. the Starter Pack's Gold ball): owned for
+ * good and marked seen. False, and nothing changes, when it is already in the bought list or isn't an item.
+ */
+export function grantItem(save: Pick<SaveData, 'shop'>, cat: ShopCat, id: string): boolean {
+  if (!shopItem(cat, id)) return false;
+  const shop = shopOf(save);
+  const key = itemKey(cat, id);
+  if (shop.owned.includes(key)) return false;
+  shop.owned.push(key);
+  if (!shop.seen.includes(key)) shop.seen.push(key);
+  return true;
 }
 
 /** Put an owned item on (into Settings, where the match reads it). False, and nothing changes, when it isn't yours. */
@@ -225,6 +256,35 @@ export function markSeen(save: Pick<SaveData, 'shop' | 'progress' | 'coins'>, ca
 export function inReach(save: Pick<SaveData, 'shop' | 'progress'>, before: number, after: number): ShopItem | null {
   const hit = ITEMS.filter((it) => it.price > before && it.price <= after && !owns(save, it.cat, it.id)).sort((a, b) => b.price - a.price);
   return hit[0] ?? null;
+}
+
+// ------------------------------------------------------------------ free coins (rewarded ads, web portals)
+
+/** Coins a watched rewarded ad pays in the shop's FREE COINS card, and how many a local day can be watched. */
+export const FREE_AD_COINS = 75;
+export const FREE_AD_DAILY_CAP = 5;
+
+/** Free-coin ads still open today (`day` = localDay(); a new day starts the count again). */
+export function freeAdsLeft(save: Pick<SaveData, 'iap'>, day: string): number {
+  const f = iapOf(save).freeAds;
+  return f.day === day ? Math.max(0, FREE_AD_DAILY_CAP - f.count) : FREE_AD_DAILY_CAP;
+}
+
+export type FreeAdResult = { ok: true; coins: number; left: number } | { ok: false; reason: 'cap' };
+
+/**
+ * One watched ad's coins into the wallet, counted against today's cap. Call it only once the ad was watched
+ * through (platform/ads.ts rewarded() resolved true); a sixth ad in a day pays nothing.
+ */
+export function claimFreeAd(save: Pick<SaveData, 'iap' | 'coins'>, day: string): FreeAdResult {
+  if (freeAdsLeft(save, day) <= 0) return { ok: false, reason: 'cap' };
+  const f = iapOf(save).freeAds;
+  if (f.day !== day) {
+    f.day = day;
+    f.count = 0;
+  }
+  f.count++;
+  return { ok: true, coins: creditCoins(save, FREE_AD_COINS), left: FREE_AD_DAILY_CAP - f.count };
 }
 
 // ------------------------------------------------------------------ scout packs

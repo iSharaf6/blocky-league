@@ -50,6 +50,7 @@ _CrazyGames integration requirements rechecked on **2 October 2026**. Earlier br
 | CrazyGames: `environment === 'disabled'` treated as no portal, `loadingStart/Stop`, `gameplayStart/Stop` deduplicated, `happytime` only for a 3-goal win. Poki: `gameLoadingFinished`, `commercialBreak` before kick-off, `rewardedBreak` rewards only when watched | `src/platform/ads.ts` | Code review |
 | SDK initialization can finish after the title becomes playable: the current gameplay state is sent after initialization and loading completion. Overlapping ad requests are rejected; callbacks arriving after an ad timeout cannot mute the game or grant a reward. Basic Launch / adblock errors disable further ad offers for the visit | `src/platform/ads.ts` | `tests/ads.test.ts` |
 | Upload ZIPs are tied to the exact source/version with SHA-256 metadata. Submission rejects stale/replaced ZIPs; packaging checks SDK hosts and missing HTML assets, and Inspector extraction rejects unsafe paths | `scripts/release.mjs`, `scripts/submission.mjs`, `scripts/release-checks.mjs` | `tests/releaseChecks.test.ts`; release/submission checks |
+| **No real-money purchases on CrazyGames, Poki, itch or the website** (Poki forbids in-game purchases; CrazyGames allows them only by invitation). The store provider is `none` there and the CrazyGames and Poki bundles contain no store code. Coins come from play and, on a portal, optional rewarded ads in the shop (FREE COINS: 75 coins, 5 a day, only on the player's tap) | `src/platform/iap.ts`, `src/ui/shop.ts`, `src/meta/shop.ts` | `tests/iap.test.ts`; no `CdvPurchase` string in a `VITE_PORTAL=crazygames` build |
 | Rewarded button reads "🎬 2× COINS", yellow, beside a larger CONTINUE; CONTINUE is disabled while the ad runs | `src/ui/menus.ts` `fulltime` | Code review |
 | Works in incognito / with storage blocked (every `localStorage` call is wrapped) | `src/core/save.ts` | Code review |
 | Store text, covers and thumbnails | `docs/STORE_LISTING.md`, `store-assets/` (docs/BRAND.md) | Store text rewritten on 28 Sep to match the v1 features |
@@ -369,10 +370,10 @@ npx cap sync
 
 **Ads:** `@capacitor-community/admob` (v8, for Capacitor 8), with interstitial and rewarded APIs and a consent form. Needs its own `ads.ts` branch, plus an AdMob account (free).
 
-**IAP ("Remove ads", coin packs):**
-- `@revenuecat/purchases-capacitor`: free until US$2,500 monthly tracked revenue, then 1%.
-- `capacitor-plugin-cdv-purchase` (cordova-plugin-purchase): MIT licensed.
-- **Keep IAP out of the web portal builds.** Poki forbids IAP, and CrazyGames allows purchases only by invitation via Xsolla.
+**IAP ("Remove ads", coin packs):** built and waiting for the native shell. The shop's COINS tab, the product ids, the Starter Pack, NO ADS and RESTORE PURCHASES are in the code; the store bridge feature-detects `window.CdvPurchase`, so installing `cordova-plugin-purchase` in the Capacitor project is all the app needs. **Exact owner steps (App Store Connect, Play Console, Capacitor, testing, receipt validation, the loot-box note) are in [MONETIZATION.md](MONETIZATION.md).**
+- `cordova-plugin-purchase` (MIT licensed) is what the code is written for; its names are from the v13 API and must be checked against the installed version.
+- `@revenuecat/purchases-capacitor` (free until US$2,500 monthly tracked revenue, then 1%) would need its own provider in `src/platform/iap.ts`; nothing here uses it.
+- **Keep IAP out of the web portal builds.** Poki forbids IAP, and CrazyGames allows purchases only by invitation via Xsolla. The code already does: the provider is `none` there.
 
 **Store accounts and fees (you register and pay yourself):**
 - **Google Play:** US$25 one-time registration.
