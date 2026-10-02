@@ -358,7 +358,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  /* It covers the whole screen (not the .screen's padded box), so it keeps clear of the notch itself. */
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   overflow-y: auto;
 }
 
@@ -376,9 +377,9 @@ body {
   display: grid;
   gap: 18px;
   animation: pop 0.28s cubic-bezier(0.2, 1.5, 0.4, 1);
-  /* Never taller than the screen (16 px clear top and bottom): the rest scrolls inside the panel. */
+  /* Never taller than the screen (16 px clear top and bottom, or the notch's inset): the rest scrolls inside the panel. */
   max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -4025,8 +4026,8 @@ button.mc-pl:active {
 
 @media (max-height: 450px) {
   .screen { padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-  .panel-wrap { padding: 8px; }
-  .panel { --pp: 14px; gap: 10px; max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); }
+  .panel-wrap { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+  .panel { --pp: 14px; gap: 10px; max-height: calc(100vh - 16px); max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))); }
   .panel h2 { font-size: 22px; }
   .panel > .btn-row:last-child:not(.no-stick) { padding-top: 8px; }
   .btn-lg { padding: 15px 24px 13px; }
@@ -4086,12 +4087,17 @@ button.mc-pl:active {
   .panel.qm .opt-row label { font-size: 14px; }
   .panel.qm .seg { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
   .panel.qm .seg button { padding: 7px 2px 6px; font-size: 14px; white-space: nowrap; box-shadow: 0 2px 0 var(--cream-2); }
+  /* A locked LEGEND ("LEGEND", the lock, "10★") takes two lines rather than spill out of its quarter-width chip. */
+  .panel.qm .seg button:has(> .picon.inl) { white-space: normal; font-size: 12px; line-height: 1; padding-top: 1px; padding-bottom: 0; }
+  .panel.qm .seg button > .picon.inl { width: 1em; height: 1em; }
   .panel.qm > .btn-row { grid-column: 1 / -1; }
   .qm .team-pick { gap: 3px; padding: 6px 4px 8px; }
   .qm .tp-label { font-size: 14px; padding: 3px 7px 2px; }
   .qm .tp-body { display: flex; gap: 4px; }
-  .qm .arrow { width: 30px; height: 40px; font-size: 14px; }
-  .qm .tp-3d { width: 76px; }
+  .qm .arrow { width: 30px; height: 40px; font-size: 14px; flex: none; }
+  /* The kit gives way (down from 76 px) so both arrows stay inside a narrow card. */
+  .qm .tp-kit { flex: 0 1 auto; min-width: 0; }
+  .qm .tp-3d { width: 76px; max-width: 100%; }
   .qm .tp-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .qm .tp-name .crest-svg { width: 16px; height: auto; margin-right: 4px; }
   .qm .tp-stars { font-size: 14px; letter-spacing: 1px; }

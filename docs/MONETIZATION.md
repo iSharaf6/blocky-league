@@ -127,15 +127,19 @@ The smallest pack is two or three wins: a head start, not a wall. The rate impro
 
 ### 4.3 Capacitor (the app shell)
 
+The iOS shell is in the repo (Capacitor 8, Swift Package Manager, no CocoaPods):
+
+- `capacitor.config.ts`: appId `com.calynx.blockyleague`, web dir `dist-itch` (the no PWA, no cloud-login web build).
+- `ios/`: landscape only on iPhone and iPad, no status bar, the grey launch screen, the 1024 app icon.
+- `npm run ios` rebuilds that web build and copies it in. Then open `ios/App/App.xcodeproj` in Xcode, set your
+  team under Signing and Capabilities, and run or archive.
+
+Still to add for the stores:
+
 ```bash
-npm i @capacitor/core && npm i -D @capacitor/cli
-npx cap init "Blocky League" com.yourname.blockyleague --web-dir dist-itch
-npm i @capacitor/ios @capacitor/android
-npm i cordova-plugin-purchase
-npm run build:itch          # the no PWA, no cloud-login web build; the store bridge is detected at run time
-npx cap add ios && npx cap add android
-npx cap sync
-npx cap open ios            # or: npx cap open android
+npm i cordova-plugin-purchase                       # the store bridge, detected at run time
+npm i @capacitor/android && npx cap add android     # Google Play (lock it to landscape too)
+npm run ios                                         # after every web change; npx cap sync for Android
 ```
 
 - Use the **same `appId`/bundle id** as the app records in 4.1 and 4.2.
