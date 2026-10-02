@@ -7,12 +7,13 @@
  * mountMeta) plus a few rules of its own below; fits 375×667 and 667×375 (one column, the panel scrolls).
  */
 import type { AppContext, MatchRequest } from '../app';
-import { fillKeys } from '../core/input';
+import { currentDevice, fillKeys } from '../core/input';
 import { momentStars, momentXp, type SaveData } from '../core/save';
 import { makeTeam, PRESET_CLUBS, resolveKitClash } from '../meta/data';
 import { MOMENT_XP_PER_STAR, MOMENTS, firstOpenMoment, momentStarTotals, momentUnlocked, nextMoment, starRules, type Moment } from '../meta/moments';
 import { closeMeta, esc, mountMeta, topBar, type MetaScreen } from './club';
-import { sep } from './text';
+import { coachText } from './coach';
+import { scoreHtml, sep } from './text';
 
 /** Best stars by moment id (a save from before moments existed reads as none). */
 export function bestStars(save: SaveData): Readonly<Record<string, number>> {
@@ -96,7 +97,7 @@ function listScreen(app: AppContext, scr: MetaScreen, hl: string, back: () => vo
   }).join('');
   scr.render(
     `${topBar('MENU', 'MOMENTS', `SHORT CHALLENGES${sep()}${tot.got}/${tot.of} STARS`, app.save.coins)}
-    <p class="mc-hint">15–90 seconds of play each. Three stars a moment: +${momentXp(0)} XP a try, +${MOMENT_XP_PER_STAR} XP a star. Retry as often as you like.</p>
+    <p class="mc-hint">15 to 90 seconds of play each. Three stars a moment: +${momentXp(0)} XP a try, +${MOMENT_XP_PER_STAR} XP a star. Retry as often as you like.</p>
     <div class="mo-list">${cards}</div>`,
     {
       back,
@@ -124,16 +125,17 @@ function preplayScreen(app: AppContext, scr: MetaScreen, mo: Moment, back: () =>
     `${mo.spec.seconds} SECONDS`,
     DIFF[mo.spec.difficulty ?? mo.difficulty] ?? 'NORMAL',
     mo.spec.mode === 'blitz' ? 'BLITZ' : '',
-    mo.spec.score[0] || mo.spec.score[1] ? `FROM ${mo.spec.score[hs]}–${mo.spec.score[hs === 0 ? 1 : 0]}` : '',
-  ].filter(Boolean);
+  ].filter(Boolean).map(esc);
+  // A start from a score other than 0 0: the score with the score divider (never a dash).
+  if (mo.spec.score[0] || mo.spec.score[1]) facts.push(`FROM ${scoreHtml(mo.spec.score[hs], mo.spec.score[hs === 0 ? 1 : 0])}`);
   scr.render(
     `${topBar('MOMENTS', esc(mo.title), `MOMENT ${MOMENTS.indexOf(mo) + 1} OF ${MOMENTS.length}`, app.save.coins)}
     <div class="mo-pre">
-      <div class="mo-prehead"><i class="mo-icon big" aria-hidden="true">${mo.icon}</i><div><p class="mo-brief">${esc(mo.brief)}</p><p class="mo-facts">${facts.map(esc).join(sep())}</p>${clubs}</div></div>
+      <div class="mo-prehead"><i class="mo-icon big" aria-hidden="true">${mo.icon}</i><div><p class="mo-brief">${esc(mo.brief)}</p><p class="mo-facts">${facts.join(sep())}</p>${clubs}</div></div>
       <ul class="mo-rules" aria-label="Star rules">
         ${rules.map((r, i) => `<li class="${got > i ? 'got' : ''}">${starsHtml(i + 1, false)}<span>${esc(r.charAt(0).toUpperCase() + r.slice(1))}</span></li>`).join('')}
       </ul>
-      <p class="mo-tip"><b>HOW</b> ${esc(fillKeys(mo.tip))}</p>
+      <p class="mo-tip"><b>HOW</b> ${esc(fillKeys(coachText(mo.tip, currentDevice())))}</p>
       <div class="mo-best">${got ? `BEST ${starsHtml(got)}` : 'NOT YET PLAYED'}${sep()}${esc(mo.xpNote)}</div>
     </div>
     <div class="btn-row no-stick">

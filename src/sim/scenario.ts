@@ -23,7 +23,7 @@
 import { blitzClear, blitzState } from './blitz';
 import { pickReceiver } from './actions';
 import { BALL_R, HALF_L, HALF_W, PEN_SPOT, SIX_DEPTH, SIX_W } from './constants';
-import type { Match, Restart } from './match';
+import type { Match, Pad, Restart } from './match';
 import type { Player } from './player';
 import type { ScenarioSpec, Side } from './types';
 
@@ -74,15 +74,22 @@ interface JudgeState {
   passKick: number;
   passTarget: number;
   requiredKick: boolean;
+  /** The human has played: a stick push or a button on some step of the moment (padUsed). */
+  engaged: boolean;
 }
 
 const STATES = new WeakMap<Match, JudgeState>();
+
+/** A pad with something on it: the stick pushed, or any button. */
+function padUsed(p: Pad): boolean {
+  return Math.hypot(p.mx, p.mz) > 0.3 || p.pass || p.shoot || p.through || p.sprint || !!p.power || !!p.skill;
+}
 
 function stateOf(m: Match, spec: ScenarioSpec): JudgeState {
   let st = STATES.get(m);
   if (!st) {
     st = { played: 0, lastClock: m.clock, score0: [spec.score[0], spec.score[1]], poss: [0, 0], graceFrom: -1, done: null,
-      initialKick: m.kickId, passKick: -1, passTarget: -1, requiredKick: false };
+      initialKick: m.kickId, passKick: -1, passTarget: -1, requiredKick: false, engaged: false };
     STATES.set(m, st);
   }
   return st;
@@ -133,6 +140,8 @@ function giveBall(m: Match, p: Player): void {
 export function applyScenario(m: Match, spec: ScenarioSpec): void {
   const hs = spec.humanSide;
   m.offside = spec.offside ?? m.cfg.offside ?? true;
+  // A penalty in a moment waits for the human's kick (it never goes on its own and scores for him).
+  m.humanPenaltyWaits = true;
   const ad = m.attackDir(hs);
   // World point / facing from the human frame.
   const W = (px: number, pz: number): { x: number; z: number } => ({ x: px * ad, z: pz * ad });
@@ -343,6 +352,7 @@ function starsFor(value: number, th: [number, number, number], min: 0 | 1): 0 | 
  *  - 'no-concede': lost at once on a goal against; won at time-up; stars by the human side's share (%) of the
  *    live time either side had the ball ([0, 30, 50]); a goal at the other end is three.
  *  - 'win-shootout': the sim's shootout result; stars by the kicks margin ([0, 1, 2]).
+ * Whatever the goal, a human who never pushed the stick or pressed a button in the moment doesn't win it.
  */
 export function judgeScenario(m: Match, spec: ScenarioSpec): ScenarioOutcome | null {
   const st = stateOf(m, spec);
@@ -350,6 +360,10 @@ export function judgeScenario(m: Match, spec: ScenarioSpec): ScenarioOutcome | n
   const hs = spec.humanSide;
   const os = otherSide(hs);
   const th = spec.stars ?? DEFAULT_STARS[spec.goal](spec);
+  // The moment is the human's to win: while he touches nothing (no stick, no button on any step), nothing the
+  // AI does for his side (a foul on his idle striker and its kick, a team-mate's goal, a hold-out) completes or
+  // stars it. (Called after every Match.step, so ctl.prev is that step's pad. A side no human plays: no test.)
+  if (!st.engaged && (!m.human[hs] || padUsed(m.ctl[hs].prev))) st.engaged = true;
 
   // Live time (and possession) only.
   const d = m.clock - st.lastClock;
@@ -363,7 +377,8 @@ export function judgeScenario(m: Match, spec: ScenarioSpec): ScenarioOutcome | n
   const goalsFor = m.score[hs] - st.score0[hs];
   const against = m.score[os] - st.score0[os];
   const margin = m.score[hs] - m.score[os];
-  const finish = (won: boolean, stars: 0 | 1 | 2 | 3, secondsLeft = left): ScenarioOutcome => {
+  const finish = (won0: boolean, stars: 0 | 1 | 2 | 3, secondsLeft = left): ScenarioOutcome => {
+    const won = won0 && st.engaged;
     st.done = { won, stars: won ? stars : 0, secondsLeft: Math.round(secondsLeft * 10) / 10 };
     return st.done;
   };

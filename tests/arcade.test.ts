@@ -155,7 +155,7 @@ describe('persistent contextual trainer', () => {
     expect(trainerCue(m, 'keyboard').actions[0]).toEqual(['SPACE', 'Pass']);
     expect(trainerCue(m, 'gamepad').actions[0][0]).toBe('A');
     m.shootCharge = 0.2;
-    expect(trainerCue(m, 'keyboard').actions).toContainEqual(['K', 'Release to shoot']);
+    expect(trainerCue(m, 'keyboard').actions).toContainEqual(['K', 'Let go to shoot']);
     m.shootCharge = 0; m.throughCharge = 0.4; m.passMode = 'lob';
     expect(trainerCue(m, 'keyboard').title).toBe('CROSS READY');
     m.throughCharge = 0; m.ball.owner = -1; m.passTarget = p.idx;

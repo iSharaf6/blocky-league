@@ -10,8 +10,7 @@ import {
   keeperGuess, newPenAim, PEN_AIM_H0, PEN_AIM_H_MAX, PEN_AIM_H_MIN, PEN_AIM_SPEED_Z, PEN_AIM_Z, PEN_TELL_FROM, PEN_TELL_MAX, PEN_TELL_SPAN,
   penaltySpeed, penaltyTell, solveStrike, steerPenAim,
 } from '../src/sim/shootout';
-import { penaltyHint } from '../src/ui/hud';
-import { SEP_HTML, sepsOfText } from '../src/ui/text';
+import { penaltyCue } from '../src/ui/coach';
 
 /**
  * Penalty aiming (the owner: "penalty taken is spazzed out like the throw in balls where it goes straight left
@@ -535,17 +534,13 @@ describe('the ghost arc follows the reticle', () => {
 
 describe('the penalty hint', () => {
   afterEach(() => setBindings());
-  const plain = (s: string) => s.replace(/\u00a0/g, ' ');
 
-  it('names the keys in force, short, with the styled divider (never a | or a bare glyph on screen)', () => {
-    expect(plain(penaltyHint('keyboard'))).toBe('A D  W S aim · hold K');
+  it('names the keys in force on a coach card: aim, then hold SHOOT (no separator glyph anywhere)', () => {
+    expect(penaltyCue('keyboard')).toEqual({ title: 'PENALTY', actions: [['WASD', 'Aim'], ['K', 'Hold to shoot']] });
     setBindings({ ...DEFAULT_KEYS, left: ['KeyJ'], right: ['KeyL'], up: ['KeyI'], down: ['KeyK'], shoot: ['Space'], pass: ['KeyZ'] }, DEFAULT_PAD);
-    expect(plain(penaltyHint('keyboard'))).toBe('J L  I K aim · hold SPACE');
-    expect(plain(penaltyHint('touch'))).toBe('Drag to aim · hold SHOOT');
-    expect(plain(penaltyHint('gamepad'))).toBe('Stick to aim · hold B');
-    // The HUD renders it through sepsOfText: the dot becomes the divider element.
-    const html = sepsOfText(penaltyHint('keyboard'));
-    expect(html).toContain(SEP_HTML);
-    expect(html).not.toMatch(/[·|]/);
+    expect(penaltyCue('keyboard').actions).toEqual([['IJKL', 'Aim'], ['SPACE', 'Hold to shoot']]);
+    expect(penaltyCue('touch').actions).toEqual([['', 'Drag to aim'], ['SHOOT', 'Hold to shoot']]);
+    expect(penaltyCue('gamepad').actions).toEqual([['STICK', 'Aim'], ['B', 'Hold to shoot']]);
+    expect(JSON.stringify(penaltyCue('keyboard'))).not.toMatch(/[·•●—–|]/);
   });
 });

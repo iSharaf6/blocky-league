@@ -65,6 +65,7 @@ const FL_SHOOT = 4;
 const FL_THROUGH = 8;
 const FL_DIGITAL = 16;
 const FL_POWER = 32;
+const FL_SKILL = 64;
 
 /**
  * A stick axis as the int8 that goes on the wire. `| 0` matters: Math.round(-0.001 * 127) is -0, which would
@@ -81,14 +82,14 @@ export function quantizePad(p: Pad): Pad {
 
 function flagsOf(p: Pad): number {
   return (p.sprint ? FL_SPRINT : 0) | (p.pass ? FL_PASS : 0) | (p.shoot ? FL_SHOOT : 0) | (p.through ? FL_THROUGH : 0) |
-    (p.digital ? FL_DIGITAL : 0) | (p.power ? FL_POWER : 0);
+    (p.digital ? FL_DIGITAL : 0) | (p.power ? FL_POWER : 0) | (p.skill ? FL_SKILL : 0);
 }
 
 function decodePad(qx: number, qz: number, f: number): Pad {
   return {
     mx: qx / 127, mz: qz / 127,
     sprint: (f & FL_SPRINT) !== 0, pass: (f & FL_PASS) !== 0, shoot: (f & FL_SHOOT) !== 0, through: (f & FL_THROUGH) !== 0,
-    digital: (f & FL_DIGITAL) !== 0, power: (f & FL_POWER) !== 0,
+    digital: (f & FL_DIGITAL) !== 0, power: (f & FL_POWER) !== 0, skill: (f & FL_SKILL) !== 0,
   };
 }
 

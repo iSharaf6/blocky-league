@@ -140,7 +140,12 @@ describe('the judge', () => {
     owner: null,
     ...over,
   });
-  const idle = (spec: ScenarioSpec, seed = 1): Match => matchFor(byId('first-touch'), seed, spec);
+  /** The moment set up, and the human counted as playing (the stick pushed once: a moment needs his input to be won). */
+  const idle = (spec: ScenarioSpec, seed = 1): Match => {
+    const m = matchFor(byId('first-touch'), seed, spec);
+    m.ctl[0].prev = { ...EMPTY_PAD, mx: 1 };
+    return m;
+  };
 
   /**
    * `s` seconds of live play as the judge sees them: the clock ticks in the 'play' phase (the sim itself

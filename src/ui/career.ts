@@ -93,7 +93,7 @@ function tableHtml(rows: TableRow[], info: Map<string, LeagueClub>, division: nu
       </tr>`;
     })
     .join('');
-  const upLabel = division > TOP_DIVISION ? 'PROMOTION' : 'TOP-TWO PRIZE';
+  const upLabel = division > TOP_DIVISION ? 'PROMOTION' : 'TOP TWO PRIZE';
   return `<div class="mc-tablewrap"><table class="mc-table">
       <thead><tr><th>#</th><th class="club">CLUB</th><th>P</th><th>W</th><th>D</th><th>L</th><th class="xs">GF</th><th class="xs">GA</th><th>GD</th><th>PTS</th></tr></thead>
       <tbody>${body}</tbody>
@@ -232,7 +232,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
   if (flash) scr.toast(flash.msg, flash.kind);
 }
 
-function playMatchday(app: AppContext, st: CareerState): void {
+export function playMatchday(app: AppContext, st: CareerState): void {
   const nm = nextMatch(st);
   const season = st.season;
   if (!nm || !season) return;
@@ -242,6 +242,7 @@ function playMatchday(app: AppContext, st: CareerState): void {
   const stadium = st.stadium;
   // Home games at your ground; away games at the rival's (sized by division).
   const venue = userHome ? stadium : rivalStadiumLevel(division, rival);
+  let ok = false;
   st.notice = null;
   closeMeta();
   app.startMatch({
@@ -254,16 +255,19 @@ function playMatchday(app: AppContext, st: CareerState): void {
     halfMinutes: app.save.settings.halfMinutes,
     attendance: matchAttendance(venue),
     stadiumLevel: venue,
+    // Called once at full time: the table moves on here (as in the cup and Club Run), so the result is saved
+    // with the match's coins. Closing the game on the full-time screen can't lose it or let the fixture be replayed.
     reward: (r) => {
+      const cur = careerState(app);
+      const [hg, ag] = r.score;
+      ok = cur.season?.number === seasonNo && resolveMatchday(cur, app.save, md, hg, ag);
       const my = userHome ? r.score[0] : r.score[1];
       const their = userHome ? r.score[1] : r.score[0];
       return matchReward(division, stadium, my, their);
     },
     nextLabel: 'BACK TO CAREER',
     onDone: (r) => {
-      const cur = careerState(app);
       const [hg, ag] = r.score;
-      const ok = cur.season?.number === seasonNo && resolveMatchday(cur, app.save, md, hg, ag);
       app.persist();
       const my = userHome ? hg : ag;
       const their = userHome ? ag : hg;

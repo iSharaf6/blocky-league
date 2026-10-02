@@ -36,6 +36,9 @@ const ON_SCREEN = 6;
 /** Badge offset inwards from the arrow (px). */
 const BADGE = 18;
 
+/** An arrow moves only once it is this much (device px) off where it was drawn. */
+const STEP_HOLD = 0.75;
+
 interface Slot {
   el: HTMLDivElement;
   arrow: SVGSVGElement;
@@ -43,6 +46,9 @@ interface Slot {
   n: number;
   key: string;
   cls: string;
+  /** Where it was last drawn (CSS px). */
+  x: number;
+  y: number;
 }
 
 export class EdgeArrows {
@@ -143,9 +149,13 @@ export class EdgeArrows {
         s.cls = cls;
         s.el.className = cls;
       }
-      // Whole pixels / tenths of opacity: style writes only when something visible changed.
-      const x = Math.round(p.x);
-      const y = Math.round(p.y);
+      // Device pixels, moved only past STEP_HOLD of one (no flicker between two of them while its man barely
+      // moves) / twentieths of opacity: style writes only when something visible changed.
+      const dpr = window.devicePixelRatio || 1;
+      if (Math.abs(p.x - s.x) * dpr > STEP_HOLD) s.x = Math.round(p.x * dpr) / dpr;
+      if (Math.abs(p.y - s.y) * dpr > STEP_HOLD) s.y = Math.round(p.y * dpr) / dpr;
+      const x = s.x;
+      const y = s.y;
       const op = Math.round(Math.min(1, Math.max(m.alpha, m.pass, m.through) * fade) * 20) / 20;
       const deg = Math.round((Math.atan2(p.uy, p.ux) * 180) / Math.PI);
       const key = `${x},${y},${op},${deg}`;
@@ -169,7 +179,7 @@ export class EdgeArrows {
     el.className = 'ea';
     el.innerHTML = '<svg class="ea-arrow" viewBox="-12 -12 24 24"><path d="M-6 -9 L10 0 L-6 9 L-2 0 Z"/></svg><b class="ea-num"></b>';
     this.root.appendChild(el);
-    s = { el, arrow: el.querySelector('svg')!, num: el.querySelector('b')!, n: -1, key: '', cls: 'ea' };
+    s = { el, arrow: el.querySelector('svg')!, num: el.querySelector('b')!, n: -1, key: '', cls: 'ea', x: -1e4, y: -1e4 };
     this.slots.set(idx, s);
     return s;
   }

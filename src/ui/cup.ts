@@ -13,6 +13,7 @@ import { PRESET_CLUBS, makeTeam, resolveKitClash } from '../meta/data';
 import { cssHex } from '../render/palette';
 import { goalsOf } from '../sim/shootout';
 import { closeMeta, esc, fmt, mountMeta, topBar, type ToastKind } from './club';
+import { difficultyLabels, playableDifficulty } from './difficulty';
 import { DIFFICULTIES, pixelIcon, shirtArt, stars } from './menus';
 import { sep } from './text';
 
@@ -63,7 +64,9 @@ function cupEntry(app: AppContext): void {
   const scr = mountMeta(app, 'cup-screen');
   const n = PRESET_CLUBS.length;
   let club = Math.max(0, Math.min(n - 1, app.save.clubIdx | 0));
-  let diff = Math.max(0, Math.min(3, app.save.settings.difficulty | 0));
+  // (LEGEND is earned by match stars, as in Quick Match: ui/difficulty.ts.)
+  const progress = app.save.progress;
+  let diff = playableDifficulty(app.save.settings.difficulty | 0, progress);
   const draw = () => {
     const c = PRESET_CLUBS[club];
     const mult = DIFF_MULT[diff];
@@ -92,7 +95,7 @@ function cupEntry(app: AppContext): void {
           <div class="total"><span>UP FOR GRABS</span><b><i></i>${fmt(total)}</b></div>
         </div>
       </div>
-      <div class="opt-row"><label>DIFFICULTY</label><div class="seg">${DIFFICULTIES.map(
+      <div class="opt-row"><label>DIFFICULTY</label><div class="seg">${difficultyLabels(DIFFICULTIES, progress).map(
         (l, i) => `<button class="${i === diff ? 'on' : ''}" data-a="diff" data-i="${i}">${l}</button>`,
       ).join('')}</div></div>
       <p class="mc-hint">Harder cups draw stronger rivals and pay more.</p>
@@ -108,7 +111,9 @@ function cupEntry(app: AppContext): void {
           draw();
         },
         diff: (el) => {
-          diff = Math.max(0, Math.min(3, Number(el.dataset.i) | 0));
+          const i = Math.max(0, Math.min(3, Number(el.dataset.i) | 0));
+          if (playableDifficulty(i, progress) !== i) return;
+          diff = i;
           draw();
         },
         start: () => {

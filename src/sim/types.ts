@@ -184,6 +184,15 @@ export type MatchEvent =
   | { type: 'offside'; side: Side; player: number }
   /** Timed finishing: the human's second SHOOT tap at the moment of contact (perfect / good) or mistimed. */
   | { type: 'timing'; player: number; grade: 'perfect' | 'good' | 'early' | 'late' }
+  /**
+   * SKILL moves (sim/skills.ts). `skillTell`: an AI defender `by` winds up a challenge (a slide, or a standing tackle)
+   * on the human's carrier `on`: SKILL within its window is a PERFECT. `skillMove`: the human's move (`cut` / `knock`:
+   * a skill cut or knock-on that beat a man and extended a chain), its grade, the chain it makes (0: none) and the
+   * man a PERFECT beat (-1). `skillGoal`: `side` scored within SKILL_GOAL_T s of a successful skill.
+   */
+  | { type: 'skillTell'; by: number; on: number; slide: boolean }
+  | { type: 'skillMove'; player: number; move: SkillMoveKind | 'cut' | 'knock'; grade: SkillGrade; combo: number; on: number }
+  | { type: 'skillGoal'; side: Side; combo: number }
   /** Blitz mode: a pickup appeared / was collected / was activated / wore off. */
   | { type: 'powerupSpawn'; id: number; kind: PowerUpKind; x: number; z: number }
   | { type: 'powerupTaken'; id: number; kind: PowerUpKind; player: number; side: Side }
@@ -196,6 +205,13 @@ export type MatchEvent =
   | { type: 'advantage'; side: Side };
 
 export type KickKind = 'pass' | 'through' | 'lob' | 'shot' | 'clear' | 'header' | 'throw' | 'keeper';
+/** The SKILL button's moves (sim/skills.ts: the stick against his run picks one). */
+export type SkillMoveKind = 'roulette' | 'rainbow' | 'stepover' | 'dragback';
+/**
+ * How a SKILL move came off: a PERFECT (timed into a defender's tell), a GOOD (it wrong-footed a man near him), a
+ * plain move (a man near, not fooled) or a show-off one (nobody near).
+ */
+export type SkillGrade = 'perfect' | 'good' | 'plain' | 'show';
 /** How a shot is struck, beyond a plain strike: lifted over the keeper, or curled and placed. */
 export type ShotStyle = 'chip' | 'finesse';
 export type RestartKind = 'kickoff' | 'throwin' | 'corner' | 'goalkick' | 'freekick' | 'penalty';

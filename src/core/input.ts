@@ -8,6 +8,8 @@ export interface Controls {
   through: boolean;
   /** Blitz mode: use the held power-up (a press; nothing outside blitz). */
   power: boolean;
+  /** SKILL: a skill move with the ball (a press; sim/skills.ts). */
+  skill: boolean;
 }
 
 export interface TouchState extends Controls {
@@ -18,14 +20,17 @@ export type Device = 'keyboard' | 'touch' | 'gamepad';
 
 // ------------------------------------------------------------------ bindings (Settings > Controls > KEYS)
 
-/** Everything a key can be bound to: the four move directions, the five buttons and pause. */
-export type KeyAction = 'up' | 'down' | 'left' | 'right' | 'pass' | 'shoot' | 'through' | 'sprint' | 'power' | 'pause';
-export const KEY_ACTIONS: readonly KeyAction[] = ['up', 'down', 'left', 'right', 'pass', 'shoot', 'through', 'sprint', 'power', 'pause'];
+/** Everything a key can be bound to: the four move directions, the six buttons and pause. */
+export type KeyAction = 'up' | 'down' | 'left' | 'right' | 'pass' | 'shoot' | 'through' | 'sprint' | 'skill' | 'power' | 'pause';
+export const KEY_ACTIONS: readonly KeyAction[] = ['up', 'down', 'left', 'right', 'pass', 'shoot', 'through', 'sprint', 'skill', 'power', 'pause'];
 /** Keys per action (a primary and up to two alternates). */
 export const KEY_SLOTS = 3;
 export type KeyMap = { [k in KeyAction]: string[] };
 
-/** The defaults: WASD + arrows, SPACE / J / Z pass, K / X shoot, L / C through, SHIFT / I sprint, E / O power, ESC / P pause. */
+/**
+ * The defaults: WASD + arrows, SPACE / J / Z pass, K / X shoot, L / C through, SHIFT / I sprint, Q / U skill (a left-hand
+ * key by the movement keys, a right-hand one by the action keys), E / O power, ESC / P pause.
+ */
 export const DEFAULT_KEYS: Readonly<KeyMap> = Object.freeze({
   up: ['KeyW', 'ArrowUp'],
   down: ['KeyS', 'ArrowDown'],
@@ -35,16 +40,18 @@ export const DEFAULT_KEYS: Readonly<KeyMap> = Object.freeze({
   shoot: ['KeyK', 'KeyX'],
   through: ['KeyL', 'KeyC'],
   sprint: ['ShiftLeft', 'KeyI'],
+  skill: ['KeyQ', 'KeyU'],
   power: ['KeyE', 'KeyO'],
   pause: ['Escape', 'KeyP'],
 });
 
 /** Gamepad buttons (standard mapping) the actions can be bound to; the d-pad always moves. */
-export type PadAction = 'pass' | 'shoot' | 'through' | 'sprint' | 'power' | 'pause';
-export const PAD_ACTIONS: readonly PadAction[] = ['pass', 'shoot', 'through', 'sprint', 'power', 'pause'];
+export type PadAction = 'pass' | 'shoot' | 'through' | 'sprint' | 'skill' | 'power' | 'pause';
+export const PAD_ACTIONS: readonly PadAction[] = ['pass', 'shoot', 'through', 'sprint', 'skill', 'power', 'pause'];
 export const PAD_SLOTS = 2;
 export type PadMap = { [k in PadAction]: number[] };
-export const DEFAULT_PAD: Readonly<PadMap> = Object.freeze({ pass: [0], shoot: [1], through: [2], sprint: [7, 5], power: [3], pause: [9] });
+/** A pass, B shoot, X through, RT / RB sprint, LB skill, Y power, START pause. */
+export const DEFAULT_PAD: Readonly<PadMap> = Object.freeze({ pass: [0], shoot: [1], through: [2], sprint: [7, 5], skill: [4], power: [3], pause: [9] });
 
 /** Buttons that can't be bound: the d-pad (movement) and the home / guide button. */
 const PAD_RESERVED = new Set([12, 13, 14, 15, 16]);
@@ -249,7 +256,7 @@ export function bindings(): { keys: KeyMap; pad: PadMap } {
 /** The label of an action's first binding for the device in hand: "SPACE" / "A" / the touch button's name. */
 export function actionKey(action: PadAction, device: Device): string {
   if (device === 'gamepad') return padLabel(padNow[action][0] ?? DEFAULT_PAD[action][0]);
-  if (device === 'touch') return { pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', power: '⚡', pause: 'II' }[action];
+  if (device === 'touch') return { pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', skill: 'SKILL', power: '⚡', pause: 'II' }[action];
   return keyLabel(keysNow[action][0] ?? DEFAULT_KEYS[action][0]);
 }
 
@@ -285,13 +292,13 @@ export function currentDevice(): Device {
 }
 
 /**
- * Fill {pass} / {shoot} / {through} / {sprint} / {power} / {pause} / {move} tokens in copy with the player's own
+ * Fill {pass} / {shoot} / {through} / {sprint} / {skill} / {power} / {pause} / {move} tokens in copy with the player's own
  * bindings for the device in hand ("SHOOT ({shoot})" reads "SHOOT (K)", "SHOOT (B)", or "SHOOT (SHOOT)" → on touch
  * the brackets would repeat the button's name, so a bracketed token is dropped there).
  */
 export function fillKeys(text: string, device: Device = currentDevice()): string {
-  const withTouch = device === 'touch' ? text.replace(/\s*\(\{(pass|shoot|through|sprint)\}\)/g, '') : text;
-  return withTouch.replace(/\{(pass|shoot|through|sprint|power|pause|move)\}/g, (_, a: string) =>
+  const withTouch = device === 'touch' ? text.replace(/\s*\(\{(pass|shoot|through|sprint|skill)\}\)/g, '') : text;
+  return withTouch.replace(/\{(pass|shoot|through|sprint|skill|power|pause|move)\}/g, (_, a: string) =>
     a === 'move' ? moveKeys(device) : actionKey(a as PadAction, device),
   );
 }
@@ -365,7 +372,7 @@ function gamepads(): readonly (Gamepad | null)[] {
 
 export class Input {
   private keys = new Set<string>();
-  readonly touch: TouchState = { enabled: false, sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false, power: false };
+  readonly touch: TouchState = { enabled: false, sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false, power: false, skill: false };
   private listeners: ((code: string) => void)[] = [];
   lastDevice: Device =
     typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 'touch' : 'keyboard';
@@ -391,7 +398,7 @@ export class Input {
     this.keys.clear();
     const t = this.touch;
     t.sx = t.sy = 0;
-    t.pass = t.shoot = t.through = t.sprint = t.power = false;
+    t.pass = t.shoot = t.through = t.sprint = t.power = t.skill = false;
   }
 
   onKey(fn: (code: string) => void): () => void {
@@ -428,6 +435,7 @@ export class Input {
       shoot: this.any(k.shoot),
       through: this.any(k.through),
       power: this.any(k.power),
+      skill: this.any(k.skill),
     };
     // Gamepad
     const pads = gamepads();
@@ -453,12 +461,14 @@ export class Input {
       const through = on('through');
       const power = on('power');
       const sprint = on('sprint');
-      if (pass || shoot || through || power || sprint || on('pause')) this.lastDevice = 'gamepad';
+      const skill = on('skill');
+      if (pass || shoot || through || power || sprint || skill || on('pause')) this.lastDevice = 'gamepad';
       out.pass ||= pass;
       out.shoot ||= shoot;
       out.through ||= through;
       out.power ||= power;
       out.sprint ||= sprint;
+      out.skill ||= skill;
       if (b(12)) out.sy = 1;
       if (b(13)) out.sy = -1;
       if (b(14)) out.sx = -1;
@@ -476,6 +486,7 @@ export class Input {
       out.through ||= t.through;
       out.sprint ||= t.sprint;
       out.power ||= t.power;
+      out.skill ||= t.skill;
     }
     // D-pad diagonals and mixed keyboard / pad movement must have the same top speed as a stick.
     const length = Math.hypot(out.sx, out.sy);

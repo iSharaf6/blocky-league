@@ -789,6 +789,53 @@ export class Sfx {
     this.noiseBurst(t, 0.07, 'lowpass', 520, 0.6, shot ? 0.26 : 0.16, this.sfxBus, 0.003);
   }
 
+  // ------------------------------------------------------------------ SKILL moves (sim/skills.ts)
+
+  /** A defender winding up a challenge on the human's man (the tell): a bright rising "ting", the cue to press SKILL. */
+  skillTell(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    this.tone(t, 'triangle', 1480, 1980, 0.07, 0.11, this.sfxBus, 0.002);
+    this.tone(t + 0.06, 'triangle', 1980, 2350, 0.08, 0.08, this.sfxBus, 0.002);
+  }
+
+  /**
+   * A skill move: the swish of the move (a PERFECT also gets a bright metallic "shing" over it and the crowd's olé; a GOOD
+   * a smaller shing and a lift from the stands). A plain or show-off move is just the swish, softer.
+   */
+  skillMove(grade: 'perfect' | 'good' | 'plain' | 'show'): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    const big = grade === 'perfect';
+    if (this.sfxOn) {
+      const k = big ? 1 : grade === 'good' ? 0.8 : 0.55;
+      const n = this.noiseBurst(t, 0.26, 'bandpass', 700, 1.2, 0.2 * k, this.sfxBus, 0.04);
+      n.f.frequency.exponentialRampToValueAtTime(2600, t + 0.12);
+      n.f.frequency.exponentialRampToValueAtTime(600, t + 0.26);
+      if (big || grade === 'good') {
+        for (const [f, pk] of (big ? [[2093, 0.11], [3136, 0.07], [4186, 0.04]] : [[1760, 0.08], [2637, 0.05]]) as [number, number][]) {
+          const g = this.toneG(t + 0.02, 'triangle', f, f * 1.01, big ? 0.32 : 0.2, pk, this.sfxBus, 0.002);
+          this.wet(g, 0.35);
+        }
+      }
+    }
+    if (big) this.ole(t + 0.12);
+    else if (grade === 'good' && this.crowdOn) this.cheer(0.4);
+  }
+
+  /** The crowd's "o-LÉ!": two vowel-ish swells off the stands, the second higher and longer. */
+  ole(at?: number): void {
+    if (!this.ready || !this.crowdOn) return;
+    const t = at ?? this.ctx!.currentTime;
+    const o = this.noiseBurst(t, 0.22, 'bandpass', 480, 4, 0.32, this.crowdBus, 0.05);
+    o.f.frequency.exponentialRampToValueAtTime(620, t + 0.2);
+    this.noiseBurst(t, 0.2, 'bandpass', 1050, 5, 0.12, this.crowdBus, 0.05);
+    const le = this.noiseBurst(t + 0.26, 0.6, 'bandpass', 760, 4, 0.42, this.crowdBus, 0.06);
+    le.f.frequency.exponentialRampToValueAtTime(1050, t + 0.5);
+    le.f.frequency.exponentialRampToValueAtTime(820, t + 0.9);
+    this.noiseBurst(t + 0.26, 0.55, 'bandpass', 1900, 6, 0.14, this.crowdBus, 0.06);
+  }
+
   /** Missed him: a soft scuff of boot on grass. */
   scuff(): void {
     if (!this.ready || !this.sfxOn) return;
@@ -904,6 +951,13 @@ export class Sfx {
       71, -1, 74, 71, 67, 71, 74, 79,
     ];
     const hz = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
+    // A throttled timer (a background tab runs intervals about once a second, or less) leaves the loop behind
+    // the audio clock. Skip the missed notes, keeping the bar, instead of starting them all at once in a burst.
+    if (this.nextNoteTime < c.currentTime) {
+      const missed = Math.ceil((c.currentTime - this.nextNoteTime) / spb);
+      this.musicStep += missed;
+      this.nextNoteTime += missed * spb;
+    }
     while (this.nextNoteTime < c.currentTime + 0.12) {
       const s = this.musicStep % 32;
       const bar = Math.floor(s / 8);

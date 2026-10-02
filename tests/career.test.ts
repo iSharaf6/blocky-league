@@ -350,7 +350,7 @@ describe('promotion and relegation', () => {
     const total = (p: number, d: number) => seasonPrizeLines(p, d).reduce((s, l) => s + l.coins, 0);
     expect(total(1, 6)).toBe(140 + 600 + 300);
     expect(total(2, 4)).toBe(6 * 40 + 600 + 500);
-    expect(seasonPrizeLines(1, 1).map((l) => l.label)).toEqual(['LEAGUE POSITION', 'TOP-TWO PRIZE', 'CHAMPIONS BONUS']);
+    expect(seasonPrizeLines(1, 1).map((l) => l.label)).toEqual(['LEAGUE POSITION', 'TOP TWO PRIZE', 'CHAMPIONS BONUS']);
     expect(total(8, 6)).toBe(0);
   });
 });

@@ -11,8 +11,11 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * the sim reads would desync the match, so the sim's inputs are all built from this, never from a local save.
  */
 
-/** Wire version of the lobby and lockstep protocol: peers on different versions don't start a match. */
-export const NET_VERSION = 2;
+/**
+ * Wire version of the lobby and lockstep protocol: peers on different versions don't start a match. (3: the SKILL
+ * button on the pad, and the AI's telegraphed challenges on a human's carrier: sim/skills.ts.)
+ */
+export const NET_VERSION = 3;
 
 /** A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local). */
 export type NetControls = Omit<ControlSettings, 'trainer'>;

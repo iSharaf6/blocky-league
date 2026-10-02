@@ -254,7 +254,7 @@ function formationButtons(cur: FormationId, action: string): string {
 }
 
 function previewHtml(kit: Kit, name: string, short: string): string {
-  return `${shirtArt(kit, 12)}<b>${esc(name || '—')}</b><span>${esc(short.length === 3 ? short : '???')}</span>`;
+  return `${shirtArt(kit, 12)}<b>${esc(name || 'YOUR CLUB')}</b><span>${esc(short.length === 3 ? short : '???')}</span>`;
 }
 
 const SUGGESTED = ['Pixel Park FC', 'Cube City', 'Voxel Rovers', 'Brick Lane FC', 'Blocky Town', 'Square United', 'Crate Albion'];

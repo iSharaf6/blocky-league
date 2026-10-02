@@ -5,6 +5,7 @@ import './style.css';
 import { Vector3 } from 'three';
 import type { AppContext, MatchKind, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
+import { localDay } from './core/day';
 import { ddaAssist, ddaRecord, suggestEasy, type Outcome } from './core/dda';
 import { Input, isKey, setBindings, setDeviceSource } from './core/input';
 import {
@@ -12,10 +13,12 @@ import {
 } from './core/onboarding';
 import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
-  streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock, skinUnlocked, type BallSkinId, celebrationUnlocked,
-  type CelebrationId, type SaveData, momentStarsTotal, momentXp, recordMoment } from './core/save';
+  streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock,
+  type SaveData, momentStarsTotal, momentXp, recordMoment } from './core/save';
+import { SKILL_GOAL_COINS } from './core/save';
 import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
-import { PRESET_CLUBS, makeTeam, resolveKitClash } from './meta/data';
+import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
+import { CAT_LABEL, DEFAULT_ID, equippedId, inReach, newInShop, shopOf, type ShopCat, type ShopItem } from './meta/shop';
 import { ads } from './platform/ads';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
@@ -24,16 +27,17 @@ import { finishScenario } from './sim/scenario';
 import type { Match } from './sim/match';
 import type { FormationId, KickKind, MatchEvent, MatchMode, Side } from './sim/types';
 import { DIFFICULTIES, DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
-import { DIVISION_NAMES, clubRating, migrateCareer, nextMatch } from './meta/career';
+import { DIVISION_NAMES, clubRating, clubTeam, migrateCareer, nextMatch, type ClubState } from './meta/career';
 import { ROUND_NAMES, clubRating as presetRating, migrateCup } from './meta/cup';
 import { overall } from './sim/types';
 import { openCareer } from './ui/career';
 import { openCup } from './ui/cup';
-import { closeMeta, openClub } from './ui/club';
+import { careerState, closeMeta, openClub } from './ui/club';
+import { openShop } from './ui/shop';
 import type { Projector } from './ui/hud';
 import { openMoments } from './ui/moments';
 import type { OnlineHost } from './ui/online';
-import { installSepGuard } from './ui/text';
+import { SEP_MARK, installSepGuard } from './ui/text';
 import { Lesson, Trainer } from './ui/trainer';
 import { TouchControls } from './ui/touch';
 import { saveClip, shareClip } from './ui/clips';
@@ -94,16 +98,20 @@ function camZoom(): CamZoom {
   return save.settings.camZoom ?? 'normal';
 }
 
-/** The ball look to play with: the chosen one if this level has earned it, else the classic ball. */
-function equippedSkin(): string | undefined {
-  const id = save.settings.ballSkin as BallSkinId | undefined;
-  return id && skinUnlocked(id, levelOf(save.progress.xp).level) ? id : undefined;
+/** A SHOP category's look to play with: the chosen one while it is yours (earned by level or bought), else none (the default). */
+function equipped(cat: ShopCat): string | undefined {
+  const id = equippedId(save, cat);
+  return id === DEFAULT_ID[cat] ? undefined : id;
 }
 
-/** The goal celebration to play: the chosen one if this level has earned it, else the classic one. */
+/** The ball look to play with: the chosen one if this level has earned it or it was bought, else the classic ball. */
+function equippedSkin(): string | undefined {
+  return equipped('ball');
+}
+
+/** The goal celebration to play: the chosen one if this level has earned it or it was bought, else the classic one. */
 function equippedCelebration(): string | undefined {
-  const id = save.settings.celebration as CelebrationId | undefined;
-  return id && celebrationUnlocked(id, levelOf(save.progress.xp).level) ? id : undefined;
+  return equipped('celebration');
 }
 
 /** Live camera-distance change (Settings opened from the pause menu). Optional: older sessions lack it. */
@@ -161,10 +169,12 @@ interface Tally {
   tacklesWon: number;
   skills: number;
   powerups: number;
+  /** SKILL GOALs (sim/skills.ts 'skillGoal'): bonus XP and coins, a line on the full-time screen. */
+  skillGoals: number;
   lastShot: { player: number; kind: KickKind; x: number; z: number; at: number } | null;
 }
 
-const newTally = (): Tally => ({ headers: 0, longGoals: 0, tacklesWon: 0, skills: 0, powerups: 0, lastShot: null });
+const newTally = (): Tally => ({ headers: 0, longGoals: 0, tacklesWon: 0, skills: 0, powerups: 0, skillGoals: 0, lastShot: null });
 
 /** Match seconds over both halves. */
 const matchAt = (m: Match) => (m.half - 1) * m.cfg.halfLength + m.clock;
@@ -194,6 +204,9 @@ function track(t: Tally, e: MatchEvent, m: Match, hs: Side): void {
     case 'powerupTaken':
       if (e.side === hs) t.powerups++;
       break;
+    case 'skillGoal':
+      if (e.side === hs) t.skillGoals++;
+      break;
     default:
       break;
   }
@@ -222,6 +235,7 @@ function applySettings(): void {
     applyCamZoom(session);
     (session as { setBallSkin?: (id?: string) => void }).setBallSkin?.(equippedSkin());
     (session as { setCelebration?: (id?: string) => void }).setCelebration?.(equippedCelebration());
+    session.setQuickSubs(s.quickSubs !== false);
   }
   persist();
 }
@@ -261,11 +275,6 @@ const app: AppContext = {
   mainMenu: () => mainMenu(),
 };
 
-function localDay(offset = 0): string {
-  const d = new Date(Date.now() + offset * 86_400_000);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 /** Today's gift if not yet claimed: 100 coins on day 1, +50 per consecutive day up to day 7. */
 function giftToday(): { amount: number; streak: number } | null {
   const g = save.gift;
@@ -283,11 +292,11 @@ function mainInfo(): MainInfo {
   const hero = heroOf(onboarding(), played());
   if (hero.kind === 'basics') {
     info.hero = { title: 'LEARN THE BASICS', kind: 'basics' };
-    info.playNow = `STEP ${hero.step + 1} OF ${BASICS_STEPS} · ${BASICS[hero.step]?.title ?? ''}`;
+    info.playNow = `STEP ${hero.step + 1} OF ${BASICS_STEPS} ${SEP_MARK} ${BASICS[hero.step]?.title ?? ''}`;
   } else if (q) {
     const p = playNowPlan();
     if (hero.kind === 'first') info.hero = { title: 'FIRST MATCH', kind: 'first' };
-    info.playNow = `${q.short} v ${PRESET_CLUBS[p.rival].short} · ${DIFFICULTIES[p.difficulty]}`;
+    info.playNow = `${p.club?.short ?? q.short} v ${PRESET_CLUBS[p.rival].short} ${SEP_MARK} ${DIFFICULTIES[p.difficulty]}`;
   }
   info.locked = LOCKED_FEATURES.filter((f) => !featureOpen(onboarding(), f));
   const run = save.run;
@@ -296,9 +305,9 @@ function mainInfo(): MainInfo {
   } catch {
     info.run = run?.best ? `BEST: ROUND ${run.best}` : 'ONE MORE RUN';
   }
-  if (q && o) info.quick = 'PICK TEAMS · RULES';
+  if (q && o) info.quick = `PICK TEAMS ${SEP_MARK} RULES`;
   const moStars = momentStarsTotal(save);
-  info.moments = moStars ? `SHORT CHALLENGES · ★ ${moStars}` : 'SHORT CHALLENGES';
+  info.moments = moStars ? `SHORT CHALLENGES ${SEP_MARK} ★ ${moStars}` : 'SHORT CHALLENGES';
   const user = cloudUser();
   if (user) info.account = user.name;
   try {
@@ -308,13 +317,13 @@ function mainInfo(): MainInfo {
       const nm = nextMatch(career);
       const div = career.season ? DIVISION_NAMES[career.season.division] ?? '' : '';
       // Opponent first: on small tiles the subtitle is cut with an ellipsis, and the next match matters most.
-      info.career = nm ? `v ${nm.rival.short} · ${div}` : div || 'SEASON DONE';
+      info.career = nm ? `v ${nm.rival.short} ${SEP_MARK} ${div}` : div || 'SEASON DONE';
       info.club = `OVR ${clubRating(club)}`;
       const star = [...club.squad.slice(0, 11)].sort((a, b) => overall(b) - overall(a))[0];
       if (star) info.captain = { def: star, kit: club.kit, club: club.name.toUpperCase(), ovr: clubRating(club) };
     } else {
       info.career = 'START YOUR CLUB';
-      info.club = 'KIT · SQUAD';
+      info.club = `KIT ${SEP_MARK} SQUAD`;
     }
     const cup = migrateCup(save.cup);
     info.cup = cup && cup.status === 'active' ? `NEXT: ${ROUND_NAMES[Math.min(cup.round, 2)]}` : 'WIN THE TROPHY';
@@ -338,7 +347,13 @@ function mainInfo(): MainInfo {
   } catch {
     // (Retention bookkeeping never breaks the menu.)
   }
-  info.unlock = nextUnlock(save.progress.xp);
+  info.unlock = nextUnlock(save.progress.xp, shopOf(save).owned);
+  try {
+    // The count on the coins / SHOP button: affordable things not seen yet, and the free daily pack.
+    info.shopNew = newInShop(save, localDay());
+  } catch {
+    // (The shop's bookkeeping never breaks the menu.)
+  }
   const dayBefore = p.daily.day;
   const daily = dailyFor(p, localDay());
   if (daily.day !== dayBefore) persist();
@@ -352,6 +367,9 @@ function onboarding(): NonNullable<typeof save.onboarding> {
   save.onboarding ??= { basics: played() > 0 ? BASICS_STEPS : 0, firstGoal: played() > 0, unlockSeen: played() > 0 };
   return save.onboarding;
 }
+
+/** What the daily gift just brought into the SHOP's reach (said once, back on the menu). */
+let giftReach: ShopItem | null = null;
 
 const FEATURE_NAMES: Record<LockedFeature, string> = { career: 'CAREER', moments: 'MOMENTS', run: 'CLUB RUN', blitz: 'BLITZ' };
 
@@ -382,12 +400,19 @@ function mainMenu(): void {
         claim: async (double) => {
           let amount = g.amount;
           if (double && (await ads.rewarded())) amount *= 2;
+          const before = save.coins;
           save.coins += amount;
           save.gift = { last: localDay(), streak: g.streak };
           persist();
+          giftReach = inReach(save, before, save.coins);
           return true;
         },
-        back: mainMenu,
+        back: () => {
+          mainMenu();
+          // The gift put something in the SHOP within reach: say so once, over the menu.
+          if (giftReach) menus.toast(`NOW IN REACH IN THE SHOP: ${giftReach.name.toUpperCase()} ${CAT_LABEL[giftReach.cat].toUpperCase()}`);
+          giftReach = null;
+        },
       });
     },
     quick: () => quickMatch(),
@@ -407,6 +432,7 @@ function mainMenu(): void {
     career: () => openCareer(app),
     cup: () => openCup(app),
     club: () => openClub(app),
+    shop: () => openShop(app),
     settings,
     howto: () => menus.howTo(mainMenu, input.lastDevice),
   }, info);
@@ -442,7 +468,7 @@ const onlineHost: OnlineHost = {
     Trainer.lesson = null;
     Trainer.taught = basicsDone(onboarding());
     const s = new MatchSession(world, input, {
-      ...opt, ballSkin: equippedSkin(), celebration: equippedCelebration(), colorblind: !!save.settings.colorblind,
+      ...opt, ballSkin: equippedSkin(), celebration: equippedCelebration(), goalFx: equipped('goalfx'), trail: equipped('trail'), colorblind: !!save.settings.colorblind,
     });
     session = s;
     s.hud?.setCommentary(save.settings.commentary);
@@ -480,14 +506,46 @@ function similarRival(mine: number): number {
 }
 
 /**
- * What PLAY NOW starts: your club against the closest-rated rival, classic rules; a new player gets Normal
- * and 1.5-minute halves, a returning one the difficulty and half length they set in Quick Match.
+ * MY CLUB (meta/career.ts), once founded: PLAY NOW kicks off with it, so every signing (the SHOP's scout packs,
+ * the transfer market) and every training session plays. Null until a club exists (the blob isn't touched).
  */
-function playNowPlan(): { home: number; rival: number; difficulty: number; halfMinutes: number } {
+function myClub(): ClubState | null {
+  const raw = save.career as { club?: unknown } | null;
+  if (!raw || typeof raw !== 'object' || !raw.club) return null;
+  try {
+    const club = careerState(app).club;
+    return club && club.squad.length >= 11 ? club : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The preset club rated closest to `rating` (a fair game for MY CLUB). */
+function rivalFor(rating: number): number {
+  let best = 0;
+  let gap = Infinity;
+  for (let i = 0; i < PRESET_CLUBS.length; i++) {
+    const g = Math.abs(presetRating(i) - rating);
+    if (g < gap) {
+      gap = g;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * What PLAY NOW starts: your club (MY CLUB once you have founded one, else the Quick Match club) against the
+ * closest-rated rival, classic rules; a new player gets Normal and 1.5-minute halves, a returning one the
+ * difficulty and half length they set in Quick Match.
+ */
+function playNowPlan(): { home: number; rival: number; difficulty: number; halfMinutes: number; club: ClubState | null } {
   const home = PRESET_CLUBS[save.clubIdx] ? save.clubIdx : 0;
   const fresh = save.record.played === 0;
+  const club = myClub();
+  const rival = club ? rivalFor(clubRating(club)) : similarRival(home);
   // The very first match is on Easy (with the first-match ease on top: core/dda.ts), and short.
-  return { home, rival: similarRival(home), difficulty: fresh ? 0 : save.settings.difficulty, halfMinutes: fresh ? 1.5 : save.settings.halfMinutes };
+  return { home, rival, difficulty: fresh ? 0 : save.settings.difficulty, halfMinutes: fresh ? 1.5 : save.settings.halfMinutes, club };
 }
 
 /** Matches played on this save so far (a moment is not a match). */
@@ -505,8 +563,10 @@ function playNow(): void {
     return;
   }
   const p = playNowPlan();
-  const home = makeTeam(PRESET_CLUBS[p.home]);
+  const home = p.club ? clubTeam(p.club) : makeTeam(PRESET_CLUBS[p.home]);
   const away = makeTeam(PRESET_CLUBS[p.rival]);
+  // (MY CLUB's names are its own: the rival's clashing surnames give way, as in a career fixture.)
+  if (p.club) dedupeSurnames(home, away);
   startMatch({
     home, away,
     kits: [home.kit, resolveKitClash(home.kit, away.kit)],
@@ -583,7 +643,13 @@ export function standardReward(r: MatchResult, difficulty: number): { coins: num
 
 /** Quick Match. `mode` preselects CLASSIC / BLITZ (the BLITZ tile); otherwise the last one played. */
 function quickMatch(mode?: MatchMode): void {
-  menus.quickMatch(save, mainMenu, (h, a, m) => {
+  // BACK keeps the options changed here (difficulty, half length, kick-off time, weather, mode): saved now, not only
+  // at the next kick-off, so a reload doesn't lose them.
+  const back = (): void => {
+    persist();
+    mainMenu();
+  };
+  menus.quickMatch(save, back, (h, a, m) => {
     save.clubIdx = h;
     save.opponentIdx = a;
     save.settings.lastMode = m;
@@ -713,7 +779,10 @@ async function startMatch(req: MatchRequest): Promise<void> {
     camZoom: camZoom(),
     ballSkin: equippedSkin(),
     celebration: equippedCelebration(),
+    goalFx: equipped('goalfx'),
+    trail: equipped('trail'),
     colorblind: !!save.settings.colorblind,
+    quickSubs: save.settings.quickSubs !== false,
     assist,
     startScore: req.startScore,
     keeperBoost: req.keeperBoost,
@@ -739,8 +808,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     hud.countdownLabel = `${step}/${BASICS_STEPS}`;
     hud.retitle = (b) => {
       if (/^\d+$/.test(b.title)) return null;
-      if (b.title === 'FAILED') return { ...b, title: 'AGAIN!', sub: 'one more go' };
-      if (b.title === 'COMPLETE!') return { ...b, title: 'NICE!', sub: step < BASICS_STEPS ? `step ${step} of ${BASICS_STEPS} done` : 'basics done' };
+      if (b.title === 'FAILED') return { ...b, title: 'AGAIN!', sub: 'One more go' };
+      if (b.title === 'COMPLETE!') return { ...b, title: 'NICE!', sub: step < BASICS_STEPS ? `Step ${step} of ${BASICS_STEPS} done` : 'Basics done' };
       return b;
     };
   }
@@ -849,7 +918,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
         endMatch();
         then();
       };
-      menus.momentResult(req.scenario, o, { from: xpFrom, to: p.xp }, {
+      menus.momentResult(req.scenario, o, { from: xpFrom, to: p.xp, owned: shopOf(save).owned }, {
         retry: () => leave(() => void startMatch({ ...req, skipIntro: true })),
         next: () => leave(() => req.onDone(r, 0)),
         nextLabel: req.nextLabel,
@@ -876,6 +945,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
       assists: (r.ratings ?? []).filter((x) => x.side === hs).reduce((n, x) => n + x.assists, 0),
       tacklesWon: tally.tacklesWon, passes: r.match.stats.passes[hs], skills: tally.skills, headers: tally.headers,
       longGoals: tally.longGoals, powerups: tally.powerups, motm: r.ratings?.[0]?.side === hs, blitz, difficulty: req.difficulty,
+      skillGoals: tally.skillGoals,
     };
     const xpFrom = p.xp;
     p.xp += matchXp(summary);
@@ -884,8 +954,14 @@ async function startMatch(req: MatchRequest): Promise<void> {
     const daily = dailyFor(p, localDay());
     const done = advanceDaily(daily, dailyChallenges(daily.day), summary);
     const bonus = done.reduce((n, x) => n + x.challenge.coins, 0);
-    let earned = reward.coins + bonus;
+    // SKILL GOALs pay a little on top (shown with the challenges done on the full-time screen).
+    const skillCoins = tally.skillGoals * SKILL_GOAL_COINS;
+    const skillLine = tally.skillGoals ? [{ text: tally.skillGoals > 1 ? `${tally.skillGoals} SKILL GOALS` : 'SKILL GOAL', coins: skillCoins }] : [];
+    let earned = reward.coins + bonus + skillCoins;
+    const coinsBefore = save.coins;
     save.coins += earned;
+    // The SHOP item this match's coins brought into reach, if any (one line at full time; nothing otherwise).
+    const reach = inReach(save, coinsBefore, save.coins);
     // The first real goal opens CAREER, MOMENTS, CLUB RUN and BLITZ (the menu says so next).
     noteGoals(onboarding(), req.kind, my);
     // The hidden ease's streaks, and the one visible hint: three quick-match defeats in a row above Easy.
@@ -939,8 +1015,9 @@ async function startMatch(req: MatchRequest): Promise<void> {
         void startMatch({ ...req, ...easy, firstMatch: false, skipIntro: true });
       } : undefined,
     }, r.ratings, {
-      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: done.map((x) => ({ text: x.challenge.text, coins: x.challenge.coins })),
-    }, { tierUps, tryEasy, clip: clipOf(s), noAds: firstEver });
+      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: [...done.map((x) => ({ text: x.challenge.text, coins: x.challenge.coins })), ...skillLine],
+      owned: shopOf(save).owned,
+    }, { tierUps, tryEasy, clip: clipOf(s), noAds: firstEver, shopReach: reach ? { name: reach.name, kind: CAT_LABEL[reach.cat] } : undefined });
   };
   window.addEventListener('keydown', pauseKey);
 }
@@ -1066,6 +1143,8 @@ async function boot(): Promise<void> {
   requestAnimationFrame(frame);
   document.getElementById('boot')?.setAttribute('aria-busy', 'false');
   document.getElementById('boot')?.classList.add('gone');
+  // The browser chrome was grey for the splash; the game itself sits under a sky.
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#5cc8f5');
   ads.loadingDone();
   const params = new URLSearchParams(location.search);
   if (import.meta.env.DEV && params.has('quick')) {

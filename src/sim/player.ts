@@ -122,6 +122,13 @@ const DRIBBLE_CUT_MAX = 2.4;
 const DRIBBLE_CUT_LOSS = 0.16;
 const DRIBBLE_FACE_TURN = 1.8;
 /**
+ * The drawn body (Player.drawFacing) keeps turning to a face target the controller drops for this long (s). Rules
+ * that face the ball only inside some range ask on one step and not the next at its edge, and every body on the
+ * pitch flicked back and forth on screen (~170 reversals a minute in AI v AI). Drawing only: what the sim plays with
+ * (`facing`, and so every kick, tackle and stat) is untouched.
+ */
+export const FACE_HOLD_T = 0.12;
+/**
  * The human's man answers the stick quicker than the AI's players (snappy, Mario-Strikers style): he speeds
  * up and slows down HUMAN_ACCEL x as hard, turns (body, and his run with the ball) HUMAN_TURN x as fast, and
  * with the stick let go he stops dead (HUMAN_STOP m/s², ~0.13 s from a sprint) rather than drifting on.
@@ -157,6 +164,15 @@ export class Player {
   wantZ = 0;
   sprint = false;
   faceTarget: number | null = null;
+  /**
+   * The body as drawn (render only: the sim never reads it, see drawnFacing): `facing`, except that a face target
+   * the controller stops asking for is still turned to for FACE_HOLD_T. The last such target and the hold left (s),
+   * and `facing` as locomote last left it (anything else turning him since snaps the drawn body to it).
+   */
+  drawFacing = 0;
+  private faceHeld = 0;
+  private faceHeldT = 0;
+  private drawSeen = 0;
 
   stamina = 1;
   kickCooldown = 0;
@@ -241,6 +257,14 @@ export class Player {
   wrongFootT = 0;
   protectT = 0;
   shieldT = 0;
+  /**
+   * An AI defender's challenge on the human's carrier, telegraphed (skills.ts): seconds left of the wind-up before
+   * he goes in (a slide when tellSlide, else a committed standing tackle). The human's SKILL meanwhile is a PERFECT.
+   */
+  tellT = 0;
+  tellSlide = false;
+  /** Seconds left of the committed challenge a tell led into (its tackle is the surer for it: skills.ts TOLD_TACKLE). */
+  toldT = 0;
   /**
    * Off balance, seconds left: bumped off the ball or riding a challenge, beaten to a 50/50, just back on
    * his feet. A shot or a first touch taken meanwhile is rougher (it doesn't slow his running).
@@ -542,12 +566,32 @@ export class Player {
     // sharply through a corner as he did at the old pace.)
     const nT = nsp / TEMPO;
     const turnRate = (dribbling ? (9 - nT * 0.5) * (cut ? DRIBBLE_FACE_TURN : 1) : 13 - nT * 0.7) * TEMPO * quick;
+    const step = Math.max(4, turnRate) * dt;
+    // The body as drawn first: turned by something else since this ran last (a kick, a tackle, a restart), it is
+    // just there. It turns as `facing` does, but to a face target the controller dropped for FACE_HOLD_T longer.
+    if (this.facing !== this.drawSeen) this.drawFacing = this.facing;
+    let shown: number | null = this.faceTarget;
+    if (shown !== null) {
+      this.faceHeld = shown;
+      this.faceHeldT = FACE_HOLD_T;
+    } else if (this.faceHeldT > 0) {
+      this.faceHeldT -= dt;
+      shown = this.faceHeld;
+    }
     let face: number | null = this.faceTarget;
     if (face === null && nsp > 0.35) face = Math.atan2(this.vel.z, this.vel.x);
-    if (face !== null) this.facing = turnToward(this.facing, face, Math.max(4, turnRate) * dt);
+    if (shown === null) shown = face;
+    if (face !== null) this.facing = turnToward(this.facing, face, step);
     this.facing = wrapAngle(this.facing);
+    if (shown !== null) this.drawFacing = wrapAngle(turnToward(this.drawFacing, shown, step));
+    this.drawSeen = this.facing;
     // Lean into acceleration for the animation.
     this.lean += ((nsp / this.top) * 0.35 - this.lean) * Math.min(1, dt * 6);
+  }
+
+  /** The facing to draw: drawFacing while nothing has turned him since locomote last ran, else `facing` itself. */
+  drawnFacing(): number {
+    return this.facing === this.drawSeen ? this.drawFacing : this.facing;
   }
 
   brake(dt: number, rate: number): void {

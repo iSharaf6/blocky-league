@@ -17,8 +17,15 @@ export function sep(): string {
   return SEP_HTML;
 }
 
-const GLYPH = /[·•●⏺]/;
-const GLYPH_RUN = /\s*[·•●⏺]\s*/g;
+/**
+ * The divider inside PLAIN text that later goes through seps() / sepsOfText() / sepText() (escaped copy, toasts,
+ * tile subtitles): U+2063 INVISIBLE SEPARATOR, written ` ${SEP_MARK} `. It becomes the divider element (" / " in
+ * plain text), and anywhere it slipped through it draws nothing. Source copy never writes a visible dot.
+ */
+export const SEP_MARK = '\u2063';
+
+const GLYPH = /[·•●⏺\u2063]/;
+const GLYPH_RUN = /\s*[·•●⏺\u2063]\s*/g;
 /** "0 - 0", "2-1", "1 – 0": a score written with a dash between digits. */
 const SCORE_DASH = /(\d)\s*[-–]\s*(\d)/g;
 

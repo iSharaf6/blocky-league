@@ -368,11 +368,17 @@ export interface PoseInput {
 
 /**
  * Pose codes (replay.ts STATE_CODE). 11 / 12 are reserved for the sim's stumble and plant-before-a-strike
- * states, if and when it has them; until then a strike at a sprint gets its plant step inside 'kick'.
+ * states, if and when it has them; until then a strike at a sprint gets its plant step inside 'kick'. 13 / 14 are
+ * the SKILL poses (sim/skills.ts): a skill move (diveDir: which, SKILL_MOVE; kickT its 0..1 progress; kickLeg the
+ * roulette's side) and a defender winding up his challenge, the tell (kickT its 0..1 progress).
  */
 export const PSTATE = {
   move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9, stumble: 11, plant: 12,
+  skill: 13, load: 14,
 } as const;
+
+/** The skill moves by their frame code (sim/skills.ts SKILL_CODE). */
+const SKILL_MOVE = { roulette: 1, rainbow: 2, stepover: 3, dragback: 4 } as const;
 
 /**
  * Celebration styles (frame channel 13, PoseInput.celebrate). 0-3 are the sim's scorer styles (arms-up hop,
@@ -428,6 +434,7 @@ const LINEAR_CH = new Set([0, 1, 8]);
 
 function blendTime(from: number, to: number): number {
   if (to === PSTATE.kick) return BLEND_KICK_S;
+  if (to === PSTATE.load) return BLEND_FAST_S;
   if (to === PSTATE.slide || to === PSTATE.dive) return BLEND_FAST_S;
   if (to === PSTATE.stand && (from === PSTATE.slide || from === PSTATE.fallen || from === PSTATE.dive)) return BLEND_GETUP_S;
   return BLEND_S;
@@ -436,8 +443,9 @@ function blendTime(from: number, to: number): number {
 /** An action (see BLEND_KICK_S): blended in with an ease-out, never the slow-starting smoothstep. */
 function isAction(key: number): boolean {
   const state = key >> 4;
-  // (A header while running is the move state's sub-pose 1.)
-  return state === PSTATE.kick || state === PSTATE.slide || state === PSTATE.dive || ((state === PSTATE.move || state === PSTATE.stand) && (key & 15) === 1);
+  // (A header while running is the move state's sub-pose 1; a skill move reads from its first frame too.)
+  return state === PSTATE.kick || state === PSTATE.slide || state === PSTATE.dive || state === PSTATE.skill ||
+    ((state === PSTATE.move || state === PSTATE.stand) && (key & 15) === 1);
 }
 
 export class Footballer {
@@ -628,6 +636,7 @@ export class Footballer {
   private static keyOf(p: PoseInput): number {
     let sub = 0;
     if (p.state === PSTATE.move || p.state === PSTATE.stand) sub = p.headerT > 0 ? 1 : 0;
+    else if (p.state === PSTATE.skill) sub = clamp(Math.round(p.diveDir), 0, 15);
     else if (p.state === PSTATE.kick) sub = Math.abs(p.kickLeg) > 1.5 && p.headerT <= 0 ? 1 : p.headerT > 0 ? 2 : 0;
     else if (p.state === PSTATE.celebrate) {
       const st = Math.round(p.celebrate);
@@ -894,6 +903,26 @@ export class Footballer {
         }
         break;
       }
+      case PSTATE.skill:
+        this.skillMove(p, time, dt, ph, run, swing);
+        break;
+      case PSTATE.load: {
+        // A defender winding up his challenge (the tell): sunk into a crouch, weight forward over the ball, arms
+        // out low and wide, a quiver through him as he coils, then he goes.
+        this.locomotion(p, time, dt, ph, run, swing);
+        const k = smoothstep(0, 0.3, p.kickT);
+        body.position.y -= 0.13 * k;
+        body.position.x = Math.sin(time * 46) * 0.025 * k;
+        torso.rotation.z -= 0.42 * k;
+        head.rotation.z += 0.3 * k;
+        lL.rotation.x = 0.22 * k;
+        lR.rotation.x = -0.22 * k;
+        lL.rotation.z = lerp(lL.rotation.z, 0.25, k);
+        lR.rotation.z = lerp(lR.rotation.z, -0.3, k);
+        aL.rotation.set(lerp(aL.rotation.x, 0.85, k), 0, lerp(aL.rotation.z, 0.55, k));
+        aR.rotation.set(lerp(aR.rotation.x, -0.85, k), 0, lerp(aR.rotation.z, 0.55, k));
+        break;
+      }
       case PSTATE.dejected: {
         this.locomotion(p, time, dt, ph, run, swing);
         // Hands on head.
@@ -988,6 +1017,67 @@ export class Footballer {
    * A braking plant step (0..1): the standing leg reaching ahead, hips sinking, torso back, arms out;
    * `kickLeg` (the sim's own plant state only) also trails the kicking leg, ready to swing.
    */
+  /**
+   * The SKILL moves (sim/skills.ts), over their 0..1 progress (kickT): the ROULETTE's full turn with a sole on the
+   * ball each half, the RAINBOW FLICK's heel kicked up behind, the STEPOVER's two legs circling the ball with the
+   * hips swaying after them, the DRAG BACK's sole rolling it back under him.
+   */
+  private skillMove(p: PoseInput, time: number, dt: number, ph: number, run: number, swing: number): void {
+    const body = this.body, torso = this.torso, head = this.head;
+    const aL = this.armL, aR = this.armR, lL = this.legL, lR = this.legR;
+    const u = clamp(p.kickT, 0, 1);
+    const kind = Math.round(p.diveDir);
+    this.locomotion(p, time, dt, ph, run * 0.3, swing * 0.3);
+    if (kind === SKILL_MOVE.roulette) {
+      // A whole turn (the way he slips: kickLeg), low over the ball, arms out for balance.
+      const e = smoothstep(0.04, 0.96, u);
+      body.rotation.y = -(p.kickLeg >= 0 ? 1 : -1) * Math.PI * 2 * e;
+      const a = Math.sin(clamp(u / 0.5, 0, 1) * Math.PI);
+      const b = Math.sin(clamp((u - 0.5) / 0.5, 0, 1) * Math.PI);
+      lR.rotation.z = 0.6 * a - 0.25 * b;
+      lL.rotation.z = 0.6 * b - 0.25 * a;
+      body.position.y = HIP_Y - 0.07 * Math.sin(u * Math.PI);
+      torso.rotation.z = -0.18;
+      aL.rotation.set(1.05, 0, 0.35);
+      aR.rotation.set(-1.05, 0, 0.35);
+      head.rotation.z = 0.2;
+    } else if (kind === SKILL_MOVE.rainbow) {
+      // Rolled up the back of the standing leg, then the heel kicks it up and over: a hop as it goes.
+      const roll = smoothstep(0, 0.38, u);
+      const kick = Math.sin(clamp((u - 0.3) / 0.7, 0, 1) * Math.PI);
+      lR.rotation.z = lerp(0.35 * roll, -2.1, kick);
+      lL.rotation.z = -0.15 + 0.2 * kick;
+      torso.rotation.z = -0.25 - 0.3 * kick;
+      head.rotation.z = -0.35 * kick;
+      body.position.y = HIP_Y + 0.12 * kick;
+      aL.rotation.set(0.7 + 0.4 * kick, 0, 0.8 + 0.9 * kick);
+      aR.rotation.set(-0.7 - 0.4 * kick, 0, 0.8 + 0.9 * kick);
+    } else if (kind === SKILL_MOVE.stepover) {
+      // Two stepovers, right then left: the leg lifts and circles out round the ball, the hips sway after it.
+      const first = u < 0.5;
+      const k = first ? u / 0.5 : (u - 0.5) / 0.5;
+      const s = first ? 1 : -1;
+      const leg = first ? lR : lL;
+      const lift = Math.sin(k * Math.PI);
+      leg.rotation.z = 0.75 * lift;
+      leg.rotation.x = -s * 0.75 * Math.sin(k * Math.PI * 2) - s * 0.2 * lift;
+      body.rotation.x = s * 0.28 * lift;
+      torso.rotation.y = s * 0.35 * lift;
+      body.position.y = HIP_Y - 0.06;
+      aL.rotation.set(0.5 + 0.4 * lift * (first ? 0 : 1), 0, 0.25);
+      aR.rotation.set(-0.5 - 0.4 * lift * (first ? 1 : 0), 0, 0.25);
+    } else {
+      // DRAG BACK: the sole on top of it, drawn back under him as he leans back off it.
+      const pull = smoothstep(0.08, 0.72, u);
+      lR.rotation.z = lerp(0.7, -0.4, pull);
+      lL.rotation.z = -0.12;
+      body.rotation.z = 0.16 * Math.sin(u * Math.PI);
+      torso.rotation.z = 0.1;
+      aL.rotation.set(0.6, 0, 0.5);
+      aR.rotation.set(-0.6, 0, 0.5);
+    }
+  }
+
   private plantStep(w: number, plant: THREE.Mesh, kickLeg: THREE.Mesh | null): void {
     if (w <= 0) return;
     plant.rotation.z = lerp(plant.rotation.z, 0.42, w);

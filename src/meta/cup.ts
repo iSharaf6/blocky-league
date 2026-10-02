@@ -11,7 +11,7 @@ import { PRESET_CLUBS, makeTeam } from './data';
 
 export const CUP_VERSION = 1 as const;
 export const CUP_SIZE = 8;
-export const ROUND_NAMES = ['QUARTER-FINAL', 'SEMI-FINAL', 'FINAL'] as const;
+export const ROUND_NAMES = ['QUARTER FINAL', 'SEMI FINAL', 'FINAL'] as const;
 export const ROUND_SHORT = ['QF', 'SF', 'FINAL'] as const;
 /** Coins for winning each round, before the difficulty multiplier. */
 export const ROUND_PRIZE = [100, 200, 400] as const;

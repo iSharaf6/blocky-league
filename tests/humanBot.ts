@@ -36,6 +36,12 @@ export interface BotOptions {
    * away, is passed to whenever he's not marked tight (within 1.2 m), whoever else is on.
    */
   wing?: boolean;
+  /**
+   * The SKILL button (src/sim/skills.ts), default 'off': 'react' answers a defender's tell (the "!" over him) after a
+   * human reaction time (0.16-0.30 s), four times in five, the stick across his run away from the man; 'spam' presses
+   * it every ~0.75 s whenever a defender is within 3 m, whatever he is doing, the stick anywhere.
+   */
+  skills?: 'off' | 'react' | 'spam';
 }
 
 export interface BotTally {
@@ -64,12 +70,19 @@ export interface BotTally {
   foulsAgainst: number;
   /** Seconds our men had it at their feet in our defensive / middle / attacking third. */
   thirds: [number, number, number];
+  /** SKILL moves made, and how they came off (PERFECT / GOOD: beat a man); tells shown on our carriers; SKILL GOALs. */
+  skillMoves: number;
+  skillPerfect: number;
+  skillGood: number;
+  skillTells: number;
+  skillGoals: number;
 }
 
 const emptyTally = (): BotTally => ({
   cutAttempts: 0, cutBeats: 0, cutKept: 0, knockOns: 0, knockKept: 0,
   tackleTaps: 0, tackleWon: 0, tackleBall: 0, tackleFouls: 0, freeTackles: 0,
   aiTackles: 0, aiTacklesWon: 0, dispossessed: 0, passes: 0, passCmp: 0, shots: 0, fouls: 0, foulsAgainst: 0, thirds: [0, 0, 0],
+  skillMoves: 0, skillPerfect: 0, skillGood: 0, skillTells: 0, skillGoals: 0,
 });
 
 type Btn = 'pass' | 'shoot' | 'through' | 'sprint';
@@ -107,10 +120,24 @@ export class HumanBot {
   private cuts: { f: number; knock: boolean; beat: boolean; lost: boolean }[] = [];
   private taps: { f: number; won: boolean; ball: boolean; foul: boolean }[] = [];
   private pendingPass: number | null = null;
+  /** SKILL: the frame to press it on (-1: none), frames left down, the stick with it, the tells answered, the spam clock. */
+  private skillAt = -1;
+  private skillDown = 0;
+  private skillDir = { x: 0, z: 0 };
+  private tellsSeen = 0;
+  private skillCool = 0;
+  /** Its own generator for the SKILL decisions, so the bot's other choices draw exactly as they did without them. */
+  private sk: number;
 
   constructor(seed: number, opts: BotOptions = {}) {
     this.s = (Math.imul(seed + 17, 2654435761) >>> 0) || 1;
-    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, ...opts };
+    this.sk = (Math.imul(seed + 71, 2246822519) >>> 0) || 1;
+    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, skills: 'off', ...opts };
+  }
+
+  private skRnd(): number {
+    this.sk = (Math.imul(this.sk, 1664525) + 1013904223) >>> 0;
+    return this.sk / 4294967296;
   }
 
   private rnd(): number {
@@ -131,7 +158,15 @@ export class HumanBot {
     this.tackleCool = Math.max(0, this.tackleCool - DT);
     this.switchCool = Math.max(0, this.switchCool - DT);
     this.decide(m);
+    this.skillPlan(m);
     const out: Pad = { ...EMPTY_PAD, mx: this.stick.x, mz: this.stick.z };
+    if (this.skillDown > 0) {
+      // SKILL down, the stick where the move should go (only the press's frame picks the move).
+      out.skill = true;
+      out.mx = this.skillDir.x;
+      out.mz = this.skillDir.z;
+      this.skillDown--;
+    }
     out.sprint = this.sprintHeld;
     if (this.dbl > 0) {
       out.sprint = this.dbl > 7 || this.dbl <= 3;
@@ -202,6 +237,50 @@ export class HumanBot {
     const opp = b.owner >= 0 && m.players[b.owner].side !== HS;
     if (opp) this.defend(m, a, m.players[b.owner]);
     else this.loose(m, a);
+  }
+
+  /** SKILL (BotOptions.skills): answer a tell after a reaction time, or mash it near a defender. */
+  private skillPlan(m: Match): void {
+    this.skillCool = Math.max(0, this.skillCool - DT);
+    const tells = m.ctl[HS].skill.tells;
+    const fresh = tells !== this.tellsSeen;
+    this.tellsSeen = tells;
+    if (this.o.skills === 'off') return;
+    const a = m.active >= 0 ? m.players[m.active] : null;
+    if (!a || m.phase !== 'play' || m.ball.owner !== a.idx || m.ball.held) {
+      this.skillAt = -1;
+      return;
+    }
+    if (this.skillAt >= 0) {
+      if (this.frame >= this.skillAt) {
+        this.skillAt = -1;
+        this.skillDown = 3;
+      }
+      return;
+    }
+    const sp = a.speed();
+    const hx = sp > 1 ? a.vel.x / sp : Math.cos(a.facing);
+    const hz = sp > 1 ? a.vel.z / sp : Math.sin(a.facing);
+    if (this.o.skills === 'react') {
+      if (!fresh || this.skRnd() >= 0.8) return;
+      const thr = m.ctl[HS].skill.threat;
+      const o = thr ? m.players[thr.by] : null;
+      // Across the run, away from the side he comes from.
+      const side = o ? lateral(a, o, hx, hz) : 1;
+      this.skillDir = { x: -hz * side, z: hx * side };
+      this.skillAt = this.frame + Math.round((0.16 + this.skRnd() * 0.14) / DT);
+      return;
+    }
+    // 'spam'
+    if (this.skillCool > 0) return;
+    let near = false;
+    for (const o of m.teamPlayers(1)) if (!o.sentOff && !o.isKeeper && Math.hypot(o.pos.x - a.pos.x, o.pos.z - a.pos.z) < 3) near = true;
+    if (!near) return;
+    const r = this.skRnd();
+    const ang = Math.atan2(hz, hx) + (r < 0.25 ? 0 : r < 0.5 ? Math.PI / 2 : r < 0.75 ? -Math.PI / 2 : Math.PI);
+    this.skillDir = r < 0.1 ? { x: 0, z: 0 } : { x: Math.cos(ang), z: Math.sin(ang) };
+    this.skillDown = 3;
+    this.skillCool = 0.72 + this.skRnd() * 0.08;
   }
 
   private reset(): void {
@@ -500,6 +579,12 @@ export class HumanBot {
       this.tally.thirds[u < -1 / 3 ? 0 : u < 1 / 3 ? 1 : 2] += DT;
     }
     for (const e of evs) {
+      if (e.type === 'skillMove' && side(e.player) === HS && e.move !== 'cut' && e.move !== 'knock') {
+        this.tally.skillMoves++;
+        if (e.grade === 'perfect') this.tally.skillPerfect++;
+        else if (e.grade === 'good') this.tally.skillGood++;
+      } else if (e.type === 'skillTell' && side(e.on) === HS) this.tally.skillTells++;
+      else if (e.type === 'skillGoal' && e.side === HS) this.tally.skillGoals++;
       if (e.type === 'beat' && side(e.by) === HS) {
         for (const c of this.cuts) if (!c.beat && this.frame - c.f < 40) c.beat = true;
       } else if (e.type === 'tackle') {
@@ -692,6 +777,12 @@ export interface BotSummary {
   attThird: number;
   /** Team shape (side 0 is the bot's). */
   shape: ShapeSummary;
+  /** SKILL moves per match, the share PERFECT / GOOD, tells per match, SKILL GOALs per match. */
+  skillMoves: number;
+  skillPerfectPct: number;
+  skillGoodPct: number;
+  skillTells: number;
+  skillGoals: number;
 }
 
 /**
@@ -740,6 +831,11 @@ export function summariseBot(list: BotMatch[], difficulty: number): BotSummary {
     foulsAgainst: t((x) => x.foulsAgainst) / n,
     attThird: pct(t((x) => x.thirds[2]), t((x) => x.thirds[0] + x.thirds[1] + x.thirds[2])),
     shape: summariseShape(list.map((r) => r.shape)),
+    skillMoves: t((x) => x.skillMoves) / n,
+    skillPerfectPct: pct(t((x) => x.skillPerfect), t((x) => x.skillMoves)),
+    skillGoodPct: pct(t((x) => x.skillGood), t((x) => x.skillMoves)),
+    skillTells: t((x) => x.skillTells) / n,
+    skillGoals: t((x) => x.skillGoals) / n,
   };
 }
 
@@ -748,5 +844,6 @@ export function fmtBot(s: BotSummary): string {
   return `diff ${s.difficulty} N=${s.n}: W${s.w} D${s.d} L${s.l} | GF ${f(s.gf, 2)} GA ${f(s.ga, 2)} | poss ${f(s.poss)}% | shots ${f(s.shotsFor)}-${f(s.shotsAgainst)}` +
     ` | cuts ${f(s.cutsPerMatch)}/m beat ${f(s.beatPct)}% kept ${f(s.cutKeptPct)}% | knock kept ${f(s.knockKeptPct)}%` +
     ` | TACKLE taps ${f(s.tapsPerMatch)}/m won ${f(s.tackleWonPct)}% ball ${f(s.tackleBallPct)}% foul ${f(s.tackleFoulPct)}% | free tackles ${f(s.freeTackles)}/m` +
-    ` | dispossessed ${f(s.dispossessed)}/m | pass ${f(s.passPct)}% | fouls ${f(s.fouls)}-${f(s.foulsAgainst)} | att third ${f(s.attThird)}% | ${fmtShape(s.shape)}`;
+    ` | dispossessed ${f(s.dispossessed)}/m | pass ${f(s.passPct)}% | fouls ${f(s.fouls)}-${f(s.foulsAgainst)} | att third ${f(s.attThird)}% | ${fmtShape(s.shape)}` +
+    ` | tells ${f(s.skillTells)}/m SKILL ${f(s.skillMoves)}/m perfect ${f(s.skillPerfectPct)}% good ${f(s.skillGoodPct)}% skill goals ${f(s.skillGoals, 2)}/m`;
 }
