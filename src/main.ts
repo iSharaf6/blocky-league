@@ -15,7 +15,7 @@ import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock,
   type SaveData, momentStarsTotal, momentXp, recordMoment } from './core/save';
-import { SKILL_GOAL_COINS } from './core/save';
+import { SKILL_GOAL_COINS, adoptPortalStore } from './core/save';
 import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
 import { CAT_LABEL, DEFAULT_ID, equippedId, inReach, newInShop, shopOf, type ShopCat, type ShopItem } from './meta/shop';
@@ -1157,6 +1157,15 @@ async function boot(): Promise<void> {
   performance.measure('bl:demo', { start: t0, end: t1 });
   performance.measure('bl:firstRender', { start: t1, end: t2 });
   await ready;
+  // CrazyGames: the save also lives in its Data Module (the player's account). A newer copy there wins (he played
+  // on another device), swapped in before any menu reads it, and its settings applied.
+  const store = ads.portalStore();
+  const theirs = store ? adoptPortalStore(store, save) : null;
+  if (theirs) {
+    for (const k of Object.keys(save)) delete (save as unknown as Record<string, unknown>)[k];
+    Object.assign(save, theirs);
+    applySettings();
+  }
   performance.mark('bl:ready');
   requestAnimationFrame(frame);
   document.getElementById('boot')?.setAttribute('aria-busy', 'false');

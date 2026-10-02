@@ -18,9 +18,15 @@ interface CrazySettings {
   muteAudio: boolean;
   disableChat: boolean;
 }
+/** CrazyGames' Data Module: a localStorage-like store kept with the player's CrazyGames account. */
+export interface PortalStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
 interface CrazySDK {
   init(): Promise<void>;
   environment: 'local' | 'crazygames' | 'disabled';
+  data?: PortalStore;
   ad: {
     requestAd(type: 'midgame' | 'rewarded', cb: { adStarted?: () => void; adFinished?: () => void; adError?: (e: CrazyAdError) => void }): void;
     hasAdblock(): Promise<boolean>;
@@ -104,6 +110,16 @@ export class Ads {
    * opt-in rewards, not interruptions, so they stay available. main.ts points it at the live save.
    */
   adFree: () => boolean = () => false;
+
+  /**
+   * The portal's own save store once its SDK is up (CrazyGames' Data Module: progress follows a signed-in player to
+   * any device), else null. The save mirrors itself there (core/save.ts adoptPortalStore).
+   */
+  portalStore(): PortalStore | null {
+    if (this.portal !== 'crazygames') return null;
+    const d = window.CrazyGames?.SDK?.data;
+    return d && typeof d.getItem === 'function' && typeof d.setItem === 'function' ? d : null;
+  }
 
   init(): Promise<void> {
     // Boot and previews may both ask to initialize. Load just one SDK/listener.

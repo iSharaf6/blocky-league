@@ -108,7 +108,7 @@ Each portal has its own taxonomy, so pick from their list when you submit. These
 | GameDistribution | Sports, Arcade | football, soccer, 3d, sports, arcade |
 | itch.io | Genre: Sports. Made with: Three.js | football, soccer, voxel, low-poly, 3d, arcade, browser, singleplayer, multiplayer |
 
-**Age / content:** no violence beyond slide tackles, no chat, no purchases, no accounts, no outgoing links. The only text a player can type is a club name and a three-letter code, both run through a profanity filter and never shown to other players. Progression (XP, levels, badges, the season track, stars, streaks, daily challenges) is earned by playing only. Progress is saved in the browser; the game itself collects no personal data. Suitable for all ages. This meets CrazyGames' PEGI-12 requirement.
+**Age / content:** no violence beyond slide tackles, no chat, no purchases, no accounts, no outgoing links. The only text a player can type is a club name and a three-letter code, both run through a profanity filter and never shown to other players. Progression (XP, levels, badges, the season track, stars, streaks, daily challenges) is earned by playing only. Progress is saved in the browser (and on CrazyGames in the player's CrazyGames account, through the SDK's Data Module); the game itself collects no personal data. Suitable for all ages. This meets CrazyGames' PEGI-12 requirement.
 
 _(Use this content paragraph for CrazyGames and Poki. It describes their single-player builds. The own-site web and itch online mode uses manual connection codes and can show club details to the opponent; use the itch-specific paragraph below for that build.)_
 

@@ -469,11 +469,40 @@ export function importSave(raw: unknown): SaveData | null {
 
 export function writeSave(d: SaveData): void {
   d.updatedAt = new Date().toISOString();
+  const json = JSON.stringify(d);
   try {
-    localStorage.setItem(KEY, JSON.stringify(d));
+    localStorage.setItem(KEY, json);
   } catch {
     // Private mode / storage full: the game still runs, progress just isn't kept.
   }
+  try {
+    portalStore?.setItem(KEY, json);
+  } catch {
+    // The portal's store refused it: the browser's copy still holds it.
+  }
+}
+
+/** A portal's save store (CrazyGames' Data Module, platform/ads.ts portalStore), mirrored on every write once adopted. */
+let portalStore: { getItem(key: string): string | null; setItem(key: string, value: string): void } | null = null;
+
+/**
+ * The portal's store is up (the game's boot, once its SDK has started): from now on every save is mirrored there.
+ * Returns the portal's copy when it is the newer one (the player signed in on another device: the caller swaps it
+ * in), else null, and the browser's copy is written there at once.
+ */
+export function adoptPortalStore(store: NonNullable<typeof portalStore>, local: SaveData): SaveData | null {
+  portalStore = store;
+  let remote: SaveData | null = null;
+  try {
+    const raw = store.getItem(KEY);
+    remote = raw ? importSave(raw) : null;
+  } catch {
+    remote = null;
+  }
+  const newer = remote && (!local.updatedAt || (remote.updatedAt ?? '') > local.updatedAt);
+  if (remote && newer) return remote;
+  writeSave(local);
+  return null;
 }
 
 // ------------------------------------------------------------------ progression (pure; see tests/progress.test.ts)
