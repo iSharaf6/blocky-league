@@ -37,23 +37,23 @@ _(149 chars)_
 
 ## Long description
 
-> **Blocky League** is fast, chunky voxel football you can play right in your browser.
+> **Skill past defenders. Smash screamers. Win the league.** Blocky League is fast, chunky voxel football you can play right in your browser.
 >
-> New to it? **Learn the basics** in three quick drills (pass, shoot, cross), then play your first match. Score your first goal and the whole game opens up.
+> Take a defender on and watch his head. When a big **!** pops up, hit SKILL and leave him on the floor. Chain your tricks and score a **SKILL GOAL**!
 >
-> Pick one of eleven clubs, from park-football minnows to superstar sides, and take on the AI on four difficulty levels, from Easy to Legend. Thread passes through tight lanes, hold Shoot to power up a screamer, float lobs and crosses, and time a first-time volley as the ball drops. Take a man on and watch for the **!** over him: hit SKILL right then for a PERFECT roulette, rainbow flick or stepover that leaves him on the floor, and chain skills into a SKILL GOAL. When they come at you, switch players, press the ball and throw in a slide tackle. Tired legs? A quick sub card pops up and makes the change at the next stoppage. Every goal gets a celebration and an instant replay, with broadcast-style text commentary, a roaring voxel crowd, and matches in daylight, at sunset or under the floodlights.
+> - Pull off roulettes, rainbow flicks and stepovers
+> - Smash screamers, whip in crosses and bang in volleys
+> - **Road to Glory:** build your own club and climb from Sunday League to the top
+> - **Blocky Cup:** knockout ties and tense penalty shootouts
+> - **Club Run:** seven matches, one life, a new perk after every win
+> - **Moments:** quick challenges to earn three stars
+> - **Blitz:** crazy power ups like Mega Shot, Freeze and Turbo
+> - Win coins and unlock celebrations, new balls, goal explosions and new players
+> - Daily challenges, win streaks and levels to climb
 >
-> **Road to Glory:** start your own club at the bottom of six divisions, set your formation, sign players on the transfer market and grow your stadium on the way to the top. **Blocky Cup:** a knockout trophy with penalty shootouts.
+> New to it? Three quick drills teach you to pass, shoot and cross in under a minute.
 >
-> **Club Run:** seven short matches against a ladder of stronger clubs, one life. After every win, pick a perk that changes how you play, and chase your best run.
->
-> **Moments:** eight short challenges, from a first-touch finish to a two-goal comeback, three stars each.
->
-> **Blitz mode:** football with power-ups. Grab the glowing pickups for a turbo burst, a mega shot, a freeze, a magnet, a shield or a golden boost that makes your next goal count double, and use them at the right moment.
->
-> Every match earns XP: level up from Sunday Leaguer to Blocky Legend, earn mastery badges for finishing, playmaking, defending, skills and saves, climb the monthly season track, keep a win streak going and beat three fresh daily challenges every day. Spend the coins you win in the shop on celebrations, balls, goal explosions, sprint trails and scout packs of new players. Everything is earned by playing.
->
-> Play on keyboard, gamepad or touch. Every key and button can be changed, the touch stick can float or stay fixed, and a colour-blind option adds shape cues. Your progress is saved in your browser.
+> Play with keyboard, controller or touch. Lace up and kick off now!
 
 ## GameDistribution fields (200–500 characters each)
 
