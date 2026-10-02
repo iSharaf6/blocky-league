@@ -8,7 +8,7 @@ const LABELS: Record<TouchContext, [string, string, string]> = {
   setpiece: ['PASS', 'SHOOT', 'CROSS'],
 };
 
-type BtnKey = 'pass' | 'shoot' | 'through' | 'sprint';
+type BtnKey = 'pass' | 'shoot' | 'through' | 'sprint' | 'skill';
 
 /** How long (ms) a ⚡ tap stays down at least, so a tap shorter than a frame still reaches the sim as a press. */
 const POWER_TAP_MS = 70;
@@ -67,6 +67,7 @@ export class TouchControls {
         <button class="tb tb-pass" data-k="pass"><span>PASS</span></button>
         <button class="tb tb-sprint" data-k="sprint"><span>SPRINT</span></button>
         <button class="tb tb-power" data-k="power" aria-label="Use power-up"><span>⚡</span></button>
+        <button class="tb tb-skill" data-k="skill" aria-label="Skill move"><span>SKILL</span></button>
       </div>
       <div class="touch-skip" aria-hidden="true"></div>`;
     this.base = this.root.querySelector('.touch-base')!;
@@ -220,7 +221,7 @@ export class TouchControls {
   /** Drop every held button and the stick (the overlay is going away mid-press). */
   private releaseAll(): void {
     const t = this.input.touch;
-    t.pass = t.shoot = t.through = t.sprint = t.power = false;
+    t.pass = t.shoot = t.through = t.sprint = t.power = t.skill = false;
     window.clearTimeout(this.skipTimer);
     this.skipTimer = 0;
     window.clearTimeout(this.powerTimer);
@@ -266,6 +267,19 @@ export class TouchControls {
     this.root.classList.toggle('blitz', on);
     if (!on) this.setPowerHeld(null);
   }
+
+  /**
+   * The SKILL button (sim/skills.ts): shown while his man has the ball in open play ('on'), and lit up while a
+   * defender's tell is open over him ('cue': tap now for a PERFECT); 'off' hides it (it never crowds the other buttons).
+   */
+  setSkill(state: 'off' | 'on' | 'cue'): void {
+    if (state === this.skillState) return;
+    this.skillState = state;
+    this.root.classList.toggle('skill-on', state !== 'off');
+    this.root.classList.toggle('skill-cue', state === 'cue');
+  }
+
+  private skillState: 'off' | 'on' | 'cue' = 'off';
 
   /** The power-up in hand (blitz): the ⚡ button lights up and names it; null greys it out. */
   setPowerHeld(kind: string | null): void {

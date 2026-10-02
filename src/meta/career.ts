@@ -634,7 +634,7 @@ export function seasonPrizeLines(position: number, division: number): PrizeLine[
   const lines: PrizeLine[] = [];
   const finish = (CLUBS_PER_DIVISION - position) * (20 + 10 * (BOTTOM_DIVISION - div));
   if (finish > 0) lines.push({ label: 'LEAGUE POSITION', coins: finish });
-  if (position <= 2) lines.push({ label: div > TOP_DIVISION ? 'PROMOTION PRIZE' : 'TOP-TWO PRIZE', coins: 600 + 250 * (BOTTOM_DIVISION - div) });
+  if (position <= 2) lines.push({ label: div > TOP_DIVISION ? 'PROMOTION PRIZE' : 'TOP TWO PRIZE', coins: 600 + 250 * (BOTTOM_DIVISION - div) });
   if (position === 1) lines.push({ label: 'CHAMPIONS BONUS', coins: 300 });
   return lines;
 }

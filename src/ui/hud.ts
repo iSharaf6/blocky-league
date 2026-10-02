@@ -5,25 +5,9 @@ import type { Kit, MatchEvent, PowerUpKind, TeamDef } from '../sim/types';
 import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
 import { Commentator, POWER_INFO, pitchNames, surname, type CommentaryLine } from './commentary';
-import { actionKey, currentDevice, moveKeys, remapKeys, type Device } from '../core/input';
+import { actionKey, currentDevice, remapKeys } from '../core/input';
+import { coachParts, cueKey, cueOfText, fillCoach, type CoachCue, type CoachParts } from './coach';
 import { scoreHtml, seps, sepsOfText } from './text';
-
-/**
- * The penalty hint (in the match and the shootout), in the player's own keys: "A D  W S aim · hold K" on the
- * defaults (left right, up down as they are bound, SHOOT's first key); the stick on a pad; a drag on touch. Short
- * enough for one line in the slot beside the goal mouth on the penalty lens (~290 px at 1280 x 720: "hold K
- * shoot" wrapped there). The " · " becomes the styled divider the other hints use (sepsOfText, never a glyph).
- * It already names the bindings: show it with Hud.setHint(text, true).
- */
-export function penaltyHint(device: Device): string {
-  if (device === 'touch') return `Drag to aim · hold ${actionKey('shoot', 'touch')}`;
-  if (device === 'gamepad') return `Stick to aim · hold ${actionKey('shoot', 'gamepad')}`;
-  // (moveKeys reads up, left, down, right: "WASD", "I J K L" with a longer name among them, or "ARROWS".)
-  const mv = moveKeys('keyboard').split(' / ')[0];
-  const [up, left, down, right] = mv === 'ARROWS' ? ['↑', '←', '↓', '→'] : mv.includes(' ') ? mv.split(' ') : [...mv];
-  // (A no-break pair between the two key pairs, so the gap survives HTML's collapsing.)
-  return `${left} ${right}\u00a0\u00a0${up} ${down} aim · hold ${actionKey('shoot', 'keyboard')}`;
-}
 
 /** How long (s) each power-up runs once used, for the slot's countdown ring when the sim doesn't say. */
 export const POWER_SECONDS: Record<PowerUpKind, number> = { turbo: 6, mega: 8, freeze: 5, magnet: 6, shield: 6, golden: 20 };
@@ -135,13 +119,16 @@ export class Hud {
   private hintT = 0;
   /** Seconds left of a hint blackout (card close-ups): set-piece hints stay hidden whatever the session asks. */
   private hintHold = 0;
-  /** The hint the session last asked for (it comes back when a blackout ends), as shown (its keys remapped). */
+  /** The hint the session last asked for (it comes back when a blackout ends), as shown (cueKey of its card). */
   private hintWant = '';
-  /** ...and as it was asked for (setHint's own words and `bound` flag), to ask again without remapping twice. */
-  private hintAsked = '';
+  /** ...and as it was asked for (setHint's own words or card and `bound` flag), to ask again without remapping twice. */
+  private hintAsked: string | CoachCue | null = '';
   private hintBound = false;
-  /** The words in the hint box now (its HTML has dividers in place of the " · " the session writes). */
+  /** The card in the hint box now (cueKey). */
   private hintText = '';
+  /** The hint and tip boxes are coach cards (ui/coach.ts): their title, key caps and line. */
+  private hintParts!: CoachParts;
+  private tipParts!: CoachParts;
   /** A hint the player has already acted on (hidden until the session wants a different one). */
   private hintDone = '';
   private btnDown = false;
@@ -191,7 +178,7 @@ export class Hud {
       <button class="hud-pause" aria-label="Pause">II</button>
       <div class="hud-power" role="status" aria-live="polite" hidden>
         <span class="pw-slot"><i class="pw-ico"></i><svg class="pw-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="pw-ring-bg" cx="20" cy="20" r="17"/><circle class="pw-ring-fg" cx="20" cy="20" r="17"/></svg></span>
-        <span class="pw-text"><b class="pw-name">NO POWER-UP</b><kbd class="pw-key">E</kbd></span>
+        <span class="pw-text"><b class="pw-name">NO POWER UP</b><kbd class="pw-key">E</kbd></span>
       </div>
       <div class="hud-banner"></div>
       <div class="hud-toast"></div>
@@ -207,6 +194,8 @@ export class Hud {
     this.banner = this.root.querySelector('.hud-banner')!;
     this.hint = this.root.querySelector('.hud-hint')!;
     this.tip = this.root.querySelector('.hud-tip')!;
+    this.hintParts = coachParts(this.hint);
+    this.tipParts = coachParts(this.tip);
     this.chip = this.root.querySelector('.hud-chip')!;
     this.chipName = this.root.querySelector('.chip-name')!;
     this.chipNum = this.root.querySelector('.chip-num')!;
@@ -397,7 +386,7 @@ export class Hud {
     el.dataset.kind = kind ?? '';
     el.style.setProperty('--pw', info?.color ?? 'rgba(255,255,255,0.35)');
     this.powerIcon.textContent = info?.icon ?? '';
-    this.powerName.textContent = a ? info!.name.toUpperCase() : info ? info.name.toUpperCase() : 'NO POWER-UP';
+    this.powerName.textContent = a ? info!.name.toUpperCase() : info ? info.name.toUpperCase() : 'NO POWER UP';
     this.powerKey.textContent = actionKey('power', this.powerDevice);
     this.powerKey.hidden = !this.powerKind || !!a;
     const ring = this.powerRing;
@@ -575,12 +564,17 @@ export class Hud {
     el.style.top = `${Math.round(pick.t)}px`;
   }
 
-  setHint(text: string, bound = false): void {
-    this.hintAsked = text;
+  /**
+   * The set-piece / penalty / keeper's-ball hint: a coach card (ui/coach.ts restartCue and friends, already in
+   * the player's own keys), or plain words, which become the same card (cueOfText: "SPACE to kick off" reads
+   * [SPACE] Kick off). Plain words name the default keys unless `bound`: the player's own bindings replace them.
+   */
+  setHint(hint: string | CoachCue | null, bound = false): void {
+    this.hintAsked = hint;
     this.hintBound = bound;
-    // The session writes the default key names ("SPACE to kick off"): the player's own bindings replace them.
-    // (`bound`: it already names them, penaltyHint.)
-    if (!bound) text = remapKeys(text, currentDevice());
+    const dev = currentDevice();
+    const cue = typeof hint === 'string' ? (hint ? cueOfText(bound ? hint : remapKeys(hint, dev), dev) : null) : hint;
+    let text = cueKey(cue && cue.actions.length ? cue : null);
     this.hintWant = text;
     // The player acted on this hint (see buttons()): it stays down until the session asks for another one.
     if (!text) this.hintDone = '';
@@ -588,9 +582,9 @@ export class Hud {
     if (this.hintHold > 0) text = '';
     const on = text.length > 0;
     // Off: keep the old words while it fades out (an empty box shrinking looks broken).
-    if (on && this.hintText !== text) {
+    if (on && cue && this.hintText !== text) {
       this.hintText = text;
-      this.hint.innerHTML = sepsOfText(text);
+      fillCoach(this.hintParts, cue);
     }
     if (on && !this.hint.classList.contains('on')) {
       // Decide the slot before it fades in, so it never flashes over the taker or the goal first.
@@ -828,7 +822,7 @@ export class Hud {
     // 2) Under the top cluster (score bug + chips, shootout tracker, flag, radar in portrait, hint, tip, plate).
     const setPiece = this.setPiece();
     let under = sb.b;
-    for (const sel of ['.so-track', '.hud-toast.on', '.hud-power.on', '.hud-hint.on:not(.low)', '.hud-tip.on', '.hud-radar', '.hud-banner.on.goal .bn-sub']) {
+    for (const sel of ['.so-track', '.hud-toast.on', '.hud-power.on', '.hud-hint.on:not(.low)', '.hud-tip.on', '.hud-radar', '.hud-banner.on.goal .bn-sub', '.hud-qsub.on']) {
       // By class, not opacity: a widget fading in counts at once, and the minimap counts even while faded
       // out (it comes back mid-line) except at a dead ball, where it stays off until the kick is taken.
       // display:none (the shootout's minimap) never counts.
@@ -972,7 +966,7 @@ export class Hud {
     const take = (q: Rect | null) => {
       if (q && q.t < H * 0.4 && q.r > l && q.l < r) y = Math.max(y, q.b);
     };
-    for (const sel of ['.scorebug', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause']) take(this.rectOf(sel, false));
+    for (const sel of ['.scorebug', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause', '.hud-qsub.on']) take(this.rectOf(sel, false));
     // The minimap only while it shows (it is off for set pieces).
     if (!this.radarHidden && !this.root.classList.contains('dead')) take(this.rectOf('.hud-radar'));
     // Landscape: a little lower than the top row, which belongs to the ticker and the event flag.
@@ -1012,13 +1006,14 @@ export class Hud {
       topSlot('topL', half, 'l');
       topSlot('topR', half, 'r');
     }
-    // Narrower corner slots that fit beside a goal mouth up in the top half of the lens.
+    // Narrower corner slots that fit beside a goal mouth up in the top half of the lens. (140 px: a landscape
+    // phone's penalty lens leaves ~145 px either side, and the stands there beat the low band over the ball.)
     for (const gr of goals) {
       if (gr.t > H * 0.5) continue;
       const left = gr.l - 8 - g * 2;
       const right = W - gr.r - 8 - g * 2;
-      if (left >= 160 && left < half) topSlot('topLg', left, 'l');
-      if (right >= 160 && right < half) topSlot('topRg', right, 'r');
+      if (left >= 140 && left < half) topSlot('topLg', left, 'l');
+      if (right >= 140 && right < half) topSlot('topRg', right, 'r');
     }
     let ll = g;
     let lr = W - g;
@@ -1224,13 +1219,14 @@ export class Hud {
     return { yellow: this.booked[side].yellow.length, red: this.booked[side].red.length };
   }
 
-  /** Tutorial tip (top centre). Empty string hides it. */
-  setTip(html: string): void {
-    html = remapKeys(html, currentDevice());
-    if (this.tip.dataset.t === html) return;
-    this.tip.dataset.t = html;
-    this.tip.innerHTML = seps(html);
-    this.tip.classList.toggle('on', html.length > 0);
+  /** The first-match tutorial tip (top centre), a coach card in the player's own keys. null hides it. */
+  setTip(cue: CoachCue | null): void {
+    const key = cueKey(cue);
+    if (this.tip.dataset.t === key) return;
+    this.tip.dataset.t = key;
+    // Off: keep the old words while it fades out.
+    if (cue) fillCoach(this.tipParts, cue);
+    this.tip.classList.toggle('on', !!cue);
   }
 
   setReplay(on: boolean): void {

@@ -6,12 +6,14 @@ import {
   CELEBRATION_NAMES, celebrationUnlocked, type CelebrationId, exportSave, importSave, unlockLadder, xpAt } from '../core/save';
 import { APP_VERSION, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
+import { coachText } from './coach';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
+import { owns, shopOf } from '../meta/shop';
 import { KitPreview, faceHtml, hydrateFaces } from './preview';
 import { crestSvg } from './crest';
 import {
-  DEFAULT_KEYS, DEFAULT_PAD, Input, KEY_ACTIONS, KEY_SLOTS, PAD_ACTIONS, PAD_SLOTS, actionKey, bindKey, bindPad, isKey, keyLabel, moveKeys, normCode,
+  DEFAULT_KEYS, DEFAULT_PAD, Input, KEY_ACTIONS, KEY_SLOTS, PAD_ACTIONS, PAD_SLOTS, actionKey, bindKey, bindPad, currentDevice, isKey, keyLabel, moveKeys, normCode,
   normalizeKeyMap, normalizePadMap, padLabel, unbindKey, unbindPad, type KeyAction, type KeyMap, type PadAction, type PadMap,
 } from '../core/input';
 import type { LockedFeature } from '../core/onboarding';
@@ -34,8 +36,8 @@ const $ = <T extends HTMLElement>(root: ParentNode, sel: string) => root.querySe
 type ControlRow = { k: keyof ControlSettings; kind: 'level' | 'switch'; label: string; why: Record<string, string> };
 const CONTROL_ROWS: ControlRow[] = [
   {
-    k: 'trainer', kind: 'switch', label: 'ON-PITCH TRAINER',
-    why: { true: `Controls beside your player${sep()}passing guide on the pitch`, false: 'Hide the trainer; keep teammate markers' },
+    k: 'trainer', kind: 'switch', label: 'PITCH TRAINER',
+    why: { true: `Controls over your player${sep()}passing guide on the pitch`, false: 'Hide the trainer; keep teammate markers' },
   },
   {
     k: 'quickPass', kind: 'switch', label: 'INSTANT PASS',
@@ -67,7 +69,7 @@ const CONTROL_ROWS: ControlRow[] = [
   },
   {
     k: 'timedFinish', kind: 'switch', label: 'TIMED FINISHING',
-    why: { true: 'Tap SHOOT again as the foot hits it: perfect', false: 'Just hold and release: no second tap' },
+    why: { true: '{Tap} SHOOT again as you strike: a perfect finish', false: 'Just hold and let go: no second press' },
   },
 ];
 
@@ -106,6 +108,8 @@ export interface MainInfo {
   badgeGoal?: string;
   /** Badge / season rewards waiting on the BADGES screen (a dot on the level badge). */
   badgesPending?: number;
+  /** SHOP news (meta/shop.ts newInShop: affordable items not yet seen, the free daily pack): a count on the coins. */
+  shopNew?: number;
 }
 
 /** What the full-time screen shows for progression (stars, XP, streak, challenges done this match). */
@@ -120,6 +124,8 @@ export interface FtProgress {
   mult: number;
   /** Challenges completed by this match (their coins are already in the total). */
   done: readonly { text: string; coins: number }[];
+  /** SHOP purchases (ShopState.owned): the NEXT UNLOCK line skips what is already bought. */
+  owned?: readonly string[];
 }
 
 export const MODE_WHY: Record<MatchMode, string> = {
@@ -292,24 +298,26 @@ function howtoKeys(): string {
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p>${mv.map((m) => `<kbd>${escHtml(m === 'ARROWS' ? '←↑→↓' : m)}</kbd>`).join(' / ')} move</p>
-      <p>${k('pass')} pass to the <b>ringed</b> mate: press = instant${sep()}aim to choose</p>
-      <p>${k('through')} through ball: your runner goes${sep()}hold: lob / cross</p>
-      <p>${k('shoot')} hold &amp; release to shoot${sep()}the keys aim while you charge</p>
-      <p>Tap ${k('shoot')} again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
-      <p>Hold ${k('shoot')} + tap ${k('through')}: chip${sep()}soft ${k('shoot')} on a diagonal: curler</p>
-      <p>${k('sprint')} sprint${sep()}double-tap to knock it past a defender</p>
-      <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; ${k('shoot')} to head at goal</p>
+      <p>${k('pass')} pass to the <b>ringed</b> teammate${sep()}aim to pick another</p>
+      <p>${k('through')} through ball${sep()}hold, then let go to cross</p>
+      <p>${k('shoot')} hold, aim, let go to shoot${sep()}a longer hold lifts it</p>
+      <p>Press ${k('shoot')} again as you strike: <b>perfect finish</b> (mistime it and it flies)</p>
+      <p>Hold ${k('shoot')}, press ${k('through')}: chip${sep()}a soft diagonal shot curls</p>
+      <p>${k('sprint')} sprint${sep()}press twice to knock it past a defender</p>
+      <p>${k('skill')} skill move: press it as a defender lunges (the <b>!</b> over him) for a <b>PERFECT</b></p>
+      <p>Stick with ${k('skill')}: across = roulette${sep()}ahead = rainbow flick${sep()}back = drag back${sep()}none = stepover</p>
+      <p><b>Crosses:</b> keep moving as one arrives to bring it down${sep()}stand still to head it${sep()}${k('shoot')} to head at goal</p>
     </div>
     <div class="ht-col">
       <h3>DEFEND</h3>
       <p>${k('pass')} switch player</p>
-      <p>${k('shoot')} tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</p>
+      <p>${k('shoot')} tackle${sep()}hold, or press while sprinting, to slide</p>
       <p>${k('through')} hold to press: he stays goal-side and steals loose touches</p>
-      <p>Flick the stick sharply while dribbling to cut past a defender</p>
+      <p>Turn sharply while dribbling to cut past a defender</p>
       <p>${k('pause')} pause</p>
     </div>
   </div>
-  <p class="fine">The <b>ringed</b> team-mate is who a pass goes to: point the stick to pick another (arrows at the screen edge show mates out of shot). First-time finish: press SHOOT just before the ball reaches you. Change any key: <b>Settings › Keys</b>. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+  <p class="fine">The <b>ringed</b> teammate is who a pass goes to: aim to pick another (arrows at the screen edge show mates out of shot). First-time finish: press ${k('shoot')} just before the ball reaches you. Change any key: <b>Settings › Keys</b>. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
 }
 
 /** HOW TO PLAY for a gamepad (the player's own button bindings). */
@@ -320,53 +328,57 @@ function howtoPad(): string {
     <div class="ht-col">
       <h3>ATTACK</h3>
       <p><kbd>LEFT STICK</kbd> move</p>
-      <p>${k('pass')} pass to the <b>ringed</b> mate: press = instant${sep()}aim to choose</p>
-      <p>${k('through')} through ball: your runner goes${sep()}hold: lob / cross</p>
-      <p>${k('shoot')} hold &amp; release to shoot${sep()}the stick aims while you charge</p>
-      <p>Tap ${k('shoot')} again as the foot hits the ball: <b>perfect finish</b> (mistime it and it flies)</p>
-      <p>Hold ${k('shoot')} + tap ${k('through')}: chip${sep()}soft ${k('shoot')} on a diagonal: curler</p>
-      <p>${k('sprint')} sprint${sep()}double-tap to knock it past</p>
-      <p><b>Crosses:</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; ${k('shoot')} to head at goal</p>
+      <p>${k('pass')} pass to the <b>ringed</b> teammate${sep()}aim to pick another</p>
+      <p>${k('through')} through ball${sep()}hold, then let go to cross</p>
+      <p>${k('shoot')} hold, aim, let go to shoot${sep()}a longer hold lifts it</p>
+      <p>Press ${k('shoot')} again as you strike: <b>perfect finish</b> (mistime it and it flies)</p>
+      <p>Hold ${k('shoot')}, press ${k('through')}: chip${sep()}a soft diagonal shot curls</p>
+      <p>${k('sprint')} sprint${sep()}press twice to knock it past</p>
+      <p>${k('skill')} skill move: press it as a defender lunges (the <b>!</b> over him) for a <b>PERFECT</b></p>
+      <p>Stick with ${k('skill')}: across = roulette${sep()}ahead = rainbow flick${sep()}back = drag back${sep()}none = stepover</p>
+      <p><b>Crosses:</b> keep moving as one arrives to bring it down${sep()}stand still to head it${sep()}${k('shoot')} to head at goal</p>
     </div>
     <div class="ht-col">
       <h3>DEFEND</h3>
       <p>${k('pass')} switch player</p>
-      <p>${k('shoot')} tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</p>
+      <p>${k('shoot')} tackle${sep()}hold, or press while sprinting, to slide</p>
       <p>${k('through')} hold to press: he stays goal-side and steals loose touches</p>
-      <p>Flick the stick sharply while dribbling to cut past a defender</p>
+      <p>Turn sharply while dribbling to cut past a defender</p>
       <p>${k('pause')} pause</p>
     </div>
   </div>
-  <p class="fine">The <b>ringed</b> team-mate is who a pass goes to: point the stick to pick another (arrows at the screen edge show mates out of shot). First-time finish: press SHOOT just before the ball reaches you. Change any button: <b>Settings › Keys</b>. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+  <p class="fine">The <b>ringed</b> teammate is who a pass goes to: aim to pick another (arrows at the screen edge show mates out of shot). First-time finish: press ${k('shoot')} just before the ball reaches you. Change any button: <b>Settings › Keys</b>. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
 }
 
 /** One of the in-match touch buttons, drawn small (same colours, rim and base as the real ones). */
 const touchBtn = (cls: string, label: string) => `<i class="ht-tb ${cls}"><span>${label}</span></i>`;
 const dot = (cls: string) => `<i class="ht-dot ${cls}"></i>`;
 
-const HOWTO_TOUCH = `
+/** HOW TO PLAY for touch (a function: its SKILL row names the key and pad button bound to it right now). */
+const howtoTouch = (): string => `
   <div class="ht-touch">
     <div class="ht-pad" aria-hidden="true">
       <div class="ht-stick"><i></i></div>
       <span class="ht-pad-l">DRAG TO MOVE</span>
       <div class="ht-cluster">
-        ${touchBtn('sprint', 'SPRINT')}${touchBtn('through', 'THROUGH')}${touchBtn('shoot', 'SHOOT')}${touchBtn('pass', 'PASS')}
+        ${touchBtn('skill', 'SKILL')}${touchBtn('sprint', 'SPRINT')}${touchBtn('through', 'THROUGH')}${touchBtn('shoot', 'SHOOT')}${touchBtn('pass', 'PASS')}
       </div>
     </div>
     <p class="ht-note"><b>MOVE</b> <span class="ht-stick-float">Put your thumb down anywhere on the left half and drag: the stick follows your thumb.</span><span class="ht-stick-fixed">Put your thumb on the stick at the bottom left and drag (FIXED stick: Settings › Controls).</span></p>
     <table class="ht-table">
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
-        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed mate: press = instant${sep()}aim to choose</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
-        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold &amp; release, longer = harder${sep()}the stick aims</td><td><b>TACKLE</b> tap: standing tackle${sep()}tap while sprinting or hold briefly: slide</td></tr>
-        <tr><td>${dot('through')}</td><td><b>THROUGH</b> your runner goes${sep()}hold: lob or cross</td><td><b>PRESS</b> hold: stay goal-side, steal loose touches</td></tr>
+        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed teammate${sep()}aim to pick another</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
+        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold, aim, let go${sep()}a longer hold lifts it</td><td><b>TACKLE</b> tap to tackle${sep()}hold, or tap while sprinting, to slide</td></tr>
+        <tr><td>${dot('through')}</td><td><b>THROUGH</b> through ball${sep()}hold, then let go to cross</td><td><b>PRESS</b> hold: stay goal-side, steal loose touches</td></tr>
         <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold${sep()}double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
-        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>PERFECT FINISH</b> tap SHOOT again as the foot hits the ball (mistime it and it flies)</td></tr>
-        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT + tap THROUGH/CROSS${sep()}<b>CURL</b> a soft SHOOT with the stick on a diagonal</td></tr>
-        <tr class="ht-finish"><td>${dot('through')}</td><td colspan="2"><b>CROSSES</b> push the stick as a cross arrives to bring it down and keep running; leave it to head it; SHOOT to head at goal</td></tr>
+        <tr class="ht-finish"><td>${dot('skill')}</td><td colspan="2"><b>SKILL</b> (shown with the ball) tap as a defender lunges, the <b>!</b> over him, for a PERFECT${sep()}the stick picks the move: across = roulette, ahead = rainbow flick, back = drag back, none = stepover${sep()}keys ${kc('skill', 'keyboard')} pad ${kc('skill', 'gamepad')}</td></tr>
+        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>PERFECT FINISH</b> tap SHOOT again as you strike (mistime it and it flies)</td></tr>
+        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT, tap THROUGH${sep()}<b>CURL</b> a soft diagonal shot</td></tr>
+        <tr class="ht-finish"><td>${dot('through')}</td><td colspan="2"><b>CROSSES</b> keep the stick pushed as one arrives to bring it down${sep()}let go to head it${sep()}SHOOT to head at goal</td></tr>
       </tbody>
     </table>
-    <p class="fine">The <b>ringed</b> team-mate is who PASS goes to: point the stick to pick another (edge arrows show mates out of shot). Set pieces: <b>PASS</b> short${sep()}<b>SHOOT</b> at goal${sep()}<b>CROSS</b> hold to whip it in. Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
+    <p class="fine">The <b>ringed</b> teammate is who PASS goes to: aim to pick another (edge arrows show mates out of shot). Set pieces: <b>PASS</b> short${sep()}<b>CROSS</b> hold to whip it in${sep()}<b>SHOOT</b> hold to shoot (a driven cross at a corner). Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
   </div>`;
 
 /** Blitz mode, under every How to Play tab: the pickups and the button that uses them. `use` names that button. */
@@ -385,7 +397,7 @@ const howtoBlitz = (use: string) => `
 
 /** Settings > KEYS: what each bindable action is called on screen. */
 const KEY_ACTION_NAMES: Record<KeyAction, string> = {
-  up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT', pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', power: 'POWER-UP', pause: 'PAUSE',
+  up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT', pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', skill: 'SKILL', power: 'POWER', pause: 'PAUSE',
 };
 
 /** A finished match's goal clip (the session's clip API, when the browser can record one). */
@@ -402,6 +414,8 @@ export interface FtExtras {
   clip?: ClipSource;
   /** The very first match: no rewarded-ad offer on it. */
   noAds?: boolean;
+  /** Something in the SHOP this match's coins brought into reach (meta/shop.ts inReach): its name and kind. */
+  shopReach?: { name: string; kind: string };
 }
 
 export class Menus {
@@ -492,6 +506,7 @@ export class Menus {
     h: {
       quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void;
       gift?: () => void; blitz?: () => void; playNow?: () => void; account?: () => void; moments?: () => void; unlocks?: () => void;
+      shop?: () => void;
       online?: () => void;
       run?: () => void; locked?: (f: LockedFeature) => void;
     },
@@ -543,7 +558,9 @@ export class Menus {
         <div class="topbar">
           ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">🎁 <span class="gift-w">DAILY </span>GIFT <b>+${info.gift.amount}</b></button>` : ''}
           ${h.account ? `<button class="btn btn-white acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
-          <div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>
+          ${h.shop
+            ? `<button class="coins shop-btn" data-a="shop" aria-label="Shop: ${save.coins.toLocaleString()} coins${info?.shopNew ? `, ${info.shopNew} new` : ''}"><i></i><span>${save.coins.toLocaleString()}</span><b class="shop-tag">SHOP</b>${info?.shopNew ? `<em class="shop-new">${info.shopNew > 9 ? '9+' : info.shopNew}</em>` : ''}</button>`
+            : `<div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>`}
         </div>
         <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
         <div class="tiles t13 ${info?.hero && info.hero.kind !== 'play' ? 'campaign' : ''} ${h.online ? 'has-online' : ''}">
@@ -554,7 +571,7 @@ export class Menus {
           ${lockable('career', `<button class="btn btn-blue tile" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>CAREER</span>${sub(info?.career)}</button>`)}
           <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${sub(info?.club)}</button>
           <button class="btn btn-white tile" data-a="settings">${pixelIcon('gear', '#26262e', 6)}<span>SETTINGS</span></button>
-          ${lockable('blitz', `<button class="btn btn-purple tile tile-side" data-a="blitz"><i class="picon bolt" aria-hidden="true">⚡</i><span>BLITZ</span><small>POWER-UPS</small></button>`)}
+          ${lockable('blitz', `<button class="btn btn-purple tile tile-side" data-a="blitz"><i class="picon bolt" aria-hidden="true">⚡</i><span>BLITZ</span><small>POWER UPS</small></button>`)}
           <button class="btn btn-red tile tile-side" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${sub(info?.cup)}</button>
           ${h.online ? `<button class="btn btn-blue tile tile-side tile-online" data-a="online">${pixelIcon('duo', '#fff', 5)}<span>ONLINE</span><small>PLAY A FRIEND</small></button>` : ''}
         </div>
@@ -588,6 +605,7 @@ export class Menus {
     d.querySelector('[data-a=run]')?.addEventListener('click', () => h.run?.());
     d.querySelector('[data-a=unlocks]')?.addEventListener('click', () => h.unlocks?.());
     d.querySelector('[data-a=account]')?.addEventListener('click', () => h.account?.());
+    d.querySelector('[data-a=shop]')?.addEventListener('click', () => h.shop?.());
     $(d, '[data-a=quick]').addEventListener('click', h.quick);
     $(d, '[data-a=career]').addEventListener('click', h.career);
     $(d, '[data-a=cup]').addEventListener('click', h.cup);
@@ -617,7 +635,7 @@ export class Menus {
           <p class="qm-why" aria-live="polite"></p>
           <div class="opt-row"><label>DIFFICULTY</label><div class="seg" data-o="diff"></div></div>
           <div class="opt-row"><label>HALF LENGTH</label><div class="seg" data-o="len"></div></div>
-          <div class="opt-row"><label>KICK-OFF</label><div class="seg" data-o="tod"></div></div>
+          <div class="opt-row"><label>KICK OFF</label><div class="seg" data-o="tod"></div></div>
           <div class="opt-row"><label>WEATHER</label><div class="seg" data-o="wx"></div></div>
           <div class="btn-row">
             <button class="btn btn-white" data-a="back">BACK</button>
@@ -1065,11 +1083,12 @@ export class Menus {
             <div class="ft-xp-h"><b class="ft-lv">LV ${lv0.level}</b><span class="ft-title">${levelTitle(lv0.level).toUpperCase()}</span><em class="ft-xp-n">+0 XP</em></div>
             <div class="ft-xp-bar"><i style="width:${Math.round((lv0.into / lv0.need) * 100)}%"></i></div>
             <div class="ft-levelup" aria-live="polite"></div>
-            ${(() => { const nu = nextUnlock(prog.xpTo); return nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''; })()}
+            ${(() => { const nu = nextUnlock(prog.xpTo, prog.owned); return nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''; })()}
           </div>
           ${prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">🔥 ${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : ''}
           ${prog.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : ''}
           ${extra.tierUps?.length ? `<ul class="ft-tiers">${extra.tierUps.map((t) => `<li>${escHtml(t)}</li>`).join('')}</ul>` : ''}
+          ${extra.shopReach ? `<p class="ft-shop">NOW IN REACH IN THE SHOP: <b>${escHtml(extra.shopReach.name.toUpperCase())}</b> ${escHtml(extra.shopReach.kind.toLowerCase())}</p>` : ''}
         </div>`
       : '';
     const easyHtml = extra.tryEasy
@@ -1284,15 +1303,17 @@ export class Menus {
     const xp = save.progress.xp;
     const lv = levelOf(xp);
     const ladder = unlockLadder();
-    const nextLevel = ladder.find((u) => u.level > lv.level)?.level ?? 0;
-    const earned = ladder.filter((u) => u.level <= lv.level).length;
+    // (Bought in the SHOP counts as yours too: the level then brings nothing new.)
+    const shopped = (u: { kind: string; id: string }) => shopOf(save).owned.includes(`${u.kind}:${u.id}`);
+    const nextLevel = ladder.find((u) => u.level > lv.level && !shopped(u))?.level ?? 0;
+    const earned = ladder.filter((u) => u.level <= lv.level || shopped(u)).length;
     const rows = ladder.map((u) => {
-      const got = u.level <= lv.level;
+      const got = u.level <= lv.level || shopped(u);
       const next = u.level === nextLevel;
       const icon = u.kind === 'ball'
         ? pixelIcon('ball', got ? BALL_TINT[u.id as BallSkinId] ?? '#fbfbf4' : '#b9b5aa', 3)
         : pixelIcon('star', got ? '#ffd23a' : '#b9b5aa', 3);
-      const when = got ? 'EARNED' : next ? `${Math.max(0, xpAt(u.level) - xp)} XP TO GO` : `LEVEL ${u.level}`;
+      const when = u.level > lv.level && got ? 'BOUGHT' : got ? 'EARNED' : next ? `${Math.max(0, xpAt(u.level) - xp)} XP TO GO` : `LEVEL ${u.level}`;
       return `<li class="${got ? 'got' : ''}${next ? ' next' : ''}"><i class="ul-lv">LV ${u.level}</i>${icon}<span>${escHtml(u.name.toUpperCase())}<small>${u.kind === 'ball' ? 'BALL LOOK' : 'GOAL CELEBRATION'}</small></span><em>${when}</em></li>`;
     }).join('');
     const stars = save.progress.stars;
@@ -1324,11 +1345,11 @@ export class Menus {
    * MENU. No coins: moments pay in XP only (main.ts awards it before calling this).
    */
   momentResult(
-    spec: Pick<ScenarioSpec, 'id' | 'title'>, o: ScenarioOutcome, xp: { from: number; to: number },
+    spec: Pick<ScenarioSpec, 'id' | 'title'>, o: ScenarioOutcome, xp: { from: number; to: number; owned?: readonly string[] },
     h: { retry: () => void; next: () => void; nextLabel?: string; menu: () => void },
   ): void {
     const lv0 = levelOf(xp.from);
-    const nu = nextUnlock(xp.to);
+    const nu = nextUnlock(xp.to, xp.owned);
     const left = Math.max(0, Math.round(o.secondsLeft));
     const d = this.mount(`
       <div class="panel-wrap dim">
@@ -1407,6 +1428,7 @@ export class Menus {
               <button data-k="crowd"></button>
               <button data-k="music"></button>
               <button data-k="commentary"></button>
+              <button data-k="quickSubs"></button>
               <button data-k="colorblind"></button>
               <button data-k="quality"></button>
               <button data-k="camZoom"></button>
@@ -1470,8 +1492,9 @@ export class Menus {
           chip.textContent = v ? 'ON' : 'OFF';
           chip.classList.toggle('off', !v);
         }
-        // Static copy with divider elements in it (see CONTROL_ROWS): markup, not text.
-        $(row, '.ctl-why').innerHTML = r.why[String(v)] ?? '';
+        // Static copy with divider elements in it (see CONTROL_ROWS): markup, not text. ({Tap}: "Tap" on touch,
+        // "Press" on keys and pads, as the coach says it: ui/coach.ts.)
+        $(row, '.ctl-why').innerHTML = coachText(r.why[String(v)] ?? '', currentDevice());
       }
       const stick = s.stick === 'fixed' ? 'fixed' : 'floating';
       const sr = $(d, '.ctl-row[data-c=stick]');
@@ -1594,7 +1617,7 @@ export class Menus {
       else {
         commitKeys(r.map);
         // (Plain text: the " · " becomes a divider element through the menus' divider guard, ui/text.ts.)
-        say(r.swapped ? `${keyLabel(code)} IS NOW ${name(a)} · ${name(r.swapped)} TOOK ITS OLD KEY` : `${keyLabel(code)} IS NOW ${name(a)}`, 'good');
+        say(r.swapped ? `${keyLabel(code)} IS NOW ${name(a)}. ${name(r.swapped)} TOOK ITS OLD KEY` : `${keyLabel(code)} IS NOW ${name(a)}`, 'good');
       }
       stopListening();
     }
@@ -1611,7 +1634,7 @@ export class Menus {
           else if (r.refused) say(`${padLabel(btn)} CAN'T BE BOUND`, 'bad');
           else {
             commitPad(r.map);
-            say(r.swapped ? `${padLabel(btn)} IS NOW ${name(a)} · ${name(r.swapped)} TOOK ITS OLD BUTTON` : `${padLabel(btn)} IS NOW ${name(a)}`, 'good');
+            say(r.swapped ? `${padLabel(btn)} IS NOW ${name(a)}. ${name(r.swapped)} TOOK ITS OLD BUTTON` : `${padLabel(btn)} IS NOW ${name(a)}`, 'good');
           }
           stopListening();
           return;
@@ -1657,8 +1680,8 @@ export class Menus {
     showTab(tab);
 
     const labels: Record<string, string> = {
-      sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', colorblind: 'COLOUR-BLIND', quality: 'GRAPHICS',
-      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION',
+      sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', colorblind: 'COLOUR BLIND', quality: 'GRAPHICS',
+      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION', quickSubs: 'QUICK SUBS',
     };
     const draw = () => {
       d.querySelectorAll<HTMLButtonElement>('.toggles button[data-k]').forEach((b) => {
@@ -1668,7 +1691,7 @@ export class Menus {
           // The ball look, and the next one still to earn (levels: see BALL_SKIN_LEVEL).
           const lvl = levelOf(save.progress.xp).level;
           const id = (s.ballSkin ?? 'classic') as BallSkinId;
-          const locked = BALL_SKIN_IDS.find((x) => !skinUnlocked(x, lvl));
+          const locked = BALL_SKIN_IDS.find((x) => !skinUnlocked(x, lvl) && !owns(save, 'ball', x));
           b.innerHTML = `<span>${labels[k]}</span><b>${BALL_SKIN_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}🔒 ${BALL_SKIN_NAMES[locked].toUpperCase()} LV${BALL_SKIN_LEVEL[locked]}</small>` : ''}</b>`;
           return;
         }
@@ -1676,11 +1699,11 @@ export class Menus {
           // The goal celebration, and the next one still to earn (levels: see CELEBRATION_LEVEL).
           const lvl = levelOf(save.progress.xp).level;
           const id = (s.celebration ?? 'classic') as CelebrationId;
-          const locked = CELEBRATION_IDS.find((x) => !celebrationUnlocked(x, lvl));
+          const locked = CELEBRATION_IDS.find((x) => !celebrationUnlocked(x, lvl) && !owns(save, 'celebration', x));
           b.innerHTML = `<span>${labels[k]}</span><b>${CELEBRATION_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}🔒 ${CELEBRATION_NAMES[locked].toUpperCase()} LV${CELEBRATION_LEVEL[locked]}</small>` : ''}</b>`;
           return;
         }
-        const on = k === 'colorblind' ? v === true : v;
+        const on = k === 'colorblind' ? v === true : k === 'quickSubs' ? v !== false : v;
         const val = k === 'quality' ? String(v).toUpperCase() : k === 'camZoom' ? (s.camZoom ?? 'normal').toUpperCase() : on ? 'ON' : 'OFF';
         b.innerHTML = `<span>${labels[k]}</span><b class="${on === false ? 'off' : ''}">${val}</b>`;
         if (k !== 'quality' && k !== 'camZoom') b.setAttribute('aria-pressed', String(!!on));
@@ -1695,18 +1718,17 @@ export class Menus {
         // Camera distance: WIDE -> NORMAL -> CLOSE -> WIDE.
         else if (k === 'camZoom') s.camZoom = CAM_ZOOMS[(CAM_ZOOMS.indexOf(s.camZoom ?? 'normal') + 1) % CAM_ZOOMS.length];
         else if (k === 'ballSkin') {
-          // Cycle through the looks this level has earned.
-          const lvl = levelOf(save.progress.xp).level;
-          const open = BALL_SKIN_IDS.filter((x) => skinUnlocked(x, lvl));
+          // Cycle through the looks this level has earned or the SHOP sold.
+          const open = BALL_SKIN_IDS.filter((x) => owns(save, 'ball', x));
           const cur = open.indexOf((s.ballSkin ?? 'classic') as BallSkinId);
           s.ballSkin = open[(cur + 1) % open.length];
         } else if (k === 'celebration') {
-          // Cycle through the celebrations this level has earned.
-          const lvl = levelOf(save.progress.xp).level;
-          const open = CELEBRATION_IDS.filter((x) => celebrationUnlocked(x, lvl));
+          // Cycle through the celebrations this level has earned or the SHOP sold.
+          const open = CELEBRATION_IDS.filter((x) => owns(save, 'celebration', x));
           const cur = open.indexOf((s.celebration ?? 'classic') as CelebrationId);
           s.celebration = open[(cur + 1) % open.length];
         } else if (k === 'colorblind') s.colorblind = !s.colorblind;
+        else if (k === 'quickSubs') s.quickSubs = s.quickSubs === false;
         else (s as unknown as Record<string, boolean>)[k] = !s[k];
         draw();
         onChange();
@@ -1840,7 +1862,7 @@ export class Menus {
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       });
-      body.innerHTML = (dev === 'touch' ? HOWTO_TOUCH : dev === 'gamepad' ? howtoPad() : howtoKeys())
+      body.innerHTML = (dev === 'touch' ? howtoTouch() : dev === 'gamepad' ? howtoPad() : howtoKeys())
         + howtoBlitz(dev === 'touch' ? 'the <b>⚡</b> button' : kc('power', dev));
     };
     d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) =>
@@ -1865,7 +1887,7 @@ export class Menus {
           <h2>DAILY GIFT</h2>
           <ul class="gift-days">${days}</ul>
           <div class="reward"><i></i><span>+${amount}</span><em>DAY ${streak} STREAK</em></div>
-          <p class="fine">Come back tomorrow to keep the streak going.</p>
+          <p class="fine">Spend it in the SHOP: celebrations, balls, goal effects and scout packs. Come back tomorrow to keep the streak going.</p>
           <div class="btn-row">
             ${canDouble ? '<button class="btn btn-white" data-a="double">🎬 2× GIFT</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>

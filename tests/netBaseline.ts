@@ -11,7 +11,9 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
  * Originally recorded before two-human support, the table still pins exact outcomes after reviewed physics
  * revisions. The 2026-10-02 incoming first-time-strike revision (network protocol v2) re-recorded only nine human
  * drivers that queue the new action; queue/contact counts are beside those rows in tests/net.test.ts. All AI rows,
- * three scripted-bot rows and ko1 remain bit-identical. No drivers or exact comparisons were relaxed.
+ * three scripted-bot rows and ko1 remain bit-identical. No drivers or exact comparisons were relaxed. The 2026-10-02b
+ * revision (NET_VERSION 3: the SKILL moves' telegraphed AI challenges, move assist's hysteresis, closing down a human
+ * standing on the ball) re-recorded the human rows; the AI rows stay bit-identical (tests/net.test.ts says which).
  * Covers AI v AI (classic, blitz, contrasting team styles), a scripted human (the bot: side 0), a masher on either
  * side with non-default controls, dynamic difficulty and the Club Run perks, the first-match onboarding, blitz with
  * starting power-ups, and knockout ties through penalty shootouts.

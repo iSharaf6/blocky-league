@@ -6,7 +6,9 @@
  */
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
-import { KEY_STATS, MATCHDAYS, ROLES, SQUAD_MAX, SQUAD_MIN, STAT_SHORT, refreshMarket, sellPlayer, sellValue, type CareerState, type ClubState } from '../meta/career';
+import {
+  BOTTOM_DIVISION, KEY_STATS, MATCHDAYS, ROLES, SQUAD_MAX, SQUAD_MIN, STAT_SHORT, newSeason, refreshMarket, sellPlayer, sellValue, type CareerState, type ClubState,
+} from '../meta/career';
 import {
   MORALE_DIP, RESALE_STARTS, SCOUT_COST, SHORTLIST_MAX, WAGE_DIP, YOUNG_AGE,
   acceptCounter, acceptOffer, bidFor, bidRange, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, newsStrip,
@@ -28,7 +30,12 @@ export interface MarketOpts {
   backLabel?: string;
 }
 
-/** Open the transfer market. Needs a club and a running season (otherwise it sends you to the club / a hint). */
+/**
+ * Open the transfer market. Needs a club (otherwise it sends you to found one). A club with no season yet gets
+ * its first one started here, exactly as CAREER would on its first visit (the market lives in the league:
+ * listings come from its clubs), so the market works from MY CLUB and the SHOP before CAREER is ever opened.
+ * Between seasons (the summary is up) it waits for CAREER to start the next one.
+ */
 export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
   const st = careerState(app);
   const back =
@@ -43,11 +50,15 @@ export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
     return;
   }
   ensureCss();
+  if (!st.season && !st.summary) {
+    newSeason(st, BOTTOM_DIVISION, 1);
+    app.persist();
+  }
   if (!st.season || st.summary) {
     const scr = mountMeta(app, 'mk-screen');
     scr.render(
-      `${topBar(backLabel, 'TRANSFER MARKET', 'NO SEASON RUNNING', app.save.coins)}
-      <p class="mc-empty">The market opens with the league: start (or continue) your career season and come back to buy, sell and scout.</p>`,
+      `${topBar(backLabel, 'TRANSFER MARKET', 'BETWEEN SEASONS', app.save.coins)}
+      <p class="mc-empty">The season is over. Start the next one in CAREER and the market reopens with the new league. Scout packs in the SHOP work any time.</p>`,
       { back },
     );
     return;
@@ -156,7 +167,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
       </div>
       <p class="mc-hint">${
         w.open
-          ? 'Tap a player to make an offer (60% to 110% of asking). Clubs answer after your next match; free agents sign at once at their price.'
+          ? 'Tap a player to make an offer (60% to 110% of asking). Clubs answer after your next CAREER match; free agents sign at once at their price.'
           : 'The window is shut: scout and shortlist now, make offers when it opens.'
       }</p>
       ${rows ? `<div class="mc-list">${rows}</div>` : '<p class="mc-empty">Nobody here for that position right now. New names arrive after every match.</p>'}`;

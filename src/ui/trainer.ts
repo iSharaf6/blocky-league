@@ -4,12 +4,13 @@ import { BALL_OFS, PF } from '../game/replay';
 import { HALF_L } from '../sim/constants';
 import { PITCH_Y } from '../render/stadium';
 import type { Match } from '../sim/match';
-import type { MatchEvent } from '../sim/types';
-import { actionKey, moveKeys } from '../core/input';
+import { skillWindow } from '../sim/skills';
+import type { MatchEvent, Side } from '../sim/types';
+import type { Device } from '../core/input';
 import type { LessonCue } from '../meta/moments';
-import { escHtml, sep, sepsOfText } from './text';
+import { coachText, defendCue, fillCoach, keeperCue, keyCap, moveCap, moveCue, passCue, pressVerb, skillCue, type CoachCue, type CoachParts } from './coach';
+import { escHtml, sep } from './text';
 
-type Device = 'keyboard' | 'gamepad' | 'touch';
 /** What a first-match teaching card waits for. */
 export type TeachStep = 'move' | 'pass';
 /** The stick and PASS state the teaching steps watch (a subset of core/input Controls). */
@@ -26,67 +27,68 @@ const CARD_GAP = 26;
 const CARD_TIP_IN = 34;
 /** A teaching wait that nothing clears (no input source wired) lets go after this long, so the game can never soft-lock. */
 const TEACH_TIMEOUT_MS = 25_000;
-export interface TrainerCue {
-  title: string;
-  actions: [string, string][];
-  detail: string;
-}
+/**
+ * The card, its tip and the pass tag sit on DEVICE pixels (crisp text) and hold still until where they should be
+ * has moved by more than this many device pixels: whole CSS pixels made the card step and flicker between two
+ * spots while the player under it moved smoothly (the owner's "glitching while playing").
+ */
+const SNAP_HOLD = 0.75;
+/** Slots in Trainer.at: the card's x and y, its tip, the pass tag's x and y. */
+const AT_X = 0, AT_Y = 1, AT_TIP = 2, AT_TAG_X = 3, AT_TAG_Y = 4;
+/** A trainer card is a coach card (ui/coach.ts: title, key caps with short imperatives, one optional line). */
+export type TrainerCue = CoachCue;
 
-/** Uses the same possession and charge state as the controller, including passes in flight. */
+/** "Let go of the stick" in the device's terms: the assisted run then meets the ball. */
+const letGo = (device: Device) => (device === 'keyboard' ? `Let go of ${moveCap('keyboard')} to meet it` : 'Let the stick go to meet it');
+
+/**
+ * The contextual card over the controlled player. Uses the same possession and charge state as the controller,
+ * including passes in flight. Caps are the player's own bindings, or the label the touch button wears right now.
+ */
 export function trainerCue(m: Match, device: Device): TrainerCue {
-  // The player's own bindings (Settings > Controls > KEYS), or the touch buttons' names.
-  const [pass, shoot, through, sprint] = (['pass', 'shoot', 'through', 'sprint'] as const).map((a) => actionKey(a, device));
+  const k = (a: 'pass' | 'shoot' | 'through' | 'sprint') => keyCap(a, device, 'attack');
   const own = m.ball.owner;
   const mine = own === m.active && own >= 0;
-  if (mine && m.ball.held) return {
-    title: "KEEPER'S BALL", actions: [[pass, 'Roll out'], [through, 'Kick long']],
-    detail: 'Point towards an open teammate',
-  };
+  if (mine && m.ball.held) return keeperCue(device);
   if (mine && m.shootCharge > 0.06) return {
-    title: 'PICK YOUR CORNER', actions: [[shoot, 'Release to shoot']],
-    detail: `${through} while charging = chip`,
+    title: 'PICK YOUR CORNER', actions: [[k('shoot'), 'Let go to shoot'], [k('through'), 'Chip it']],
+    ...(m.timedFinish ? { detail: `${pressVerb(device)} ${k('shoot')} again as you strike` } : {}),
   };
-  if (mine && m.throughCharge > 0.08 && (m.passMode === 'through' || m.passMode === 'lob')) return {
-    title: m.throughCharge >= 0.3 ? 'CROSS READY' : 'THROUGH BALL',
-    actions: [[through, m.throughCharge >= 0.3 ? 'Release to cross' : 'Release into space']],
-    detail: 'Hold longer to lift it over the defence',
-  };
+  if (mine && m.throughCharge > 0.08 && (m.passMode === 'through' || m.passMode === 'lob')) return m.throughCharge >= 0.3
+    ? { title: 'CROSS READY', actions: [[k('through'), 'Let go to cross']] }
+    : { title: 'THROUGH BALL', actions: [[k('through'), 'Let go to play it']], detail: 'Hold longer to cross' };
+  // A defender winding up a challenge on him (sim/skills.ts): the window for a PERFECT is open.
+  if (mine && m.cfg.humanSide >= 0 && skillWindow(m, m.cfg.humanSide as Side)) return skillCue(device);
   if (mine) return {
-    title: 'ON THE BALL', actions: [[pass, 'Pass'], [shoot, 'Shoot'], [through, 'Through']],
-    detail: m.players[m.active].sprint ? `${sprint} + ${pass} = pass & run` : `Hold ${through} to cross · ${sprint} sprint`,
+    title: 'ON THE BALL', actions: [[k('pass'), 'Pass'], [k('shoot'), 'Shoot'], [k('through'), 'Through ball']],
+    detail: m.players[m.active].sprint ? 'Pass now to run for the return' : `Hold ${k('through')} to cross`,
   };
   if (own < 0 && m.passTarget === m.active) return {
-    title: 'MEET THE PASS', actions: [[pass, 'First-time pass'], [shoot, 'Finish']],
-    detail: 'Let go of movement to meet the ball',
+    title: 'MEET THE PASS', actions: [[k('pass'), 'Pass it on'], [k('shoot'), 'Shoot']], detail: letGo(device),
   };
-  if (m.canStrikeLoose()) return {
-    title: m.players[m.active].order?.looseStrike !== undefined ? 'STRIKE READY' : 'FIRST-TIME SHOT',
-    actions: [[shoot, m.players[m.active].order?.looseStrike !== undefined ? 'Strike on arrival' : 'Tap to strike first time']],
-    detail: 'Let go of movement to meet the ball',
-  };
-  if (own >= 0 && m.players[own].side !== m.cfg.humanSide) return {
-    title: 'WIN IT BACK', actions: [[device === 'touch' ? 'TACKLE' : shoot, 'Tackle'], [device === 'touch' ? 'PRESS' : through, 'Hold to press'], [device === 'touch' ? 'SWITCH' : pass, 'Switch']],
-    detail: `Hold ${device === 'touch' ? 'TACKLE' : shoot} to slide · aim away to cancel`,
-  };
-  return { title: 'GET TO THE BALL', actions: [[sprint, 'Sprint'], [pass, 'Switch']], detail: 'Point your movement towards the ball' };
+  if (m.canStrikeLoose()) {
+    const set = m.players[m.active].order?.looseStrike !== undefined;
+    return set
+      ? { title: 'STRIKE READY', actions: [[k('shoot'), 'Shoots as it arrives']], detail: letGo(device) }
+      : { title: 'LOOSE BALL', actions: [[k('shoot'), 'Shoot first time']], detail: letGo(device) };
+  }
+  if (own >= 0 && m.players[own].side !== m.cfg.humanSide) return defendCue(device);
+  // A team-mate has it (the touch buttons still read PASS / SHOOT / THROUGH); a loose ball (SWITCH / TACKLE / PRESS).
+  if (own >= 0) return { title: 'MAKE A RUN', actions: [[k('sprint'), 'Sprint'], [k('pass'), 'Switch']] };
+  return { title: 'GET TO THE BALL', actions: [[k('sprint'), 'Sprint'], [keyCap('pass', device, 'defend'), 'Switch']] };
 }
 
 /** A basics prompt's title (the action), over its key cap and line. */
 const LESSON_TITLE: Record<LessonCue['key'], string> = { pass: 'PASS', shoot: 'SHOOT', through: 'CROSS', sprint: 'SPRINT', move: 'MOVE' };
 
-/** The teaching cards, by device: the key cap, what to do, and one line of detail. */
+/** A LEARN THE BASICS prompt as a card: its title, the cap (the binding, or the button on screen), its line. */
+export function lessonCue(lc: LessonCue, device: Device): TrainerCue {
+  return { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveCap(device) : keyCap(lc.key, device), coachText(lc.text, device)]] };
+}
+
+/** The first match's teaching cards (the same look and words as the basics prompts). */
 function teachCue(step: TeachStep, device: Device): TrainerCue {
-  const keys = moveKeys('keyboard').split(' / ')[0];
-  const stick = device === 'keyboard' ? keys : 'STICK';
-  const pass = actionKey('pass', device);
-  if (step === 'move') return {
-    title: 'STEP 1 · MOVE', actions: [[stick, device === 'keyboard' ? `Run with ${[...keys].join(' ')}${moveKeys('keyboard').includes('ARROWS') ? ' (or the arrows)' : ''}` : 'Push the stick to run']],
-    detail: 'Head for the goal the arrow points at',
-  };
-  return {
-    title: 'STEP 2 · PASS', actions: [[pass, device === 'touch' ? 'Tap PASS to the ringed mate' : `Tap ${pass} to the ringed mate`]],
-    detail: 'Point the stick at a mate to pick him',
-  };
+  return step === 'move' ? moveCue(device) : passCue(device);
 }
 
 /**
@@ -199,9 +201,7 @@ export class Trainer {
   /** The action the teaching card on screen is waiting for; null when no card is waiting (the sim may run). */
   waitingFor: TeachStep | null = null;
   private card: HTMLElement;
-  private title: HTMLElement;
-  private actions: HTMLElement;
-  private detail: HTMLElement;
+  private parts: CoachParts;
   private recipient: HTMLElement;
   private line: SVGLineElement;
   private shadow: SVGLineElement;
@@ -213,19 +213,31 @@ export class Trainer {
   private fed: TeachControls | null = null;
   private waitSince = 0;
   private startPos: [number, number] | null = null;
+  /** Where the card, its tip and the tag are drawn now (CSS px on the device-pixel grid; NaN: not yet). */
+  private at = new Float64Array(5).fill(NaN);
+
+  /** Slot `i` moved to `v` (CSS px), on the device-pixel grid with SNAP_HOLD's hold; returns the CSS px to draw. */
+  private snap(i: number, v: number): number {
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    const cur = this.at[i];
+    if (!(Math.abs(v - cur) * dpr <= SNAP_HOLD)) this.at[i] = Math.round(v * dpr) / dpr;
+    return Math.round(this.at[i] * 100) / 100;
+  }
 
   constructor() {
     this.root.className = 'pitch-trainer';
     this.root.hidden = true;
     this.root.innerHTML = `<svg class="trainer-guide" aria-hidden="true"><line class="trainer-line-shadow"/><line class="trainer-line"/></svg>
       <div class="trainer-recipient" aria-hidden="true"></div>
-      <div class="trainer-card" role="group" aria-label="On-pitch trainer">
-        <div class="trainer-title"></div><div class="trainer-actions"></div><div class="trainer-detail"></div>
+      <div class="trainer-card coach" role="group" aria-label="On-pitch trainer">
+        <div class="trainer-title coach-title"></div><div class="trainer-actions coach-actions"></div><div class="trainer-detail coach-detail"></div>
       </div>`;
     this.card = this.root.querySelector('.trainer-card')!;
-    this.title = this.root.querySelector('.trainer-title')!;
-    this.actions = this.root.querySelector('.trainer-actions')!;
-    this.detail = this.root.querySelector('.trainer-detail')!;
+    this.parts = {
+      title: this.root.querySelector('.trainer-title')!,
+      actions: this.root.querySelector('.trainer-actions')!,
+      detail: this.root.querySelector('.trainer-detail')!,
+    };
     this.recipient = this.root.querySelector('.trainer-recipient')!;
     this.line = this.root.querySelector('.trainer-line')!;
     this.shadow = this.root.querySelector('.trainer-line-shadow')!;
@@ -264,7 +276,7 @@ export class Trainer {
     if (step === 'pass' && !mine) {
       if (this.waitingFor === 'pass') return this.advance(m, frame, device, controls);
       this.waitingFor = null;
-      this.card.classList.remove('teach');
+      this.card.classList.remove('lesson');
       return false;
     }
     const now = performance.now();
@@ -272,18 +284,10 @@ export class Trainer {
       this.waitingFor = step;
       this.waitSince = now;
       this.startPos = [frame[a], frame[a + 1]];
-      const cue = teachCue(step, device);
       this.lastCue = `teach:${step}:${device}`;
-      this.title.textContent = cue.title;
-      this.actions.replaceChildren(...cue.actions.map(([k, label]) => {
-        const item = document.createElement('span');
-        const cap = document.createElement('kbd');
-        cap.textContent = k;
-        item.append(cap, document.createTextNode(label));
-        return item;
-      }));
-      this.detail.innerHTML = sepsOfText(cue.detail);
-      this.card.classList.add('teach');
+      fillCoach(this.parts, teachCue(step, device));
+      // The basics prompts' look: a size up, the key cap bobbing.
+      this.card.classList.add('lesson');
     }
     // With an input source the action itself is what counts (the sim moves him on its own at a kick-off, and
     // move assist keeps him running: neither is the player pushing the stick). Without one, the match has to do.
@@ -304,7 +308,7 @@ export class Trainer {
     this.stage = this.stage === 'move' ? 'pass' : 'play';
     this.waitingFor = null;
     this.lastCue = '';
-    this.card.classList.remove('teach');
+    this.card.classList.remove('lesson');
     return this.stage !== 'play' && this.teach(m, frame, device, controls);
   }
 
@@ -334,9 +338,8 @@ export class Trainer {
     if (lesson) {
       // In flight, after a miss, or once the taught action is done, keep useful recovery guidance visible.
       const lc = lesson.show(m, controls ?? this.fed ?? Trainer.input?.read() ?? null);
-      cue = lc ? { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveKeys(device).split(' / ')[0] : actionKey(lc.key, device), lc.text]], detail: '' } : trainerCue(m, device);
+      cue = lc ? lessonCue(lc, device) : trainerCue(m, device);
       this.card.classList.toggle('lesson', !!lc);
-      this.card.classList.toggle('teach', !!lc);
       this.card.hidden = false;
     } else {
       this.card.hidden = false;
@@ -345,16 +348,8 @@ export class Trainer {
     const key = cue ? JSON.stringify(cue) + direction : this.lastCue;
     if (cue && key !== this.lastCue) {
       this.lastCue = key;
-      this.title.textContent = cue.title + (m.ball.owner === m.active && !lesson ? direction : '');
-      this.actions.replaceChildren(...cue.actions.map(([k, label]) => {
-        const item = document.createElement('span');
-        const cap = document.createElement('kbd');
-        cap.textContent = k;
-        item.append(cap, document.createTextNode(label));
-        return item;
-      }));
-      // Two facts in one line ("Hold L to cross · SHIFT sprint") are split with the divider element.
-      this.detail.innerHTML = sepsOfText(cue.detail);
+      // On the ball, the title points the way he attacks.
+      fillCoach(this.parts, cue, m.ball.owner === m.active && !lesson ? direction : '');
     }
     // The card rides on the controlled player (the owner: "keep the trainer on top of the player controlled"),
     // never off in a corner. Above his head, its tip pointing down at him; if the ball is where the card
@@ -375,12 +370,13 @@ export class Trainer {
     }
     x = clamp(x, 10, w - cw - 10);
     y = clamp(y, 70, h - ch - 90);
+    const sx = this.snap(AT_X, x), sy = this.snap(AT_Y, y);
     // The tip sits over the player, wherever the card had to slide.
-    this.card.style.setProperty('--tip', `${Math.round(clamp(at.x - x, 12, cw - 12))}px`);
+    this.card.style.setProperty('--tip', `${this.snap(AT_TIP, clamp(at.x - sx, 12, cw - 12))}px`);
     this.card.classList.toggle('below', below);
     this.card.classList.toggle('docked', docked);
     this.card.style.visibility = 'visible';
-    this.card.style.transform = `translate(${Math.round(x)}px,${Math.round(y)}px)`;
+    this.card.style.transform = `translate(${sx}px,${sy}px)`;
     const idx = m.passCharge >= 0 ? m.passAim : m.passPreview;
     const valid = m.ball.owner === m.active && m.shootCharge < 0.06 && m.throughCharge < 0.08 &&
       idx >= 0 && idx !== m.active && !m.players[idx].sentOff && m.players[idx].side === m.cfg.humanSide;
@@ -397,11 +393,11 @@ export class Trainer {
     }
     this.recipient.hidden = !tag.visible || tag.x < 38 || tag.x > w - 38 || tag.y < 80 || tag.y > h - 85 ||
       (tag.x > x - 30 && tag.x < x + cw + 30 && tag.y > y - 15 && tag.y < at.y - 10);
-    this.recipient.style.transform = `translate(${Math.round(tag.x)}px,${Math.round(tag.y - 12)}px) translate(-50%,-100%)`;
+    this.recipient.style.transform = `translate(${this.snap(AT_TAG_X, tag.x)}px,${this.snap(AT_TAG_Y, tag.y - 12)}px) translate(-50%,-100%)`;
     if (this.target !== idx || this.recipient.dataset.device !== device) {
       this.target = idx;
       this.recipient.dataset.device = device;
-      this.recipient.innerHTML = `${escHtml(actionKey('pass', device))}${sep()}${escHtml(String(m.players[idx].def.number))}`;
+      this.recipient.innerHTML = `${escHtml(keyCap('pass', device))}${sep()}${escHtml(String(m.players[idx].def.number))}`;
     }
   }
 }

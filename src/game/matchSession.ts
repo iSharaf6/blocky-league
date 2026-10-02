@@ -1,11 +1,12 @@
 import { sfx } from '../audio/sfx';
-import type { Input } from '../core/input';
+import { moveKeys, type Input } from '../core/input';
 import { CELEBRATION_IDS, type CamZoom, type CelebrationId } from '../core/save';
 import { clamp, damp, smoothstep, wrapAngle } from '../core/math';
 import { BlitzFx, POWER_COLOR, POWER_LIGHT } from '../render/blitz';
 import { CameraRig, type CamFocus } from '../render/cameraRig';
 import { AI_CELEBRATIONS, type CelebCue } from '../render/celebration';
 import { setCharacterFill, setCharacterHemiFill, setCharacterWhiteBalance } from '../render/characters';
+import { goalFxColors, trailColors } from '../render/cosmetics';
 import { Effects } from '../render/effects';
 import { GhostArc } from '../render/ghostArc';
 import {
@@ -13,6 +14,10 @@ import {
   type TrailStyle,
 } from '../render/juice';
 import { MatchView } from '../render/matchView';
+import { SKILL_SLOW_RATE, SKILL_SLOW_S } from '../render/juice';
+import { actionKey } from '../core/input';
+import { skillWindow, type SkillEvent } from '../sim/skills';
+import { SkillHud } from '../ui/skillHud';
 import { CutFlash } from '../render/transition';
 import { PITCH_Y, Stadium, stadiumFill } from '../render/stadium';
 import { Weather, type WeatherKind } from '../render/weather';
@@ -24,7 +29,11 @@ import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, PowerUpKind, RestartKind, ScenarioSpec, Side } from '../sim/types';
 import { applyScenario, finishScenario, judgeScenario, scenarioSecondsLeft, type ScenarioOutcome } from '../sim/scenario';
 import { EdgeArrows, type EdgeMate, type EdgeRect } from '../ui/edgeArrows';
-import { Hud, hudTeam, penaltyHint } from '../ui/hud';
+import { Hud, hudTeam } from '../ui/hud';
+import { defendCue, diveCue, keeperCue, keyCap, moveCue, penaltyCue, pressVerb, restartCue, type CoachCtx, type CoachCue } from '../ui/coach';
+import { skillCue } from '../ui/coach';
+import { SEP_MARK } from '../ui/text';
+import { QuickSubCard } from '../ui/quickSub';
 import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
 import { Trainer } from '../ui/trainer';
@@ -34,6 +43,7 @@ import { ClipRecorder, clipSupported, type Clip } from './clip';
 import { FOUL_BEAT_S, FoulPresentation, type BookingShot } from './foulPresentation';
 import { GHOST_MAX_PTS, flyGhost, lobLaunch, penaltyGhost, strikeLaunch, type GhostLaunch } from './ghostArc';
 import { contrastAwayKit } from './kitContrast';
+import { QuickSubs, quickSubsAllowed } from './quickSub';
 import { MatchTally, type PlayerRating } from './ratings';
 import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
 
@@ -57,12 +67,17 @@ export interface SessionOptions extends MatchConfig {
   ballSkin?: string;
   /** The human side's goal celebration (progression; CelebrationId); undefined = classic. */
   celebration?: string;
+  /** SHOP cosmetics for the human side (render/cosmetics.ts): its goals' explosion colours, its sprint speed lines. */
+  goalFx?: string;
+  trail?: string;
   /** A Football Moment to run instead of a full match (src/sim/scenario.ts applies and judges it). */
   scenario?: ScenarioSpec;
   /** Colour-blind aid: shape cues on rings and markers (dashed opponent rings, a chevron on your team), not colour alone. */
   colorblind?: boolean;
   /** No screen shake or camera punch (default: the OS "reduce motion" setting). */
   reducedMotion?: boolean;
+  /** Settings > QUICK SUBS (default on): the card that offers a tired player's change (game/quickSub.ts). */
+  quickSubs?: boolean;
 }
 
 /**
@@ -128,6 +143,13 @@ const MOMENT_COUNT_S = 5;
 /** Hit-stop at the top of the backflip (frames). */
 const HIT_STOP_APEX = 2;
 /**
+ * Ball glide (glideBall): a jump of the ball this big (m) that its velocity doesn't explain is drawn as a quick
+ * glide (time constant BALL_GLIDE_TAU s) instead. Smaller is a dribble's touch; bigger is a restart, never smoothed.
+ */
+const BALL_GLIDE_MIN = 0.25;
+const BALL_GLIDE_MAX = 4;
+const BALL_GLIDE_TAU = 0.05;
+/**
  * Hit-stop (60 Hz frames the drawn picture holds on the impact: the sim waits, its clock untouched, while the
  * camera punch, the flash and the burst land on the frozen picture) on a won tackle and on a goal (the rest:
  * render/juice.ts HIT_STOP), and the camera punch (m: ~3 px at broadcast distance). The screen shake is in
@@ -153,6 +175,8 @@ const KICK_LOG = 24;
 const POSTER_W = 1280;
 /** A 'tackle' outcome within this long (s) of a 'tackleTry' from the same man is the same attempt. */
 const TACKLE_TRY_S = 0.15;
+/** The first this many tells of a match (until his first PERFECT) name the SKILL button (MatchSession.skillEvent). */
+const SKILL_TEACH_TELLS = 3;
 /** Pace readability: speed lines and dust from this speed (m/s); the ball trails from this speed. */
 const SPRINT_FX_MS = 7;
 /** Blitz: the mega ball stays a fireball this long (s) after it leaves the shooter's foot; a freeze's fallback length. */
@@ -217,21 +241,10 @@ const EDGE_SIDE = 22;
 const EDGE_TOP = 72;
 const EDGE_BOTTOM = 82;
 
-/**
- * On-screen labels of the touch buttons (mirrors ui/touch.ts LABELS): hints name the button the player sees.
- * [pass, shoot, through] per context.
- */
-const TOUCH_LABELS = {
-  attack: ['PASS', 'SHOOT', 'THROUGH'],
-  defend: ['SWITCH', 'TACKLE', 'PRESS'],
-  setpiece: ['PASS', 'SHOOT', 'CROSS'],
-} as const;
-type HintCtx = keyof typeof TOUCH_LABELS;
-type HintKey = 'pass' | 'shoot' | 'through';
-
-/** Button names per device for the hints (module constants: no object per call). */
-const PAD_KEYS: Record<HintKey, string> = { pass: 'A', shoot: 'B', through: 'X' };
-const KEY_KEYS: Record<HintKey, string> = { pass: 'SPACE', shoot: 'K', through: 'L' };
+/** Which labels the touch buttons wear right now (attack / defend / set piece): hints name the button on screen. */
+type HintCtx = CoachCtx;
+/** An action a hint names (keyName: the player's own key, the pad button, or the touch button's label). */
+type HintKey = 'pass' | 'shoot' | 'through' | 'sprint';
 
 /** The presentation pace, for tests (seconds; see INTRO_S and friends). */
 export const PRESENTATION = {
@@ -246,7 +259,7 @@ export const PRESENTATION = {
 const POST_BITS = [0xffffff, 0xf4f4ea, 0xdfe6ec] as const;
 
 const RESTART_LABEL: Record<RestartKind, string> = {
-  kickoff: 'KICK OFF', throwin: 'THROW-IN', corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!',
+  kickoff: 'KICK OFF', throwin: 'THROW IN', corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!',
 };
 
 /** A plain name for a colour (the first-match card names the ring under the player's man). */
@@ -279,6 +292,8 @@ export class MatchSession {
   readonly hud: Hud | null;
   readonly touch: TouchControls | null;
   private trainer: Trainer | null = null;
+  /** The quick-sub card (an ordinary match against the AI only: quickSubsAllowed). */
+  private quick: QuickSubCard | null = null;
   paused = false;
   private padPauseHeld = false;
   /** Online: the lockstep driver (see StepDriver); null for a local match. */
@@ -376,7 +391,7 @@ export class MatchSession {
    * one-step press, never lost. Cleared whenever the sim isn't stepping (intro, replay, pause), so a press
    * that skipped a replay never fires a pass at the restart.
    */
-  private latch = { pass: false, shoot: false, through: false, power: false };
+  private latch = { pass: false, shoot: false, through: false, power: false, skill: false };
   private offKey: (() => void) | null = null;
   /** Off-screen team-mate arrows (see EDGE_FADE_S), their eased opacity, and the HUD boxes they keep off. */
   private edge: EdgeArrows | null = null;
@@ -386,6 +401,15 @@ export class MatchSession {
   private edgeMates: EdgeMate[] = [];
   /** Hit-stop: seconds of hold left (frames / 60; see HIT_STOP_TACKLE). */
   private hitStopT = 0;
+  /**
+   * SKILL moves (sim/skills.ts) on screen: the tell over a defender and each move's pop (ui/skillHud.ts); the slow
+   * motion after a PERFECT (s left, see SKILL_SLOW_S); the tells seen and PERFECTs landed this match (the first
+   * SKILL_TEACH_TELLS tells, until his first PERFECT, name the button).
+   */
+  private skillHud: SkillHud | null = null;
+  private slowT = 0;
+  private skillTells = 0;
+  private skillPerfects = 0;
   /** The ball's owner and pace before the last sim step (who was tackled; was a strike first-time; how hard it hit the post). */
   private ownerBefore = -1;
   private ballSpeedBefore = 0;
@@ -429,6 +453,8 @@ export class MatchSession {
   private lastState = new Float32Array(22).fill(-1);
   private fxAcc = new Float32Array(22);
   private ballFxAcc = 0;
+  /** The human side's sprint speed-line colours (SessionOptions.trail), looked up on the first sprint. */
+  private trailCols: readonly number[] | null = null;
   /** Blitz visuals (made on the first frame of a blitz match; never otherwise). */
   private blitz: BlitzFx | null = null;
   /** Blitz: which side is frozen by a freeze event (and its fallback timer), the mega ball in flight, the last hot state. */
@@ -503,9 +529,18 @@ export class MatchSession {
       document.getElementById('ui')!.appendChild(this.hud.root);
       this.trainer = new Trainer();
       this.hud.root.appendChild(this.trainer.root);
+      this.skillHud = new SkillHud();
+      this.hud.root.appendChild(this.skillHud.root);
       if (opt.humanSide === 0 || opt.humanSide === 1) {
         this.edge = new EdgeArrows(this.view.teamColor.fill, this.view.teamColor.edge);
         this.hud.root.appendChild(this.edge.root);
+      }
+      if (quickSubsAllowed(opt)) {
+        const side = opt.humanSide as Side;
+        const qs = new QuickSubs(this.match, side, (slot, benchIdx) => this.substitute(side, slot, benchIdx));
+        qs.enabled = opt.quickSubs !== false;
+        this.quick = new QuickSubCard(qs, input);
+        this.hud.root.appendChild(this.quick.root);
       }
       this.touch = new TouchControls(input);
       document.getElementById('ui')!.appendChild(this.touch.root);
@@ -544,7 +579,7 @@ export class MatchSession {
       this.stadium.setScore(this.match.score[0], this.match.score[1], `${this.match.minute()}'`);
       this.prevButtons = true;
     } else if (this.hud && intro) {
-      this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} · ${teams[1].name}`, 'small intro', INTRO_S - 0.2);
+      this.hud.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} v ${teams[1].name}`, 'small intro', INTRO_S - 0.2);
       this.prevButtons = true;
     }
   }
@@ -578,6 +613,11 @@ export class MatchSession {
 
   setCamZoom(z: CamZoom): void {
     this.cam.setZoom(z);
+  }
+
+  /** Settings > QUICK SUBS changed mid-match (off: the card goes, a queued change with it). */
+  setQuickSubs(on: boolean): void {
+    if (this.quick) this.quick.qs.enabled = on;
   }
 
   requestPause(): void {
@@ -643,24 +683,60 @@ export class MatchSession {
       digital: this.input.lastDevice === 'keyboard',
       // Blitz: use the held power-up (keyboard E / pad Y / the touch button, once the input maps it).
       power: ((c as { power?: boolean }).power ?? false) || l.power,
+      // SKILL (Q / U, pad LB, the touch SKILL button): a skill move with the ball (sim/skills.ts).
+      skill: c.skill || l.skill,
     };
     this.clearLatch();
     return pad;
   }
 
   /** Note whichever action buttons are down right now (called on every key-down). */
-  private latchPresses(c: { pass: boolean; shoot: boolean; through: boolean; power?: boolean }): void {
+  private latchPresses(c: { pass: boolean; shoot: boolean; through: boolean; power?: boolean; skill?: boolean }): void {
     if (this.demo || this.paused) return;
     const l = this.latch;
     l.pass ||= c.pass;
     l.shoot ||= c.shoot;
     l.through ||= c.through;
     l.power ||= c.power ?? false;
+    l.skill ||= c.skill ?? false;
   }
 
   private clearLatch(): void {
     const l = this.latch;
-    l.pass = l.shoot = l.through = l.power = false;
+    l.pass = l.shoot = l.through = l.power = l.skill = false;
+  }
+
+  /**
+   * A touch that put the ball somewhere its flight never took it (onto a foot, down off a chest, into a keeper's
+   * hands): the newest step's ball is that far (`j`) from the last one plus its velocity. The older frame takes
+   * the jump too, so the blend between them never draws it, and the drawn ball is held back by it instead
+   * (MatchView.ballGlide), closing over ~BALL_GLIDE_TAU: it travels there rather than teleporting a metre.
+   */
+  private glideBall(live: boolean): void {
+    if (!live) return;
+    const a = this.prev;
+    const b = this.cur;
+    const jx = b[BALL_OFS] - (a[BALL_OFS] + a[BALL_OFS + 3] * DT);
+    const jy = b[BALL_OFS + 1] - (a[BALL_OFS + 1] + a[BALL_OFS + 4] * DT);
+    const jz = b[BALL_OFS + 2] - (a[BALL_OFS + 2] + a[BALL_OFS + 5] * DT);
+    const j = Math.hypot(jx, jy, jz);
+    if (j < BALL_GLIDE_MIN || j > BALL_GLIDE_MAX) return;
+    a[BALL_OFS] += jx;
+    a[BALL_OFS + 1] += jy;
+    a[BALL_OFS + 2] += jz;
+    const g = this.view.ballGlide;
+    g.x -= jx;
+    g.y -= jy;
+    g.z -= jz;
+  }
+
+  /** The drawn ball closes on the sim's; none outside live play or in a replay (a restart, a cut: it is just there). */
+  private easeBallGlide(dt: number): void {
+    const g = this.view.ballGlide;
+    const k = this.match.phase === 'play' && !this.replay ? Math.exp(-dt / BALL_GLIDE_TAU) : 0;
+    g.x *= k;
+    g.y *= k;
+    g.z *= k;
   }
 
   /** Hold the picture for `frames` 60 Hz frames (the longer of what is already held and this). */
@@ -681,6 +757,8 @@ export class MatchSession {
     this.driver?.frame();
     const presentationPaused = this.paused || !!this.driver?.paused;
     if (!presentationPaused) this.foulPresentation.tick(dt);
+    // (Not while a hit-stop holds the picture: the glide waits with it, or the ball jumps when it lets go.)
+    if (!this.paused && this.hitStopT <= 1e-4) this.easeBallGlide(dt);
     // Hit flashes count rendered frames, before this frame's events (see MatchView.tickFlashes).
     if (!this.paused) this.view.tickFlashes(dt);
 
@@ -695,6 +773,9 @@ export class MatchSession {
       // (The sim is simply not stepped: its clock waits, nothing in it is scaled or skipped.)
       this.hitStopT -= dt;
       held = true;
+      // Picking up where the held frame (the newest step, drawn whole) left off: the next frame steps at once and
+      // draws past it. (From an empty clock a fast display drew half a step BEHIND it first: a jolt back.)
+      if (this.hitStopT <= 1e-4) this.acc = DT * 0.999;
     } else if (this.introLeft > 0) {
       this.introLeft -= dt;
       this.cam.introT = Math.min(1, 1 - this.introLeft / INTRO_S);
@@ -730,7 +811,10 @@ export class MatchSession {
       this.view.apply(this.prev, this.cur, 1, this.time, dt);
     } else {
       const drv = this.driver;
-      this.acc += drv ? dt * drv.pace() : dt;
+      // (A PERFECT skill move's slow-motion beat: against the AI only, never in an online match's lockstep.)
+      const slow = !drv && this.slowT > 0 ? SKILL_SLOW_RATE : 1;
+      if (this.slowT > 0) this.slowT -= dt;
+      this.acc += drv ? dt * drv.pace() : dt * slow;
       let steps = 0;
       let waited = false;
       while (this.acc >= DT && steps < 6) {
@@ -748,6 +832,7 @@ export class MatchSession {
         this.prev.set(this.cur);
         this.ownerBefore = m.ball.owner;
         this.ballSpeedBefore = Math.hypot(m.ball.vel.x, m.ball.vel.y, m.ball.vel.z);
+        const livePrev = m.phase === 'play';
         m.step(DT, pad);
         drv?.after(m);
         // (Events first: a TACKLE press this step is baked into this very frame as the lunge.)
@@ -755,6 +840,7 @@ export class MatchSession {
         if (this.moment) this.judgeMoment();
         for (let i = 0; i < 22; i++) if (this.lunge[i] >= 0 && (this.lunge[i] += DT) >= LUNGE_S) this.lunge[i] = -1;
         writeFrame(m, this.cur, this.time, this.lunge, this.lungeLeg);
+        this.glideBall(m.phase === 'play' && livePrev);
         this.buffer.push(m, this.time, this.lunge, this.lungeLeg);
         this.recorded++;
         this.acc -= DT;
@@ -938,6 +1024,7 @@ export class MatchSession {
     this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time, this.world.camera.position);
     this.updateAtmosphere(dt);
     this.updateHud(dt);
+    this.updateQuickSub(dt);
     // Online: the man the other player controls gets his own ring.
     if (this.driver) {
       const hs = m.cfg.humanSide;
@@ -1078,9 +1165,9 @@ export class MatchSession {
       this.firstCardUp = true;
       const you = colourName(this.view.teamColor.fill);
       const dev = this.input.lastDevice;
-      const move = dev === 'gamepad' ? 'the LEFT STICK' : dev === 'touch' ? 'the thumbstick' : 'WASD / ARROWS';
+      const move = dev === 'gamepad' ? 'the left stick' : dev === 'touch' ? 'the stick' : moveKeys('keyboard').replace(' / ', ' or ');
       // (A short title: the banner's letters are huge; "YOU ARE THE BLUE RING" ran off both edges.)
-      this.hud.show('THIS IS YOU', `the ${you} ring · move with ${move} to begin`, 'small intro', 30);
+      this.hud.show('THIS IS YOU', `The ${you} ring. Move with ${move} to start`, 'small intro', 30);
     }
     const c = this.input.read();
     const btn = c.pass || c.shoot || c.through;
@@ -1123,7 +1210,7 @@ export class MatchSession {
     if (m.phase !== 'goal') finishScenario(m);
     // (Short titles: the banner's letters are huge; "MOMENT COMPLETE" ran off both edges.)
     const stars = o.won ? '★'.repeat(o.stars) + '☆'.repeat(Math.max(0, 3 - o.stars)) : '';
-    this.hud?.show(o.won ? 'COMPLETE!' : 'FAILED', o.won ? `MOMENT ${stars}` : 'MOMENT · try again', o.won ? 'goal' : 'small goal against', MOMENT_END_S + 0.4);
+    this.hud?.show(o.won ? 'COMPLETE!' : 'FAILED', o.won ? `MOMENT ${stars}` : 'Try again', o.won ? 'goal' : 'small goal against', MOMENT_END_S + 0.4);
     if (o.won) {
       sfx.cheer(1.4);
       this.goalHypeT = Math.max(this.goalHypeT, 3);
@@ -1564,7 +1651,8 @@ export class MatchSession {
           }
           if (e.kind === 'shot' && e.power > 0.5) {
             this.effects.grass(e.x, e.z, 10, e.power);
-            this.cam.kick(0.05 + e.power * 0.08);
+            // (The lens punches for a human's strike only: every AI shot wobbling the picture read as a glitch.)
+            if (kicker >= 0 && m.human[m.players[kicker].side]) this.cam.kick(0.04 + e.power * 0.06);
           } else if (e.power > 0.6) this.effects.grass(e.x, e.z, 5, e.power * 0.6);
           break;
         }
@@ -1604,7 +1692,9 @@ export class MatchSession {
           this.stadium.setScore(m.score[0], m.score[1], `${m.minute()}'`);
           this.goalHypeT = 5;
           // A golden goal (Blitz: it counts double) celebrates in gold, with an extra shower over the goal mouth.
-          const cols = golden ? [0xffd23a, 0xffb300, 0xfff0b0, 0xfbfbf4] : [this.opt.kits[side].shirt, this.opt.kits[side].shirt2, 0xffd23a, 0xfbfbf4];
+          const kitCols = [this.opt.kits[side].shirt, this.opt.kits[side].shirt2, 0xffd23a, 0xfbfbf4];
+          // (Your goals burst in the SHOP theme you equipped: render/cosmetics.ts.)
+          const cols = golden ? [0xffd23a, 0xffb300, 0xfff0b0, 0xfbfbf4] : side === human ? goalFxColors(this.opt.goalFx, kitCols) : kitCols;
           const gx = Math.sign(m.ball.pos.x) * HALF_L;
           // Juice: a hold on the impact frame, a decaying shake, the net rippling, a fat burst in the scorer's
           // colours out of the goal mouth, confetti from the roof and the ground and the whole bowl flashing.
@@ -1686,6 +1776,11 @@ export class MatchSession {
           }
           break;
         }
+        case 'skillTell':
+        case 'skillMove':
+        case 'skillGoal':
+          this.skillEvent(e);
+          break;
         case 'tackleTry':
           this.tackleAttempt(e.by, e.slide);
           break;
@@ -1704,9 +1799,13 @@ export class MatchSession {
             const victim = ob >= 0 && ob < m.players.length && m.players[ob].side !== p.side ? m.players[ob] : null;
             const closing = victim ? Math.hypot(p.vel.x - victim.vel.x, p.vel.z - victim.vel.z) : p.speed();
             const heavy = e.slide || closing >= HEAVY_TACKLE_MS;
-            this.hold(e.slide ? HIT_STOP.slide : HIT_STOP_TACKLE);
-            this.cam.kick(PUNCH_TACKLE);
-            if (heavy) this.cam.shakePx(e.slide ? SHAKE_PX.slide : SHAKE_PX.tackleHeavy);
+            // (Only a tackle a human's side wins: the AI taking it off him is no payoff, and a frozen frame and a
+            // jolted camera there read as the game hitching.)
+            if (m.human[p.side]) {
+              this.hold(e.slide ? HIT_STOP.slide : HIT_STOP_TACKLE);
+              this.cam.kick(PUNCH_TACKLE);
+              if (heavy) this.cam.shakePx(e.slide ? SHAKE_PX.slide : SHAKE_PX.tackleHeavy);
+            }
             const kit = this.opt.kits[p.side];
             const b = m.ball.pos;
             this.effects.burst(b.x, Math.max(0.25, b.y), b.z, [kit.shirt, kit.shirt2, 0xfbfbf4], 30, 7, 1.6);
@@ -1757,7 +1856,8 @@ export class MatchSession {
           this.cam.softCut();
           break;
         case 'sub': {
-          this.hud?.toastMsg(`SUB · ${e.on} ON · ${e.off} OFF`, 2);
+          // (A quick sub has its own board up: no flag as well.)
+          if (!this.quick?.qs.claims(e)) this.hud?.toastMsg(`SUB ${SEP_MARK} ${e.on} ON ${SEP_MARK} ${e.off} OFF`, 2);
           // Manager and AI subs alike: draw whoever the sim now has in that slot (no-op if already swapped).
           const on = m.teamPlayers(e.side)[e.slot];
           if (on) {
@@ -1875,6 +1975,51 @@ export class MatchSession {
   }
 
   /**
+   * SKILL moves (sim/skills.ts) for the human's side: the tell's "ting" (the cue to press), each move's swish and pop
+   * (ui/skillHud.ts), and a PERFECT's payoff: the hold, then a beat of slow motion, a jolt, the man who bit flashing,
+   * the ring round the dribbler, the "shing" and the crowd's olé. A SKILL GOAL is called under the score.
+   */
+  private skillEvent(e: SkillEvent): void {
+    const m = this.match;
+    const hs = m.cfg.humanSide;
+    if (hs < 0 || this.demo) return;
+    if (e.type === 'skillTell') {
+      if (m.players[e.on]?.side !== hs) return;
+      this.skillTells++;
+      sfx.skillTell();
+      return;
+    }
+    if (e.type === 'skillGoal') {
+      if (e.side !== hs) return;
+      this.hud?.toastMsg(e.combo >= 2 ? `SKILL GOAL ×${e.combo}` : 'SKILL GOAL', 2.6);
+      sfx.cheer(1.2);
+      return;
+    }
+    const p = m.players[e.player];
+    if (!p || p.side !== hs) return;
+    this.skillHud?.show(e.player, e.grade, e.move, e.combo);
+    if (e.move === 'cut' || e.move === 'knock') {
+      sfx.skillMove('good');
+      return;
+    }
+    sfx.skillMove(e.grade);
+    if (e.grade === 'perfect') {
+      this.skillPerfects++;
+      this.hold(HIT_STOP.skillPerfect);
+      // (The slow motion counts down only once the hold is over: it follows it.)
+      this.slowT = SKILL_SLOW_S;
+      this.cam.shakePx(SHAKE_PX.skillPerfect);
+      this.view.flashBall();
+      if (e.on >= 0) this.view.flashPlayer(e.on, PLAYER_FLASH_FRAMES);
+      const kit = this.opt.kits[p.side];
+      this.effects.burst(p.pos.x, 0.5, p.pos.z, [kit.shirt, kit.shirt2, 0xfbfbf4, 0xffd23a], 26, 6, 1.2);
+      this.effects.dust(p.pos.x, p.pos.z, 10, 0.8);
+    } else if (e.grade === 'good') {
+      this.effects.dust(p.pos.x, p.pos.z, 6, 0.6);
+    }
+  }
+
+  /**
    * A TACKLE press (the sim's 'tackleTry', before any contact): a standing tackle lunges at once (baked into
    * the frames: replay.ts writeFrame, so replays lunge too), with a puff of dust at the boot and a whip of
    * air; a slide gets a bigger cloud and a longer swish.
@@ -1949,8 +2094,13 @@ export class MatchSession {
       while (this.fxAcc[i] >= 1) {
         this.fxAcc[i] -= 1;
         const sway = (Math.random() - 0.5) * 0.5 * k;
-        const col = turbo ? (Math.random() < 0.5 ? POWER_COLOR.turbo : POWER_LIGHT.turbo) : 0xf4f4ea;
-        fx.streak(x - ux * 0.6 - uz * sway, 0.14 + Math.random() * 0.5 * k, z - uz * 0.6 + ux * sway, facing, 0.5 + Math.random() * 0.5, 0.045, col, 0.14, -ux * 3, -uz * 3);
+        // (Your side's lines in the SHOP trail you equipped: render/cosmetics.ts.)
+        const mine = this.match.players[i]?.side === this.match.cfg.humanSide;
+        const tc = (this.trailCols ??= trailColors(this.opt.trail));
+        const col = turbo ? (Math.random() < 0.5 ? POWER_COLOR.turbo : POWER_LIGHT.turbo) : mine ? tc[(Math.random() * tc.length) | 0] : 0xf4f4ea;
+        // (A coloured trail is drawn a little bolder and longer-lived than the chalk one, so it reads from the gantry.)
+        const bold = mine && !turbo && (tc.length > 1 || tc[0] !== 0xf4f4ea);
+        fx.streak(x - ux * 0.6 - uz * sway, 0.14 + Math.random() * 0.5 * k, z - uz * 0.6 + ux * sway, facing, 0.5 + Math.random() * 0.5, bold ? 0.07 : 0.045, col, bold ? 0.2 : 0.14, -ux * 3, -uz * 3);
         if (Math.random() < (turbo ? 0.6 : 0.4)) fx.dust(x - ux * 0.35, z - uz * 0.35, 1, 0.3, -ux, -uz, 0.05);
         if (turbo && Math.random() < 0.5) fx.sparks(x - ux * 0.3, 0.3 * k, z - uz * 0.3, [POWER_COLOR.turbo, POWER_LIGHT.turbo], 1, 3, 0.2, 2);
       }
@@ -2134,7 +2284,7 @@ export class MatchSession {
     const p = this.match.players[shot.player];
     const red = shot.color === 'red';
     const close = shot.close && p.def.id === shot.playerId;
-    this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', shot.second ? `${shot.name} · 2nd yellow` : shot.name,
+    this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', shot.second ? `${shot.name}, second yellow` : shot.name,
       red ? 'small card red' : 'small card', red ? 2.2 : 1.8);
     this.view.showCard(shot.color, shot.x, shot.z, close ? CARD_CAM_S : red ? 2.2 : 1.8, close);
     if (close) this.startCardShot(shot.player, shot.x, shot.z);
@@ -2408,37 +2558,32 @@ export class MatchSession {
     // The context the touch buttons are labelled for right now: hints name the button on screen.
     const ctx: HintCtx = so ? (so.turn === hs ? 'setpiece' : 'defend') : m.phase === 'restart' || m.phase === 'kickoff' ? 'setpiece' : mine || incoming || m.canStrikeLoose() ? 'attack' : 'defend';
     this.hintCtx = ctx;
+    // The hint is a coach card (ui/coach.ts: the same card, caps and words as the trainer's). A new hint: add a
+    // cue there, or write words with key(), which names the player's own binding / the button on screen
+    // ("`${key('pass')} to kick off`" draws as [SPACE] Kick off).
     const key = this.keyName;
-    let hint = '';
+    let hint: string | CoachCue | null = null;
     const soAim = !!so && (so.stage === 'aim' || so.stage === 'intro');
-    // Hold for power, let go to strike (never "SHOOT to shoot": the touch button already says SHOOT).
-    const strike = `hold ${key('shoot')} to strike`;
-    // A penalty's hint names the player's own keys (penaltyHint), so it isn't remapped again.
-    let bound = false;
     if (so) {
-      if (soAim && so.turn === hs) {
-        hint = penaltyHint(dev);
-        bound = true;
-      } else if (soAim) hint = 'Dive: point the stick when they shoot';
+      if (soAim && so.turn === hs) hint = penaltyCue(dev);
+      else if (soAim) hint = diveCue(dev);
     } else if (m.phase === 'restart' && r && r.side === hs && r.kind === 'penalty') {
-      hint = penaltyHint(dev);
-      bound = true;
+      hint = penaltyCue(dev);
     } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs) {
-      switch (r.kind) {
-        case 'kickoff': hint = `${key('pass')} to kick off`; break;
-        case 'throwin': hint = `Point to a teammate · ${key('pass')} to throw`; break;
-        // SHOOT on a corner is a driven cross (flat and fast), not a shot. (Touch labels the through button
-        // CROSS at set pieces, so the verb is "whip it in", never "CROSS to cross".)
-        case 'corner': hint = `${key('pass')} short · hold ${key('through')} to whip it in · ${key('shoot')} = driven cross`; break;
-        case 'goalkick': hint = `${key('pass')} short · hold ${key('through')} to go long`; break;
-        case 'freekick': hint = `Aim · ${strike} · hold ${key('through')} to whip it in`; break;
-      }
-    } else if (m.ball.held && mine) {
-      hint = `${key('pass')} to throw it out · ${key('through')} to kick long`;
+      hint = restartCue(r.kind, dev);
+    } else if (m.ball.held && mine && !m.trainer) {
+      // (With the trainer on, its card over the keeper says this already.)
+      hint = keeperCue(dev);
     }
+    // SKILL: a defender winding up a challenge on his man (sim/skills.ts) has the tell over him; the first few times
+    // (until his first PERFECT) the tell names the button as well. The cue itself is the trainer's card when the trainer
+    // is on (ui/trainer.ts), else then the hint band's.
+    const sw = m.phase === 'play' && !this.replay ? skillWindow(m, hs as Side) : null;
+    const teach = !!sw && this.skillTells <= SKILL_TEACH_TELLS && this.skillPerfects === 0;
+    if (teach && !hint && !m.trainer) hint = skillCue(dev);
     // Nothing over the referee close-up (the set-piece hint comes back when the camera cuts back to the game).
     const cinematic = !!this.replay || this.cam.mode === 'card';
-    hud.setHint(cinematic ? '' : hint, bound);
+    hud.setHint(cinematic ? null : hint, true);
     // The penalty reticle on the goal, where his penalty (or shootout kick) is aimed, until it's struck.
     this.view.setPenAim(cinematic ? null : m.penAim);
     // Aim arrow for our set pieces. A penalty (in the match or his shootout kick) has the reticle instead.
@@ -2472,27 +2617,55 @@ export class MatchSession {
     }
     this.updatePassCharge(cinematic, dt);
     this.updateEdgeArrows(dt);
-    if (this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast' || this.cam.behindActive) this.trainer?.hide();
+    // (While a skill move's pop rides over his man it has the space there: the card over him steps aside.)
+    if (this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast' || this.cam.behindActive || this.skillHud?.popping) this.trainer?.hide();
     else this.trainer?.update(m, this.view.frame, this.world.camera, this.view.headTop, dev);
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
       // Off for the referee close-up too (the buttons would sit on the booked player).
       this.touch.setVisible(!(this.paused || this.introLeft > 0 || this.replay || this.cam.mode === 'card' || m.phase === 'goal' || m.phase === 'halftime' || m.phase === 'fulltime'));
       this.touch.setContext(ctx);
+      // SKILL: shown with the ball at his feet in open play, lit while a tell is open over his man.
+      const onBall = m.phase === 'play' && !m.ball.held && m.ball.owner >= 0 && m.ball.owner === m.active;
+      this.touch.setSkill(sw ? 'cue' : onBall ? 'on' : 'off');
     }
+    const skillOff = this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast';
+    // (With the trainer's card up, the card names the button and the tell keeps off it.)
+    const card = sw && m.trainer && this.trainer && !this.trainer.root.hidden ? this.trainer.root.querySelector('.trainer-card')?.getBoundingClientRect() : null;
+    const avoid = card && card.width > 0 ? { l: card.left, t: card.top, r: card.right, b: card.bottom } : null;
+    this.skillHud?.update(this.view.frame, this.world.camera, this.view.headTop, sw, teach && !avoid ? actionKey('skill', dev) : null, skillOff, dt, avoid);
     // Pause via keyboard / gamepad.
     const c = this.input.gamepadPause();
     if (c && !this.padPauseHeld && !this.paused) this.requestPause();
     this.padPauseHeld = c;
   }
 
+  /**
+   * The quick-sub card: up over live play and dead balls on the broadcast lens only (never a replay, a goal
+   * celebration, the card close-up, the over-the-shoulder set-piece lens, the fly-in or the pause menu). A queued
+   * change is made at the first stoppage the picture is free for: never under the referee's close-up or the foul's
+   * impact beat (the man coming off might be the one in it).
+   */
+  private updateQuickSub(dt: number): void {
+    const q = this.quick;
+    if (!q) return;
+    const m = this.match;
+    const cam = this.cam;
+    const ph = m.phase;
+    const live = !this.paused && !this.driver && !this.replay && this.introLeft <= 0 && !this.holdFirst;
+    const shown = live && cam.mode === 'broadcast' && !cam.behindActive && !this.cineHud &&
+      (ph === 'play' || ph === 'out' || ph === 'restart' || ph === 'kickoff');
+    const ready = live && this.cardT <= 0 && cam.mode !== 'card' && !this.foulPresentation.waiting;
+    q.update(this.paused ? 0 : dt, shown, ready);
+  }
+
   /** The touch-button context the hints are worded for this frame (see updateHud). */
   private hintCtx: HintCtx = 'attack';
-  /** The name of the button for `k` on the device in hand (bound once: the hints call it several times a frame). */
-  private readonly keyName = (k: HintKey): string => {
-    const dev = this.input.lastDevice;
-    return dev === 'gamepad' ? PAD_KEYS[k] : dev === 'touch' ? TOUCH_LABELS[this.hintCtx][k === 'pass' ? 0 : k === 'shoot' ? 1 : 2] : KEY_KEYS[k];
-  };
+  /**
+   * The cap for `k` on the device in hand: the player's own key or pad button, or the label the touch button wears
+   * now (bound once: the hints call it several times a frame). Already the binding: never remapped again.
+   */
+  private readonly keyName = (k: HintKey): string => keyCap(k, this.input.lastDevice, this.hintCtx);
 
   /** Is the ball, or the controlled player (boots to head), drawn under the minimap (or within RADAR_MARGIN of it)? */
   private radarOccludes(dt: number): boolean {
@@ -2643,10 +2816,11 @@ export class MatchSession {
     const H = window.innerHeight;
     this.edgeAvoidT -= dt;
     if (this.edgeAvoidT <= 0) {
-      // The minimap and (touch) the action buttons: re-measured twice a second.
+      // The minimap, (touch) the action buttons and the quick-sub card: re-measured twice a second.
       this.edgeAvoidT = RADAR_RECT_S;
       this.edgeAvoid = [];
-      const boxes = [this.hud?.root.querySelector('.hud-radar'), this.touch?.isVisible ? this.touch.root.querySelector('.touch-btns') : null];
+      const boxes = [this.hud?.root.querySelector('.hud-radar'), this.touch?.isVisible ? this.touch.root.querySelector('.touch-btns') : null,
+        this.hud?.root.querySelector('.hud-qsub.on')];
       for (const el of boxes) {
         const r = el?.getBoundingClientRect();
         if (r && r.width > 0 && r.height > 0) this.edgeAvoid.push({ l: r.left, t: r.top, r: r.right, b: r.bottom });
@@ -2719,44 +2893,50 @@ export class MatchSession {
     return us < EDGE_LOOSE && us <= them;
   }
 
+  /**
+   * The first match's tips for a player who turned the trainer off: the trainer's own cards (ui/coach.ts), one
+   * at a time in the tip slot, until he has moved, passed, shot, tried a chip and defended.
+   */
   private updateTutorial(dt: number, key: (k: HintKey) => string): void {
     const hud = this.hud;
     if (!hud || !this.opt.tutorial) return;
     // The persistent trainer carries the controls beside the player; don't duplicate them across the pitch.
-    if (this.match.trainer) { hud.setTip(''); return; }
+    if (this.match.trainer) { hud.setTip(null); return; }
     const m = this.match;
     const t = this.tut;
     const c = this.input.read();
     if (Math.hypot(c.sx, c.sy) > 0.3 && m.phase === 'play') t.moved = true;
     if (m.phase !== 'play' || this.replay) {
-      hud.setTip('');
+      hud.setTip(null);
       return;
     }
     t.t += dt;
     const dev = this.input.lastDevice;
-    const move = dev === 'gamepad' ? 'LEFT STICK' : dev === 'touch' ? 'the left thumbstick' : 'WASD / ARROWS';
-    const sprint = dev === 'gamepad' ? 'RT' : dev === 'touch' ? 'SPRINT' : 'SHIFT';
     const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === m.cfg.humanSide;
-    let tip = '';
-    if (!t.moved) tip = `Move with <kbd>${move}</kbd> · sprint with <kbd>${sprint}</kbd>`;
+    let tip: CoachCue | null = null;
+    if (!t.moved) {
+      const mv = moveCue(dev);
+      tip = { ...mv, actions: [...mv.actions, [key('sprint'), 'Hold to sprint']] };
+    }
     // (Round 9 controls: PASS goes at once to the mate the preview rings; THROUGH sends that runner in behind.)
-    else if (mine && !t.passed) {
+    else if (mine && !t.passed) tip = {
+      title: 'PASS',
       // (On MANUAL passing nobody is ringed: the ball goes where the stick points.)
-      const to = m.groundAssist === 'manual' ? 'passes where you point the stick' : 'passes to the <b>ringed</b> mate at once (point the stick to pick him)';
-      tip = `<kbd>${key('pass')}</kbd> ${to}${m.quickPass ? '' : ' · hold it to hit it harder'} · <kbd>${key('through')}</kbd> sends a runner through`;
-    }
-    else if (mine && !t.shot) {
-      tip = `Near goal? <b>Hold</b> <kbd>${key('shoot')}</kbd> and release to shoot: a tap drives it low, a long hold rises`;
-      if (this.match.timedFinish) tip += ` · tap it again as the boot meets the ball for a perfect finish`;
-    }
+      actions: [[key('pass'), m.groundAssist === 'manual' ? 'Pass where you aim' : 'Pass to the ringed teammate'], [key('through'), 'Through ball']],
+      ...(m.quickPass ? {} : { detail: `Hold ${key('pass')} for a harder pass` }),
+    };
+    else if (mine && !t.shot) tip = {
+      title: 'SHOOT', actions: [[key('shoot'), 'Hold, aim, let go']],
+      detail: m.timedFinish ? `${pressVerb(dev)} ${key('shoot')} again as you strike` : 'A longer hold lifts it',
+    };
     else if (mine && !t.chip) {
       // Once he has had a shot: the finishes (shown for a while on the ball, or until he tries one).
-      tip = `Keeper off his line? <b>Hold</b> <kbd>${key('shoot')}</kbd> and tap <kbd>${key('through')}</kbd> to chip him · a soft shot aimed at a corner curls in`;
+      tip = { title: 'CHIP', actions: [[key('shoot'), 'Hold'], [key('through'), `${pressVerb(dev)} to chip`]], detail: 'A soft diagonal shot curls' };
       t.chipT += dt;
       if (t.chipT > 14) t.chip = true;
     }
     else if (!mine && m.ball.owner >= 0 && !t.switched) {
-      tip = `Defending: tap <kbd>${key('shoot')}</kbd> to tackle (hold it to slide) · hold <kbd>${key('through')}</kbd> to press · <kbd>${key('pass')}</kbd> switches player`;
+      tip = defendCue(dev);
       if (t.t > 60) t.switched = true;
     }
     if (t.moved && t.passed && t.shot && t.chip && (t.switched || t.t > 90)) this.opt.tutorial = false;
@@ -2784,6 +2964,8 @@ export class MatchSession {
     this.flash.dispose();
     this.blitz?.dispose();
     this.blitz = null;
+    this.quick?.dispose();
+    this.quick = null;
     this.hud?.dispose();
     this.touch?.dispose();
     this.input.touch.enabled = false;

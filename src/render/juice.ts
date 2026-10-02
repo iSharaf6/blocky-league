@@ -26,6 +26,8 @@ export const HIT_STOP = {
   /** A real save (a shot on target stopped). */
   save: 2,
   goal: 3,
+  /** A PERFECT skill move (timed into a defender's tell: sim/skills.ts): the parry lands on it. */
+  skillPerfect: 5,
 } as const;
 /** A ball hitting the post at or under this pace (m/s) is a knock, not a thunderbolt: the shorter hold and a smaller shake. */
 export const SLOW_POST = 16;
@@ -39,7 +41,14 @@ export const SHAKE_PX = {
   slide: 5,
   tackleHeavy: 4,
   mega: 6,
+  skillPerfect: 3,
 } as const;
+/**
+ * A PERFECT skill move's slow-motion beat after the hold: SKILL_SLOW_S real seconds of play at SKILL_SLOW_RATE x
+ * speed (a match against the AI only: an online match keeps the other machine's pace).
+ */
+export const SKILL_SLOW_S = 0.32;
+export const SKILL_SLOW_RATE = 0.45;
 export const SHAKE_MAX_PX = 8;
 /** Shake decay rate (1/s): ~8 px is down to ~1 px in ~0.25 s. */
 const SHAKE_DECAY = 8.5;

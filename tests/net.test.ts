@@ -27,24 +27,33 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * Only the nine human-input rows whose drivers queue that action were re-recorded. Their queue/contact counts
  * are noted below; even a cancelled queue can change movement and possession before contact. All AI rows, the
  * three scripted-bot rows and ko1 keep their exact prior hashes, ticks, scores and shootout flags.
+ * Physics revision 2026-10-02b (NET_VERSION 3) re-recorded the rows with a human in them (bot*, fuzz*, pen*, ko*):
+ * - the SKILL moves (sim/skills.ts, the SKILL bit on the wire): an AI challenge on a human's carrier from in front
+ *   or beside him is telegraphed first (a wind-up, then a lunge), so every row with a human in it plays out
+ *   differently even with SKILL never pressed;
+ * - move assist's cone hysteresis (Match.moveAssistRun, HumanCtl.runTaken) and the AI closing down a human who
+ *   stands on the ball (ai.ts humanStalling).
+ * The fix for "players spaz out" draws the body with a face-target hold (Player.drawFacing, FACE_HOLD_T) and leaves
+ * the sim's facing alone, so all six AI v AI rows (ai*, aiKo*) are bit-identical to before. No driver or comparison
+ * was relaxed.
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2262850705, 2447626034, 19417, 2, 3, 0],
   aiBlitz: [513065991, 663489125, 11382, 0, 2, 0],
   aiStyles: [2891120658, 2774569015, 11673, 1, 2, 0],
-  botSide0: [4291927938, 1091955903, 15525, 1, 1, 0],
-  botPerks: [2431068158, 403911831, 11880, 4, 1, 0],
-  botFirstMatch: [3953689325, 351485200, 11657, 1, 0, 0],
-  fuzzSide1: [399059712, 1308671870, 11258, 1, 0, 0], // 1 new queue, 0 contacts
-  fuzzBlitz0: [594496695, 1168062696, 11302, 0, 2, 0], // 3 new queues, 1 contact
-  fuzzBlitzPerks1: [4063850517, 1852493949, 11103, 1, 0, 0], // 7 new queues, 2 contacts
-  penTaker0: [626915086, 958774721, 7537, 1, 1, 0], // 2 new queues, 1 contact
-  penTaker1Low: [790814125, 3196858246, 7590, 0, 1, 0], // 2 new queues, 0 contacts
-  penTimeout1: [2721849617, 965648269, 7411, 0, 1, 0], // 3 new queues, 2 contacts
-  penKeeper1: [483959362, 1474512133, 7381, 1, 0, 0], // 3 new queues, 0 contacts
-  ko1: [4291486144, 3361617526, 3773, 1, 0, 0],
-  ko3: [1812744883, 1974716986, 3603, 1, 0, 0], // 1 new queue, 1 contact
-  ko6: [1838196313, 3688112271, 5716, 0, 0, 1], // 5 new queues, 1 contact
+  botSide0: [2008141426, 2119754777, 15449, 4, 0, 0],
+  botPerks: [478059341, 849763147, 11377, 3, 1, 0],
+  botFirstMatch: [992705381, 3733448369, 11376, 1, 0, 0],
+  fuzzSide1: [1765176342, 1498320739, 11591, 3, 0, 0],
+  fuzzBlitz0: [521166639, 1094532567, 11627, 0, 2, 0],
+  fuzzBlitzPerks1: [4063850517, 1852493949, 11103, 1, 0, 0],
+  penTaker0: [645986944, 2368237204, 8098, 1, 1, 0],
+  penTaker1Low: [2432999293, 1714160249, 7946, 0, 1, 0],
+  penTimeout1: [465348317, 1904918744, 7616, 1, 1, 0],
+  penKeeper1: [4109551657, 2031425049, 8073, 2, 0, 0],
+  ko1: [3342705198, 2341050154, 5121, 0, 0, 1],
+  ko3: [1861822237, 1933322066, 7958, 0, 0, 1],
+  ko6: [2526958168, 1573587964, 5649, 0, 0, 1],
   aiKo1: [47845968, 1192999698, 5817, 0, 0, 1],
   aiKo4: [2291840460, 860824426, 3346, 0, 1, 0],
   aiKo7: [4112032605, 1756315151, 5108, 0, 0, 1],

@@ -102,7 +102,7 @@ describe('embedded input and focus', () => {
     key('KeyW');
     Object.assign(input.touch, { enabled: true, sx: 1, sy: 0, shoot: true });
     win.dispatchEvent(new Event('blur'));
-    expect(input.read()).toEqual({ sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false, power: false });
+    expect(input.read()).toEqual({ sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false, power: false, skill: false });
     key('Space');
     input.touch.through = true;
     doc.hidden = true;

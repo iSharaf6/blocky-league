@@ -494,13 +494,13 @@ export class Stadium {
       const light = ((bg >> 16) & 255) * 0.3 + ((bg >> 8) & 255) * 0.59 + (bg & 255) * 0.11 > 170;
       g.fillStyle = fgs ? fgs[i % fgs.length] : brand ? cssHex(CALYNX_BLUE) : light ? '#26262e' : '#fbfbf4';
       let size = 42;
-      g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
+      g.font = `700 ${size}px "Silkscreen", "Lilita One", sans-serif`;
       const glyph = brand ? 48 + 12 : 0;
       const wMax = segW * 0.86 - glyph;
       let tw = g.measureText(w).width;
       if (tw > wMax) {
         size = Math.floor(size * (wMax / tw));
-        g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
+        g.font = `700 ${size}px "Silkscreen", "Lilita One", sans-serif`;
         tw = g.measureText(w).width;
       }
       g.textAlign = 'center';
@@ -769,7 +769,7 @@ export class Stadium {
     g.fillStyle = cssHex(shade(home, 0.8));
     g.fillRect(0, 0, 2048, 64);
     g.fillStyle = '#fbfbf4';
-    g.font = '700 40px "Silkscreen", "Courier New", monospace';
+    g.font = '700 40px "Silkscreen", "Lilita One", sans-serif';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     const name = this.opt.homeName.toUpperCase();
@@ -1594,11 +1594,11 @@ export class Stadium {
       g.fillRect(0, 88, 512, 8);
       const lynx = bg === CALYNX_BLUE ? 60 + 14 : 0;
       let size = 52;
-      g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
+      g.font = `700 ${size}px "Silkscreen", "Lilita One", sans-serif`;
       let w = g.measureText(text).width;
       if (w > 470 - lynx) {
         size = Math.floor(size * ((470 - lynx) / w));
-        g.font = `700 ${size}px "Silkscreen", "Courier New", monospace`;
+        g.font = `700 ${size}px "Silkscreen", "Lilita One", sans-serif`;
         w = g.measureText(text).width;
       }
       g.textAlign = 'center';

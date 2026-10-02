@@ -29,6 +29,10 @@ export interface Settings {
   ballSkin?: string;
   /** Chosen goal celebration (progression; see CELEBRATION_IDS); undefined = classic. */
   celebration?: string;
+  /** Goal explosion colours for your goals (SHOP; see GOAL_FX_IDS); undefined = your club's colours. */
+  goalFx?: string;
+  /** Sprint speed-line colour for your side (SHOP; see TRAIL_IDS); undefined = chalk white. */
+  trail?: string;
   /** Pass assistance (default ground 'assisted', through 'assisted'), switch move assist and timed finishing (default on). */
   groundAssist?: AssistLevel;
   throughAssist?: AssistLevel;
@@ -47,6 +51,8 @@ export interface Settings {
   stick?: StickMode;
   /** Colour-blind aid: shape cues on rings, markers and the minimap as well as colour (SessionOptions.colorblind). */
   colorblind?: boolean;
+  /** Quick subs: a card offers a tired player's change, made at the next stoppage (default on; game/quickSub.ts). */
+  quickSubs?: boolean;
 }
 
 export type StickMode = 'floating' | 'fixed';
@@ -113,8 +119,11 @@ export function normalizeSettings(raw: unknown): Settings {
   s.pad = normalizePadMap(s.pad);
   if (s.stick !== 'floating' && s.stick !== 'fixed') s.stick = 'floating';
   if (typeof s.colorblind !== 'boolean') s.colorblind = false;
+  if (typeof s.quickSubs !== 'boolean') s.quickSubs = true;
   if (s.ballSkin !== undefined && !(BALL_SKIN_IDS as readonly string[]).includes(s.ballSkin)) s.ballSkin = undefined;
   if (s.celebration !== undefined && !(CELEBRATION_IDS as readonly string[]).includes(s.celebration)) s.celebration = undefined;
+  if (s.goalFx !== undefined && !(GOAL_FX_IDS as readonly string[]).includes(s.goalFx)) s.goalFx = undefined;
+  if (s.trail !== undefined && !(TRAIL_IDS as readonly string[]).includes(s.trail)) s.trail = undefined;
   if (!ASSIST_LEVELS.includes(s.groundAssist as AssistLevel)) s.groundAssist = CONTROL_DEFAULTS.groundAssist;
   if (!ASSIST_LEVELS.includes(s.throughAssist as AssistLevel)) s.throughAssist = CONTROL_DEFAULTS.throughAssist;
   for (const k of ['autoSwitch', 'moveAssist', 'timedFinish', 'trainer', 'quickPass'] as const) {
@@ -161,7 +170,56 @@ export interface SaveData {
   run?: RunState;
   mastery?: MasteryState;
   season?: SeasonState;
+  /** The coin SHOP (src/meta/shop.ts): what has been bought, seen and the daily free pack. Always whole once loaded. */
+  shop?: ShopState;
   updatedAt: string;
+}
+
+/** What the coin SHOP remembers (src/meta/shop.ts owns the rules; normalizeShop makes any stored copy whole). */
+export interface ShopState {
+  /** Items bought with coins, as `${category}:${id}` (level unlocks aren't listed here: XP earns those). */
+  owned: string[];
+  /** Items the shop has already shown (an affordable one not in here is NEW on the menu's SHOP button). */
+  seen: string[];
+  /** Local day (YYYY-MM-DD) the free daily scout pack was last opened ('' = never). */
+  freePack: string;
+  /** Packs opened so far: it seeds the next one (the same save always draws the same players). */
+  packs: number;
+  /**
+   * A paid-for pack whose card hasn't been signed or sold yet (the tab closed mid-reveal): enough to draw the same
+   * card again (meta/shop.ts pendingCard), so it is never lost. Null when there is none.
+   */
+  pending: PendingPack | null;
+}
+
+export interface PendingPack {
+  kind: 'scout' | 'elite';
+  seed: number;
+  /** The club rating the card was drawn against, and what the pack cost (the resale cap reads it). */
+  base: number;
+  price: number;
+}
+
+/** A shop blob as stored by any build (or none) made whole: unknown entries dropped, numbers sane. */
+export function normalizeShop(raw: unknown): ShopState {
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<ShopState>) : {};
+  const keys = (v: unknown): string[] =>
+    Array.isArray(v) ? [...new Set(v.filter((k): k is string => typeof k === 'string' && /^[a-z]+:[a-z]+$/.test(k)))].slice(0, 200) : [];
+  return {
+    owned: keys(r.owned),
+    seen: keys(r.seen),
+    freePack: typeof r.freePack === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.freePack) ? r.freePack : '',
+    packs: num(r.packs),
+    pending: normalizePending(r.pending),
+  };
+}
+
+function normalizePending(raw: unknown): PendingPack | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const p = raw as Partial<PendingPack>;
+  if (p.kind !== 'scout' && p.kind !== 'elite') return null;
+  if (typeof p.seed !== 'number' || !Number.isFinite(p.seed) || typeof p.base !== 'number' || !Number.isFinite(p.base)) return null;
+  return { kind: p.kind, seed: p.seed >>> 0, base: Math.max(0, Math.min(99, Math.round(p.base))), price: num(p.price) };
 }
 
 /** The player's progression (everything here is earned by playing; nothing is bought). */
@@ -206,6 +264,7 @@ export function defaultSave(): SaveData {
       sfx: true, music: true, crowd: true, quality: defaultQuality(), difficulty: 1, halfMinutes: 2, timeOfDay: 'random', weather: 'random',
       commentary: true, camZoom: 'normal', ...CONTROL_DEFAULTS,
       keys: normalizeKeyMap(undefined), pad: normalizePadMap(undefined), stick: 'floating', colorblind: false,
+      quickSubs: true,
     },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
@@ -219,6 +278,7 @@ export function defaultSave(): SaveData {
     run: normalizeRun(undefined),
     mastery: normalizeMastery(undefined),
     season: normalizeSeason(undefined),
+    shop: normalizeShop(undefined),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -289,6 +349,8 @@ function mergeSave(raw: unknown): SaveData {
     run: normalizeRun(d.run),
     mastery: normalizeMastery(d.mastery),
     season: normalizeSeason(d.season),
+    // Saves from before the shop own nothing bought (their level unlocks stay: those come from XP).
+    shop: normalizeShop(d.shop),
   } as SaveData;
 }
 
@@ -423,6 +485,8 @@ export interface MatchSummary {
   tacklesWon: number;
   passes: number;
   skills: number;
+  /** SKILL GOALs: goals within a few seconds of a skill move that beat a man (sim/skills.ts 'skillGoal'). */
+  skillGoals?: number;
   headers: number;
   /** Goals scored from outside the box. */
   longGoals: number;
@@ -433,11 +497,16 @@ export interface MatchSummary {
   difficulty: number;
 }
 
+/** A SKILL GOAL's bonus: XP (up to three a match count) and coins (main.ts adds them to the match's reward). */
+export const SKILL_GOAL_XP = 20;
+export const SKILL_GOAL_COINS = 25;
+
 /** XP for a match: taking part, the result, and every good thing the player did (a clean sheet counts even in a draw). */
 export function matchXp(s: MatchSummary): number {
   let xp = 40;
   xp += s.won ? 60 : s.drawn ? 25 : 0;
   xp += s.goals * 15 + s.assists * 10 + Math.min(10, s.tacklesWon) * 4 + Math.min(10, s.skills) * 3;
+  xp += Math.min(3, s.skillGoals ?? 0) * SKILL_GOAL_XP;
   if (s.conceded === 0 && !(s.goals === 0 && !s.won && !s.drawn)) xp += 25;
   if (s.motm) xp += 20;
   return Math.round(xp * (1 + 0.15 * Math.max(0, Math.min(3, s.difficulty))));
@@ -599,11 +668,12 @@ export function unlockLadder(): NextUnlock[] {
 
 /**
  * The next thing XP earns, ball look or celebration, whichever comes at the lower level (the earliest next
- * level wins), and the XP still needed; null once the whole ladder is climbed.
+ * level wins), and the XP still needed; null once the whole ladder is climbed. `owned` (ShopState.owned) skips
+ * anything already bought in the SHOP: the level would bring nothing new.
  */
-export function nextUnlock(xp: number): NextUnlock | null {
+export function nextUnlock(xp: number, owned?: readonly string[]): NextUnlock | null {
   const lv = levelOf(xp).level;
-  const next = unlockLadder().find((u) => u.level > lv);
+  const next = unlockLadder().find((u) => u.level > lv && !owned?.includes(`${u.kind}:${u.id}`));
   return next ? { ...next, xpLeft: Math.max(0, xpAt(next.level) - xp) } : null;
 }
 
@@ -620,3 +690,12 @@ export const CELEBRATION_NAMES: { readonly [k in CelebrationId]: string } = {
 export function celebrationUnlocked(id: CelebrationId, level: number): boolean {
   return level >= CELEBRATION_LEVEL[id];
 }
+
+/**
+ * SHOP cosmetics with no level ladder (coins only; src/meta/shop.ts prices them, render/cosmetics.ts colours
+ * them): goal explosion themes ('club' = your kit's colours, always yours) and sprint trails ('white' always yours).
+ */
+export const GOAL_FX_IDS = ['club', 'gold', 'fire', 'ice', 'neon', 'rainbow', 'galaxy'] as const;
+export type GoalFxId = (typeof GOAL_FX_IDS)[number];
+export const TRAIL_IDS = ['white', 'fire', 'ice', 'lime', 'pink', 'gold', 'rainbow'] as const;
+export type TrailId = (typeof TRAIL_IDS)[number];

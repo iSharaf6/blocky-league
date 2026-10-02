@@ -286,17 +286,33 @@ export class World {
     c.updateProjectionMatrix();
   }
 
-  /** Keep the shadow frustum centred on what the camera is looking at. */
+  /**
+   * Keep the shadow frustum centred on what the camera is looking at, moved in whole shadow-map texels measured in
+   * the sun's own view: the texel grid then stays put on the ground as it follows, so shadow edges don't crawl or
+   * flicker while the camera pans. (Steps of 0.5 m along the pitch's axes slid the map by a fraction of a texel
+   * and re-cut every edge on the pitch several times a second.)
+   */
   focusShadows(x: number, z: number): void {
-    // Snap to texel-ish steps to avoid shimmering edges.
-    const step = 0.5;
-    const sx = Math.round(x / step) * step;
-    const sz = Math.round(z / step) * step;
-    this.sun.target.position.set(sx, 0, sz);
-    this.sun.position.set(sx + this.sunOffset.x, this.sunOffset.y, sz + this.sunOffset.z);
+    const c = this.sun.shadow.camera;
+    const size = this.sun.shadow.mapSize.x;
+    const tx = (c.right - c.left) / size;
+    const ty = (c.top - c.bottom) / size;
+    // The shadow camera's axes (it looks from the sun at its target, +y up, as Object3D.lookAt builds them).
+    const back = this.shadowBack.copy(this.sunOffset).normalize();
+    const right = this.shadowRight.set(0, 1, 0).cross(back).normalize();
+    const up = this.shadowUp.copy(back).cross(right);
+    const a = Math.round((x * right.x + z * right.z) / tx) * tx;
+    const b = Math.round((x * up.x + z * up.z) / ty) * ty;
+    const p = this.shadowFocus.set(0, 0, 0).addScaledVector(right, a).addScaledVector(up, b).addScaledVector(back, x * back.x + z * back.z);
+    this.sun.target.position.copy(p);
+    this.sun.position.copy(p).add(this.sunOffset);
     // Low from the far corner masts, opposite the key.
-    this.fill.position.set(sx + 20, 22, sz - 34);
+    this.fill.position.set(p.x + 20, 22, p.z - 34);
   }
+  private readonly shadowBack = new THREE.Vector3();
+  private readonly shadowRight = new THREE.Vector3();
+  private readonly shadowUp = new THREE.Vector3();
+  private readonly shadowFocus = new THREE.Vector3();
 
   resize(): void {
     const w = window.innerWidth;

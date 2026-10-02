@@ -1,5 +1,3 @@
-import './boot.css';
-
 // Keep a usable loading screen even if the game bundle fails to download or WebGL cannot initialize.
 void import('./main').then(({ ready }) => ready).catch((error: unknown) => {
   console.error('Blocky League could not start:', error);

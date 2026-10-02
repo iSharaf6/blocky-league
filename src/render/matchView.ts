@@ -233,6 +233,8 @@ export class MatchView {
   private passShaft: THREE.Mesh;
   private passHead: THREE.Mesh;
   private passing = false;
+  /** How far (m) the drawn ball still trails the sim's after a touch that snapped it somewhere (MatchSession.glideBall). */
+  readonly ballGlide = { x: 0, y: 0, z: 0 };
   /** Time of the last apply() (the pass ring pulses on it). */
   private clock = 0;
   private towers: readonly { x: number; z: number; h: number }[] = FLOODLIGHT_TOWERS;
@@ -568,6 +570,13 @@ export class MatchView {
     }
     for (let k = 0; k < 6; k++) f[BALL_OFS + k] = lerp(a[BALL_OFS + k], b[BALL_OFS + k], alpha);
     for (let k = 6; k < 11; k++) f[BALL_OFS + k] = b[BALL_OFS + k];
+    // Still gliding to where a touch put it (MatchSession.glideBall): drawn short of it, never through the turf.
+    const g = this.ballGlide;
+    if (g.x !== 0 || g.y !== 0 || g.z !== 0) {
+      f[BALL_OFS] += g.x;
+      f[BALL_OFS + 1] = Math.max(BALL_R, f[BALL_OFS + 1] + g.y);
+      f[BALL_OFS + 2] += g.z;
+    }
     for (const pin of this.pinned) {
       // Stood still on his mark, facing the referee (the sim is already walking him to the free kick).
       const o = pin.i * PF;

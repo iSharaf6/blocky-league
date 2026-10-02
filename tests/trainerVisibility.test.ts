@@ -7,7 +7,11 @@ import { PITCH_Y } from '../src/render/stadium';
 import { DT } from '../src/sim/constants';
 import { EMPTY_PAD, Match } from '../src/sim/match';
 import { applyScenario } from '../src/sim/scenario';
-import { Lesson, Trainer } from '../src/ui/trainer';
+import { Lesson, Trainer, lessonCue } from '../src/ui/trainer';
+
+// The cards' words come from the cue builders (the copy can change; what is checked is that the right card shows).
+const CROSS_CUE = lessonCue(BASICS[2].lesson[0], 'touch');
+const FINISH_CUE = lessonCue(BASICS[2].lesson[1], 'touch');
 
 /** Only the DOM operations the trainer uses; projection and match state remain real. */
 class ElementDouble {
@@ -130,7 +134,7 @@ function cross(p: ReturnType<typeof setup>): void {
 }
 
 function expectInside(card: ElementDouble, viewport: Viewport): void {
-  const position = /^translate\((-?\d+)px,(-?\d+)px\)$/.exec(card.style.transform);
+  const position = /^translate\((-?\d+(?:\.\d+)?)px,(-?\d+(?:\.\d+)?)px\)$/.exec(card.style.transform);
   expect(position).not.toBeNull();
   const x = Number(position![1]), y = Number(position![2]);
   expect(x).toBeGreaterThanOrEqual(0);
@@ -148,7 +152,7 @@ describe('tutorial instructions for an offscreen receiver', () => {
     p.card.offsetWidth = Math.min(340, viewport.width - 24);
     const initialCamera = cameraFor(p.frame, p.m.active, viewport, viewport.width / 2, viewport.height / 2);
     p.trainer.update(p.m, p.frame, initialCamera, head, 'touch', controls);
-    expect(p.root.querySelector('.trainer-title').textContent).toBe('CROSS');
+    expect(p.root.querySelector('.trainer-title').textContent).toBe(CROSS_CUE.title);
     cross(p);
     const x = viewport.edge === 'left' ? -40 : viewport.edge === 'right' ? viewport.width + 40 : viewport.width / 2;
     const y = viewport.edge === 'above' ? 40 : viewport.edge === 'below' ? viewport.height - 10 : viewport.height / 2;
@@ -161,8 +165,8 @@ describe('tutorial instructions for an offscreen receiver', () => {
       expect(p.root.hidden).toBe(false);
       expect(p.card.hidden).toBe(false);
       expect(p.card.style.visibility).toBe('visible');
-      expect(p.root.querySelector('.trainer-title').textContent).toBe('SHOOT');
-      expect(p.root.querySelector('.trainer-actions').textContent).toContain('Tap to finish the incoming cross');
+      expect(p.root.querySelector('.trainer-title').textContent).toBe(FINISH_CUE.title);
+      expect(p.root.querySelector('.trainer-actions').textContent).toContain(FINISH_CUE.actions[0][1]);
       expect(p.card.classList.contains('docked')).toBe(true);
       expectInside(p.card, viewport);
     }
@@ -181,7 +185,7 @@ describe('tutorial instructions for an offscreen receiver', () => {
     p.trainer.update(p.m, p.frame, onscreen, head, 'touch', controls);
     expect(p.root.hidden).toBe(false);
     expect(p.card.classList.contains('docked')).toBe(false);
-    expect(p.root.querySelector('.trainer-title').textContent).toBe('SHOOT');
+    expect(p.root.querySelector('.trainer-title').textContent).toBe(FINISH_CUE.title);
     expectInside(p.card, viewport);
   });
 
@@ -196,5 +200,27 @@ describe('tutorial instructions for an offscreen receiver', () => {
     p.trainer.update(p.m, p.frame, offscreen, head, 'touch', controls);
     expect(p.root.hidden).toBe(true);
     expect(p.trainer.waitingFor).toBeNull();
+  });
+
+  it('rides the player on device pixels and holds still through sub-pixel drift (no flicker between two pixels)', () => {
+    const viewport = viewports[0];
+    (window as unknown as { devicePixelRatio: number }).devicePixelRatio = 2;
+    const p = setup();
+    Trainer.lesson = null;
+    const at = (x: number) => {
+      p.trainer.update(p.m, p.frame, cameraFor(p.frame, p.m.active, viewport, x, viewport.height / 2), head, 'touch', controls);
+      return p.card.style.transform;
+    };
+    const first = at(200);
+    const [, x0] = /^translate\((-?[\d.]+)px,/.exec(first)!.map(Number);
+    // Half a CSS px is one device px at 2x: every spot is on that grid.
+    expect((x0 * 2) % 1).toBe(0);
+    // A player drifting by less than a device pixel either way: the card does not move at all.
+    for (const dx of [0.1, 0.3, -0.2, 0.25, -0.3]) expect(at(200 + dx)).toBe(first);
+    // A real move: it follows, still on the grid.
+    const moved = at(203.3);
+    const [, x1] = /^translate\((-?[\d.]+)px,/.exec(moved)!.map(Number);
+    expect(x1).not.toBe(x0);
+    expect((x1 * 2) % 1).toBe(0);
   });
 });

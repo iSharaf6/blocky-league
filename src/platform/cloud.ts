@@ -15,7 +15,7 @@
  * once with a keepalive request when the tab hides. Offline pushes wait for `online`. Failures toast.
  */
 import type { Session } from '@supabase/supabase-js';
-import { defaultSave, levelOf, normalizeProgress, normalizeSettings, type SaveData } from '../core/save';
+import { defaultSave, levelOf, normalizeProgress, normalizeSettings, normalizeShop, type SaveData } from '../core/save';
 
 export interface CloudContext {
   save: SaveData;
@@ -315,6 +315,8 @@ export function normalizeCloud(raw: unknown): SaveData {
     record: { ...base.record, ...(d.record ?? {}) },
     cup: typeof d.cup === 'object' ? d.cup : null,
     progress: normalizeProgress(d.progress),
+    // (The SHOP's purchases: an older copy has none, a damaged one is made whole.)
+    shop: normalizeShop(d.shop),
     updatedAt: typeof d.updatedAt === 'string' ? d.updatedAt : base.updatedAt,
   } as SaveData;
 }

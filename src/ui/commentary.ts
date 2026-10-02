@@ -172,6 +172,8 @@ const T = {
   soWide: ['{p} drags it wide!', '{p} misses the target!'],
   soWin: ['{wt} win it on penalties, {psc}!', '{wt} hold their nerve! Through on penalties.', "It's {wt}! They win the shootout {psc}."],
   skill: ['Lovely skill from {p}!', 'Neat footwork from {p}.'],
+  skillPerfect: ['Olé! {p} sends {q} the wrong way!', '{q} bites, and {p} is gone!', 'Sublime from {p}! {q} buys it completely.'],
+  skillGoal: ['Skill and a finish! What a goal!', 'The trickery, then the finish. Beautiful!'],
   beat: ['{p} leaves {q} for dead.', '{p} skips past {q}.', '{p} twists and turns past {q}.'],
   claim: ['{k} comes and claims it.', 'Good take from {k}.'],
   punch: ['{k} punches clear.', '{k} comes out and punches it away.'],
@@ -549,6 +551,17 @@ export class Commentator {
         const p = m.players[e.player];
         return p ? L(this.pick('skill', { ...v, p: this.sn(p.def.name) }), 1, p.side) : null;
       }
+      case 'skillMove': {
+        // (A PERFECT: timed into a defender's challenge, sim/skills.ts. The other moves have the 'skill' line.)
+        if (e.grade !== 'perfect' || e.on < 0) return null;
+        const p = m.players[e.player];
+        const q = m.players[e.on];
+        if (!p || !q) return null;
+        const [pn, qn] = this.two(m, p.idx, q.idx);
+        return L(this.pick('skillPerfect', { ...v, p: pn, q: qn }), 2, p.side, 'big');
+      }
+      case 'skillGoal':
+        return L(this.pick('skillGoal', v), 3, e.side, 'big');
       case 'claim': {
         const k = m.players[e.keeper];
         return k ? L(this.pick(e.caught ? 'claim' : 'punch', { ...v, k: this.sn(k.def.name) }), 1, k.side) : null;

@@ -27,7 +27,8 @@ export interface Moment {
   xpNote: string;
   /**
    * Controls reminder for the pre-play card (action names as HOW TO PLAY uses them; the key in brackets as a
-   * {pass} / {shoot} / {through} / {sprint} / {power} token, filled with the player's own binding: see fillKeys).
+   * {pass} / {shoot} / {through} / {sprint} / {power} token, filled with the player's own binding: see fillKeys;
+   * a quick press as {tap}, "tap" on touch and "press" on keys and pads: ui/coach.ts coachText).
    */
   tip: string;
   /** Preset clubs (indexes into PRESET_CLUBS) to play as / against; undefined = the player's own club / usual rival. */
@@ -69,7 +70,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Take the pass and score from ten metres. 20 seconds.',
     icon: '⚽',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'The ball is rolling to your striker: let it come, then SHOOT ({shoot}) with the stick at a corner of the goal. Tap SHOOT again as the foot meets the ball for a perfect finish.',
+    tip: 'The ball rolls to your striker. Let it come, aim at a corner and SHOOT ({shoot}). {Tap} SHOOT again as the foot meets the ball for a perfect finish.',
     difficulty: 0,
     next: 'cross-finish',
     spec: {
@@ -98,7 +99,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Your winger has it. Cross for the runner and score. 25 seconds.',
     icon: '↗',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Hold THROUGH ({through}) with the stick towards the box to cross; control switches to your striker as it comes in. Leave the stick to head it, or SHOOT ({shoot}) to head at goal.',
+    tip: 'Aim at the box, hold THROUGH ({through}) and let go to cross. You take the striker as it comes in: SHOOT ({shoot}) to head at goal.',
     difficulty: 0,
     next: 'one-on-one',
     spec: {
@@ -126,7 +127,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Through on goal from 25 metres, two defenders on your heels. 15 seconds.',
     icon: '🏃',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'SPRINT ({sprint}) at goal and shoot before they catch you: SHOOT ({shoot}) with the stick across the keeper, or hold SHOOT and tap THROUGH ({through}) to chip him.',
+    tip: 'SPRINT ({sprint}) at goal and shoot before they catch you. Aim across the keeper and SHOOT ({shoot}), or hold SHOOT and {tap} THROUGH ({through}) to chip him.',
     difficulty: 1,
     next: 'corner-kick',
     spec: {
@@ -154,7 +155,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Score from a corner. 30 seconds of play (the wait for the kick is free).',
     icon: '⚑',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Aim with the stick and tap PASS ({pass}) to swing it in, or hold for a driven ball. As it drops, SHOOT ({shoot}) to head at goal, or push the stick to bring it down.',
+    tip: 'Hold THROUGH ({through}) to whip it in, or SHOOT ({shoot}) for a driven cross. As it drops, SHOOT to head at goal, or move to bring it down.',
     difficulty: 1,
     next: 'two-down',
     spec: {
@@ -178,13 +179,13 @@ export const MOMENTS: Moment[] = [
     brief: 'Two goals behind, a minute to play, the ball at your feet. Draw or better.',
     icon: '⏱',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Move it fast: PASS ({pass}) to the ringed man, THROUGH ({through}) for a runner, SHOOT ({shoot}) from anywhere near the box. Win the kick-off back after you score. A draw is one star, a win two.',
+    tip: 'Move it fast: PASS ({pass}) to the ringed teammate, THROUGH ({through}) for a runner, SHOOT ({shoot}) near the box. Win the kick-off back after you score. A draw is one star, a win two.',
     difficulty: 0,
     next: 'hold-the-fort',
     spec: {
       id: 'two-down',
       title: 'TWO DOWN',
-      brief: 'From 0–2, get level or better before time.',
+      brief: 'Two goals down: get level or better before time.',
       clock: 0,
       seconds: 60,
       score: [0, 2],
@@ -209,7 +210,7 @@ export const MOMENTS: Moment[] = [
     brief: 'One up, one man down, they are coming. Keep them out for 45 seconds.',
     icon: '🛡',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Hold THROUGH ({through}) to PRESS and stay goal-side, tap SHOOT ({shoot}) to tackle when you are close. PASS ({pass}) switches to the nearest defender. Win it and keep it for more stars.',
+    tip: 'Hold PRESS ({through}) to stay goal-side, {tap} TACKLE ({shoot}) when you are close, SWITCH ({pass}) to the nearest defender. Win it and keep it for more stars.',
     difficulty: 2,
     next: 'giant-killing',
     spec: {
@@ -266,7 +267,7 @@ export const MOMENTS: Moment[] = [
     brief: 'Grab the MEGA cube and score with the rocket. 40 seconds.',
     icon: '⚡',
     xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
-    tip: 'Run over the cube, press POWER ({power}) to arm it, wait a second for the ball to glow, then SHOOT ({shoot}) from range: a mega shot cannot be saved from inside twelve metres.',
+    tip: 'Run over the cube, {tap} POWER ({power}) to arm it, wait a second for the ball to glow, then SHOOT ({shoot}) from range: a mega shot cannot be saved from inside twelve metres.',
     difficulty: 1,
     next: null,
     spec: {
@@ -331,7 +332,7 @@ export function starRules(spec: ScenarioSpec): [string, string, string] {
   const s = (n: number) => `${Math.round(n)} s`;
   switch (spec.goal) {
     case 'complete-pass':
-      return ['find your team-mate', 'find your team-mate', 'find your team-mate'];
+      return ['find your teammate', 'find your teammate', 'find your teammate'];
     case 'score':
       return ['score', th ? `score with ${s(th[1])} left` : 'score fast', th ? `score with ${s(th[2])} left` : 'score faster'];
     case 'lead':
@@ -354,7 +355,10 @@ export function starRules(spec: ScenarioSpec): [string, string, string] {
  */
 export interface LessonCue {
   key: 'pass' | 'shoot' | 'through' | 'sprint' | 'move';
-  /** What to do, beside the key cap ("to your free team-mate"). */
+  /**
+   * What to do, beside the key cap: a short imperative that never names the key ("Pass to the ringed teammate").
+   * A quick press is written {Tap}: "Tap" on touch, "Press" on keys and pads (ui/coach.ts coachText).
+   */
   text: string;
   after: number;
   /** onBall: our man has it at his feet; offBall: nobody of ours has it; incoming: a ball is on its way to our man. */
@@ -386,15 +390,15 @@ export const BASICS: readonly BasicsStep[] = [
   {
     id: 'basics-pass',
     title: 'PASS',
-    brief: 'Tap PASS to your free team-mate. Let the ball reach him.',
+    brief: 'Pass to your free teammate and let the ball reach him.',
     icon: '⇄',
     lesson: [
-      { key: 'pass', text: 'Tap to pass to the ringed team-mate', after: 0, when: 'onBall', done: 'pass' },
+      { key: 'pass', text: 'Pass to the ringed teammate', after: 0, when: 'onBall', done: 'pass' },
     ],
     spec: {
       id: 'basics-pass',
       title: 'PASS',
-      brief: 'Tap PASS. Your team-mate will meet the ball.',
+      brief: 'Pass. Your teammate meets the ball.',
       clock: 0,
       seconds: 30,
       untimed: true,
@@ -415,11 +419,11 @@ export const BASICS: readonly BasicsStep[] = [
   {
     id: 'basics-shoot',
     title: 'SHOOT',
-    brief: 'An open goal from twelve metres. Hold SHOOT briefly, aim at a corner, let go.',
+    brief: 'An open goal from twelve metres. Hold SHOOT, aim at a corner, let go.',
     icon: '⚽',
     lesson: [
-      { key: 'shoot', text: 'Hold briefly, aim at a corner, let go', after: 0, when: 'onBall', done: 'shot' },
-      { key: 'sprint', text: 'Sprint after the ball', after: 1.2, when: 'offBall', done: 'sprint' },
+      { key: 'shoot', text: 'Hold, aim at a corner, let go', after: 0, when: 'onBall', done: 'shot' },
+      { key: 'sprint', text: 'Hold to chase the ball', after: 1.2, when: 'offBall', done: 'sprint' },
     ],
     spec: {
       id: 'basics-shoot',
@@ -445,13 +449,13 @@ export const BASICS: readonly BasicsStep[] = [
     brief: 'Cross into the open goalmouth, then finish with your runner.',
     icon: '↗',
     lesson: [
-      { key: 'through', text: 'Hold, then let go to cross to your runner', after: 0, when: 'onBall', done: 'cross' },
-      { key: 'shoot', text: 'Tap to finish the incoming cross', after: 0, when: 'incoming', done: 'shot' },
+      { key: 'through', text: 'Hold, then let go to cross', after: 0, when: 'onBall', done: 'cross' },
+      { key: 'shoot', text: '{Tap} as the cross arrives', after: 0, when: 'incoming', done: 'shot' },
     ],
     spec: {
       id: 'basics-cross',
       title: 'CROSS',
-      brief: 'Hold to cross, then tap SHOOT to finish.',
+      brief: 'Hold to cross, then SHOOT as it arrives.',
       clock: 0,
       seconds: 30,
       untimed: true,

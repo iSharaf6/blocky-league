@@ -18,6 +18,7 @@ import {
 import { goalsOf } from '../sim/shootout';
 import { closeMeta, esc, fmt, mountMeta, topBar, type MetaScreen, type ToastKind } from './club';
 import { crestSvg } from './crest';
+import { difficultyLabels, playableDifficulty } from './difficulty';
 import { DIFFICULTIES, DIFF_LEVEL, pixelIcon } from './menus';
 import { scoreHtml, sep } from './text';
 
@@ -195,10 +196,12 @@ function milestoneToast(scr: MetaScreen, f?: Flash): void {
 function startScreen(app: AppContext, scr: MetaScreen, back: () => void, onBack: () => void, flash?: Flash): void {
   const st = runState(app);
   const club = PRESET_CLUBS[app.save.clubIdx] ? app.save.clubIdx : 0;
-  let diff = Math.max(0, Math.min(3, st.runs ? st.difficulty : app.save.settings.difficulty));
+  // (LEGEND is earned by match stars, as in Quick Match: ui/difficulty.ts.)
+  const progress = app.save.progress;
+  let diff = playableDifficulty(st.runs ? st.difficulty : app.save.settings.difficulty, progress);
   const render = (): void => {
     const c = PRESET_CLUBS[club];
-    const chips = DIFFICULTIES.map((d, i) => `<button class="rn-diff ${i === diff ? 'on' : ''}" data-a="diff" data-i="${i}" aria-pressed="${i === diff}">${d}</button>`).join('');
+    const chips = difficultyLabels(DIFFICULTIES, progress).map((d, i) => `<button class="rn-diff ${i === diff ? 'on' : ''}" data-a="diff" data-i="${i}" aria-pressed="${i === diff}">${d}</button>`).join('');
     const last = st.last ? `<p class="rn-last"><span>LAST RUN</span> ${lastLine(st)}</p>` : '';
     scr.render(
       `${topBar('MENU', 'CLUB RUN', `${RUN_ROUNDS} WINS${sep()}ONE LIFE`, app.save.coins)}
@@ -226,7 +229,9 @@ function startScreen(app: AppContext, scr: MetaScreen, back: () => void, onBack:
       {
         back,
         diff: (el) => {
-          diff = Number(el.dataset.i) || 0;
+          const i = Number(el.dataset.i) || 0;
+          if (playableDifficulty(i, progress) !== i) return;
+          diff = i;
           render();
         },
         start: () => {

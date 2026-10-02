@@ -1,0 +1,131 @@
+/*
+ * The coach card (ui/coach.ts): every instruction the game gives in play wears it. One component, two sizes:
+ *   default  a tip: the trainer over the controlled player, the set-piece / penalty / shootout / keeper's-ball
+ *            hint, the first-match tutorial tip;
+ *   .lesson  LEARN THE BASICS and the first match's MOVE / PASS steps: a size up, the key cap bobbing.
+ * Dark ink card, a gold rule on top, the title in the pixel face (capitals), the words in Lilita One, key caps
+ * cream with ink letters. In: a short rise (and a fade where the slot fades). Out: at once.
+ * Where a card sits is its owner's business (trainer.ts rides it on the player; the HUD slots in style.css).
+ */
+:root {
+  --coach-bg: rgba(38, 38, 46, 0.94);
+  --coach-gold: #ffd23a;
+  --coach-cap: #fbfbf4;
+  --coach-cap-edge: #adaeaa;
+}
+
+.coach {
+  width: max-content;
+  padding: 7px 10px 8px;
+  color: #fbfbf4;
+  background: var(--coach-bg);
+  border: 0;
+  border-top: 3px solid var(--coach-gold);
+  box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.22);
+  font: 400 14px / 1.15 var(--round);
+  text-align: left;
+}
+.coach [hidden] { display: none !important; }
+.coach-title { margin-bottom: 6px; font: 700 11px / 1 var(--px); letter-spacing: 1px; color: var(--coach-gold); white-space: nowrap; }
+.coach-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font: 400 14px / 1.15 var(--round); letter-spacing: 0.2px; }
+.coach-actions > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.coach kbd {
+  display: inline-block;
+  min-width: 1.8em;
+  margin: 0;
+  padding: 3px 5px 2px;
+  text-align: center;
+  font: 700 11px / 1 var(--px);
+  letter-spacing: 0.5px;
+  color: #26262e;
+  background: var(--coach-cap);
+  box-shadow: 0 2px 0 var(--coach-cap-edge);
+}
+.coach-detail { margin-top: 6px; font: 400 12px / 1.2 var(--round); color: #d1d7ce; }
+
+/* The lesson size: one prompt, read from across the room. */
+.coach.lesson { padding: 10px 14px 11px; border-top-width: 4px; box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.27); }
+.coach.lesson .coach-title { margin-bottom: 8px; font-size: 15px; }
+.coach.lesson .coach-actions { gap: 6px 12px; font-size: 18px; }
+.coach.lesson kbd { padding: 5px 8px 4px; font-size: 16px; box-shadow: 0 3px 0 var(--coach-cap-edge); animation: coach-bob 0.9s ease-in-out infinite; }
+.coach.lesson .coach-detail { display: none; }
+
+@keyframes coach-bob { 50% { transform: translateY(-3px); } }
+/* (`translate`, not `transform`: the trainer card is placed with an inline transform, the HUD slots centre with one.) */
+@keyframes coach-in { from { translate: 0 5px; } }
+
+/* Big screens a step up; phones a step down (the card must never hide the play). */
+@media (min-width: 1200px) and (min-height: 720px) {
+  .coach-title { font-size: 12px; }
+  .coach-actions { font-size: 15px; }
+  .coach kbd { font-size: 12px; }
+  .coach-detail { font-size: 13px; }
+}
+@media (max-width: 600px), (max-height: 500px) {
+  .coach { padding: 5px 8px 6px; }
+  .coach-title { margin-bottom: 5px; font-size: 9px; }
+  .coach-actions { gap: 4px 8px; font-size: 12px; }
+  .coach kbd { padding: 2px 4px 2px; font-size: 9px; }
+  .coach-detail { margin-top: 5px; font-size: 10px; }
+  .coach.lesson { padding: 7px 10px 8px; }
+  .coach.lesson .coach-title { margin-bottom: 5px; font-size: 12px; }
+  .coach.lesson .coach-actions { font-size: 15px; }
+  .coach.lesson kbd { padding: 4px 6px 3px; font-size: 13px; }
+}
+
+/* ---------------------------------------------------------------- the on-pitch trainer (ui/trainer.ts) */
+
+/* It follows the player, never the ball. */
+.pitch-trainer { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
+.pitch-trainer[hidden], .pitch-trainer [hidden] { display: none !important; }
+.trainer-guide { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
+.trainer-line-shadow { stroke: #26302c; stroke-width: 4; stroke-opacity: .28; stroke-dasharray: 5 9; }
+.trainer-line { stroke: #f7ffe2; stroke-width: 2; stroke-opacity: .8; stroke-dasharray: 5 9; }
+.trainer-card { position: absolute; top: 0; left: 0; max-width: calc(100vw - 20px); animation: coach-in 0.18s ease-out; transition: opacity 0.18s ease-out; }
+@starting-style { .trainer-card { opacity: 0; } }
+/* Its pointer: a tip under the card (over it when the card hangs below his feet) at --tip, over the player. */
+.trainer-card::after { content: ''; position: absolute; left: var(--tip, 50%); top: 100%; width: 0; height: 0; margin-left: -7px; border: 7px solid transparent; border-top-color: var(--coach-bg); border-bottom: 0; }
+.trainer-card.docked::after { display: none; }
+.trainer-card.below::after { top: auto; bottom: 100%; border-top: 0; border-bottom: 7px solid var(--coach-gold); }
+/* The pass receiver's tag: the PASS cap and his number. */
+.trainer-recipient { position: absolute; top: 0; left: 0; padding: 3px 6px 2px; color: #26262e; background: var(--coach-cap); box-shadow: 0 2px 0 var(--coach-cap-edge); font: 700 10px / 1 var(--px); letter-spacing: 0.5px; white-space: nowrap; }
+.trainer-recipient .sep { width: 2px; height: 0.72em; opacity: 0.6; margin: 0 0.5em; vertical-align: -0.06em; }
+/* A basics prompt is one action and one short line: room for it, wrapping rather than spilling past the card. */
+.pitch-trainer .trainer-card.lesson { max-width: min(400px, calc(100vw - 24px)); }
+.pitch-trainer .trainer-card.lesson .coach-actions > span { white-space: normal; }
+/* Narrow phones: a narrow card. Landscape phones are short, not narrow: a wider card is fewer rows over the play. */
+@media (max-width: 600px) {
+  .trainer-card { max-width: 220px; }
+}
+@media (max-height: 500px) and (min-width: 601px) {
+  .trainer-card { max-width: 360px; }
+}
+
+/* ---------------------------------------------------------------- the HUD's hint and tip slots (ui/hud.ts) */
+
+/* (The slots' places, and when they give way to banners and flags, stay in style.css.) */
+.hud .hud-hint.coach,
+.hud .hud-tip.coach {
+  max-width: min(560px, calc(100vw - 24px));
+  padding: 8px 12px 9px;
+  color: #fbfbf4;
+  background: var(--coach-bg);
+  border: 0;
+  border-top: 3px solid var(--coach-gold);
+  box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.22);
+  font: 400 14px / 1.15 var(--round);
+  text-align: left;
+}
+.hud .hud-hint.coach.on { animation: coach-in 0.18s ease-out; transition: opacity 0.18s ease-out; }
+/* The hint lives in a band (top, or low between the controls) over a set piece: one row where it fits, the title
+   leading it, so it covers as little of the taker, the goal and the ball as it can. */
+.hud .hud-hint.coach { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.hud .hud-hint.coach .coach-actions { display: contents; }
+.hud .hud-hint.coach .coach-title { margin: 0; }
+.hud .hud-hint.coach .coach-detail { flex-basis: 100%; margin-top: 0; }
+.hud .hud-tip.coach { transform: translateX(-50%); transition: none; }
+.hud .hud-tip.coach.on { transform: translateX(-50%); animation: coach-in 0.18s ease-out; transition: opacity 0.18s ease-out; }
+@media (max-width: 600px), (max-height: 500px) {
+  .hud .hud-hint.coach,
+  .hud .hud-tip.coach { padding: 6px 9px 7px; }
+}

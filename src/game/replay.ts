@@ -1,5 +1,6 @@
 import type { Match } from '../sim/match';
 import type { PState } from '../sim/player';
+import { skillPose } from '../sim/skills';
 
 /**
  * Floats per player in a frame: 0 x, 1 z, 2 y, 3 facing, 4 state code, 5 stateT, 6 runPhase, 7 speed,
@@ -14,10 +15,13 @@ export const FRAME_LEN = BALL_OFS + 11;
  * Frame code per player state; 10 = sent off (parked by his dugout, drawn hands-on-head). 11 / 12 are
  * reserved for a sim 'stumble' and a 'plant' (the step before a strike at a sprint): the renderer already
  * draws them (characters.PSTATE), so a sim state by either name is recorded and drawn with no other change.
+ * 13 / 14 are SKILL poses written over a running man (sim/skills.ts skillPose): 13 his skill move (channel 5 its
+ * clock, 8 its 0..1 progress, 9 the roulette's side, 11 the move: SKILL_CODE), 14 a defender winding up a challenge
+ * (the tell; 5 its clock, 8 its 0..1 progress). A man a PERFECT beat is written as 11, stumbling (8: 0..1 through it).
  */
 export const STATE_CODE: Record<PState, number> & Record<string, number | undefined> = {
   move: 0, kick: 1, slide: 2, fallen: 3, stand: 4, dive: 5, hold: 6, throw: 7, celebrate: 8, dejected: 9, sentoff: 10,
-  stumble: 11, plant: 12,
+  stumble: 11, plant: 12, skill: 13, load: 14,
 };
 export const SENT_OFF_CODE = 10;
 
@@ -46,7 +50,8 @@ export function writeFrame(m: Match, out: Float32Array, time: number, lunge?: Fl
     out[o] = p.pos.x;
     out[o + 1] = p.pos.z;
     out[o + 2] = p.y;
-    out[o + 3] = p.facing;
+    // (The body as drawn: Player.drawFacing rides out a face target dropped for a step, the sim's facing doesn't.)
+    out[o + 3] = p.drawnFacing();
     out[o + 4] = isSentOff(p) ? SENT_OFF_CODE : STATE_CODE[p.state] ?? 0;
     out[o + 5] = p.stateT;
     out[o + 6] = p.runPhase;
@@ -67,6 +72,19 @@ export function writeFrame(m: Match, out: Float32Array, time: number, lunge?: Fl
     out[o + 13] = p.celebrate;
     out[o + 14] = m.ball.owner === p.idx ? 1 : 0;
     out[o + 15] = p.stamina;
+    // SKILL (sim/skills.ts): his move, a defender's tell, the man a PERFECT beat (over a running man only).
+    const sk = out[o + 4] === STATE_CODE.move ? skillPose(m, p) : null;
+    if (sk) {
+      const u = Math.min(1, sk.t / Math.max(1e-3, sk.dur));
+      out[o + 4] = sk.kind === 'move' ? STATE_CODE.skill! : sk.kind === 'load' ? STATE_CODE.load! : STATE_CODE.stumble!;
+      // (The stumble pose plays over 0.6 s of its clock: stretched over however long he stumbles.)
+      out[o + 5] = sk.kind === 'stumble' ? u * 0.6 : sk.t;
+      out[o + 8] = u;
+      if (sk.kind === 'move') {
+        out[o + 9] = sk.turn;
+        out[o + 11] = sk.code;
+      }
+    }
   }
   const b = m.ball;
   out[BALL_OFS] = b.pos.x;

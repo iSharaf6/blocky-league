@@ -3,6 +3,7 @@ import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_
 import { headerAtGoal, throughLead } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, DDA_PRESS, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
 import { readsHuman, takeOnVsHuman, vsHuman } from './dribble';
+import { startTell, telegraphs, TELL_PRESS, TOLD_TACKLE } from './skills';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import { FIRST_MATCH_PRESS, type Match } from './match';
 import type { Player } from './player';
@@ -32,6 +33,13 @@ export interface TeamBrain {
   trap: number;
   /** The presser holds a screen in front of the block instead of engaging (the carrier is beyond the style's press zone). */
   screen: boolean;
+  /**
+   * The human's carrier being watched for standing on the ball (humanStalling): his index (-1: none), the furthest
+   * he has got up the pitch (m, his attacking direction) and the match clock when he last gained ground.
+   */
+  stallBy: number;
+  stallBest: number;
+  stallSince: number;
   supporter: number;
   supportX: number;
   supportZ: number;
@@ -71,7 +79,7 @@ export interface TeamBrain {
 
 export function makeBrain(): TeamBrain {
   return {
-    think: 0, chaser: -1, presser: -1, cover: -1, trap: -1, screen: false,
+    think: 0, chaser: -1, presser: -1, cover: -1, trap: -1, screen: false, stallBy: -1, stallBest: 0, stallSince: 0,
     supporter: -1, supportX: 0, supportZ: 0, supportT: 0,
     supporter2: -1, support2X: 0, support2Z: 0,
     supporter3: -1, support3X: 0, support3Z: 0,
@@ -462,8 +470,9 @@ function pickPresser(m: Match, side: Side, brain: TeamBrain, c: Player): void {
   if (!first) return;
   const st = styleOf(m, side);
   // Beyond the style's press zone (a low block, a mid-block) the presser holds a screen in front of the block and
-  // nobody else steps out of it.
-  brain.screen = cN > st.pressFrom && !inOwnBox(m, side, c.pos.x, c.pos.z);
+  // nobody else steps out of it. Not for ever: the human's man standing on it there (no ground gained for STALL_S)
+  // is closed down, the presser in and the cover with him, as against a carrier inside the zone.
+  brain.screen = cN > st.pressFrom && !inOwnBox(m, side, c.pos.x, c.pos.z) && !humanStalling(m, brain, c);
   let engaged: Player | null;
   if (human && human.s < first.s + 4) {
     // The human is on it; the nearest AI teammate covers.
@@ -482,6 +491,28 @@ function pickPresser(m: Match, side: Side, brain: TeamBrain, c: Player): void {
     if (t && t.s < 22) brain.trap = t.p.idx;
   }
 }
+
+/**
+ * The human's carrier hasn't gained STALL_GAIN m up the pitch in STALL_S s of the match clock (standing on the ball,
+ * or shuffling it about, to run the clock down where a low block won't come for him). Only the human's man: an AI
+ * carrier moves it on by himself. A new carrier, or ground gained, starts the count again.
+ */
+function humanStalling(m: Match, brain: TeamBrain, c: Player): boolean {
+  if (!m.isHumanControlled(c) || m.ball.owner !== c.idx) {
+    brain.stallBy = -1;
+    return false;
+  }
+  const fwd = c.pos.x * m.attackDir(c.side);
+  if (brain.stallBy !== c.idx || fwd > brain.stallBest + STALL_GAIN || m.clock < brain.stallSince) {
+    brain.stallBy = c.idx;
+    brain.stallBest = fwd;
+    brain.stallSince = m.clock;
+    return false;
+  }
+  return m.clock - brain.stallSince >= STALL_S;
+}
+export const STALL_S = 3;
+const STALL_GAIN = 2;
 
 /** A high press's trap engages while the carrier is this far up (our frame: 0 is halfway, so in his own half; the human's, his own third). */
 const TRAP_FROM = 0;
@@ -1087,7 +1118,7 @@ function trap(m: Match, p: Player, c: Player, dt: number): void {
   const x = c.pos.x - ad * 1.2 + c.vel.x * 0.3;
   const z = clamp(c.pos.z + sgn * TRAP_D + c.vel.z * 0.3, -HALF_W + 1, HALF_W - 1);
   moveTo(p, x, z, 0.9, b);
-  if (m.ball.owner === c.idx && p.tackleCooldown <= 0 && p.slowT <= 0 && !(m.isHumanControlled(c) && c.protectT > 0) &&
+  if (m.ball.owner === c.idx && p.tackleCooldown <= 0 && p.slowT <= 0 && p.tellT <= 0 && !(m.isHumanControlled(c) && c.protectT > 0) &&
     dist2(p.footX(), p.footZ(), b.x, b.z) < 0.95 && dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.95) {
     m.tryTackle(p, c, (0.62 + m.aiSkill(p.side) * 0.09) * 1.1);
   }
@@ -1162,7 +1193,8 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   let commit = p.commitT > 0;
   if (hasBall && d < 3.2) p.jockeyT += dt;
   if (commit) p.commitT -= dt;
-  else if (hasBall && d < 2.7 && p.tackleCooldown <= 0 && !guarded) {
+  // (Winding up a telegraphed challenge, Player.tellT: skills.ts sends him in when it's up.)
+  else if (hasBall && d < 2.7 && p.tackleCooldown <= 0 && !guarded && p.tellT <= 0) {
     const exposed = dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.8 ? 2.2 : 1;
     const backToGoal = Math.cos(c.facing) * ad > 0.3 ? 1.5 : 1;
     const covered = brain.cover >= 0 ? 1.3 : 0.8;
@@ -1178,9 +1210,15 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     const styleK = st.pressRate * (nX(m, p.side, c.pos.x) > 0 ? st.pressHigh : 1);
     const style = (vsHuman ? 1 + (styleK - 1) * STYLE_VS_HUMAN : styleK) * (vsHuman ? 1 - DDA_PRESS * m.assistEase(p.side) : 1);
     const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25) * ease * style;
-    if (m.rng.chance(rate * dt)) {
-      p.commitT = 0.55;
-      commit = true;
+    // At the human's man from in front of him or beside him it's telegraphed first: the SKILL counter (skills.ts). (A
+    // told challenge comes TELL_PRESS x as often: the warning it gives him costs it the surprise.)
+    const told = vsHuman && telegraphs(m, p, c);
+    if (m.rng.chance(rate * (told ? TELL_PRESS : 1) * dt)) {
+      if (told) startTell(m, p, c, false);
+      else {
+        p.commitT = 0.55;
+        commit = true;
+      }
     }
   }
   // The jockeying gap is measured from the ball so the presser's foot isn't already on it (a little more room
@@ -1193,14 +1231,16 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   const jz = b.z + c.vel.z * 0.28 + (uz / ul) * gap;
   moveTo(p, jx, jz, 1, b);
   if (d < 3.2) p.faceTarget = Math.atan2(b.z - p.pos.z, b.x - p.pos.x);
-  p.sprint = d > 2.6 || commit;
+  // (Winding up a telegraphed challenge, skills.ts, he keeps up with the man on his toes.)
+  p.sprint = d > 2.6 || commit || p.tellT > 0;
   const aggression = 0.62 + skill * 0.09;
   const footD = dist2(p.footX(), p.footZ(), b.x, b.z);
   if (commit && hasBall && p.tackleCooldown <= 0 && footD < 1.15) {
-    m.tryTackle(p, c, aggression);
+    // (Going in out of a tell, skills.ts, the man ignored it: the tackle is the surer for it.)
+    m.tryTackle(p, c, aggression * (p.toldT > 0 ? TOLD_TACKLE : 1));
     p.commitT = 0;
     p.jockeyT = 0;
-  } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded &&
+  } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded && p.tellT <= 0 &&
     dist2(b.x, b.z, c.pos.x, c.pos.z) > (vsHuman ? HUMAN_POKE_EXPOSED : 0.95)) {
     // Poke it away when the carrier's touch takes it too far from his feet.
     m.tryTackle(p, c, aggression * 1.25);
@@ -1217,7 +1257,7 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
  */
 function chaseSlide(m: Match, p: Player, c: Player, dt: number): void {
   const b = m.ball;
-  if (b.owner !== c.idx || b.held || p.state !== 'move' || p.tackleCooldown > 0 || p.slowT > 0) return;
+  if (b.owner !== c.idx || b.held || p.state !== 'move' || p.tackleCooldown > 0 || p.slowT > 0 || p.tellT > 0) return;
   const tx = p.pos.x - c.pos.x;
   const tz = p.pos.z - c.pos.z;
   const d = Math.hypot(tx, tz);
@@ -1239,6 +1279,11 @@ function chaseSlide(m: Match, p: Player, c: Player, dt: number): void {
   const bz = b.pos.z + c.vel.z * 0.18;
   if (pointSegDist(c.pos.x, c.pos.z, p.pos.x, p.pos.z, bx, bz).d < 0.55) rate *= 0.3;
   if (!m.rng.chance(rate * dt)) return;
+  // Beside the human's man (not from behind him) it's telegraphed first: he goes to ground when it's up (skills.ts).
+  if (telegraphs(m, p, c)) {
+    startTell(m, p, c, true);
+    return;
+  }
   p.facing = Math.atan2(bz - p.pos.z, bx - p.pos.x);
   m.startSlide(p);
 }

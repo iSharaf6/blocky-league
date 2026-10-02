@@ -13,6 +13,7 @@ import {
   standingFoulChance, standingTackleChance, STAND_REACH, tackleClosing, vsHuman, HUMAN_SLIDE_BOOST, HUMAN_SLIDE_MIN,
   HUMAN_SLIDE_REACH, HUMAN_SLIDE_T, humanSlideFoul,
 } from './dribble';
+import { humanSkill, SkillState, skillGoal, skillTells } from './skills';
 import {
   AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
   PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SHOT_TEMPO, SIX_DEPTH, SIX_W, SPRINT_SPEED, TEMPO, DDA_TACKLE, KEEPER_BOOST,
@@ -90,6 +91,8 @@ export interface Pad {
   digital?: boolean;
   /** Blitz mode: use the held power-up (optional; a press, not a hold). */
   power?: boolean;
+  /** SKILL: a skill move with the ball (optional; a press, not a hold: skills.ts). */
+  skill?: boolean;
 }
 
 export interface Restart {
@@ -439,6 +442,8 @@ const LOOSE_STRIKE_POWER = 0.9;
  */
 const MOVE_ASSIST_T = 0.5;
 const MOVE_ASSIST_CONE = Math.PI / 3;
+/** ...and a run once taken is only given back to the stick this much (rad) beyond that cone (no flicker at its edge). */
+const MOVE_ASSIST_SLACK = Math.PI / 9;
 /** ... and off the ball, with the stick left alone for MOVE_IDLE_T s, he follows his AI positioning at a jog. */
 const MOVE_IDLE_T = 0.4;
 /** The stick held at a switch counts as neutral (latched) until it's let go or swung more than this (rad). */
@@ -553,6 +558,8 @@ export class HumanCtl {
   /** Switch tracking for move assist: the man last seen controlled, seconds since the last switch. */
   seenActive = -1;
   sinceSwitch = 99;
+  /** Move assist since the last switch: running the AI's run (true), handed to the stick (false), undecided (null). */
+  runTaken: boolean | null = null;
   /** Seconds the stick has been left alone, and the direction it was held at the last switch (see STICK_LATCH_TURN). */
   stickIdle = 0;
   latch: { x: number; z: number } | null = null;
@@ -599,6 +606,8 @@ export class HumanCtl {
    * smoothed turn never passed its 0.9 rad bar once the human's cut was a quick bend.)
    */
   readonly assist = new AssistState();
+  /** His SKILL moves, the tells on his man and his skill chain (see skills.ts). */
+  readonly skill = new SkillState();
   /** His last stick input looked like keys / d-pad (see isDigitalStick, Pad.digital). */
   padDigital = false;
   /** THROUGH was tapped during the current SHOOT charge: the shot will be a chip. */
@@ -812,6 +821,11 @@ export class Match {
   };
   /** Offside law on (MatchConfig.offside, default true). Can be flipped mid-match. */
   offside: boolean;
+  /**
+   * A Football Moment (scenario.ts applyScenario): a human's penalty waits for his kick instead of going on its
+   * own after HUMAN_RESTART_WINDOW (a moment is his to win). Off in a match, where a stalled restart must not hang.
+   */
+  humanPenaltyWaits = false;
   /** Formation each side is playing right now (see setFormation). */
   readonly formation: [FormationId, FormationId];
   /**
@@ -1470,21 +1484,27 @@ export class Match {
     let made = 0;
     for (const p of tired) {
       if (room <= 0) break;
-      const bench = this.bench[side];
-      // Like for like first, then any outfielder.
-      const order = [
-        ...bench.map((d, i) => ({ d, i })).filter((e) => e.d.role === p.role),
-        ...bench.map((d, i) => ({ d, i })).filter((e) => e.d.role !== p.role && e.d.role !== 'GK'),
-      ];
-      for (const e of order) {
-        if (this.substitute(side, p.slot, e.i)) {
-          made++;
-          room--;
-          break;
-        }
+      const i = this.subPick(side, p.slot);
+      if (i >= 0 && this.substitute(side, p.slot, i)) {
+        made++;
+        room--;
       }
     }
     return made;
+  }
+
+  /**
+   * The bench player (index into bench[side]) a manager brings on for the man in `slot`: like for like first,
+   * then any outfielder; a keeper only for the keeper. -1 when nobody fits. The AI benches (subTired) and the
+   * human's quick subs (game/quickSub.ts) both pick with this.
+   */
+  subPick(side: Side, slot: number): number {
+    const p = this.bySide[side][slot];
+    if (!p) return -1;
+    const bench = this.bench[side];
+    if (p.isKeeper) return bench.findIndex((d) => d.role === 'GK');
+    const same = bench.findIndex((d) => d.role === p.role);
+    return same >= 0 ? same : bench.findIndex((d) => d.role !== 'GK');
   }
 
   /**
@@ -1571,6 +1591,8 @@ export class Match {
   step(dt: number, pad: Pad | readonly [Pad, Pad]): void {
     const pads = this.padsFor(pad);
     this.phaseT += dt;
+    // Telegraphed challenges on a human's carrier count down (skills.ts); out of open play the moves stop.
+    skillTells(this, dt);
     // (Set again in applyHuman while a human lines up a penalty.)
     this.ctl[0].penAim = this.ctl[1].penAim = null;
     if (this.penDive) this.stepPenDive();
@@ -2662,6 +2684,8 @@ export class Match {
         this.steerReceive(p, pad, stickLen);
       }
     }
+    // SKILL: a move with the ball, or one under way (skills.ts): last, so it has the say over his run.
+    humanSkill(this, p, pad, dt);
   }
 
   /** A nearby incoming loose flight with a reachable contact; keeper touches and woodwork need no pass target. */
@@ -3097,6 +3121,7 @@ export class Match {
     if (p.idx !== this.h.seenActive) {
       this.h.seenActive = p.idx;
       this.h.sinceSwitch = 0;
+      this.h.runTaken = null;
       this.h.switchT = 0;
       this.h.latch = stickLen > 0.3 ? { x: pad.mx / stickLen, z: pad.mz / stickLen } : null;
     } else this.h.sinceSwitch += dt;
@@ -3123,9 +3148,19 @@ export class Match {
     if (!run) return;
     if (fresh) {
       if (stickLen >= 0.2 && !this.h.latch) {
+        // (Decided with some give: once the stick has gone its own way it keeps him for the rest of the window,
+        // and a run taken is only dropped past the cone plus MOVE_ASSIST_SLACK. Taken and dropped on alternate
+        // steps at the cone's edge, the run and the stick turned his body back and forth: he shook.)
+        if (this.h.runTaken === false) return;
         const rl = Math.hypot(run.wantX, run.wantZ);
-        if (rl < 0.05 || (pad.mx * run.wantX + pad.mz * run.wantZ) / (stickLen * rl) < Math.cos(MOVE_ASSIST_CONE)) return;
+        if (rl < 0.05) return;
+        const edge = this.h.runTaken ? MOVE_ASSIST_CONE + MOVE_ASSIST_SLACK : MOVE_ASSIST_CONE;
+        if ((pad.mx * run.wantX + pad.mz * run.wantZ) / (stickLen * rl) < Math.cos(edge)) {
+          this.h.runTaken = false;
+          return;
+        }
       }
+      this.h.runTaken = true;
       p.sprint = run.sprint || pad.sprint;
     } else p.sprint = false;
     p.wantX = run.wantX;
@@ -3402,6 +3437,8 @@ export class Match {
       // Humans get a generous window, then it goes automatically. (The very first match: his kick-offs wait for
       // his button, however long: MatchConfig.firstMatch.)
       if (r.kind === 'kickoff' && this.cfg.firstMatch) return;
+      // (A Football Moment's penalty is his to take: humanPenaltyWaits.)
+      if (r.kind === 'penalty' && this.humanPenaltyWaits) return;
       if (this.phaseT < HUMAN_RESTART_WINDOW) return;
     } else if (this.phaseT < r.wait) return;
     if (t.order) return;
@@ -3761,6 +3798,7 @@ export class Match {
     this.ball.owner = -1;
     this.ball.held = false;
     this.events.push({ type: 'goal', side, scorer: scorer.idx, own });
+    skillGoal(this, side, own);
     // The scorer (for an own goal, the attacker nearest the ball) wheels away to the corner flag on
     // the camera side at this end; the 3-4 nearest teammates chase him there, the rest jog over and
     // the keeper stays home. The conceding side trudges off towards its own half.

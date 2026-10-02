@@ -136,8 +136,9 @@ export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt
     st.hist.length = 0;
   }
   if (p.state !== 'move') return;
-  // (Charging a shot or a pass, or aiming one with PASS / THROUGH down, the stick is aiming: no skill move.)
-  const busy = pad.shoot || pad.pass || pad.through || m.ctl[p.side].passMode !== null;
+  // (Charging a shot or a pass, or aiming one with PASS / THROUGH down, the stick is aiming: no skill move. With SKILL
+  // down it is picking the move: skills.ts, never a cut as well.)
+  const busy = pad.shoot || pad.pass || pad.through || !!pad.skill || m.ctl[p.side].passMode !== null;
   // ---- Skill cut. (A flick across a thumbstick passes near the middle for a frame or two: those frames
   // are skipped, not a reset.)
   const h = st.hist;
@@ -187,9 +188,10 @@ function skillCut(m: Match, p: Player): void {
     if (d > CUT_REACH + 0.5) continue;
     near = true;
     if (d > CUT_REACH) continue;
-    // Committed: going in for the tackle (or to ground), or closing on him at pace.
+    // Committed: going in for the tackle (or to ground), or closing on him at pace. (A man winding up a telegraphed
+    // challenge, skills.ts, is set, not yet going: the SKILL button is the answer to that.)
     const closing = (o.vel.x * dx + o.vel.z * dz) / Math.max(0.1, d);
-    const committed = o.commitT > 0 || o.state === 'slide' || closing > 2 || (o.tackleCooldown <= 0 && d < 1.8);
+    const committed = o.tellT <= 0 && (o.commitT > 0 || o.state === 'slide' || closing > 2 || (o.tackleCooldown <= 0 && d < 1.8));
     const edge = (p.stat.dribbling - o.stat.defending) / 100;
     const shift = vsHuman(m.aiSkill(o.side)).cut;
     const pWin = committed ? clamp(0.72 + edge * 0.9 + shift, 0.45, 0.92) : clamp(0.3 + edge * 0.6 + shift, 0.12, 0.5);
@@ -198,7 +200,11 @@ function skillCut(m: Match, p: Player): void {
       beat = true;
     }
   }
-  if (beat) p.protectT = PROTECT_T;
+  if (beat) {
+    p.protectT = PROTECT_T;
+    // (A cut that beats a man chains with the SKILL moves: skills.ts.)
+    m.ctl[p.side].skill.chain(m, p, 'cut');
+  }
   const st = m.ctl[p.side].assist;
   if (near && st.t - st.lastSkill > SKILL_GAP) {
     st.lastSkill = st.t;
@@ -325,7 +331,10 @@ export function knockAssist(m: Match, p: Player, ux: number, uz: number): { x: n
   const bend = -(Math.sign(bl) || 1) * clamp(((1.6 - Math.abs(bl)) / 1.6) * 0.45, 0.1, 0.45);
   if (bd < 3.2) {
     const edge = (p.stat.dribbling - best.stat.defending + p.stat.pace - best.stat.pace) / 200;
-    if (m.rng.chance(clamp(0.5 + edge + vsHuman(m.aiSkill(best.side)).cut, 0.25, 0.75))) wrongFoot(m, p, best, 0.8);
+    if (m.rng.chance(clamp(0.5 + edge + vsHuman(m.aiSkill(best.side)).cut, 0.25, 0.75))) {
+      wrongFoot(m, p, best, 0.8);
+      m.ctl[p.side].skill.chain(m, p, 'knock');
+    }
   }
   const c = Math.cos(bend);
   const s = Math.sin(bend);
@@ -343,6 +352,8 @@ export function carrierGuard(m: Match, tackler: Player, c: Player): number {
   if (!m.isHumanControlled(c)) return 1;
   if (c.protectT > 0) return PROTECT_TACKLE;
   let k = humanCarrierTackle(m.aiSkill(tackler.side), c.stat.dribbling);
+  // Mid SKILL move (skills.ts) the ball is off his foot.
+  k *= m.ctl[c.side].skill.exposure(c.idx);
   // He's only just got it: no stealing it off his first touch.
   if (c.ballT < RECEIVE_GUARD_T) k *= RECEIVE_GUARD;
   if (c.shieldT > 0) {

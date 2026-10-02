@@ -81,7 +81,7 @@ function sessionFor(m: Match) {
   };
   const refState = { x: -15, z: 3, faceX: -13.3, faceZ: 3 };
   const view = {
-    frame, headTop: 1.9, refState,
+    frame, headTop: 1.9, refState, ballGlide: { x: 0, y: 0, z: 0 },
     apply: vi.fn((_prev: Float32Array, cur: Float32Array) => frame.set(cur)),
     tickFlashes: vi.fn(), flashPlayer: vi.fn(), refSignal: vi.fn(), clearFades: vi.fn(), pinPlayer: vi.fn(),
     setBallHidden: vi.fn(), setMarkerMode: vi.fn(), setTeamRings: vi.fn(), setTeamPips: vi.fn(),
@@ -148,7 +148,7 @@ describe('the tackle has time to read before the referee decision', () => {
       expect(Math.hypot(x - by.pos.x, z - by.pos.z)).toBeGreaterThan(0.3);
     }
     expect(h.hud.show).toHaveBeenCalledWith(second ? 'RED CARD' : 'YELLOW CARD',
-      second ? `${by.def.name} · 2nd yellow` : by.def.name, expect.any(String), expect.any(Number));
+      second ? `${by.def.name}, second yellow` : by.def.name, expect.any(String), expect.any(Number));
     expect(h.hud.toastMsg.mock.calls.filter(([text]) => text === 'FREE KICK')).toHaveLength(1);
     h.session.update(0.1);
     expect(h.view.showCard).toHaveBeenCalledTimes(1);

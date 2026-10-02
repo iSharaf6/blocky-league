@@ -397,7 +397,7 @@ function drawLobby(host: OnlineHost, link: OnlineLink, how: string): void {
     </div>
     <div class="opt-row"><label>MODE</label><div class="seg" data-o="mode"></div></div>
     <div class="opt-row"><label>HALF LENGTH</label><div class="seg" data-o="len"></div></div>
-    <div class="opt-row"><label>KICK-OFF</label><div class="seg" data-o="tod"></div></div>
+    <div class="opt-row"><label>KICK OFF</label><div class="seg" data-o="tod"></div></div>
     <div class="opt-row"><label>IF LEVEL</label><div class="seg" data-o="ko"></div></div>
     ${hostSide ? '' : '<p class="fine">The host sets the rules.</p>'}
     <p class="net-status" aria-live="polite">${escHtml(status)}</p>
