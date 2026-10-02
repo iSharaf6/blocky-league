@@ -30,6 +30,7 @@ import type { Kit, MatchEvent, PowerUpKind, RestartKind, ScenarioSpec, Side } fr
 import { applyScenario, finishScenario, judgeScenario, scenarioSecondsLeft, type ScenarioOutcome } from '../sim/scenario';
 import { EdgeArrows, type EdgeMate, type EdgeRect } from '../ui/edgeArrows';
 import { Hud, hudTeam } from '../ui/hud';
+import { safeAreaInsets, type Insets } from '../ui/safeArea';
 import { defendCue, diveCue, keeperCue, keyCap, moveCue, penaltyCue, pressVerb, restartCue, type CoachCtx, type CoachCue } from '../ui/coach';
 import { skillCue } from '../ui/coach';
 import { SEP_MARK } from '../ui/text';
@@ -398,6 +399,8 @@ export class MatchSession {
   private edgeFade = 0;
   private edgeAvoid: EdgeRect[] = [];
   private edgeAvoidT = 0;
+  /** The notch / home-indicator insets the arrows also keep inside (re-read with edgeAvoid). */
+  private edgeInset: Insets = { l: 0, t: 0, r: 0, b: 0 };
   private edgeMates: EdgeMate[] = [];
   /** Hit-stop: seconds of hold left (frames / 60; see HIT_STOP_TACKLE). */
   private hitStopT = 0;
@@ -2822,6 +2825,7 @@ export class MatchSession {
       // The minimap, (touch) the action buttons and the quick-sub card: re-measured twice a second.
       this.edgeAvoidT = RADAR_RECT_S;
       this.edgeAvoid = [];
+      safeAreaInsets(this.edgeInset);
       const boxes = [this.hud?.root.querySelector('.hud-radar'), this.touch?.isVisible ? this.touch.root.querySelector('.touch-btns') : null,
         this.hud?.root.querySelector('.hud-qsub.on')];
       for (const el of boxes) {
@@ -2869,11 +2873,13 @@ export class MatchSession {
       q.through = this.view.throughWeight(i);
       out.push(q);
     }
+    // Inside the notch's insets too (a landscape iPhone's camera housing takes about 62 px of one side).
     const box = this.edgeBox;
-    box.l = EDGE_SIDE;
-    box.t = Math.min(EDGE_TOP, H * 0.2);
-    box.r = W - EDGE_SIDE;
-    box.b = H - Math.min(EDGE_BOTTOM, H * 0.22);
+    const ins = this.edgeInset;
+    box.l = EDGE_SIDE + ins.l;
+    box.t = Math.min(EDGE_TOP, H * 0.2) + ins.t;
+    box.r = W - EDGE_SIDE - ins.r;
+    box.b = H - Math.min(EDGE_BOTTOM, H * 0.22) - ins.b;
     ea.update(out, this.edgeFade, box, this.edgeAvoid);
   }
 

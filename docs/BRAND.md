@@ -194,9 +194,9 @@ horizontal lockup): no overflow, and the letter edges are crisp.
 
 Seen in the game at these sizes (noted, not changed here):
 
-- The off-screen team-mate arrows (`ui/edgeArrows.ts`, the box set in `game/matchSession.ts`) keep a fixed side
-  margin and ignore the safe-area insets. On an iPhone they sit inside the 62 px left inset, under the camera
-  housing when it is on that side (see `02-pass` and `04-blitz` in the iPhone sets).
+- The off-screen team-mate arrows kept a fixed side margin and sat inside the iPhone's 62 px inset, under the
+  camera housing. Fixed after these shots: their box now adds the safe-area insets (`ui/safeArea.ts`), so they
+  line up with the score bug. `02-pass` and `04-blitz` in the iPhone sets still show them at the old margin.
 - On a landscape phone the transfer market panel fills the height, and the player list starts at the bottom edge:
   only the first row's top shows before a scroll.
 - On a short landscape screen the full-time card scrolls: at 476 CSS px tall the man of the match and the stats are

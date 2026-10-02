@@ -645,6 +645,14 @@ function ensureCss(): void {
   .mk-sheet { padding: 12px; gap: 10px; }
 }
 @media (max-height: 480px) {
+  /* A phone on its side: the list starts higher. One news line (your latest, else the window's), slimmer tabs and
+     filters, tighter gaps, and no BUY hint (the offer sheet's 60 to 110% slider says the same). */
+  .panel.mc:has(> .mk-tabs) { gap: 8px; }
+  .mk-news { padding: 4px 8px; align-items: center; }
+  .mk-news > b { padding: 4px 6px 2px; }
+  .mk-news li:first-child:not(:only-child), .mk-news li:nth-child(n+3) { display: none; }
+  .mk-tabs button, .mk-filters .seg button { min-height: 32px; padding-top: 5px; padding-bottom: 4px; }
+  .mk-filters + .mc-hint { display: none; }
   .mk-modal { align-items: center; }
   .mk-sheet { max-height: calc(100vh - 16px); gap: 8px; padding: 10px 12px; }
   .mk-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
