@@ -38,6 +38,49 @@ const AT_X = 0, AT_Y = 1, AT_TIP = 2, AT_TAG_X = 3, AT_TAG_Y = 4;
 /** A trainer card is a coach card (ui/coach.ts: title, key caps with short imperatives, one optional line). */
 export type TrainerCue = CoachCue;
 
+/**
+ * The trainer gets quieter as he learns (the owner: "it takes a big chunk of the screen"). Each in-match card is
+ * counted every time it comes up (persisted in this browser): the routine ones (on the ball, defending, off the ball)
+ * show in full for their first LEARN_BRIEF appearances, then as the keys alone, and from LEARN_QUIET on not at all;
+ * the moment-to-moment ones (BEAT HIM, a loose ball, a set piece) go to the keys alone and stay. Switching PITCH
+ * TRAINER back on in Settings starts it over (Trainer.resetLearned).
+ */
+const LEARN_KEY = 'blocky-league-trainer-seen';
+const LEARN_BRIEF = 20;
+const LEARN_QUIET = 80;
+const ROUTINE = new Set(['ON THE BALL', 'GET TO THE BALL', 'MAKE A RUN', 'WIN IT BACK', 'MEET THE PASS']);
+let learned: Record<string, number> | null = null;
+
+function learnedCounts(): Record<string, number> {
+  if (learned) return learned;
+  try {
+    const raw = JSON.parse(localStorage.getItem(LEARN_KEY) ?? '{}') as unknown;
+    learned = raw && typeof raw === 'object' ? (raw as Record<string, number>) : {};
+  } catch {
+    learned = {};
+  }
+  return learned;
+}
+
+/** A card came up once more: counted, and as much of it as he still needs (null: he has it, show nothing). */
+export function learnCue(cue: TrainerCue, fresh: boolean): TrainerCue | null {
+  const seen = learnedCounts();
+  const n = seen[cue.title] ?? 0;
+  if (fresh) {
+    seen[cue.title] = n + 1;
+    try {
+      localStorage.setItem(LEARN_KEY, JSON.stringify(seen));
+    } catch {
+      /* private mode: he just sees the full cards */
+    }
+  }
+  const routine = ROUTINE.has(cue.title);
+  if (routine && n >= LEARN_QUIET) return null;
+  if (n >= LEARN_BRIEF) return { title: cue.title, actions: cue.actions.map(([k]) => [k, ''] as [string, string]) };
+  // (No detail line over the play: the lessons keep theirs.)
+  return { title: cue.title, actions: cue.actions };
+}
+
 /** "Let go of the stick" in the device's terms: the assisted run then meets the ball. */
 const letGo = (device: Device) => (device === 'keyboard' ? `Let go of ${moveCap('keyboard')} to meet it` : 'Let the stick go to meet it');
 
@@ -208,6 +251,8 @@ export class Trainer {
   private guide: SVGSVGElement;
   private v = new Vector3();
   private lastCue = '';
+  /** The title of the last in-match card (a new title is one more appearance: learnCue). */
+  private lastTitle = '';
   private target = -1;
   private stageInit = false;
   private fed: TeachControls | null = null;
@@ -253,6 +298,16 @@ export class Trainer {
   /** The session may hand over this frame's controls (instead of, or as well as, Trainer.input). */
   feed(c: TeachControls | null): void {
     this.fed = c;
+  }
+
+  /** PITCH TRAINER switched back on: every card in full again (learnCue). */
+  static resetLearned(): void {
+    learned = {};
+    try {
+      localStorage.removeItem(LEARN_KEY);
+    } catch {
+      /* nothing stored */
+    }
   }
 
   /** Skip the teaching (a returning player, or the session decided): straight to the normal cues. */
@@ -342,8 +397,12 @@ export class Trainer {
       this.card.classList.toggle('lesson', !!lc);
       this.card.hidden = false;
     } else {
-      this.card.hidden = false;
-      cue = teaching ? null : trainerCue(m, device);
+      const full = teaching ? null : trainerCue(m, device);
+      const fresh = !!full && full.title !== this.lastTitle;
+      if (full) this.lastTitle = full.title;
+      cue = full ? learnCue(full, fresh) : null;
+      // (A card he has learned: nothing over him; the pass recipient's tag below still shows.)
+      this.card.hidden = !!full && !cue;
     }
     const key = cue ? JSON.stringify(cue) + direction : this.lastCue;
     if (cue && key !== this.lastCue) {

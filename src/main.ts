@@ -130,11 +130,17 @@ function applyCamZoom(s: MatchSession | null): void {
   (s as { setCamZoom?: (z: CamZoom) => void } | null)?.setCamZoom?.(camZoom());
 }
 
+/** The PITCH TRAINER setting as last applied (applyControls: null before the first match). */
+let trainerWas: boolean | null = null;
+
 /**
  * Settings > Controls onto a match: pass assistance (ground / through), auto switch, switch move assist and
  * timed finishing. The sim reads them every tick, so a change from the pause menu applies at once.
  */
 function applyControls(m: Match, c: ControlSettings = controlsOf(save.settings)): void {
+  // (PITCH TRAINER switched back on: the cards he had outgrown come back in full.)
+  if (trainerWas === false && c.trainer) Trainer.resetLearned();
+  trainerWas = c.trainer;
   m.groundAssist = c.groundAssist;
   m.throughAssist = c.throughAssist;
   m.autoSwitch = c.autoSwitch;
