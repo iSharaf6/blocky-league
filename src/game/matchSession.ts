@@ -545,6 +545,9 @@ export class MatchSession {
       this.touch = new TouchControls(input);
       document.getElementById('ui')!.appendChild(this.touch.root);
       this.touch.setEnabled(isTouchDevice());
+      // With the touch buttons on screen, the trainer and hints name them (PASS, SHOOT), not keys, until a key or a
+      // pad is actually used. (Some phones and tablets show the buttons without reporting a coarse pointer.)
+      if (isTouchDevice()) input.lastDevice = 'touch';
       // Latch presses as they happen (see `latch`): a key-down is read through Input itself (whatever it maps
       // to), a touch button by its own press.
       this.offKey = input.onKey(() => {
