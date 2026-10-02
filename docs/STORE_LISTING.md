@@ -41,9 +41,9 @@ _(149 chars)_
 >
 > New to it? **Learn the basics** in three quick drills (pass, shoot, cross), then play your first match. Score your first goal and the whole game opens up.
 >
-> Pick one of eleven clubs, from park-football minnows to superstar sides, and take on the AI on four difficulty levels, from Easy to Legend. Thread passes through tight lanes, hold Shoot to power up a screamer, float lobs and crosses, and time a first-time volley as the ball drops. When they come at you, switch players, press the ball and throw in a slide tackle. Every goal gets a celebration and an instant replay, with broadcast-style text commentary, a roaring voxel crowd, and matches in daylight, at sunset or under the floodlights.
+> Pick one of eleven clubs, from park-football minnows to superstar sides, and take on the AI on four difficulty levels, from Easy to Legend. Thread passes through tight lanes, hold Shoot to power up a screamer, float lobs and crosses, and time a first-time volley as the ball drops. Take a man on and watch for the **!** over him: hit SKILL right then for a PERFECT roulette, rainbow flick or stepover that leaves him on the floor, and chain skills into a SKILL GOAL. When they come at you, switch players, press the ball and throw in a slide tackle. Tired legs? A quick sub card pops up and makes the change at the next stoppage. Every goal gets a celebration and an instant replay, with broadcast-style text commentary, a roaring voxel crowd, and matches in daylight, at sunset or under the floodlights.
 >
-> **Career:** start your own club at the bottom of six divisions, set your formation, sign players on the transfer market and grow your stadium on the way to the top. **Blocky Cup:** a knockout trophy with penalty shootouts.
+> **Road to Glory:** start your own club at the bottom of six divisions, set your formation, sign players on the transfer market and grow your stadium on the way to the top. **Blocky Cup:** a knockout trophy with penalty shootouts.
 >
 > **Club Run:** seven short matches against a ladder of stronger clubs, one life. After every win, pick a perk that changes how you play, and chase your best run.
 >
@@ -51,7 +51,7 @@ _(149 chars)_
 >
 > **Blitz mode:** football with power-ups. Grab the glowing pickups for a turbo burst, a mega shot, a freeze, a magnet, a shield or a golden boost that makes your next goal count double, and use them at the right moment.
 >
-> Every match earns XP: level up from Sunday Leaguer to Blocky Legend, earn mastery badges for finishing, playmaking, defending, skills and saves, climb the monthly season track, keep a win streak going and beat three fresh daily challenges every day. Everything is earned by playing: there is nothing to buy.
+> Every match earns XP: level up from Sunday Leaguer to Blocky Legend, earn mastery badges for finishing, playmaking, defending, skills and saves, climb the monthly season track, keep a win streak going and beat three fresh daily challenges every day. Spend the coins you win in the shop on celebrations, balls, goal explosions, sprint trails and scout packs of new players. Everything is earned by playing.
 >
 > Play on keyboard, gamepad or touch. Every key and button can be changed, the touch stick can float or stay fixed, and a colour-blind option adds shape cues. Your progress is saved in your browser.
 
@@ -85,11 +85,13 @@ KEYBOARD
   Through ball        Tap L  |  lob or cross: hold L
   Sprint              Shift
   Defend              Space switches player  |  K tackles (tap while sprinting, or hold: slide)  |  hold L to press
+  Skill move          Q  (when the ! shows over a defender: PERFECT)
+  Quick sub           B  (when the sub card shows)
   Power-up (Blitz)    E
   Pause               Esc or P
 
-GAMEPAD   A pass  |  B shoot  |  X through ball  |  Y power-up  |  RT sprint  |  Start pause
-TOUCH     Stick on the left (floating or fixed: Settings › Controls), buttons on the right (⚡ in Blitz)
+GAMEPAD   A pass  |  B shoot  |  X through ball  |  LB skill  |  Y power-up  |  RT sprint  |  Start pause
+TOUCH     Stick on the left (floating or fixed: Settings › Controls), buttons on the right, SKILL with the ball, POWER in Blitz
 TIP       Press SHOOT just before a pass or cross reaches you for a first-time finish
 ```
 

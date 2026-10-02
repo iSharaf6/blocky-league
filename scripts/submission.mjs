@@ -350,7 +350,7 @@ function listingText(portal, L0, zipName) {
     add('Contact email', L.contact);
     add('Made with', L.madeWith);
     add('Settings to switch on', [
-      'Automatic Progress Save: ON (the game has no purchases, so no SDK data code is needed)',
+      'Progress save: the build saves through the SDK Data Module (Get Item / Set Item), so no extra setting is needed',
       'Launch phase: Basic Launch first (ads disabled). Full Launch/monetization requires CrazyGames approval.',
       'Before Full Launch: test progress restoration for a signed-in CrazyGames user on a second device.',
       'Preview QA: check loading/gameplay events, portal muteAudio, ad success/error/adblock, and touch controls.',
