@@ -1203,7 +1203,7 @@ export class Menus {
           <ul class="ul-new">
             <li>${pixelIcon('trophy', '#ffd23a', 3)}<b>ROAD TO GLORY</b><span>build a club, climb six divisions</span></li>
             <li>${pixelIcon('star', '#ffd23a', 3)}<b>MOMENTS</b><span>short challenges for stars</span></li>
-            <li>${pixelIcon('trophy', '#fff', 3)}<b>CLUB RUN</b><span>seven matches, one life, a perk a win</span></li>
+            <li>${pixelIcon('trophy', '#ff8a2a', 3)}<b>CLUB RUN</b><span>seven matches, one life, a perk a win</span></li>
             <li><i class="ul-bolt" aria-hidden="true">${pixelIcon('bolt', '#8a5cf6', 2.2)}</i><b>BLITZ</b><span>football with power-ups</span></li>
           </ul>
           <div class="btn-row"><button class="btn btn-go btn-lg" data-a="ok">LET'S GO</button></div>
@@ -1271,7 +1271,7 @@ export class Menus {
       const got = u.level <= lv.level || shopped(u);
       const next = u.level === nextLevel;
       const icon = u.kind === 'ball'
-        ? pixelIcon('ball', got ? BALL_TINT[u.id as BallSkinId] ?? '#fbfbf4' : '#b9b5aa', 3)
+        ? pixelIcon('ball', got ? (u.id === 'classic' ? '#26262e' : BALL_TINT[u.id as BallSkinId] ?? '#26262e') : '#b9b5aa', 3)
         : pixelIcon('star', got ? '#ffd23a' : '#b9b5aa', 3);
       const when = u.level > lv.level && got ? 'BOUGHT' : got ? 'EARNED' : next ? `${Math.max(0, xpAt(u.level) - xp)} XP TO GO` : `LEVEL ${u.level}`;
       return `<li class="${got ? 'got' : ''}${next ? ' next' : ''}"><i class="ul-lv">LV ${u.level}</i>${icon}<span>${escHtml(u.name.toUpperCase())}<small>${u.kind === 'ball' ? 'BALL LOOK' : 'GOAL CELEBRATION'}</small></span><em>${when}</em></li>`;

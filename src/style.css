@@ -6071,9 +6071,9 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
   .tiles.t14 > .tile[data-a='settings'] { min-height: 38px; }
 }
 
-/* Four columns (landscape phones and short windows): PLAY NOW and ROAD TO GLORY across the top, then QUICK MATCH, MY CLUB,
-   BLOCKY CUP and MOMENTS as stacked tiles, then a slim row. */
-@media (max-height: 520px), (max-height: 820px) and (min-width: 700px) {
+/* Four columns (any landscape screen, and short ones): PLAY NOW and ROAD TO GLORY across the top, then QUICK MATCH,
+   MY CLUB, BLOCKY CUP and MOMENTS as stacked tiles, then a slim row. (Two columns, taller, only stand upright.) */
+@media (max-height: 520px), (min-width: 700px) and (min-aspect-ratio: 1/1) {
   .tiles.t14 {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     grid-template-areas: "play play road road" "quick club cup mom" "run blitz set set";
@@ -6140,12 +6140,8 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 
 /* ---------------------------------------------------------------- main menu: the logo on one line, short frames */
 
-/* The menu's logo is one line (BLOCKY LEAGUE) where it shows at all: stacked, its second word ran under the tiles
-   at 1280 by 720. (Short and narrow screens hide it, above.) */
-@media (min-height: 651px) and (min-width: 601px) {
-  .screen.main .logo.small { display: flex; flex-wrap: nowrap; justify-content: center; gap: 0.35em; }
-  .screen.main .logo.small span { font-size: clamp(30px, 3.6vw, 52px); }
-}
+/* No logo on the menu: the title screen carries it, and here it met the gift and coin bar on some screens. */
+.screen.main h1.logo.small { display: none; }
 
 /* Short frames (a portal's 900 by 506 iframe, a laptop's 800 by 531 window): the tiles start under the gift and coin
    bar, and the rows are tighter, so the menu and its footer sit above the fold. (Phones on their side, 400 tall and
@@ -6154,14 +6150,14 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
   .screen.main { padding-top: 64px; }
   .main-col { gap: 8px; }
   .tiles.t14 { gap: 8px; }
-  .tiles.t14 > .tile.tile-wide { min-height: 0; height: 58px; padding-top: 4px; padding-bottom: 4px; }
+  .tiles.t14 > .tile.tile-wide { min-height: 58px; padding-top: 4px; padding-bottom: 4px; }
   .tiles.t14 > .tile.tile-wide .picon { width: 34px; height: 34px; }
   .tiles.t14 > .tile[data-a='quick'], .tiles.t14 > .tile[data-a='club'], .tiles.t14 > .tile-cup, .tiles.t14 > .tile-moments {
-    min-height: 0; height: 92px; padding-top: 6px; padding-bottom: 5px; row-gap: 2px;
+    min-height: 92px; padding-top: 6px; padding-bottom: 5px; row-gap: 2px; font-size: 14px; letter-spacing: 1px;
   }
   .tiles.t14 > .tile[data-a='quick'] .picon, .tiles.t14 > .tile[data-a='club'] .picon,
   .tiles.t14 > .tile-cup .picon, .tiles.t14 > .tile-moments .picon { width: 30px; height: 30px; }
-  .tiles.t14 > .tile.tile-side:not(.tile-cup):not(.tile-moments) { min-height: 0; height: 40px; }
+  .tiles.t14 > .tile.tile-side:not(.tile-cup):not(.tile-moments) { min-height: 40px; }
   .main-foot { width: 100%; max-width: 640px; flex-wrap: nowrap; }
   .main-foot .record-chip.lvl { flex: 1; min-width: 0; }
   .screen.main .logo.small { display: none; }
@@ -6170,11 +6166,28 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 @media (min-width: 700px) and (max-height: 480px) and (min-height: 401px) {
   .screen.main { padding-top: 60px; }
   .main-col, .tiles.t14 { gap: 6px; }
-  .tiles.t14 > .tile.tile-wide { height: 50px; }
+  .tiles.t14 > .tile.tile-wide { min-height: 50px; }
   .tiles.t14 > .tile.tile-wide .picon { width: 28px; height: 28px; }
-  .tiles.t14 > .tile[data-a='quick'], .tiles.t14 > .tile[data-a='club'], .tiles.t14 > .tile-cup, .tiles.t14 > .tile-moments { height: 82px; }
+  .tiles.t14 > .tile[data-a='quick'], .tiles.t14 > .tile[data-a='club'], .tiles.t14 > .tile-cup, .tiles.t14 > .tile-moments { min-height: 82px; }
   .tiles.t14 > .tile[data-a='quick'] .picon, .tiles.t14 > .tile[data-a='club'] .picon,
   .tiles.t14 > .tile-cup .picon, .tiles.t14 > .tile-moments .picon { width: 24px; height: 24px; }
-  .tiles.t14 > .tile.tile-side:not(.tile-cup):not(.tile-moments) { height: 36px; }
+  .tiles.t14 > .tile.tile-side:not(.tile-cup):not(.tile-moments) { min-height: 36px; }
   .daily { padding-top: 6px; padding-bottom: 6px; }
+}
+
+/* Tall landscape screens (a fullscreen laptop, a monitor): the four columns as on a short window, at a size for the
+   room. (They were held to the upright layout's 380 px column: four tiles of 83 px, every title cut.) */
+@media (min-width: 700px) and (min-aspect-ratio: 1/1) and (min-height: 821px) {
+  .screen.main { padding-top: max(72px, env(safe-area-inset-top)); }
+  .tiles, .daily { width: min(760px, 58vw); }
+  .main-foot { width: min(760px, 58vw); max-width: none; }
+  .tiles.t14 { gap: 14px; }
+  .tiles.t14 > .tile.tile-wide { min-height: 84px; }
+  .tiles.t14 > .tile[data-a='quick'], .tiles.t14 > .tile[data-a='club'], .tiles.t14 > .tile-cup, .tiles.t14 > .tile-moments { min-height: 136px; }
+}
+/* A stacked tile's subtitle wraps under its title rather than ending in dots (MOMENTS on an upright phone). */
+.tiles.t14 > .tile-moments small, .tiles.t14 > .tile-cup small { white-space: normal; overflow: visible; text-overflow: clip; }
+/* Small phones on their side: the tiles start clear of the gift and coin bar over the captain. */
+@media (max-height: 400px) {
+  .main-wrap.with-captain .main-col { padding-left: 10px; }
 }
