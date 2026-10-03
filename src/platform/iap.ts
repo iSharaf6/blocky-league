@@ -21,6 +21,7 @@
  */
 import { IAP_APPLIED_MAX, type SaveData } from '../core/save';
 import { creditCoins, grantItem, iapOf, itemKey, type ShopCat } from '../meta/shop';
+import { inNativeApp } from './native';
 
 // ------------------------------------------------------------------ the catalogue
 
@@ -379,8 +380,7 @@ class DevStore implements Provider {
 async function nativeStore(): Promise<CdvPurchaseGlobal | null> {
   if (typeof window === 'undefined') return null;
   if (window.CdvPurchase?.store) return window.CdvPurchase;
-  const host = window as unknown as { cordova?: unknown; Capacitor?: { isNativePlatform?: () => boolean } };
-  if (!host.cordova && !host.Capacitor?.isNativePlatform?.()) return null;
+  if (!(window as unknown as { cordova?: unknown }).cordova && !inNativeApp()) return null;
   await new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, 3000);
     document.addEventListener('deviceready', () => {

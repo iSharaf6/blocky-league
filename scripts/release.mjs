@@ -32,7 +32,7 @@ const VARIANTS = {
 };
 
 // Files from public/ that only make sense on a top-level site we control.
-const WEB_ONLY_FILES = ['sw.js', 'manifest.webmanifest', 'icons', 'apple-touch-icon.png', 'og-image.png', 'robots.txt', 'privacy.html'];
+const WEB_ONLY_FILES = ['sw.js', 'manifest.webmanifest', 'icons', 'apple-touch-icon.png', 'og-image.png', 'robots.txt', 'privacy.html', 'support.html'];
 const WEB_ONLY_BLOCK = /[ \t]*<!-- web-only:start[\s\S]*?<!-- web-only:end -->\n?/;
 const TEXT_EXT = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.txt', '.svg']);
 const PORTAL_HOSTS = { crazygames: ['sdk.crazygames.com'], poki: ['game-cdn.poki.com'], itch: [] };

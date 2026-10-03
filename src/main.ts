@@ -49,6 +49,7 @@ import { badgePending, nextBadgeGoal, recordMatchMeta, wornTitle, type MasteryMa
 import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
+import { inNativeApp } from './platform/native';
 
 /** A brief studio entrance on the standalone site; portals only wait for actual loading. */
 const bootAt = performance.now();
@@ -405,7 +406,8 @@ function mainMenu(): void {
   }
   const info = mainInfo();
   const backup = (): void => menus.backup(save, { onImport: reload, back: () => settings() });
-  const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', { backup });
+  // (No BACKUP inside the iPhone / iPad app: its export is a browser download, and iOS backs the app up itself.)
+  const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', { backup: inNativeApp() ? undefined : backup });
   menus.main(save, {
     playNow: () => playNow(),
     account: cloudAvailable() ? () => openAccount({ save, persist, reload }, mainMenu) : undefined,
@@ -437,7 +439,7 @@ function mainMenu(): void {
     // (The condition written out here, not through a variable: the bundler drops the whole branch, the import
     // with it, only when it can see the literal: see ONLINE below.)
     online: !import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none'
-      ? () => void import('./ui/online').then((o) => o.openOnline(onlineHost))
+      ? inNativeApp() ? undefined : () => void import('./ui/online').then((o) => o.openOnline(onlineHost))
       : undefined,
     run: () => openRun(app, mainMenu),
     locked: (f) => menus.toast(`SCORE YOUR FIRST GOAL TO UNLOCK ${FEATURE_NAMES[f]}`),
@@ -458,6 +460,8 @@ function mainMenu(): void {
  * ONLINE ships in the web builds only: the own site and itch (VITE_PORTAL 'none'), and dev (unset). The portal builds
  * (CrazyGames, Poki) leave it out altogether: no tile, and none of its code in the bundle (the main menu's lazy
  * import is dead there once VITE_PORTAL is a literal), so a portal submission makes no WebRTC or STUN request.
+ * The iPhone / iPad app wraps the itch build but shows no tile either (inNativeApp): hand-swapped codes with no
+ * relay mostly fail on mobile data, and its "this browser" room means nothing in an app.
  */
 
 /**
