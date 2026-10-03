@@ -19,6 +19,7 @@ import {
   SEASON_TIERS, claimCarry, claimSeasonTier, rollSeason, seasonOf, seasonDaysLeft, seasonName, seasonProgress,
   seasonReward, seasonTheme, seasonTier, type SeasonState,
 } from '../meta/season';
+import { gameCenterReady, showGameCenterAchievements } from '../platform/gameCenter';
 import { closeMeta, esc, fmt, mountMeta, topBar, type MetaScreen } from './club';
 import { pixelIcon } from './menus';
 import { maskIcon } from './run';
@@ -65,9 +66,11 @@ function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesT
     `${topBar('MENU', 'BADGES', sub, app.save.coins)}
     <div class="seg mc-tabs bd-tabs">${tabs.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}${dot(k)}</button>`).join('')}</div>
     ${body}
+    ${tab === 'badges' && gameCenterReady() ? '<div class="btn-row no-stick"><button class="btn btn-white" data-a="gc">GAME CENTER ACHIEVEMENTS</button></div>' : ''}
     ${pending ? `<div class="btn-row"><button class="btn btn-yellow btn-lg pulse bd-all" data-a="all">CLAIM ALL (${pending})</button></div>` : ''}`,
     {
       back,
+      gc: () => void showGameCenterAchievements(),
       tab: (el) => render(app, scr, back, (el.dataset.v as BadgesTab) ?? 'badges'),
       claimTrack: (el) => {
         const k = el.dataset.k as MasteryTrack;

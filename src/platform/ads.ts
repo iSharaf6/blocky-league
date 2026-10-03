@@ -1,14 +1,29 @@
 /**
- * Web-portal monetisation adapter. The same build runs standalone (no ads) or on
- * CrazyGames / Poki, which pay developers a revenue share of the ads they serve.
+ * Monetisation adapter. The same build runs standalone (no ads), on CrazyGames / Poki (which pay developers a
+ * revenue share of the ads they serve), or inside the iPhone / iPad app, where Google AdMob serves them ('app').
  *
  * Pick the portal at build time with VITE_PORTAL=crazygames|poki (npm run build:crazygames / build:poki).
  * In dev (VITE_PORTAL unset) ?portal=crazygames|poki switches at runtime. Portal builds contain only
  * their own SDK: the checks below compare the build-time constant, so the minifier drops the other branch.
+ * The app is the itch build (VITE_PORTAL 'none') inside Capacitor: it loads the AdMob plugin only there.
  * Everything fails soft: if an SDK can't load, is blocked, or throws, the game just plays.
  */
+import type { AdMobPlugin } from '@capacitor-community/admob';
+import { ADMOB_IOS, ADMOB_KID_SAFE, ADMOB_TEST_IDS } from './adConfig';
+import { inNativeApp } from './native';
 
-type Portal = 'none' | 'crazygames' | 'poki';
+type Portal = 'none' | 'crazygames' | 'poki' | 'app';
+type AppAd = 'rewarded' | 'interstitial';
+type AdMobModule = typeof import('@capacitor-community/admob');
+
+/**
+ * App interstitials, our own cap (the portals cap theirs): one at most every APP_AD_EVERY natural breaks and never
+ * within APP_AD_GAP_MS of the last, so a session's first matches run clean and nobody sees one every match.
+ */
+export const APP_AD_EVERY = 2;
+export const APP_AD_GAP_MS = 240_000;
+/** Longest a full-screen ad may hold the game before it carries on regardless. */
+const APP_AD_MAX_MS = 180_000;
 
 interface CrazyAdError {
   code: 'adsDisabledBasicLaunch' | 'unfilled' | 'adblock' | 'adCooldown' | 'other';
@@ -111,6 +126,23 @@ export class Ads {
    */
   adFree: () => boolean = () => false;
 
+  // ---- the app's AdMob state ('app' only)
+  private admob: AdMobPlugin | null = null;
+  private admobMod: AdMobModule | null = null;
+  private appLoaded: Record<AppAd, boolean> = { rewarded: false, interstitial: false };
+  private appLoading: Record<AppAd, boolean> = { rewarded: false, interstitial: false };
+  private appRetry: Record<AppAd, number> = { rewarded: 0, interstitial: 0 };
+  /** Natural breaks since the last app interstitial, and when that one played (ms, Date.now). */
+  private appBreaks = 0;
+  private appLastAt = -Infinity;
+  private readyFns = new Set<() => void>();
+
+  /** `fn` runs whenever an app ad finishes loading (the shop redraws its FREE COINS card). Returns the unsubscribe. */
+  onAdReady(fn: () => void): () => void {
+    this.readyFns.add(fn);
+    return () => void this.readyFns.delete(fn);
+  }
+
   /**
    * The portal's own save store once its SDK is up (CrazyGames' Data Module: progress follows a signed-in player to
    * any device), else null. The save mirrors itself there (core/save.ts adoptPortalStore).
@@ -129,7 +161,9 @@ export class Ads {
   private async initPortal(): Promise<void> {
     const q = new URLSearchParams(location.search).get('portal');
     try {
-      if (import.meta.env.VITE_PORTAL === 'crazygames' || (!import.meta.env.VITE_PORTAL && q === 'crazygames')) {
+      if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && inNativeApp()) {
+        await this.initApp();
+      } else if (import.meta.env.VITE_PORTAL === 'crazygames' || (!import.meta.env.VITE_PORTAL && q === 'crazygames')) {
         await withTimeout(loadScript('https://sdk.crazygames.com/crazygames-sdk-v3.js'), 6000, undefined);
         const sdk = window.CrazyGames?.SDK;
         // Off CrazyGames' domains (and not localhost) the SDK is 'disabled' and every call throws.
@@ -162,8 +196,110 @@ export class Ads {
     this.syncGameplay();
   }
 
-  /** Rewarded ads only exist on portals. */
+  /**
+   * Google's AdMob in the app. EEA / UK players first get Google's consent form where the law asks for one (the UMP
+   * message set up in the AdMob console); kid-safe settings (adConfig.ts) go on every request. Both ad kinds are
+   * loaded ahead, and loaded again after each one plays.
+   */
+  private async initApp(): Promise<void> {
+    // (A literal check, so the portal builds drop the plugin and its chunks altogether.)
+    if (import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'none') return;
+    const m = await withTimeout(import('@capacitor-community/admob'), 8000, null);
+    if (!m) return;
+    const A = m.AdMob;
+    try {
+      let info = await withTimeout(A.requestConsentInfo({ tagForUnderAgeOfConsent: ADMOB_KID_SAFE }), 8000, null);
+      if (info && info.status === m.AdmobConsentStatus.REQUIRED && info.isConsentFormAvailable) info = await A.showConsentForm();
+      if (info && !info.canRequestAds) return;
+    } catch {
+      // (No consent message set up yet, or offline: ads may still be requested where none is needed.)
+    }
+    const kid = ADMOB_KID_SAFE;
+    await withTimeout(A.initialize({
+      tagForChildDirectedTreatment: kid,
+      tagForUnderAgeOfConsent: kid,
+      maxAdContentRating: kid ? m.MaxAdContentRating.General : m.MaxAdContentRating.ParentalGuidance,
+      initializeForTesting: ADMOB_TEST_IDS,
+    }), 10_000, undefined);
+    this.admob = A;
+    this.admobMod = m;
+    this.portal = 'app';
+    this.ok = true;
+    this.prepareApp('rewarded');
+    this.prepareApp('interstitial');
+  }
+
+  /** Load the next ad of a kind; a failed load tries again later (15 s, doubling, at most 5 min apart). */
+  private prepareApp(kind: AppAd): void {
+    const A = this.admob;
+    if (!A || this.appLoading[kind] || this.appLoaded[kind]) return;
+    this.appLoading[kind] = true;
+    const opts = { adId: ADMOB_IOS[kind], npa: true };
+    const load = kind === 'rewarded' ? A.prepareRewardVideoAd(opts) : A.prepareInterstitial(opts);
+    load.then(
+      () => {
+        this.appLoading[kind] = false;
+        this.appLoaded[kind] = true;
+        this.appRetry[kind] = 0;
+        for (const fn of this.readyFns) safe(fn);
+      },
+      () => {
+        this.appLoading[kind] = false;
+        const n = ++this.appRetry[kind];
+        setTimeout(() => this.prepareApp(kind), Math.min(300_000, 15_000 * 2 ** (n - 1)));
+      },
+    );
+  }
+
+  /**
+   * Show a loaded app ad; resolves when it is gone (closed, failed, or APP_AD_MAX_MS passed): true only if a
+   * rewarded one paid out. (The plugin's show call for a rewarded ad only ever resolves on the reward, so the
+   * dismissal is what ends it.)
+   */
+  private showApp(kind: AppAd): Promise<boolean> {
+    const A = this.admob!;
+    const M = this.admobMod!;
+    this.appLoaded[kind] = false;
+    return new Promise<boolean>((resolve) => {
+      let earned = false;
+      let done = false;
+      const handles: { remove(): Promise<void> }[] = [];
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        for (const h of handles) void h.remove().catch(() => {});
+        this.prepareApp(kind);
+        resolve(earned);
+      };
+      const timer = setTimeout(finish, APP_AD_MAX_MS);
+      const listen = async () => {
+        if (kind === 'rewarded') {
+          const E = M.RewardAdPluginEvents;
+          handles.push(await A.addListener(E.Rewarded, () => { earned = true; }));
+          handles.push(await A.addListener(E.Dismissed, finish));
+          handles.push(await A.addListener(E.FailedToShow, finish));
+        } else {
+          const E = M.InterstitialAdPluginEvents;
+          handles.push(await A.addListener(E.Dismissed, finish));
+          handles.push(await A.addListener(E.FailedToShow, finish));
+        }
+      };
+      listen().then(() => {
+        if (done) return;
+        this.setAdMute(true);
+        const show = kind === 'rewarded' ? A.showRewardVideoAd().then(() => { earned = true; }) : A.showInterstitial();
+        show.catch(finish);
+      }, finish);
+    });
+  }
+
+  /** Rewarded ads: on the portals, and in the app once one has loaded (asking for the next if not). */
   get rewardedAvailable(): boolean {
+    if (this.portal === 'app') {
+      if (!this.appLoaded.rewarded) this.prepareApp('rewarded');
+      return this.ok && this.appLoaded.rewarded;
+    }
     return this.ok && this.adsAllowed;
   }
 
@@ -216,11 +352,23 @@ export class Ads {
    */
   async midgame(): Promise<void> {
     if (!this.ok || !this.adsAllowed || this.adInFlight || this.adFree()) return;
+    if (this.portal === 'app') {
+      // Our own cap (APP_AD_EVERY breaks, APP_AD_GAP_MS apart), and only an ad that is already loaded.
+      this.appBreaks++;
+      if (this.appBreaks < APP_AD_EVERY || Date.now() - this.appLastAt < APP_AD_GAP_MS || !this.appLoaded.interstitial) {
+        this.prepareApp('interstitial');
+        return;
+      }
+      this.appBreaks = 0;
+      this.appLastAt = Date.now();
+    }
     this.gameplayStop();
     this.adInFlight = true;
     let active = true;
     try {
-      if (this.portal === 'poki') {
+      if (this.portal === 'app') {
+        await this.showApp('interstitial');
+      } else if (this.portal === 'poki') {
         await withTimeout(window.PokiSDK!.commercialBreak(() => { if (active) this.setAdMute(true); }), 45_000, undefined);
       } else if (this.portal === 'crazygames') {
         await this.crazyAd('midgame');
@@ -242,6 +390,13 @@ export class Ads {
     this.adInFlight = true;
     let active = true;
     try {
+      if (this.portal === 'app') {
+        if (!this.appLoaded.rewarded) {
+          this.prepareApp('rewarded');
+          return false;
+        }
+        return await this.showApp('rewarded');
+      }
       if (this.portal === 'poki') {
         return await withTimeout(window.PokiSDK!.rewardedBreak(() => { if (active) this.setAdMute(true); }), 60_000, false);
       }

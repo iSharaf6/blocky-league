@@ -666,6 +666,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
 
   if (isCat(tab)) stage.set({ cat: tab, id: pick[tab] });
   draw();
+  // (In the app the next ad loads after each one plays: the FREE COINS card lights up again when it's in.)
+  onMetaClose(ads.onAdReady(() => {
+    if (tab === 'coins' && !busy) draw();
+  }));
   // A pack opened last time but never signed or sold (the tab closed mid-reveal): its card is still yours.
   const waiting = pendingCard(save, clubOf());
   if (waiting) reveal(waiting.card, waiting.price);

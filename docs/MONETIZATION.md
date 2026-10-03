@@ -18,7 +18,8 @@ _Written 3 October 2026. The code and tests below were run. Every console click 
 | Shop COINS tab, FREE COINS, RESTORE PURCHASES (`src/ui/shop.ts`, `shop.css`) | Implemented; exercised in a browser on `?iap=dev` (buy a pack, the Starter Pack, NO ADS, restore, cancel) and on `?portal=crazygames` (the 5 a day cap) |
 | NO ADS silencing interstitials (`src/platform/ads.ts` `adFree`) | Implemented and tested; rewarded ads stay |
 | Save fields and cloud copy (`SaveData.iap`) | Implemented; old saves load; a save holding a purchase is never given away unasked by cloud sync |
-| The real native bridge | **Not run against a real store.** It is written from cordova-plugin-purchase v13's documented API and tested against a stand-in. Check the names in `src/platform/iap.ts` (the `Cdv...` interfaces) against the version you install before trusting it |
+| The real native bridge | `cordova-plugin-purchase` 13.18.0 is installed in the iOS app; every name `iap.ts` uses was checked against its own typings (`www/store.d.ts`, cancel code 6777006). In the simulator it starts up and asks the App Store for the six products. **Not yet run against a real store:** that needs the products in App Store Connect (docs/APP_STORE.md) |
+| Ads in the app (`src/platform/ads.ts`, provider `app`) | Google AdMob through `@capacitor-community/admob` 8.1.0: rewarded and interstitial, kid-safe, capped; `tests/appAds.test.ts`. A real Google test ad played and paid +75 in the simulator. Uses Google's TEST ids until the owner's AdMob ids go in `src/platform/adConfig.ts` and Info.plist |
 | Receipt validation | **None in v1** (the plugin's own local handling is trusted). See 4.5 |
 | Store accounts, products, sandbox runs | **Yours to do** (section 4). Nothing has been created or spent |
 

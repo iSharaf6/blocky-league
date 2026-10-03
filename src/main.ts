@@ -49,6 +49,7 @@ import { badgePending, nextBadgeGoal, recordMatchMeta, wornTitle, type MasteryMa
 import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
+import { gameCenterSignIn, queueAchievementSync, syncAchievements } from './platform/gameCenter';
 import { inNativeApp } from './platform/native';
 
 /** A brief studio entrance on the standalone site; portals only wait for actual loading. */
@@ -74,6 +75,8 @@ let atMenu = false;
 
 function persist(): void {
   writeSave(save);
+  // (Game Center, in the app: anything a save moved goes up once the burst settles. A no-op elsewhere.)
+  queueAchievementSync(save);
 }
 
 // Store purchases (platform/iap.ts) pay out into the one save and store it before the store is told it arrived.
@@ -1177,6 +1180,10 @@ async function boot(): Promise<void> {
   // The browser chrome was grey for the splash; the game itself sits under a sky.
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#5cc8f5');
   ads.loadingDone();
+  // Game Center (the iPhone / iPad app only): sign in, then report anything earned since last time.
+  void gameCenterSignIn().then((ok) => {
+    if (ok) void syncAchievements(save);
+  });
   const params = new URLSearchParams(location.search);
   if (import.meta.env.DEV && params.has('quick')) {
     const home = makeTeam(PRESET_CLUBS[save.clubIdx]);
