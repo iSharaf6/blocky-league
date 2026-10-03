@@ -37,23 +37,23 @@ _(149 chars)_
 
 ## Long description
 
-> **Blocky League** is fast, chunky voxel football you can play right in your browser.
+> **Skill past defenders. Smash screamers. Win the league.** Blocky League is fast, chunky voxel football you can play right in your browser.
 >
-> New to it? **Learn the basics** in three quick drills (pass, shoot, cross), then play your first match. Score your first goal and the whole game opens up.
+> Take a defender on and watch his head. When a big **!** pops up, hit SKILL and leave him on the floor. Chain your tricks and score a **SKILL GOAL**!
 >
-> Pick one of eleven clubs, from park-football minnows to superstar sides, and take on the AI on four difficulty levels, from Easy to Legend. Thread passes through tight lanes, hold Shoot to power up a screamer, float lobs and crosses, and time a first-time volley as the ball drops. When they come at you, switch players, press the ball and throw in a slide tackle. Every goal gets a celebration and an instant replay, with broadcast-style text commentary, a roaring voxel crowd, and matches in daylight, at sunset or under the floodlights.
+> - Pull off roulettes, rainbow flicks and stepovers
+> - Smash screamers, whip in crosses and bang in volleys
+> - **Road to Glory:** build your own club and climb from Sunday League to the top
+> - **Blocky Cup:** knockout ties and tense penalty shootouts
+> - **Club Run:** seven matches, one life, a new perk after every win
+> - **Moments:** quick challenges to earn three stars
+> - **Blitz:** crazy power ups like Mega Shot, Freeze and Turbo
+> - Win coins and unlock celebrations, new balls, goal explosions and new players
+> - Daily challenges, win streaks and levels to climb
 >
-> **Career:** start your own club at the bottom of six divisions, set your formation, sign players on the transfer market and grow your stadium on the way to the top. **Blocky Cup:** a knockout trophy with penalty shootouts.
+> New to it? Three quick drills teach you to pass, shoot and cross in under a minute.
 >
-> **Club Run:** seven short matches against a ladder of stronger clubs, one life. After every win, pick a perk that changes how you play, and chase your best run.
->
-> **Moments:** eight short challenges, from a first-touch finish to a two-goal comeback, three stars each.
->
-> **Blitz mode:** football with power-ups. Grab the glowing pickups for a turbo burst, a mega shot, a freeze, a magnet, a shield or a golden boost that makes your next goal count double, and use them at the right moment.
->
-> Every match earns XP: level up from Sunday Leaguer to Blocky Legend, earn mastery badges for finishing, playmaking, defending, skills and saves, climb the monthly season track, keep a win streak going and beat three fresh daily challenges every day. Everything is earned by playing: there is nothing to buy.
->
-> Play on keyboard, gamepad or touch. Every key and button can be changed, the touch stick can float or stay fixed, and a colour-blind option adds shape cues. Your progress is saved in your browser.
+> Play with keyboard, controller or touch. Lace up and kick off now!
 
 ## GameDistribution fields (200–500 characters each)
 
@@ -85,11 +85,13 @@ KEYBOARD
   Through ball        Tap L  |  lob or cross: hold L
   Sprint              Shift
   Defend              Space switches player  |  K tackles (tap while sprinting, or hold: slide)  |  hold L to press
+  Skill move          Q  (when the ! shows over a defender: PERFECT)
+  Quick sub           B  (when the sub card shows)
   Power-up (Blitz)    E
   Pause               Esc or P
 
-GAMEPAD   A pass  |  B shoot  |  X through ball  |  Y power-up  |  RT sprint  |  Start pause
-TOUCH     Stick on the left (floating or fixed: Settings › Controls), buttons on the right (⚡ in Blitz)
+GAMEPAD   A pass  |  B shoot  |  X through ball  |  LB skill  |  Y power-up  |  RT sprint  |  Start pause
+TOUCH     Stick on the left (floating or fixed: Settings › Controls), buttons on the right, SKILL with the ball, POWER in Blitz
 TIP       Press SHOOT just before a pass or cross reaches you for a first-time finish
 ```
 
@@ -108,7 +110,7 @@ Each portal has its own taxonomy, so pick from their list when you submit. These
 | GameDistribution | Sports, Arcade | football, soccer, 3d, sports, arcade |
 | itch.io | Genre: Sports. Made with: Three.js | football, soccer, voxel, low-poly, 3d, arcade, browser, singleplayer, multiplayer |
 
-**Age / content:** no violence beyond slide tackles, no chat, no purchases, no accounts, no outgoing links. The only text a player can type is a club name and a three-letter code, both run through a profanity filter and never shown to other players. Progression (XP, levels, badges, the season track, stars, streaks, daily challenges) is earned by playing only. Progress is saved in the browser; the game itself collects no personal data. Suitable for all ages. This meets CrazyGames' PEGI-12 requirement.
+**Age / content:** no violence beyond slide tackles, no chat, no purchases, no accounts, no outgoing links. The only text a player can type is a club name and a three-letter code, both run through a profanity filter and never shown to other players. Progression (XP, levels, badges, the season track, stars, streaks, daily challenges) is earned by playing only. Progress is saved in the browser (and on CrazyGames in the player's CrazyGames account, through the SDK's Data Module); the game itself collects no personal data. Suitable for all ages. This meets CrazyGames' PEGI-12 requirement.
 
 _(Use this content paragraph for CrazyGames and Poki. It describes their single-player builds. The own-site web and itch online mode uses manual connection codes and can show club details to the opponent; use the itch-specific paragraph below for that build.)_
 

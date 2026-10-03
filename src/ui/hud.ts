@@ -7,6 +7,7 @@ import { cssHex } from '../render/palette';
 import { Commentator, POWER_INFO, pitchNames, surname, type CommentaryLine } from './commentary';
 import { actionKey, currentDevice, remapKeys } from '../core/input';
 import { coachParts, cueKey, cueOfText, fillCoach, type CoachCue, type CoachParts } from './coach';
+import { pixelIcon } from './pixelIcons';
 import { scoreHtml, seps, sepsOfText } from './text';
 
 /** How long (s) each power-up runs once used, for the slot's countdown ring when the sim doesn't say. */
@@ -324,7 +325,7 @@ export class Hud {
     this.drawPower();
   }
 
-  /** The device in hand: the slot's key hint reads E (keyboard), Y (gamepad) or ⚡ (the touch button). */
+  /** The device in hand: the slot's key hint reads E (keyboard), Y (gamepad) or POWER (the touch button). */
   setPowerDevice(dev: 'keyboard' | 'touch' | 'gamepad'): void {
     if (dev === this.powerDevice) return;
     this.powerDevice = dev;
@@ -385,7 +386,7 @@ export class Hud {
     el.classList.toggle('active', !!a);
     el.dataset.kind = kind ?? '';
     el.style.setProperty('--pw', info?.color ?? 'rgba(255,255,255,0.35)');
-    this.powerIcon.textContent = info?.icon ?? '';
+    this.powerIcon.innerHTML = pixelIcon(info?.icon ?? 'bolt', 'currentColor', 2.4);
     this.powerName.textContent = a ? info!.name.toUpperCase() : info ? info.name.toUpperCase() : 'NO POWER UP';
     this.powerKey.textContent = actionKey('power', this.powerDevice);
     this.powerKey.hidden = !this.powerKind || !!a;

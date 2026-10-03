@@ -358,7 +358,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  /* It covers the whole screen (not the .screen's padded box), so it keeps clear of the notch itself. */
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   overflow-y: auto;
 }
 
@@ -376,9 +377,9 @@ body {
   display: grid;
   gap: 18px;
   animation: pop 0.28s cubic-bezier(0.2, 1.5, 0.4, 1);
-  /* Never taller than the screen (16 px clear top and bottom): the rest scrolls inside the panel. */
+  /* Never taller than the screen (16 px clear top and bottom, or the notch's inset): the rest scrolls inside the panel. */
   max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -4025,8 +4026,8 @@ button.mc-pl:active {
 
 @media (max-height: 450px) {
   .screen { padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-  .panel-wrap { padding: 8px; }
-  .panel { --pp: 14px; gap: 10px; max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); }
+  .panel-wrap { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+  .panel { --pp: 14px; gap: 10px; max-height: calc(100vh - 16px); max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))); }
   .panel h2 { font-size: 22px; }
   .panel > .btn-row:last-child:not(.no-stick) { padding-top: 8px; }
   .btn-lg { padding: 15px 24px 13px; }
@@ -4086,12 +4087,17 @@ button.mc-pl:active {
   .panel.qm .opt-row label { font-size: 14px; }
   .panel.qm .seg { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
   .panel.qm .seg button { padding: 7px 2px 6px; font-size: 14px; white-space: nowrap; box-shadow: 0 2px 0 var(--cream-2); }
+  /* A locked LEGEND ("LEGEND", the lock, "10★") takes two lines rather than spill out of its quarter-width chip. */
+  .panel.qm .seg button:has(> .picon.inl) { white-space: normal; font-size: 12px; line-height: 1; padding-top: 1px; padding-bottom: 0; }
+  .panel.qm .seg button > .picon.inl { width: 1em; height: 1em; }
   .panel.qm > .btn-row { grid-column: 1 / -1; }
   .qm .team-pick { gap: 3px; padding: 6px 4px 8px; }
   .qm .tp-label { font-size: 14px; padding: 3px 7px 2px; }
   .qm .tp-body { display: flex; gap: 4px; }
-  .qm .arrow { width: 30px; height: 40px; font-size: 14px; }
-  .qm .tp-3d { width: 76px; }
+  .qm .arrow { width: 30px; height: 40px; font-size: 14px; flex: none; }
+  /* The kit gives way (down from 76 px) so both arrows stay inside a narrow card. */
+  .qm .tp-kit { flex: 0 1 auto; min-width: 0; }
+  .qm .tp-3d { width: 76px; max-width: 100%; }
   .qm .tp-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .qm .tp-name .crest-svg { width: 16px; height: auto; margin-right: 4px; }
   .qm .tp-stars { font-size: 14px; letter-spacing: 1px; }
@@ -4766,8 +4772,9 @@ button.mc-pl:active {
 .hud-power[hidden] { display: none; }
 .hud.dead .hud-power, .hud.replaying .hud-power, .hud.cinematic .hud-power { opacity: 0; }
 .pw-slot { position: relative; width: 40px; height: 40px; display: grid; place-items: center; }
-.pw-ico { font: 400 22px / 1 var(--round); font-style: normal; filter: grayscale(1); opacity: 0.5; }
-.hud-power.has .pw-ico, .hud-power.active .pw-ico { filter: none; opacity: 1; }
+.pw-ico { display: grid; place-items: center; font-style: normal; color: rgba(255, 255, 255, 0.55); opacity: 0.45; }
+.pw-ico .picon { width: 24px; height: 24px; filter: none; }
+.hud-power.has .pw-ico, .hud-power.active .pw-ico { color: var(--pw); opacity: 1; }
 .pw-ring { position: absolute; inset: 0; width: 40px; height: 40px; transform: rotate(-90deg); }
 .pw-ring circle { fill: none; stroke-width: 4; }
 .pw-ring-bg { stroke: rgba(255, 255, 255, 0.18); }
@@ -4812,7 +4819,7 @@ button.mc-pl:active {
     0 8px 0 rgba(0, 0, 0, 0.25);
 }
 
-/* Touch: the ⚡ button, blitz only, lit while a power-up is held. */
+/* Touch: the bolt button, blitz only, lit while a power-up is held. */
 .tb-power {
   --c: #8a5cf6;
   --cd: #5b36b8;
@@ -4823,11 +4830,13 @@ button.mc-pl:active {
   height: 64px;
   font-size: 26px;
 }
+.tb-power .picon { width: 30px; height: 30px; display: block; margin: 0 auto; }
 .touch.blitz .tb-power { display: block; }
 .tb-power:not(.has) { opacity: 0.35; filter: grayscale(0.6); }
 .tb-power.has { opacity: 0.9; animation: pw-pulse 1.2s ease-in-out infinite; }
 @media (max-width: 720px), (max-height: 480px) {
   .tb-power { right: 34px; bottom: 184px; width: 56px; height: 56px; font-size: 22px; }
+  .tb-power .picon { width: 26px; height: 26px; }
 }
 
 /* Name fields: a blocked name turns red, says why and shakes (no shake with reduced motion: see the global rule). */
@@ -5041,7 +5050,7 @@ button.mc-pl:active {
 
 /* Short, wide windows (a 1280×720 laptop or stream): four tile columns, as on landscape phones, so the whole
    column sits above the fold (PLAY NOW added a row; at HEAD the badge already ended 9 px under it). */
-@media (max-height: 820px) and (min-height: 451px) and (min-width: 900px) {
+@media (max-height: 820px) and (min-height: 451px) and (min-width: 700px) {
   .screen.main { padding-top: max(52px, env(safe-area-inset-top)); }
   .main-col { gap: 12px; }
   .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); width: min(640px, 94vw); gap: 12px; }
@@ -5082,7 +5091,7 @@ button.mc-pl:active {
 @media (max-height: 520px) {
   .tile.tile-wide { grid-column: span 2; }
 }
-@media (max-height: 820px) and (min-height: 451px) and (min-width: 900px) {
+@media (max-height: 820px) and (min-height: 451px) and (min-width: 700px) {
   .tile.tile-wide { grid-column: span 2; }
 }
 /* Landscape phones (≤ 450 px tall; the grid is three columns there, see the earlier ≤ 450 block): the gift and
@@ -5182,53 +5191,6 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 .btn-orange { --c: #ff8a2a; --d: #c45f12; --t: #fff; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
 .btn-orange.tile small { color: #fff1e2; }
 
-/* One grid, two shapes: two columns (portrait and tall screens), four (landscape and short desktop windows). */
-.tiles.t13 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-areas: "play play" "mom run" "quick career" "club set" "blitz cup";
-}
-.tiles.t13 > .tile { grid-column: auto; grid-row: auto; min-width: 0; }
-.tiles.t13 > [data-a='playnow'] { grid-area: play; }
-.tiles.t13 > [data-a='moments'] { grid-area: mom; }
-.tiles.t13 > [data-a='run'] { grid-area: run; }
-.tiles.t13 > [data-a='quick'] { grid-area: quick; }
-.tiles.t13 > [data-a='career'] { grid-area: career; }
-.tiles.t13 > [data-a='club'] { grid-area: club; }
-.tiles.t13 > [data-a='settings'] { grid-area: set; }
-.tiles.t13 > [data-a='blitz'] { grid-area: blitz; }
-.tiles.t13 > [data-a='cup'] { grid-area: cup; }
-.tiles.t13 > .tile.tile-side { justify-content: start; padding-left: 12px; padding-right: 10px; }
-.tiles.t13 > .tile.tile-side > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@media (max-height: 520px), (max-height: 820px) and (min-width: 900px) {
-  .tiles.t13 {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-areas: "play play mom run" "quick career club set" "blitz blitz cup cup";
-  }
-  .tiles.t13 > .tile.tile-side { justify-content: center; }
-}
-/* Landscape phones: the second-row side tiles keep their titles only. */
-@media (max-height: 450px) {
-  .tiles.t13 { gap: 8px; }
-  .tiles.t13 > [data-a='moments'] small, .tiles.t13 > [data-a='run'] small { display: none; }
-  .tiles.t13 > .tile.tile-side { min-height: 40px; padding: 5px 8px 4px; column-gap: 6px; font-size: 15px; }
-  .tiles.t13 > .tile:not(.tile-side):not(.tile-wide) { min-height: 0; padding: 7px 6px 6px; gap: 4px; font-size: 15px; }
-  .tiles.t13 > [data-a='settings'] { grid-auto-flow: row; }
-  .tiles.t13 > .tile:not(.tile-side):not(.tile-wide) .picon { width: 26px; height: 26px; }
-  .tiles.t13 > .tile.tile-side .picon { width: 22px; height: 22px; }
-  .tiles.t13 > .tile.tile-side .picon.bolt { font-size: 22px; height: 22px; }
-}
-/* Portrait phones: the MOMENTS / CLUB RUN row is slim, like BLITZ / CUP. */
-@media (max-width: 480px) {
-  .tiles.t13 > .tile.tile-side { min-height: 52px; padding: 7px 8px 6px 10px; column-gap: 8px; font-size: 16px; }
-  .tiles.t13 > .tile.tile-side .picon { width: 26px; height: 26px; }
-  .tiles.t13 > .tile.tile-side small { font-size: 12px; }
-}
-@media (max-width: 480px) and (max-height: 700px) {
-  .tiles.t13 > .tile.tile-side { min-height: 46px; padding-top: 5px; padding-bottom: 4px; }
-  .tiles.t13 > .tile:not(.tile-wide):not(.tile-side) { padding: 7px 8px 6px; gap: 5px; }
-  .tiles.t13 > .tile:not(.tile-wide):not(.tile-side) .picon:not(.bolt) { width: 38px; height: 38px; }
-}
-
 /* Locked until the first goal: greyed, a lock line where the subtitle was, a little shake when tapped. */
 .btn.tile.locked { --c: #8f8c85; --d: #62605b; --t: #f7f5ee; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.2); }
 .tile.locked .lock-note { display: block; max-width: 100%; font: 400 12px / 1.05 var(--round); letter-spacing: 0.3px; white-space: normal; color: #f7f5ee; opacity: 0.95; margin: 0; }
@@ -5244,7 +5206,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 /* The campaign hero ("LEARN THE BASICS" / "FIRST MATCH") keeps the green, and pulses. */
 .tiles.campaign > [data-a='playnow'] small { opacity: 1; }
 @media (max-height: 450px) {
-  .tiles.t13 > .tile.locked .lock-note { display: none; }
+  .tiles.t14 > .tile.locked .lock-note { display: none; }
 }
 
 /* A small note over the menu (what opens a locked tile). */
@@ -5353,23 +5315,6 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   .ul-new li { grid-template-columns: 30px minmax(0, 1fr); }
   .ul-new span { grid-column: 2; }
 }
-/* Desktop windows (pixel font, four columns): MOMENTS and CLUB RUN share row one with PLAY NOW, so they stack
-   (icon over title) to fit a single column; the campaign's longer hero title steps down a size. */
-.tiles.t13 > .tile.tile-side { font-size: 15px; }
-@media (max-height: 820px) and (min-height: 521px) and (min-width: 900px) {
-  .tiles.t13 > [data-a='moments'], .tiles.t13 > [data-a='run'] {
-    grid-template-columns: minmax(0, 1fr); justify-content: stretch; justify-items: center; row-gap: 5px; padding: 8px 8px 7px; text-align: center;
-  }
-  .tiles.t13 > [data-a='moments'] .picon, .tiles.t13 > [data-a='run'] .picon { grid-row: auto; }
-  .tiles.t13 > [data-a='moments'] > span, .tiles.t13 > [data-a='run'] > span,
-  .tiles.t13 > [data-a='moments'] small, .tiles.t13 > [data-a='run'] small { justify-self: center; }
-  .tiles.t13.campaign > [data-a='playnow'] { font-size: 17px; }
-}
-@media (max-height: 820px) and (min-height: 521px) and (min-width: 900px) {
-  .tiles.t13 > [data-a='moments'], .tiles.t13 > [data-a='run'] { row-gap: 3px; padding: 6px 6px 6px; font-size: 14px; }
-  .tiles.t13 > [data-a='moments'] .picon, .tiles.t13 > [data-a='run'] .picon { width: 28px; height: 28px; }
-  .tiles.t13 > [data-a='moments'] small, .tiles.t13 > [data-a='run'] small { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-}
 /* A claim waiting on the BADGES screen: a small count on the level badge. */
 .record-chip.lvl .lvl-dot { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 6px; padding: 0 4px; font: 400 12px / 1 var(--round); font-style: normal; color: #fff; background: var(--red); border-radius: 9px; vertical-align: 1px; }
 /* Short landscape screens: the UNLOCKED list goes two by two, the one-line descriptions stay. */
@@ -5381,25 +5326,9 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   .basics-done .bd-steps li { padding: 5px 10px 4px; font-size: 15px; }
 }
 
-/* Side tiles (MOMENTS, CLUB RUN, BLOCKY CUP) on wide screens: a smaller icon, and a title that wraps between
-   words instead of being cut off with an ellipsis ("MOMEN...", "CLUB R..." at 1920x1080). */
-.tiles.t13 > .tile.tile-side .picon { width: 38px; height: 38px; flex: none; }
-.tiles.t13 > .tile.tile-side span:not(.sep) { white-space: normal; text-overflow: clip; overflow: visible; line-height: 1.05; min-width: 0; }
 /* ================================================================ ONLINE (src/ui/online.ts) */
 
-/* Main menu: ONLINE is a sideways tile (like BLITZ / CUP) spanning a row of its own under the grid, in either shape
-   of main's t13 grid (two columns or four): no grid area, just every column of the next row. */
-.tiles.t13 > .tile.tile-online { grid-column: 1 / -1; justify-content: center; }
 .btn-blue.tile small { color: #e3eeff; }
-/* Short screens (landscape phones): no room for a row of its own; it takes half of the BLITZ / CUP row. */
-@media (max-height: 520px) {
-  .tiles.t13.has-online { grid-template-areas: "play play mom run" "quick career club set" "blitz cup online online"; }
-  .tiles.t13.has-online > .tile.tile-online { grid-area: online; }
-  .tiles.t13.has-online > .tile.tile-online small,
-  .tiles.t13.has-online > [data-a='blitz'] small,
-  .tiles.t13.has-online > [data-a='cup'] small { display: none; }
-}
-
 .screen.online.dim .panel-wrap { background: rgba(38, 38, 46, 0.45); }
 .online-panel .net-sec {
   display: grid;
@@ -5901,7 +5830,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 /* ---------------------------------------------------------------- SKILL moves (sim/skills.ts, ui/skillHud.ts) */
 
 /* Touch: the SKILL button, over SPRINT at the top left of the cluster, a clear gap from SPRINT below it and from the
-   blitz ⚡ beside it (with room for its lit ring and pulse). Shown only with the ball at his feet in open play
+   blitz bolt beside it (with room for its lit ring and pulse). Shown only with the ball at his feet in open play
    (TouchControls.setSkill), lit and pulsing while a tell is open. */
 .tb-skill {
   --c: #f0479b;
@@ -6089,4 +6018,182 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 @media (max-height: 480px) {
   .sk-pop b { font-size: 22px; }
   .sk-pop span { font-size: 15px; }
+}
+
+/* ================================================================ round 14: pixel icons, ROAD TO GLORY, a main menu that puts the important things first
+   Order: PLAY NOW and ROAD TO GLORY (the two big tiles), QUICK MATCH and MY CLUB, BLOCKY CUP, MOMENTS, CLUB RUN, BLITZ,
+   ONLINE, then a slim SETTINGS. Two columns on portrait and tall screens, four on landscape phones and short windows. */
+
+/* A pixel icon set inline with words (ui/pixelIcons.ts, class "inl"): sits on the text, takes its colour from it. */
+.picon.inl { display: inline-block; vertical-align: -0.16em; margin: 0 0.3em 0 0; filter: none; animation: none; }
+.seg button .picon.inl { margin: 0 0 0 0.35em; }
+small.lock .picon.inl { margin: 0 0.25em 0 0; }
+.ht-blitz h3 .picon.inl { vertical-align: -3px; margin-right: 8px; }
+.ht-pw li i { display: grid; place-items: center; align-self: center; }
+.ft-streak .picon.inl, .record-chip .picon.inl { margin-right: 4px; }
+.topbar .gift .picon.inl { margin-right: 6px; vertical-align: -3px; }
+.ul-bolt { display: grid; place-items: center; }
+
+.tiles.t14 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas: "play play" "road road" "quick club" "cup mom" "run blitz" "set set";
+}
+.tiles.t14.has-online { grid-template-areas: "play play" "road road" "quick club" "cup mom" "run blitz" "online set"; }
+.tiles.t14 > .tile { grid-column: auto; grid-row: auto; min-width: 0; }
+.tiles.t14 > .tile[data-a='playnow'] { grid-area: play; }
+.tiles.t14 > .tile[data-a='career'] { grid-area: road; }
+.tiles.t14 > .tile[data-a='quick'] { grid-area: quick; }
+.tiles.t14 > .tile[data-a='club'] { grid-area: club; }
+.tiles.t14 > .tile[data-a='cup'] { grid-area: cup; }
+.tiles.t14 > .tile[data-a='moments'] { grid-area: mom; }
+.tiles.t14 > .tile[data-a='run'] { grid-area: run; }
+.tiles.t14 > .tile[data-a='blitz'] { grid-area: blitz; }
+.tiles.t14 > .tile[data-a='online'] { grid-area: online; }
+.tiles.t14 > .tile[data-a='settings'] { grid-area: set; }
+.tiles.t14 > .tile-wide { font-size: clamp(17px, 1.7vw, 21px); }
+.tiles.t14.campaign > [data-a='playnow'] { font-size: 17px; }
+/* The slim tiles: icon left, title over subtitle; a long title wraps between words instead of ending in dots. */
+.tiles.t14 > .tile.tile-side { justify-content: start; padding-left: 12px; padding-right: 10px; font-size: 15px; }
+.tiles.t14 > .tile.tile-side .picon { width: 34px; height: 34px; flex: none; }
+.tiles.t14 > .tile.tile-side span:not(.sep) { white-space: normal; text-overflow: clip; overflow: visible; line-height: 1.05; min-width: 0; }
+/* SETTINGS asks for the least room. */
+.tiles.t14 > .tile[data-a='settings'] { min-height: 44px; padding-top: 6px; padding-bottom: 5px; justify-content: center; }
+.tiles.t14 > .tile[data-a='settings'] .picon { width: 24px; height: 24px; animation: none; }
+
+@media (max-width: 480px) {
+  .tiles.t14 { gap: 12px; }
+  .tiles.t14 > .tile-wide { min-height: 62px; padding-top: 8px; padding-bottom: 7px; }
+  .tiles.t14 > .tile:not(.tile-wide):not(.tile-side) { min-height: 100px; }
+  .tiles.t14 > .tile.tile-side { min-height: 52px; padding: 7px 8px 6px 10px; column-gap: 8px; font-size: 16px; }
+  .tiles.t14 > .tile.tile-side .picon { width: 28px; height: 28px; }
+  .tiles.t14 > .tile.tile-side small { font-size: 12px; }
+  .tiles.t14 > .tile[data-a='settings'] { min-height: 42px; padding-top: 5px; padding-bottom: 4px; }
+  .tiles.t14 > .tile[data-a='settings'] .picon { width: 22px; height: 22px; }
+}
+@media (max-width: 480px) and (max-height: 700px) {
+  .tiles.t14 > .tile.tile-side { min-height: 46px; padding-top: 5px; padding-bottom: 4px; }
+  .tiles.t14 > .tile:not(.tile-wide):not(.tile-side) { padding: 7px 8px 6px; gap: 5px; }
+  .tiles.t14 > .tile:not(.tile-wide):not(.tile-side) .picon { width: 38px; height: 38px; }
+  .tiles.t14 > .tile[data-a='settings'] { min-height: 38px; }
+}
+
+/* Four columns (any landscape screen, and short ones): PLAY NOW and ROAD TO GLORY across the top, then QUICK MATCH,
+   MY CLUB, BLOCKY CUP and MOMENTS as stacked tiles, then a slim row. (Two columns, taller, only stand upright.) */
+@media (max-height: 520px), (min-width: 700px) and (min-aspect-ratio: 1/1) {
+  .tiles.t14 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-areas: "play play road road" "quick club cup mom" "run blitz set set";
+  }
+  .tiles.t14.has-online { grid-template-areas: "play play road road" "quick club cup mom" "run blitz online set"; }
+  .tiles.t14 > .tile[data-a='cup'], .tiles.t14 > .tile[data-a='moments'] {
+    grid-template-columns: minmax(0, 1fr); justify-content: stretch; justify-items: center; align-content: center; row-gap: 4px; padding: 10px 8px 9px; text-align: center; font-size: 17px;
+  }
+  .tiles.t14 > .tile[data-a='cup'] .picon, .tiles.t14 > .tile[data-a='moments'] .picon { grid-row: auto; width: 44px; height: 44px; }
+  .tiles.t14 > .tile[data-a='cup'] > span, .tiles.t14 > .tile[data-a='moments'] > span,
+  .tiles.t14 > .tile[data-a='cup'] small, .tiles.t14 > .tile[data-a='moments'] small { justify-self: center; text-align: center; }
+  .tiles.t14 > .tile[data-a='cup'] small, .tiles.t14 > .tile[data-a='moments'] small { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .tiles.t14 > .tile:not(.tile-side):not(.tile-wide) .picon { width: 44px; height: 44px; }
+  .tiles.t14 > .tile[data-a='run'] small, .tiles.t14 > .tile[data-a='blitz'] small, .tiles.t14 > .tile[data-a='online'] small { display: none; }
+  .tiles.t14 > .tile[data-a='settings'] { min-height: 0; padding-left: 6px; padding-right: 6px; column-gap: 6px; font-size: 14px; letter-spacing: 0; }
+  .tiles.t14 > .tile[data-a='settings'] .picon { width: 20px; height: 20px; }
+}
+/* Landscape phones: titles only on the stacked tiles, tighter everything. */
+@media (max-height: 450px) {
+  .tiles.t14 { gap: 8px; }
+  .tiles.t14 > .tile-wide { font-size: 16px; }
+  .tiles.t14 > .tile[data-a='cup'] small, .tiles.t14 > .tile[data-a='moments'] small, .tiles.t14 > .tile.tile-side small { display: none; }
+  .tiles.t14 > .tile:not(.tile-side):not(.tile-wide), .tiles.t14 > .tile[data-a='cup'], .tiles.t14 > .tile[data-a='moments'] {
+    min-height: 0; padding: 6px 6px 5px; gap: 3px; row-gap: 3px; font-size: 15px;
+  }
+  .tiles.t14 > .tile:not(.tile-side):not(.tile-wide) .picon, .tiles.t14 > .tile[data-a='cup'] .picon, .tiles.t14 > .tile[data-a='moments'] .picon { width: 26px; height: 26px; }
+  .tiles.t14 > .tile.tile-side { min-height: 36px; padding: 4px 8px 3px; column-gap: 6px; font-size: 15px; }
+  .tiles.t14 > .tile.tile-side .picon { width: 22px; height: 22px; }
+  .tiles.t14 > .tile[data-a='settings'] { min-height: 36px; padding: 4px 8px 3px; }
+}
+/* Short windows (800 by 600): the logo steps aside so the whole menu sits above the fold. */
+@media (max-height: 650px) and (min-height: 451px) and (min-width: 700px) {
+  .screen.main .logo.small { display: none; }
+}
+/* Between a tablet and a laptop (721 to 899 wide, short): the captain leaves so the four columns have the room. */
+@media (min-width: 721px) and (max-width: 899px) and (min-height: 451px) and (max-height: 820px) {
+  .main-wrap.with-captain .captain { display: none; }
+}
+
+/* ROAD TO GLORY: the "how it works" panel (ui/roadIntro.ts) and its button on the hub. */
+.mc-tabrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: stretch; }
+.mc-how { min-height: 48px; padding: 10px 14px 9px; font: 400 14px / 1 var(--round); letter-spacing: 0.5px; white-space: nowrap; }
+@media (max-width: 480px) {
+  .mc-tabrow { grid-template-columns: 1fr; }
+  .mc-how { min-height: 40px; padding-top: 8px; padding-bottom: 7px; }
+}
+.rg { display: grid; gap: 14px; }
+.rg-ladder { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.rg-ladder li { display: flex; align-items: center; gap: 8px; margin-left: calc(var(--k) * 5%); padding: 7px 10px 6px; font: 400 15px / 1 var(--round); letter-spacing: 0.5px; background: #fff; border: 3px solid var(--ink); box-shadow: 0 3px 0 var(--cream-2); }
+.rg-ladder li span { min-width: 46px; font: 700 12px var(--px); letter-spacing: 1px; color: var(--ink-2); }
+.rg-ladder li b { flex: 1 1 auto; min-width: 0; font-weight: 400; }
+.rg-ladder li em { padding: 2px 6px 1px; font: 400 12px var(--round); font-style: normal; letter-spacing: 1px; color: var(--ink); background: var(--yellow); white-space: nowrap; }
+.rg-ladder li.start { background: #fff6d0; border-color: var(--yellow-d); }
+.rg-ladder li.top { background: var(--ink); border-color: var(--ink); color: var(--yellow); }
+.rg-ladder li.top span { color: #cfcab8; }
+.rg-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; align-content: start; }
+.rg-points li { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 12px; align-items: center; }
+.rg-ic { display: grid; place-items: center; width: 48px; height: 48px; color: var(--ink); background: var(--cream-2); border: 3px solid var(--ink); }
+.rg-ic .picon { width: 30px; height: 30px; filter: none; }
+.rg-points b { display: block; margin-bottom: 2px; font: 400 17px / 1.1 var(--round); letter-spacing: 0.5px; color: var(--blue-d); }
+.rg-points span { font: 400 16px / 1.3 var(--round); color: var(--ink-2); }
+@media (min-width: 720px) { .rg { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 22px; } }
+.mc-road-screen .btn-row { justify-content: center; }
+
+/* ---------------------------------------------------------------- main menu: the logo on one line, short frames */
+
+/* No logo on the menu: the title screen carries it, and here it met the gift and coin bar on some screens. */
+.screen.main h1.logo.small { display: none; }
+
+/* Short frames (a portal's 900 by 506 iframe, a laptop's 800 by 531 window): the tiles start under the gift and coin
+   bar, and the rows are tighter, so the menu and its footer sit above the fold. (Phones on their side, 400 tall and
+   under, keep their own layout.) */
+@media (min-width: 700px) and (max-height: 600px) and (min-height: 401px) {
+  .screen.main { padding-top: 64px; }
+  .main-col { gap: 8px; }
+  .tiles.t14 { gap: 8px; }
+  .tiles.t14 > .tile.tile-wide { min-height: 58px; padding-top: 4px; padding-bottom: 4px; }
+  .tiles.t14 > .tile.tile-wide .picon { width: 34px; height: 34px; }
+  .tiles.t14 > .tile[data-a='quick'], .tiles.t14 > .tile[data-a='club'], .tiles.t14 > .tile-cup, .tiles.t14 > .tile-moments {
+    min-height: 92px; padding-top: 6px; padding-bottom: 5px; row-gap: 2px; font-size: 14px; letter-spacing: 1px;
+  }
+  .tiles.t14 > .tile[data-a='quick'] .picon, .tiles.t14 > .tile[data-a='club'] .picon,
+  .tiles.t14 > .tile-cup .picon, .tiles.t14 > .tile-moments .picon { width: 30px; height: 30px; }
+  .tiles.t14 > .tile.tile-side:not(.tile-cup):not(.tile-moments) { min-height: 40px; }
+  .main-foot { width: 100%; max-width: 640px; flex-wrap: nowrap; }
+  .main-foot .record-chip.lvl { flex: 1; min-width: 0; }
+  .screen.main .logo.small { display: none; }
+}
+/* ...and a 16:9 frame 450 tall (800 by 450): a step tighter still. */
+@media (min-width: 700px) and (max-height: 480px) and (min-height: 401px) {
+  .screen.main { padding-top: 60px; }
+  .main-col, .tiles.t14 { gap: 6px; }
+  .tiles.t14 > .tile.tile-wide { min-height: 50px; }
+  .tiles.t14 > .tile.tile-wide .picon { width: 28px; height: 28px; }
+  .tiles.t14 > .tile[data-a='quick'], .tiles.t14 > .tile[data-a='club'], .tiles.t14 > .tile-cup, .tiles.t14 > .tile-moments { min-height: 82px; }
+  .tiles.t14 > .tile[data-a='quick'] .picon, .tiles.t14 > .tile[data-a='club'] .picon,
+  .tiles.t14 > .tile-cup .picon, .tiles.t14 > .tile-moments .picon { width: 24px; height: 24px; }
+  .tiles.t14 > .tile.tile-side:not(.tile-cup):not(.tile-moments) { min-height: 36px; }
+  .daily { padding-top: 6px; padding-bottom: 6px; }
+}
+
+/* Tall landscape screens (a fullscreen laptop, a monitor): the four columns as on a short window, at a size for the
+   room. (They were held to the upright layout's 380 px column: four tiles of 83 px, every title cut.) */
+@media (min-width: 700px) and (min-aspect-ratio: 1/1) and (min-height: 821px) {
+  .screen.main { padding-top: max(72px, env(safe-area-inset-top)); }
+  .tiles, .daily { width: min(760px, 58vw); }
+  .main-foot { width: min(760px, 58vw); max-width: none; }
+  .tiles.t14 { gap: 14px; }
+  .tiles.t14 > .tile.tile-wide { min-height: 84px; }
+  .tiles.t14 > .tile[data-a='quick'], .tiles.t14 > .tile[data-a='club'], .tiles.t14 > .tile-cup, .tiles.t14 > .tile-moments { min-height: 136px; }
+}
+/* A stacked tile's subtitle wraps under its title rather than ending in dots (MOMENTS on an upright phone). */
+.tiles.t14 > .tile-moments small, .tiles.t14 > .tile-cup small { white-space: normal; overflow: visible; text-overflow: clip; }
+/* Small phones on their side: the tiles start clear of the gift and coin bar over the captain. */
+@media (max-height: 400px) {
+  .main-wrap.with-captain .main-col { padding-left: 10px; }
 }

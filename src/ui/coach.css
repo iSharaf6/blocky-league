@@ -129,3 +129,50 @@
   .hud .hud-hint.coach,
   .hud .hud-tip.coach { padding: 6px 9px 7px; }
 }
+
+/* ---------------------------------------------------------------- small screens: a compact card over the player */
+
+/* Phones and short frames (a portal's 900 by 506 iframe): the card over the player was a quarter of the screen wide
+   and three rows tall, sitting over the play. Here it is a chip: tighter type and keys, and the optional detail
+   line goes (the lessons keep theirs: they teach). */
+@media (max-width: 600px), (max-height: 600px) {
+  .coach { padding: 4px 7px 5px; }
+  .coach-title { margin-bottom: 4px; font-size: 9px; }
+  .coach-actions { gap: 3px 7px; font-size: 11px; }
+  .coach kbd { padding: 2px 4px 1px; font-size: 9px; box-shadow: 0 1px 0 var(--coach-cap-edge); }
+  .pitch-trainer .trainer-card:not(.lesson) .coach-detail { display: none; }
+  .coach.lesson { padding: 6px 9px 7px; }
+  .coach.lesson .coach-title { margin-bottom: 4px; font-size: 11px; }
+  .coach.lesson .coach-actions { font-size: 13px; }
+  .coach.lesson kbd { padding: 3px 5px 2px; font-size: 11px; }
+  .coach.lesson .coach-detail { font-size: 10px; }
+  .trainer-card::after { margin-left: -5px; border-width: 5px; }
+  .hud .hud-hint.coach,
+  .hud .hud-tip.coach { padding: 4px 8px 5px; gap: 4px 8px; font-size: 11px; }
+}
+@media (max-width: 600px) {
+  .trainer-card { max-width: 170px; }
+  .pitch-trainer .trainer-card.lesson { max-width: min(280px, calc(100vw - 24px)); }
+}
+@media (max-height: 600px) and (min-width: 601px) {
+  .trainer-card { max-width: 300px; }
+}
+
+/* In a match (not the lessons) the card over the player is compact at every size, with no detail line: it was a
+   big chunk of the screen even on a laptop. (It also fades as he learns: trainer.ts learnCue.) */
+.pitch-trainer .trainer-card:not(.lesson) { padding: 5px 8px 6px; }
+.pitch-trainer .trainer-card:not(.lesson) .coach-title { margin-bottom: 4px; font-size: 10px; }
+.pitch-trainer .trainer-card:not(.lesson) .coach-actions { gap: 4px 9px; font-size: 12px; }
+.pitch-trainer .trainer-card:not(.lesson) kbd { padding: 2px 4px 1px; font-size: 10px; box-shadow: 0 1px 0 var(--coach-cap-edge); }
+.pitch-trainer .trainer-card:not(.lesson) .coach-detail { display: none; }
+@media (min-width: 1600px) and (min-height: 900px) {
+  .pitch-trainer .trainer-card:not(.lesson) .coach-title { font-size: 11px; }
+  .pitch-trainer .trainer-card:not(.lesson) .coach-actions { font-size: 13px; }
+  .pitch-trainer .trainer-card:not(.lesson) kbd { font-size: 11px; }
+}
+@media (max-width: 600px), (max-height: 600px) {
+  .pitch-trainer .trainer-card:not(.lesson) { padding: 4px 7px 5px; }
+  .pitch-trainer .trainer-card:not(.lesson) .coach-title { margin-bottom: 3px; font-size: 9px; }
+  .pitch-trainer .trainer-card:not(.lesson) .coach-actions { gap: 3px 7px; font-size: 11px; }
+  .pitch-trainer .trainer-card:not(.lesson) kbd { font-size: 9px; }
+}

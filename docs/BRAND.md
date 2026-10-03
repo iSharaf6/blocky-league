@@ -4,10 +4,12 @@ The logo, the icons, the portal covers and the app store screenshots for Blocky 
 covers the design, the palette, every file (where it is, its size, and the rule it meets) and each platform's
 rules, with the page each rule came from and the date it was read.
 
-**No iOS or Android app exists yet.** Capacitor comes later. Until then the App Store and Google Play files here
-(icons, feature graphic, screenshots) are ready ahead of time. They are not uploaded anywhere. The screenshots
-are of the web game in a phone or tablet touch emulation, not of a native build. Re-shoot them from the Capacitor
-build if its layout ends up different (safe areas, the notch, the status bar).
+**The iOS and iPad app exists; the Android app doesn't yet.** `ios/` is the Capacitor shell (`capacitor.config.ts`):
+the itch.io web build, landscape only on iPhone and iPad. The Google Play files here (icon, feature graphic,
+screenshots) are ready ahead of an Android build. Every store screenshot is landscape, as the app runs. They are
+of the web game in a phone or tablet touch emulation, not of the native build; the iPhone and iPad ones carry the
+device's landscape safe areas, so the HUD sits where the app puts it. Re-shoot them from the native build if its
+layout ends up different.
 
 ## The design
 
@@ -137,44 +139,69 @@ The in-world sponsor boards (calynx, CUBE COLA, HOP HOP, VOXEL BANK) are part of
 
 ### App store screenshots (`store-assets/screenshots/`)
 
-All screenshots are real gameplay from the dev snapshot, in a touch-device emulation: a coarse pointer, touch
-events and a mobile user agent, so the on-screen stick and buttons show. Each one uses the device's CSS size and
-pixel ratio, and the WebGL canvas is forced to the full ratio (no upscaled 3D). There are no dev overlays and no
-cursor, and the onboarding trainer card is hidden. The commentary ticker is off (the player's own Settings
+Every screenshot is **landscape**, as the app runs (the iOS app is locked to landscape). They were reshot on 3 Oct
+2026, all real gameplay from the dev snapshot, in a touch-device emulation: a coarse pointer, touch events and a
+mobile user agent, so the on-screen stick and buttons show. Each one uses the device's CSS width and pixel ratio,
+and the WebGL canvas is forced to the full ratio (no upscaled 3D). The iPhone sets carry the iPhone's landscape
+safe areas (Chrome's `Emulation.setSafeAreaInsetsOverride`): 62 CSS px left and right and 21 px at the bottom on
+the 6.9", 47, 47 and 21 on the 6.5". The iPad carries its 20 px home-indicator inset. So the score bug, the pause
+button and the touch buttons sit where the app puts them. The Play sets have no insets. There are no dev overlays
+and no cursor, and the onboarding trainer card is hidden. The commentary ticker is off (the player's own Settings
 switch), so no line crosses the HUD's banners.
 
-A sky strip at the top (10% of the height; 272 px on the iPad) carries a caption in the game's Silkscreen type:
-cream words, the last word in yellow, an ink outline, and an ink edge under the strip. Captions are three words or
-fewer, with no hyphens, dashes or dots. The game area below the strip is the captured frame, placed 1:1.
+A sky strip across the top carries the caption in the game's Silkscreen Bold type (its pixel grid read back from
+the font): cream words, the last word in yellow, an ink outline and drop, and an ink edge under the strip. The
+strip is 10.5% to 12% of the height: 156 px on the 6.9", 153 on the 6.5", 216 on the iPad and 130 and 128 on the
+Play sets, at 16, 16, 24, 12 and 12 px per type cell, so every letter edge lands on a pixel. Captions are three
+words or fewer, with no hyphens, dashes or dots. The game area below the strip is the captured frame, placed 1:1:
+the game runs at the device width and the height left under the strip.
 
 The moments:
 
-- **Title.** The live title screen with the Calynx credit.
-- **Pass.** Our forward is placed on the ball in their half, team-mates spread ahead. The pass-preview ring sits
-  under the man a pass would find.
-- **Goal.** A goal, then the scorer's knee slide on the game's own celebration camera, dollied in along its line to
-  him. He is big in the lower half, with GOAL!, his name tag, the confetti and the goal behind.
+- **Title.** The live title screen (the horizontal lockup, as on any landscape phone) with the Calynx credit.
+- **Pass.** Our forward on the ball at the halfway line, team-mates spread ahead. A thumb holds the floating stick
+  towards the man a pass would find, and the pass-preview ring sits under him.
+- **Goal.** A shot into the top corner, then the scorer's knee slide on the game's own celebration camera, dollied
+  in along its line to about 6 m from him (7.5 m on the iPad) and swung a little round him. He is big in the lower
+  left, with GOAL!, his name tag, the confetti and the goal behind.
 - **Blitz.** Our side is given a MEGA SHOT (the HUD slot and the power button lit), and a turbo cube glows on the
-  pitch.
-- **Market.** The transfer market of a career club.
+  pitch in their half. The iPad shot uses the game's CLOSE camera setting, so the players read on the big frame.
+- **Market.** The transfer market of a new career club (ROAD TO GLORY, week 1), unscrolled.
 - **Full time.** A real match: two 2-minute halves played out by the sim with the AI running both sides (a stronger
-  AI for ours). The seed was chosen so we win by two or more with a clean sheet, which gives three stars. Every stat
-  on the screen was played, for example 12 shots, 8 on target, 51 passes and 7 tackles on the iPad. The save sits
-  mid-level, so no LEVEL UP toast crosses the XP bar. The screen's own count-ups had finished before the capture.
+  AI for ours). Seed 3 gives a 2:0 win with a clean sheet, which gives three stars. Every stat on the screen was
+  played: 10 shots, 7 on target, 49 passes and 10 tackles, to their 1, 0, 41 and 6. The save sits mid-level (level
+  11), so no LEVEL UP toast crosses the XP bar. Its badge and season progress are pinned mid-tier, so the card shows
+  the win-streak line and one SEASON TIER line and nothing more. The screen's own count-ups had finished before the
+  capture. On the iPad the whole card fits. On the Play tablet (476 CSS px tall under the strip) the card shows its
+  top: the score, the three stars and the XP bar, as the game does at that height.
 
 | Folder | Size | Shots |
 |---|---|---|
-| `ios-6.9/` | 1320×2868 RGB (CSS 440×956 at 3×) | `01-title` "VOXEL FOOTBALL", `02-pass` "PASS AND MOVE", `03-goal` "SCORE SCREAMERS", `04-blitz` "BLITZ POWER UPS", `05-market` "BUILD YOUR CLUB" |
-| `ios-6.5/` | 1284×2778 RGB (428×926 at 3×) | The same five |
-| `play-phone/` | 1080×1920 RGB (432×768 at 2.5×) | The same five |
-| `ipad-13/` | 2064×2752 RGB (1032×1376 at 2×; the full-time card at 903 CSS px wide at 16/7×, so it fills the frame) | `01-goal`, `02-blitz`, `03-fulltime` "EARN EVERY STAR": YOU WIN! 3:0, three stars, XP, man of the match, the stats |
-| `play-tablet-7/` | 1200×1920 RGB (600×960 at 2×) | `01-pass`, `02-goal`, `03-blitz`, `04-fulltime` (YOU WIN! 2:0): four shots, Google's tablet minimum |
+| `ios-6.9/` | 2868×1320 RGB, landscape (game 956×388 CSS at 3×, under a 156 px strip) | `01-title` "VOXEL FOOTBALL", `02-pass` "PASS AND MOVE", `03-goal` "SCORE SCREAMERS", `04-blitz` "BLITZ POWER UPS", `05-market` "BUILD YOUR CLUB" |
+| `ios-6.5/` | 2778×1284 RGB, landscape (926×377 at 3×, 153 px strip) | The same five |
+| `play-phone/` | 1920×1080 RGB, landscape 16:9 (768×380 at 2.5×, 130 px strip) | The same five |
+| `ipad-13/` | 2752×2064 RGB, landscape (1376×924 at 2×, 216 px strip) | `01-goal`, `02-blitz`, `03-fulltime` "EARN EVERY STAR": YOU WIN! 2:0, three stars, XP, man of the match, the stats |
+| `play-tablet-7/` | 1920×1080 RGB, landscape 16:9 (960×476 at 2×, 128 px strip) | `01-pass`, `02-goal`, `03-blitz`, `04-fulltime` (YOU WIN! 2:0): four shots, Google's tablet minimum |
+
+Every file was checked with a Python PNG header read on 3 Oct 2026: exact size, colour type 2 (RGB, no alpha), bit
+depth 8, no `tRNS` chunk. Against the platform rules below: the three Apple sizes are on Apple's landscape list,
+and both Play sets are 16:9 with a 1080 px short side (inside 320 to 3840 px, the long side
+under twice the short). Each image was looked at full size and in a contact sheet at about 265 px wide, where the
+captions and the moments still read.
 
 The title screen with the new lockup was checked at 1280×720, 375×667 and 667×375 (the landscape phone uses the
 horizontal lockup): no overflow, and the letter edges are crisp.
 
-The Play phone set is 432 CSS px wide at 2.5×. At 360 CSS px wide, the game's GOAL! banner touches the clock pill
-(a HUD layout issue at that width, noted but not changed here).
+Seen in the game at these sizes (noted, not changed here):
+
+- The off-screen team-mate arrows kept a fixed side margin and sat inside the iPhone's 62 px inset, under the
+  camera housing. Fixed after these shots: their box now adds the safe-area insets (`ui/safeArea.ts`), so they
+  line up with the score bug. `02-pass` and `04-blitz` in the iPhone sets still show them at the old margin.
+- On a landscape phone the transfer market panel fills the height, and the player list starts at the bottom edge:
+  only the first row's top shows before a scroll.
+- On a short landscape screen the full-time card scrolls: at 476 CSS px tall the man of the match and the stats are
+  below the fold under a fade. On the iPad an extra BADGE UP line was enough to push the last two stat rows under it.
+- On the Play phone and tablet the Blitz power button sits over the far goal mouth when play is near that end.
 
 ## How the files are made, and `npm run assets`
 
@@ -205,20 +232,21 @@ and checks their sizes. That includes GameDistribution's two optional banners, w
 | Platform | Rule | Source (read 29 Sep 2026) |
 |---|---|---|
 | Apple app icon | 1024×1024 layout. Square: "the system applies masking to produce rounded corners". Background "full-bleed and opaque". "Keep primary content centered to avoid truncation" | <https://developer.apple.com/design/human-interface-guidelines/app-icons> (read through its JSON: `developer.apple.com/tutorials/data/design/human-interface-guidelines/app-icons.json`) |
-| Apple screenshots | 6.9": 1260×2736, 1290×2796 or 1320×2868 (portrait). 6.5": 1284×2778 or 1242×2688. iPad 13": 2064×2752 or 2048×2732. 1 to 10 per set; .png, .jpg or .jpeg; RGB with no alpha. 6.5" is required for iPhone apps unless 6.9" is provided; 13" is required if the app runs on iPad | <https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications> |
+| Apple screenshots | 6.9": 1260×2736, 1290×2796 or 1320×2868 portrait, or 2736×1260, 2796×1290 or 2868×1320 landscape. 6.5": 1284×2778 or 1242×2688 portrait, 2778×1284 or 2688×1242 landscape. iPad 13": 2064×2752 or 2048×2732 portrait, 2752×2064 or 2732×2048 landscape (the landscape sizes re-read 3 Oct 2026). 1 to 10 per set; .png, .jpg or .jpeg; RGB with no alpha. 6.5" is required for iPhone apps unless 6.9" is provided; 13" is required if the app runs on iPad | <https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications> |
 | Google Play icon | 512×512, 32-bit PNG, sRGB, 1024 KB or less, full square. Play applies the corner mask (30% radius) and the shadow; avoid transparency; keylines are guidelines | <https://developer.android.com/distribute/google-play/resources/icon-design-specifications> |
-| Google Play feature graphic and screenshots | Feature graphic: 1024×500, JPEG or 24-bit PNG, no alpha. Screenshots: JPEG or 24-bit PNG, no alpha, 320 to 3840 px, the long side no more than twice the short side, at least 2 (up to 8 per device type). Phone: 1080 px minimum recommended, 9:16 portrait. Tablets: at least 4 screenshots, 1080 to 7680 px, 16:9 or 9:16 | <https://support.google.com/googleplay/android-developer/answer/9866151> |
+| Google Play feature graphic and screenshots | Feature graphic: 1024×500, JPEG or 24-bit PNG, no alpha. Screenshots: JPEG or 24-bit PNG, no alpha, 320 to 3840 px, the long side no more than twice the short side, at least 2 (up to 8 per device type). Recommended (re-read 3 Oct 2026): at least four at 1080 px or more, "16:9 for landscape (minimum 1920x1080px)" or 9:16 for portrait; games "at least three 16:9 landscape screenshots (minimum 1920x1080px)" or three 9:16 portrait. Tablets: at least 4 screenshots, 1080 to 7680 px, 16:9 landscape or 9:16 portrait | <https://support.google.com/googleplay/android-developer/answer/9866151> |
 | CrazyGames covers | 16:9 1920×1080, 2:3 800×1200, 1:1 800×800. "Don't write anything else other than your game's title". "Don't put icons or store logos in the visuals". No borders; nothing blurry or pixelated | <https://docs.crazygames.com/requirements/game-covers/> |
 | Poki thumbnail | Full-bleed square, at least 628×628; avoid text and titles; no borders or padding; show the main character and a key gameplay element; avoid colours close to #83FFE7 | <https://developers.poki.com/guide/game-thumbnail> |
 | GameDistribution | 512×512, 512×384 and 200×120 mandatory; 1280×720 and 1280×550 optional. From a search summary: the official guide could not be read (see docs/SUBMIT.md) | <https://static.gamedistribution.com/developer/developers-guidelines.html> |
 
 ### Open points
 
-- **Play tablet aspect.** Google's help page asks for tablet screenshots in **16:9 or 9:16**. The `play-tablet-7/`
-  set is 1200×1920 (10:16), as requested. It passes the general 2:1 rule and the 1080 to 7680 px range, but it is
-  not exactly 9:16. If Play Console refuses it, shoot the same four moments at 1080×1920.
+- **Play tablet aspect.** Settled by the landscape reshoot (3 Oct 2026): `play-tablet-7/` is now 1920×1080, exactly
+  16:9, four shots, inside Google's 1080 to 7680 px tablet range.
 - **Covers carry no mark.** Every cover uses the wordmark alone. CrazyGames says no icons in the visuals (the mark
   is the game's icon), and on the wide art the mark tile looked pasted on. The full lockups stay in `logo/`.
 - **The covers' ball.** The drawn ball is lifted 0.42 m from its simulated spot, so that it clears the keeper in
   every view. The sim itself is untouched.
-- **Native builds.** Every App Store and Google Play screenshot shows the web build (see the top of this file).
+- **Native builds.** Every App Store and Google Play screenshot shows the web build in emulation, with the iPhone's
+  and iPad's landscape safe areas (see the top of this file). The iOS app wraps that same build; there is no
+  Android build yet.

@@ -5,6 +5,7 @@
  * has no clips, and nothing here ever throws into the frame loop. Encoding runs in the browser's media pipeline,
  * off the main thread; the frame loop only starts and stops it.
  */
+import { inNativeApp } from '../platform/native';
 export const CLIP_FPS = 30;
 /** Video bitrate cap (bits/s): 4 Mbps for the picture and sound together. */
 export const CLIP_BPS = 4_000_000;
@@ -33,6 +34,8 @@ export function clipMime(audio: boolean): string | null {
 
 /** Can this browser record the game canvas at all? */
 export function clipSupported(): boolean {
+  // (Not in the iPhone / iPad app: a WebM can't go to Photos there, and a download goes nowhere.)
+  if (inNativeApp()) return false;
   if (typeof HTMLCanvasElement === 'undefined' || typeof HTMLCanvasElement.prototype.captureStream !== 'function') return false;
   return clipMime(false) !== null;
 }

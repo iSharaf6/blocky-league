@@ -82,9 +82,9 @@ function cupEntry(app: AppContext): void {
         <div class="team-pick cup-pick">
           <span class="tp-label">YOUR CLUB</span>
           <div class="tp-body">
-            <button class="arrow" data-a="prev" aria-label="Previous club">◀</button>
+            <button class="arrow" data-a="prev" aria-label="Previous club">←</button>
             <div class="tp-kit">${shirtArt(c.kit, 8)}</div>
-            <button class="arrow" data-a="next" aria-label="Next club">▶</button>
+            <button class="arrow" data-a="next" aria-label="Next club">→</button>
           </div>
           <b class="tp-name">${esc(c.name)}</b>
           <span class="tp-stars">${stars(clubRating(club))}</span>

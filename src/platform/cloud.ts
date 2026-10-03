@@ -15,7 +15,7 @@
  * once with a keepalive request when the tab hides. Offline pushes wait for `online`. Failures toast.
  */
 import type { Session } from '@supabase/supabase-js';
-import { defaultSave, levelOf, normalizeProgress, normalizeSettings, normalizeShop, type SaveData } from '../core/save';
+import { defaultSave, levelOf, normalizeIap, normalizeProgress, normalizeSettings, normalizeShop, type SaveData } from '../core/save';
 
 export interface CloudContext {
   save: SaveData;
@@ -270,10 +270,12 @@ const hasCup = (d: SaveData): boolean => d.cup !== null && d.cup !== undefined &
 /**
  * Barely started: no match played, no XP, no career, no cup (daily-gift coins don't count). Nothing a player
  * would miss, so the other side may replace it without asking. Coins alone are never compared: they go down
- * legitimately (transfers, upgrades), so "more coins" says nothing about which save is further along.
+ * legitimately (transfers, upgrades), so "more coins" says nothing about which save is further along. A store
+ * purchase is the exception: money was paid for it, so a save that holds one is never given away unasked.
  */
 export function isSmall(d: SaveData): boolean {
-  return !peekCareer(d) && !hasCup(d) && (d.record?.played ?? 0) === 0 && (d.progress?.xp ?? 0) === 0;
+  return !peekCareer(d) && !hasCup(d) && (d.record?.played ?? 0) === 0 && (d.progress?.xp ?? 0) === 0
+    && (d.iap?.owned?.length ?? 0) === 0 && (d.iap?.applied?.length ?? 0) === 0;
 }
 
 /**
@@ -317,6 +319,8 @@ export function normalizeCloud(raw: unknown): SaveData {
     progress: normalizeProgress(d.progress),
     // (The SHOP's purchases: an older copy has none, a damaged one is made whole.)
     shop: normalizeShop(d.shop),
+    // (Store purchases follow the account: an older copy has none, a damaged one is made whole.)
+    iap: normalizeIap(d.iap),
     updatedAt: typeof d.updatedAt === 'string' ? d.updatedAt : base.updatedAt,
   } as SaveData;
 }
@@ -333,7 +337,7 @@ export interface SaveSummary {
 /** The lines the choice panel shows for one save. */
 export function summarize(d: SaveData, when: number | null): SaveSummary {
   const c = peekCareer(d);
-  let career = 'No career yet';
+  let career = 'No Road to Glory yet';
   if (c) {
     const name = typeof c.club?.name === 'string' && c.club.name.trim() ? c.club.name.trim() : 'Your club';
     career = c.season

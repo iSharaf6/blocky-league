@@ -256,7 +256,7 @@ export function bindings(): { keys: KeyMap; pad: PadMap } {
 /** The label of an action's first binding for the device in hand: "SPACE" / "A" / the touch button's name. */
 export function actionKey(action: PadAction, device: Device): string {
   if (device === 'gamepad') return padLabel(padNow[action][0] ?? DEFAULT_PAD[action][0]);
-  if (device === 'touch') return { pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', skill: 'SKILL', power: '⚡', pause: 'II' }[action];
+  if (device === 'touch') return { pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', skill: 'SKILL', power: 'POWER', pause: 'II' }[action];
   return keyLabel(keysNow[action][0] ?? DEFAULT_KEYS[action][0]);
 }
 
@@ -374,8 +374,10 @@ export class Input {
   private keys = new Set<string>();
   readonly touch: TouchState = { enabled: false, sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false, power: false, skill: false };
   private listeners: ((code: string) => void)[] = [];
+  // (The same test that puts the touch buttons on screen, ui/touch.ts isTouchDevice: a coarse pointer or touch events.)
   lastDevice: Device =
-    typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 'touch' : 'keyboard';
+    typeof window !== 'undefined' && ((typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window)
+      ? 'touch' : 'keyboard';
 
   constructor() {
     window.addEventListener('keydown', (e) => {

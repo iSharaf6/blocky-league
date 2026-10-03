@@ -53,6 +53,8 @@ export interface Settings {
   colorblind?: boolean;
   /** Quick subs: a card offers a tired player's change, made at the next stoppage (default on; game/quickSub.ts). */
   quickSubs?: boolean;
+  /** ROAD TO GLORY's "how it works" panel has been shown once (ui/career.ts; it stays one tap away on the hub). */
+  roadIntroSeen?: boolean;
 }
 
 export type StickMode = 'floating' | 'fixed';
@@ -120,6 +122,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (s.stick !== 'floating' && s.stick !== 'fixed') s.stick = 'floating';
   if (typeof s.colorblind !== 'boolean') s.colorblind = false;
   if (typeof s.quickSubs !== 'boolean') s.quickSubs = true;
+  if (typeof s.roadIntroSeen !== 'boolean') s.roadIntroSeen = false;
   if (s.ballSkin !== undefined && !(BALL_SKIN_IDS as readonly string[]).includes(s.ballSkin)) s.ballSkin = undefined;
   if (s.celebration !== undefined && !(CELEBRATION_IDS as readonly string[]).includes(s.celebration)) s.celebration = undefined;
   if (s.goalFx !== undefined && !(GOAL_FX_IDS as readonly string[]).includes(s.goalFx)) s.goalFx = undefined;
@@ -172,6 +175,8 @@ export interface SaveData {
   season?: SeasonState;
   /** The coin SHOP (src/meta/shop.ts): what has been bought, seen and the daily free pack. Always whole once loaded. */
   shop?: ShopState;
+  /** Real-money purchases and the free-coin ads (src/platform/iap.ts, src/meta/shop.ts). Always whole once loaded. */
+  iap?: IapState;
   updatedAt: string;
 }
 
@@ -222,6 +227,40 @@ function normalizePending(raw: unknown): PendingPack | null {
   return { kind: p.kind, seed: p.seed >>> 0, base: Math.max(0, Math.min(99, Math.round(p.base))), price: num(p.price) };
 }
 
+/**
+ * What store purchases and the free-coin ads leave in the save (src/platform/iap.ts owns the rules, meta/shop.ts
+ * the free-ad cap; normalizeIap makes any stored copy whole). It travels with the cloud copy, so a purchase
+ * follows the account.
+ */
+export interface IapState {
+  /** One-time products owned (non-consumables: the Starter Pack, NO ADS), by store id. A new device restores them. */
+  owned: string[];
+  /**
+   * Transactions already paid out, `${transactionId}|${productId}`, oldest first and capped (IAP_APPLIED_MAX): a
+   * store that delivers one transaction twice (a crash before it was finished, a restore) never pays twice.
+   */
+  applied: string[];
+  /** Rewarded ads watched for coins on one local day (YYYY-MM-DD; '' = none yet): the FREE COINS daily cap. */
+  freeAds: { day: string; count: number };
+}
+
+/** How many paid-out transaction ids a save keeps (a store re-delivers within days, never hundreds of purchases later). */
+export const IAP_APPLIED_MAX = 200;
+
+/** An IAP blob as stored by any build (or none) made whole: unknown entries dropped, numbers sane. */
+export function normalizeIap(raw: unknown): IapState {
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<IapState>) : {};
+  const strings = (v: unknown, ok: RegExp, max: number): string[] =>
+    Array.isArray(v) ? [...new Set(v.filter((k): k is string => typeof k === 'string' && ok.test(k)))].slice(-max) : [];
+  const f = r.freeAds && typeof r.freeAds === 'object' ? (r.freeAds as Partial<IapState['freeAds']>) : {};
+  const day = typeof f.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(f.day) ? f.day : '';
+  return {
+    owned: strings(r.owned, /^[A-Za-z0-9._-]{1,64}$/, 50),
+    applied: strings(r.applied, /^[^\0]{1,160}$/, IAP_APPLIED_MAX),
+    freeAds: { day, count: day ? Math.min(99, num(f.count)) : 0 },
+  };
+}
+
 /** The player's progression (everything here is earned by playing; nothing is bought). */
 export interface Progress {
   /** Total XP ever earned. */
@@ -264,7 +303,7 @@ export function defaultSave(): SaveData {
       sfx: true, music: true, crowd: true, quality: defaultQuality(), difficulty: 1, halfMinutes: 2, timeOfDay: 'random', weather: 'random',
       commentary: true, camZoom: 'normal', ...CONTROL_DEFAULTS,
       keys: normalizeKeyMap(undefined), pad: normalizePadMap(undefined), stick: 'floating', colorblind: false,
-      quickSubs: true,
+      quickSubs: true, roadIntroSeen: false,
     },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
@@ -279,6 +318,7 @@ export function defaultSave(): SaveData {
     mastery: normalizeMastery(undefined),
     season: normalizeSeason(undefined),
     shop: normalizeShop(undefined),
+    iap: normalizeIap(undefined),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -351,6 +391,8 @@ function mergeSave(raw: unknown): SaveData {
     season: normalizeSeason(d.season),
     // Saves from before the shop own nothing bought (their level unlocks stay: those come from XP).
     shop: normalizeShop(d.shop),
+    // Saves from before store purchases own nothing and have watched no ads.
+    iap: normalizeIap(d.iap),
   } as SaveData;
 }
 
@@ -427,11 +469,40 @@ export function importSave(raw: unknown): SaveData | null {
 
 export function writeSave(d: SaveData): void {
   d.updatedAt = new Date().toISOString();
+  const json = JSON.stringify(d);
   try {
-    localStorage.setItem(KEY, JSON.stringify(d));
+    localStorage.setItem(KEY, json);
   } catch {
     // Private mode / storage full: the game still runs, progress just isn't kept.
   }
+  try {
+    portalStore?.setItem(KEY, json);
+  } catch {
+    // The portal's store refused it: the browser's copy still holds it.
+  }
+}
+
+/** A portal's save store (CrazyGames' Data Module, platform/ads.ts portalStore), mirrored on every write once adopted. */
+let portalStore: { getItem(key: string): string | null; setItem(key: string, value: string): void } | null = null;
+
+/**
+ * The portal's store is up (the game's boot, once its SDK has started): from now on every save is mirrored there.
+ * Returns the portal's copy when it is the newer one (the player signed in on another device: the caller swaps it
+ * in), else null, and the browser's copy is written there at once.
+ */
+export function adoptPortalStore(store: NonNullable<typeof portalStore>, local: SaveData): SaveData | null {
+  portalStore = store;
+  let remote: SaveData | null = null;
+  try {
+    const raw = store.getItem(KEY);
+    remote = raw ? importSave(raw) : null;
+  } catch {
+    remote = null;
+  }
+  const newer = remote && (!local.updatedAt || (remote.updatedAt ?? '') > local.updatedAt);
+  if (remote && newer) return remote;
+  writeSave(local);
+  return null;
 }
 
 // ------------------------------------------------------------------ progression (pure; see tests/progress.test.ts)

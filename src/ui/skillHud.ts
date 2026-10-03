@@ -2,7 +2,7 @@ import { Vector3, type Camera } from 'three';
 import { clamp } from '../core/math';
 import { PF } from '../game/replay';
 import { PITCH_Y } from '../render/stadium';
-import { SKILL_NAMES } from '../sim/skills';
+import { SKILL_NAMES, type ChainKind } from '../sim/skills';
 import type { SkillGrade, SkillMoveKind } from '../sim/types';
 import { escHtml } from './text';
 
@@ -59,18 +59,19 @@ export class SkillHud {
   /**
    * A move came off (the session, on 'skillMove'): the pop over `player`. PERFECT in green over the move's name; a
    * GOOD (it beat him) the name in teal; a plain or show-off move just the name, small; a chain of two or more gets
-   * its "SKILL ×n" tag (a skill cut or knock-on only shows when it extends a chain).
+   * its "SKILL ×n" tag (a skill cut, a knock-on and a man dribbled past are links of their own: their name, and the chain).
    */
-  show(player: number, grade: SkillGrade, move: SkillMoveKind | 'cut' | 'knock', combo: number): void {
+  show(player: number, grade: SkillGrade, move: SkillMoveKind | ChainKind, combo: number): void {
     const name = escHtml(SKILL_NAMES[move]);
     const chain = combo >= 2 ? `<em>SKILL ×${combo}</em>` : '';
+    const link = move === 'cut' || move === 'knock' || move === 'past';
     let html: string;
     if (grade === 'perfect') html = `<b>PERFECT</b><span>${name}</span>${chain}`;
-    else if (move === 'cut' || move === 'knock') html = `<b>SKILL ×${combo}</b><span>${name}</span>`;
+    else if (link) html = combo >= 2 ? `<b>SKILL ×${combo}</b><span>${name}</span>` : `<b>${name}</b>`;
     else if (grade === 'good') html = `<b>${name}</b>${chain}`;
-    else html = `<span>${name}</span>`;
+    else html = `<span>${name}</span>${chain}`;
     const el = this.pop;
-    el.dataset.grade = move === 'cut' || move === 'knock' ? 'chain' : grade;
+    el.dataset.grade = link ? 'chain' : grade;
     el.innerHTML = html;
     el.classList.remove('on');
     void el.offsetWidth;

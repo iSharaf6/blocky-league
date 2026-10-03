@@ -32,7 +32,8 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  *   or beside him is telegraphed first (a wind-up, then a lunge), so every row with a human in it plays out
  *   differently even with SKILL never pressed;
  * - move assist's cone hysteresis (Match.moveAssistRun, HumanCtl.runTaken) and the AI closing down a human who
- *   stands on the ball (ai.ts humanStalling).
+ *   stands on the ball (ai.ts humanStalling);
+ * - the duel (skills.ts TELL_DUEL): a man in front of the human's dribbler winds up a told challenge far more often.
  * The fix for "players spaz out" draws the body with a face-target hold (Player.drawFacing, FACE_HOLD_T) and leaves
  * the sim's facing alone, so all six AI v AI rows (ai*, aiKo*) are bit-identical to before. No driver or comparison
  * was relaxed.
@@ -41,19 +42,19 @@ const BEFORE: Record<string, Row> = {
   aiClassic: [2262850705, 2447626034, 19417, 2, 3, 0],
   aiBlitz: [513065991, 663489125, 11382, 0, 2, 0],
   aiStyles: [2891120658, 2774569015, 11673, 1, 2, 0],
-  botSide0: [2008141426, 2119754777, 15449, 4, 0, 0],
-  botPerks: [478059341, 849763147, 11377, 3, 1, 0],
-  botFirstMatch: [992705381, 3733448369, 11376, 1, 0, 0],
+  botSide0: [4018342276, 2847971312, 15921, 6, 0, 0],
+  botPerks: [1256534990, 1190657039, 11391, 2, 1, 0],
+  botFirstMatch: [419490953, 422137024, 11141, 1, 0, 0],
   fuzzSide1: [1765176342, 1498320739, 11591, 3, 0, 0],
-  fuzzBlitz0: [521166639, 1094532567, 11627, 0, 2, 0],
+  fuzzBlitz0: [3264831548, 444990822, 11085, 0, 0, 0],
   fuzzBlitzPerks1: [4063850517, 1852493949, 11103, 1, 0, 0],
-  penTaker0: [645986944, 2368237204, 8098, 1, 1, 0],
+  penTaker0: [628411677, 3333066141, 7588, 0, 0, 0],
   penTaker1Low: [2432999293, 1714160249, 7946, 0, 1, 0],
   penTimeout1: [465348317, 1904918744, 7616, 1, 1, 0],
-  penKeeper1: [4109551657, 2031425049, 8073, 2, 0, 0],
+  penKeeper1: [3738431922, 1903557219, 8078, 1, 0, 0],
   ko1: [3342705198, 2341050154, 5121, 0, 0, 1],
   ko3: [1861822237, 1933322066, 7958, 0, 0, 1],
-  ko6: [2526958168, 1573587964, 5649, 0, 0, 1],
+  ko6: [2418784713, 319717197, 5633, 0, 0, 1],
   aiKo1: [47845968, 1192999698, 5817, 0, 0, 1],
   aiKo4: [2291840460, 860824426, 3346, 0, 1, 0],
   aiKo7: [4112032605, 1756315151, 5108, 0, 0, 1],

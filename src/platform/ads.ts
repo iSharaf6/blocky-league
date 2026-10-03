@@ -18,9 +18,15 @@ interface CrazySettings {
   muteAudio: boolean;
   disableChat: boolean;
 }
+/** CrazyGames' Data Module: a localStorage-like store kept with the player's CrazyGames account. */
+export interface PortalStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
 interface CrazySDK {
   init(): Promise<void>;
   environment: 'local' | 'crazygames' | 'disabled';
+  data?: PortalStore;
   ad: {
     requestAd(type: 'midgame' | 'rewarded', cb: { adStarted?: () => void; adFinished?: () => void; adError?: (e: CrazyAdError) => void }): void;
     hasAdblock(): Promise<boolean>;
@@ -99,6 +105,21 @@ export class Ads {
   private muted = false;
   /** true = all game audio must be silent (ad playing, or CrazyGames muteAudio setting); false = may play. */
   onMute: (muted: boolean) => void = () => {};
+  /**
+   * true = the player owns NO ADS (platform/iap.ts adFree): no interstitial is ever requested. Rewarded ads are
+   * opt-in rewards, not interruptions, so they stay available. main.ts points it at the live save.
+   */
+  adFree: () => boolean = () => false;
+
+  /**
+   * The portal's own save store once its SDK is up (CrazyGames' Data Module: progress follows a signed-in player to
+   * any device), else null. The save mirrors itself there (core/save.ts adoptPortalStore).
+   */
+  portalStore(): PortalStore | null {
+    if (this.portal !== 'crazygames') return null;
+    const d = window.CrazyGames?.SDK?.data;
+    return d && typeof d.getItem === 'function' && typeof d.setItem === 'function' ? d : null;
+  }
 
   init(): Promise<void> {
     // Boot and previews may both ask to initialize. Load just one SDK/listener.
@@ -146,6 +167,11 @@ export class Ads {
     return this.ok && this.adsAllowed;
   }
 
+  /** This build can show interstitial ads at all (so NO ADS is worth selling in it; see ui/shop.ts). */
+  get showsInterstitials(): boolean {
+    return this.ok && this.adsAllowed;
+  }
+
   /** Call once the title screen is interactive. Safe to call before init() has finished. */
   loadingDone(): void {
     this.loaded = true;
@@ -189,7 +215,7 @@ export class Ads {
    * No local cooldown: both SDKs decide whether an ad actually plays (CrazyGames caps at 1 per 3 min).
    */
   async midgame(): Promise<void> {
-    if (!this.ok || !this.adsAllowed || this.adInFlight) return;
+    if (!this.ok || !this.adsAllowed || this.adInFlight || this.adFree()) return;
     this.gameplayStop();
     this.adInFlight = true;
     let active = true;

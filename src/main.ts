@@ -15,11 +15,12 @@ import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock,
   type SaveData, momentStarsTotal, momentXp, recordMoment } from './core/save';
-import { SKILL_GOAL_COINS } from './core/save';
+import { SKILL_GOAL_COINS, adoptPortalStore } from './core/save';
 import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
 import { CAT_LABEL, DEFAULT_ID, equippedId, inReach, newInShop, shopOf, type ShopCat, type ShopItem } from './meta/shop';
 import { ads } from './platform/ads';
+import { adFree, iap } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
 import { BOX_DEPTH, BOX_W, HALF_L } from './sim/constants';
@@ -33,7 +34,7 @@ import { overall } from './sim/types';
 import { openCareer } from './ui/career';
 import { openCup } from './ui/cup';
 import { careerState, closeMeta, openClub } from './ui/club';
-import { openShop } from './ui/shop';
+import { openShop, shopOpen } from './ui/shop';
 import type { Projector } from './ui/hud';
 import { openMoments } from './ui/moments';
 import type { OnlineHost } from './ui/online';
@@ -48,6 +49,7 @@ import { badgePending, nextBadgeGoal, recordMatchMeta, wornTitle, type MasteryMa
 import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
+import { inNativeApp } from './platform/native';
 
 /** A brief studio entrance on the standalone site; portals only wait for actual loading. */
 const bootAt = performance.now();
@@ -73,6 +75,15 @@ let atMenu = false;
 function persist(): void {
   writeSave(save);
 }
+
+// Store purchases (platform/iap.ts) pay out into the one save and store it before the store is told it arrived.
+// NO ADS switches the interstitials off (rewarded ads stay: they are the player's choice). Both read the live save.
+ads.adFree = () => adFree(save);
+iap.bind({ save, persist });
+iap.onGrant((g) => {
+  // A purchase that completes while the shop is shut (a family approval, one the store re-delivers at launch) still says so.
+  if (!shopOpen() && !g.restored) menus.toast(`PURCHASE ARRIVED${g.coins ? `: +${g.coins.toLocaleString('en-US')} COINS` : ''}`);
+});
 
 /**
  * Replace the running save with another (a file the player imported, or the cloud copy): every module holds
@@ -120,11 +131,17 @@ function applyCamZoom(s: MatchSession | null): void {
   (s as { setCamZoom?: (z: CamZoom) => void } | null)?.setCamZoom?.(camZoom());
 }
 
+/** The PITCH TRAINER setting as last applied (applyControls: null before the first match). */
+let trainerWas: boolean | null = null;
+
 /**
  * Settings > Controls onto a match: pass assistance (ground / through), auto switch, switch move assist and
  * timed finishing. The sim reads them every tick, so a change from the pause menu applies at once.
  */
 function applyControls(m: Match, c: ControlSettings = controlsOf(save.settings)): void {
+  // (PITCH TRAINER switched back on: the cards he had outgrown come back in full.)
+  if (trainerWas === false && c.trainer) Trainer.resetLearned();
+  trainerWas = c.trainer;
   m.groundAssist = c.groundAssist;
   m.throughAssist = c.throughAssist;
   m.autoSwitch = c.autoSwitch;
@@ -322,7 +339,7 @@ function mainInfo(): MainInfo {
       const star = [...club.squad.slice(0, 11)].sort((a, b) => overall(b) - overall(a))[0];
       if (star) info.captain = { def: star, kit: club.kit, club: club.name.toUpperCase(), ovr: clubRating(club) };
     } else {
-      info.career = 'START YOUR CLUB';
+      info.career = 'START AT THE BOTTOM';
       info.club = `KIT ${SEP_MARK} SQUAD`;
     }
     const cup = migrateCup(save.cup);
@@ -371,7 +388,7 @@ function onboarding(): NonNullable<typeof save.onboarding> {
 /** What the daily gift just brought into the SHOP's reach (said once, back on the menu). */
 let giftReach: ShopItem | null = null;
 
-const FEATURE_NAMES: Record<LockedFeature, string> = { career: 'CAREER', moments: 'MOMENTS', run: 'CLUB RUN', blitz: 'BLITZ' };
+const FEATURE_NAMES: Record<LockedFeature, string> = { career: 'ROAD TO GLORY', moments: 'MOMENTS', run: 'CLUB RUN', blitz: 'BLITZ' };
 
 function mainMenu(): void {
   atMenu = true;
@@ -389,7 +406,8 @@ function mainMenu(): void {
   }
   const info = mainInfo();
   const backup = (): void => menus.backup(save, { onImport: reload, back: () => settings() });
-  const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', { backup });
+  // (No BACKUP inside the iPhone / iPad app: its export is a browser download, and iOS backs the app up itself.)
+  const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', { backup: inNativeApp() ? undefined : backup });
   menus.main(save, {
     playNow: () => playNow(),
     account: cloudAvailable() ? () => openAccount({ save, persist, reload }, mainMenu) : undefined,
@@ -421,7 +439,7 @@ function mainMenu(): void {
     // (The condition written out here, not through a variable: the bundler drops the whole branch, the import
     // with it, only when it can see the literal: see ONLINE below.)
     online: !import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none'
-      ? () => void import('./ui/online').then((o) => o.openOnline(onlineHost))
+      ? inNativeApp() ? undefined : () => void import('./ui/online').then((o) => o.openOnline(onlineHost))
       : undefined,
     run: () => openRun(app, mainMenu),
     locked: (f) => menus.toast(`SCORE YOUR FIRST GOAL TO UNLOCK ${FEATURE_NAMES[f]}`),
@@ -442,6 +460,8 @@ function mainMenu(): void {
  * ONLINE ships in the web builds only: the own site and itch (VITE_PORTAL 'none'), and dev (unset). The portal builds
  * (CrazyGames, Poki) leave it out altogether: no tile, and none of its code in the bundle (the main menu's lazy
  * import is dead there once VITE_PORTAL is a literal), so a portal submission makes no WebRTC or STUN request.
+ * The iPhone / iPad app wraps the itch build but shows no tile either (inNativeApp): hand-swapped codes with no
+ * relay mostly fail on mobile data, and its "this browser" room means nothing in an app.
  */
 
 /**
@@ -1102,6 +1122,8 @@ async function boot(): Promise<void> {
   TouchControls.stickMode = save.settings.stick === 'fixed' ? 'fixed' : 'floating';
   menus.stick = TouchControls.stickMode;
   ads.onMute = (m) => sfx.setMuted(m);
+  // The store (the apps' native one, or the dev fake): loads in the background, the shop looks when it opens.
+  void iap.init();
   // Every screen's text goes through the divider guard (see ui/text.ts): no glyph the fonts lack.
   // (The whole page: menus, the HUD, the trainer card and anything else that writes text.)
   installSepGuard(document.body);
@@ -1139,6 +1161,15 @@ async function boot(): Promise<void> {
   performance.measure('bl:demo', { start: t0, end: t1 });
   performance.measure('bl:firstRender', { start: t1, end: t2 });
   await ready;
+  // CrazyGames: the save also lives in its Data Module (the player's account). A newer copy there wins (he played
+  // on another device), swapped in before any menu reads it, and its settings applied.
+  const store = ads.portalStore();
+  const theirs = store ? adoptPortalStore(store, save) : null;
+  if (theirs) {
+    for (const k of Object.keys(save)) delete (save as unknown as Record<string, unknown>)[k];
+    Object.assign(save, theirs);
+    applySettings();
+  }
   performance.mark('bl:ready');
   requestAnimationFrame(frame);
   document.getElementById('boot')?.setAttribute('aria-busy', 'false');

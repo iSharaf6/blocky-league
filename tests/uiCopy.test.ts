@@ -3,6 +3,8 @@ import ts from 'typescript';
 import { DEFAULT_KEYS, DEFAULT_PAD, setBindings, type Device } from '../src/core/input';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { BASICS, MOMENTS } from '../src/meta/moments';
+import { POWER_INFO } from '../src/ui/commentary';
+import { ICONS, ICON_NAMES } from '../src/ui/pixelIcons';
 import { Match } from '../src/sim/match';
 import type { RestartKind } from '../src/sim/types';
 import {
@@ -79,6 +81,51 @@ describe('user-visible copy: separators and fonts', () => {
     }
     for (const l of allLiterals()) if (/\b(monospace|Courier)\b/i.test(l.text)) bad.push(`${l.file}:${l.line} ${l.text}`);
     expect(bad).toEqual([]);
+  }, SCAN_MS);
+});
+
+/**
+ * No emoji either: they come from each platform's own set and read as AI slop beside the chunky pixel look. Every
+ * icon is a pixel icon (ui/pixelIcons.ts). Plain typographic glyphs stay: ★ (match stars), ✓, ✕, and the arrows
+ * ← → ↑ ↓. (★ is the only one of those the pictograph class also holds, so it is the one allowed through.)
+ */
+const PICTOGRAPH = /\p{Extended_Pictographic}|\p{Regional_Indicator}|[\u{FE0F}\u{20E3}\u{1F3FB}-\u{1F3FF}]/u;
+const ALLOWED_GLYPHS = new Set(['★']);
+const emojiIn = (text: string): string[] => [...text].filter((c) => PICTOGRAPH.test(c) && !ALLOWED_GLYPHS.has(c));
+
+describe('user-visible copy: pixel icons, no emoji', () => {
+  it('no string in src/ holds an emoji or pictograph', () => {
+    const hits = allLiterals().filter((l) => emojiIn(l.text).length).map((l) => `${l.file}:${l.line} ${JSON.stringify(l.text)}`);
+    expect(hits).toEqual([]);
+  }, SCAN_MS);
+
+  it('no stylesheet draws one with content:, and the page shell has none', () => {
+    const bad: string[] = [];
+    for (const f of [...files(join(root, 'src'), /\.css$/), join(root, 'index.html')]) {
+      const text = readFileSync(f, 'utf8');
+      for (const m of text.matchAll(/content:\s*(['"])(.*?)\1/g)) if (emojiIn(m[2]).length) bad.push(`${f}: content ${m[2]}`);
+      if (f.endsWith('.html') && emojiIn(text).length) bad.push(`${f}: ${emojiIn(text).join('')}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('every pixel icon is a 10 by 10 grid, and every icon a moment, a step or a power-up names exists', () => {
+    for (const name of ICON_NAMES) {
+      const rows = ICONS[name];
+      expect(rows.length, name).toBe(10);
+      for (const r of rows) expect(r, name).toMatch(/^[X.]{10}$/);
+      expect(rows.join(''), name).toContain('X');
+    }
+    for (const mo of MOMENTS) expect(ICONS[mo.icon], `moment ${mo.id}`).toBeDefined();
+    for (const b of BASICS) expect(ICONS[b.icon], `basics ${b.id}`).toBeDefined();
+    for (const [kind, info] of Object.entries(POWER_INFO)) expect(ICONS[info.icon], `power-up ${kind}`).toBeDefined();
+  });
+});
+
+describe('user-visible copy: the mode is ROAD TO GLORY', () => {
+  it('no visible label or sentence in src/ still calls it CAREER', () => {
+    const hits = allLiterals().filter((l) => /\bCAREER\b/.test(l.text)).map((l) => `${l.file}:${l.line} ${JSON.stringify(l.text)}`);
+    expect(hits).toEqual([]);
   }, SCAN_MS);
 });
 

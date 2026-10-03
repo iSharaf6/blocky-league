@@ -298,6 +298,99 @@
 .panel.mc .sh-noclub h3 { margin: 0; font: 700 18px var(--px); letter-spacing: 1.5px; color: var(--ink); }
 .sh-noclub p { margin: 0; max-width: 46ch; font: 400 16px / 1.35 var(--round); color: var(--ink-2); }
 
+/* ---------------------------------------------------------------- COINS: store packs, or free coins from ads */
+
+.sh-coins { display: grid; gap: 14px; }
+.sh-lede { margin: 0; font: 400 16px / 1.3 var(--round); color: var(--ink-2); }
+
+.sh-iaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+.sh-iap {
+  position: relative;
+  appearance: none;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 6px;
+  padding: 10px 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--cream-2);
+  cursor: pointer;
+  transition: transform 0.06s, box-shadow 0.06s, filter 0.12s;
+}
+.sh-iap:hover { filter: brightness(1.03); }
+.sh-iap:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--cream-2); }
+.sh-iap:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2px; }
+.sh-iap:disabled { cursor: default; }
+.sh-iap:disabled:not(.wait) { opacity: 0.6; }
+.sh-iap.tagged { border-color: var(--blue); box-shadow: 0 4px 0 var(--blue-d); background: #eef5ff; }
+.sh-iap > b { font: 400 20px / 1.05 var(--round); letter-spacing: 0.6px; text-align: center; }
+.sh-iap > small { min-height: 1.2em; font: 700 12px / 1.2 var(--px); letter-spacing: 0.5px; color: var(--go-d); text-align: center; }
+.sh-pile {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 5 / 3;
+  background: linear-gradient(#c8ecfc, #8fd0f2);
+}
+.sh-pile .sh-px { width: 56%; }
+.sh-ribbon {
+  position: absolute;
+  top: -10px;
+  left: -8px;
+  z-index: 1;
+  padding: 4px 6px 3px;
+  font: 700 11px / 1 var(--px);
+  font-style: normal;
+  letter-spacing: 0.5px;
+  color: #fff;
+  background: var(--blue);
+  box-shadow: 0 3px 0 var(--blue-d);
+}
+.sh-ribbon.best { background: var(--go); box-shadow: 0 3px 0 var(--go-d); }
+
+.sh-deal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--cream-2);
+}
+.sh-deal.starter { border-color: var(--yellow-d); background: #fff5c4; box-shadow: 0 4px 0 #ecd889; }
+.sh-deal.noads { grid-template-columns: minmax(0, 1fr) auto; }
+.sh-dealart { display: grid; place-items: center; padding: 6px; background: var(--ink); }
+.sh-dealtxt { display: grid; gap: 3px; min-width: 0; }
+.sh-dealtxt b { font: 700 16px var(--px); letter-spacing: 1px; color: var(--ink); }
+.sh-dealtxt span { font: 400 15px / 1.25 var(--round); color: var(--ink-2); }
+.sh-deal .btn { min-height: 40px; padding: 9px 16px 7px; font-size: 16px; }
+.sh-restore { display: flex; justify-content: center; }
+
+.sh-gift {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: #fff5c4;
+  border: 3px solid var(--yellow-d);
+  box-shadow: 0 4px 0 #ecd889;
+}
+.sh-giftart { display: grid; place-items: center; width: 84px; padding: 10px 6px; background: linear-gradient(#c8ecfc, #8fd0f2); }
+.sh-giftart .sh-px { width: 70%; }
+.sh-gifttxt { display: grid; gap: 4px; min-width: 0; }
+.panel.mc .sh-gifttxt h3 { margin: 0; font: 700 18px var(--px); letter-spacing: 1.5px; color: var(--ink); }
+.sh-gifttxt p { margin: 0; font: 400 16px / 1.3 var(--round); color: var(--ink-2); }
+.sh-gifttxt .sh-left { font-size: 15px; color: var(--go-d); letter-spacing: 0.4px; }
+.sh-gifttxt .sh-left.done, .sh-gifttxt .sh-left.none { color: var(--ink-2); }
+.sh-watch { display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
+.sh-watch .sh-play { flex: none; }
+.btn.sh-more { width: 100%; margin-top: 2px; }
+
 /* ---------------------------------------------------------------- the pack reveal */
 
 .sh-modal {
@@ -435,6 +528,14 @@
   .sh-pack > small { text-align: left; }
   .sh-odds { justify-content: flex-start; }
   .sh-market { grid-template-columns: 1fr; }
+  .sh-iaps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .sh-iap > b { font-size: 17px; }
+  .sh-deal { grid-template-columns: auto minmax(0, 1fr); }
+  .sh-deal .btn { grid-column: 1 / -1; }
+  .sh-deal.noads { grid-template-columns: minmax(0, 1fr); }
+  .sh-gift { grid-template-columns: auto minmax(0, 1fr); }
+  .sh-gift .sh-watch { grid-column: 1 / -1; }
+  .sh-giftart { width: 64px; }
 }
 /* Landscape phones: the showcase stays side by side, flatter. */
 @media (max-height: 480px) {

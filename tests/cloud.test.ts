@@ -289,7 +289,7 @@ describe('normalizeCloud / summarize', () => {
     expect(s.played).toBe(12);
     expect(s.career).toBe('Voxel United: season 2, 5 played');
     expect(s.when).toBe(ms(T1));
-    expect(summarize(at(T0), null).career).toBe('No career yet');
+    expect(summarize(at(T0), null).career).toBe('No Road to Glory yet');
   });
 });
 
