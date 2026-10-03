@@ -1,6 +1,8 @@
 /**
- * Career screens: hub (next match, table, fixtures), match launch and the season summary. Transfers live in one
- * place, the market (ui/market.ts): the hub's MARKET button opens it and its BACK returns here.
+ * ROAD TO GLORY screens on the app shell (docs/UX.md): the hub (the next match with a big PLAY on the left, always on
+ * screen, with compact SQUAD / TRAINING / TRANSFERS / STADIUM under it; the TABLE, FIXTURES and CUP tabs in a pane on
+ * the right, scrolled to your row and the current matchday), match launch and the one-screen season summary.
+ * Transfers live in one place, the market (ui/market.ts): its BACK returns here.
  * Rules live in meta/career.ts; this file only renders and wires them to AppContext.
  */
 import type { AppContext } from '../app';
@@ -15,16 +17,21 @@ import { CUP_AFTER, ROUND_NAMES, cupPrize, retiredCupNote, type TieOutcome } fro
 import { marketUnread } from '../meta/market';
 import { cssHex } from '../render/palette';
 import { goalsOf } from '../sim/shootout';
-import type { Side } from '../sim/types';
+import type { Kit, Side } from '../sim/types';
 import { careerState, closeMeta, clubCreate, esc, fmt, mountMeta, openClub, topBar, type ToastKind } from './club';
 import { cupFinishText, cupSeasonRow, cupTabHtml, cupTrophyScreen } from './cup';
 import { openMarket } from './market';
 import { DIFFICULTIES, shirtArt } from './menus';
+import { revealInPane } from './panes';
 import { pixelIcon } from './pixelIcons';
 import { roadIntro } from './roadIntro';
 import { scoreHtml, sep } from './text';
+import './career.css';
 
 type HubTab = 'table' | 'fixtures' | 'cup';
+
+/** The hub's memory for the session (docs/UX.md section 8): the last tab looked at. */
+const hubMemo = { tab: 'table' as HubTab };
 
 interface Flash {
   msg: string;
@@ -98,7 +105,7 @@ export function openCareer(app: AppContext, flash?: Flash, tab?: HubTab): void {
   }
   refreshMarket(st);
   // A cup tie up next opens on the draw.
-  careerHub(app, st, tab ?? (cupDue(st) >= 0 ? 'cup' : 'table'), flash);
+  careerHub(app, st, tab ?? (cupDue(st) >= 0 ? 'cup' : hubMemo.tab), flash);
 }
 
 /**
@@ -153,28 +160,31 @@ function fixtureScore(f: Fixture): string {
   return `<b class="sc">${scoreHtml(f.hg, f.ag)}${f.forfeit ? '<small>FF</small>' : ''}</b>`;
 }
 
-function fixturesHtml(st: CareerState, season: SeasonState, info: Map<string, LeagueClub>, mdView: number): string {
+/**
+ * Your season, one row per matchday (the cup's rounds slot in after the matchday they follow), the next match marked.
+ * A row tap opens that matchday's other results under it; the last one played starts open.
+ */
+function fixturesHtml(st: CareerState, season: SeasonState, info: Map<string, LeagueClub>, open: number): string {
   const cup = season.cup;
   const cupClubMap = cup ? cupClubs(st) : null;
   const due = cupDue(st);
-  // The cup round that comes after this league matchday (QF after MD2...), as its own row in YOUR SEASON.
+  // The cup round that comes after this league matchday (QF after MD2...), as its own row.
   const cupAfter = (md: number): string => {
     const r = CUP_AFTER.findIndex((n) => n === md + 1);
     return cup && cupClubMap && r >= 0 ? cupSeasonRow(cup, r, cupClubMap, due === r) : '';
   };
-  const day = season.fixtures.filter((f) => f.md === mdView);
-  const status = mdView < season.matchday ? 'FULL TIME' : mdView === season.matchday ? 'NEXT UP' : 'UPCOMING';
-  const rows = day
-    .map((f) => {
-      const you = f.home === YOU || f.away === YOU;
-      return `<div class="mc-fx ${you ? 'you' : ''}">
+  const others = (mine: Fixture) =>
+    season.fixtures
+      .filter((f) => f.md === mine.md && f !== mine)
+      .map(
+        (f) => `<div class="mc-fx">
         <span class="h">${clubNames(info.get(f.home))}${kitDot(info.get(f.home))}</span>
         ${fixtureScore(f)}
         <span class="a">${kitDot(info.get(f.away))}${clubNames(info.get(f.away))}</span>
-      </div>`;
-    })
-    .join('');
-  const mine = season.fixtures
+      </div>`,
+      )
+      .join('');
+  const rows = season.fixtures
     .filter((f) => f.home === YOU || f.away === YOU)
     .sort((a, b) => a.md - b.md)
     .map((f) => {
@@ -186,23 +196,46 @@ function fixturesHtml(st: CareerState, season: SeasonState, info: Map<string, Le
         const their = home ? f.ag : f.hg;
         res = my > their ? '<i class="mc-wdl w">W</i>' : my === their ? '<i class="mc-wdl d">D</i>' : '<i class="mc-wdl l">L</i>';
       }
-      return `<div class="mc-ys ${f.md === season.matchday && due < 0 ? 'next' : ''}">
-        <span class="mc-ysmd">MD${f.md + 1}</span>
-        <span class="mc-chip ${home ? 'home' : 'away'}">${home ? 'H' : 'A'}</span>
-        <span class="mc-ysopp">${kitDot(opp)}${clubNames(opp)}</span>
-        ${fixtureScore(f)}
-        ${res}
-      </div>${cupAfter(f.md)}`;
+      const isOpen = f.md === open;
+      const next = f.md === season.matchday && due < 0;
+      return `<button class="mc-ys cr-ys${next ? ' next' : ''}${isOpen ? ' open' : ''}" data-a="md" data-v="${f.md}" aria-expanded="${isOpen}" aria-label="Matchday ${f.md + 1}: other results">
+          <span class="mc-ysmd">MD${f.md + 1}</span>
+          <span class="mc-chip ${home ? 'home' : 'away'}">${home ? 'H' : 'A'}</span>
+          <span class="mc-ysopp">${kitDot(opp)}${clubNames(opp)}</span>
+          ${fixtureScore(f)}
+          ${res}
+        </button>${isOpen ? `<div class="cr-others">${others(f)}</div>` : ''}${cupAfter(f.md)}`;
     })
     .join('');
-  return `<div class="mc-pager">
-      <button class="arrow" data-a="mdprev" ${mdView <= 0 ? 'disabled' : ''} aria-label="Previous matchday">←</button>
-      <b>MATCHDAY ${mdView + 1}<small>${status}</small></b>
-      <button class="arrow" data-a="mdnext" ${mdView >= MATCHDAYS - 1 ? 'disabled' : ''} aria-label="Next matchday">→</button>
-    </div>
-    <div class="mc-fxlist">${rows}</div>
-    <h3 class="mc-h">YOUR SEASON</h3>
-    <div class="mc-fxlist">${mine}</div>`;
+  return `<div class="mc-fxlist cr-fx">${rows}</div>`;
+}
+
+/** One side of the next-match card: shirt, short name, full name, a fact line. */
+function sideHtml(kit: Kit, short: string, name: string, meta: string): string {
+  return `<div class="mc-side">${shirtArt(kit, 6)}<b>${esc(short)}</b><small>${esc(name)}</small><em>${meta}</em></div>`;
+}
+
+/** The next league match: both clubs, the big PLAY, and what a result pays. */
+function leagueCard(st: CareerState, nm: NextMatch, table: TableRow[]): string {
+  const club = st.club!;
+  const season = st.season!;
+  const pay = payTable(season.division, st.stadium);
+  const youKit = nm.userHome ? nm.kits[0] : nm.kits[1];
+  const themKit = nm.userHome ? nm.kits[1] : nm.kits[0];
+  // League position only means something once a ball has been kicked.
+  const place = (id: string) => (season.matchday > 0 ? `${sep()}${ordinal(table.findIndex((r) => r.id === id) + 1)}` : '');
+  const you = sideHtml(youKit, club.short, club.name, `OVR ${clubRating(club)}${place(YOU)}`);
+  const them = sideHtml(themKit, nm.rival.short, nm.rival.name, `OVR ${nm.rival.rating}${place(nm.rival.id)}`);
+  return `<section class="mc-next cr-next">
+      <div class="mc-nexttop">
+        <span class="mc-chip div">DIV ${season.division}</span>
+        <span>MATCHDAY ${nm.md + 1}/${MATCHDAYS}${sep()}AI ${DIFFICULTIES[matchDifficulty(season.division)]}</span>
+        <span class="mc-chip ${nm.userHome ? 'home' : 'away'}">${nm.userHome ? 'HOME' : 'AWAY'}</span>
+      </div>
+      <div class="mc-vs">${nm.userHome ? you : them}<div class="mc-vsx">VS</div>${nm.userHome ? them : you}</div>
+      <button class="btn btn-go btn-lg mc-play" data-a="play">PLAY MATCHDAY ${nm.md + 1}</button>
+      <p class="mc-pay">WIN +${fmt(pay.win)}${sep()}DRAW +${fmt(pay.draw)}${sep()}LOSS +${fmt(pay.loss)}${sep()}GOAL +${pay.goal}</p>
+    </section>`;
 }
 
 /** The next-match card for a BLOCKY CUP tie: the round, both clubs with their divisions, and what's at stake. */
@@ -211,81 +244,77 @@ function cupCard(st: CareerState, nm: NextMatch): string {
   const division = st.season!.division;
   const youKit = nm.userHome ? nm.kits[0] : nm.kits[1];
   const themKit = nm.userHome ? nm.kits[1] : nm.kits[0];
-  const side = (kit: typeof youKit, short: string, name: string, meta: string) =>
-    `<div class="mc-side">${shirtArt(kit, 6)}<b>${esc(short)}</b><small>${esc(name)}</small><em>${meta}</em></div>`;
-  const you = side(youKit, club.short, club.name, `OVR ${clubRating(club)}${sep()}DIV ${division}`);
-  const them = side(themKit, nm.rival.short, nm.rival.name, `OVR ${nm.rival.rating}${sep()}DIV ${nm.rivalDivision}`);
+  const you = sideHtml(youKit, club.short, club.name, `OVR ${clubRating(club)}${sep()}DIV ${division}`);
+  const them = sideHtml(themKit, nm.rival.short, nm.rival.name, `OVR ${nm.rival.rating}${sep()}DIV ${nm.rivalDivision}`);
   const round = ROUND_NAMES[nm.cupRound];
   const venue = nm.neutral ? '<span class="mc-chip">NEUTRAL</span>' : `<span class="mc-chip ${nm.userHome ? 'home' : 'away'}">${nm.userHome ? 'HOME' : 'AWAY'}</span>`;
   const prize = cupPrize(nm.cupRound, true, division);
   const stake = nm.cupRound === 2 ? `LIFT THE CUP +${fmt(prize)}` : `GO THROUGH +${fmt(prize)}`;
-  return `<section class="mc-next cup-next">
+  return `<section class="mc-next cr-next cup-next">
       <div class="mc-nexttop">
-        <span class="mc-chip cup">${pixelIcon('trophy', 'currentColor', 1.6, 'inl')}BLOCKY CUP</span>
-        <span>${round}</span>
+        <span class="mc-chip cup">${pixelIcon('trophy', 'currentColor', 1.6, 'inl')}CUP</span>
+        <span>${round}${sep()}AI ${DIFFICULTIES[matchDifficulty(division)]}</span>
         ${venue}
       </div>
       <div class="mc-vs">${nm.userHome ? you : them}<div class="mc-vsx">VS</div>${nm.userHome ? them : you}</div>
-      <button class="btn btn-go btn-lg mc-play" data-a="play">PLAY THE ${round}</button>
-      <p class="mc-pay">${stake}${sep()}LEVEL AFTER 90 MEANS PENALTIES${sep()}LOSE AND YOU'RE OUT${sep()}AI ${DIFFICULTIES[matchDifficulty(division)]}</p>
+      <button class="btn btn-go btn-lg mc-play" data-a="play">PLAY ${round}</button>
+      <p class="mc-pay">${stake}${sep()}LEVEL AFTER 90 GOES TO PENS</p>
     </section>`;
 }
 
 function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash): void {
-  const scr = mountMeta(app, 'mc-career-screen');
-  const club = st.club!;
+  const scr = mountMeta(app, 'mc-career-screen shell');
   let tab = tab0;
-  let mdView = Math.min(MATCHDAYS - 1, Math.max(0, (st.season?.matchday ?? 1) - 1));
+  hubMemo.tab = tab;
+  /** The matchday whose other results show under your row (the last one played, to start with). */
+  let open = (st.season?.matchday ?? 0) - 1;
+  /** Bring you into view after the next draw: your table row, the next match, your cup tie. */
+  let focus = true;
   const draw = () => {
     const season = st.season!;
     const nm = nextMatch(st);
     const info = new Map(leagueClubs(st).map((c) => [c.id, c]));
     const table = leagueTable(st);
-    const pos = table.findIndex((r) => r.id === YOU) + 1;
-    const pay = payTable(season.division, st.stadium);
-    let next = '';
-    if (nm && nm.competition === 'cup') {
-      next = cupCard(st, nm);
-    } else if (nm) {
-      const youKit = nm.userHome ? nm.kits[0] : nm.kits[1];
-      const themKit = nm.userHome ? nm.kits[1] : nm.kits[0];
-      const rivalPos = table.findIndex((r) => r.id === nm.rival.id) + 1;
-      const side = (kit: typeof youKit, short: string, name: string, meta: string) =>
-        `<div class="mc-side">${shirtArt(kit, 6)}<b>${esc(short)}</b><small>${esc(name)}</small><em>${meta}</em></div>`;
-      // League position only means something once a ball has been kicked.
-      const place = (p: number) => (season.matchday > 0 ? `${sep()}${ordinal(p)}` : '');
-      const you = side(youKit, club.short, club.name, `OVR ${clubRating(club)}${place(pos)}`);
-      const them = side(themKit, nm.rival.short, nm.rival.name, `OVR ${nm.rival.rating}${place(rivalPos)}`);
-      next = `<section class="mc-next">
-        <div class="mc-nexttop">
-          <span class="mc-chip div">DIV ${season.division}</span>
-          <span>MATCHDAY ${nm.md + 1}/${MATCHDAYS}</span>
-          <span class="mc-chip ${nm.userHome ? 'home' : 'away'}">${nm.userHome ? 'HOME' : 'AWAY'}</span>
-        </div>
-        <div class="mc-vs">${nm.userHome ? you : them}<div class="mc-vsx">VS</div>${nm.userHome ? them : you}</div>
-        <button class="btn btn-go btn-lg mc-play" data-a="play">PLAY MATCHDAY ${nm.md + 1}</button>
-        <p class="mc-pay">WIN +${fmt(pay.win)}${sep()}DRAW +${fmt(pay.draw)}${sep()}LOSS +${fmt(pay.loss)}${sep()}+${pay.goal} PER GOAL${sep()}AI ${DIFFICULTIES[matchDifficulty(season.division)]}</p>
-      </section>`;
-    }
-    const body = tab === 'table' ? tableHtml(table, info, season.division) : tab === 'cup' ? cupTabHtml(st) : fixturesHtml(st, season, info, mdView);
-    const tabs: [HubTab, string][] = [['table', 'TABLE'], ['fixtures', 'FIXTURES'], ['cup', 'BLOCKY CUP']];
+    const next = nm
+      ? nm.competition === 'cup'
+        ? cupCard(st, nm)
+        : leagueCard(st, nm, table)
+      : '<section class="mc-next cr-next cr-done"><b>SEASON DONE</b><button class="btn btn-go btn-lg mc-play" data-a="summary">SEE HOW YOU FINISHED</button></section>';
+    const body = tab === 'table' ? tableHtml(table, info, season.division) : tab === 'cup' ? cupTabHtml(st) : fixturesHtml(st, season, info, open);
+    const tabs: [HubTab, string][] = [['table', 'TABLE'], ['fixtures', 'FIXTURES'], ['cup', 'CUP']];
+    const cupNext = cupDue(st) >= 0;
     // Market news the club made itself and nobody has read (openMarket marks them seen, so a visit clears it).
     const unread = marketUnread(st);
+    const quick = (a: string, icon: string, label: string, extra = '', aria = '') =>
+      `<button class="btn btn-white" data-a="${a}"${aria ? ` aria-label="${aria}"` : ''}>${pixelIcon(icon, 'currentColor', 1.5)}<span>${label}</span>${extra}</button>`;
     scr.render(
       `${topBar('MENU', 'ROAD TO GLORY', `SEASON ${season.number}${sep()}${DIVISION_NAMES[season.division]}`, app.save.coins)}
-      ${st.notice ? `<div class="mc-notice"><p>${esc(st.notice)}</p><button class="btn btn-white" data-a="dismiss">OK</button></div>` : ''}
-      ${next}
-      <div class="mc-quick">
-        <button class="btn btn-yellow" data-a="squad">SQUAD</button>
-        <button class="btn btn-white" data-a="train">TRAINING</button>
-        <button class="btn btn-white" data-a="stadium">STADIUM<span class="mc-lv">${sep()}LV ${st.stadium}</span></button>
-        <button class="btn btn-white mc-marketbtn" data-a="market" aria-label="Transfer market${unread ? `, ${unread} unread` : ''}">MARKET${unread ? `<b class="mc-badge">${unread}</b>` : ''}</button>
-      </div>
-      <div class="mc-tabrow">
-        <div class="seg mc-tabs">${tabs.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}</button>`).join('')}</div>
-        <button class="btn btn-white mc-how" data-a="how">HOW IT WORKS</button>
-      </div>
-      ${body}`,
+      <div class="mc-body cr-body">
+        <section class="pane cr-main">
+          ${st.notice ? `<div class="cr-notice" role="status"><p>${esc(st.notice)}</p><button class="btn btn-white" data-a="dismiss">OK</button></div>` : ''}
+          ${next}
+          <nav class="cr-quick" aria-label="Your club">
+            ${quick('squad', 'shirt', 'SQUAD')}
+            ${quick('train', 'bolt', 'TRAINING')}
+            ${quick('market', 'swap', 'TRANSFERS', unread ? `<b class="mc-badge">${unread}</b>` : '', `Transfers${unread ? `, ${unread} new` : ''}`)}
+            ${quick('stadium', 'flag', 'STADIUM', `<small>LV ${st.stadium}</small>`)}
+          </nav>
+        </section>
+        <section class="pane cr-side">
+          <div class="cr-tabs">
+            <div class="seg">${tabs
+              .map(
+                ([k, l]) =>
+                  `<button class="${k === tab ? 'on' : ''}${k === 'cup' && cupNext ? ' due' : ''}" data-a="tab" data-v="${k}" aria-pressed="${k === tab}">${
+                    k === 'cup' ? pixelIcon('trophy', 'currentColor', 1.3, 'inl') : ''
+                  }${l}</button>`,
+              )
+              .join('')}</div>
+            <button class="cr-how" data-a="how" aria-label="How ROAD TO GLORY works">?</button>
+          </div>
+          <div class="pane-scroll cr-scroll" data-scroll-key="cr-${tab}">${body}</div>
+        </section>
+      </div>`,
       {
         back: () => toMenu(app),
         dismiss: () => {
@@ -294,26 +323,31 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
           draw();
         },
         play: () => playMatchday(app, st),
+        summary: () => openCareer(app),
         how: () => roadIntro(app, { first: false, onGo: () => openCareer(app, undefined, tab), onBack: () => openCareer(app, undefined, tab) }),
-        squad: () => openClub(app, { tab: 'squad', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app) }),
-        train: () => openClub(app, { tab: 'train', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app) }),
-        stadium: () => openClub(app, { tab: 'stadium', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app) }),
+        squad: () => openClub(app, { tab: 'squad', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app, undefined, tab) }),
+        train: () => openClub(app, { tab: 'train', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app, undefined, tab) }),
+        stadium: () => openClub(app, { tab: 'stadium', backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app, undefined, tab) }),
         // One market, one BACK: straight to the transfer market, and its BACK lands here.
-        market: () => openMarket(app, { backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app) }),
+        market: () => openMarket(app, { backLabel: 'ROAD TO GLORY', onBack: () => openCareer(app, undefined, tab) }),
         tab: (el) => {
           tab = el.dataset.v as HubTab;
+          hubMemo.tab = tab;
+          focus = true;
           draw();
         },
-        mdprev: () => {
-          mdView = Math.max(0, mdView - 1);
+        md: (el) => {
+          const md = Number(el.dataset.v);
+          open = open === md ? -1 : md;
           draw();
-        },
-        mdnext: () => {
-          mdView = Math.min(MATCHDAYS - 1, mdView + 1);
-          draw();
+          revealInPane(scr.panel.querySelector('.cr-others') ?? el);
         },
       },
     );
+    if (focus) {
+      focus = false;
+      revealInPane(scr.panel.querySelector('.cr-scroll tr.you, .cr-scroll .mc-ys.next, .cr-scroll .cup-tie.next'), 'center');
+    }
   };
   draw();
   if (flash) scr.toast(flash.msg, flash.kind);
@@ -367,12 +401,12 @@ export function playMatchday(app: AppContext, st: CareerState): void {
       // A plain-text toast: the score reads "2:1" (no dash: see ui/text.ts) and facts are split with a slash.
       returnToCareer(app, ok ? { msg: `${verdict} ${my}:${their} VS ${rival.short} / TABLE UPDATED`, kind: my > their ? 'good' : my === their ? 'info' : 'bad' } : undefined);
     },
-    quitNote: 'Walking off counts as a 3-0 defeat in the league table.',
+    quitNote: 'Walking off counts as a 3:0 defeat in the league table.',
     onQuit: () => {
       const cur = careerState(app);
       const [hg, ag] = forfeitScore(userHome);
       if (cur.season?.number === seasonNo && resolveMatchday(cur, app.save, md, hg, ag, true)) {
-        cur.notice = `You quit against ${rival.name}. Walking off counts as a 3-0 forfeit defeat.`;
+        cur.notice = `You walked off against ${rival.name}: a 3:0 defeat.`;
       }
       app.persist();
       returnToCareer(app);
@@ -439,11 +473,11 @@ function playCupTie(app: AppContext, st: CareerState, nm: NextMatch): void {
       // Back on the draw, to see who else went through.
       returnToCareer(app, flash, 'cup');
     },
-    quitNote: "Walking off counts as a 3-0 defeat: you're out of the cup.",
+    quitNote: "Walking off counts as a 3:0 defeat: you're out of the cup.",
     onQuit: () => {
       const cur = current();
       if (cur && resolveCupTie(cur, 0, 3, false)) {
-        cur.notice = `You quit against ${rival.name}. Walking off counts as a 3-0 defeat: you're out of the Blocky Cup. The league goes on.`;
+        cur.notice = `You walked off against ${rival.name}: out of the Blocky Cup. The league goes on.`;
       }
       app.persist();
       returnToCareer(app);
@@ -451,10 +485,11 @@ function playCupTie(app: AppContext, st: CareerState, nm: NextMatch): void {
   });
 }
 
+/** The season's end on one screen: the verdict and the prize money left, the final table right, START pinned below. */
 function seasonSummary(app: AppContext, st: CareerState): void {
   const sum = st.summary!;
   const season = st.season!;
-  const scr = mountMeta(app, 'mc-summary-screen');
+  const scr = mountMeta(app, 'mc-summary-screen shell');
   const info = new Map(leagueClubs(st).map((c) => [c.id, c]));
   const table = leagueTable(st);
   const [title, cls] = sum.champion
@@ -464,15 +499,11 @@ function seasonSummary(app: AppContext, st: CareerState): void {
       : sum.outcome === 'relegated'
         ? ['RELEGATED', 'down']
         : ['SEASON OVER', 'stay'];
-  const move =
-    sum.outcome === 'promoted'
-      ? `▲ UP TO THE ${DIVISION_NAMES[sum.nextDivision]}`
-      : sum.outcome === 'relegated'
-        ? `▼ DOWN TO THE ${DIVISION_NAMES[sum.nextDivision]}`
-        : `STAYING IN THE ${DIVISION_NAMES[sum.nextDivision]}`;
+  const next = DIVISION_NAMES[sum.nextDivision];
+  const move = sum.outcome === 'promoted' ? `UP TO THE ${next}` : sum.outcome === 'relegated' ? `DOWN TO THE ${next}` : `STAYING IN THE ${next}`;
   const lines = sum.lines.length
     ? sum.lines.map((l) => `<div><span>${l.label}</span><b><i></i>+${fmt(l.coins)}</b></div>`).join('')
-    : '<div><span>NO PRIZE MONEY THIS TIME</span><b><i></i>+0</b></div>';
+    : '<div><span>NO PRIZE MONEY</span><b><i></i>+0</b></div>';
   const past = st.history
     .slice(-5)
     .reverse()
@@ -484,24 +515,33 @@ function seasonSummary(app: AppContext, st: CareerState): void {
     .join('');
   // The season's cup run, under the league result (prize money already paid tie by tie).
   const cup = season.cup;
-  const cupLine = sum.cup !== undefined
-    ? `<div class="cup-sumline${sum.cup === 3 ? ' won' : ''}">${pixelIcon('trophy', sum.cup === 3 ? '#26262e' : '#b9b5aa', 3)}<span>BLOCKY CUP</span><b>${cupFinishText(sum.cup)}</b>${
-      cup && cup.earned > 0 ? `<em>+${fmt(cup.earned)} WON</em>` : ''
-    }</div>`
-    : '';
+  const cupLine =
+    sum.cup !== undefined
+      ? `<div class="cup-sumline${sum.cup === 3 ? ' won' : ''}">${pixelIcon('trophy', sum.cup === 3 ? '#26262e' : '#b9b5aa', 2)}<span>BLOCKY CUP</span><b>${cupFinishText(sum.cup)}</b>${
+          cup && cup.earned > 0 ? `<em>+${fmt(cup.earned)}</em>` : ''
+        }</div>`
+      : '';
   scr.render(
     `${topBar('MENU', `SEASON ${sum.season}`, 'FINAL WHISTLE', app.save.coins)}
-    <div class="mc-result ${cls}">
-      <b>${title}</b>
-      <span>${ordinal(sum.position)} OF ${CLUBS_PER_DIVISION} IN THE ${DIVISION_NAMES[sum.division]}</span>
-      <em>${move}</em>
+    <div class="mc-body cr-body cr-sum">
+      <section class="pane cr-main">
+        <div class="mc-result ${cls}">
+          <b>${title}</b>
+          <span>${ordinal(sum.position)} OF ${CLUBS_PER_DIVISION}${sep()}${DIVISION_NAMES[sum.division]}</span>
+          <em>${move}</em>
+        </div>
+        ${cupLine}
+        <div class="mc-prize">${lines}<div class="total"><span>PRIZE MONEY</span><b><i></i>+${fmt(sum.prize)}</b></div></div>
+      </section>
+      <section class="pane cr-side">
+        <div class="pane-h">FINAL TABLE</div>
+        <div class="pane-scroll cr-scroll" data-scroll-key="cr-sum">${tableHtml(table, info, season.division)}${past ? `<div class="mc-histrow">${past}</div>` : ''}</div>
+      </section>
     </div>
-    ${cupLine}
-    <div class="mc-prize">${lines}<div class="total"><span>PRIZE MONEY</span><b><i></i>+${fmt(sum.prize)}</b></div></div>
-    ${tableHtml(table, info, season.division)}
-    ${past ? `<h3 class="mc-h">HISTORY</h3><div class="mc-histrow">${past}</div>` : ''}
-    <p class="mc-hint">Next season brings seven new rivals in the ${esc(DIVISION_NAMES[sum.nextDivision])} and a new Blocky Cup draw. Your squad, coins and ${esc(STADIUM_NAMES[st.stadium])} come with you.</p>
-    <div class="btn-row"><button class="btn btn-go btn-lg" data-a="next">START SEASON ${sum.season + 1}</button></div>`,
+    <div class="mc-actions">
+      <span class="cr-carry">SQUAD, COINS AND ${esc(STADIUM_NAMES[st.stadium])} CARRY OVER</span>
+      <button class="btn btn-go btn-lg" data-a="next">START SEASON ${sum.season + 1}</button>
+    </div>`,
     {
       back: () => toMenu(app),
       next: () => {
@@ -511,5 +551,6 @@ function seasonSummary(app: AppContext, st: CareerState): void {
       },
     },
   );
+  revealInPane(scr.panel.querySelector('.cr-scroll tr.you'), 'center');
   sfx.coin();
 }

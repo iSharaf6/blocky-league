@@ -13,8 +13,10 @@ import {
 import { cssHex } from '../render/palette';
 import { buzz } from '../platform/haptics';
 import { esc, fmt, mountMeta } from './club';
+import { escBack } from './panes';
 import { pixelIcon } from './pixelIcons';
 import { scoreHtml, sep } from './text';
+import './career.css';
 
 function kitDot(c: CupClub | undefined): string {
   if (!c) return '<i class="mc-kd"></i>';
@@ -52,13 +54,15 @@ function tieHtml(cup: SeasonCup, t: CupTie, clubs: Map<string, CupClub>, divisio
 
 /** The draw, QF to the winner, your path highlighted: compact enough for a landscape phone. */
 export function cupBracketHtml(cup: SeasonCup, clubs: Map<string, CupClub>, division: number): string {
+  // Each round's prize rides on its header (numbers over words): what winning that column pays.
+  const pay = (coins: number) => `<small>+${fmt(Math.round(coins * CUP_DIV_SCALE[division]))}</small>`;
   const col = (round: number) =>
-    `<div class="cup-col"><h3 class="cup-rh">${ROUND_SHORT[round]}</h3><div class="cup-ties">${ROUND_TIES[round]
+    `<div class="cup-col"><h3 class="cup-rh">${ROUND_SHORT[round]}${pay(ROUND_PRIZE[round])}</h3><div class="cup-ties">${ROUND_TIES[round]
       .map((i) => tieHtml(cup, cup.ties[i], clubs, division))
       .join('')}</div></div>`;
   const ch = champion(cup);
   const winner = ch >= 0 ? clubs.get(cup.slots[ch]) : undefined;
-  const crown = `<div class="cup-col"><h3 class="cup-rh">WINNER</h3><div class="cup-ties">
+  const crown = `<div class="cup-col"><h3 class="cup-rh">CUP${pay(TROPHY_PRIZE)}</h3><div class="cup-ties">
       <div class="cup-winner${ch >= 0 && ch === cup.user ? ' you' : ''}${ch >= 0 ? ' crowned' : ''}">
         ${pixelIcon('trophy', ch >= 0 ? '#26262e' : '#b9b5aa', 4)}<b>${winner ? esc(winner.short) : '?'}</b>
       </div></div></div>`;
@@ -84,26 +88,22 @@ function statusLine(st: CareerState, cup: SeasonCup, clubs: Map<string, CupClub>
   return `<b>${ROUND_NAMES[r]}${opp}</b><span>${when}</span>`;
 }
 
-/** The BLOCKY CUP tab: where your run stands, what each round pays, the draw and the trophy cabinet. */
+/** The BLOCKY CUP tab: where your run stands and the trophy cabinet in one strip, then the draw (prizes on its headers). */
 export function cupTabHtml(st: CareerState): string {
   const season = st.season!;
   const cup = season.cup;
   const won = trophyCount(st);
   // This season's cup goes into the history (and the count) when the season ends.
   const cups = won.cups + (cup?.status === 'won' && !st.summary ? 1 : 0);
-  const cabinet = `<div class="cup-cabinet">${pixelIcon('trophy', '#ffd23a', 3)}<span>TROPHY CABINET</span><b>${cups} BLOCKY CUP${cups === 1 ? '' : 'S'}${sep()}${
+  const cabinet = `<span class="cup-cab" aria-label="Trophy cabinet: ${cups} cups, ${won.titles} league titles"><span><b>${cups}</b> CUP${cups === 1 ? '' : 'S'}</span><span><b>${
     won.titles
-  } LEAGUE TITLE${won.titles === 1 ? '' : 'S'}</b></div>`;
+  }</b> TITLE${won.titles === 1 ? '' : 'S'}</span></span>`;
   if (!cup) {
-    return `<p class="mc-empty">The Blocky Cup starts next season: eight clubs from across the divisions, three knockout rounds between your league matchdays.</p>${cabinet}`;
+    return `<div class="cup-head">${pixelIcon('trophy', '#ffd23a', 3)}<div class="cup-status"><b>NEXT SEASON</b><span>8 CLUBS${sep()}3 KNOCKOUT ROUNDS</span></div>${cabinet}</div>`;
   }
   const clubs = cupClubs(st);
-  const div = season.division;
-  const prizes = ROUND_SHORT.map((r, i) => `${r} +${fmt(Math.round(ROUND_PRIZE[i] * CUP_DIV_SCALE[div]))}`).join(sep());
-  return `<div class="cup-head">${pixelIcon('trophy', '#ffd23a', 4)}<div class="cup-status">${statusLine(st, cup, clubs)}</div></div>
-    ${cupBracketHtml(cup, clubs, div)}
-    <p class="mc-hint">Win a round: ${prizes}${sep()}TROPHY +${fmt(Math.round(TROPHY_PRIZE * CUP_DIV_SCALE[div]))}. Level after 90 minutes goes to penalties. Knocked out? The league goes on.</p>
-    ${cabinet}`;
+  return `<div class="cup-head">${pixelIcon('trophy', '#ffd23a', 3)}<div class="cup-status">${statusLine(st, cup, clubs)}</div>${cabinet}</div>
+    ${cupBracketHtml(cup, clubs, season.division)}`;
 }
 
 // ------------------------------------------------------------------ YOUR SEASON rows
@@ -147,7 +147,7 @@ export function cupTrophyScreen(app: AppContext, st: CareerState, onNext: () => 
   const season = st.season!;
   const cup = season.cup!;
   const club = st.club!;
-  const scr = mountMeta(app, 'cup-screen cup-trophy-screen');
+  const scr = mountMeta(app, 'cup-screen cup-trophy-screen shell');
   cup.celebrated = true;
   app.persist();
   const div = season.division;
@@ -156,17 +156,22 @@ export function cupTrophyScreen(app: AppContext, st: CareerState, onNext: () => 
     `<div><span>TROPHY BONUS</span><b><i></i>+${fmt(Math.round(TROPHY_PRIZE * CUP_DIV_SCALE[div]))}</b></div>`;
   const total = cup.earned > 0 ? cup.earned : cupPrizeTotal(div);
   scr.render(
-    `<div class="cup-lift">
-      <div class="cup-rays" aria-hidden="true"></div>
-      <div class="cup-big">${pixelIcon('trophy', '#ffd23a', 18)}</div>
-      <h2 class="cup-champ-title">CHAMPIONS!</h2>
-      <p class="cup-champ-sub">${esc(club.name.toUpperCase())} WIN THE BLOCKY CUP</p>
-    </div>
-    <div class="mc-prize">${lines}<div class="total"><span>CUP PRIZE MONEY</span><b><i></i>+${fmt(total)}</b></div></div>
-    <p class="mc-hint">It goes in the trophy cabinet. Now finish the league season.</p>
-    <div class="btn-row"><button class="btn btn-go btn-lg" data-a="next">CONTINUE</button></div>`,
+    `<div class="mc-body cup-liftbody">
+      <div class="cup-lift">
+        <div class="cup-rays" aria-hidden="true"></div>
+        <div class="cup-big">${pixelIcon('trophy', '#ffd23a', 18)}</div>
+        <h2 class="cup-champ-title">CHAMPIONS!</h2>
+        <p class="cup-champ-sub">${esc(club.name.toUpperCase())} WIN THE BLOCKY CUP</p>
+      </div>
+      <div class="cup-liftside">
+        <div class="mc-prize">${lines}<div class="total"><span>CUP PRIZE MONEY</span><b><i></i>+${fmt(total)}</b></div></div>
+        <button class="btn btn-go btn-lg" data-a="next">CONTINUE</button>
+      </div>
+    </div>`,
     { next: onNext },
   );
+  // No BACK here: Escape continues, like the button.
+  escBack(onNext);
   const cols = [club.kit.shirt, club.kit.shirt2, 0xffd23a, 0xfbfbf4, 0x3cc15a, 0x2f7be8, 0xec4a3e];
   let bits = '';
   for (let i = 0; i < 72; i++) {

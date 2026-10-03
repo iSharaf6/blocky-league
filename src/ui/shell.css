@@ -1,0 +1,259 @@
+/*
+ * The app shell (docs/UX.md): every menu screen is ONE screen. A slim header, optional slim tabs, and a body that fills
+ * the rest; the page never scrolls, only a list inside its own pane does. Screens opt in with the `shell` class:
+ * `mountMeta(app, '<screen> shell')` for the meta screens (club, career, market, cup), `.panel-wrap.shell` and
+ * `.panel.shell` for the menus.ts panels. Loaded after style.css; selectors carry `.shell` so they win over the older
+ * card rules without !important.
+ */
+
+/* ----- every size: the structure ----- */
+
+.shell .panel.mc,
+.panel.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+  /* A fixed height, not a max: the body divides it, and only panes scroll. */
+  height: min(720px, calc(100dvh - 32px));
+  max-height: none;
+}
+
+.shell .panel.mc > *,
+.panel.shell > * {
+  flex: none;
+  min-width: 0;
+}
+
+.shell .mc-top,
+.panel.shell > .mc-top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+
+.shell .mc-body,
+.shell .panel.mc > .mc-body,
+.panel.shell > .mc-body {
+  /* (The second selector out-ranks `.shell .panel.mc > *` above, so the body really takes the rest.) */
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  /* One row that is exactly the body's height: a pane never grows with its content, its list scrolls instead. */
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+}
+
+/* Two panes side by side: the list and its detail, or the pitch and the bench. */
+.mc-body.split {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+}
+
+.mc-body.split-l {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+}
+
+.mc-body.split-r {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+}
+
+.pane {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pane-h {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  font: 400 13px var(--round);
+  letter-spacing: 1px;
+  color: var(--blue-d);
+}
+
+.pane-h .grow {
+  flex: 1;
+}
+
+/* The one thing that scrolls: a list inside its pane. Give it a `data-scroll-key` and mountMeta.render keeps its
+   scroll across re-renders (src/ui/panes.ts). */
+.pane-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+}
+
+.pane-scroll.x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  touch-action: pan-x;
+}
+
+/* A pinned action bar: the primary action on the right, always on screen. */
+.mc-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.mc-actions .grow {
+  flex: 1;
+}
+
+/* Compact filter chips: one row, scrolls sideways if it must, never wraps into a second row. */
+.chips {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chips > button {
+  flex: none;
+  min-height: 36px;
+  padding: 4px 12px;
+  border: 3px solid var(--ink);
+  background: #fff;
+  color: var(--ink);
+  font: 400 13px var(--round);
+  letter-spacing: 0.5px;
+  cursor: pointer;
+}
+
+.chips > button.on {
+  background: var(--ink);
+  color: var(--yellow);
+}
+
+/* ----- short screens (landscape phones, portal frames): full-bleed, compact ----- */
+
+@media (max-height: 560px) {
+  .shell .mc-wrap,
+  .panel-wrap.shell {
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+    overflow: hidden;
+  }
+
+  .shell .panel.mc,
+  .panel.shell {
+    width: 100%;
+    max-width: none;
+    height: 100vh;
+    height: 100dvh;
+    border: 0;
+    box-shadow: none;
+    gap: 6px;
+    padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .shell .mc-top,
+  .panel.shell > .mc-top {
+    min-height: 40px;
+    gap: 8px;
+  }
+
+  .shell .mc-top .mc-back {
+    min-width: 40px;
+    min-height: 38px;
+    padding: 6px 10px 5px;
+    font-size: 13px;
+  }
+
+  /* Title and subtitle on one line. */
+  .shell .mc-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .shell .panel.mc .mc-title h2,
+  .panel.shell .mc-title h2 {
+    font-size: 18px;
+    letter-spacing: 1px;
+  }
+
+  .shell .mc-title span {
+    font-size: 12px;
+  }
+
+  .shell .coins.mc-coins {
+    font-size: 13px;
+    padding: 6px 8px 5px 6px;
+  }
+
+  .shell .mc-tabs {
+    gap: 6px;
+  }
+
+  .shell .mc-tabs button {
+    min-height: 34px;
+    padding: 4px 6px 3px;
+    font-size: 12px;
+  }
+
+  .shell .mc-body {
+    gap: 8px;
+  }
+
+  .shell .mc-actions .btn {
+    min-height: 40px;
+    padding-top: 8px;
+    padding-bottom: 7px;
+  }
+}
+
+/* ----- toasts on shell screens: slim, just under the header (over the tabs), never over a pane's buttons ----- */
+
+.shell .mc-toast {
+  font-size: 15px;
+  padding: 7px 14px 6px;
+}
+
+@media (max-height: 560px) {
+  .shell .mc-toast {
+    font-size: 13px;
+    padding: 6px 12px 5px;
+  }
+}
+
+/* ----- drag and drop (src/ui/dragSwap.ts): any screen with `data-drag` items ----- */
+
+/* The copy under the finger (on <body>, fixed, never a target). */
+.drag-ghost {
+  opacity: 0.94;
+  filter: drop-shadow(0 8px 0 rgba(38, 38, 46, 0.3));
+}
+
+[data-drag] {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
+/* The item being dragged stays behind, faded; valid targets glow; the one under the finger lights up. */
+.drag-src { opacity: 0.35; }
+[data-drag].drop-ok { outline: 3px dashed var(--yellow); outline-offset: 2px; }
+[data-drag].drop-hover { outline: 4px solid var(--yellow); outline-offset: 2px; }

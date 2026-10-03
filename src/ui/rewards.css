@@ -1,0 +1,99 @@
+/* The unlock ladder, the daily gift and the welcome offer (src/ui/menus.ts unlocks / gift / welcomeOffer).
+   The ladder is an app shell panel (shell.css): one sideways track, opened on the next unlock, no page scroll.
+   The gift and the offer are small cards that fit a landscape phone with their button on screen. */
+
+/* ---- UNLOCKS */
+
+.panel.shell.ul { width: min(980px, 100%); }
+.ul-xp { padding: 0 4px; font: 700 14px var(--px); letter-spacing: 1px; color: var(--blue-d); white-space: nowrap; }
+.ul-xpbar { flex: none; height: 12px; background: var(--cream-2); border: 2px solid var(--ink); overflow: hidden; }
+.ul-xpbar i { display: block; height: 100%; background: var(--blue); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18); }
+.ul-body .pane-h span:first-child { color: var(--ink); }
+.ul-how { font-size: 12px; color: var(--ink-2); }
+.ul-rail { padding: 14px 4px 12px; }
+.ul-track { position: relative; list-style: none; margin: 0; padding: 0; display: flex; gap: 12px; height: 100%; width: max-content; }
+.ul-card {
+  position: relative;
+  flex: none;
+  width: 116px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 5px;
+  padding: 16px 6px 10px;
+  text-align: center;
+  color: var(--ink-2);
+  background: #fff;
+  border: 3px solid var(--cream-2);
+  box-shadow: 0 4px 0 var(--cream-2);
+}
+.ul-card.got { color: var(--ink); border-color: var(--go); box-shadow: 0 4px 0 var(--go-d); }
+.ul-card.next { color: var(--ink); background: #fff5c4; border-color: var(--ink); box-shadow: 0 0 0 3px var(--yellow), 0 6px 0 3px var(--yellow-d); }
+.ul-card.legend { border-color: var(--yellow-d); }
+.ul-card .ul-lv {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 6px 3px;
+  font: 700 13px var(--px);
+  font-style: normal;
+  white-space: nowrap;
+  color: var(--cream);
+  background: var(--ink);
+}
+.ul-card.got .ul-lv { background: var(--go-d); }
+.ul-card.next .ul-lv { color: var(--ink); background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
+.ul-ic { display: grid; place-items: center; width: 56px; height: 56px; background: linear-gradient(#c8ecfc, #8fd0f2); }
+.ul-card:not(.got) .ul-ic { background: var(--cream); }
+.ul-card b { font: 400 15px / 1.1 var(--round); letter-spacing: 0.5px; }
+.ul-card small { font: 400 11px var(--round); letter-spacing: 1px; opacity: 0.8; }
+.ul-card em { font: 700 12px var(--px); font-style: normal; white-space: nowrap; color: var(--ink-2); }
+.ul-card.got em { color: var(--go-d); }
+.ul-card.next em { color: var(--red-d); }
+.ul .mc-actions .btn { min-height: 44px; }
+
+/* Tall screens (iPad, desktop): bigger cards, centred on the track instead of stretched. */
+@media (min-height: 561px) {
+  .ul-track { align-items: center; }
+  .ul-card { width: 140px; min-height: 236px; gap: 8px; }
+  .ul-ic { width: 78px; height: 78px; }
+  .ul-ic .picon { width: 56px; height: 56px; }
+  .ul-card b { font-size: 18px; }
+  .ul-card small { font-size: 12px; }
+  .ul-card em { font-size: 14px; }
+}
+
+@media (max-height: 560px) {
+  .ul-rail { padding: 13px 4px 10px; }
+  .ul-card { width: 104px; gap: 4px; padding: 14px 4px 8px; }
+  .ul-ic { width: 46px; height: 46px; }
+  .ul-ic .picon { width: 32px; height: 32px; }
+  .ul-card b { font-size: 14px; }
+  .ul .mc-actions .btn { min-height: 40px; padding: 8px 14px 6px; font-size: 14px; }
+}
+
+/* ---- DAILY GIFT and the WELCOME OFFER: one small card, the button always on screen */
+
+.panel.narrow.gift-panel { width: min(500px, 94vw); }
+.gift-note { margin: 0; text-align: center; font: 400 14px var(--round); letter-spacing: 1px; color: var(--ink-2); }
+.gift-panel .btn-row .btn { display: inline-flex; align-items: center; gap: 6px; }
+
+.wo-sub { margin: 0; text-align: center; font: 700 13px var(--px); letter-spacing: 1px; color: var(--red-d); }
+.wo-box { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 10px 12px; background: #fff5c4; border: 3px solid var(--yellow-d); box-shadow: 0 4px 0 #ecd889; }
+.wo-item { display: grid; justify-items: center; gap: 3px; }
+.wo-item b { font: 400 22px / 1 var(--round); color: var(--ink); white-space: nowrap; }
+.wo-item small { font: 700 11px var(--px); letter-spacing: 1px; color: var(--ink-2); }
+.wo-coin { display: block; width: 28px; height: 28px; background: var(--yellow); box-shadow: inset -4px -4px 0 var(--yellow-d), inset 4px 4px 0 #fff3b0; }
+.wo-plus { font: 400 26px var(--round); color: var(--ink-2); }
+.wo-price { margin: 0; text-align: center; font: 400 14px var(--round); letter-spacing: 1px; color: var(--ink-2); }
+.wo-price b { color: var(--ink); font-weight: 400; }
+
+@media (max-height: 560px) {
+  .panel.narrow.gift-panel { gap: 10px; }
+  .panel.gift-panel h2 { font-size: 20px; }
+  .gift-panel .gift-days li { padding: 4px 2px; }
+  .gift-panel .reward { font-size: 22px; }
+  .wo-box { padding: 8px 10px; }
+  .wo-item b { font-size: 19px; }
+}

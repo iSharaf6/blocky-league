@@ -1,0 +1,763 @@
+/*
+ * Transfer market (ui/market.ts) on the app shell (shell.css, docs/UX.md): BUY / SELL / SHORTLIST as slim tabs with
+ * the news badge beside them, the list on the left scrolling inside its own pane under one row of chips, the
+ * selected player on the right with his action pinned at the bottom. Nothing here scrolls the page.
+ */
+
+.mk-screen .mk-body {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  /* Room for the detail card's block shadow inside the clipped body. */
+  padding-bottom: 4px;
+}
+
+/* ----- header subtitle: window, squad, wages ----- */
+
+.mk-screen .mc-title .mk-win {
+  font-weight: 400;
+  color: #fff;
+  background: var(--go-d);
+  padding: 2px 5px 1px;
+}
+
+.mk-screen .mc-title .mk-win.shut { background: var(--red); }
+.mk-screen .mc-title .mk-wage.over,
+.mk-screen .mc-title .mk-full { color: var(--red-d); }
+
+/* ----- tabs + news ----- */
+
+.mk-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.mk-tabs .seg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mk-newsbtn {
+  position: relative;
+  flex: none;
+  appearance: none;
+  min-width: 78px;
+  padding: 4px 12px 3px;
+  border: 3px solid var(--ink);
+  background: #fff;
+  color: var(--ink);
+  font: 400 14px var(--round);
+  letter-spacing: 1px;
+  box-shadow: 0 3px 0 var(--cream-2);
+  cursor: pointer;
+}
+
+.mk-newsbtn b {
+  position: absolute;
+  top: -8px;
+  right: -7px;
+  min-width: 22px;
+  padding: 4px 5px 3px;
+  background: var(--red);
+  color: #fff;
+  font: 700 12px/1 var(--px);
+  text-align: center;
+  box-shadow: 0 2px 0 var(--red-d);
+}
+
+/* ----- the list ----- */
+
+.mk-listpane {
+  gap: 6px;
+}
+
+.mk-chips > button {
+  font-size: 13px;
+  padding: 3px 11px 2px;
+}
+
+.chips > button.mk-sort {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  background: var(--yellow);
+  color: var(--ink);
+}
+
+/* The sort icon: the swap arrows stood on end. */
+.mk-sorticon {
+  align-self: center;
+  transform: rotate(90deg);
+}
+
+.mk-screen .mc-title .mk-win i {
+  font-style: normal;
+}
+
+.mk-warn {
+  flex: none;
+  margin: 0;
+  padding: 4px 8px 3px;
+  background: var(--red);
+  color: #fff;
+  font: 400 12px var(--round);
+  letter-spacing: 1px;
+  text-align: center;
+}
+
+.mk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 1px 4px 6px 1px;
+}
+
+.mk-row {
+  appearance: none;
+  flex: none;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 32px auto minmax(0, 1fr) auto auto minmax(50px, auto);
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 8px 4px 5px;
+  text-align: left;
+  color: var(--ink);
+  font: inherit;
+  background: #fff;
+  border: 2px solid var(--ink);
+  box-shadow: 0 2px 0 var(--cream-2);
+  cursor: pointer;
+}
+
+.mk-row:active {
+  transform: translateY(1px);
+}
+
+.mk-row:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 1px;
+}
+
+/* The selection is unmistakable: yellow, a thicker outline and a lift. */
+.mk-row.sel {
+  background: var(--yellow);
+  border-width: 3px;
+  padding: 3px 7px 3px 4px;
+  box-shadow: 0 3px 0 var(--yellow-d);
+}
+
+.mk-row .face {
+  --fs: 32px;
+}
+
+.mk-row .mc-role,
+.mk-did .mc-role {
+  min-width: 26px;
+  padding: 3px 3px 2px;
+  font-size: 12px;
+}
+
+.mk-nm {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mk-nm b {
+  font: 400 15px/1.1 var(--round);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-nm small {
+  font: 400 12px/1.15 var(--round);
+  letter-spacing: 0.3px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-nm .mk-tag {
+  margin-left: 6px;
+}
+
+.mk-starred {
+  margin-left: 5px;
+  vertical-align: -1px;
+  color: var(--yellow-d);
+}
+
+.mk-row.sel .mk-starred {
+  color: var(--ink);
+}
+
+.mk-gain {
+  font: 700 12px var(--px);
+  font-style: normal;
+  color: var(--go-d);
+}
+
+.mk-row .mc-ovr {
+  min-width: 32px;
+  padding: 5px 4px 4px;
+  font-size: 13px;
+}
+
+.mk-price {
+  font: 700 13px var(--px);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mk-price.poor {
+  color: var(--red-d);
+}
+
+.mk-tag {
+  display: inline-block;
+  padding: 2px 4px 1px;
+  font: 400 10px/1 var(--round);
+  font-style: normal;
+  letter-spacing: 0.6px;
+  vertical-align: 1px;
+  background: var(--cream-2);
+  color: var(--ink);
+}
+
+.mk-tag.hot { background: var(--red); color: #fff; }
+.mk-tag.youth { background: var(--go); color: #fff; }
+.mk-tag.bid { background: var(--blue); color: #fff; }
+.mk-tag.counter,
+.mk-tag.new { background: var(--yellow); color: var(--ink); }
+
+/* ----- the selected player ----- */
+
+.mk-detail {
+  gap: 6px;
+  padding: 8px 8px 4px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--cream-2);
+}
+
+.mk-dh {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.mk-dh .face {
+  --fs: 40px;
+}
+
+.mk-did {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mk-did b {
+  font: 400 18px/1.05 var(--round);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-did span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font: 400 12px var(--round);
+  letter-spacing: 0.5px;
+}
+
+.mk-did em {
+  min-width: 0;
+  font-style: normal;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-big {
+  display: grid;
+  justify-items: center;
+  min-width: 52px;
+  padding: 3px 8px 4px;
+  background: var(--ink);
+  color: var(--yellow);
+}
+
+.mk-big small {
+  font: 400 11px var(--round);
+  letter-spacing: 1px;
+  color: var(--cream);
+}
+
+.mk-big b {
+  font: 700 24px/1 var(--px);
+}
+
+.mk-dbody {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.mk-dbody > * {
+  flex: none;
+}
+
+.mk-cmp {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 8px 2px;
+  background: var(--cream);
+  font: 400 13px var(--round);
+  letter-spacing: 0.4px;
+  color: var(--ink-2);
+}
+
+.mk-cmp b {
+  flex: none;
+  font: 700 14px var(--px);
+  color: var(--ink);
+}
+
+.mk-cmp span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-cmp.up { background: #e3f5e6; }
+.mk-cmp.up b { color: var(--go-d); }
+.mk-cmp.down b { color: var(--red-d); }
+
+/* Key stats: three cells, the number over a bar. */
+.mk-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.mk-stat {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: space-between;
+  align-items: baseline;
+  row-gap: 2px;
+  padding: 2px 6px 4px;
+  background: var(--cream);
+}
+
+.mk-stat small {
+  font: 400 11px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+}
+
+.mk-stat b {
+  font: 700 13px var(--px);
+}
+
+.mk-stat > i {
+  grid-column: 1 / -1;
+  display: block;
+  height: 5px;
+  background: var(--cream-2);
+}
+
+.mk-stat > i i {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+}
+
+.mk-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.mk-fact {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 1px;
+  min-width: 0;
+  padding: 3px 2px 2px;
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.mk-fact small {
+  font: 400 10px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+}
+
+.mk-fact b {
+  max-width: 100%;
+  font: 700 13px/1.2 var(--px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mk-fact b.word {
+  font: 400 13px/1.2 var(--round);
+  letter-spacing: 0.5px;
+}
+
+/* An unscouted youngster's potential cell is the SCOUT button. */
+.mk-scout {
+  appearance: none;
+  border: 2px solid var(--ink);
+  background: #fff;
+  box-shadow: 0 2px 0 var(--ink-2);
+  cursor: pointer;
+}
+
+.mk-scout b {
+  font: 400 12px/1.2 var(--round);
+  letter-spacing: 0.5px;
+  color: var(--blue-d);
+}
+
+.mk-stars {
+  display: inline-flex;
+  gap: 2px;
+  vertical-align: middle;
+}
+
+.mk-stars i {
+  width: 6px;
+  height: 6px;
+  background: var(--cream-2);
+  border: 2px solid var(--ink);
+}
+
+.mk-stars i.on {
+  background: var(--yellow);
+}
+
+.mk-haggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 46px;
+  align-items: center;
+  gap: 8px;
+  font: 400 12px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+}
+
+.mk-haggle input[type='range'] {
+  width: 100%;
+  height: 26px;
+  margin: 0;
+  accent-color: var(--blue);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.mk-haggle b {
+  font: 700 13px var(--px);
+  color: var(--ink);
+  text-align: right;
+}
+
+.mk-hint {
+  margin: 0;
+  font: 400 12px/1.25 var(--round);
+  letter-spacing: 0.4px;
+  color: var(--ink-2);
+}
+
+.mk-deal {
+  margin: 0;
+  display: grid;
+  gap: 1px;
+  padding: 5px 8px 4px;
+  border: 2px solid var(--blue);
+  font: 400 12px var(--round);
+  letter-spacing: 0.5px;
+  color: var(--ink-2);
+}
+
+.mk-deal b {
+  font: 400 15px var(--round);
+  color: var(--ink);
+}
+
+.mk-deal.counter { border-color: var(--yellow-d); background: #fff5c4; }
+.mk-deal.shut { border-color: var(--cream-2); }
+
+.mk-offers {
+  display: grid;
+  gap: 4px;
+}
+
+.mk-offer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 8px;
+  background: var(--cream);
+  border: 2px solid var(--ink);
+  font: 400 13px var(--round);
+}
+
+.mk-offer b {
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-offer span {
+  font: 700 13px var(--px);
+}
+
+.panel .mk-offer .btn {
+  min-height: 36px;
+  padding: 6px 8px 5px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 3px 0 var(--d);
+}
+
+.panel .mk-offer .btn-white {
+  box-shadow: inset 0 0 0 2px var(--ink), 0 3px 0 var(--ink-2);
+}
+
+/* The pinned action row: the primary action is the wide green one on the right. */
+.mk-dact {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 2px 0 5px;
+}
+
+.mk-screen .mk-dact .btn,
+.mk-sheet .mk-dact .btn {
+  min-height: 44px;
+  padding: 8px 10px 7px;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 0 var(--d);
+}
+
+.mk-screen .mk-dact .btn:active,
+.mk-sheet .mk-dact .btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--d);
+}
+
+.mk-screen .mk-dact .btn-white,
+.mk-sheet .mk-dact .btn-white {
+  --c: #fff;
+  box-shadow: inset 0 0 0 3px var(--ink), 0 4px 0 var(--ink-2);
+}
+
+.mk-screen .mk-dact .btn-white.mk-ic.on {
+  --c: var(--yellow);
+}
+
+.mk-dact .mk-go {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mk-screen .mk-dact .mk-ic {
+  flex: none;
+  padding: 6px 10px;
+}
+
+.mk-ic .picon {
+  display: block;
+}
+
+/* ----- empty states ----- */
+
+.mk-empty {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 4px;
+  padding: 14px 10px;
+  text-align: center;
+  background: #fff;
+  border: 3px dashed var(--cream-2);
+}
+
+.mk-empty b {
+  font: 400 16px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink);
+}
+
+.mk-empty span {
+  font: 400 13px var(--round);
+  letter-spacing: 0.5px;
+  color: var(--ink-2);
+}
+
+.mk-detail .mk-empty {
+  flex: 1 1 auto;
+  border: 0;
+}
+
+.mk-screen .mc-body.mk-off {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+/* ----- sheets: the expensive-offer confirm and the news ----- */
+
+.mk-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(38, 38, 46, 0.55);
+  animation: fade 0.18s ease-out;
+}
+
+.mk-sheet {
+  width: min(440px, 100%);
+  max-height: calc(100% - 8px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  box-shadow: 0 8px 0 var(--ink), 0 18px 30px rgba(0, 0, 0, 0.3);
+  animation: pop 0.22s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.mk-sheet .mk-dact .btn {
+  flex: 1 1 0;
+}
+
+.mk-cfq {
+  margin: 0;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.mk-cfq b {
+  font: 700 22px var(--px);
+  letter-spacing: 1px;
+}
+
+.mk-cfq span {
+  font: 400 13px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+}
+
+.mk-newsh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mk-newsh b {
+  font: 700 18px var(--px);
+  letter-spacing: 1px;
+}
+
+.mk-sheet .mk-newsh .btn {
+  min-height: 40px;
+  padding: 8px 14px 7px;
+  font-size: 14px;
+  --c: #fff;
+  box-shadow: inset 0 0 0 3px var(--ink), 0 4px 0 var(--ink-2);
+}
+
+.mk-newsl {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.mk-newsl li {
+  padding: 5px 8px 4px;
+  background: #fff;
+  border-left: 4px solid var(--cream-2);
+  font: 400 14px/1.25 var(--round);
+}
+
+.mk-newsl li.good { border-color: var(--go); }
+.mk-newsl li.bad { border-color: var(--red); }
+.mk-newsl li.own { color: var(--ink); }
+.mk-newsl li.own.good { color: var(--go-d); }
+.mk-newsl li.own.bad { color: var(--red-d); }
+.mk-newsl li.info { color: var(--ink-2); }
+.mk-newsl .mk-tag { margin-right: 6px; }
+
+/* ----- tall screens (iPad, desktop): the same panes, a little roomier ----- */
+
+@media (min-height: 561px) {
+  .mk-row { min-height: 50px; }
+  .mk-row .face { --fs: 38px; }
+  .mk-row { grid-template-columns: 38px auto minmax(0, 1fr) auto auto minmax(56px, auto); }
+  .mk-nm b { font-size: 16px; }
+  .mk-nm small { font-size: 13px; }
+  .mk-dh .face { --fs: 56px; }
+  .mk-big b { font-size: 34px; }
+  .mk-detail { padding: 12px 12px 6px; gap: 10px; }
+  .mk-dbody { gap: 10px; }
+  .mk-stat { padding: 4px 8px 6px; }
+  .mk-stat b { font-size: 16px; }
+  .mk-stat > i { height: 7px; }
+  .mk-fact { padding: 6px 2px 5px; }
+  .mk-fact small { font-size: 12px; }
+  .mk-fact b { font-size: 15px; }
+  .mk-fact b.word { font-size: 15px; }
+  .mk-screen .mk-dact .btn { min-height: 52px; font-size: 15px; }
+}
+
+/* ----- narrower phones (iPhone SE and the like): shorter header words, slimmer chips ----- */
+
+@media (max-width: 720px) {
+  .mk-screen .mc-title .mk-win i { display: none; }
+  .mk-chips > button { padding-left: 8px; padding-right: 8px; }
+  .mk-chips { gap: 5px; }
+}
+
+/* ----- narrow portrait windows (web): the list on top, the player under it ----- */
+
+@media (max-width: 560px) {
+  .mk-screen .mk-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+}

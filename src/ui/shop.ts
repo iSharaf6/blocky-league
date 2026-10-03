@@ -57,6 +57,39 @@ export function shopOpen(): boolean {
   return open;
 }
 
+// This session's memory (docs/UX.md 8): the last tab, the look picked per category and each list's scroll.
+let lastTab: ShopTab | null = null;
+const lastPick: Partial<Record<ShopCat, string>> = {};
+const scrolls = new Map<string, number>();
+
+/** Note every keyed list's scroll (`data-scroll-key`) before the panel is redrawn... */
+function keepScrolls(panel: HTMLElement): void {
+  panel.querySelectorAll<HTMLElement>('[data-scroll-key]').forEach((el) => {
+    scrolls.set(el.dataset.scrollKey ?? '', el.classList.contains('x') ? el.scrollLeft : el.scrollTop);
+  });
+}
+
+/** ...and put it back after (a list never jumps to the top because something was bought or picked). */
+function restoreScrolls(panel: HTMLElement): void {
+  panel.querySelectorAll<HTMLElement>('[data-scroll-key]').forEach((el) => {
+    const v = scrolls.get(el.dataset.scrollKey ?? '');
+    if (v === undefined) return;
+    if (el.classList.contains('x')) el.scrollLeft = v;
+    else el.scrollTop = v;
+  });
+}
+
+/**
+ * Scroll `el` into view inside its own list only (scrollIntoView could move the fixed panel too). Layout offsets
+ * (the list is positioned), not client rects: the panel may still be mid entrance animation.
+ */
+function revealIn(list: HTMLElement, el: HTMLElement): void {
+  const top = el.offsetTop - 12;
+  const bottom = el.offsetTop + el.offsetHeight + 10;
+  if (top < list.scrollTop) list.scrollTop = Math.max(0, top);
+  else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+}
+
 export interface ShopOpts {
   tab?: ShopTab;
   /** Where BACK goes (defaults to the main menu). */
@@ -152,11 +185,11 @@ export function openShop(app: AppContext, opts: ShopOpts = {}): void {
     const raw = app.save.career as { club?: unknown } | null;
     return raw && typeof raw === 'object' && raw.club ? careerState(app).club : null;
   };
-  shopScreen(app, opts.tab ?? 'celebration', back, backLabel, clubOf);
+  shopScreen(app, opts.tab ?? lastTab ?? 'celebration', back, backLabel, clubOf);
 }
 
 function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel: string, clubOf: () => ClubState | null): void {
-  const scr = mountMeta(app, 'sh-screen');
+  const scr = mountMeta(app, 'sh-screen shell');
   const save = app.save;
   shopOf(save);
   let tab: ShopTab = tab0 === 'coins' && !coinsTab() ? 'celebration' : tab0;
@@ -164,10 +197,16 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   onMetaClose(() => {
     open = false;
   });
-  /** The item on the stage, per category (the equipped one first). */
-  const pick: { [k in ShopCat]: string } = {
-    celebration: equippedId(save, 'celebration'), ball: equippedId(save, 'ball'), goalfx: equippedId(save, 'goalfx'), trail: equippedId(save, 'trail'),
+  /** The item on the stage, per category (this session's pick, else the equipped one). */
+  const pickOf = (cat: ShopCat): string => {
+    const id = lastPick[cat];
+    return id && shopItem(cat, id) ? id : equippedId(save, cat);
   };
+  const pick: { [k in ShopCat]: string } = {
+    celebration: pickOf('celebration'), ball: pickOf('ball'), goalfx: pickOf('goalfx'), trail: pickOf('trail'),
+  };
+  /** The picked tile is brought into view on the next draw (on opening, and after TODAY'S DEAL jumps to it). */
+  let revealPick = true;
   const star = starOf(app, clubOf());
   const stage = new ShopStage(star.def, star.kit);
   onMetaClose(() => stage.dispose());
@@ -208,68 +247,72 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const pass = list.find((p) => p.pass);
     const doubler = list.find((p) => p.doubler);
     const off = busy !== '' ? 'disabled' : '';
+    const label = (p: IapProduct) => esc(busy === p.id ? 'ONE MOMENT' : p.price);
     const pack = (p: IapProduct, i: number) => `<button class="sh-iap ${p.tag ? 'tagged' : ''} ${busy === p.id ? 'wait' : ''}" data-a="iap" data-id="${esc(p.id)}" ${off}
-        aria-label="${fmt(p.coins)} coins, ${esc(p.price)}${p.tag ? `, ${p.tag.toLowerCase()}` : ''}">
+        aria-label="${fmt(p.coins * (p.firstBonus ? FIRST_BUY_MULT : 1))} coins, ${esc(p.price)}${p.firstBonus ? ', doubled on your first buy' : p.tag ? `, ${p.tag.toLowerCase()}` : ''}">
         ${p.firstBonus ? `<i class="sh-ribbon first">FIRST BUY X${FIRST_BUY_MULT}</i>` : p.tag ? `<i class="sh-ribbon ${p.tag === 'BEST VALUE' ? 'best' : 'pop'}">${p.tag}</i>` : ''}
         <span class="sh-pile">${coinPile(i + 1)}</span>
-        <b>${fmt(p.coins * (p.firstBonus ? FIRST_BUY_MULT : 1))} COINS</b>
-        <small>${p.firstBonus ? `DOUBLED ON YOUR FIRST BUY` : p.bonusPct ? `${fmt(p.baseCoins)} + ${p.bonusPct}% BONUS` : 'A QUICK TOP UP'}</small>
-        <em class="sh-tag price buy">${esc(busy === p.id ? 'ONE MOMENT' : p.price)}</em>
+        <b>${fmt(p.coins * (p.firstBonus ? FIRST_BUY_MULT : 1))}</b>
+        <small>${p.firstBonus ? 'COINS, DOUBLED' : p.bonusPct ? `COINS +${p.bonusPct}%` : 'COINS'}</small>
+        <em class="sh-tag price buy">${label(p)}</em>
       </button>`;
-    // The Starter Pack is a one-time offer: gone once bought. NO ADS: always in the app (it shows ads).
-    const showNoAds = !!noAds;
+    // A compact offer: icon, name, a few words, the price on its button (or OWNED).
+    const offer = (cls: string, p: IapProduct, icon: string, name: string, what: string, btn: string) => `<section class="sh-offer ${cls}">
+        <span class="sh-offart" aria-hidden="true">${icon}</span>
+        <div class="sh-offtxt"><b>${name}</b><small>${what}</small></div>
+        ${p.owned ? '<em class="sh-tag own">OWNED</em>' : `<button class="btn ${btn} sh-offbuy" data-a="iap" data-id="${esc(p.id)}" ${off} aria-label="${name}, ${esc(p.price)}">${label(p)}</button>`}
+      </section>`;
     const season = seasonOf(save);
+    const theme = seasonTheme(season.id).name.toUpperCase();
     const totals = passTotals(season.id);
     const days = seasonDaysLeft();
-    const passCard = pass ? `<section class="sh-deal pass">
-          <div class="sh-dealtxt"><b>CLUB PASS: ${esc(seasonTheme(season.id).name.toUpperCase())}</b>
-            <span>${fmt(totals.coins)} coins on top of the free season, plus the ${esc(seasonTheme(season.id).name)} trail and goal explosion: only in the pass. Tiers you have already reached unlock at once. ${days} ${days === 1 ? 'day' : 'days'} left this month.</span></div>
-          ${pass.owned ? '<em class="sh-tag own">ON THIS MONTH</em>' : `<button class="btn btn-yellow" data-a="iap" data-id="${esc(pass.id)}" ${off}>${esc(busy === pass.id ? 'ONE MOMENT' : pass.price)}</button>`}
+    // The Club Pass is the big card: the month, its numbers, the price. Tiers already reached unlock at once.
+    const passCard = pass ? `<section class="sh-passcard ${pass.owned ? 'on' : ''}">
+          <span class="sh-pc-ic" aria-hidden="true">${pixelIcon('crown', '#ffd23a', 4)}</span>
+          <b class="sh-pc-name">CLUB PASS</b>
+          <small class="sh-pc-theme">${esc(theme)}</small>
+          <ul class="sh-pc-facts">
+            <li><b>+${fmt(totals.coins)}</b>COINS</li>
+            <li><b>${totals.items.length}</b>PASS LOOKS</li>
+            <li><b>${days}</b>${days === 1 ? 'DAY LEFT' : 'DAYS LEFT'}</li>
+          </ul>
+          <small class="sh-pc-note">REACHED TIERS UNLOCK AT ONCE</small>
+          ${pass.owned ? '<em class="sh-tag own sh-pc-on">ON THIS MONTH</em>' : `<button class="btn btn-yellow btn-lg sh-pc-buy" data-a="iap" data-id="${esc(pass.id)}" ${off} aria-label="Get the Club Pass, ${esc(pass.price)}"><small>GET IT</small><b>${label(pass)}</b></button>`}
         </section>` : '';
-    const doublerCard = doubler ? `<section class="sh-deal doubler">
-          <div class="sh-dealtxt"><b>COIN DOUBLER</b><span>Every match pays double coins, for good. Challenges and gifts stay as they are.</span></div>
-          ${doubler.owned ? '<em class="sh-tag own">OWNED</em>' : `<button class="btn btn-white" data-a="iap" data-id="${esc(doubler.id)}" ${off}>${esc(busy === doubler.id ? 'ONE MOMENT' : doubler.price)}</button>`}
-        </section>` : '';
-    // Club Pass first, then the one-time offers (NO ADS, the Starter Pack), the coin packs and the Coin Doubler.
-    return `<p class="sh-lede">Coins buy looks and more. Every match pays coins too, so top up only if you like.</p>
-      ${iap.available ? '' : '<p class="sh-wait">The App Store isn\'t ready yet, so nothing can be bought right now. Prices are in US dollars.</p>'}
-      ${passCard}
-      ${showNoAds && noAds ? `<section class="sh-deal noads">
-          <span class="sh-dealart" aria-hidden="true">${pixelIcon('film', '#fff', 5)}</span>
-          <div class="sh-dealtxt"><b>REMOVE ADS</b><span>No ad breaks between matches, for good. Ads you choose to watch for a bonus stay.</span></div>
-          ${noAds.owned ? '<em class="sh-tag own">OWNED</em>' : `<button class="btn btn-red" data-a="iap" data-id="${esc(noAds.id)}" ${off}>${esc(busy === noAds.id ? 'ONE MOMENT' : noAds.price)}</button>`}
-        </section>` : ''}
-      ${starter && !starter.owned ? `<section class="sh-deal starter">
-          <span class="sh-dealart" aria-hidden="true">${pixelIcon('ball', '#ffd23a', 6)}</span>
-          <div class="sh-dealtxt"><b>STARTER PACK</b><span>${fmt(starter.coins)} COINS AND THE GOLD BALL${sep()}ONE TIME ONLY</span></div>
-          <button class="btn btn-yellow" data-a="iap" data-id="${esc(starter.id)}" ${off}>${esc(busy === starter.id ? 'ONE MOMENT' : starter.price)}</button>
-        </section>` : ''}
+    // The one-time offers (NO ADS, the Coin Doubler, the Starter Pack until bought) and the free coins, side by side.
+    const offers = [
+      noAds ? offer('noads', noAds, pixelIcon('film', '#fff', 3), 'REMOVE ADS', 'NO AD BREAKS', 'btn-red') : '',
+      doubler ? offer('doubler', doubler, pixelIcon('bolt', '#ffd23a', 3), 'COIN DOUBLER', 'EVERY MATCH PAYS X2', 'btn-white') : '',
+      starter && !starter.owned ? offer('starter', starter, pixelIcon('ball', '#ffd23a', 3), 'STARTER PACK', `${fmt(starter.coins)} + GOLD BALL`, 'btn-yellow') : '',
+      ads.portal !== 'none' ? freeHtml(false) : '',
+    ].filter(Boolean);
+    return `${passCard}
+      <div class="sh-offers n${offers.length}">${offers.join('')}</div>
       <div class="sh-iaps">${packs.map(pack).join('')}</div>
-      ${doublerCard}
-      <div class="sh-restore"><button class="btn btn-white" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE PURCHASES'}</button></div>
-      <p class="mc-hint">Coins have no cash value and can't buy scout packs (those take Scout Tokens, earned by playing). Nothing you buy changes a match.</p>`;
+      <div class="sh-foot">
+        <button class="btn btn-white sh-restore" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE'}</button>
+        <p class="sh-fine">${iap.available ? '' : '<b>STORE NOT READY YET.</b> '}No cash value. Coins never buy scout packs. Nothing you buy changes a match.</p>
+      </div>`;
   };
 
-  const freeHtml = (): string => {
+  /** FREE COINS from a rewarded ad: a compact offer beside the store's, or the one big card on a portal. */
+  const freeHtml = (big: boolean): string => {
     const left = freeAdsLeft(save, localDay());
     const ready = ads.rewardedAvailable;
     const state = left <= 0 ? 'done' : !ready ? 'none' : busy === 'ad' ? 'wait' : 'go';
-    const label = state === 'done' ? 'ALL DONE TODAY' : state === 'none' ? 'NO AD RIGHT NOW' : state === 'wait' ? 'ONE MOMENT' : `${PLAY_ART}WATCH AN AD, +${FREE_AD_COINS}`;
-    const note = state === 'done' ? 'You have used all of today\'s free coins. Come back tomorrow.'
-      : state === 'none' ? 'There is no ad to show right now. Come back a little later.'
-        : `${left} of ${FREE_AD_DAILY_CAP} left today.`;
-    return `<section class="sh-gift">
-        <span class="sh-giftart" aria-hidden="true">${coinPile(3)}</span>
-        <div class="sh-gifttxt">
-          <h3>FREE COINS</h3>
-          <p>Watch a short ad and get ${FREE_AD_COINS} coins. Up to ${FREE_AD_DAILY_CAP} a day.</p>
-          <p class="sh-left ${state}">${note}</p>
-        </div>
-        <button class="btn btn-yellow btn-lg sh-watch" data-a="ad" ${state === 'go' ? '' : 'disabled'}>${label}</button>
+    const label = state === 'done' ? 'DONE TODAY' : state === 'none' ? 'NO AD YET' : state === 'wait' ? 'ONE MOMENT' : `${PLAY_ART}+${FREE_AD_COINS}`;
+    const note = state === 'done' ? 'BACK TOMORROW' : state === 'none' ? 'TRY AGAIN SOON' : `${left} OF ${FREE_AD_DAILY_CAP} LEFT TODAY`;
+    return `<section class="sh-offer free ${big ? 'big' : ''}">
+        <span class="sh-offart" aria-hidden="true">${coinPile(3)}</span>
+        <div class="sh-offtxt"><b>FREE COINS</b><small class="sh-left ${state}">${big ? `WATCH AN AD FOR ${FREE_AD_COINS}${sep()}` : ''}${note}</small></div>
+        <button class="btn btn-yellow sh-offbuy sh-watch ${big ? 'btn-lg' : ''}" data-a="ad" ${state === 'go' ? '' : 'disabled'} aria-label="Watch an ad for ${FREE_AD_COINS} coins">${label}</button>
       </section>`;
   };
 
-  const coinsHtml = (): string => `<div class="sh-coins">${iap.storefront ? storeHtml() : ''}${ads.portal !== 'none' ? freeHtml() : ''}</div>`;
+  // In the app: every money card on one screen, the Club Pass the biggest. On a portal: the free coins alone.
+  const coinsHtml = (): string => iap.storefront
+    ? `<div class="mc-body sh-money">${storeHtml()}</div>`
+    : `<div class="mc-body sh-money free-only">${freeHtml(true)}</div>`;
 
   // ---- cosmetics
 
@@ -344,51 +387,58 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     </button>`;
   };
 
+  /** The detail pane's action: BUY (one tap), EQUIP, EQUIPPED, or what's missing and where to get it. */
   const actionHtml = (it: ShopItem): string => {
     const s = stateOf(it);
-    if (s === 'on') return '<button class="btn btn-white btn-lg sh-act" disabled>EQUIPPED</button>';
-    if (s === 'owned') return `<button class="btn btn-go btn-lg sh-act" data-a="equip">EQUIP</button>`;
+    const lv = it.level !== undefined && s !== 'on' && s !== 'owned' && s !== 'pass' ? `FREE AT LV ${it.level}` : '';
+    const line = (txt: string, cls = '') => (txt ? `<p class="sh-short ${cls}" id="sh-short">${txt}</p>` : '');
+    if (s === 'on') return '<div class="sh-btns"><button class="btn btn-white btn-lg sh-act" disabled>EQUIPPED</button></div>';
+    if (s === 'owned') return '<div class="sh-btns"><button class="btn btn-go btn-lg sh-act" data-a="equip">EQUIP</button></div>';
     if (s === 'pass') {
-      return `<p class="sh-short">EARN IT IN THE ${esc(it.name.toUpperCase())} CLUB PASS</p>
-        ${iap.storefront ? '<button class="btn btn-blue sh-more" data-a="tab" data-v="coins">SEE THE CLUB PASS</button>' : ''}`;
+      return `<div class="sh-btns">${iap.storefront
+        ? '<button class="btn btn-blue btn-lg sh-act" data-a="tab" data-v="coins">SEE THE CLUB PASS</button>'
+        : '<button class="btn btn-white btn-lg sh-act" disabled>CLUB PASS ONLY</button>'}</div>
+        ${line('EARNED IN THIS MONTH\'S CLUB PASS', 'pass')}`;
     }
     const price = priceOf(it);
     const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s> ` : '';
-    if (s === 'buy') return `<button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY ${was}${coin(price)}</button>`;
-    return `<button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short">${was}${coin(price)}</button>
-      <p class="sh-short" id="sh-short">${fmt(price - save.coins)} COINS SHORT${sep()}EVERY MATCH PAYS</p>
-      ${coinsTab() ? '<button class="btn btn-blue sh-more" data-a="tab" data-v="coins">GET COINS</button>' : ''}`;
+    if (s === 'buy') return `<div class="sh-btns"><button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY ${was}${coin(price)}</button></div>${line(lv, 'free')}`;
+    return `<div class="sh-btns">
+        <button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short">${was}${coin(price)}</button>
+        ${coinsTab() ? '<button class="btn btn-blue btn-lg sh-more" data-a="tab" data-v="coins">GET COINS</button>' : ''}
+      </div>
+      ${line(`${fmt(price - save.coins)} SHORT${lv ? `${sep()}${lv}` : ''}`)}`;
   };
 
-  const showcaseHtml = (it: ShopItem): string => {
-    const s = stateOf(it);
-    const lv = it.level !== undefined && s !== 'on' && s !== 'owned' ? `<p class="sh-free">OR FREE AT LEVEL ${it.level}</p>` : '';
-    return `<section class="sh-show">
+  /** What the picked look is (kind, rarity, name, a line on wide screens) and its action. */
+  const infoHtml = (it: ShopItem): string => `
+      <div class="sh-id">
+        <small class="sh-kind">${CAT_LABEL[it.cat].toUpperCase()}${itemTier(it) === 'common' ? '' : `${sep()}<b class="t-${itemTier(it)}">${ITEM_TIER_NAMES[itemTier(it)]}</b>`}</small>
+        <h3 class="sh-name">${esc(it.name.toUpperCase())}</h3>
+        <p class="sh-blurb">${esc(it.blurb)}</p>
+      </div>
+      <div class="sh-actrow">${actionHtml(it)}</div>`;
+
+  /** The detail pane: the look live on the stage, its name and the button. It never scrolls. */
+  const detailHtml = (it: ShopItem): string => `<section class="pane sh-detail">
         <div class="sh-stage ${stage.ok ? '' : 'flat'}">
           ${stage.ok ? '<canvas class="sh-3d" aria-hidden="true"></canvas>' : `<span class="sh-art big">${artOf(it)}</span>`}
           <div class="sh-burst" aria-hidden="true"></div>
         </div>
-        <div class="sh-info">
-          <small class="sh-kind">${CAT_LABEL[it.cat].toUpperCase()}${itemTier(it) === 'common' ? '' : `${sep()}<b class="t-${itemTier(it)}">${ITEM_TIER_NAMES[itemTier(it)]}</b>`}</small>
-          <h3 class="sh-name">${esc(it.name.toUpperCase())}</h3>
-          <p class="sh-blurb">${esc(it.blurb)}</p>
-          ${actionHtml(it)}
-          ${lv}
-        </div>
+        <div class="sh-info">${infoHtml(it)}</div>
       </section>`;
-  };
 
-  /** Today's deal, on top of every looks tab: one look a day at DEAL_OFF % off, honestly rotating. */
+  /** Today's deal as a chip over the looks: one look a day at DEAL_OFF % off, honestly rotating. A tap shows it. */
   const dealHtml = (): string => {
     const d = dailyDeal(save, today());
     if (!d) return '';
-    return `<section class="sh-dealbar">
-        <b>TODAY'S DEAL</b>
-        <span>${esc(d.item.name.toUpperCase())} ${CAT_LABEL[d.item.cat].toUpperCase()}, ${DEAL_OFF}% OFF: <s>${fmt(d.item.price)}</s> ${coin(d.price)}. A new deal every day.</span>
-        <button class="btn btn-yellow" data-a="deal">SEE IT</button>
-      </section>`;
+    const got = owns(save, d.item.cat, d.item.id);
+    return `<button class="sh-dealchip ${got ? 'got' : ''}" data-a="deal" aria-label="Today's deal: ${esc(d.item.name)} ${esc(CAT_LABEL[d.item.cat])}, ${DEAL_OFF}% off, ${d.price} coins">
+        <b>TODAY'S DEAL</b><span>${esc(d.item.name.toUpperCase())}</span><em>${got ? 'OWNED' : `${DEAL_OFF}% OFF`}</em>${got ? '' : `<i class="sh-dealprice">${coin(d.price)}</i>`}
+      </button>`;
   };
 
+  /** A looks tab: the tiles on the left (the only thing that scrolls), the picked look's stage and BUY on the right. */
   const catHtml = (cat: ShopCat): string => {
     // Club Pass looks: this month's (to earn) and any already earned; past months' don't clutter the shop.
     const passId = seasonPassItems(seasonOf(save).id)[cat === 'goalfx' ? 'goalfx' : 'trail'].id;
@@ -396,7 +446,14 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const seen = new Set(shopOf(save).seen);
     const it = shopItem(cat, pick[cat]) ?? items[0];
     const tiles = items.map((x) => tileHtml(x, x.id === it.id, x.price > 0 && x.price <= save.coins && !owns(save, x.cat, x.id) && !seen.has(itemKey(x.cat, x.id)))).join('');
-    return `${dealHtml()}${showcaseHtml(it)}<div class="sh-grid">${tiles}</div>`;
+    const mine = items.filter((x) => owns(save, x.cat, x.id)).length;
+    return `<div class="mc-body split sh-cat">
+        <section class="pane sh-list">
+          <div class="pane-h sh-listh"><span class="sh-count">${mine}/${items.length} OWNED</span><span class="grow"></span>${dealHtml()}</div>
+          <div class="pane-scroll sh-grid" data-scroll-key="sh-${cat}">${tiles}</div>
+        </section>
+        ${detailHtml(it)}
+      </div>`;
   };
 
   // ---- players (scout packs + the market)
@@ -404,12 +461,14 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   const playersHtml = (): string => {
     const club = clubOf();
     if (!club) {
-      return `<section class="sh-noclub">
-          ${pixelIcon('shirt', '#26262e', 6)}
-          <h3>FOUND YOUR CLUB FIRST</h3>
-          <p>Packs sign real players into <b>MY CLUB</b>, the team you take into PLAY NOW and ROAD TO GLORY. Pick a name, a kit and a formation: it takes a minute.</p>
-          <button class="btn btn-go btn-lg" data-a="found">FOUND YOUR CLUB</button>
-        </section>`;
+      return `<div class="mc-body sh-players">
+          <section class="sh-noclub">
+            ${pixelIcon('shirt', '#26262e', 5)}
+            <h3>FOUND YOUR CLUB FIRST</h3>
+            <p>Packs sign real players into MY CLUB.</p>
+            <button class="btn btn-go btn-lg" data-a="found">FOUND YOUR CLUB</button>
+          </section>
+        </div>`;
     }
     const day = today();
     const rating = clubRating(club);
@@ -425,28 +484,27 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       return `<button class="sh-pack p-${free ? 'free' : k} ${poor ? 'poor' : ''}" data-a="pack" data-k="${k}" data-free="${free ? 1 : 0}" aria-label="${name}, ${free ? 'free' : `${cost} scout ${cost === 1 ? 'token' : 'tokens'}`}">
           <span class="sh-cardback" aria-hidden="true"><i></i></span>
           <b>${name}</b>
-          <small>${free ? 'A SCOUT PACK ON THE HOUSE, EVERY DAY' : `OVR ${Math.max(30, rating + lo)} TO ${Math.min(95, rating + 16)}`}</small>
+          <small>${free ? 'ONE A DAY' : `OVR ${Math.max(30, rating + lo)} TO ${Math.min(95, rating + 16)}`}</small>
           ${odds(k)}
           <em class="sh-tag price ${poor ? 'poor' : 'buy'}">${free ? 'FREE' : `${cost} ${cost === 1 ? 'TOKEN' : 'TOKENS'}`}</em>
         </button>`;
     };
-    return `<section class="sh-club">
-        ${shirtArt(club.kit, 4)}
-        <div class="sh-clubtxt"><b>${esc(club.name)}</b><span>OVR ${rating}${sep()}SQUAD ${club.squad.length}/${SQUAD_MAX}${sep()}WAGES ${fmt(wages)}</span></div>
-        <button class="btn btn-white" data-a="squad">SQUAD</button>
-      </section>
-      ${full ? `<p class="mc-hint warn">Squad full (${SQUAD_MAX}): a new card can still join if you let your weakest sub go, or sell him on.</p>` : ''}
-      <p class="sh-tokens"><b>${tokens}</b> SCOUT ${tokens === 1 ? 'TOKEN' : 'TOKENS'}<span>Every daily challenge you finish earns one. Tokens are earned, never sold.</span></p>
-      <div class="sh-packs">
-        ${freePackReady(save, day) ? pack('scout', true) : ''}
-        ${pack('scout', false)}
-        ${pack('elite', false)}
-      </div>
-      <p class="mc-hint">Every card is a real player for MY CLUB, rated against your XI. Sign him (straight into the starting XI when he beats a starter) or sell him on. Odds are shown on every pack.</p>
-      <section class="sh-market">
-        <div><b>TRANSFER MARKET</b><span>Bid for named players from the clubs in your league, sell yours, scout the youth.</span></div>
-        <button class="btn btn-blue" data-a="market">OPEN MARKET</button>
-      </section>`;
+    // One bar for the club (its numbers, SQUAD and the MARKET), the packs side by side, one line of fine print.
+    return `<div class="mc-body sh-players">
+        <section class="sh-club">
+          ${shirtArt(club.kit, 3)}
+          <div class="sh-clubtxt"><b>${esc(club.name)}</b><span>OVR ${rating}${sep()}<em class="${full ? 'full' : ''}">${full ? 'SQUAD FULL' : `SQUAD ${club.squad.length}/${SQUAD_MAX}`}</em>${sep()}WAGES ${fmt(wages)}</span></div>
+          <span class="sh-tokens" aria-label="${tokens} scout ${tokens === 1 ? 'token' : 'tokens'}"><b>${tokens}</b>${tokens === 1 ? 'TOKEN' : 'TOKENS'}</span>
+          <button class="btn btn-white" data-a="squad">SQUAD</button>
+          <button class="btn btn-blue" data-a="market">MARKET</button>
+        </section>
+        <div class="sh-packs pane-scroll" data-scroll-key="sh-packs">
+          ${freePackReady(save, day) ? pack('scout', true) : ''}
+          ${pack('scout', false)}
+          ${pack('elite', false)}
+        </div>
+        <p class="mc-hint sh-fine">Tokens come from daily challenges, never from coins. Odds are on every pack.</p>
+      </div>`;
   };
 
   // ---- the pack reveal (a sheet on the screen root, so panel re-renders leave it alone)
@@ -592,20 +650,23 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   // ---- drawing
 
   const draw = () => {
+    lastTab = tab;
     const cats = TABS.filter(([k]) => k !== 'coins' || coinsTab()).map(([k, long, short]) => {
       const dot = k === 'players' ? freePackReady(save, today()) : false;
       // The money tab stands out (gold); in the app it sells the Club Pass and NO ADS too, and says so.
       const money = k === 'coins';
       const name = money && iap.storefront ? 'PASS AND COINS' : long;
-      return `<button class="${k === tab ? 'on' : ''} ${money ? 'sh-money' : ''}" data-a="tab" data-v="${k}"><span class="sh-long">${name}</span><span class="sh-shortl">${short}</span>${dot ? '<i class="sh-dot">FREE</i>' : ''}</button>`;
+      return `<button class="${k === tab ? 'on' : ''} ${money ? 'sh-money' : ''}" data-a="tab" data-v="${k}" aria-pressed="${k === tab}"><span class="sh-long">${name}</span><span class="sh-shortl">${money && iap.storefront ? name : short}</span>${dot ? '<i class="sh-dot">FREE</i>' : ''}</button>`;
     }).join('');
     const body = tab === 'players' ? playersHtml() : tab === 'coins' ? coinsHtml() : catHtml(tab);
+    keepScrolls(scr.panel);
     scr.render(
       `${topBar(backLabel, 'SHOP', iap.storefront ? 'EARN COINS PLAYING OR TOP UP' : 'COINS COME FROM PLAYING', shownCoins)}
-      <div class="seg mc-tabs sh-tabs">${cats}</div>
+      <nav class="seg mc-tabs sh-tabs">${cats}</nav>
       ${body}`,
       handlers,
     );
+    restoreScrolls(scr.panel);
     hydrateFaces(scr.panel);
     // The wallet runs down to its new total after a purchase.
     const span = scr.panel.querySelector<HTMLElement>('.mc-top .coins span');
@@ -617,38 +678,70 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       if (cv) stage.attach(cv);
       markSeen(save, tab);
       app.persist();
+      const list = scr.panel.querySelector<HTMLElement>('.sh-grid');
+      const sel = list?.querySelector<HTMLElement>('.sh-tile.sel');
+      if (revealPick && list && sel) revealIn(list, sel);
     }
+    revealPick = false;
   };
 
   const showItem = (cat: ShopCat, id: string) => {
     pick[cat] = id;
+    lastPick[cat] = id;
     stage.set({ cat, id });
   };
 
+  /** A tile tap: the look goes on the stage at once and the detail pane follows; the list is left exactly where it was. */
+  const showPick = (cat: ShopCat) => {
+    const it = shopItem(cat, pick[cat]);
+    if (!it) return;
+    scr.panel.querySelectorAll<HTMLElement>('.sh-tile').forEach((t) => {
+      const on = t.dataset.id === it.id;
+      t.classList.toggle('sel', on);
+      t.setAttribute('aria-pressed', String(on));
+    });
+    const info = scr.panel.querySelector<HTMLElement>('.sh-info');
+    if (info) info.innerHTML = infoHtml(it);
+    const flat = scr.panel.querySelector<HTMLElement>('.sh-stage.flat .sh-art.big');
+    if (flat) flat.innerHTML = artOf(it);
+  };
+
+  // (Esc: mountMeta sends it to BACK, which waits while a pack reveal is up.)
   const handlers = {
     // (A pack being opened has to be signed or sold first: its card is paid for.)
     back: () => {
       if (!sheet) back();
     },
     tab: (el: HTMLElement) => {
-      tab = el.dataset.v as ShopTab;
-      scr.panel.scrollTop = 0;
+      const next = el.dataset.v as ShopTab;
+      if (next === tab) return;
+      tab = next;
       if (isCat(tab)) stage.set({ cat: tab, id: pick[tab] });
       draw();
     },
-    // TODAY'S DEAL: its tab, with the look on the stage.
+    // TODAY'S DEAL: its tab, with the look on the stage and its tile in view.
     deal: () => {
       const d = dailyDeal(save, today());
       if (!d) return;
+      const same = tab === d.item.cat;
       tab = d.item.cat;
-      scr.panel.scrollTop = 0;
       showItem(d.item.cat, d.item.id);
+      if (same) {
+        showPick(d.item.cat);
+        const list = scr.panel.querySelector<HTMLElement>('.sh-grid');
+        const sel = list?.querySelector<HTMLElement>('.sh-tile.sel');
+        if (list && sel) revealIn(list, sel);
+        return;
+      }
+      revealPick = true;
       draw();
     },
     pick: (el: HTMLElement) => {
       if (!isCat(tab)) return;
-      showItem(tab, el.dataset.id ?? DEFAULT_ID[tab]);
-      draw();
+      const id = el.dataset.id ?? DEFAULT_ID[tab];
+      if (id === pick[tab]) return;
+      showItem(tab, id);
+      showPick(tab);
     },
     buy: () => {
       if (!isCat(tab)) return;

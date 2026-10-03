@@ -7,6 +7,8 @@ import {
 import { APP_VERSION, CONTACT_EMAIL, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
 import { pixelIcon } from './pixelIcons';
+import './menus.css';
+import './rewards.css';
 import { buzz, hapticsAvailable, type HapticLevel } from '../platform/haptics';
 import { coachText } from './coach';
 import { clubRating as presetRating } from '../meta/cup';
@@ -26,6 +28,8 @@ import { FORMATIONS, FORMATION_IDS, type Slot } from '../sim/formations';
 import type { Match } from '../sim/match';
 import type { ScenarioOutcome } from '../sim/scenario';
 import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef, type ScenarioSpec } from '../sim/types';
+import { suggestSubs, type SubPlan } from '../meta/squad';
+import { bindDragSwap } from './dragSwap';
 
 export { pixelIcon };
 
@@ -264,113 +268,117 @@ export function defaultDevice(): 'keyboard' | 'touch' {
 }
 
 /** A key cap for an action's first binding (keyboard or gamepad), escaped for markup. */
-const kc = (a: PadAction, dev: 'keyboard' | 'gamepad') => `<kbd>${escHtml(actionKey(a, dev))}</kbd>`;
+const kc = (a: PadAction, dev: 'keyboard' | 'gamepad' | 'touch') => `<kbd>${escHtml(actionKey(a, dev))}</kbd>`;
 
-/** HOW TO PLAY for the keyboard: every key named is the player's own binding (Settings > Controls > KEYS). */
-function howtoKeys(): string {
-  const k = (a: PadAction) => kc(a, 'keyboard');
-  const mv = moveKeys('keyboard').split(' / ');
-  return `
-  <div class="howto">
-    <div class="ht-col">
-      <h3>ATTACK</h3>
-      <p>${mv.map((m) => `<kbd>${escHtml(m === 'ARROWS' ? '←↑→↓' : m)}</kbd>`).join(' / ')} move</p>
-      <p>${k('pass')} pass to the <b>ringed</b> teammate${sep()}aim to pick another</p>
-      <p>${k('through')} through ball${sep()}hold, then let go to cross</p>
-      <p>${k('shoot')} hold, aim, let go to shoot${sep()}a longer hold lifts it</p>
-      <p>Press ${k('shoot')} again as you strike: <b>perfect finish</b> (mistime it and it flies)</p>
-      <p>Hold ${k('shoot')}, press ${k('through')}: chip${sep()}a soft diagonal shot curls</p>
-      <p>${k('sprint')} sprint${sep()}press twice to knock it past a defender</p>
-      <p>${k('skill')} skill move: press it as a defender lunges (the <b>!</b> over him) for a <b>PERFECT</b></p>
-      <p>Stick with ${k('skill')}: ahead = rainbow flick (a man squared up: nutmeg)${sep()}half across = elastico${sep()}across = roulette (slow: la croqueta)${sep()}half back = heel chop${sep()}back = drag back${sep()}none = stepover (standing: ball roll)</p>
-      <p><b>Crosses:</b> keep moving as one arrives to bring it down${sep()}stand still to head it${sep()}${k('shoot')} to head at goal</p>
-    </div>
-    <div class="ht-col">
-      <h3>DEFEND</h3>
-      <p>${k('pass')} switch player</p>
-      <p>${k('shoot')} tackle${sep()}hold, or press while sprinting, to slide</p>
-      <p>${k('through')} hold to press: he stays goal-side and steals loose touches</p>
-      <p>Turn sharply while dribbling to cut past a defender</p>
-      <p>${k('pause')} pause</p>
-    </div>
-  </div>
-  <p class="fine">The <b>ringed</b> teammate is who a pass goes to: aim to pick another (arrows at the screen edge show mates out of shot). First-time finish: press ${k('shoot')} just before the ball reaches you. Change any key: <b>Settings › Keys</b>. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
+/** The app shell's header (docs/UX.md, ui/shell.css): BACK at the top left, the title and its one line, a right slot. */
+function shellTop(title: string, sub = '', right = '', back = 'BACK'): string {
+  const gap = '<span class="mc-top-gap" aria-hidden="true"></span>';
+  const b = back ? `<button class="btn btn-white mc-back" data-a="back" aria-label="${escHtml(back)}">←<span>${escHtml(back)}</span></button>` : gap;
+  return `<header class="mc-top">${b}<div class="mc-title"><h2>${title}</h2>${sub ? `<span>${sub}</span>` : ''}</div>${right || gap}</header>`;
 }
 
-/** HOW TO PLAY for a gamepad (the player's own button bindings). */
-function howtoPad(): string {
-  const k = (a: PadAction) => kc(a, 'gamepad');
-  return `
-  <div class="howto">
-    <div class="ht-col">
-      <h3>ATTACK</h3>
-      <p><kbd>LEFT STICK</kbd> move</p>
-      <p>${k('pass')} pass to the <b>ringed</b> teammate${sep()}aim to pick another</p>
-      <p>${k('through')} through ball${sep()}hold, then let go to cross</p>
-      <p>${k('shoot')} hold, aim, let go to shoot${sep()}a longer hold lifts it</p>
-      <p>Press ${k('shoot')} again as you strike: <b>perfect finish</b> (mistime it and it flies)</p>
-      <p>Hold ${k('shoot')}, press ${k('through')}: chip${sep()}a soft diagonal shot curls</p>
-      <p>${k('sprint')} sprint${sep()}press twice to knock it past</p>
-      <p>${k('skill')} skill move: press it as a defender lunges (the <b>!</b> over him) for a <b>PERFECT</b></p>
-      <p>Stick with ${k('skill')}: ahead = rainbow flick (a man squared up: nutmeg)${sep()}half across = elastico${sep()}across = roulette (slow: la croqueta)${sep()}half back = heel chop${sep()}back = drag back${sep()}none = stepover (standing: ball roll)</p>
-      <p><b>Crosses:</b> keep moving as one arrives to bring it down${sep()}stand still to head it${sep()}${k('shoot')} to head at goal</p>
-    </div>
-    <div class="ht-col">
-      <h3>DEFEND</h3>
-      <p>${k('pass')} switch player</p>
-      <p>${k('shoot')} tackle${sep()}hold, or press while sprinting, to slide</p>
-      <p>${k('through')} hold to press: he stays goal-side and steals loose touches</p>
-      <p>Turn sharply while dribbling to cut past a defender</p>
-      <p>${k('pause')} pause</p>
-    </div>
-  </div>
-  <p class="fine">The <b>ringed</b> teammate is who a pass goes to: aim to pick another (arrows at the screen edge show mates out of shot). First-time finish: press ${k('shoot')} just before the ball reaches you. Change any button: <b>Settings › Keys</b>. Pass help (ASSISTED / SEMI / MANUAL): <b>Settings › Controls</b>.</p>`;
-}
+const coinChip = (n: number) => `<div class="coins mc-coins"><i></i><span>${n.toLocaleString()}</span></div>`;
+
+type SettingsTab = 'general' | 'controls' | 'keys' | 'more';
+type HtDev = 'keyboard' | 'touch' | 'gamepad';
+type HtTab = 'attack' | 'defend' | 'skills' | 'crosses' | 'blitz';
+
+/** Session memory (docs/UX.md 8): the last tab or fold per screen, until the game closes. */
+const mem: { qmMore: boolean; setTab: SettingsTab | null; htTab: HtTab } = { qmMore: false, setTab: null, htTab: 'attack' };
+
+const HT_TABS: [HtTab, string][] = [['attack', 'ATTACK'], ['defend', 'DEFEND'], ['skills', 'SKILLS'], ['crosses', 'CROSSES'], ['blitz', 'BLITZ']];
 
 /** One of the in-match touch buttons, drawn small (same colours, rim and base as the real ones). */
 const touchBtn = (cls: string, label: string) => `<i class="ht-tb ${cls}"><span>${label}</span></i>`;
 const dot = (cls: string) => `<i class="ht-dot ${cls}"></i>`;
 
-/** HOW TO PLAY for touch (a function: its SKILL row names the key and pad button bound to it right now). */
-const howtoTouch = (): string => `
-  <div class="ht-touch">
-    <div class="ht-pad" aria-hidden="true">
-      <div class="ht-stick"><i></i></div>
-      <span class="ht-pad-l">DRAG TO MOVE</span>
-      <div class="ht-cluster">
-        ${touchBtn('skill', 'SKILL')}${touchBtn('sprint', 'SPRINT')}${touchBtn('through', 'THROUGH')}${touchBtn('shoot', 'SHOOT')}${touchBtn('pass', 'PASS')}
-      </div>
-    </div>
-    <p class="ht-note"><b>MOVE</b> <span class="ht-stick-float">Put your thumb down anywhere on the left half and drag: the stick follows your thumb.</span><span class="ht-stick-fixed">Put your thumb on the stick at the bottom left and drag (FIXED stick: Settings › Controls).</span></p>
-    <table class="ht-table">
-      <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
-      <tbody>
-        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed teammate${sep()}aim to pick another</td><td>${dot('through')}<b>PRESS</b> hold: stay goal-side, steal loose touches${sep()}or go win a loose ball</td></tr>
-        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold, aim, let go${sep()}a longer hold lifts it</td><td><b>TACKLE</b> tap to tackle${sep()}hold to slide</td></tr>
-        <tr><td>${dot('through')}</td><td><b>THROUGH</b> through ball${sep()}hold, then let go to cross</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
-        <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> push the stick all the way (AUTO SPRINT)${sep()}or hold SPRINT${sep()}double tap it to knock it past</td><td><b>SPRINT</b> stick all the way to chase</td></tr>
-        <tr class="ht-finish"><td>${dot('skill')}</td><td colspan="2"><b>SKILL</b> (shown with the ball) tap as a defender lunges, the <b>!</b> over him, for a PERFECT${sep()}the stick picks the move: ahead = rainbow flick (a man squared up: nutmeg)${sep()}half across = elastico${sep()}across = roulette (slow: la croqueta)${sep()}half back = heel chop${sep()}back = drag back${sep()}none = stepover (standing: ball roll)${sep()}keys ${kc('skill', 'keyboard')} pad ${kc('skill', 'gamepad')}</td></tr>
-        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>PERFECT FINISH</b> tap SHOOT again as you strike (mistime it and it flies)</td></tr>
-        <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT, tap THROUGH${sep()}<b>CURL</b> a soft diagonal shot</td></tr>
-        <tr class="ht-finish"><td>${dot('through')}</td><td colspan="2"><b>CROSSES</b> keep the stick pushed as one arrives to bring it down${sep()}let go to head it${sep()}SHOOT to head at goal</td></tr>
-      </tbody>
-    </table>
-    <p class="fine">The <b>ringed</b> teammate is who PASS goes to: aim to pick another (edge arrows show mates out of shot). Set pieces: <b>PASS</b> short${sep()}<b>CROSS</b> hold to whip it in${sep()}<b>SHOOT</b> hold to shoot (a driven cross at a corner). Pass help: <b>Settings › Controls</b>. Tap to skip a replay; <b>II</b> pauses.</p>
+/** A slice of the match screen: grass, the stick and the button cluster (defending: PRESS under the thumb, SWITCH on top). */
+const htPad = (defend: boolean) => `<div class="ht-pad" aria-hidden="true">
+    <div class="ht-stick"><i></i></div>
+    <span class="ht-pad-l">DRAG TO MOVE</span>
+    <div class="ht-cluster">${touchBtn('skill', 'SKILL')}${touchBtn('sprint', 'SPRINT')}${defend ? touchBtn('through dsw', 'SWITCH') : touchBtn('through', 'THROUGH')}${touchBtn('shoot', defend ? 'TACKLE' : 'SHOOT')}${defend ? touchBtn('pass dp', 'PRESS') : touchBtn('pass', 'PASS')}</div>
   </div>`;
 
-/** Blitz mode, under every How to Play tab: the pickups and the button that uses them. `use` names that button. */
-const howtoBlitz = (use: string) => `
-  <div class="ht-blitz">
-    <h3>${pixelIcon('bolt', '#8a5cf6', 2, 'inl')}BLITZ MODE</h3>
-    <p>Quick Match › MODE › BLITZ. Run over the glowing pickups on the pitch, then press ${use} to use the one you hold (one at a time, and it shows by the score):</p>
-    <ul class="ht-pw">
-      <li><i>${pixelIcon('bolt', '#1fb36b', 2)}</i><b>TURBO</b><span>a burst of pace</span></li>
-      <li><i>${pixelIcon('burst', '#e2501a', 2)}</i><b>MEGA SHOT</b><span>your next shot is a rocket</span></li>
-      <li><i>${pixelIcon('freeze', '#2a8fd0', 2)}</i><b>FREEZE</b><span>the other side slows for a few seconds</span></li>
-      <li><i>${pixelIcon('magnet', '#d99a00', 2)}</i><b>MAGNET</b><span>the ball sticks to your feet</span></li>
-      <li><i>${pixelIcon('shield', '#8a5cf6', 2)}</i><b>SHIELD</b><span>nobody can tackle you</span></li>
-    </ul>
-  </div>`;
+/** One HOW TO PLAY row: the control (the touch button's colour, or the player's own key), its name and a few words. */
+const htRow = (cap: string, name: string, what: string) =>
+  `<li class="ht-row"><span class="ht-cap">${cap}</span><b>${name}</b><span class="ht-what">${what}</span></li>`;
+
+/**
+ * HOW TO PLAY, one topic for one device, as short rows that fit a phone on its side. Every key named is the player's
+ * own binding (Settings > KEYS); the touch rows show the button's colour as it is on the pitch.
+ */
+function howtoBody(tab: HtTab, dev: HtDev): string {
+  const touch = dev === 'touch';
+  const cap = (a: PadAction, colour: string) => (touch ? dot(colour) : kc(a, dev));
+  const stick = touch ? dot('stick')
+    : dev === 'gamepad' ? '<kbd>L STICK</kbd>'
+      : moveKeys('keyboard').split(' / ').map((m) => `<kbd>${escHtml(m === 'ARROWS' ? '←↑→↓' : m)}</kbd>`).join('');
+  const tap = (t: string) => coachText(t, dev);
+  const list = (rows: string[], cls = '') => `<ul class="ht-list ${cls}">${rows.join('')}</ul>`;
+  const withPad = (rows: string[], defend: boolean) => (touch ? `<div class="ht-split">${htPad(defend)}${list(rows)}</div>` : list(rows));
+  if (tab === 'defend') {
+    return withPad([
+      htRow(touch ? dot('def') : kc('pass', dev), 'SWITCH', 'Change player'),
+      htRow(cap('shoot', 'shoot'), 'TACKLE', `${tap('{Tap} to tackle')}${sep()}hold to slide`),
+      htRow(touch ? dot('through') : kc('through', dev), 'PRESS', `Hold${sep()}he stays goal side and steals loose touches`),
+      htRow(cap('sprint', 'sprint'), 'SPRINT', touch ? 'Stick all the way to chase' : 'Hold to chase'),
+      htRow(touch ? '<kbd>II</kbd>' : kc('pause', dev), 'PAUSE', touch ? `Top of the screen${sep()}tap to skip a replay` : 'Pause the match'),
+    ], true);
+  }
+  if (tab === 'skills') {
+    return `${list([htRow(cap('skill', 'skill'), 'SKILL', tap('{Tap} as a defender lunges (the ! over him): PERFECT'))])}
+      <p class="ht-h">THE STICK PICKS THE MOVE</p>
+      ${list([
+        htRow('', 'AHEAD', 'Rainbow flick (squared up: nutmeg)'),
+        htRow('', 'HALF ACROSS', 'Elastico'),
+        htRow('', 'ACROSS', 'Roulette (slow: la croqueta)'),
+        htRow('', 'HALF BACK', 'Heel chop'),
+        htRow('', 'BACK', 'Drag back'),
+        htRow('', 'NONE', 'Stepover (standing: ball roll)'),
+      ], 'two')}
+      ${list([
+        htRow(stick, 'CUT', 'Turn sharply while dribbling to beat a man'),
+        htRow(cap('shoot', 'shoot'), 'CURL', 'A soft diagonal shot curls'),
+      ])}`;
+  }
+  if (tab === 'crosses') {
+    return `<div class="ht-cols">
+        <div><p class="ht-h">CROSSES</p>${list([
+          htRow(cap('through', 'through'), 'CROSS', 'Hold THROUGH, then let go'),
+          htRow(stick, 'CONTROL', 'Keep moving as it arrives'),
+          htRow(stick, 'HEADER', touch ? 'Let go of the stick' : 'Stand still as it arrives'),
+          htRow(cap('shoot', 'shoot'), 'AT GOAL', 'SHOOT as it arrives'),
+        ])}</div>
+        <div><p class="ht-h">SET PIECES</p>${list([
+          htRow(cap('pass', 'pass'), 'SHORT', 'PASS it short'),
+          htRow(cap('through', 'through'), 'CROSS', 'Hold to whip it in'),
+          htRow(cap('shoot', 'shoot'), 'SHOT', 'Hold to shoot (at a corner: a driven cross)'),
+        ])}</div>
+      </div>`;
+  }
+  if (tab === 'blitz') {
+    const use = touch ? `<b class="inl-ic">${pixelIcon('bolt', '#8a5cf6', 2)}</b>` : kc('power', dev);
+    return `${list([htRow(use, 'USE', `Run over a glowing pickup${sep()}then use it`)])}
+      ${list([
+        htRow(pixelIcon('bolt', '#1fb36b', 2), 'TURBO', 'A burst of pace'),
+        htRow(pixelIcon('burst', '#e2501a', 2), 'MEGA SHOT', 'Your next shot is a rocket'),
+        htRow(pixelIcon('freeze', '#2a8fd0', 2), 'FREEZE', 'They slow for a few seconds'),
+        htRow(pixelIcon('magnet', '#d99a00', 2), 'MAGNET', 'The ball sticks to your feet'),
+        htRow(pixelIcon('shield', '#8a5cf6', 2), 'SHIELD', 'Nobody can tackle you'),
+      ], 'two')}
+      <p class="ht-h">QUICK MATCH${sep()}MODE${sep()}BLITZ</p>`;
+  }
+  return withPad([
+    htRow(stick, 'MOVE', touch ? '<span class="ht-stick-float">Drag anywhere on the left half</span><span class="ht-stick-fixed">Thumb on the stick, bottom left</span>' : 'Run'),
+    htRow(cap('pass', 'pass'), 'PASS', `To the ringed mate${sep()}aim to pick another`),
+    htRow(cap('through', 'through'), 'THROUGH', `Into space${sep()}hold, let go to cross`),
+    htRow(cap('shoot', 'shoot'), 'SHOOT', `Hold, aim, let go${sep()}longer lifts it`),
+    htRow(cap('shoot', 'shoot'), 'FINISH', tap('{Tap} SHOOT again as you strike')),
+    htRow(cap('shoot', 'shoot'), 'FIRST TIME', 'SHOOT just before it reaches you'),
+    htRow(cap('shoot', 'shoot'), 'CHIP', tap('Hold SHOOT, {tap} THROUGH')),
+    htRow(cap('sprint', 'sprint'), 'SPRINT', touch ? `Stick all the way${sep()}double tap to knock it on` : `Hold${sep()}press twice to knock it on`),
+  ], false);
+}
 
 /** A shopping bag in the pixel icons' style (ui/pixelIcons.ts: a 10 by 10 grid), for the hub's SHOP tile. */
 function bagIcon(color: string, px: number): string {
@@ -721,24 +729,32 @@ export class Menus {
         </button>`;
     };
     const cards = [
-      h.moments ? card('moments', 'moments', 'ev-mom', pixelIcon('star', '#ffd23a', 5), 'MOMENTS', 'Short challenges, up to three stars each', seps(escHtml(info?.moments ?? 'SHORT CHALLENGES'))) : '',
-      h.run ? card('run', 'run', 'ev-run', pixelIcon('trophy', '#fff', 5), 'CLUB RUN', 'Seven matches in a row: lose one and the run ends', seps(escHtml(info?.run ?? 'ONE MORE RUN'))) : '',
-      h.blitz ? card('blitz', 'blitz', 'ev-blitz', pixelIcon('bolt', '#ffd23a', 5), 'BLITZ', 'Football with power ups on the pitch', 'TURBO, MEGA SHOT, FREEZE') : '',
+      h.moments ? card('moments', 'moments', 'ev-mom', pixelIcon('star', '#ffd23a', 5), 'MOMENTS', 'Short challenges for stars', seps(escHtml(info?.moments ?? 'SHORT CHALLENGES'))) : '',
+      h.run ? card('run', 'run', 'ev-run', pixelIcon('trophy', '#fff', 5), 'CLUB RUN', 'Seven wins in a row, one life', seps(escHtml(info?.run ?? 'ONE MORE RUN'))) : '',
+      h.blitz ? card('blitz', 'blitz', 'ev-blitz', pixelIcon('bolt', '#ffd23a', 5), 'BLITZ', 'Football with power ups', 'TURBO, MEGA SHOT, FREEZE') : '',
       h.online ? card('online', null, 'ev-online', pixelIcon('duo', '#fff', 5), 'ONLINE', 'Play a friend on another device', 'SHARE A CODE') : '',
-    ].join('');
+    ].filter(Boolean);
+    // One screen (docs/UX.md): the modes as big tiles that share the body, BACK at the top left.
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel ev-panel">
-          <h2>EVENTS</h2>
-          <div class="ev-grid">${cards}</div>
-          <div class="btn-row"><button class="btn btn-white" data-a="back">BACK</button></div>
+      <div class="panel-wrap dim shell">
+        <div class="panel mc shell ev-panel">
+          ${shellTop('EVENTS', 'QUICK MODES')}
+          <div class="mc-body ev-grid n${cards.length}">${cards.join('')}</div>
         </div>
       </div>`, 'events-screen');
     this.wireLocked(d, h.locked);
     for (const k of ['moments', 'run', 'blitz', 'online'] as const) d.querySelector(`[data-a=${k}]`)?.addEventListener('click', () => h[k]?.());
     $(d, '[data-a=back]').addEventListener('click', h.back);
+    this.listenKey((e) => {
+      if (e.code === 'Escape') h.back();
+    });
   }
 
+  /**
+   * QUICK MATCH, one screen (docs/UX.md): the two clubs across the top (tap the arrows), the options two by two under
+   * them (MODE and DIFFICULTY, HALF and MORE; MORE folds away KICK OFF and WEATHER), the mode's line and KICK OFF pinned
+   * at the bottom. The last setup comes back: the clubs and every option live in the save (BACK keeps them too).
+   */
   quickMatch(
     save: SaveData, onBack: () => void, onKickOff: (home: number, away: number, mode: MatchMode) => void, mode?: MatchMode, blitzLocked = false,
   ): void {
@@ -747,23 +763,27 @@ export class Menus {
     const modes: MatchMode[] = ['classic', 'blitz'];
     let cur: MatchMode = blitzLocked ? 'classic' : mode ?? (save.settings.lastMode === 'blitz' ? 'blitz' : 'classic');
     const d = this.mount(`
-      <div class="panel-wrap">
-        <div class="panel qm">
-          <h2>QUICK MATCH</h2>
-          <div class="vs-row">
-            <div class="team-pick" data-side="home"></div>
-            <div class="vs">VS</div>
-            <div class="team-pick" data-side="away"></div>
+      <div class="panel-wrap shell">
+        <div class="panel mc shell qm">
+          ${shellTop('QUICK MATCH', '', coinChip(save.coins))}
+          <div class="mc-body qm-body">
+            <div class="vs-row qm-teams">
+              <div class="team-pick" data-side="home"></div>
+              <div class="vs">VS</div>
+              <div class="team-pick" data-side="away"></div>
+            </div>
+            <div class="qm-opts ${mem.qmMore ? 'more' : ''}">
+              <div class="qm-row"><label>MODE</label><div class="seg qm-seg seg-mode" data-o="mode"></div></div>
+              <div class="qm-row"><label>DIFFICULTY</label><div class="seg qm-seg" data-o="diff"></div></div>
+              <div class="qm-row"><label>HALF</label><div class="seg qm-seg" data-o="len"></div></div>
+              <button class="qm-more" data-a="more" aria-expanded="${mem.qmMore}"></button>
+              <div class="qm-row qm-x"><label>KICK OFF</label><div class="seg qm-seg" data-o="tod"></div></div>
+              <div class="qm-row qm-x"><label>WEATHER</label><div class="seg qm-seg" data-o="wx"></div></div>
+            </div>
           </div>
-          <div class="opt-row mode-row"><label>MODE</label><div class="seg seg-mode" data-o="mode"></div></div>
-          <p class="qm-why" aria-live="polite"></p>
-          <div class="opt-row"><label>DIFFICULTY</label><div class="seg" data-o="diff"></div></div>
-          <div class="opt-row"><label>HALF LENGTH</label><div class="seg" data-o="len"></div></div>
-          <div class="opt-row"><label>KICK OFF</label><div class="seg" data-o="tod"></div></div>
-          <div class="opt-row"><label>WEATHER</label><div class="seg" data-o="wx"></div></div>
-          <div class="btn-row">
-            <button class="btn btn-white" data-a="back">BACK</button>
-            <button class="btn btn-go btn-lg" data-a="go">KICK OFF</button>
+          <div class="mc-actions">
+            <p class="qm-why mc-hint1" aria-live="polite"></p>
+            <button class="btn btn-go btn-lg qm-go" data-a="go">KICK OFF</button>
           </div>
         </div>
       </div>`, 'qm-screen');
@@ -775,15 +795,15 @@ export class Menus {
       const ovr = presetRating(idx);
       const el = $(d, `[data-side=${side}]`);
       el.innerHTML = `
-        <span class="tp-label">${side === 'home' ? 'YOU' : 'RIVAL'}</span>
-        <div class="tp-body">
-          <button class="arrow" data-d="-1">←</button>
-          <div class="tp-kit">${preview.ok ? '<canvas class="tp-3d"></canvas>' : shirtArt(c.kit, 9)}</div>
-          <button class="arrow" data-d="1">→</button>
+        <button class="arrow" data-d="-1" aria-label="Previous club">←</button>
+        <div class="tp-kit">${preview.ok ? '<canvas class="tp-3d"></canvas>' : shirtArt(c.kit, 6)}</div>
+        <div class="tp-info">
+          <span class="tp-label">${side === 'home' ? 'YOU' : 'RIVAL'}</span>
+          <b class="tp-name">${crestSvg(c.name, c.short, c.kit, 2)}<span>${c.name}</span></b>
+          <span class="tp-stars">${stars(ovr)}</span>
+          <span class="tp-meta">OVR ${ovr}${sep()}<span class="fm">${c.formation}</span></span>
         </div>
-        <b class="tp-name">${crestSvg(c.name, c.short, c.kit, 2)}${c.name}</b>
-        <span class="tp-stars">${stars(ovr)}</span>
-        <span class="tp-meta">OVR ${ovr}${sep()}<span class="fm">${c.formation}</span></span>`;
+        <button class="arrow" data-d="1" aria-label="Next club">→</button>`;
       const cv = el.querySelector<HTMLCanvasElement>('.tp-3d');
       if (cv) {
         const team = makeTeam(c);
@@ -801,6 +821,9 @@ export class Menus {
             away = (away + dlt + n) % n;
             if (away === home) away = (away + dlt + n) % n;
           }
+          // The last setup comes back next time (BACK saves it).
+          save.clubIdx = home;
+          save.opponentIdx = away;
           render(side);
         }),
       );
@@ -810,12 +833,13 @@ export class Menus {
     const seg = (key: 'mode' | 'diff' | 'len' | 'tod' | 'wx', labels: string[], get: () => number, set: (i: number) => void) => {
       const el = $(d, `[data-o=${key}]`);
       const draw = () => {
-        el.innerHTML = labels.map((l, i) => `<button class="${i === get() ? 'on' : ''}" data-i="${i}">${l}</button>`).join('');
+        el.innerHTML = labels.map((l, i) => `<button class="${i === get() ? 'on' : ''}" data-i="${i}" aria-pressed="${i === get()}">${l}</button>`).join('');
         el.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
           b.addEventListener('click', () => {
             sfx.click();
             set(Number(b.dataset.i));
             draw();
+            drawMore();
           }),
         );
       };
@@ -826,6 +850,28 @@ export class Menus {
       why.textContent = nope ? 'BLITZ opens with your first goal.' : MODE_WHY[cur];
       d.classList.toggle('blitz', cur === 'blitz');
     };
+    // MORE: the kick-off time and the weather, folded; the row says what they are set to.
+    const tods = ['day', 'sunset', 'night', 'random'] as const;
+    const todLabels = ['DAY', 'SUNSET', 'NIGHT', 'RANDOM'];
+    const wxs = ['clear', 'rain', 'snow', 'random'] as const;
+    const wxLabels = ['CLEAR', 'RAIN', 'SNOW', 'RANDOM'];
+    const tod = () => Math.max(0, tods.indexOf(save.settings.timeOfDay));
+    const wx = () => Math.max(0, wxs.indexOf(save.settings.weather));
+    const opts = $(d, '.qm-opts');
+    const more = $<HTMLButtonElement>(d, '[data-a=more]');
+    function drawMore(): void {
+      more.innerHTML = mem.qmMore
+        ? '<b>LESS</b><small></small><i></i>'
+        : `<b>MORE</b><small>${todLabels[tod()]}${sep()}${wxLabels[wx()]}</small><i></i>`;
+      more.setAttribute('aria-expanded', String(mem.qmMore));
+      more.setAttribute('aria-label', mem.qmMore ? 'Fewer options' : `More options: kick off ${todLabels[tod()]}, weather ${wxLabels[wx()]}`);
+    }
+    more.addEventListener('click', () => {
+      sfx.click();
+      mem.qmMore = !mem.qmMore;
+      opts.classList.toggle('more', mem.qmMore);
+      drawMore();
+    });
     seg('mode', ['CLASSIC', `BLITZ ${pixelIcon(blitzLocked ? 'lock' : 'bolt', 'currentColor', 1.6, 'inl')}`], () => modes.indexOf(cur), (i) => {
       if (blitzLocked && modes[i] === 'blitz') return drawWhy(true);
       cur = modes[i];
@@ -841,12 +887,17 @@ export class Menus {
       save.settings.difficulty = i;
     });
     seg('len', HALF_OPTIONS.map((m) => `${m} MIN`), () => Math.max(0, HALF_OPTIONS.indexOf(save.settings.halfMinutes)), (i) => (save.settings.halfMinutes = HALF_OPTIONS[i]));
-    const tods = ['day', 'sunset', 'night', 'random'] as const;
-    seg('tod', ['DAY', 'SUNSET', 'NIGHT', 'RANDOM'], () => Math.max(0, tods.indexOf(save.settings.timeOfDay)), (i) => (save.settings.timeOfDay = tods[i]));
-    const wxs = ['clear', 'rain', 'snow', 'random'] as const;
-    seg('wx', ['CLEAR', 'RAIN', 'SNOW', 'RANDOM'], () => Math.max(0, wxs.indexOf(save.settings.weather)), (i) => (save.settings.weather = wxs[i]));
+    seg('tod', todLabels, tod, (i) => (save.settings.timeOfDay = tods[i]));
+    seg('wx', wxLabels, wx, (i) => (save.settings.weather = wxs[i]));
+    drawMore();
+    const go = () => onKickOff(home, away, cur);
     $(d, '[data-a=back]').addEventListener('click', onBack);
-    $(d, '[data-a=go]').addEventListener('click', () => onKickOff(home, away, cur));
+    $(d, '[data-a=go]').addEventListener('click', go);
+    // Keyboard: ENTER kicks off, ESC goes back.
+    this.listenKey((e) => {
+      if (e.code === 'Escape') onBack();
+      else if (e.code === 'Enter' && !(e.target as HTMLElement | null)?.closest?.('button')) go();
+    });
   }
 
   /**
@@ -964,8 +1015,11 @@ export class Menus {
   }
 
   /**
-   * In-match tactics for the human side: formation, the XI on a pitch in formation slots (OVR + stamina on
-   * every starter), bench, mentality. Tap a starter then a substitute (or the other way round) to make a sub.
+   * In-match TACTICS & SUBS for the human side, on the app shell (docs/UX.md): one screen, nothing scrolls but the
+   * bench list. Left: the formation rail and the XI on the pitch (OVR, stamina and cards on every shirt). Right: the
+   * mentality, SUGGESTED SUBS (tired or booked starters off for the best fresh man in the role: one tap each, or SUB
+   * ALL) and the bench. A sub is two taps (a starter then a sub, either order) or one drag. RESUME (SECOND HALF at the
+   * break) is always on screen, top right; BACK returns to the pause or half-time screen.
    */
   tactics(
     m: Match, side: 0 | 1, kits: [Kit, Kit],
@@ -974,29 +1028,47 @@ export class Menus {
       substitute: (slot: number, benchIdx: number) => boolean;
       setFormation?: (id: FormationId) => void;
       back: () => void;
+      /** Straight back to the match (the button reads `resumeLabel`, RESUME by default); without it, DONE = back. */
+      resume?: () => void;
+      resumeLabel?: string;
     },
   ): void {
     const kit = kits[side];
     const light = lum(kit.shirt) > 0.62;
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel tactics tx">
-          <div class="tx-pitch" style="--shirt:${cssHex(kit.shirt)};--trim:${cssHex(kit.shirt2)};--gk:${cssHex(kit.gk)};--dot-t:${light ? 'var(--ink)' : '#fff'}"></div>
-          <div class="tx-side">
-            <div class="tx-head"><h2>TACTICS</h2><span class="tx-left"></span></div>
-            <div class="tx-row tx-forms-row"><label>FORMATION</label><div class="seg tx-forms"></div></div>
-            <div class="tx-row tx-ment-row"><label>MENTALITY</label><div class="seg tx-ment"></div></div>
-            <div class="tx-benchbox"><div class="tx-bh"><h3>BENCH</h3><p class="tx-hint"></p></div><ul class="tx-bench"></ul></div>
+      <div class="panel-wrap dim shell">
+        <div class="panel shell tactics tx">
+          <header class="mc-top">
+            <button class="btn btn-white mc-back" data-a="back" aria-label="Back">←<span>BACK</span></button>
+            <div class="mc-title"><h2>TACTICS</h2><span class="tx-left"></span></div>
+            <button class="btn btn-go tx-resume" data-a="resume">${escHtml(h.resume ? h.resumeLabel ?? 'RESUME' : 'DONE')}</button>
+          </header>
+          <div class="mc-body sq-body tx-body">
+            <div class="pane sq-pitchpane">
+              <div class="sq-rail tx-forms" role="group" aria-label="Formation"></div>
+              <div class="tx-pitch" style="--shirt:${cssHex(kit.shirt)};--trim:${cssHex(kit.shirt2)};--gk:${cssHex(kit.gk)};--dot-t:${light ? 'var(--ink)' : '#fff'}"></div>
+            </div>
+            <div class="pane sq-benchpane tx-benchpane">
+              <div class="seg tx-ment" role="group" aria-label="Mentality"></div>
+              <div class="pane-h"><span class="sq-ph">BENCH</span><span class="grow tx-hint"></span><button class="btn btn-yellow tx-all" data-a="all" hidden>SUB ALL</button></div>
+              <div class="pane-scroll sq-list" data-scroll-key="tx-bench">
+                <div class="tx-sugg"></div>
+                <ul class="sq-grid tx-subs"></ul>
+              </div>
+            </div>
           </div>
-          <div class="btn-row"><button class="btn btn-go btn-lg" data-a="back">DONE</button></div>
         </div>
       </div>`, 'tactics-screen');
     /** Current pick: a starter (slot) or a bench player waiting for the other half of the swap. */
     let picked: { k: 'x' | 'b'; i: number } | null = null;
     let chosen: FormationId | null = null;
     let fresh = -1;
+    const panel = $(d, '.panel.tx');
     const pitch = $(d, '.tx-pitch');
-    const bench = $(d, '.tx-bench');
+    const bench = $(d, '.tx-subs');
+    const sugg = $(d, '.tx-sugg');
+    const allBtn = $(d, '[data-a=all]') as HTMLButtonElement;
+    let plans: SubPlan[] = [];
 
     const formation = (): FormationId => {
       const cur = m.slots[side];
@@ -1035,14 +1107,30 @@ export class Menus {
             !p.sentOff && slot && p.def.role !== slot.role ? 'warn' : '',
           ].filter(Boolean).join(' ');
           const [l, t, room] = pos[i];
-          return `<button class="tx-p ${cls}" data-k="x${i}" style="left:${l}%;top:${t}%;--room:${room}%" ${p.sentOff ? 'disabled' : ''}
-            aria-label="${slot?.label ?? ''} ${p.def.name}, overall ${overall(p.def)}, stamina ${st}%${p.sentOff ? ', sent off' : ''}">
+          const booked = !p.sentOff && m.booked.has(p.idx);
+          return `<button class="tx-p ${cls}" data-k="x${i}" data-drag="x${i}" style="left:${l}%;top:${t}%;--room:${room}%" ${p.sentOff ? 'disabled' : ''}
+            aria-label="${slot?.label ?? ''} ${escHtml(p.def.name)}, overall ${overall(p.def)}, stamina ${st}%${booked ? ', booked' : ''}${p.sentOff ? ', sent off' : ''}">
             <span class="tx-shirt"><b>${p.def.number}</b><i class="tx-ovr">${overall(p.def)}</i><s class="tx-st"><u style="width:${st}%;background:${col}"></u></s></span>
-            <em class="tx-nm">${lastName(p.def.name)}</em>
+            <em class="tx-nm">${escHtml(lastName(p.def.name))}</em>${booked ? '<i class="tx-card" aria-hidden="true"></i>' : ''}
           </button>`;
         })
         .join('');
     };
+
+    /** SUGGESTED SUBS (meta/squad.ts suggestSubs): tired, then booked, starters off for the best fresh man in the role. */
+    const plan = (): SubPlan[] => {
+      const onNames = new Set(m.events.flatMap((e) => (e.type === 'sub' && e.side === side ? [e.on] : [])));
+      const team = m.teamPlayers(side).map((p) => ({
+        slot: p.slot, role: m.slots[side][p.slot]?.role ?? p.def.role, stamina: p.stamina, booked: m.booked.has(p.idx),
+        sentOff: p.sentOff, keeper: p.isKeeper, cameOn: onNames.has(p.def.name),
+      }));
+      return suggestSubs(team, m.bench[side], subsLeft()).filter((s) => {
+        const on = m.bench[side].find((b) => b.id === s.onId);
+        return !!on && canSwap(s.slot, on);
+      });
+    };
+
+    const chip = (p: PlayerDef) => `<i class="sq-num">${p.number}</i><span class="sq-nm">${escHtml(lastName(p.name))}</span>`;
 
     const drawBench = () => {
       const list = m.bench[side];
@@ -1052,32 +1140,50 @@ export class Menus {
             .map((p, i) => {
               const ok = x >= 0 ? canSwap(x, p) : subsLeft() > 0;
               const sel = picked?.k === 'b' && picked.i === i;
-              return `<li><button class="tx-b ${sel ? 'sel' : ''} ${ok ? (x >= 0 ? 'hot' : '') : 'off'}" data-k="b${i}" ${ok ? '' : 'aria-disabled="true"'}>
-                ${faceHtml(p, kit, 'sm')}<i style="background:${cssHex(kit.shirt)};color:${light ? 'var(--ink)' : '#fff'}">${p.number}</i><span>${p.name}</span><em>${p.role}</em><b>${overall(p)}</b>
-              </button></li>`;
+              return `<li><button class="sq-chip r-${p.role} ${sel ? 'sel' : ''} ${ok ? (x >= 0 ? 'hot' : '') : 'off'}" data-k="b${i}" data-drag="b${i}" ${ok ? '' : 'aria-disabled="true"'}
+                aria-label="${escHtml(p.name)}, ${p.role}, overall ${overall(p)}">${chip(p)}<em class="sq-role">${p.role}</em><b class="sq-ovr">${overall(p)}</b></button></li>`;
             })
             .join('')
         : '<li class="tx-empty">Nobody left on the bench.</li>';
       const left = subsLeft();
-      hydrateFaces(bench);
+      const team = m.teamPlayers(side);
+      plans = left > 0 && !picked ? plan() : [];
+      sugg.innerHTML = plans.length
+        ? `<div class="sq-sub">SUGGESTED</div>${plans
+            .map((s, i) => {
+              const off = team[s.slot];
+              const on = list.find((b) => b.id === s.onId)!;
+              const st = Math.round(off.stamina * 100);
+              const mark = s.reason === 'booked'
+                ? '<i class="tx-sg-yc" aria-hidden="true"></i>'
+                : `<s class="tx-sg-st" aria-hidden="true"><u style="width:${st}%;background:${st > 35 ? 'var(--yellow)' : 'var(--red)'}"></u></s>`;
+              return `<button class="tx-sg" data-sg="${i}" aria-label="Sub ${escHtml(off.def.name)} (${s.reason === 'booked' ? 'booked' : `stamina ${st}%`}) off for ${escHtml(on.name)}">
+                <span class="tx-sg-off r-${off.def.role}">${chip(off.def)}${mark}</span><i class="tx-sg-arrow" aria-hidden="true">→</i><span class="tx-sg-on r-${on.role}">${chip(on)}</span><b class="tx-sg-go">SUB</b>
+              </button>`;
+            })
+            .join('')}${list.length ? '<div class="sq-sub">BENCH</div>' : ''}`
+        : '';
+      allBtn.hidden = plans.length < 2;
+      allBtn.textContent = `SUB ALL ${plans.length}`;
       $(d, '.tx-left').textContent = left > 0 ? `${left} OF ${maxSubs()} SUBS LEFT` : 'NO SUBS LEFT';
       $(d, '.tx-left').classList.toggle('none', left <= 0);
-      const team = m.teamPlayers(side);
-      $(d, '.tx-hint').textContent =
-        left <= 0 ? 'All substitutions made.'
-          : picked?.k === 'x' ? `${team[picked.i].def.name} off: pick a sub.`
-            : picked?.k === 'b' ? `${list[picked.i]?.name ?? ''} on: pick who comes off.`
-              : 'Tap a player, then a sub.';
+      // One hint line, until the first sub of the session.
+      const hint = $(d, '.tx-hint');
+      hint.innerHTML =
+        left <= 0 ? '<b class="sq-hint">NO SUBS LEFT</b>'
+          : picked?.k === 'x' ? `<b class="sq-hint sel">${escHtml(lastName(team[picked.i].def.name).toUpperCase())} OFF: PICK A SUB</b>`
+            : picked?.k === 'b' ? `<b class="sq-hint sel">${escHtml(lastName(list[picked.i]?.name ?? '').toUpperCase())} ON: PICK WHO GOES OFF</b>`
+              : Menus.subbedOnce ? '' : '<b class="sq-hint">TAP OR DRAG TO SUB</b>';
     };
 
     const drawForms = () => {
       const cur = formation();
       const el = $(d, '.tx-forms');
-      el.innerHTML = FORMATION_IDS.map((f) => `<button class="${f === cur ? 'on' : ''}" data-f="${f}" ${h.setFormation ? '' : 'disabled'}>${f}</button>`).join('');
+      el.innerHTML = FORMATION_IDS.map((f) => `<button class="${f === cur ? 'on' : ''}" data-f="${f}" aria-pressed="${f === cur}" ${h.setFormation ? '' : 'disabled'}>${f}</button>`).join('');
     };
     const drawMent = () => {
       const labels = ['DEFENSIVE', 'BALANCED', 'ATTACKING'];
-      $(d, '.tx-ment').innerHTML = labels.map((l, i) => `<button class="${m.mentality[side] === i - 1 ? 'on' : ''}" data-i="${i}">${l}</button>`).join('');
+      $(d, '.tx-ment').innerHTML = labels.map((l, i) => `<button class="${m.mentality[side] === i - 1 ? 'on' : ''}" data-i="${i}" aria-pressed="${m.mentality[side] === i - 1}">${l}</button>`).join('');
     };
     const draw = () => {
       drawPitch();
@@ -1090,8 +1196,15 @@ export class Menus {
       if (!p || !canSwap(slot, p)) return false;
       if (!h.substitute(slot, benchIdx)) return false;
       sfx.coin();
+      buzz('tap');
       fresh = slot;
+      Menus.subbedOnce = true;
       return true;
+    };
+    /** A suggestion, by the bench player's id (the bench reorders as changes are made). */
+    const applyPlan = (s: SubPlan) => {
+      const bi = m.bench[side].findIndex((b) => b.id === s.onId);
+      return bi >= 0 && tryPair(s.slot, bi);
     };
 
     d.addEventListener('click', (e) => {
@@ -1113,7 +1226,22 @@ export class Menus {
         drawMent();
         return;
       }
-      const btn = t.closest<HTMLButtonElement>('.tx-p, .tx-b');
+      const sg = t.closest<HTMLButtonElement>('.tx-sg');
+      if (sg) {
+        const s = plans[Number(sg.dataset.sg)];
+        if (s && applyPlan(s)) {
+          picked = null;
+          draw();
+        }
+        return;
+      }
+      if (t.closest('[data-a=all]')) {
+        for (const s of [...plans]) applyPlan(s);
+        picked = null;
+        draw();
+        return;
+      }
+      const btn = t.closest<HTMLButtonElement>('.tx-p, .sq-chip');
       if (!btn || btn.disabled) return;
       sfx.click();
       const k = btn.dataset.k!;
@@ -1131,20 +1259,53 @@ export class Menus {
       }
       draw();
     });
+    // Drag a starter onto a sub (or a sub onto a starter): the same change as the two taps (src/ui/dragSwap.ts).
+    const pair = (a: string, b: string): [number, number] | null => {
+      if (a[0] === b[0]) return null;
+      const [x, s] = a[0] === 'x' ? [a, b] : [b, a];
+      return [Number(x.slice(1)), Number(s.slice(1))];
+    };
+    this.cleanups.push(
+      bindDragSwap(panel, {
+        canDrop: (a, b) => {
+          const p = pair(a, b);
+          const on = p ? m.bench[side][p[1]] : undefined;
+          return !!p && !!on && canSwap(p[0], on);
+        },
+        onDrop: (a, b) => {
+          const p = pair(a, b);
+          if (p && tryPair(p[0], p[1])) {
+            picked = null;
+            draw();
+          }
+        },
+      }),
+    );
     drawForms();
     drawMent();
     draw();
     $(d, '[data-a=back]').addEventListener('click', h.back);
+    $(d, '[data-a=resume]').addEventListener('click', h.resume ?? h.back);
+    // ESC goes back to the pause (or half-time) screen.
+    this.listenKey((e) => {
+      if (e.code === 'Escape') h.back();
+    });
   }
 
+  /** The tactics hint ("TAP OR DRAG TO SUB") shows until the first sub of the session. */
+  private static subbedOnce = false;
+
+  /** Half time, one screen: the score over the stats (five by two), TACTICS & SUBS and SECOND HALF pinned. */
   halftime(m: Match, kits: [Kit, Kit], onContinue: () => void, onTactics?: () => void): void {
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel">
-          <h2>HALF TIME</h2>
-          ${this.scoreHeader(m, kits)}
-          ${this.statsTable(m, kits)}
-          <div class="btn-row">
+      <div class="panel-wrap dim shell">
+        <div class="panel mc shell ht-panel">
+          ${shellTop('HALF TIME', '', '', '')}
+          <div class="mc-body ht-body">
+            ${this.scoreHeader(m, kits)}
+            ${this.statsTable(m, kits)}
+          </div>
+          <div class="mc-actions">
             ${onTactics ? '<button class="btn btn-blue" data-a="tactics">TACTICS &amp; SUBS</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="go">SECOND HALF</button>
           </div>
@@ -1181,12 +1342,11 @@ export class Menus {
       const kit = kits[r.side === 1 ? 1 : 0];
       return def && kit ? faceHtml(def, kit, cls) : '';
     };
+    const plural = (n: number, w: string) => `${n} ${w}${n > 1 ? 's' : ''}`;
+    const motmLine = motm ? [motm.goals ? plural(motm.goals, 'goal') : '', motm.assists ? plural(motm.assists, 'assist') : ''].filter(Boolean).join(sep()) : '';
     const motmHtml = motm
-      ? `<div class="motm">
-          <div class="motm-card" style="--k:${cssHex(kits[motm.side].shirt)}">${face(motm, 'xl')}<span>MAN OF THE MATCH</span><b>${motm.name}</b><em>${motm.rating.toFixed(1)}</em>
-          ${motm.goals ? `<small>${motm.goals} goal${motm.goals > 1 ? 's' : ''}${motm.assists ? `${sep()}${motm.assists} assist${motm.assists > 1 ? 's' : ''}` : ''}</small>` : motm.assists ? `<small>${motm.assists} assist${motm.assists > 1 ? 's' : ''}</small>` : ''}</div>
-          <ul class="ratings">${mine.map((r) => `<li>${face(r, 'sm')}<span>${r.name}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>
-        </div>`
+      ? `<div class="ft-motm" style="--k:${cssHex(kits[motm.side].shirt)}">${face(motm)}<span>MAN OF THE MATCH</span><b>${motm.name}${motmLine ? `<small>${motmLine}</small>` : ''}</b><em>${motm.rating.toFixed(1)}</em></div>
+        ${mine.length ? `<ul class="ratings">${mine.map((r) => `<li>${face(r, 'sm')}<span>${r.name}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>` : ''}`
       : '';
     const my = m.score[humanSide];
     const their = m.score[humanSide === 0 ? 1 : 0];
@@ -1196,10 +1356,11 @@ export class Menus {
     const verdict = res > 0 ? 'YOU WIN!' : res === 0 ? 'DRAW' : 'YOU LOSE';
     const cls = res > 0 ? 'win' : res === 0 ? 'draw' : 'lose';
     const pens = so
-      ? `<p class="ft-pens">${m.teams[so.winner as 0 | 1].short} WIN ${so.kicks[so.winner as 0 | 1].filter(Boolean).length}${SCORE_SEP_HTML}${so.kicks[so.winner === 0 ? 1 : 0].filter(Boolean).length} ON PENALTIES</p>`
+      ? `${m.teams[so.winner as 0 | 1].short} WIN ${so.kicks[so.winner as 0 | 1].filter(Boolean).length}${SCORE_SEP_HTML}${so.kicks[so.winner === 0 ? 1 : 0].filter(Boolean).length} ON PENALTIES`
       : '';
-    // Progression: stars, the XP bar (counts up after the coins), the streak chip and any challenges done.
+    // Progression: the stars and the XP bar (it counts up after the coins); the extras get a list of their own.
     const lv0 = prog ? levelOf(prog.xpFrom) : null;
+    const nu = prog ? nextUnlock(prog.xpTo, prog.owned) : null;
     const progHtml = prog && lv0
       ? `<div class="ft-prog">
           <div class="ft-stars" role="img" aria-label="${prog.stars} of 3 stars">${[1, 2, 3].map((i) => `<i class="${i <= prog.stars ? 'lit' : ''}" style="--i:${i}">★</i>`).join('')}</div>
@@ -1207,31 +1368,41 @@ export class Menus {
             <div class="ft-xp-h"><b class="ft-lv">LV ${lv0.level}</b><span class="ft-title">${levelTitle(lv0.level).toUpperCase()}</span><em class="ft-xp-n">+0 XP</em></div>
             <div class="ft-xp-bar"><i style="width:${Math.round((lv0.into / lv0.need) * 100)}%"></i></div>
             <div class="ft-levelup" aria-live="polite"></div>
-            ${(() => { const nu = nextUnlock(prog.xpTo, prog.owned); return nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''; })()}
+            ${nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''}
           </div>
-          ${prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">${pixelIcon('fire', '#ff9a3a', 2, 'inl')}${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : ''}
-          ${prog.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : ''}
-          ${extra.tierUps?.length ? `<ul class="ft-tiers">${extra.tierUps.map((t) => `<li>${escHtml(t)}</li>`).join('')}</ul>` : ''}
-          ${extra.shopReach ? `<p class="ft-shop">NOW IN REACH IN THE SHOP: <b>${escHtml(extra.shopReach.name.toUpperCase())}</b> ${escHtml(extra.shopReach.kind.toLowerCase())}</p>` : ''}
         </div>`
       : '';
-    const easyHtml = extra.tryEasy
-      ? '<p class="ft-easy">Tough run? <button class="btn btn-white ft-easy-btn" data-a="easy">TRY EASY</button></p>'
-      : '';
+    const extras = [
+      prog && prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">${pixelIcon('fire', '#ff9a3a', 2, 'inl')}${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : '',
+      extra.tryEasy ? '<p class="ft-easy">Tough run? <button class="btn btn-white ft-easy-btn" data-a="easy">TRY EASY</button></p>' : '',
+      prog?.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : '',
+      extra.tierUps?.length ? `<ul class="ft-tiers">${extra.tierUps.map((t) => `<li>${escHtml(t)}</li>`).join('')}</ul>` : '',
+      extra.shopReach ? `<p class="ft-shop">IN REACH IN THE SHOP: <b>${escHtml(extra.shopReach.name.toUpperCase())}</b> ${escHtml(extra.shopReach.kind.toLowerCase())}</p>` : '',
+      this.clipRow(extra.clip, true),
+    ].join('');
+    // One screen (docs/UX.md): the match on the left (the score, then man of the match and the stats in a list of
+    // their own), what you earned on the right (the coins with 2x COINS beside them, the stars and the XP bar, then
+    // the extras), REMATCH and CONTINUE pinned. The verdict is the header.
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel">
-          <h2 class="verdict ${cls}">${verdict}</h2>
-          ${this.scoreHeader(m, kits)}${pens}
-          ${easyHtml}
-          ${progHtml}
-          ${this.clipRow(extra.clip, true)}
-          ${motmHtml}
-          ${this.statsTable(m, kits)}
-          <div class="btn-row ft-foot">
-            <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
-            ${canDouble ? `<button class="btn btn-yellow" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× COINS</button>` : ''}
-            ${h.rematch ? '<button class="btn btn-white btn-lg" data-a="rematch">⟳ REMATCH</button>' : ''}
+      <div class="panel-wrap dim shell">
+        <div class="panel mc shell ft-panel">
+          ${shellTop(`<span class="verdict ${cls}">${verdict}</span>`, pens || 'FULL TIME', '', '')}
+          <div class="mc-body ft-body">
+            <div class="pane ft-match">
+              ${this.scoreHeader(m, kits)}
+              <div class="pane-scroll ft-scroll">${motmHtml}${this.statsTable(m, kits)}</div>
+            </div>
+            <div class="pane ft-gain">
+              <div class="ft-earn">
+                <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
+                ${canDouble ? `<button class="btn btn-yellow ft-dbl" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× COINS</button>` : ''}
+              </div>
+              ${progHtml}
+              ${extras ? `<div class="pane-scroll ft-extra">${extras}</div>` : ''}
+            </div>
+          </div>
+          <div class="mc-actions">
+            ${h.rematch ? '<button class="btn btn-white" data-a="rematch">⟳ REMATCH</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="next">${h.nextLabel ?? 'CONTINUE'}</button>
           </div>
         </div>
@@ -1335,7 +1506,7 @@ export class Menus {
           <ul class="bd-steps">
             <li><b>✓</b>PASS</li><li><b>✓</b>SHOOT</li><li><b>✓</b>CROSS</li>
           </ul>
-          <p class="fine big">Now your first match. Score a goal to unlock <b>ROAD TO GLORY</b>, <b>MOMENTS</b>, <b>CLUB RUN</b> and <b>BLITZ</b>.</p>
+          <p class="fine big">Score in your first match to open every mode.</p>
           <div class="btn-row">
             <button class="btn btn-white" data-a="menu">MENU</button>
             <button class="btn btn-go btn-lg pulse" data-a="play">FIRST MATCH ▸</button>
@@ -1432,36 +1603,47 @@ export class Menus {
     const shopped = (u: { kind: string; id: string }) => shopOf(save).owned.includes(`${u.kind}:${u.id}`);
     const nextLevel = ladder.find((u) => u.level > lv.level && !shopped(u))?.level ?? 0;
     const earned = ladder.filter((u) => u.level <= lv.level || shopped(u)).length;
-    const rows = ladder.map((u) => {
+    // One card per unlock, left to right in level order (the ladder), the next one lit; LEGEND by stars at the end.
+    const cards = ladder.map((u) => {
       const got = u.level <= lv.level || shopped(u);
       const next = u.level === nextLevel;
       const icon = u.kind === 'ball'
-        ? pixelIcon('ball', got ? (u.id === 'classic' ? '#26262e' : BALL_TINT[u.id as BallSkinId] ?? '#26262e') : '#b9b5aa', 3)
-        : pixelIcon('star', got ? '#ffd23a' : '#b9b5aa', 3);
-      const when = u.level > lv.level && got ? 'BOUGHT' : got ? 'EARNED' : next ? `${Math.max(0, xpAt(u.level) - xp)} XP TO GO` : `LEVEL ${u.level}`;
-      return `<li class="${got ? 'got' : ''}${next ? ' next' : ''}"><i class="ul-lv">LV ${u.level}</i>${icon}<span>${escHtml(u.name.toUpperCase())}<small>${u.kind === 'ball' ? 'BALL LOOK' : 'GOAL CELEBRATION'}</small></span><em>${when}</em></li>`;
+        ? pixelIcon('ball', got ? (u.id === 'classic' ? '#26262e' : BALL_TINT[u.id as BallSkinId] ?? '#26262e') : '#b9b5aa', 4)
+        : pixelIcon('star', got ? '#ffd23a' : '#b9b5aa', 4);
+      const when = u.level > lv.level && got ? 'BOUGHT' : got ? 'EARNED' : next ? `${Math.max(0, xpAt(u.level) - xp)} XP` : `LV ${u.level}`;
+      const name = u.name.replace(/ (ball|celebration)$/i, '').toUpperCase();
+      return `<li class="ul-card ${got ? 'got' : ''}${next ? ' next' : ''}"><i class="ul-lv">LV ${u.level}</i><span class="ul-ic">${icon}</span><b>${escHtml(name)}</b><small>${u.kind === 'ball' ? 'BALL' : 'CELEBRATION'}</small><em>${when}</em></li>`;
     }).join('');
     const stars = save.progress.stars;
     const legend = legendUnlocked(save.progress);
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel ul">
-          <h2>UNLOCKS</h2>
-          <div class="ul-head"><b>LV ${lv.level}</b><span>${escHtml(levelTitle(lv.level).toUpperCase())}</span><em>${lv.into} / ${lv.need} XP</em></div>
-          <div class="ft-xp-bar ul-bar"><i style="width:${Math.round((lv.into / lv.need) * 100)}%"></i></div>
-          <p class="ul-sum">${earned} OF ${ladder.length} EARNED${sep()}XP COMES FROM EVERY MATCH AND MOMENT</p>
-          <ul class="ul-list" aria-label="Unlock ladder">
-            ${rows}
-            <li class="legend ${legend ? 'got' : ''}"><i class="ul-lv">★ ${LEGEND_STARS}</i>${pixelIcon('trophy', legend ? '#ffd23a' : '#b9b5aa', 3)}<span>LEGEND DIFFICULTY<small>MATCH STARS, NOT LEVELS</small></span><em>${legend ? 'EARNED' : `${Math.min(stars, LEGEND_STARS)} / ${LEGEND_STARS} STARS`}</em></li>
-          </ul>
-          <div class="btn-row">
-            <button class="btn btn-white btn-lg" data-a="back">BACK</button>
-            ${onBadges ? '<button class="btn btn-blue btn-lg" data-a="badges">BADGES &amp; SEASON ▸</button>' : ''}
+      <div class="panel-wrap dim shell">
+        <div class="panel shell ul">
+          ${shellTop('UNLOCKS', `LV ${lv.level}${sep()}${escHtml(levelTitle(lv.level).toUpperCase())}`, `<span class="ul-xp">${lv.into} / ${lv.need} XP</span>`)}
+          <div class="ul-xpbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round((lv.into / lv.need) * 100)}" aria-label="XP to the next level"><i style="width:${Math.round((lv.into / lv.need) * 100)}%"></i></div>
+          <div class="mc-body ul-body">
+            <section class="pane">
+              <div class="pane-h"><span>${earned}/${ladder.length} EARNED</span><span class="grow"></span><span class="ul-how">XP FROM EVERY MATCH</span></div>
+              <div class="pane-scroll x ul-rail" data-scroll-key="ul">
+                <ol class="ul-track" aria-label="Unlock ladder">
+                  ${cards}
+                  <li class="ul-card legend ${legend ? 'got' : ''} ${!legend && !nextLevel ? 'next' : ''}"><i class="ul-lv">★ ${LEGEND_STARS}</i><span class="ul-ic">${pixelIcon('trophy', legend ? '#ffd23a' : '#b9b5aa', 4)}</span><b>LEGEND</b><small>DIFFICULTY</small><em>${legend ? 'EARNED' : `${Math.min(stars, LEGEND_STARS)}/${LEGEND_STARS} ★`}</em></li>
+                </ol>
+              </div>
+            </section>
           </div>
+          ${onBadges ? '<div class="mc-actions"><button class="btn btn-blue" data-a="badges">SEASON AND BADGES</button></div>' : ''}
         </div>
       </div>`, 'unlocks');
     $(d, '[data-a=back]').addEventListener('click', onBack);
     d.querySelector('[data-a=badges]')?.addEventListener('click', () => onBadges?.());
+    this.listenKey((e) => {
+      if (e.code === 'Escape') onBack();
+    });
+    // The track opens on the next unlock, one earned card still showing before it.
+    const rail = d.querySelector<HTMLElement>('.ul-rail');
+    const next = rail?.querySelector<HTMLElement>('.ul-card.next');
+    if (rail && next) rail.scrollLeft = Math.max(0, next.offsetLeft - next.offsetWidth - 24);
   }
 
   /**
@@ -1476,67 +1658,65 @@ export class Menus {
     const lv0 = levelOf(xp.from);
     const nu = nextUnlock(xp.to, xp.owned);
     const left = Math.max(0, Math.round(o.secondsLeft));
+    // One screen: MENU at the top left, the verdict and the moment in the header, the stars, the time left and the XP
+    // bar in the middle, RETRY and NEXT pinned (NEXT the biggest).
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel mo">
-          <h2 class="verdict ${o.won ? 'win' : 'lose'}">${o.won ? 'MOMENT COMPLETE' : 'FAILED'}</h2>
-          <p class="mo-title">${escHtml(spec.title)}</p>
-          <div class="ft-prog">
-            <div class="ft-stars" role="img" aria-label="${o.stars} of 3 stars">${[1, 2, 3].map((i) => `<i class="${i <= o.stars ? 'lit' : ''}" style="--i:${i}">★</i>`).join('')}</div>
-            <p class="mo-left ${o.won ? 'won' : ''}">${o.won ? `${left} SECOND${left === 1 ? '' : 'S'} LEFT` : left > 0 ? 'NOT THIS TIME' : 'TIME UP'}</p>
-            <div class="ft-xp">
-              <div class="ft-xp-h"><b class="ft-lv">LV ${lv0.level}</b><span class="ft-title">${levelTitle(lv0.level).toUpperCase()}</span><em class="ft-xp-n">+0 XP</em></div>
-              <div class="ft-xp-bar"><i style="width:${Math.round((lv0.into / lv0.need) * 100)}%"></i></div>
-              <div class="ft-levelup" aria-live="polite"></div>
-              ${nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''}
+      <div class="panel-wrap dim shell">
+        <div class="panel mc shell mo-panel">
+          ${shellTop(`<span class="verdict ${o.won ? 'win' : 'lose'}">${o.won ? 'MOMENT COMPLETE' : 'FAILED'}</span>`, escHtml(spec.title), '', 'MENU')}
+          <div class="mc-body mo-body">
+            <div class="ft-prog">
+              <div class="ft-stars" role="img" aria-label="${o.stars} of 3 stars">${[1, 2, 3].map((i) => `<i class="${i <= o.stars ? 'lit' : ''}" style="--i:${i}">★</i>`).join('')}</div>
+              <p class="mo-left ${o.won ? 'won' : ''}">${o.won ? `${left} SECOND${left === 1 ? '' : 'S'} LEFT` : left > 0 ? 'NOT THIS TIME' : 'TIME UP'}</p>
+              <div class="ft-xp">
+                <div class="ft-xp-h"><b class="ft-lv">LV ${lv0.level}</b><span class="ft-title">${levelTitle(lv0.level).toUpperCase()}</span><em class="ft-xp-n">+0 XP</em></div>
+                <div class="ft-xp-bar"><i style="width:${Math.round((lv0.into / lv0.need) * 100)}%"></i></div>
+                <div class="ft-levelup" aria-live="polite"></div>
+                ${nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''}
+              </div>
             </div>
           </div>
-          <div class="btn-row ft-foot mo-foot">
-            <button class="btn btn-white" data-a="menu">MENU</button>
-            <button class="btn btn-yellow btn-lg" data-a="retry">⟳ RETRY</button>
+          <div class="mc-actions">
+            <button class="btn btn-yellow" data-a="retry">⟳ RETRY</button>
             <button class="btn btn-go btn-lg" data-a="next">${escHtml(h.nextLabel ?? 'NEXT MOMENT')}</button>
           </div>
         </div>
       </div>`, 'ft moment');
     this.playProgress(d, { stars: o.stars, xpFrom: xp.from, xpTo: xp.to, streak: 0, mult: 1, done: [] });
-    $(d, '[data-a=menu]').addEventListener('click', h.menu);
+    $(d, '[data-a=back]').addEventListener('click', h.menu);
     $(d, '[data-a=retry]').addEventListener('click', h.retry);
     $(d, '[data-a=next]').addEventListener('click', h.next);
   }
 
   /**
-   * Settings, in three tabs: GENERAL (REMOVE ADS first where the app sells it (`opts.removeAds`), sound, commentary,
-   * colour-blind aid, graphics, camera, TEXT SIZE (menus and HUD only: ui/textSize.ts), the ball look and
-   * celebration earned by levelling up, and BACKUP when `opts.backup` is given: the main menu offers it, the
-   * pause menu not), CONTROLS (pass assistance, switching, timed finishing, the touch THUMBSTICK; each option
-   * says in a line what it does) and KEYS (rebind the keyboard and gamepad, with swaps on a conflict and RESET).
-   * `tab` picks the one shown first (the pause menu opens on CONTROLS). Every change is saved and applied at
+   * Settings, one screen per tab (docs/UX.md): slim tabs, the rows two by two, each row one line (its name and its
+   * value), and one hint line under them. GENERAL holds the most used first (sound, music, graphics, text size,
+   * vibration in the app, camera, then crowd, commentary, colour blind, quick subs); CONTROLS the pass assistance,
+   * switching, finishing and the thumbstick (the hint line says what the value just picked does); KEYS rebinds the
+   * keyboard and the gamepad, each list scrolling in its own pane; MORE the ball look and celebration earned by
+   * levelling up, BACKUP (`opts.backup`: the main menu offers it, the pause menu not) and FEEDBACK. REMOVE ADS sits in
+   * the header on every tab where the app sells it. `tab` picks the one shown first (the pause menu opens on
+   * CONTROLS; GENERAL, the main menu's, comes back to the session's last tab). Every change is saved and applied at
    * once via onChange.
    */
   settings(
-    save: SaveData, onChange: () => void, onBack: () => void, tab: 'general' | 'controls' | 'keys' = 'general',
+    save: SaveData, onChange: () => void, onBack: () => void, tab: SettingsTab = 'general',
     opts: {
       backup?: () => void;
-      /** REMOVE ADS, first in GENERAL (the app): its price, whether it is owned, and the purchase (true once bought). */
+      /** REMOVE ADS, in the header (the app): its price, whether it is owned, and the purchase (true once bought). */
       removeAds?: { price: string; owned: boolean; buy: () => Promise<boolean> };
     } = {},
   ): void {
     const s = save.settings;
-    // Each row carries both forms of a switch: the one-button ON / OFF toggle (portrait: label inside it) and
-    // an ON | OFF segment (landscape phones: label and its line on the left, the value on the right). CSS
-    // shows one; both drive the same setting.
-    // (VIBRATION only where it can work: the app.)
-    const rows = CONTROL_ROWS.filter((r) => !r.appOnly || hapticsAvailable());
+    // CONTROLS: a switch is one tappable row (its ON / OFF chip on the right); a level shows its values beside its
+    // name. (VIBRATION lives in GENERAL, the app only: its lines still come from CONTROL_ROWS for the hint.)
+    const rows = CONTROL_ROWS.filter((r) => r.k !== 'vibration');
+    const vibRow = CONTROL_ROWS.find((r) => r.k === 'vibration');
     const ctlRow = (r: ControlRow) => {
-      const opts = r.opts ?? (r.kind === 'level' ? ASSIST_LEVELS.map((l) => [l, l.toUpperCase()]) : [['true', 'ON'], ['false', 'OFF']]);
-      return `<div class="ctl-row ${r.kind}" data-c="${r.k}">
-          <span class="ctl-label" id="ctl-${r.k}">${r.label}</span>
-          <div class="seg ctl-seg" role="radiogroup" aria-labelledby="ctl-${r.k}">
-            ${opts.map(([v, t]) => `<button data-v="${v}" role="radio">${t}</button>`).join('')}
-          </div>
-          ${r.kind === 'switch' ? `<div class="toggles ctl-tog"><button data-t="${r.k}" role="switch"><span>${r.label}</span><b></b></button></div>` : ''}
-          <p class="ctl-why" aria-live="polite"></p>
-        </div>`;
+      if (r.kind === 'switch') return `<button class="set-sw" data-c="${r.k}" role="switch"><span>${r.label}</span><b></b></button>`;
+      const vals: [string, string][] = r.opts ?? ASSIST_LEVELS.map((l) => [l, l.toUpperCase()] as [string, string]);
+      return `<div class="set-row" data-c="${r.k}"><span id="ctl-${r.k}">${r.label}</span><div class="seg set-seg" role="radiogroup" aria-labelledby="ctl-${r.k}">${
+        vals.map(([v, t]) => `<button data-v="${v}" role="radio">${t}</button>`).join('')}</div></div>`;
     };
     const STICK_WHY: Record<'floating' | 'fixed', string> = {
       floating: `The stick appears under your thumb${sep()}anywhere on the left`,
@@ -1546,134 +1726,141 @@ export class Menus {
       Array.from({ length: KEY_SLOTS }, (_, i) => `<button class="kb-slot" data-ka="${a}" data-s="${i}" aria-label="${KEY_ACTION_NAMES[a]} key ${i + 1}"></button>`).join('')}</div>`;
     const padRow = (a: PadAction) => `<div class="kb-row" data-pa="${a}"><span class="kb-act">${KEY_ACTION_NAMES[a]}</span>${
       Array.from({ length: PAD_SLOTS }, (_, i) => `<button class="kb-slot" data-pa="${a}" data-s="${i}" aria-label="${KEY_ACTION_NAMES[a]} button ${i + 1}"></button>`).join('')}</div>`;
+    const ra = opts.removeAds;
+    const noAdsBtn = ra
+      ? `<button class="btn set-noads ${ra.owned ? 'btn-white owned' : 'btn-red'}" data-a="noads" ${ra.owned ? 'disabled' : ''} aria-label="${ra.owned ? 'No ads: on' : `Remove ads, ${escHtml(ra.price)}`}"><span>${ra.owned ? 'NO ADS' : 'REMOVE ADS'}</span><b>${ra.owned ? 'ON' : escHtml(ra.price)}</b></button>`
+      : '';
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel narrow set-panel">
-          <h2>SETTINGS</h2>
-          <div class="seg set-tabs" role="tablist">
+      <div class="panel-wrap dim shell">
+        <div class="panel mc shell set-panel">
+          ${shellTop('SETTINGS', '', noAdsBtn)}
+          <nav class="seg mc-tabs set-nav" role="tablist">
             <button data-tab="general" role="tab">GENERAL</button>
             <button data-tab="controls" role="tab">CONTROLS</button>
             <button data-tab="keys" role="tab">KEYS</button>
-          </div>
-          <div class="set-pane" data-pane="general" role="tabpanel">
-            <div class="toggles">
-              ${opts.removeAds ? `<button class="set-noads ${opts.removeAds.owned ? 'owned' : ''}" data-a="noads" ${opts.removeAds.owned ? 'disabled' : ''} aria-label="${opts.removeAds.owned ? 'No ads: on' : `Remove ads, ${escHtml(opts.removeAds.price)}`}"><span>${opts.removeAds.owned ? 'NO ADS' : 'REMOVE ADS'}</span><b class="${opts.removeAds.owned ? '' : 'link'}">${opts.removeAds.owned ? 'ON' : escHtml(opts.removeAds.price)}</b></button>` : ''}
+            <button data-tab="more" role="tab">MORE</button>
+          </nav>
+          <div class="mc-body set-body">
+            <div class="set-pane set-grid toggles" data-pane="general" role="tabpanel">
               <button data-k="sfx"></button>
-              <button data-k="crowd"></button>
               <button data-k="music"></button>
-              <button data-k="commentary"></button>
-              <button data-k="quickSubs"></button>
-              <button data-k="colorblind"></button>
               <button data-k="quality"></button>
-              <button data-k="camZoom"></button>
               <button data-k="textSize"></button>
+              ${hapticsAvailable() ? '<button data-k="vibration"></button>' : ''}
+              <button data-k="camZoom"></button>
+              <button data-k="crowd"></button>
+              <button data-k="commentary"></button>
+              <button data-k="colorblind"></button>
+              <button data-k="quickSubs"></button>
+            </div>
+            <div class="set-pane set-grid ctl-grid" data-pane="controls" role="tabpanel">
+              ${rows.map(ctlRow).join('')}
+              <div class="set-row" data-c="stick"><span id="ctl-stick">THUMBSTICK</span><div class="seg set-seg" role="radiogroup" aria-labelledby="ctl-stick"><button data-stick="floating" role="radio">FLOATING</button><button data-stick="fixed" role="radio">FIXED</button></div></div>
+            </div>
+            <div class="set-pane kb-pane" data-pane="keys" role="tabpanel">
+              <div class="pane"><div class="pane-h"><b>KEYBOARD</b><span class="grow"></span><button class="btn btn-white kb-reset" data-reset="keys">RESET</button></div><div class="pane-scroll kb-grid">${KEY_ACTIONS.map(keyRow).join('')}</div></div>
+              <div class="pane"><div class="pane-h"><b>GAMEPAD</b><span class="grow"></span><button class="btn btn-white kb-reset" data-reset="pad">RESET</button></div><div class="pane-scroll kb-grid pad">${PAD_ACTIONS.map(padRow).join('')}</div></div>
+            </div>
+            <div class="set-pane set-grid toggles" data-pane="more" role="tabpanel">
               <button data-k="ballSkin"></button>
               <button data-k="celebration"></button>
               ${opts.backup ? '<button data-a="backup" aria-label="Backup: export or import your save"><span>BACKUP</span><b class="link">EXPORT / IMPORT</b></button>' : ''}
               <button data-a="feedback" aria-label="Send feedback by email"><span>FEEDBACK</span><b class="link">EMAIL US</b></button>
             </div>
-            <p class="set-about">${lynxSvg(1, STUDIO_BLUE, '#fff', 'lynx sm')}<span>Blocky League v${APP_VERSION} by ${STUDIO}</span></p>
           </div>
-          <div class="set-pane ctl-pane" data-pane="controls" role="tabpanel">
-            ${rows.map(ctlRow).join('')}
-            <div class="ctl-row level ctl-stick" data-c="stick">
-              <span class="ctl-label" id="ctl-stick">THUMBSTICK</span>
-              <div class="seg ctl-seg" role="radiogroup" aria-labelledby="ctl-stick">
-                <button data-stick="floating" role="radio">FLOATING</button>
-                <button data-stick="fixed" role="radio">FIXED</button>
-              </div>
-              <p class="ctl-why" aria-live="polite"></p>
-            </div>
-          </div>
-          <div class="set-pane kb-pane" data-pane="keys" role="tabpanel">
-            <p class="kb-msg" role="status" aria-live="polite"></p>
-            <div class="kb-head"><b>KEYBOARD</b><button class="btn btn-white kb-reset" data-reset="keys">RESET</button></div>
-            <p class="kb-hint">Tap a key box, then press the new key. A key already in use swaps over. BACKSPACE clears a spare, ESC cancels.</p>
-            <div class="kb-grid">${KEY_ACTIONS.map(keyRow).join('')}</div>
-            <div class="kb-head"><b>GAMEPAD</b><button class="btn btn-white kb-reset" data-reset="pad">RESET</button></div>
-            <p class="kb-hint">Tap a button box, then press the button on the pad. The d-pad and left stick always move.</p>
-            <div class="kb-grid pad">${PAD_ACTIONS.map(padRow).join('')}</div>
-          </div>
-          <div class="btn-row"><button class="btn btn-go" data-a="back">DONE</button></div>
+          <p class="set-hint mc-hint1" role="status" aria-live="polite"></p>
         </div>
       </div>`, 'settings');
-    const showTab = (t: 'general' | 'controls' | 'keys') => {
-      d.querySelectorAll<HTMLButtonElement>('.set-tabs button').forEach((b) => {
+    // The one hint line: what the last thing tapped does (CONTROLS), the key prompt (KEYS), the studio (MORE).
+    const hintEl = $(d, '.set-hint');
+    const hint = (html: string, kind: 'good' | 'bad' | '' = '') => {
+      hintEl.innerHTML = html;
+      hintEl.className = `set-hint mc-hint1 ${kind}`;
+    };
+    let shown: SettingsTab = tab;
+    const tabHint = () => hint(shown === 'keys' ? 'TAP A BOX, THEN PRESS THE NEW KEY OR BUTTON. ESC CANCELS'
+      : shown === 'more' ? `${lynxSvg(1, STUDIO_BLUE, '#fff', 'lynx sm')}Blocky League v${APP_VERSION} by ${STUDIO}` : '');
+    const showTab = (t: SettingsTab) => {
+      shown = t;
+      mem.setTab = t;
+      d.querySelectorAll<HTMLButtonElement>('.set-nav button').forEach((b) => {
         const on = b.dataset.tab === t;
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       });
       d.querySelectorAll<HTMLElement>('.set-pane').forEach((p) => (p.hidden = p.dataset.pane !== t));
-      d.querySelector('.panel')!.scrollTop = 0;
       stopListening();
+      tabHint();
     };
-    d.querySelectorAll<HTMLButtonElement>('.set-tabs button').forEach((b) =>
-      b.addEventListener('click', () => showTab(b.dataset.tab as 'general' | 'controls' | 'keys')),
+    d.querySelectorAll<HTMLButtonElement>('.set-nav button').forEach((b) =>
+      b.addEventListener('click', () => showTab(b.dataset.tab as SettingsTab)),
     );
-    // Controls: an ASSISTED / SEMI / MANUAL row per pass type, an ON / OFF switch for the rest.
+    // Controls: an ASSISTED / SEMI / MANUAL row per pass type, an ON / OFF switch for the rest. ({Tap}: "Tap" on
+    // touch, "Press" on keys and pads, as the coach says it: ui/coach.ts.)
+    const why = (r: ControlRow) => `<b>${r.label}</b> ${coachText(r.why[String(controlsOf(s)[r.k])] ?? '', currentDevice())}`;
     const drawControls = () => {
       const c = controlsOf(s);
       for (const r of rows) {
-        const row = $(d, `.ctl-row[data-c=${r.k}]`);
+        const row = $(d, `[data-c=${r.k}]`);
         const v = c[r.k];
-        row.querySelectorAll<HTMLButtonElement>('.ctl-seg button').forEach((b) => {
-          const on = b.dataset.v === String(v);
-          b.classList.toggle('on', on);
-          b.setAttribute('aria-checked', String(on));
-        });
-        const t = row.querySelector<HTMLButtonElement>('[data-t]');
-        if (t) {
-          t.setAttribute('aria-checked', String(v));
-          const chip = t.querySelector('b')!;
+        if (r.kind === 'switch') {
+          row.setAttribute('aria-checked', String(v));
+          const chip = $(row, 'b');
           chip.textContent = v ? 'ON' : 'OFF';
           chip.classList.toggle('off', !v);
+        } else {
+          row.querySelectorAll<HTMLButtonElement>('.set-seg button').forEach((b) => {
+            const on = b.dataset.v === String(v);
+            b.classList.toggle('on', on);
+            b.setAttribute('aria-checked', String(on));
+          });
         }
-        // Static copy with divider elements in it (see CONTROL_ROWS): markup, not text. ({Tap}: "Tap" on touch,
-        // "Press" on keys and pads, as the coach says it: ui/coach.ts.)
-        $(row, '.ctl-why').innerHTML = coachText(r.why[String(v)] ?? '', currentDevice());
       }
       const stick = s.stick === 'fixed' ? 'fixed' : 'floating';
-      const sr = $(d, '.ctl-row[data-c=stick]');
-      sr.querySelectorAll<HTMLButtonElement>('[data-stick]').forEach((b) => {
+      d.querySelectorAll<HTMLButtonElement>('[data-stick]').forEach((b) => {
         const on = b.dataset.stick === stick;
         b.classList.toggle('on', on);
         b.setAttribute('aria-checked', String(on));
       });
-      $(sr, '.ctl-why').innerHTML = STICK_WHY[stick];
     };
     for (const r of rows) {
-      const row = $(d, `.ctl-row[data-c=${r.k}]`);
-      row.querySelectorAll<HTMLButtonElement>('.ctl-seg button').forEach((b) =>
+      const row = $(d, `[data-c=${r.k}]`);
+      if (r.kind === 'switch') {
+        row.addEventListener('click', () => {
+          if (r.k !== 'groundAssist' && r.k !== 'throughAssist' && r.k !== 'vibration') s[r.k] = !controlsOf(s)[r.k];
+          drawControls();
+          onChange();
+          hint(why(r));
+        });
+        continue;
+      }
+      row.querySelectorAll<HTMLButtonElement>('.set-seg button').forEach((b) =>
         b.addEventListener('click', () => {
           const v = b.dataset.v!;
           if (r.k === 'groundAssist') s.groundAssist = v as AssistLevel;
           else if (r.k === 'throughAssist') s.throughAssist = v as AssistLevel;
-          else if (r.k === 'vibration') s.vibration = v as HapticLevel;
-          else s[r.k] = v === 'true';
           drawControls();
           onChange();
+          hint(why(r));
         }),
       );
-      row.querySelector('[data-t]')?.addEventListener('click', () => {
-        if (r.kind === 'switch' && r.k !== 'groundAssist' && r.k !== 'throughAssist' && r.k !== 'vibration') s[r.k] = !controlsOf(s)[r.k];
-        drawControls();
-        onChange();
-      });
     }
     d.querySelectorAll<HTMLButtonElement>('[data-stick]').forEach((b) =>
       b.addEventListener('click', () => {
         s.stick = b.dataset.stick === 'fixed' ? 'fixed' : 'floating';
         drawControls();
         onChange();
+        hint(`<b>THUMBSTICK</b> ${STICK_WHY[s.stick]}`);
       }),
     );
     drawControls();
 
-    // KEYS: every slot shows its key; tapping one listens for the next key (or gamepad button).
-    const msgEl = $(d, '.kb-msg');
+    // KEYS: every slot shows its key; tapping one listens for the next key (or gamepad button). The hint line says
+    // what happened (plain text).
     const say = (t: string, kind: 'good' | 'bad' | '' = '') => {
-      msgEl.textContent = t;
-      msgEl.className = `kb-msg ${kind}`;
+      if (!t) return tabHint();
+      hint('', kind);
+      hintEl.textContent = t;
     };
     const keysOf = (): KeyMap => normalizeKeyMap(s.keys);
     const padOf = (): PadMap => normalizePadMap(s.pad);
@@ -1814,12 +2001,14 @@ export class Menus {
       }),
     );
     drawKeys();
-    showTab(tab);
+    // (The main menu opens on GENERAL: the session's last tab comes back instead. The pause menu asks for CONTROLS.)
+    showTab(tab === 'general' && mem.setTab ? mem.setTab : tab);
 
     const labels: Record<string, string> = {
       sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', colorblind: 'COLOUR BLIND', quality: 'GRAPHICS',
-      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION', quickSubs: 'QUICK SUBS', textSize: 'TEXT SIZE',
+      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION', quickSubs: 'QUICK SUBS', textSize: 'TEXT SIZE', vibration: 'VIBRATION',
     };
+    const VIB: HapticLevel[] = ['off', 'light', 'full'];
     const draw = () => {
       d.querySelectorAll<HTMLButtonElement>('.toggles button[data-k]').forEach((b) => {
         const k = b.dataset.k as keyof typeof s;
@@ -1843,6 +2032,12 @@ export class Menus {
         if (k === 'textSize') {
           // Menu and HUD text only (ui/textSize.ts): SMALL, MEDIUM, LARGE.
           b.innerHTML = `<span>${labels[k]}</span><b>${TEXT_SIZE_LABEL[s.textSize ?? 'medium']}</b>`;
+          return;
+        }
+        if (k === 'vibration') {
+          // The app only: OFF, LIGHT (the big moments) or FULL.
+          const lv = controlsOf(s).vibration;
+          b.innerHTML = `<span>${labels[k]}</span><b class="${lv === 'off' ? 'off' : ''}">${lv.toUpperCase()}</b>`;
           return;
         }
         const on = k === 'colorblind' ? v === true : k === 'quickSubs' ? v !== false : v;
@@ -1876,9 +2071,14 @@ export class Menus {
         } else if (k === 'colorblind') s.colorblind = !s.colorblind;
         else if (k === 'textSize') s.textSize = nextTextSize(s.textSize);
         else if (k === 'quickSubs') s.quickSubs = s.quickSubs === false;
+        else if (k === 'vibration') s.vibration = VIB[(VIB.indexOf(controlsOf(s).vibration) + 1) % VIB.length];
         else (s as unknown as Record<string, boolean>)[k] = !s[k];
         draw();
         onChange();
+        if (k === 'vibration' && vibRow) {
+          buzz('success');
+          hint(why(vibRow));
+        }
       }),
     );
     draw();
@@ -1899,13 +2099,19 @@ export class Menus {
       const bought = await opts.removeAds.buy().catch(() => false);
       if (!noAds.isConnected) return;
       if (bought) {
-        noAds.classList.add('owned');
+        noAds.classList.remove('btn-red');
+        noAds.classList.add('owned', 'btn-white');
         noAds.innerHTML = '<span>NO ADS</span><b>ON</b>';
       } else noAds.disabled = false;
     });
-    $(d, '[data-a=back]').addEventListener('click', () => {
+    const back = () => {
       stopListening();
       onBack();
+    };
+    $(d, '[data-a=back]').addEventListener('click', back);
+    // ESC goes back (while a key box is listening, ESC only cancels that: it never gets here).
+    this.listenKey((e) => {
+      if (e.code === 'Escape') back();
     });
   }
 
@@ -1923,41 +2129,46 @@ export class Menus {
       const date = when && !Number.isNaN(when.getTime()) ? `${sep()}${when.toLocaleDateString()}` : '';
       return `<b>LV ${lv.level}</b> ${levelTitle(lv.level).toUpperCase()}${sep()}${d.coins.toLocaleString()} COINS${sep()}${d.record.played} MATCHES${date}`;
     };
+    // One screen: the save (and the file's, when importing) on the left, what to do with it on the right.
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel narrow bk-panel">
-          <h2>BACKUP</h2>
-          <p class="fine big">Your progress lives in this browser. Export a copy to keep it safe or carry it to another device; import one to restore it.</p>
-          <div class="bk-card"><span>THIS SAVE</span><em>${line(save)}</em></div>
-          <div class="menu-col bk-main">
-            <button class="btn btn-go" data-a="export">EXPORT SAVE</button>
-            <button class="btn btn-blue" data-a="import">IMPORT SAVE</button>
-            <input type="file" accept=".json,application/json" hidden aria-label="Save file">
-          </div>
-          <div class="bk-confirm" hidden>
-            <div class="bk-card"><span>FROM THE FILE</span><em class="bk-in"></em></div>
-            <p class="fine big">Replace your save with this one? The current one is gone unless you exported it.</p>
-            <div class="menu-col">
-              <button class="btn btn-red" data-a="replace">REPLACE MY SAVE</button>
-              <button class="btn btn-white" data-a="keep">KEEP MINE</button>
+      <div class="panel-wrap dim shell">
+        <div class="panel mc shell bk-panel">
+          ${shellTop('BACKUP', 'YOUR SAVE LIVES IN THIS BROWSER')}
+          <div class="mc-body bk-body">
+            <div class="pane">
+              <div class="bk-card"><span>THIS SAVE</span><em>${line(save)}</em></div>
+              <div class="bk-card bk-confirm" hidden><span>FROM THE FILE</span><em class="bk-in"></em></div>
+            </div>
+            <div class="pane">
+              <div class="menu-col bk-main">
+                <button class="btn btn-go" data-a="export">EXPORT SAVE</button>
+                <button class="btn btn-blue" data-a="import">IMPORT SAVE</button>
+                <input type="file" accept=".json,application/json" hidden aria-label="Save file">
+              </div>
+              <div class="menu-col bk-confirm" hidden>
+                <p class="bk-ask">Replace your save with the file's? Export yours first to keep it.</p>
+                <button class="btn btn-red" data-a="replace">REPLACE MY SAVE</button>
+                <button class="btn btn-white" data-a="keep">KEEP MINE</button>
+              </div>
+              <p class="bk-msg fine" role="status" aria-live="polite"></p>
             </div>
           </div>
-          <p class="bk-msg fine" role="status" aria-live="polite"></p>
-          <div class="btn-row"><button class="btn btn-white" data-a="back">BACK</button></div>
         </div>
       </div>`, 'backup');
+    this.listenKey((e) => {
+      if (e.code === 'Escape') h.back();
+    });
     const msgEl = $(d, '.bk-msg');
     const msg = (text: string, kind: 'good' | 'bad' | '' = '') => {
       msgEl.textContent = text;
       msgEl.className = `bk-msg fine ${kind}`;
     };
     const main = $(d, '.bk-main');
-    const confirm = $(d, '.bk-confirm');
     let pending: SaveData | null = null;
     const asking = (d2: SaveData | null) => {
       pending = d2;
       main.hidden = !!d2;
-      confirm.hidden = !d2;
+      d.querySelectorAll<HTMLElement>('.bk-confirm').forEach((el) => (el.hidden = !d2));
       if (d2) $(d, '.bk-in').innerHTML = line(d2);
     };
     $(d, '[data-a=export]').addEventListener('click', () => {
@@ -2001,42 +2212,58 @@ export class Menus {
   }
 
   /**
-   * Controls for the device in hand: the touch pad (stick + the coloured buttons and what each one does when
-   * attacking / defending), keyboard, or gamepad. Tabs show the others.
+   * HOW TO PLAY, one screen per topic (docs/UX.md: no endless scroll): the device in hand (TOUCH, KEYS, PAD) in the
+   * header, five topics as tabs (ATTACK, DEFEND, SKILLS, CROSSES, BLITZ), one short row per control. Touch draws the
+   * pad beside the rows. The topic is remembered for the session.
    */
-  howTo(onBack: () => void, device: 'keyboard' | 'touch' | 'gamepad' = defaultDevice()): void {
+  howTo(onBack: () => void, device: HtDev = defaultDevice()): void {
+    const devs: [HtDev, string][] = [['touch', 'TOUCH'], ['keyboard', 'KEYS'], ['gamepad', 'PAD']];
     const d = this.mount(`
-      <div class="panel-wrap dim">
-        <div class="panel howto-panel">
-          <h2>HOW TO PLAY</h2>
-          <div class="seg ht-tabs" role="tablist">
-            <button data-dev="touch" role="tab">TOUCH</button>
-            <button data-dev="keyboard" role="tab">KEYBOARD</button>
-            <button data-dev="gamepad" role="tab">GAMEPAD</button>
-          </div>
-          <div class="ht-body"></div>
-          <div class="btn-row"><button class="btn btn-go" data-a="back">GOT IT</button></div>
+      <div class="panel-wrap dim shell">
+        <div class="panel mc shell howto-panel">
+          ${shellTop('HOW TO PLAY', '<i class="ht-sub"></i>', `<div class="seg ht-dev" role="tablist" aria-label="Device">${devs.map(([k, l]) => `<button data-dev="${k}" role="tab">${l}</button>`).join('')}</div>`)}
+          <nav class="seg mc-tabs ht-topics" role="tablist">${HT_TABS.map(([k, l]) => `<button data-ht="${k}" role="tab">${l}</button>`).join('')}</nav>
+          <div class="mc-body ht-body" role="tabpanel"></div>
         </div>
       </div>`, 'howto-screen');
     d.classList.toggle('stick-fixed', this.stick === 'fixed');
     const body = $(d, '.ht-body');
-    const show = (dev: 'keyboard' | 'touch' | 'gamepad') => {
-      d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) => {
+    const sub = $(d, '.ht-sub');
+    let dev = device;
+    const show = () => {
+      d.querySelectorAll<HTMLButtonElement>('.ht-dev button').forEach((b) => {
         const on = b.dataset.dev === dev;
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       });
-      body.innerHTML = (dev === 'touch' ? howtoTouch() : dev === 'gamepad' ? howtoPad() : howtoKeys())
-        + howtoBlitz(dev === 'touch' ? `the <b class="inl-ic">${pixelIcon('bolt', '#8a5cf6', 1.6, 'inl')}</b> button` : kc('power', dev));
+      d.querySelectorAll<HTMLButtonElement>('.ht-topics button').forEach((b) => {
+        const on = b.dataset.ht === mem.htTab;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-selected', String(on));
+      });
+      d.classList.toggle('dev-touch', dev === 'touch');
+      // The one hint line: where to change what this screen describes.
+      sub.textContent = dev === 'touch' ? 'PASS HELP IN SETTINGS' : dev === 'gamepad' ? 'CHANGE BUTTONS IN SETTINGS' : 'CHANGE KEYS IN SETTINGS';
+      body.innerHTML = howtoBody(mem.htTab, dev);
+      body.scrollTop = 0;
     };
-    d.querySelectorAll<HTMLButtonElement>('.ht-tabs button').forEach((b) =>
+    d.querySelectorAll<HTMLButtonElement>('.ht-dev button').forEach((b) =>
       b.addEventListener('click', () => {
-        sfx.click();
-        show(b.dataset.dev as 'keyboard' | 'touch' | 'gamepad');
+        dev = b.dataset.dev as HtDev;
+        show();
       }),
     );
-    show(device);
+    d.querySelectorAll<HTMLButtonElement>('.ht-topics button').forEach((b) =>
+      b.addEventListener('click', () => {
+        mem.htTab = b.dataset.ht as HtTab;
+        show();
+      }),
+    );
+    show();
     $(d, '[data-a=back]').addEventListener('click', onBack);
+    this.listenKey((e) => {
+      if (e.code === 'Escape') onBack();
+    });
   }
 
   /**
@@ -2047,11 +2274,15 @@ export class Menus {
     const n = (v: number) => v.toLocaleString('en-US');
     const d = this.mount(`
       <div class="panel-wrap dim">
-        <div class="panel narrow gift-panel">
+        <div class="panel narrow gift-panel wo-panel">
           <h2>FIRST WIN!</h2>
-          <p class="fine big">A thank you for new players: the STARTER PACK, one time only.</p>
-          <div class="reward"><i></i><span>${n(o.coins)} COINS</span><em>AND THE GOLD BALL</em></div>
-          <p class="fine">Worth ${n(o.worth)} coins in the shop, for ${escHtml(o.price)}. It stays in the shop if you'd rather decide later.</p>
+          <p class="wo-sub">STARTER PACK${sep()}ONE TIME ONLY</p>
+          <div class="wo-box">
+            <span class="wo-item"><i class="wo-coin" aria-hidden="true"></i><b>${n(o.coins)}</b><small>COINS</small></span>
+            <span class="wo-plus" aria-hidden="true">+</span>
+            <span class="wo-item">${pixelIcon('ball', '#ffd23a', 3)}<b>GOLD BALL</b><small>LOOK</small></span>
+          </div>
+          <p class="wo-price">WORTH <b>${n(o.worth)}</b> COINS FOR <b>${escHtml(o.price)}</b>${sep()}STAYS IN THE SHOP</p>
           <div class="btn-row">
             <button class="btn btn-white" data-a="later">NOT NOW</button>
             <button class="btn btn-yellow btn-lg" data-a="see">SEE THE PACK</button>
@@ -2060,6 +2291,9 @@ export class Menus {
       </div>`, 'gift-screen');
     d.querySelector('[data-a=see]')?.addEventListener('click', () => h.see());
     d.querySelector('[data-a=later]')?.addEventListener('click', () => h.later());
+    this.listenKey((e) => {
+      if (e.code === 'Escape') h.later();
+    });
   }
 
   gift(amount: number, streak: number, canDouble: boolean, h: { claim: (double: boolean) => Promise<boolean>; back: () => void }): void {
@@ -2074,7 +2308,7 @@ export class Menus {
           <h2>DAILY GIFT</h2>
           <ul class="gift-days">${days}</ul>
           <div class="reward"><i></i><span>+${amount}</span><em>DAY ${streak} OF 7</em></div>
-          <p class="fine">Spend it in the SHOP: celebrations, balls, goal effects and trails. Come back tomorrow for the next one. Miss a day and you keep your place.</p>
+          <p class="gift-note">TOMORROW +${100 + 50 * (streak % 7)}${sep()}MISS A DAY, KEEP YOUR PLACE</p>
           <div class="btn-row">
             ${canDouble ? `<button class="btn btn-white" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× GIFT</button>` : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>

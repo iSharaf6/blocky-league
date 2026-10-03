@@ -1,5 +1,5 @@
 import { angleDiff, clamp, dist2 } from '../core/math';
-import { BALL_R, GRAVITY, ROLL_A, ROLL_B } from './constants';
+import { BALL_R, GRAVITY, HALF_L, HALF_W, ROLL_A, ROLL_B } from './constants';
 import { PROTECT_T, vsHuman, wrongFoot } from './dribble';
 import type { Match, Pad } from './match';
 import type { Player } from './player';
@@ -12,8 +12,8 @@ import type { MatchEvent, Side, SkillGrade, SkillMoveKind } from './types';
  *
  * The move: SKILL with the stick against his run picks it (skillKind), each with its use:
  * - along it: a NUTMEG with a man squared up in front of him (NUTMEG_R m: through his legs and round him to it), else
- *   a RAINBOW FLICK, the ball flicked up over a man in front (FLICK_APEX m high: it goes over a slide too), landing
- *   FLICK_LAND m on for him to run onto;
+ *   a RAINBOW FLICK, the ball flicked up over the man in front (FLICK_CLEAR m over him at least: a slide too), landing
+ *   FLICK_BEYOND m beyond him for him to run round onto (see FLICK_AT);
  * - half across it: an ELASTICO, out and back in with the outside of the boot: ELASTICO_SLIP m to that side at speed;
  * - across his run: a ROULETTE at pace, a spin that slips him ROULETTE_SLIP m to that side with the ball, or LA
  *   CROQUETA from a jog or less (the ball shifted foot to foot, CROQUETA_SLIP m, quick);
@@ -149,13 +149,54 @@ export const SKILL_GOAL_T = 5;
 const ROULETTE_SLIP = 1.3;
 const ROULETTE_ON = 0.45;
 const MOVE_PACE_MAX = 3.2;
-/** RAINBOW FLICK: flicked up this far into the move (s), FLICK_APEX m high, landing FLICK_LAND m on; he can't take it back for FLICK_COOL s. */
-export const FLICK_AT = 0.14;
-export const FLICK_APEX = 2.1;
-export const FLICK_LAND = 5.5;
+/**
+ * RAINBOW FLICK (2026-10-03, the owner: "rainbow flick is basically failing dosnt go over the player goes back"): flicked
+ * up FLICK_AT s into the move (he brakes on it first, FLICK_BRAKE of his run), the way the stick points (else his run).
+ * It goes over the man in front of him (the nearest within FLICK_LANE m of its line, up to FLICK_SEEK m on) at least
+ * FLICK_CLEAR m high (a man is drawn up to ~2.15 m tall on a landscape phone: render/characters.ts screenCharK) and comes
+ * down FLICK_BEYOND m beyond him: FLICK_LAND_MIN..FLICK_LAND_MAX m from where it left the
+ * boot (FLICK_LAND_MIN with nobody there), its top FLICK_APEX_MIN..FLICK_APEX_MAX m. He can't take it back for
+ * FLICK_COOL s. Measured before: it went up 2.1 m and came down 5.5 m on whatever was there, so a man 5 m off headed it
+ * straight back, one 1.5 m off had it pass him on the grass before it rose, and a sprinting dribbler ran under it and
+ * left it behind him.
+ */
+export const FLICK_AT = 0.1;
+const FLICK_BRAKE = 0.15;
+export const FLICK_CLEAR = 2.9;
+export const FLICK_BEYOND = 3.6;
+export const FLICK_LAND_MIN = 4.5;
+export const FLICK_LAND_MAX = 8.5;
+export const FLICK_APEX_MIN = 2.1;
+export const FLICK_APEX_MAX = 3.6;
+const FLICK_LANE = 1.6;
+const FLICK_SEEK = 6;
+/** It leaves him at this share of his own pace at least (he's braking on it): it never drops behind him. */
+const FLICK_AWAY = 0.95;
+/** ... where he'll be (s ahead, at his pace now) as it goes over him, and how far on he'll have turned and gone after it (m). */
+const FLICK_LOOK = 0.5;
+const FLICK_STEP = 0.5;
+const FLICK_DRIFT = 1;
 const FLICK_COOL = 0.3;
+/**
+ * The man it goes over has to turn round to it: planted (Player.wrongFootT) FLICK_PLANT s as it goes up, then slowed
+ * (Player.slowT) to FLICK_TURN s. (Measured: left alone, a man 5 m off ran back with the ball and had it drop on his head.)
+ */
+const FLICK_PLANT = 0.55;
+const FLICK_TURN = 0.7;
+/** It comes down this far (m) inside the touchlines and goal lines at least: its bounce and roll stay in play too. */
+const FLICK_IN = 3.5;
 /** ... and he's after it until he has it, someone else does, or this long (s) after it lands. */
-const FLICK_CHASE = 0.6;
+const FLICK_CHASE = 0.8;
+/**
+ * Going after his flick or nutmeg he's run onto it (the stick only takes him elsewhere pulled back against the move,
+ * CHASE_OWN): flat out to CHASE_UNDER m short of where a flick comes down, but never level with the ball as it flies
+ * (CHASE_BEHIND m behind it at least: run under it and past, it would drop behind him); on the grass at it flat out with
+ * CHASE_LEAD s of lead. Round the man it went over or through until he's past him.
+ */
+const CHASE_OWN = -0.3;
+const CHASE_UNDER = 0.5;
+const CHASE_BEHIND = 0.4;
+const CHASE_LEAD = 0.25;
 /** STEPOVER: his pace meanwhile (share of his pace going in); DRAG BACK: his pace back the other way (m/s). */
 const STEPOVER_ON = 0.35;
 const DRAG_PACE = 3;
@@ -183,6 +224,8 @@ const NUTMEG_LANE = 0.9;
 const NUTMEG_AT = 0.12;
 const NUTMEG_PAST = 2.6;
 const NUTMEG_ROUND = 1.1;
+/** ... and takes it no sooner than this far (m) beyond him. */
+const NUTMEG_BEYOND = 0.5;
 const NUTMEG_CHASE = 0.8;
 /**
  * A move that fits the moment fools a man more often (gradeMove's GOOD roll): a nutmeg on the man squared up, a rainbow
@@ -217,9 +260,13 @@ export interface SkillMove {
   landX: number;
   landZ: number;
   chaseEnd: number;
-  /** NUTMEG: the man it goes through (-1: none), and the side (+1 / -1 across the run) he goes round him. */
+  /** NUTMEG / RAINBOW FLICK: the man it goes through or over (-1: none), and the side (+1 / -1 across) he goes round him. */
   through: number;
   round: number;
+  /** RAINBOW FLICK / NUTMEG: the way the ball goes (the stick, else his run); a flick has come down (its first bounce). */
+  fx: number;
+  fz: number;
+  landed: boolean;
 }
 
 /** A defender's telegraphed challenge on him: `until` (skill clock) closes the PERFECT window. */
@@ -512,6 +559,8 @@ function trySkill(m: Match, p: Player, pad: Pad, st: SkillState): void {
     kind, player: p.idx, t: 0, dur: SKILL_T[kind], ux, uz, lx: -uz * turn, lz: ux * turn,
     bx: sl >= STICK_DEAD ? pad.mx / sl : -ux, bz: sl >= STICK_DEAD ? pad.mz / sl : -uz, entry: sp, grade: 'show',
     flicked: false, landX: 0, landZ: 0, chaseEnd: 0, through: kind === 'nutmeg' && sq ? sq.idx : -1, round: 1,
+    // (A flick goes the way the stick points when it's pushed: the run can still be coming round to it.)
+    fx: kind === 'rainbow' && sl >= STICK_DEAD ? pad.mx / sl : ux, fz: kind === 'rainbow' && sl >= STICK_DEAD ? pad.mz / sl : uz, landed: false,
   };
   if (kind === 'nutmeg' && sq) mv.round = -Math.sign(-uz * (sq.pos.x - p.pos.x) + ux * (sq.pos.z - p.pos.z)) || 1;
   st.move = mv;
@@ -711,36 +760,17 @@ function stepMove(m: Match, p: Player, pad: Pad, st: SkillState, dt: number): vo
     case 'rainbow':
     case 'nutmeg': {
       if (!mv.flicked) {
-        p.wantX = mv.ux * 0.55;
-        p.wantZ = mv.uz * 0.55;
+        // Braking on it, the sole rolling it up the back of his standing leg (a flick), or squared up to it (a nutmeg).
+        const k = mv.kind === 'rainbow' ? FLICK_BRAKE : 0.55;
+        p.wantX = mv.fx * k;
+        p.wantZ = mv.fz * k;
         p.sprint = false;
-        p.faceTarget = run;
-        if (mv.kind === 'rainbow' && mv.t >= FLICK_AT) flick(m, p, mv);
+        p.faceTarget = Math.atan2(mv.fz, mv.fx);
+        if (mv.kind === 'rainbow' && mv.t >= FLICK_AT) flick(m, p, mv, st);
         else if (mv.kind === 'nutmeg' && mv.t >= NUTMEG_AT) nutmeg(m, p, mv);
         break;
       }
-      // After it: onto where it comes down (round the man it went through), unless the stick takes him elsewhere.
-      m.ctl[p.side].switchT = 0;
-      let gx = mv.kind === 'nutmeg' ? b.pos.x : mv.landX;
-      let gz = mv.kind === 'nutmeg' ? b.pos.z : mv.landZ;
-      const o = mv.through >= 0 ? m.players[mv.through] : null;
-      if (o && (o.pos.x - p.pos.x) * mv.ux + (o.pos.z - p.pos.z) * mv.uz > -0.3) {
-        // Not past him yet: round his side first.
-        gx = o.pos.x - mv.uz * mv.round * NUTMEG_ROUND + mv.ux * 0.6;
-        gz = o.pos.z + mv.ux * mv.round * NUTMEG_ROUND + mv.uz * 0.6;
-      }
-      const tx = gx - p.pos.x;
-      const tz = gz - p.pos.z;
-      const tl = Math.hypot(tx, tz);
-      const sl = Math.hypot(pad.mx, pad.mz);
-      const own = sl > STICK_DEAD && tl > 0.5 && (pad.mx * tx + pad.mz * tz) / (sl * tl) < 0.5;
-      if (!own && tl > 0.15) {
-        p.wantX = (tx / tl) * Math.min(1, tl / 0.8);
-        p.wantZ = (tz / tl) * Math.min(1, tl / 0.8);
-        p.sprint = tl > 1.2;
-        p.faceTarget = null;
-      }
-      if (b.owner === p.idx || mv.t > mv.chaseEnd) st.move = null;
+      chase(m, p, pad, st, mv);
       return;
     }
   }
@@ -778,26 +808,190 @@ function runAt(p: Player, dx: number, dz: number, v: number): void {
   p.wantZ = dz * k;
 }
 
-/** RAINBOW FLICK: the ball up off the back of his heel, over a man in front, to come down FLICK_LAND m on. */
-function flick(m: Match, p: Player, mv: SkillMove): void {
+/**
+ * RAINBOW FLICK: the ball up off the back of his heel the way it's going (mv.fx, fz), over the man in front of him at
+ * least FLICK_CLEAR m high, to come down FLICK_BEYOND m beyond him (see FLICK_AT). A crowd's gasp when it goes over a man.
+ */
+function flick(m: Match, p: Player, mv: SkillMove, st: SkillState): void {
   const b = m.ball;
+  const fx = mv.fx;
+  const fz = mv.fz;
   const y0 = Math.max(b.pos.y, BALL_R);
-  const vy = Math.sqrt(2 * GRAVITY * Math.max(0.2, FLICK_APEX - y0));
-  const T = (vy + Math.sqrt(vy * vy + 2 * GRAVITY * Math.max(0, y0 - BALL_R))) / GRAVITY;
-  const vh = FLICK_LAND / T;
+  // The man it goes over: the nearest of theirs in its lane (where he'll be as it passes him, roughly).
+  let over: Player | null = null;
+  let oAlong = FLICK_SEEK;
+  for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
+    if (o.sentOff || o.isKeeper) continue;
+    const ox = o.pos.x + o.vel.x * FLICK_LOOK - b.pos.x;
+    const oz = o.pos.z + o.vel.z * FLICK_LOOK - b.pos.z;
+    const along = ox * fx + oz * fz;
+    if (along < -0.2 || along > oAlong || Math.abs(-fz * ox + fx * oz) > FLICK_LANE) continue;
+    oAlong = along;
+    over = o;
+  }
+  let D = over ? clamp(Math.max(0, oAlong) + FLICK_BEYOND, FLICK_LAND_MIN, FLICK_LAND_MAX) : FLICK_LAND_MIN;
+  // Never out of play: shortened to land inside the lines.
+  const room = Math.max(1, roomAlong(b.pos.x, b.pos.z, fx, fz, FLICK_IN));
+  D = Math.min(D, room);
+  /** Its top for a carry of `d` m: high enough over him (a parabola from the boot to the grass, 4 s (1 - s) of its rise at s). */
+  const apexFor = (d: number) => {
+    let a = FLICK_APEX_MIN;
+    if (over) {
+      // (Over him wherever he is as it passes: from FLICK_STEP m nearer, stepping in, to FLICK_DRIFT m on, turning after it.)
+      const lo = clamp((Math.max(0.3, oAlong) - FLICK_STEP) / d, 0.12, 0.88);
+      const hi = clamp((Math.max(0.3, oAlong) + FLICK_DRIFT) / d, 0.12, 0.88);
+      const f = Math.min(4 * lo * (1 - lo), 4 * hi * (1 - hi));
+      a = Math.max(a, y0 + (FLICK_CLEAR - y0) / f);
+    }
+    return Math.min(a, FLICK_APEX_MAX);
+  };
+  const flight = (a: number) => {
+    const vy0 = Math.sqrt(2 * GRAVITY * Math.max(0.2, a - y0));
+    return { vy: vy0, T: (vy0 + Math.sqrt(vy0 * vy0 + 2 * GRAVITY * Math.max(0, y0 - BALL_R))) / GRAVITY };
+  };
+  let { vy, T } = flight(apexFor(D));
+  // Going away from him however fast he came in (a longer carry, not a ball he runs under and past), as long as it still
+  // clears the man: over him comes first (he brakes for it, chase).
+  const atLeast = p.speed() * FLICK_AWAY;
+  if (D / T < atLeast) {
+    const D2 = Math.min(room, atLeast * T);
+    const a2 = apexFor(D2);
+    const sMan = over ? clamp(Math.max(0.3, oAlong) / D2, 0, 1) : 0.5;
+    if (!over || y0 + (a2 - y0) * 4 * sMan * (1 - sMan) >= FLICK_CLEAR) {
+      D = D2;
+      ({ vy, T } = flight(a2));
+    }
+  }
+  // (Air drag takes a little off the carry: a touch more pace to land on the spot.)
+  const vh = (D / T) * 1.03;
   b.owner = -1;
-  b.vel.x = mv.ux * vh;
-  b.vel.z = mv.uz * vh;
+  b.vel.x = fx * vh;
+  b.vel.z = fz * vh;
   b.vel.y = vy;
+  b.spin.x = b.spin.y = b.spin.z = 0;
   b.lastTouch = p.idx;
   b.lastTouchSide = p.side;
   p.kickCooldown = Math.max(p.kickCooldown, FLICK_COOL);
   m.passTarget = -1;
   mv.flicked = true;
-  // (Air drag takes a little off the carry.)
-  mv.landX = b.pos.x + mv.ux * FLICK_LAND * 0.94;
-  mv.landZ = b.pos.z + mv.uz * FLICK_LAND * 0.94;
+  mv.landed = false;
+  mv.landX = b.pos.x + fx * D;
+  mv.landZ = b.pos.z + fz * D;
   mv.chaseEnd = mv.t + T + FLICK_CHASE;
+  if (over) {
+    mv.through = over.idx;
+    const lat = -fz * (p.pos.x - over.pos.x) + fx * (p.pos.z - over.pos.z);
+    mv.round = Math.sign(lat) || mv.round;
+    // (He isn't "past" him by dribbling: the flick's own link says so when it's his again.)
+    st.ahead[over.idx] = -9;
+    // Over his head: he has to turn round to it, and can't take it out of the air as it goes up past him (this step's
+    // touches are still to come: chase keeps him off it from the next one until it lands).
+    over.wrongFootT = Math.max(over.wrongFootT, FLICK_PLANT);
+    over.slowT = Math.max(over.slowT, FLICK_TURN);
+    over.kickCooldown = Math.max(over.kickCooldown, SHIELD_STEP);
+    if (over.order?.firstTime) over.order = null;
+    m.events.push({ type: 'ooh' });
+  }
+}
+
+/** How far (m) from (x, z) along (fx, fz) the ball can go and stay `inset` m inside the pitch. */
+function roomAlong(x: number, z: number, fx: number, fz: number, inset: number): number {
+  let d = 99;
+  if (fx > 1e-6) d = Math.min(d, (HALF_L - inset - x) / fx);
+  else if (fx < -1e-6) d = Math.min(d, (-HALF_L + inset - x) / fx);
+  if (fz > 1e-6) d = Math.min(d, (HALF_W - inset - z) / fz);
+  else if (fz < -1e-6) d = Math.min(d, (-HALF_W + inset - z) / fz);
+  return Math.max(0, d);
+}
+
+/**
+ * After his flick or nutmeg (mv.flicked): he goes and gets it. A flick in the air: none of theirs can head or volley it
+ * (it's over them) and he's paced to be just short of where it lands as it comes down; on the grass (or a nutmeg): at it
+ * flat out with a little lead. Round the man it went over or through first. The stick only takes over pulled back against
+ * the move (CHASE_OWN). It ends when he has it (beyond the man: a link in the chain, SKINNED HIM), someone else does, or
+ * at chaseEnd.
+ */
+function chase(m: Match, p: Player, pad: Pad, st: SkillState, mv: SkillMove): void {
+  const b = m.ball;
+  m.ctl[p.side].switchT = 0;
+  const o = mv.through >= 0 ? m.players[mv.through] : null;
+  if (b.owner === p.idx) {
+    if (o && (o.pos.x - p.pos.x) * mv.fx + (o.pos.z - p.pos.z) * mv.fz < -0.3) {
+      st.ahead[o.idx] = -9;
+      st.chain(m, p, 'past', 'good', o.idx);
+    }
+    st.move = null;
+    return;
+  }
+  if (mv.t > mv.chaseEnd) {
+    st.move = null;
+    return;
+  }
+  const air = mv.kind === 'rainbow' && !mv.landed;
+  if (air && b.pos.y <= BALL_R + 0.06 && b.vel.y <= 0.5) mv.landed = true;
+  // A nutmeg is taken beyond the man, never level with him (it went through his legs, he went round).
+  if (mv.kind === 'nutmeg' && o && (b.pos.x - o.pos.x) * mv.fx + (b.pos.z - o.pos.z) * mv.fz < NUTMEG_BEYOND) {
+    p.kickCooldown = Math.max(p.kickCooldown, SHIELD_STEP);
+  }
+  if (air) {
+    // Over their heads: nobody of theirs meets it first time on the way (only the keeper, in his box, may claim it), and
+    // the man it went over, turning, can't take it out of the air over his shoulder: on the grass it's a race.
+    for (const q of m.teamPlayers(p.side === 0 ? 1 : 0)) if (!q.isKeeper && q.order?.firstTime) q.order = null;
+    if (o) o.kickCooldown = Math.max(o.kickCooldown, SHIELD_STEP);
+  }
+  const sl = Math.hypot(pad.mx, pad.mz);
+  if (sl > STICK_DEAD && (pad.mx * mv.fx + pad.mz * mv.fz) / sl < CHASE_OWN) return;
+  let gx: number;
+  let gz: number;
+  let v: number;
+  let faceBall = false;
+  if (mv.kind === 'rainbow' && !mv.landed) {
+    // Where it comes down (from the ball as it flies now): just short of there, round the man; never ahead of the ball as
+    // it flies (it stays in front of him: run under it and past, it would drop behind him).
+    const tl = (b.vel.y + Math.sqrt(Math.max(0, b.vel.y * b.vel.y + 2 * GRAVITY * Math.max(0, b.pos.y - BALL_R)))) / GRAVITY;
+    gx = b.pos.x + b.vel.x * tl - mv.fx * CHASE_UNDER;
+    gz = b.pos.z + b.vel.z * tl - mv.fz * CHASE_UNDER;
+    // (Flat out: a man it went over may be turning to race him to it. Never level with the ball as it flies, though: below.)
+    v = 99;
+  } else {
+    gx = b.pos.x + b.vel.x * CHASE_LEAD;
+    gz = b.pos.z + b.vel.z * CHASE_LEAD;
+    v = 99;
+    // Already level with it or ahead of it on its way: step to the ball itself and meet it facing it.
+    if ((p.pos.x - b.pos.x) * b.vel.x + (p.pos.z - b.pos.z) * b.vel.z > 0) {
+      gx = b.pos.x;
+      gz = b.pos.z;
+    }
+    faceBall = Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z) < 1.6;
+  }
+  if (o && (o.pos.x - p.pos.x) * mv.fx + (o.pos.z - p.pos.z) * mv.fz > -0.3) {
+    // Not past him yet: round his side first (a stride beyond his shoulder), unless the way there is already clear of him.
+    const tx = gx - p.pos.x;
+    const tz = gz - p.pos.z;
+    const tl = Math.hypot(tx, tz) || 1;
+    const ox = o.pos.x - p.pos.x;
+    const oz = o.pos.z - p.pos.z;
+    const along = (ox * tx + oz * tz) / tl;
+    const off = Math.abs(-tz * ox + tx * oz) / tl;
+    if (along > 0 && along < tl && off < NUTMEG_ROUND) {
+      gx = o.pos.x - mv.fz * mv.round * NUTMEG_ROUND + mv.fx * 0.6;
+      gz = o.pos.z + mv.fx * mv.round * NUTMEG_ROUND + mv.fz * 0.6;
+      v = Math.max(v, p.jogPace());
+    }
+  }
+  if (mv.kind === 'rainbow' && !mv.landed && (p.pos.x - b.pos.x) * mv.fx + (p.pos.z - b.pos.z) * mv.fz > -CHASE_BEHIND) {
+    v = Math.min(v, Math.hypot(b.vel.x, b.vel.z) * 0.95);
+  }
+  const tx = gx - p.pos.x;
+  const tz = gz - p.pos.z;
+  const tl = Math.hypot(tx, tz);
+  if (tl < 0.12) {
+    p.wantX = p.wantZ = 0;
+    p.sprint = false;
+  } else {
+    runAt(p, tx / tl, tz / tl, Math.min(v, tl * 8));
+  }
+  p.faceTarget = faceBall ? Math.atan2(b.pos.z - p.pos.z, b.pos.x - p.pos.x) : tl < 1 ? Math.atan2(mv.fz, mv.fx) : null;
 }
 
 /** NUTMEG: knocked through the man's legs (mv.through) to stop NUTMEG_PAST m beyond him; he goes round to it. */

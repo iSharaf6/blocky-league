@@ -8,21 +8,27 @@ import { sfx } from '../audio/sfx';
 import { Rng } from '../core/rng';
 import {
   KEY_STATS, PATTERNS, SQUAD_MAX, STADIUM_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_STEP,
-  autoPick, clubRating, createClub, keeperColor, lineupIssues, matchAttendance, migrateCareer, randomKit,
+  clubRating, createClub, keeperColor, lineupIssues, matchAttendance, migrateCareer, randomKit,
   sanitizeName, sanitizeShort, setFormation, stadiumUpgradeCost, swapPlayers, trainPlayer, trainingCost, upgradeStadium,
   type CareerState, type ClubState, type TxFail,
 } from '../meta/career';
 import { NAME_DISALLOWED, cleanName, fallbackShort, isNameAllowed, nameProblem } from '../core/names';
 import { KIT_COLORS } from '../meta/data';
 import { SHORTLIST_MAX, WAGE_DIP, marketSummary, wageOf } from '../meta/market';
+import { BENCH_SIZE, autoLineup, trainBest } from '../meta/squad';
+import { buzz } from '../platform/haptics';
 import { openMarket } from './market';
 import { sep } from './text';
 import { cssHex } from '../render/palette';
 import { STADIUM_LEVELS } from '../render/stadium';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, type FormationId, type Kit, type KitPattern, type PlayerDef, type PlayerStats } from '../sim/types';
+import { bindDragSwap } from './dragSwap';
 import { pitchLayout, shirtArt } from './menus';
+import { paneScrolls, restorePaneScrolls, revealInPane } from './panes';
 import { StadiumPreview, faceHtml, hydrateFaces, stadiumIsoSvg } from './preview';
+// The club screens' and the in-match tactics screen's layout (pitch plus bench, master and detail).
+import './squad.css';
 
 // ------------------------------------------------------------------ shared screen kit
 
@@ -58,7 +64,7 @@ export type ToastKind = 'good' | 'bad' | 'info';
 export interface MetaScreen {
   root: HTMLDivElement;
   panel: HTMLDivElement;
-  /** Replace the panel content (keeps scroll position) and the active click/input handlers. */
+  /** Replace the panel content (keeps its scroll position, and each keyed list's) and the click/input handlers. */
   render(html: string, on: Handlers, inputs?: InputHandlers): void;
   toast(msg: string, kind?: ToastKind): void;
 }
@@ -116,18 +122,31 @@ export function mountMeta(app: AppContext, cls: string): MetaScreen {
     const t = e.target as Element;
     if (t.matches('input')) {
       e.stopPropagation();
-      if (e.key === 'Enter') (t as HTMLInputElement).blur();
+      if (e.key === 'Enter' || e.key === 'Escape') (t as HTMLInputElement).blur();
     }
   });
+  // Esc goes back (docs/UX.md), unless something on top took it first (a sheet's own Esc stops the event).
+  const onEsc = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' || e.defaultPrevented || e.repeat || activeRoot !== root) return;
+    const backBtn = panel.querySelector<HTMLButtonElement>('[data-a=back]');
+    if (!backBtn || backBtn.disabled) return;
+    e.preventDefault();
+    backBtn.click();
+  };
+  window.addEventListener('keydown', onEsc);
+  onMetaClose(() => window.removeEventListener('keydown', onEsc));
   return {
     root,
     panel,
     render(html, on, inp) {
       const top = panel.scrollTop;
+      // Lists inside panes (`.pane-scroll` with a data-scroll-key or data-key) keep their place too (src/ui/panes.ts).
+      const lists = paneScrolls(panel);
       panel.innerHTML = html;
       clicks = on;
       inputs = inp ?? {};
       panel.scrollTop = top;
+      restorePaneScrolls(panel, lists);
     },
     toast(msg, kind = 'info') {
       toastEl.textContent = msg;
@@ -142,7 +161,8 @@ export function mountMeta(app: AppContext, cls: string): MetaScreen {
       const pTop = y(panel);
       const bar = panel.querySelector<HTMLElement>('.mc-top');
       const barBottom = bar ? y(bar) + bar.offsetHeight - panel.scrollTop : pTop;
-      toastEl.style.top = `${Math.round(Math.max(pTop + 8, barBottom + 14))}px`;
+      // App-shell screens: a slim toast right under the header, over the tabs (never over a pane's buttons).
+      toastEl.style.top = `${Math.round(Math.max(pTop + 8, barBottom + (root.classList.contains('shell') ? 4 : 14)))}px`;
       toastEl.className = `mc-toast on ${kind}`;
       window.clearTimeout(toastTimer);
       toastTimer = window.setTimeout(() => toastEl.classList.remove('on'), 2600);
@@ -218,12 +238,15 @@ export type KitPart = 'shirt' | 'shirt2' | 'shorts' | 'socks';
 const PARTS: [KitPart, string][] = [['shirt', 'SHIRT'], ['shirt2', 'TRIM'], ['shorts', 'SHORTS'], ['socks', 'SOCKS']];
 const COLORS = Object.entries(KIT_COLORS) as [string, number][];
 
+/** Part tabs (with SHUFFLE beside them), the colours, the patterns: compact enough to sit beside the preview. */
 function kitEditorHtml(kit: Kit, part: KitPart): string {
   return `<div class="mc-kited">
-    <div class="seg mc-parts">${PARTS.map(([k, l]) => `<button class="${k === part ? 'on' : ''}" data-a="part" data-v="${k}">${l}</button>`).join('')}</div>
+    <div class="ck-partrow">
+      <div class="seg mc-parts">${PARTS.map(([k, l]) => `<button class="${k === part ? 'on' : ''}" data-a="part" data-v="${k}">${l}</button>`).join('')}</div>
+      <button class="btn btn-white mc-rand" data-a="randkit" aria-label="Shuffle the kit">SHUFFLE</button>
+    </div>
     <div class="mc-swatches">${COLORS.map(([n, c]) => `<button class="mc-sw ${kit[part] === c ? 'on' : ''}" data-a="color" data-v="${c}" style="--sw:${cssHex(c)}" aria-label="${n}" title="${n.toUpperCase()}"></button>`).join('')}</div>
     <div class="mc-pats">${PATTERNS.map((p) => `<button class="mc-pat ${kit.pattern === p ? 'on' : ''}" data-a="pattern" data-v="${p}">${shirtArt({ ...kit, pattern: p }, 3)}<span>${p.toUpperCase()}</span></button>`).join('')}</div>
-    <button class="btn btn-white mc-rand" data-a="randkit">SHUFFLE KIT</button>
   </div>`;
 }
 
@@ -262,7 +285,7 @@ const SUGGESTED = ['Pixel Park FC', 'Cube City', 'Voxel Rovers', 'Brick Lane FC'
 /** First-run club builder: name, short name, kit, formation. Generates the 16-man squad on CREATE. */
 export function clubCreate(app: AppContext, onDone: () => void, onBack: () => void): void {
   const st = careerState(app);
-  const scr = mountMeta(app, 'mc-create-screen');
+  const scr = mountMeta(app, 'mc-create-screen shell');
   const name0 = SUGGESTED[Math.floor(Math.random() * SUGGESTED.length)];
   const d = {
     name: name0,
@@ -283,22 +306,25 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
   };
   const draw = () =>
     scr.render(
+      // One screen (docs/UX.md): name and badge on the left, kit and shape on the right, CREATE CLUB pinned.
       `${topBar('BACK', 'NEW CLUB', 'FOUND YOUR TEAM', app.save.coins)}
-      <div class="mc-create">
-        <div class="mc-preview">${previewHtml(d.kit, sanitizeName(d.name), d.short)}</div>
-        <div class="mc-form">
+      <div class="mc-body ck-body">
+        <div class="pane ck-id">
+          <div class="mc-preview">${previewHtml(d.kit, sanitizeName(d.name), d.short)}</div>
           <div class="mc-fields">
             <label class="mc-field"><span>CLUB NAME</span><input data-in="name" maxlength="18" value="${esc(d.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
             <label class="mc-field mc-short"><span>SHORT</span><input data-in="short" maxlength="3" value="${esc(d.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
           </div>
-          <h3 class="mc-h">KIT</h3>
+        </div>
+        <div class="pane ck-ed">
           ${kitEditorHtml(d.kit, part.v)}
-          <h3 class="mc-h">FORMATION</h3>
-          ${formationButtons(d.formation, 'form')}
+          <div class="ck-forms"><span class="ck-lbl">FORMATION</span>${formationButtons(d.formation, 'form')}</div>
         </div>
       </div>
-      <p class="mc-hint">You start in the Sunday League with 16 players. Win matches, train your squad and climb all the way to the Elite League.</p>
-      <div class="btn-row"><button class="btn btn-go btn-lg" data-a="create" ${valid() ? '' : 'disabled'}>CREATE CLUB</button></div>`,
+      <div class="mc-actions">
+        <span class="grow mc-note">16 PLAYERS${sep()}SUNDAY LEAGUE</span>
+        <button class="btn btn-go" data-a="create" ${valid() ? '' : 'disabled'}>CREATE CLUB</button>
+      </div>`,
       {
         back: onBack,
         ...kitHandlers(d.kit, part, draw),
@@ -351,6 +377,12 @@ export interface ClubOpts {
   backLabel?: string;
 }
 
+/** The club screen's last tab and TRAIN pick, kept for the session (docs/UX.md section 8: memory). */
+let lastTab: Exclude<ClubTab, 'market'> = 'squad';
+let lastTrainId = '';
+/** The SQUAD hint ("TAP OR DRAG TO SWAP") shows until the first swap of the session. */
+let swappedOnce = false;
+
 export function openClub(app: AppContext, opts: ClubOpts = {}): void {
   const st = careerState(app);
   const back =
@@ -365,10 +397,10 @@ export function openClub(app: AppContext, opts: ClubOpts = {}): void {
   }
   const backLabel = opts.backLabel ?? 'MENU';
   if (opts.tab === 'market') {
-    openMarket(app, { backLabel, onBack: () => clubHub(app, st, st.club!, 'squad', back, backLabel) });
+    openMarket(app, { backLabel, onBack: () => clubHub(app, st, st.club!, lastTab, back, backLabel) });
     return;
   }
-  clubHub(app, st, st.club, opts.tab ?? 'squad', back, backLabel);
+  clubHub(app, st, st.club, opts.tab ?? lastTab, back, backLabel);
 }
 
 const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['train', 'TRAIN'], ['market', 'MARKET'], ['kit', 'KIT'], ['stadium', 'STADIUM']];
@@ -378,29 +410,37 @@ function lastName(name: string): string {
   return parts[parts.length - 1] ?? name;
 }
 
+/**
+ * MY CLUB: one screen per tab, no page scroll (docs/UX.md). The club's name and OVR ride in the header; the tabs are
+ * a slim row; each tab is a body of two panes:
+ * - SQUAD: the formation rail and the pitch on the left, the bench and reserves on the right (the only list that
+ *   scrolls). Swap by tap then tap, or drag and drop, with both ends on screen. AUTO PICK in the bench pane's header.
+ * - TRAIN: the squad list on the left, the picked player's stats and +2 buttons on the right. TRAIN BEST on the list.
+ * - KIT: the preview and the name on the left, the colours and patterns on the right.
+ * - STADIUM: the ground now and next on the left, the numbers and UPGRADE (with its cost) on the right.
+ */
 function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTab, back: () => void, backLabel: string): void {
-  const scr = mountMeta(app, 'mc-club-screen');
-  let tab = tab0;
+  const scr = mountMeta(app, 'mc-club-screen shell');
+  let tab: Exclude<ClubTab, 'market'> = tab0 === 'market' ? 'squad' : tab0;
+  lastTab = tab;
   let sel = -1;
-  let trainIdx = 0;
+  let trainIdx = Math.max(0, club.squad.findIndex((p) => p.id === lastTrainId));
+  /** Squad indices just swapped (they pop once). */
+  let fresh: number[] = [];
   const part = { v: 'shirt' as KitPart };
 
-  const playerRow = (p: PlayerDef, i: number, action: string, selected: boolean) => {
-    const slots = FORMATIONS[club.formation];
-    const starter = i < 11;
-    const warn = starter && slots[i].role !== p.role;
-    return `<button class="mc-pl ${selected ? 'sel' : ''} ${warn ? 'warn' : ''}" data-a="${action}" data-i="${i}">
-      <span class="mc-slot">${starter ? slots[i].label : 'SUB'}</span>
-      ${faceHtml(p, club.kit)}
-      <span class="mc-num">${p.number}</span>
-      ${roleBadge(p.role)}
-      <span class="mc-pname"><b>${esc(p.name)}</b><small>${keyStatsText(p)}</small></span>
-      ${ovrBadge(overall(p))}
-    </button>`;
+  // ---- SQUAD
+
+  const roleCls = (p: PlayerDef) => `r-${p.role}`;
+
+  /** A bench or reserve chip: number, surname, role (its colour) and OVR. The whole chip is the tap and drag target. */
+  const chip = (p: PlayerDef, i: number) => {
+    const cls = ['sq-chip', roleCls(p), sel === i ? 'sel' : '', sel >= 0 && sel !== i ? 'hot' : '', fresh.includes(i) ? 'fresh' : ''];
+    return `<button class="${cls.filter(Boolean).join(' ')}" data-a="pick" data-i="${i}" data-drag="${i}" aria-pressed="${sel === i}"
+      aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}"><i class="sq-num">${p.number}</i><span class="sq-nm">${esc(lastName(p.name))}</span><em class="sq-role">${p.role}</em><b class="sq-ovr">${overall(p)}</b></button>`;
   };
 
-  const pitchHtml = () => {
-    const issues = new Set(lineupIssues(club));
+  const pitchHtml = (issues: Set<number>) => {
     const light = lum(club.kit.shirt) > 0.62;
     // Same team-sheet pitch as the in-match tactics screen (menus.ts pitchLayout + .tx-p tokens).
     const slots = FORMATIONS[club.formation];
@@ -409,8 +449,12 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       ${slots
         .map((s, i) => {
           const p = club.squad[i];
+          if (!p) return '';
           const [left, top, room] = pos[i];
-          return `<button class="tx-p ${i === 0 ? 'gk' : ''} ${sel === i ? 'sel' : ''} ${issues.has(i) ? 'warn' : ''}" data-a="pick" data-i="${i}" style="left:${left}%;top:${top}%;--room:${room}%" aria-label="${s.label} ${esc(p.name)}, overall ${overall(p)}"><span class="tx-shirt"><b>${p.number}</b><i class="tx-ovr">${overall(p)}</i></span><em class="tx-nm">${esc(lastName(p.name))}</em></button>`;
+          const warn = issues.has(i);
+          const cls = ['tx-p', roleCls(p), i === 0 ? 'gk' : '', sel === i ? 'sel' : '', sel >= 0 && sel !== i ? 'hot' : '', warn ? 'warn' : '', fresh.includes(i) ? 'fresh' : ''];
+          return `<button class="${cls.filter(Boolean).join(' ')}" data-a="pick" data-i="${i}" data-drag="${i}" aria-pressed="${sel === i}" style="left:${left}%;top:${top}%;--room:${room}%"
+            aria-label="${s.label} ${esc(p.name)}, ${p.role}, overall ${overall(p)}${warn ? ', out of position' : ''}"><span class="tx-shirt"><b>${p.number}</b><i class="tx-ovr">${overall(p)}</i></span><em class="tx-nm">${esc(lastName(p.name))}</em>${warn ? '<i class="tx-warn" aria-hidden="true">!</i>' : ''}</button>`;
         })
         .join('')}
     </div>`;
@@ -418,25 +462,59 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
 
   const squadHtml = () => {
     const issues = lineupIssues(club);
+    const bench = club.squad.slice(11, 11 + BENCH_SIZE);
+    const reserves = club.squad.slice(11 + BENCH_SIZE);
+    // At most one hint, and only until it has been done once (docs/UX.md section 6).
     const hint =
       sel >= 0
-        ? `<p class="mc-hint sel">${esc(club.squad[sel].name)} selected: tap another player to swap.</p>`
+        ? `<b class="sq-hint sel">${esc(lastName(club.squad[sel].name).toUpperCase())}: PICK WHO TO SWAP</b>`
         : issues.length
-          ? `<p class="mc-hint warn">${issues.length} starter${issues.length > 1 ? 's' : ''} out of position. AUTO PICK fixes it.</p>`
-          : '<p class="mc-hint">Tap two players to swap them. The first 11 start.</p>';
-    return `<div class="mc-squadtop">
-        ${pitchHtml()}
-        <div class="mc-squadside">
-          <h3 class="mc-h">FORMATION</h3>
-          ${formationButtons(club.formation, 'form')}
-          ${hint}
-          <button class="btn btn-yellow" data-a="autopick">AUTO PICK</button>
+          ? `<b class="sq-hint warn">${issues.length} OUT OF POSITION</b>`
+          : swappedOnce ? '' : '<b class="sq-hint">TAP OR DRAG TO SWAP</b>';
+    return `<div class="mc-body sq-body">
+        <div class="pane sq-pitchpane">
+          <div class="sq-rail" role="group" aria-label="Formation">${FORMATION_IDS.map((f) => `<button class="${f === club.formation ? 'on' : ''}" data-a="form" data-v="${f}" aria-pressed="${f === club.formation}">${f}</button>`).join('')}</div>
+          ${pitchHtml(new Set(issues))}
         </div>
-      </div>
-      <h3 class="mc-h">STARTING XI</h3>
-      <div class="mc-list">${club.squad.slice(0, 11).map((p, i) => playerRow(p, i, 'pick', i === sel)).join('')}</div>
-      <h3 class="mc-h">BENCH${sep()}${club.squad.length - 11}</h3>
-      <div class="mc-list">${club.squad.slice(11).map((p, i) => playerRow(p, i + 11, 'pick', i + 11 === sel)).join('')}</div>`;
+        <div class="pane sq-benchpane">
+          <div class="pane-h"><span class="sq-ph">BENCH</span><span class="grow">${hint}</span><button class="btn btn-yellow sq-auto ${issues.length ? 'pulse' : ''}" data-a="autopick">AUTO PICK</button></div>
+          <div class="pane-scroll sq-list" data-scroll-key="sq-bench">
+            <div class="sq-grid">${bench.map((p, j) => chip(p, 11 + j)).join('')}</div>
+            ${reserves.length ? `<div class="sq-sub">RESERVES</div><div class="sq-grid">${reserves.map((p, j) => chip(p, 11 + BENCH_SIZE + j)).join('')}</div>` : ''}
+          </div>
+        </div>
+      </div>`;
+  };
+
+  const swap = (a: number, b: number) => {
+    if (!swapPlayers(club, a, b)) return;
+    sel = -1;
+    fresh = [a, b];
+    swappedOnce = true;
+    app.persist();
+    buzz('tap');
+    draw();
+    fresh = [];
+  };
+
+  // Drag and drop on the SQUAD tab (src/ui/dragSwap.ts): any player onto any other swaps them.
+  onMetaClose(
+    bindDragSwap(scr.panel, {
+      canDrop: (a, b) => tab === 'squad' && a !== b,
+      onDrop: (a, b) => swap(Number(a), Number(b)),
+    }),
+  );
+
+  // ---- TRAIN
+
+  /** Training raises a player's wage (OVR² / 40 a week); over the budget, coins drain after every match. */
+  const wageLine = (p: PlayerDef) => {
+    const s = marketSummary(st);
+    const over = s.drain > 0;
+    const text = over
+      ? `OVER BUDGET${sep()}${fmt(s.drain)} COINS A MATCH, ${WAGE_DIP} OVR DOWN`
+      : `WAGE ${fmt(wageOf(p))} A WEEK${sep()}SQUAD ${fmt(s.wages)} OF ${fmt(s.budget)}`;
+    return `<p class="tr-wage ${over ? 'warn' : ''}">${text}</p>`;
   };
 
   const trainHtml = () => {
@@ -444,51 +522,79 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     const p = club.squad[trainIdx];
     const cost = trainingCost(p);
     const poor = app.save.coins < cost;
-    const keys = new Set(KEY_STATS[p.role]);
-    const stats = STAT_KEYS.map((k) => {
-      const v = p.stats[k];
-      const maxed = v >= STAT_CAP;
-      return `<div class="mc-st ${keys.has(k) ? 'key' : ''}">
-        <span><i class="nm-full">${STAT_NAME[k]}</i><i class="nm-short">${STAT_SHORT[k]}</i></span>
-        <div class="mc-meter"><i style="width:${v}%"></i></div>
-        <b>${v}</b>
-        <button class="btn btn-go mc-trainbtn ${poor ? 'poor' : ''}" data-a="train" data-k="${k}" ${maxed ? 'disabled' : ''}>${maxed ? 'MAX' : `+${TRAIN_STEP}${sep()}${fmt(cost)}`}</button>
-      </div>`;
-    }).join('');
-    return `<div class="mc-tcard">
-        <div class="mc-tchead">
-          <button class="arrow" data-a="tprev" aria-label="Previous player">←</button>
-          <div class="mc-tcid">${faceHtml(p, club.kit, 'lg')}${roleBadge(p.role)}<b>${esc(p.name)}</b><span class="mc-num">#${p.number}</span>${ovrBadge(overall(p))}</div>
-          <button class="arrow" data-a="tnext" aria-label="Next player">→</button>
+    const keys = KEY_STATS[p.role];
+    // His role's key stats first (green), then the rest.
+    const order = [...keys, ...STAT_KEYS.filter((k) => !keys.includes(k))];
+    const best = trainBest(club.squad);
+    const slots = FORMATIONS[club.formation];
+    const where = trainIdx < 11 ? slots[trainIdx]?.label ?? '' : trainIdx < 11 + BENCH_SIZE ? 'BENCH' : 'RESERVE';
+    const row = (q: PlayerDef, i: number) => `<button class="tr-row ${roleCls(q)} ${i === trainIdx ? 'sel' : ''}" data-a="tpick" data-i="${i}" aria-pressed="${i === trainIdx}">
+        <em class="sq-role">${q.role}</em><i class="sq-num">${q.number}</i><span class="sq-nm">${esc(q.name)}</span>${best?.index === i ? '<i class="tr-tip">BEST</i>' : ''}<b class="sq-ovr">${overall(q)}</b></button>`;
+    const stats = order
+      .map((k) => {
+        const v = p.stats[k];
+        const maxed = v >= STAT_CAP;
+        return `<div class="tr-st ${keys.includes(k) ? 'key' : ''}">
+          <span title="${STAT_NAME[k]}">${STAT_SHORT[k]}</span>
+          <div class="mc-meter"><i style="width:${v}%"></i></div>
+          <b>${v}</b>
+          <button class="btn btn-go tr-btn ${poor ? 'poor' : ''}" data-a="train" data-k="${k}" ${maxed ? 'disabled' : ''} aria-label="${maxed ? `${STAT_NAME[k]} maxed` : `Train ${STAT_NAME[k]}, ${fmt(cost)} coins`}">${maxed ? 'MAX' : `+${TRAIN_STEP}`}</button>
+        </div>`;
+      })
+      .join('');
+    return `<div class="mc-body split-l tr-body">
+        <div class="pane">
+          <div class="pane-h"><span class="sq-ph">SQUAD</span><span class="grow"></span><button class="btn btn-yellow tr-best" data-a="trainbest" ${best ? '' : 'disabled'}>TRAIN BEST</button></div>
+          <div class="pane-scroll tr-list" data-scroll-key="tr-list">${club.squad.map(row).join('')}</div>
         </div>
-        <div class="mc-stats">${stats}</div>
-        <p class="mc-hint">Each session adds +${TRAIN_STEP} and costs 40 + 3 × OVR coins. Green stats count most for a ${p.role}.</p>
-        ${wageLine(p)}
-      </div>
-      <h3 class="mc-h">PICK A PLAYER</h3>
-      <div class="mc-list">${club.squad.map((q, i) => playerRow(q, i, 'tpick', i === trainIdx)).join('')}</div>`;
+        <div class="pane tr-detail">
+          <div class="tr-id">
+            ${faceHtml(p, club.kit, 'md')}
+            <div class="tr-who"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<i>#${p.number}</i><i>${where}</i></span></div>
+            <div class="tr-cost ${poor ? 'poor' : ''}"><small>+${TRAIN_STEP} COSTS</small><span class="coins mc-coins"><i></i><span>${fmt(cost)}</span></span></div>
+            ${ovrBadge(overall(p))}
+          </div>
+          <div class="tr-stats">${stats}</div>
+          ${wageLine(p)}
+        </div>
+      </div>`;
   };
 
-  /** Training raises a player's wage (OVR² / 40 a week); over the budget, coins drain after every match. */
-  const wageLine = (p: PlayerDef) => {
-    const s = marketSummary(st);
-    const over = s.drain > 0;
-    return `<p class="mc-hint ${over ? 'warn' : ''}">${esc(p.name)} earns ${fmt(wageOf(p))}/wk${sep()}squad wages ${fmt(s.wages)} of ${fmt(s.budget)}${
-      over ? `${sep()}OVER BUDGET: ${fmt(s.drain)} coins go after every match and everyone plays ${WAGE_DIP} point down` : ''
-    }</p>`;
+  const trainStat = (k: keyof PlayerStats) => {
+    const p = club.squad[trainIdx];
+    const was = p.stats[k];
+    const ovr = overall(p);
+    const r = trainPlayer(club, app.save, p.id, k);
+    if (!r.ok) {
+      scr.toast(failText(r.reason), 'bad');
+      return;
+    }
+    lastTrainId = p.id;
+    app.persist();
+    sfx.coin();
+    buzz('tap');
+    draw();
+    const now = overall(p);
+    scr.toast(`${lastName(p.name).toUpperCase()} ${STAT_SHORT[k]} ${was} → ${p.stats[k]}${now !== ovr ? ` / OVR ${ovr} → ${now}` : ''}`, 'good');
   };
 
-  const kitHtml = () => `<div class="mc-create">
-      <div class="mc-preview">${previewHtml(club.kit, club.name, club.short)}</div>
-      <div class="mc-form">
+  // ---- KIT
+
+  const kitHtml = () => `<div class="mc-body ck-body">
+      <div class="pane ck-id">
+        <div class="mc-preview">${previewHtml(club.kit, club.name, club.short)}</div>
         <div class="mc-fields">
           <label class="mc-field"><span>CLUB NAME</span><input data-in="cname" maxlength="18" value="${esc(club.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
           <label class="mc-field mc-short"><span>SHORT</span><input data-in="cshort" maxlength="3" value="${esc(club.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
         </div>
-        <h3 class="mc-h">KIT${sep()}CHANGES SAVE AUTOMATICALLY</h3>
+      </div>
+      <div class="pane ck-ed">
         ${kitEditorHtml(club.kit, part.v)}
+        <p class="ck-note">CHANGES SAVE AUTOMATICALLY</p>
       </div>
     </div>`;
+
+  // ---- STADIUM
 
   /** Upgrade-screen 3D grounds (now / next), alive only while the STADIUM tab is showing. */
   let pv: StadiumPreview | null = null;
@@ -516,19 +622,22 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     const cap = (l: number) => fmt(STADIUM_LEVELS[l]?.capacity ?? 0);
     const next = (a: string, b: string) => (maxed ? `<b>${a}</b>` : `<b>${a} <em>→ ${b}</em></b>`);
     const gl = has3d();
-    return `<div class="mc-stadium ${maxed ? 'maxed' : ''}">
-        ${stadiumView(lvl, 'NOW', maxed, gl)}
-        ${maxed ? '' : stadiumView(lvl + 1, 'NEXT', false, gl)}
-        <div class="mc-stadinfo">
+    // The grounds now and next on the left; the numbers and UPGRADE (its cost on the button) pinned on the right.
+    return `<div class="mc-body split-r sd-body ${maxed ? 'maxed' : ''}">
+        <div class="pane sd-views">
+          ${stadiumView(lvl, 'NOW', maxed, gl)}
+          ${maxed ? '' : stadiumView(lvl + 1, 'NEXT', false, gl)}
+        </div>
+        <div class="pane sd-info">
           <b class="mc-stadname">${STADIUM_NAMES[lvl]}</b>
-          <span class="mc-stadlvl">LEVEL ${lvl} / ${STADIUM_MAX}</span>
+          <span class="mc-stadlvl">LEVEL ${lvl} OF ${STADIUM_MAX}</span>
           <div class="mc-kv"><span>CAPACITY</span>${next(cap(lvl), cap(lvl + 1))}</div>
           <div class="mc-kv"><span>CROWD</span>${next(crowd(lvl), crowd(lvl + 1))}</div>
           <div class="mc-kv"><span>MATCH COINS</span>${next(`+${lvl * 10}%`, `+${(lvl + 1) * 10}%`)}</div>
+          <span class="grow"></span>
+          <button class="btn btn-go sd-up ${app.save.coins < cost ? 'poor' : ''}" data-a="upgrade" ${maxed ? 'disabled' : ''}>${maxed ? 'FULLY UPGRADED' : `UPGRADE <span class="sd-cost"><i></i>${fmt(cost)}</span>`}</button>
         </div>
-      </div>
-      <p class="mc-hint">A bigger ground packs in more fans and pays more coins for every home match.</p>
-      <div class="btn-row"><button class="btn btn-go btn-lg ${app.save.coins < cost ? 'poor' : ''}" data-a="upgrade" ${maxed ? 'disabled' : ''}>${maxed ? 'FULLY UPGRADED' : `UPGRADE${sep()}${fmt(cost)}`}</button></div>`;
+      </div>`;
   };
 
   /** After a render: point the previews at the fresh canvases (or free them off the STADIUM tab). */
@@ -544,16 +653,16 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     if (lvl >= STADIUM_MAX) pv.clear(1);
   };
 
+  // ---- the screen
+
+  /** The header's subtitle: the club and its OVR (what the old banner said, in one line). */
+  const sub = () => `<i class="mc-clubname">${esc(club.name.toUpperCase())}</i><b class="mc-ovrchip">OVR ${clubRating(club)}</b>`;
+
   const draw = () => {
     const body = tab === 'squad' ? squadHtml() : tab === 'train' ? trainHtml() : tab === 'kit' ? kitHtml() : stadiumHtml();
     scr.render(
-      `${topBar(backLabel, 'MY CLUB', esc(club.name.toUpperCase()), app.save.coins)}
-      <div class="mc-clubbar">
-        ${shirtArt(club.kit, 4)}
-        <div class="mc-clubtxt"><b>${esc(club.name)}</b><span>${esc(club.short)}${sep()}${club.formation}${sep()}${club.squad.length} PLAYERS${sep()}${STADIUM_NAMES[st.stadium]}</span></div>
-        <div class="mc-ovrbox"><small>OVR</small><b>${clubRating(club)}</b></div>
-      </div>
-      <div class="seg mc-tabs">${TABS.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}</button>`).join('')}</div>
+      `${topBar(backLabel, 'MY CLUB', sub(), app.save.coins)}
+      <div class="seg mc-tabs" role="tablist">${TABS.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}" role="tab" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
       ${body}`,
       {
         back,
@@ -564,18 +673,18 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
             return;
           }
           tab = next;
+          lastTab = next;
           sel = -1;
-          scr.panel.scrollTop = 0;
           draw();
+          if (tab === 'train') revealInPane(scr.panel.querySelector('.tr-row.sel'), 'center');
         },
         pick: (el) => {
           const i = Number(el.dataset.i);
           if (sel < 0) sel = i;
           else if (sel === i) sel = -1;
           else {
-            swapPlayers(club, sel, i);
-            sel = -1;
-            app.persist();
+            swap(sel, i);
+            return;
           }
           draw();
         },
@@ -586,40 +695,30 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           draw();
         },
         autopick: () => {
-          autoPick(club);
+          club.squad = autoLineup(club.squad, club.formation);
           sel = -1;
+          fresh = club.squad.slice(0, 11).map((_, i) => i);
           app.persist();
+          buzz('tap');
           draw();
+          fresh = [];
           scr.toast('BEST XI PICKED', 'good');
         },
         tpick: (el) => {
           trainIdx = Number(el.dataset.i);
-          draw();
-          scr.panel.querySelector('.mc-tcard')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        },
-        tprev: () => {
-          trainIdx = (trainIdx - 1 + club.squad.length) % club.squad.length;
+          lastTrainId = club.squad[trainIdx]?.id ?? '';
           draw();
         },
-        tnext: () => {
-          trainIdx = (trainIdx + 1) % club.squad.length;
-          draw();
-        },
-        train: (el) => {
-          const p = club.squad[trainIdx];
-          const k = el.dataset.k as keyof PlayerStats;
-          const was = p.stats[k];
-          const ovr = overall(p);
-          const r = trainPlayer(club, app.save, p.id, k);
-          if (!r.ok) {
-            scr.toast(failText(r.reason), 'bad');
-            return;
-          }
-          app.persist();
-          sfx.coin();
-          draw();
-          const now = overall(p);
-          scr.toast(`${STAT_SHORT[k]} ${was} → ${p.stats[k]}${now !== ovr ? ` / OVR ${ovr} → ${now}` : ''}`, 'good');
+        train: (el) => trainStat(el.dataset.k as keyof PlayerStats),
+        trainbest: () => {
+          const pick = trainBest(club.squad);
+          if (!pick) return;
+          trainIdx = pick.index;
+          lastTrainId = club.squad[trainIdx]?.id ?? '';
+          // Short of coins: the toast says so, and the pick still shows who it would be.
+          if (app.save.coins < pick.cost) draw();
+          trainStat(pick.stat);
+          revealInPane(scr.panel.querySelector('.tr-row.sel'));
         },
         ...kitHandlers(club.kit, part, () => {
           app.persist();
@@ -648,8 +747,8 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           app.persist();
           const kp = scr.panel.querySelector('.mc-preview');
           if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short);
-          const bar = scr.panel.querySelector('.mc-clubtxt b');
-          if (bar) bar.textContent = club.name;
+          const nm = scr.panel.querySelector('.mc-clubname');
+          if (nm) nm.textContent = club.name.toUpperCase();
         },
         cshort: (el) => {
           const v = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
@@ -668,4 +767,5 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     hydrateFaces(scr.panel);
   };
   draw();
+  if (tab === 'train') revealInPane(scr.panel.querySelector('.tr-row.sel'), 'center');
 }

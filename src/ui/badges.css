@@ -1,0 +1,261 @@
+/* The SEASON / BADGES / TITLES screen (src/ui/badges.ts): an app shell screen (shell.css). The tabs and CLAIM ALL
+   share one row; SEASON is a purple strip over a sideways track; BADGES and TITLES are grids scrolling in their pane. */
+
+.bd-screen .panel.mc { width: min(1040px, 100%); }
+
+/* ---- the tab row: three tabs, and CLAIM ALL pinned on the right whenever something is waiting */
+
+.bd-tabrow { display: flex; align-items: center; gap: 10px; }
+.bd-tabrow .bd-tabs { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.bd-tabs button { position: relative; }
+.mc-tabs.bd-tabs button[data-v='season']:not(.on) { color: #fff; background: #5b2bc4; box-shadow: 0 3px 0 #3a1f78; }
+.bd-dot {
+  position: absolute;
+  top: -8px;
+  right: -4px;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  font: 400 12px var(--round);
+  font-style: normal;
+  color: #fff;
+  background: var(--red);
+  border: 2px solid var(--ink);
+}
+.panel .btn.bd-all { flex: none; display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 9px 14px 7px; font-size: 16px; }
+.btn.bd-all b { padding: 3px 6px 2px; font-size: 13px; color: var(--yellow); background: var(--ink); }
+
+/* ---- shared bits */
+
+.bd-bar { position: relative; height: 20px; background: var(--cream-2); border: 2px solid var(--ink); overflow: hidden; }
+.bd-bar i { position: absolute; inset: 0 auto 0 0; background: var(--c); box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.18); }
+.bd-bar span { position: relative; display: block; text-align: center; font: 400 12px / 16px var(--round); letter-spacing: 1px; color: var(--ink); text-shadow: 0 0 3px #fff, 0 0 2px #fff, 0 1px 0 #fff; white-space: nowrap; }
+.bd-bar.big { height: 26px; }
+.bd-bar.big span { font-size: 14px; line-height: 22px; }
+.bd-coin { display: inline-block; flex: none; width: 11px; height: 11px; background: var(--yellow); box-shadow: inset -2px -2px 0 var(--yellow-d), inset 2px 2px 0 #fff3b0; border: 1px solid var(--ink); }
+
+/* ---- SEASON: the strip */
+
+.bd-season {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 10px;
+  color: #fff;
+  background: linear-gradient(120deg, #3a1f78, #5b2bc4 55%, #8a5cf6);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 rgba(38, 38, 46, 0.35), inset 0 -4px 0 rgba(0, 0, 0, 0.18);
+}
+/* The month's own colour: a chunky swatch block before its name. */
+.bd-swatch { flex: none; width: 18px; height: 18px; background: var(--c); border: 3px solid var(--ink); box-shadow: inset -3px -3px 0 rgba(0, 0, 0, 0.2); }
+.bd-theme { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 22px / 1 var(--round); letter-spacing: 1px; color: var(--yellow); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
+.bd-stier { flex: none; display: flex; align-items: baseline; gap: 3px; padding: 3px 9px 2px; color: var(--ink); background: var(--yellow); border: 2px solid var(--ink); box-shadow: 0 3px 0 var(--yellow-d); }
+.bd-stier small { font: 400 12px var(--round); letter-spacing: 1px; }
+.bd-stier b { font: 400 24px / 1 var(--round); }
+.bd-season .bd-bar { flex: 1 1 auto; min-width: 110px; --c: var(--yellow); background: rgba(255, 255, 255, 0.9); }
+.bd-days, .bd-passon { flex: none; font: 400 13px var(--round); letter-spacing: 1px; padding: 4px 8px 3px; border: 2px solid var(--ink); white-space: nowrap; }
+.bd-days { color: var(--ink); background: #fff; }
+.bd-passon { color: var(--ink); background: var(--yellow); }
+
+/* ---- SEASON: the body (the pass card, the track) */
+
+.mc-body.bd-sbody { grid-template-columns: minmax(0, 1fr); }
+.mc-body.bd-sbody.with-offer { grid-template-columns: 172px minmax(0, 1fr); }
+
+.bd-passoffer {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 8px 10px;
+  color: #fff;
+  text-align: center;
+  background: linear-gradient(160deg, #5b2bc4, #8a5cf6 60%, #b07cff);
+  border: 3px solid #3a1f78;
+  box-shadow: 0 5px 0 #3a1f78;
+  overflow: hidden;
+}
+.bd-po-ic { display: grid; place-items: center; width: 42px; height: 42px; flex: none; background: #3a1f78; border: 3px solid var(--ink); }
+.bd-po-name { font: 400 20px / 1 var(--round); letter-spacing: 1px; color: var(--yellow); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3); }
+.bd-po-facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; width: 100%; }
+.bd-po-facts li { display: flex; align-items: baseline; justify-content: center; gap: 6px; padding: 3px 4px 2px; font: 400 12px var(--round); letter-spacing: 0.8px; background: rgba(38, 20, 90, 0.35); }
+.bd-po-facts b { font: 400 17px / 1 var(--round); color: var(--yellow); }
+.bd-po-note { font: 400 11px / 1.2 var(--round); letter-spacing: 0.5px; color: #f1eaff; }
+.panel .btn.bd-po-buy { width: 100%; min-height: 50px; display: grid; justify-items: center; gap: 3px; padding: 8px 6px 7px; font-size: 18px; }
+.btn.bd-po-buy small { font-size: 11px; letter-spacing: 1px; }
+
+.bd-trackpane .pane-h { min-height: 32px; gap: 8px; }
+.bd-legend { display: inline-flex; align-items: center; gap: 6px; font: 400 13px var(--round); letter-spacing: 1px; color: var(--ink-2); white-space: nowrap; }
+.bd-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 3px 4px 2px 8px;
+  font: 400 12px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink);
+  background: #fff5c4;
+  border: 3px solid var(--yellow-d);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bd-chip b { display: inline-flex; align-items: center; gap: 4px; font: 400 14px var(--round); }
+.bd-chip em { font-style: normal; color: #fff; background: var(--go-d); padding: 4px 6px 3px; }
+
+.bd-rail { padding: 0 0 10px; }
+.bd-railgrid {
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: 24px minmax(56px, 120px);
+  grid-auto-columns: 70px;
+  gap: 6px;
+  height: 100%;
+  width: max-content;
+}
+.bd-railgrid.with-pass { grid-template-rows: 24px minmax(52px, 110px) minmax(52px, 110px); }
+/* The labels stay put as the tiers slide under them. */
+.bd-lab {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 3px;
+  font: 400 12px var(--round);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+  background: var(--cream);
+  box-shadow: 6px 0 0 var(--cream);
+}
+.bd-lab.free { color: var(--ink); background: var(--cream-2); border: 2px solid var(--ink); }
+.bd-lab.pass { color: var(--yellow); background: #5b2bc4; border: 2px solid var(--ink); }
+.bd-tn { display: grid; place-items: center; font: 400 13px var(--round); color: var(--ink-2); background: var(--cream); border-bottom: 3px solid var(--cream-2); }
+.bd-tn.on { color: #fff; background: #8a5cf6; border-bottom-color: #5b2bc4; }
+.bd-tn.next { color: var(--ink); background: var(--yellow); border-bottom-color: var(--yellow-d); }
+.bd-tile { position: relative; display: grid; justify-items: center; align-content: center; gap: 3px; min-width: 0; padding: 5px 2px 4px; font: inherit; color: var(--ink); background: #fff; border: 3px solid var(--ink); box-shadow: 0 3px 0 var(--cream-2); cursor: pointer; }
+.bd-tile.lock { background: var(--cream); color: var(--ink-2); }
+.bd-tile.big { border-color: var(--yellow-d); }
+.bd-tile.ready { background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); animation: bd-bob 1.1s ease-in-out infinite; }
+.bd-tile.got { background: #e6f6e9; border-color: var(--go-d); box-shadow: 0 3px 0 rgba(35, 138, 59, 0.3); }
+.bd-tile.ptile { background: #f1eaff; border-color: #3a1f78; }
+.bd-tile.ptile.big { background: #e2d3ff; }
+.bd-tile.ptile.ready { background: var(--yellow); }
+.bd-tile.ptile.got { background: #e6f6e9; border-color: var(--go-d); }
+.bd-railgrid:not(.pass-on) .bd-tile.ptile { background: #ddd2f5; }
+.bd-tile em { font: 400 10px var(--round); font-style: normal; letter-spacing: 0.5px; color: #fff; background: var(--ink); padding: 2px 4px 1px; }
+.bd-tile:active { transform: translateY(3px); box-shadow: 0 0 0 var(--cream-2); }
+.bd-tile:focus-visible, .bd-title:focus-visible, .bd-chip:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.bd-star { position: absolute; top: 3px; right: 3px; line-height: 0; }
+.bd-coins { display: inline-flex; align-items: center; gap: 3px; font: 400 14px var(--round); line-height: 1; }
+.bd-item { font-size: 11px; letter-spacing: 0.5px; color: #3a1f78; }
+@keyframes bd-bob { 50% { transform: translateY(-2px); } }
+
+/* ---- BADGES: cards in a grid, scrolling in their pane */
+
+.bd-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); grid-auto-rows: max-content; align-content: start; gap: 10px; padding: 2px 4px 10px 2px; }
+.bd-track { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; padding: 8px 10px; background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2); }
+.bd-track.ready { box-shadow: 0 4px 0 var(--yellow-d); background: #fffbe8; }
+.bd-ic { display: grid; place-items: center; width: 44px; height: 44px; background: var(--c); border: 3px solid var(--ink); box-shadow: inset -4px -4px 0 rgba(0, 0, 0, 0.2), inset 4px 4px 0 rgba(255, 255, 255, 0.22); }
+.bd-ic svg { width: 26px; height: 26px; }
+.bd-body { display: grid; gap: 5px; min-width: 0; }
+.bd-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.bd-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 400 16px var(--round); letter-spacing: 1px; white-space: nowrap; }
+.bd-pips { flex: none; display: inline-flex; gap: 2px; }
+.bd-pips i { display: grid; place-items: center; min-width: 18px; height: 17px; padding: 0 1px; font: 400 9px var(--round); font-style: normal; color: #b9b5aa; background: var(--cream); border: 2px solid var(--cream-2); }
+.bd-pips i.on { color: #fff; background: var(--c); border-color: var(--ink); }
+.bd-foot { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 30px; }
+.bd-next { flex: 1 1 auto; min-width: 0; margin: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; font: 400 12px var(--round); letter-spacing: 0.5px; color: var(--ink-2); white-space: nowrap; }
+.bd-next span { font-size: 10px; letter-spacing: 1px; color: #fff; background: var(--ink-2); padding: 2px 5px 1px; }
+.bd-next em { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-style: normal; color: var(--ink); background: var(--cream); border: 2px solid var(--cream-2); padding: 1px 5px 0; }
+.bd-next.done span { background: var(--go-d); }
+/* (A tier waiting to be claimed: its CLAIM button takes the room, the next prize shows only its title.) */
+.bd-track.ready .bd-next em:first-of-type { display: none; }
+.panel .btn.bd-claim { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 8px 10px 6px; font-size: 13px; }
+.bd-gc { min-height: 34px; padding: 7px 10px 5px; font-size: 12px; }
+
+/* ---- TITLES: a grid, the one worn first */
+
+.bd-titles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); grid-auto-rows: max-content; align-content: start; gap: 8px; padding: 2px 4px 10px 2px; }
+.bd-title { display: grid; gap: 2px; min-width: 0; min-height: 52px; text-align: left; padding: 7px 10px; font: inherit; color: var(--ink); background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2); cursor: pointer; }
+.bd-title b { font: 400 16px var(--round); letter-spacing: 0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-title small { font: 400 11px var(--round); letter-spacing: 1px; color: var(--ink-2); }
+.bd-title.on { background: var(--blue); color: #fff; border-color: var(--blue-d); box-shadow: 0 4px 0 var(--blue-d); }
+.bd-title.on small { color: #dbe8ff; }
+.bd-title.soon { color: var(--ink-2); background: var(--cream); border-color: var(--cream-2); box-shadow: none; }
+.bd-mini { display: block; height: 6px; margin-top: 2px; background: var(--cream-2); }
+.bd-mini i { display: block; height: 100%; background: var(--c); }
+
+/* ---- tall screens (iPad, desktop): a bigger track, centred, and a bigger pass card */
+
+@media (min-height: 561px) {
+  .bd-railgrid { grid-auto-columns: 96px; gap: 8px; align-content: center; grid-template-rows: 30px minmax(70px, 160px); }
+  .bd-railgrid.with-pass { grid-template-rows: 30px minmax(70px, 160px) minmax(70px, 160px); }
+  .bd-tn { font-size: 16px; }
+  .bd-lab { font-size: 14px; }
+  .bd-coins { gap: 5px; font-size: 19px; }
+  .bd-coin { width: 14px; height: 14px; }
+  .bd-item { font-size: 13px; }
+  .bd-tile em { font-size: 12px; padding: 3px 6px 2px; }
+  .mc-body.bd-sbody.with-offer { grid-template-columns: 220px minmax(0, 1fr); }
+  .bd-passoffer { gap: 10px; padding: 16px 12px; }
+  .bd-po-ic { width: 64px; height: 64px; }
+  .bd-po-ic .picon { width: 45px; height: 45px; }
+  .bd-po-name { font-size: 28px; }
+  .bd-po-facts li { font-size: 14px; padding: 5px 6px 4px; }
+  .bd-po-facts b { font-size: 22px; }
+  .bd-po-note { font-size: 13px; }
+  .panel .btn.bd-po-buy { min-height: 64px; font-size: 22px; }
+}
+
+/* ---- short screens (landscape phones, portal frames) */
+
+@media (max-height: 560px) {
+  .panel .btn.bd-all { min-height: 38px; padding: 7px 12px 5px; font-size: 14px; }
+  .bd-season { gap: 8px; padding: 4px 8px; }
+  .bd-swatch { width: 14px; height: 14px; }
+  .bd-theme { font-size: 17px; }
+  .bd-stier { padding: 2px 7px 1px; }
+  .bd-stier b { font-size: 19px; }
+  .bd-bar.big { height: 22px; }
+  .bd-bar.big span { font-size: 12px; line-height: 18px; }
+  .bd-days, .bd-passon { font-size: 12px; padding: 3px 6px 2px; }
+  .mc-body.bd-sbody.with-offer { grid-template-columns: 150px minmax(0, 1fr); }
+  .bd-passoffer { gap: 4px; padding: 6px 6px 8px; }
+  .bd-po-ic { width: 34px; height: 34px; }
+  .bd-po-name { font-size: 17px; }
+  .bd-po-facts b { font-size: 15px; }
+  .panel .btn.bd-po-buy { min-height: 46px; padding: 7px 4px 6px; font-size: 16px; }
+  .bd-trackpane .pane-h { min-height: 30px; }
+  .bd-railgrid { grid-auto-columns: 64px; gap: 5px; grid-template-rows: 22px minmax(52px, 1fr); }
+  .bd-railgrid.with-pass { grid-template-rows: 22px minmax(48px, 1fr) minmax(48px, 1fr); }
+  .bd-track { grid-template-columns: 38px minmax(0, 1fr); gap: 8px; padding: 6px 8px; }
+  .bd-ic { width: 38px; height: 38px; }
+  .bd-ic svg { width: 22px; height: 22px; }
+  .bd-body { gap: 4px; }
+  .bd-head b { font-size: 15px; }
+  .bd-foot { min-height: 28px; }
+  .panel .btn.bd-claim { min-height: 34px; }
+  .bd-title { min-height: 46px; padding: 5px 8px; }
+  .bd-title b { font-size: 15px; }
+}
+
+/* Narrow: the theme name gives way to the bar, the pass card narrows. */
+@media (max-width: 720px) {
+  .bd-theme { max-width: 150px; font-size: 15px; }
+  .mc-body.bd-sbody.with-offer { grid-template-columns: 136px minmax(0, 1fr); }
+  .bd-po-note { display: none; }
+  .bd-list { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bd-tile.ready { animation: none; }
+}

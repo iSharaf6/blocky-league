@@ -2,6 +2,7 @@ import '@fontsource/lilita-one/400.css';
 import '@fontsource/silkscreen/400.css';
 import '@fontsource/silkscreen/700.css';
 import './style.css';
+import './ui/shell.css';
 import { Vector3 } from 'three';
 import type { AppContext, MatchKind, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
@@ -920,26 +921,30 @@ async function startMatch(req: MatchRequest): Promise<void> {
     persist();
   };
   ads.gameplayStart();
-  const tacticsMenu = (back: () => void) =>
+  // TACTICS & SUBS: BACK returns to the pause (or half-time) screen; RESUME (SECOND HALF) goes straight back to play.
+  const tacticsMenu = (back: () => void, resume?: () => void, resumeLabel?: string) =>
     menus.tactics(s.match, humanSide, kits, {
       setMentality: (v) => s.setMentality(humanSide, v),
       substitute: (slot, benchIdx) => s.substitute(humanSide, slot, benchIdx),
       // Match.setFormation is new in the sim; the optional call keeps older builds working (picker is a no-op).
       setFormation: (id) => (s.match as Match & { setFormation?: (side: Side, f: FormationId) => unknown }).setFormation?.(humanSide, id),
       back,
+      resume,
+      resumeLabel,
     });
   s.onPause = () => {
     ads.gameplayStop();
+    const resumeMatch = (): void => {
+      menus.close();
+      s.resume();
+      ads.gameplayStart();
+    };
     const pauseMenu = (): void =>
       menus.pause({
         quitNote: req.quitNote ?? "This match won't count and you won't earn any coins.",
         quitLabel: basics ? 'BACK TO MENU' : undefined,
-        tactics: basics ? undefined : () => tacticsMenu(pauseMenu),
-        resume: () => {
-          menus.close();
-          s.resume();
-          ads.gameplayStart();
-        },
+        tactics: basics ? undefined : () => tacticsMenu(pauseMenu, resumeMatch),
+        resume: resumeMatch,
         howto: () => menus.howTo(pauseMenu, input.lastDevice),
         // Mid-match, the options that matter are the controls: open on that tab.
         settings: () => menus.settings(save, applySettings, pauseMenu, 'controls'),
@@ -963,12 +968,12 @@ async function startMatch(req: MatchRequest): Promise<void> {
   };
   s.onHalftime = () => {
     ads.gameplayStop();
-    const ht = (): void =>
-      menus.halftime(s.match, kits, () => {
-        menus.close();
-        s.continueSecondHalf();
-        ads.gameplayStart();
-      }, () => tacticsMenu(ht));
+    const secondHalf = (): void => {
+      menus.close();
+      s.continueSecondHalf();
+      ads.gameplayStart();
+    };
+    const ht = (): void => menus.halftime(s.match, kits, secondHalf, () => tacticsMenu(ht, secondHalf, 'SECOND HALF'));
     // The app's half-time ad (platform/ads.ts APP_AD_GAP_MS), then the half-time screen. Never in the basics, a
     // moment, the tutorial or a new player's first match.
     if (!basics && !req.scenario && !req.firstMatch && save.seenTutorial && played() > 0) void ads.midgame('halftime').then(ht, ht);

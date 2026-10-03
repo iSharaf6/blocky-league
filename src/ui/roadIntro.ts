@@ -1,13 +1,14 @@
 /**
- * ROAD TO GLORY's "how it works" panel: shown once, the first time the mode is opened (save.settings.roadIntroSeen),
- * and again from the hub's HOW IT WORKS button. It says the whole idea in three lines (start at the bottom, build the
- * club up, climb to the top) over the real ladder of divisions from meta/career.ts, so the copy can't drift from the
- * rules. Chunky house style on the shared meta-screen kit (ui/club.ts).
+ * ROAD TO GLORY's "how it works" screen: shown once, the first time the mode is opened (save.settings.roadIntroSeen),
+ * and again from the hub's ? button. One screen on the app shell, its button pinned in view: the whole idea in three
+ * short lines (start at the bottom, build the club up, climb to the top) beside the real ladder of divisions from
+ * meta/career.ts, so the copy can't drift from the rules.
  */
 import type { AppContext } from '../app';
 import { BOTTOM_DIVISION, DIVISION_NAMES, TOP_DIVISION } from '../meta/career';
 import { mountMeta, topBar } from './club';
 import { pixelIcon } from './pixelIcons';
+import './career.css';
 
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 
@@ -35,20 +36,20 @@ export interface RoadIntroOptions {
 }
 
 export function roadIntro(app: AppContext, o: RoadIntroOptions): void {
-  const scr = mountMeta(app, 'mc-road-screen');
-  const n = WORDS[BOTTOM_DIVISION - TOP_DIVISION + 1];
+  const scr = mountMeta(app, 'mc-road-screen shell');
+  // Three short lines: a label and a few words each (docs/UX.md: less to read).
   const points: [string, string, string][] = [
-    ['shirt', 'START AT THE BOTTOM', `Found your club with a scrappy squad in the ${title(DIVISION_NAMES[BOTTOM_DIVISION])}.`],
-    ['gear', 'BUILD IT UP', 'Win matches for coins. Sign players, train your squad and upgrade your ground.'],
-    ['trophy', 'CLIMB TO THE TOP', `Finish in the top two to go up, and chase the Blocky Cup every season. ${n[0].toUpperCase()}${n.slice(1)} divisions stand between you and the ${title(DIVISION_NAMES[TOP_DIVISION])}.`],
+    ['shirt', 'START AT THE BOTTOM', `${title(DIVISION_NAMES[BOTTOM_DIVISION])}, a scrappy squad.`],
+    ['gear', 'BUILD IT UP', 'Win coins. Sign, train, upgrade.'],
+    ['trophy', 'CLIMB TO THE TOP', 'Top two go up. A cup every season.'],
   ];
   scr.render(
-    `${topBar(o.first ? 'MENU' : 'BACK', 'ROAD TO GLORY', 'BUILD YOUR CLUB FROM THE BOTTOM UP', app.save.coins)}
-    <div class="rg">
+    `${topBar(o.first ? 'MENU' : 'BACK', 'ROAD TO GLORY', `${BOTTOM_DIVISION - TOP_DIVISION + 1} DIVISIONS TO THE TOP`, app.save.coins)}
+    <div class="mc-body rg">
       ${ladderHtml()}
       <ul class="rg-points">${points.map(([ic, h, t]) => `<li><i class="rg-ic" aria-hidden="true">${pixelIcon(ic, 'currentColor', 3)}</i><span><b>${h}</b>${t}</span></li>`).join('')}</ul>
     </div>
-    <div class="btn-row"><button class="btn btn-go btn-lg" data-a="go">${o.first ? "LET'S GO" : 'GOT IT'}</button></div>`,
+    <div class="mc-actions"><button class="btn btn-go btn-lg" data-a="go">${o.first ? "LET'S GO" : 'GOT IT'}</button></div>`,
     { back: o.onBack, go: o.onGo },
   );
 }

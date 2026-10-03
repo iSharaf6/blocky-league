@@ -1,0 +1,504 @@
+/*
+ * ROAD TO GLORY (ui/career.ts, ui/cup.ts, ui/roadIntro.ts) on the app shell (shell.css, docs/UX.md). The hub keeps the
+ * next match and its PLAY on screen beside a pane of TABLE / FIXTURES / CUP; the season summary, the trophy lift and
+ * the intro each fit one screen with their button in view. Restructured, not restyled: the blocks are style.css's.
+ */
+
+/* ----- two panes ----- */
+
+.mc-career-screen .cr-body,
+.mc-summary-screen .cr-body {
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  padding-bottom: 4px;
+}
+
+.cr-main {
+  gap: 8px;
+  container-type: inline-size;
+}
+
+.cr-side {
+  container-type: inline-size;
+}
+
+/* ----- hub: the next match, always on screen ----- */
+
+.cr-main .mc-next.cr-next {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: space-evenly;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.cr-next .mc-nexttop {
+  font-size: 13px;
+}
+
+.cr-next .mc-nexttop > span:not(.mc-chip) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cr-next .mc-chip {
+  flex: none;
+  font-size: 12px;
+  padding: 3px 6px 2px;
+}
+
+.cr-next .mc-vs { gap: 6px; }
+.cr-next .mc-side { gap: 2px; }
+.cr-next .mc-side .shirt { --px: 4px !important; }
+.cr-next .mc-side b { font-size: 17px; }
+.cr-next .mc-side small { font-size: 13px; }
+.cr-next .mc-side em { font-size: 12px; padding: 2px 6px 1px; }
+.cr-next .mc-vsx { font-size: 22px; }
+
+.cr-next .mc-play {
+  min-height: 52px;
+  padding: 12px 10px 10px;
+  /* One line in the pane: the label scales with the pane's width. */
+  font-size: clamp(14px, 5cqi, 22px);
+  white-space: normal;
+  line-height: 1.1;
+}
+
+/* A notice takes room: the card drops the clubs' full names (the short codes stay). */
+.cr-main:has(.cr-notice) .cr-next .mc-side small {
+  display: none;
+}
+
+.cr-next .mc-pay {
+  min-height: 1.25em;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cr-done {
+  justify-items: center;
+  align-content: center;
+}
+
+.cr-done b {
+  font: 700 20px var(--px);
+}
+
+/* A notice (a walk-off, a retired cup): one slim strip, two lines at most. */
+.cr-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  background: var(--yellow);
+  border: 3px solid var(--ink);
+}
+
+.cr-notice p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: 400 13px/1.2 var(--round);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.panel .cr-notice .btn {
+  min-height: 36px;
+  padding: 6px 12px 5px;
+  font-size: 13px;
+  box-shadow: inset 0 0 0 3px var(--ink), 0 3px 0 var(--ink-2);
+}
+
+/* SQUAD / TRAINING / TRANSFERS / STADIUM: four compact blocks, icon over label. */
+.cr-quick {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding-bottom: 4px;
+}
+
+.panel .cr-quick .btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 46px;
+  padding: 6px 2px 5px;
+  font: 400 12px/1 var(--round);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 3px var(--ink), 0 4px 0 var(--ink-2);
+}
+
+.panel .cr-quick .btn:active {
+  transform: translateY(3px);
+  box-shadow: inset 0 0 0 3px var(--ink), 0 1px 0 var(--ink-2);
+}
+
+.cr-quick .picon {
+  display: block;
+}
+
+.cr-quick span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cr-quick small {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  font-size: 10px;
+  color: var(--ink-2);
+}
+
+.cr-quick .mc-badge {
+  top: -8px;
+  right: -6px;
+  min-width: 22px;
+  padding: 4px 5px 3px;
+  font-size: 12px;
+}
+
+/* ----- hub: the TABLE / FIXTURES / CUP pane ----- */
+
+.cr-tabs {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.cr-tabs .seg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cr-tabs .seg button {
+  min-height: 36px;
+  padding: 4px 4px 3px;
+  font-size: 13px;
+}
+
+.cr-tabs .seg button .picon {
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+/* A cup tie is up next: its tab glows until you look. */
+.cr-tabs .seg button.due:not(.on) {
+  background: var(--yellow);
+}
+
+.cr-how {
+  flex: none;
+  appearance: none;
+  width: 40px;
+  border: 3px solid var(--ink);
+  background: #fff;
+  color: var(--ink);
+  font: 700 16px var(--px);
+  box-shadow: 0 3px 0 var(--cream-2);
+  cursor: pointer;
+}
+
+.cr-scroll {
+  padding: 0 3px 4px 0;
+}
+
+/* The league table, compact, its header pinned while it scrolls. */
+.cr-scroll .mc-tablewrap { overflow: visible; }
+.cr-scroll .mc-table { border-spacing: 0 3px; font-size: 14px; }
+
+.cr-scroll .mc-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 2px 3px;
+  font-size: 12px;
+  background: var(--cream);
+}
+
+.cr-scroll .mc-table td { padding: 5px 3px 4px; }
+.cr-scroll .mc-table td.club { font-size: 14px; }
+.cr-scroll .mc-table td.pos { width: 28px; }
+.cr-scroll .mc-table .xs { display: none; }
+.cr-scroll .mc-legend { margin: 2px 0 0; font-size: 12px; }
+
+/* Your season: slim rows; a tap opens that matchday's other results under it. */
+.cr-fx { gap: 4px; }
+
+.cr-scroll .mc-ys {
+  grid-template-columns: 34px auto minmax(0, 1fr) auto 28px;
+  gap: 6px;
+  min-height: 38px;
+  padding: 3px 6px;
+  font: 400 14px var(--round);
+}
+
+.mc-ys.cr-ys {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.mc-ys.cr-ys.open { box-shadow: inset 0 -3px 0 var(--blue); }
+.cr-scroll .mc-ysmd { font-size: 12px; }
+.cr-scroll .mc-ys .mc-chip { font-size: 12px; padding: 3px 5px 2px; }
+.cr-scroll .sc { min-width: 46px; padding: 4px 6px 3px; font-size: 14px; }
+.cr-scroll .mc-wdl { height: 24px; font-size: 13px; line-height: 24px; }
+
+.cr-others {
+  display: grid;
+  gap: 3px;
+  margin: -1px 0 2px 14px;
+}
+
+.cr-scroll .cr-others .mc-fx {
+  min-height: 30px;
+  gap: 6px;
+  padding: 2px 6px;
+  border-width: 1px;
+  font-size: 13px;
+}
+
+.cr-others .sc { min-width: 40px; padding: 3px 4px 2px; font-size: 13px; }
+
+/* The BLOCKY CUP tab: your run and the cabinet in one strip, the draw under it with each round's prize on top. */
+.cr-scroll .cup-head {
+  margin-bottom: 5px;
+  padding: 3px 8px;
+  gap: 8px;
+}
+
+.cr-scroll .cup-head > .picon { width: 22px; height: 22px; }
+.cr-scroll .cup-status b { font-size: 14px; }
+.cr-scroll .cup-status span { font-size: 12px; }
+
+.cup-cab {
+  margin-left: auto;
+  flex: none;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  font: 400 11px var(--round);
+  letter-spacing: 0.5px;
+  color: var(--cream);
+}
+
+.cup-cab b {
+  font: 700 13px var(--px);
+  color: var(--yellow);
+}
+
+.cr-scroll .cup-bracket.compact {
+  gap: 5px;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 0.85fr);
+}
+
+.panel.mc .cr-scroll .cup-bracket.compact .cup-rh {
+  font-size: 12px;
+  letter-spacing: 1px;
+  padding: 3px 2px 2px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.cup-rh small {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--yellow);
+}
+
+.cr-scroll .cup-bracket.compact .ct-row { padding: 2px 4px 1px; font-size: 13px; }
+.cr-scroll .cup-bracket.compact .cup-ties { gap: 5px; }
+.cr-scroll .ct-row .mc-kd { width: 10px; height: 10px; margin: 0 5px 0 1px; }
+.cr-scroll .cup-bracket.compact .cup-winner { padding: 6px 2px 4px; font-size: 13px; }
+.cr-scroll .cup-winner .picon { width: 28px; height: 28px; }
+.cr-scroll .mc-empty { padding: 12px 10px; font-size: 14px; }
+
+/* Narrow panes: short club names, no division tags in the draw. */
+@container (max-width: 380px) {
+  .cr-scroll .nm-full { display: none; }
+  .cr-scroll .nm-short { display: inline; }
+  .cr-scroll .ct-row span em { display: none; }
+  .cr-scroll .mc-table td.club { font-size: 13px; }
+}
+
+/* ----- season summary ----- */
+
+.cr-sum .mc-result {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: center;
+  gap: 6px;
+  padding: 10px;
+}
+
+.cr-sum .mc-result b {
+  font-size: 36px;
+  text-shadow: 0 4px 0 var(--ink);
+}
+
+.cr-sum .mc-result span { font-size: 13px; }
+.cr-sum .mc-result em { font-size: 12px; padding: 4px 8px 3px; }
+.cr-sum .cup-sumline { flex: none; padding: 4px 10px; font-size: 13px; }
+.cr-sum .cup-sumline b { font-size: 13px; }
+.cr-sum .cup-sumline em { font-size: 13px; }
+.cr-sum .mc-prize { flex: none; gap: 4px; padding: 6px 10px; }
+.cr-sum .mc-prize div { font-size: 13px; }
+.cr-sum .mc-prize .total { padding-top: 5px; font-size: 14px; }
+.cr-scroll .mc-histrow { margin-top: 6px; gap: 4px; }
+.cr-scroll .mc-hist { padding: 4px 6px 3px; font-size: 12px; }
+
+.cr-carry {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 400 12px var(--round);
+  letter-spacing: 0.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ----- the trophy lift: the cup left, the prize money and CONTINUE right ----- */
+
+.cup-trophy-screen .mc-body.cup-liftbody {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.cup-trophy-screen .cup-lift {
+  gap: 6px;
+  padding: 0;
+}
+
+.cup-trophy-screen .cup-big .picon {
+  width: 120px;
+  height: 120px;
+}
+
+.cup-trophy-screen .panel .cup-champ-title {
+  font-size: 36px;
+}
+
+.cup-liftside {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 14px;
+  align-content: center;
+}
+
+.cup-liftside .mc-prize {
+  gap: 5px;
+  padding: 8px 12px;
+}
+
+.cup-liftside .mc-prize div {
+  font-size: 14px;
+}
+
+.cup-liftside .btn {
+  width: 100%;
+}
+
+/* ----- the intro: the ladder left, three lines right, the button pinned below ----- */
+
+.mc-road-screen .mc-body.rg {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.mc-road-screen .rg-ladder { gap: 4px; }
+.mc-road-screen .rg-ladder li { padding: 5px 10px 4px; font-size: 14px; }
+.mc-road-screen .rg-points { gap: 12px; }
+.mc-road-screen .rg-points li { grid-template-columns: 40px minmax(0, 1fr); gap: 10px; }
+.mc-road-screen .rg-ic { width: 40px; height: 40px; }
+.mc-road-screen .rg-ic .picon { width: 24px; height: 24px; }
+.mc-road-screen .rg-points b { font-size: 16px; }
+.mc-road-screen .rg-points span { font-size: 14px; line-height: 1.25; }
+
+.mc-road-screen .mc-actions {
+  justify-content: center;
+}
+
+/* ----- short phones (iPhone SE): a little tighter ----- */
+
+@media (max-height: 380px) {
+  .cr-next .mc-side small { display: none; }
+  .cr-next .mc-side .shirt { --px: 3px !important; }
+  .cr-next .mc-play { min-height: 46px; padding-top: 10px; padding-bottom: 8px; }
+  .panel .cr-quick .btn { min-height: 44px; }
+  .cup-trophy-screen .cup-big .picon { width: 90px; height: 90px; }
+  .cup-trophy-screen .panel .cup-champ-title { font-size: 30px; }
+  .mc-road-screen .rg-ladder li { padding: 4px 10px 3px; }
+}
+
+/* ----- portal frames (900x506): room for bigger shirts ----- */
+
+@media (min-height: 470px) and (max-height: 560px) {
+  .cr-next .mc-side .shirt { --px: 5px !important; }
+  .cr-next .mc-side b { font-size: 19px; }
+}
+
+/* ----- tall screens (iPad, desktop): the same panes, roomier; the small screens size to their content ----- */
+
+@media (min-height: 561px) {
+  .cr-next .mc-side .shirt { --px: 6px !important; }
+  .cr-next .mc-side b { font-size: 20px; }
+  .cr-next .mc-side small { font-size: 15px; }
+  .cr-next .mc-nexttop { font-size: 14px; }
+  .cr-next .mc-play { min-height: 60px; }
+  .cr-next .mc-pay { font-size: 14px; }
+  .panel .cr-quick .btn { min-height: 56px; font-size: 14px; gap: 5px; }
+  .cr-tabs .seg button { min-height: 44px; font-size: 14px; }
+  .cr-scroll .mc-table td { padding: 8px 4px 7px; }
+  .cr-scroll .mc-ys { min-height: 44px; }
+  .cr-scroll .cup-bracket.compact .ct-row { padding: 6px 6px 5px; font-size: 15px; }
+  .cr-scroll .cup-bracket.compact .cup-ties { gap: 12px; }
+  .panel.mc .cr-scroll .cup-bracket.compact .cup-rh { font-size: 14px; padding: 5px 2px 4px; }
+  .cr-scroll .cup-head { padding: 8px 10px; margin-bottom: 10px; }
+  .cr-sum .mc-result b { font-size: 48px; }
+  .cup-trophy-screen.shell .panel.mc,
+  .mc-road-screen.shell .panel.mc {
+    width: min(820px, 100%);
+    height: auto;
+    max-height: calc(100dvh - 32px);
+  }
+  .cup-trophy-screen .cup-big .picon { width: 150px; height: 150px; }
+  .cup-trophy-screen .panel .cup-champ-title { font-size: 48px; }
+}
+
+/* ----- narrow portrait windows (web): one column ----- */
+
+@media (max-width: 560px) {
+  .mc-career-screen .cr-body,
+  .mc-summary-screen .cr-body,
+  .cup-trophy-screen .mc-body.cup-liftbody,
+  .mc-road-screen .mc-body.rg {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}

@@ -1,0 +1,467 @@
+/*
+ * The menus.ts screens on the app shell (docs/UX.md, ui/shell.css): QUICK MATCH, SETTINGS, HOW TO PLAY, EVENTS, half
+ * time, full time, the moment result and BACKUP. One screen each: a slim header (BACK at the top left), optional slim
+ * tabs, a body that fills the rest (only a list scrolls, inside its own pane) and the main action pinned bottom right.
+ * Imported by ui/menus.ts, so it loads after style.css and shell.css; every selector carries .shell, so it wins over
+ * the older card rules in style.css without !important.
+ */
+
+/* ---------------------------------------------------------------- shared */
+
+.panel.mc.shell .mc-top-gap { display: block; min-width: 1px; }
+.panel.mc.shell .mc-title h2 { line-height: 1; }
+.panel.mc.shell .mc-actions { min-height: 44px; }
+.panel.mc.shell .mc-actions .btn-lg { min-width: 180px; }
+
+/* The one hint line a screen may have: small, quiet, never wraps into a second line. */
+.panel.mc.shell .mc-hint1 {
+  margin: 0;
+  min-width: 0;
+  font: 400 14px / 1.25 var(--round);
+  letter-spacing: 0.3px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* A slim tab row (docs/UX.md: 34 px): every tab the same width, one line. */
+.panel.mc.shell .mc-tabs.seg { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
+.panel.mc.shell .mc-tabs.seg button { min-height: 38px; padding: 5px 4px 4px; font-size: 14px; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-height: 560px) {
+  .panel.mc.shell .mc-hint1 { font-size: 13px; }
+  .panel.mc.shell .mc-actions { min-height: 40px; }
+  .panel.mc.shell .mc-actions .btn-lg { min-height: 44px; padding: 9px 22px 8px; font-size: 18px; letter-spacing: 1.5px; }
+  .panel.mc.shell .mc-tabs.seg button { min-height: 34px; padding: 4px 4px 3px; font-size: 13px; }
+}
+
+/* Tall screens (an iPad, a desktop window): each screen is a centred card of its own width (short screens are
+   full-bleed: shell.css). */
+@media (min-height: 561px) {
+  .qm-screen .panel.qm.shell { width: min(940px, 100%); }
+  .settings .panel.set-panel.shell { width: min(880px, 100%); height: min(560px, calc(100dvh - 32px)); }
+  .panel.set-panel.shell .toggles button,
+  .panel.set-panel.shell .set-sw,
+  .panel.set-panel.shell .set-row { min-height: 50px; font-size: 16px; }
+  .panel.set-panel.shell .set-seg button { min-height: 38px; font-size: 14px; }
+  .panel.set-panel.shell .set-grid { gap: 10px 14px; }
+  .howto-screen .panel.howto-panel.shell { width: min(920px, 100%); height: min(620px, calc(100dvh - 32px)); }
+  .ht-row { min-height: 42px; font-size: 17px; column-gap: 14px; }
+  .ht-row > b { font-size: 16px; }
+  .ht-row .ht-cap kbd { font-size: 15px; }
+  .ht-row .ht-cap .ht-dot { width: 26px; height: 26px; }
+  .ht-h { font-size: 15px; }
+  .events-screen .panel.ev-panel.shell { width: min(880px, 100%); }
+  .ht .panel.ht-panel.shell,
+  .ft .panel.ft-panel.shell { width: min(940px, 100%); }
+  .ft.moment .panel.mo-panel.shell { width: min(720px, 100%); }
+  .backup .panel.bk-panel.shell { width: min(760px, 100%); }
+}
+
+/* ---------------------------------------------------------------- QUICK MATCH
+   The two clubs across the top (kit, name, stars, arrows either side), the options two by two under them (MODE and
+   DIFFICULTY, HALF and MORE; MORE opens KICK OFF and WEATHER), the mode's line and KICK OFF pinned at the bottom. */
+
+.panel.qm.shell .qm-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 10px; }
+.panel.qm.shell .qm-teams {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 8px; min-height: 0;
+  /* (The old card layout placed .vs-row by grid lines: style.css "Quick match: teams left, options right".) */
+  grid-row: auto; grid-column: auto; align-self: stretch;
+}
+.panel.qm.shell .qm-teams .vs { align-self: center; font-size: clamp(18px, 2.6vw, 30px); }
+.panel.qm.shell .team-pick {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) minmax(0, 1.2fr) 36px;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: center;
+  justify-items: stretch;
+  gap: 6px;
+  min-height: 0;
+  padding: 6px;
+  text-align: left;
+}
+.panel.qm.shell .team-pick .arrow { width: 36px; height: 48px; font-size: 16px; }
+.panel.qm.shell .tp-kit { position: relative; align-self: stretch; display: grid; place-items: center; min-width: 0; min-height: 0; }
+.panel.qm.shell .tp-3d { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; aspect-ratio: auto; }
+.panel.qm.shell .tp-info { display: grid; gap: 5px; align-content: center; justify-items: start; min-width: 0; }
+.panel.qm.shell .tp-label { font-size: 12px; letter-spacing: 1.5px; padding: 3px 7px 2px; }
+.panel.qm.shell .tp-name {
+  display: flex; align-items: center; gap: 6px; max-width: 100%;
+  font: 400 clamp(14px, 1.9vw, 21px) / 1.1 var(--round); white-space: normal;
+}
+.panel.qm.shell .tp-name > span { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.panel.qm.shell .tp-name .crest-svg { flex: none; width: 20px; height: auto; margin: 0; }
+.panel.qm.shell .tp-stars { font-size: 15px; line-height: 1; letter-spacing: 1px; }
+.panel.qm.shell .tp-meta { font-size: 13px; line-height: 1.1; }
+
+.panel.qm.shell .qm-opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; }
+.panel.qm.shell .qm-row { display: grid; grid-template-columns: 5.6em minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
+.panel.qm.shell .qm-row > label { font: 400 13px / 1.05 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
+.panel.qm.shell .qm-seg { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); grid-template-columns: none; gap: 4px; }
+.panel.qm.shell .qm-seg button {
+  min-width: 0; min-height: 36px; padding: 3px 2px 2px; overflow: hidden;
+  font-size: 13px; line-height: 1.05; white-space: nowrap; box-shadow: 0 2px 0 var(--cream-2);
+}
+.panel.qm.shell .qm-seg button:has(> .picon.inl) { white-space: normal; font-size: 11px; padding-top: 1px; padding-bottom: 0; }
+.panel.qm.shell .qm-seg button > .picon.inl { width: 1em; height: 1em; }
+.panel.qm.shell .qm-x { display: none; }
+.panel.qm.shell .qm-opts.more .qm-x { display: grid; }
+
+/* MORE: the kick-off time and the weather, folded (the row says what they are set to). */
+.panel.qm.shell .qm-more {
+  appearance: none; margin: 0; cursor: pointer;
+  display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 3px 12px 2px;
+  font: 400 13px / 1 var(--round); letter-spacing: 1px; color: var(--ink); text-align: left;
+  background: var(--cream-2); border: 3px solid var(--ink); box-shadow: 0 2px 0 rgba(38, 38, 46, 0.25);
+}
+.panel.qm.shell .qm-more b { font-weight: 400; flex: none; }
+.panel.qm.shell .qm-more small { flex: 1 1 auto; min-width: 0; font: inherit; letter-spacing: 0.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel.qm.shell .qm-more i { flex: none; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid currentColor; }
+.panel.qm.shell .qm-opts.more .qm-more i { transform: rotate(180deg); }
+.panel.qm.shell .qm-more:active { transform: translateY(2px); box-shadow: none; }
+.panel.qm.shell .qm-more:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+
+.panel.qm.shell .qm-why { margin: 0; min-height: 0; flex: 1 1 auto; }
+.panel.qm.shell .qm-go { min-width: 200px; }
+
+/* Narrow landscape phones (667 wide): every value still reads in full (NORMAL, RANDOM). */
+@media (max-width: 760px) {
+  .panel.qm.shell .qm-opts { column-gap: 10px; }
+  .panel.qm.shell .qm-row { grid-template-columns: 5.3em minmax(0, 1fr); gap: 6px; }
+  .panel.qm.shell .qm-row > label { font-size: 11px; letter-spacing: 0; }
+  .panel.qm.shell .qm-seg { gap: 3px; grid-auto-columns: minmax(min-content, 1fr); }
+  .panel.qm.shell .qm-seg button { padding: 3px 2px 2px; font-size: 12px; }
+}
+
+/* Tall screens (an iPad, a desktop window): the clubs get the room. */
+@media (min-height: 561px) {
+  /* The card stands up: the kit big in the middle between the arrows, the club under it. */
+  .panel.qm.shell .team-pick { grid-template-columns: 44px minmax(0, 1fr) 44px; grid-template-rows: minmax(0, 1fr) auto; padding: 10px; }
+  .panel.qm.shell .team-pick .arrow { grid-row: 1; width: 44px; }
+  .panel.qm.shell .team-pick .arrow[data-d='-1'] { grid-column: 1; }
+  .panel.qm.shell .team-pick .arrow[data-d='1'] { grid-column: 3; }
+  .panel.qm.shell .tp-kit { grid-column: 2; grid-row: 1; }
+  .panel.qm.shell .tp-info { grid-column: 1 / -1; grid-row: 2; justify-items: center; text-align: center; }
+  .panel.qm.shell .tp-label { font-size: 14px; }
+  .panel.qm.shell .tp-stars { font-size: 18px; }
+  .panel.qm.shell .tp-meta { font-size: 15px; }
+  .panel.qm.shell .qm-opts { gap: 10px 18px; }
+  .panel.qm.shell .qm-seg button { min-height: 44px; font-size: 15px; }
+  .panel.qm.shell .qm-more { min-height: 44px; font-size: 15px; }
+  .panel.qm.shell .qm-row > label { font-size: 15px; }
+}
+
+/* ---------------------------------------------------------------- SETTINGS
+   Slim tabs (GENERAL, CONTROLS, KEYS, MORE), the rows two by two, each row one line (its name and its value), and one
+   hint line under them that says what the last thing tapped does. REMOVE ADS sits in the header on every tab. */
+
+.panel.set-panel.shell .set-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.panel.set-panel.shell .set-pane { min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; }
+.panel.set-panel.shell .set-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; align-content: start; padding-bottom: 4px; }
+.panel.set-panel.shell .set-body > .set-pane[hidden] { display: none; }
+
+.panel.set-panel.shell .toggles button,
+.panel.set-panel.shell .set-sw,
+.panel.set-panel.shell .set-row {
+  min-width: 0; min-height: 42px; padding: 4px 6px 3px 12px;
+  font: 400 15px / 1.1 var(--round); letter-spacing: 0.5px; box-shadow: 0 3px 0 var(--cream-2);
+}
+.panel.set-panel.shell .toggles button > span,
+.panel.set-panel.shell .set-sw > span,
+.panel.set-panel.shell .set-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.panel.set-panel.shell .toggles button > b { flex: none; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+
+/* A switch: the whole row toggles; its ON / OFF chip on the right (as the GENERAL rows). */
+.panel.set-panel.shell .set-sw {
+  appearance: none; margin: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  color: var(--ink); background: #fff; border: 3px solid var(--ink);
+}
+.panel.set-panel.shell .set-sw > b { flex: none; padding: 4px 8px 3px; font-weight: 400; color: #fff; background: var(--go); }
+.panel.set-panel.shell .set-sw > b.off { background: var(--red); }
+.panel.set-panel.shell .set-sw:active,
+.panel.set-panel.shell .toggles button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--cream-2); }
+.panel.set-panel.shell .set-sw:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+
+/* A level: its name and the values side by side (ASSISTED | SEMI | MANUAL, FLOATING | FIXED). */
+.panel.set-panel.shell .set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; background: #fff; border: 3px solid var(--ink); padding-right: 4px; }
+.panel.set-panel.shell .set-seg { grid-auto-flow: column; grid-auto-columns: auto; gap: 3px; }
+.panel.set-panel.shell .set-seg button { min-height: 32px; padding: 3px 7px 2px; font-size: 13px; letter-spacing: 0.3px; white-space: nowrap; border-width: 2px; box-shadow: none; }
+
+/* KEYS: the keyboard and the gamepad side by side, each list scrolling in its own pane. */
+.panel.set-panel.shell .kb-pane { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; overflow: hidden; }
+.panel.set-panel.shell .kb-pane .pane { min-height: 0; }
+.panel.set-panel.shell .kb-pane .pane-h b { font: 700 14px var(--px); letter-spacing: 1px; color: var(--ink); }
+.panel.set-panel.shell .kb-pane .kb-reset { min-height: 32px; padding: 6px 12px 5px; font-size: 13px; }
+.panel.set-panel.shell .kb-grid { align-content: start; gap: 5px; padding: 2px 6px 6px 0; }
+.panel.set-panel.shell .kb-slot { min-height: 36px; }
+
+/* REMOVE ADS in the header (the app): the shop's red, its price on a darker chip. */
+.panel.mc.shell .mc-top .set-noads {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 5px 0 12px;
+  font: 400 15px / 1 var(--round); letter-spacing: 0.5px;
+}
+.panel.mc.shell .mc-top .set-noads b { padding: 5px 7px 4px; font-weight: 400; background: rgba(0, 0, 0, 0.22); }
+.panel.mc.shell .mc-top .set-noads.owned { --c: #fff; --d: var(--ink-2); color: var(--go-d); text-shadow: none; }
+.panel.mc.shell .mc-top .set-noads.owned b { color: #fff; background: var(--go); }
+
+.panel.set-panel.shell .set-hint { min-height: 1.3em; text-align: center; white-space: nowrap; display: block; }
+.panel.set-panel.shell .set-hint.good { color: var(--go-d); }
+.panel.set-panel.shell .set-hint.bad { color: var(--red-d); }
+.panel.set-panel.shell .set-hint .lynx { vertical-align: -3px; margin-right: 6px; }
+
+.panel.set-panel.shell .toggles button b small.lock { font-size: 12px; }
+
+@media (max-height: 560px) {
+  .panel.set-panel.shell .toggles button,
+  .panel.set-panel.shell .set-sw,
+  .panel.set-panel.shell .set-row { min-height: 40px; font-size: 14px; }
+  .panel.mc.shell .mc-top .set-noads { min-height: 36px; font-size: 13px; }
+}
+/* Narrow landscape phones (667 wide): the level rows' names keep their words (GROUND PASS, THROUGH BALL). */
+@media (max-width: 760px) {
+  .panel.set-panel.shell .set-row { padding-left: 10px; font-size: 13px; letter-spacing: 0.3px; gap: 6px; }
+  .panel.set-panel.shell .set-seg button { padding: 3px 5px 2px; font-size: 12px; letter-spacing: 0; }
+  .panel.set-panel.shell .toggles button > b { max-width: 68%; }
+}
+
+/* ---------------------------------------------------------------- HOW TO PLAY
+   The device in hand (TOUCH, KEYS, PAD) in the header, five short topics as tabs, one short row per control. */
+
+.panel.howto-panel.shell .ht-dev { grid-auto-flow: column; grid-auto-columns: auto; gap: 3px; }
+.panel.howto-panel.shell .ht-dev button { min-height: 36px; padding: 3px 9px 2px; font-size: 13px; border-width: 2px; box-shadow: none; }
+.panel.howto-panel.shell .ht-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: auto; align-content: start; overflow-y: auto; overscroll-behavior: contain; gap: 6px; }
+
+.ht-split { display: grid; grid-template-columns: minmax(260px, 0.4fr) minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; }
+.panel.howto-panel.shell .mc-title .ht-sub { font-style: normal; }
+.ht-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; align-items: start; min-width: 0; }
+.ht-cols > div { display: grid; gap: 4px; min-width: 0; }
+.ht-h { margin: 0; font: 400 13px / 1.1 var(--round); letter-spacing: 1px; color: var(--ink-2); }
+
+.ht-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 4px; align-content: start; min-width: 0; }
+.ht-row {
+  display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; column-gap: 10px;
+  min-height: 30px; padding: 2px 10px 1px 6px; background: #fff; border: 3px solid var(--ink);
+  font: 400 15px / 1.15 var(--round); color: var(--ink);
+}
+@supports not (grid-template-columns: subgrid) {
+  .ht-row { grid-template-columns: 96px 96px minmax(0, 1fr); }
+}
+.ht-row > b { font: 400 14px / 1 var(--round); letter-spacing: 1px; color: var(--blue-d); white-space: nowrap; }
+.ht-row .ht-cap { display: flex; align-items: center; gap: 3px; min-width: 0; white-space: nowrap; line-height: 0; }
+.ht-row .ht-cap:empty { display: none; }
+.ht-row .ht-cap kbd { margin: 0; font-size: 13px; line-height: 1; padding: 3px 5px 2px; }
+.ht-row .ht-cap .ht-dot { margin: 0; }
+.ht-row .ht-cap .picon { width: 20px; height: 20px; }
+.ht-row .ht-what { min-width: 0; }
+/* Two columns of short rows (the stick's skill moves, the power-ups). */
+.ht-list.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ht-list.two .ht-row { grid-column: auto; grid-template-columns: auto auto minmax(0, 1fr); }
+.ht-dot.stick { --c: #6f7a63; --cd: var(--ink); }
+
+/* The pad drawn for defending: the big button is PRESS (blue), the top one SWITCH (yellow). */
+.ht-tb.pass.dp { --c: var(--blue); --cd: var(--blue-d); }
+.ht-tb.through.dsw { --c: var(--yellow); --cd: var(--yellow-d); color: var(--ink); text-shadow: none; }
+.ht-split .ht-pad { margin: 0; }
+
+@media (max-height: 560px) {
+  .ht-row { min-height: 28px; font-size: 14px; }
+  .ht-row > b { font-size: 13px; }
+  .ht-split .ht-pad { height: 140px; }
+}
+/* Too narrow for the pad beside the rows (667 wide): the rows alone, their dots in the buttons' colours. */
+@media (max-width: 760px) {
+  .ht-split { grid-template-columns: minmax(0, 1fr); }
+  .ht-split .ht-pad { display: none; }
+}
+@media (max-width: 600px) {
+  .ht-cols { grid-template-columns: minmax(0, 1fr); }
+  .ht-list.two { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------------------------------------------------------- EVENTS: the quick modes as big tiles, one screen */
+
+@media (min-height: 561px) {
+  .events-screen .panel.ev-panel.shell { height: min(560px, calc(100dvh - 32px)); }
+}
+.panel.ev-panel.shell .ev-grid { gap: 12px; grid-template-rows: none; grid-auto-rows: minmax(0, 1fr); align-content: stretch; }
+.panel.ev-panel.shell .ev-grid.n4,
+.panel.ev-panel.shell .ev-grid.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.panel.ev-panel.shell .ev-grid.n3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.panel.ev-panel.shell .ev-grid.n1 { grid-template-columns: minmax(0, 1fr); }
+.panel.ev-panel.shell .ev-card { min-height: 0; padding: 12px 16px; column-gap: 14px; row-gap: 6px; align-content: center; }
+.panel.ev-panel.shell .ev-card .ev-ic .picon { width: clamp(36px, 8vmin, 64px); height: auto; }
+.panel.ev-panel.shell .ev-card b { font-size: clamp(19px, 2.8vw, 30px); }
+.panel.ev-panel.shell .ev-card span { font-size: 15px; }
+.panel.ev-panel.shell .ev-card small { justify-self: start; padding: 4px 7px 3px; font-size: 12px; background: rgba(0, 0, 0, 0.22); }
+.panel.ev-panel.shell .ev-grid.n3 .ev-card { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; justify-items: start; }
+.panel.ev-panel.shell .ev-grid.n3 .ev-card .ev-ic { grid-row: auto; }
+
+/* ---------------------------------------------------------------- half time and full time */
+
+
+/* The score: crests, short names, the big score, the scorers wrapping under each side. */
+.panel.mc.shell .final { gap: 10px; align-items: center; }
+.panel.mc.shell .f-team { gap: 3px; min-width: 0; }
+.panel.mc.shell .f-team .crest-svg { width: clamp(26px, 6.5vmin, 52px); height: auto; }
+.panel.mc.shell .f-team b { font-size: clamp(16px, 2.2vw, 22px); }
+.panel.mc.shell .f-team ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 8px; max-height: 2.5em; overflow: hidden; font-size: 13px; line-height: 1.25; }
+.panel.mc.shell .f-score { padding-top: 0; font-size: clamp(36px, 9vmin, 68px); }
+
+.panel.mc.shell .st-row { grid-template-columns: 30px minmax(0, 1fr) 112px minmax(0, 1fr) 30px; gap: 6px; font-size: 14px; }
+/* The verdict is the header's title: a size up, in its colour (YOU WIN! green, YOU LOSE red). */
+.panel.mc.shell .mc-title h2 .verdict { font-size: 1.3em; }
+.panel.mc.shell .st-row span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.panel.mc.shell .st-bar { height: 10px; }
+
+/* Half time: the score over the stats, five by two. */
+.panel.ht-panel.shell .ht-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: auto; align-content: safe center; gap: 14px; }
+.panel.ht-panel.shell .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(5, auto); grid-auto-flow: column; column-gap: 14px; row-gap: 5px; }
+.panel.ht-panel.shell .stats .st-row:nth-child(n + 6) { border-left: 3px solid var(--cream-2); padding-left: 12px; }
+
+/* Full time: the match on the left (the score, then man of the match and the stats in a list), what you earned on
+   the right (the coins with 2x COINS beside them, the stars and the XP bar, then the extras), REMATCH and CONTINUE. */
+.panel.ft-panel.shell .ft-body { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; }
+.panel.ft-panel.shell .ft-match,
+.panel.ft-panel.shell .ft-gain { gap: 8px; }
+.panel.ft-panel.shell .ft-match .final { flex: none; }
+.panel.ft-panel.shell .ft-scroll { display: grid; gap: 6px; align-content: start; padding: 0 4px 4px 0; }
+.panel.ft-panel.shell .ft-scroll .stats { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-flow: row; gap: 4px; }
+.panel.ft-panel.shell .ft-scroll .stats .st-row:nth-child(n + 6) { border-left: 0; padding-left: 0; }
+
+.panel.mc.shell .ft-motm {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'face t r' 'face n r';
+  align-items: center; column-gap: 10px; row-gap: 1px; padding: 5px 10px 5px 5px;
+  color: var(--cream); background: var(--ink); border-bottom: 5px solid var(--k, var(--yellow));
+}
+.panel.mc.shell .ft-motm .face { grid-area: face; --fs: 36px; }
+.panel.mc.shell .ft-motm span { grid-area: t; font: 400 12px / 1 var(--round); letter-spacing: 1px; color: var(--yellow); }
+.panel.mc.shell .ft-motm b { grid-area: n; min-width: 0; font: 400 16px / 1.1 var(--round); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel.mc.shell .ft-motm b small { font-size: 12px; color: #cfd3d8; margin-left: 6px; }
+.panel.mc.shell .ft-motm em { grid-area: r; font: 700 22px var(--px); font-style: normal; color: var(--yellow); }
+.panel.mc.shell .ft-scroll .ratings { gap: 4px; }
+.panel.mc.shell .ft-scroll .ratings li { padding: 2px 8px 2px 2px; font-size: 14px; border-width: 2px; }
+.panel.mc.shell .ft-scroll .ratings li .face { --fs: 24px; }
+.panel.mc.shell .ft-scroll .ratings b { font-size: 14px; padding: 2px 6px 1px; }
+
+.panel.ft-panel.shell .ft-earn {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px;
+  padding: 5px 6px 5px 12px; color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25);
+}
+.panel.ft-panel.shell .ft-earn .reward { min-width: 0; justify-content: flex-start; gap: 8px; font-size: 28px; color: var(--yellow); }
+.panel.ft-panel.shell .ft-earn .reward i { width: 24px; height: 24px; flex: none; }
+.panel.ft-panel.shell .ft-earn .reward em { min-width: 0; font-size: 13px; letter-spacing: 0.5px; color: #cfcab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel.ft-panel.shell .ft-earn .ft-dbl { flex: none; min-height: 40px; padding: 7px 12px 6px; font-size: 15px; letter-spacing: 1px; }
+.panel.mc.shell .ft-gain .ft-prog { flex: none; grid-template-columns: auto minmax(0, 1fr); justify-items: stretch; align-items: center; column-gap: 14px; padding: 8px 12px; }
+.panel.mc.shell .ft-gain .ft-stars { font-size: 30px; gap: 2px; }
+.panel.ft-panel.shell .ft-extra { display: grid; gap: 6px; align-content: start; padding: 0 4px 4px 0; }
+.panel.ft-panel.shell .ft-extra .ft-streak { justify-self: start; }
+.panel.ft-panel.shell .ft-extra .ft-daily li,
+.panel.ft-panel.shell .ft-extra .ft-shop { font-size: 14px; }
+.panel.ft-panel.shell .ft-extra .ft-shop,
+.panel.ft-panel.shell .ft-extra .ft-easy { margin: 0; justify-content: flex-start; text-align: left; }
+.panel.ft-panel.shell .ft-extra .clip-row.big { justify-content: flex-start; }
+
+/* The moment's result: stars, the time left and the XP bar in the middle; RETRY and NEXT pinned. */
+.panel.mo-panel.shell .mo-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; align-content: safe center; justify-items: center; gap: 10px; }
+.panel.mo-panel.shell .mo-body .ft-prog { width: min(520px, 100%); }
+.panel.mo-panel.shell .mo-body .ft-stars { font-size: clamp(34px, 9vmin, 56px); }
+.panel.mo-panel.shell .mo-left { margin: 0; }
+@media (min-height: 561px) {
+  .ft.moment .panel.mo-panel.shell { height: min(520px, calc(100dvh - 32px)); }
+}
+
+@media (max-height: 560px) {
+  .panel.ft-panel.shell .ft-earn { min-height: 48px; }
+  .panel.ft-panel.shell .ft-earn .reward { font-size: 24px; }
+  .panel.mc.shell .ft-gain .ft-stars { font-size: 26px; }
+  .panel.mc.shell .ft-gain .ft-xp-h b { font-size: 16px; }
+  .panel.mc.shell .ft-gain .ft-xp-bar { height: 12px; }
+  .panel.mc.shell .ft-gain .ft-next { margin-top: 2px; }
+}
+/* The XP block's lines shrink to their column (the level title ends in dots, the next unlock wraps). */
+.panel.mc.shell .ft-xp { grid-template-columns: minmax(0, 1fr); }
+.panel.mc.shell .ft-next { min-width: 0; }
+@media (max-width: 760px) {
+  .panel.mc.shell .ft-gain .ft-prog { grid-template-columns: minmax(0, 1fr); row-gap: 4px; padding: 6px 10px 8px; }
+  .panel.mc.shell .ft-gain .ft-stars { justify-self: center; }
+}
+@media (max-width: 700px) {
+  .panel.ft-panel.shell .ft-earn .reward em { display: none; }
+}
+
+/* ---------------------------------------------------------------- BACKUP (the web): the save, and what to do with it */
+
+@media (min-height: 561px) {
+  .backup .panel.bk-panel.shell { height: min(460px, calc(100dvh - 32px)); }
+}
+.panel.bk-panel.shell .bk-body { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: center; align-items: start; gap: 14px; }
+.panel.bk-panel.shell .bk-body .pane { gap: 10px; justify-content: center; }
+.panel.bk-panel.shell .bk-body .menu-col { display: grid; gap: 12px; }
+.panel.bk-panel.shell .bk-body .btn { width: 100%; }
+.panel.bk-panel.shell .bk-msg { margin: 0; }
+.panel.bk-panel.shell .bk-ask { margin: 0; font: 400 15px / 1.25 var(--round); color: var(--ink); }
+.panel.bk-panel.shell .bk-confirm[hidden],
+.panel.bk-panel.shell .bk-main[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- small cards that stay cards (they fit as they are) */
+
+@media (max-height: 450px) {
+  .basics-screen .panel.basics-done,
+  .unlocked-screen .panel.unlocked-panel { gap: 8px; }
+}
+
+/* ---------------------------------------------------------------- ONLINE (the web: ui/online.ts): fits one screen
+   The two ways to play, and the two code steps, side by side; the long notes are one line each. */
+
+.online-panel .net-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; align-items: start; min-width: 0; }
+.online-panel .net-step { display: grid; gap: 8px; min-width: 0; }
+.online-panel .net-step[hidden] { display: none; }
+.online-panel .net-cols .btn-row { gap: 10px; }
+@media (max-height: 560px) {
+  .panel.online-panel { gap: 8px; }
+  .online-panel .net-cols .net-sec { gap: 8px; padding-top: 8px; }
+  .online-panel .btn { min-height: 44px; padding-top: 11px; padding-bottom: 9px; }
+  .online-panel .net-sec .fine { margin: 0; font-size: 13px; line-height: 1.2; }
+  .online-panel .net-code { min-height: 54px; padding: 6px 10px; font-size: 14px; }
+  .online-panel .fine.big { font-size: 15px; }
+  .online-panel .net-room { font-size: 44px; padding: 6px 10px 2px 18px; }
+}
+@media (max-width: 600px) {
+  .online-panel .net-cols { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The lobby: the two clubs on the left, the rules (and what is happening) on the right, the buttons under them. */
+.net-lobby-panel .net-lobby-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: center; min-width: 0; }
+.net-lobby-panel .net-rules { display: grid; gap: 6px; min-width: 0; }
+.net-lobby-panel .net-rules .opt-row { grid-template-columns: 5.4em minmax(0, 1fr); gap: 8px; }
+.net-lobby-panel .net-rules .opt-row label { font-size: 13px; letter-spacing: 0.5px; }
+.net-lobby-panel .net-rules .seg button { min-height: 36px; padding: 3px 2px 2px; font-size: 13px; white-space: nowrap; box-shadow: 0 2px 0 var(--cream-2); }
+.net-lobby-panel .net-rules .net-status { font-size: 15px; }
+.net-lobby-panel .net-rules .fine { margin: 0; }
+.net-lobby-panel .vs-row { gap: 6px; }
+.net-lobby-panel .team-pick { gap: 3px; padding: 6px 4px 8px; align-content: center; }
+.net-lobby-panel .team-pick .arrow { width: 32px; height: 40px; }
+.net-lobby-panel .tp-name { font-size: 15px; line-height: 1.1; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; }
+.net-lobby-panel .tp-name .crest-svg { margin: 0; }
+@media (max-height: 560px) {
+  .panel.net-lobby-panel { width: min(900px, 100%); }
+  .net-lobby-panel .net-line { font-size: 13px; }
+  .net-lobby-panel .net-rules { gap: 4px; }
+  .net-lobby-panel .net-rules .seg button { min-height: 34px; }
+  .net-lobby-panel .net-rules .net-status { font-size: 14px; line-height: 1.2; }
+}
+@media (max-width: 600px) {
+  .net-lobby-panel .net-lobby-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* LARGE text (Settings > TEXT SIZE zooms the panel's contents): the option chips shrink their words, never the row. */
+:root.ts-large .panel.qm.shell .qm-seg { grid-auto-columns: minmax(0, 1fr); }
+
+/* The hub (menus.ts main()) with LARGE text on the smallest phones: the tile titles keep their letters (TRANSFERS). */
+@media (max-width: 760px) {
+  :root.ts-large .hub-tile .ht-t { font-size: 16px; letter-spacing: 0.5px; }
+}

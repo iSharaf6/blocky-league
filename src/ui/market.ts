@@ -1,27 +1,33 @@
 /**
- * Transfer market screen: BUY (listings with filters and an offer sheet), SELL (your squad: list for offers or
- * quick-sell), SHORTLIST, plus a news strip and the window / squad / wage status. Rules live in
- * meta/market.ts; this file only renders and wires them to AppContext. Reached from the club hub's MARKET tab
- * (openClub(app, { tab: 'market' })).
+ * Transfer market (docs/UX.md): one screen on the app shell. BUY / SELL / SHORTLIST tabs; on the left the list (one
+ * row of position chips and the sort chip above it, scrolling inside its own pane), on the right the selected player
+ * with his action pinned at the bottom of that pane. BUY starts sorted FOR YOU (meta/forYou.ts: the biggest upgrade
+ * you can afford, the weakest position first) with the top player selected, so a signing is two taps: pick, then
+ * OFFER (a confirm sheet only when it would spend more than half your coins). The window, squad and wage bill ride in
+ * the header; the news is a badge that opens a sheet. Rules live in meta/market.ts; this file only renders them.
  */
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
+import { BOTTOM_DIVISION, KEY_STATS, ROLES, SQUAD_MAX, STAT_SHORT, newSeason, refreshMarket, sellPlayer, sellValue, type CareerState, type ClubState } from '../meta/career';
+import { canAfford, forYouSort, transferBudget, upgradeOf, type TransferBudget } from '../meta/forYou';
 import {
-  BOTTOM_DIVISION, KEY_STATS, MATCHDAYS, ROLES, SQUAD_MAX, SQUAD_MIN, STAT_SHORT, newSeason, refreshMarket, sellPlayer, sellValue, type CareerState, type ClubState,
-} from '../meta/career';
-import {
-  MORALE_DIP, RESALE_STARTS, SCOUT_COST, SHORTLIST_MAX, WAGE_DIP, YOUNG_AGE,
-  acceptCounter, acceptOffer, bidFor, bidRange, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, newsStrip,
+  MORALE_DIP, RESALE_STARTS, SCOUT_COST, SHORTLIST_MAX, YOUNG_AGE,
+  acceptCounter, acceptOffer, bidFor, canBid, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, newsStrip,
   placeBid, playerAge, playerPotential, playerValue, rejectOffer, resaleCap, saleFor, scoutListing, shortlisted, sortListings, toggleShortlist,
   townOf, unlistPlayer, wageOf, withdrawBid, type Listing, type MarketFail, type MetaPlayer, type NewsItem,
 } from '../meta/market';
+import { buzz } from '../platform/haptics';
 import { overall, type Kit, type PlayerDef, type Role } from '../sim/types';
 import { careerState, closeMeta, esc, failText, fmt, mountMeta, onMetaClose, openClub, ovrBadge, roleBadge, topBar, type Handlers, type InputHandlers } from './club';
+import { PaneScroll, revealInPane } from './panes';
+import { pixelIcon } from './pixelIcons';
 import { faceHtml, hydrateFaces } from './preview';
 import { sep } from './text';
+import './market.css';
 
 export type MarketTab = 'buy' | 'sell' | 'shortlist';
-type SortKey = 'price' | 'ovr' | 'age';
+type SortKey = 'foryou' | 'price' | 'ovr' | 'age';
+type Pos = Role | 'ALL';
 
 export interface MarketOpts {
   tab?: MarketTab;
@@ -30,11 +36,26 @@ export interface MarketOpts {
   backLabel?: string;
 }
 
+const SORTS: [SortKey, string][] = [['foryou', 'FOR YOU'], ['price', 'PRICE'], ['ovr', 'OVR'], ['age', 'AGE']];
+
+/** An offer above this share of your coins asks once more before it goes (docs/UX.md: confirm only when it's expensive). */
+const CONFIRM_SHARE = 0.5;
+
+/** The session's market memory (docs/UX.md section 8): the tab, each tab's filter and selection, the sort, list scroll. */
+const scrolls = new PaneScroll();
+const memo = {
+  tab: 'buy' as MarketTab,
+  pos: { buy: 'ALL', sell: 'ALL', shortlist: 'ALL' } as Record<MarketTab, Pos>,
+  sort: 'foryou' as SortKey,
+  sel: { buy: '', sell: '', shortlist: '' } as Record<MarketTab, string>,
+  idx: { buy: 0, sell: 0, shortlist: 0 } as Record<MarketTab, number>,
+};
+
 /**
  * Open the transfer market. Needs a club (otherwise it sends you to found one). A club with no season yet gets
- * its first one started here, exactly as CAREER would on its first visit (the market lives in the league:
- * listings come from its clubs), so the market works from MY CLUB and the SHOP before CAREER is ever opened.
- * Between seasons (the summary is up) it waits for CAREER to start the next one.
+ * its first one started here, exactly as ROAD TO GLORY would on its first visit (the market lives in the league:
+ * listings come from its clubs), so the market works from MY CLUB and the SHOP before ROAD TO GLORY is ever opened.
+ * Between seasons (the summary is up) it waits for ROAD TO GLORY to start the next one.
  */
 export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
   const st = careerState(app);
@@ -49,16 +70,15 @@ export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
     openClub(app, { tab: 'market', onBack: opts.onBack, backLabel });
     return;
   }
-  ensureCss();
   if (!st.season && !st.summary) {
     newSeason(st, BOTTOM_DIVISION, 1);
     app.persist();
   }
   if (!st.season || st.summary) {
-    const scr = mountMeta(app, 'mk-screen');
+    const scr = mountMeta(app, 'mk-screen shell');
     scr.render(
-      `${topBar(backLabel, 'TRANSFER MARKET', 'BETWEEN SEASONS', app.save.coins)}
-      <p class="mc-empty">The season is over. Start the next one in ROAD TO GLORY and the market reopens with the new league. Scout packs in the SHOP work any time.</p>`,
+      `${topBar(backLabel, 'TRANSFERS', 'SEASON OVER', app.save.coins)}
+      <div class="mc-body mk-off"><div class="mk-empty"><b>MARKET CLOSED</b><span>START THE NEXT SEASON IN ROAD TO GLORY</span></div></div>`,
       { back },
     );
     return;
@@ -69,7 +89,8 @@ export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
   const fresh = new Set<NewsItem>(st.tm.news.filter((n) => n.own && !n.seen));
   markNewsSeen(st);
   app.persist();
-  marketScreen(app, st, st.club, opts.tab ?? 'buy', back, backLabel, fresh);
+  if (opts.tab) memo.tab = opts.tab;
+  marketScreen(app, st, st.club, back, backLabel, fresh);
 }
 
 // ------------------------------------------------------------------ bits
@@ -78,358 +99,357 @@ export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
 const dot = sep();
 
 function stars(n: number): string {
-  let s = '<span class="mk-stars" aria-label="' + n + ' of 5">';
+  let s = `<span class="mk-stars" aria-label="${n} of 5">`;
   for (let i = 0; i < 5; i++) s += `<i class="${i < n ? 'on' : ''}"></i>`;
   return s + '</span>';
 }
 
-function formText(form: number): string {
-  return form > 1 ? 'GREAT' : form > 0 ? 'GOOD' : form < -1 ? 'POOR' : form < 0 ? 'SHAKY' : 'STEADY';
-}
-
-function keyBars(p: PlayerDef): string {
-  return KEY_STATS[p.role]
-    .map((k) => `<div class="mc-bar"><span>${STAT_SHORT[k]}</span><div><i style="width:${p.stats[k]}%"></i></div><b>${p.stats[k]}</b></div>`)
-    .join('');
+/** His three key stats for the role, one row of cells: the number over a bar. */
+function keyStats(p: PlayerDef): string {
+  return `<div class="mk-stats">${KEY_STATS[p.role]
+    .map((k) => `<div class="mk-stat"><small>${STAT_SHORT[k]}</small><b>${p.stats[k]}</b><i><i style="width:${p.stats[k]}%"></i></i></div>`)
+    .join('')}</div>`;
 }
 
 function tag(cls: string, text: string): string {
   return `<i class="mk-tag ${cls}">${text}</i>`;
 }
 
+function fact(label: string, value: string | number, word = false): string {
+  return `<div class="mk-fact"><small>${label}</small><b${word ? ' class="word"' : ''}>${value}</b></div>`;
+}
+
+function bigOvr(n: number): string {
+  return `<div class="mk-big"><small>OVR</small><b>${n}</b></div>`;
+}
+
 // ------------------------------------------------------------------ screen
 
-function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: MarketTab, back: () => void, backLabel: string, fresh: Set<NewsItem>): void {
-  const scr = mountMeta(app, 'mk-screen');
-  let tab = tab0;
-  let pos: Role | 'ALL' = 'ALL';
-  let sort: SortKey = 'price';
-  /** Offer slider, % of asking (per listing so it survives re-renders). */
+function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: () => void, backLabel: string, fresh: Set<NewsItem>): void {
+  const scr = mountMeta(app, 'mk-screen shell');
+  /** Offer slider, % of asking (per listing, so it survives re-renders). */
   const pct = new Map<string, number>();
-  let confirm = '';
-  let sheet: { kind: 'listing' | 'player'; id: string } | null = null;
+  /** The player whose SELL NOW is armed (a second tap sells). */
+  let armed = '';
+  let newsBadge = fresh.size;
+  /** Scroll the selected row into view after the next draw (a new tab, filter or sort, or an automatic pick). */
+  let showSel = true;
+  /** A new filter or sort: the list starts from its top (then the selection is brought into view). */
+  let resetList = false;
 
   const rivalKit = (l: Listing): Kit => st.season?.rivals.find((r) => r.id === l.club)?.kit ?? club.kit;
   const say = (r: { ok: false; reason: MarketFail }) => scr.toast(failText(r.reason), 'bad');
+  const coins = () => app.save.coins;
+  const offerOf = (l: Listing) => Math.round((l.asking * (pct.get(l.id) ?? 100)) / 100 / 10) * 10;
+  const listKey = () => `mk-list-${memo.tab}`;
 
-  // ---- header: window / squad / wages + news
+  // ---- lists
 
-  const statusHtml = () => {
+  const buyList = (budget: TransferBudget): Listing[] => {
+    const list = filterListings(st.tm.listings, memo.pos.buy);
+    return memo.sort === 'foryou' ? forYouSort(list, club, budget) : sortListings(list, memo.sort);
+  };
+  const sellList = (): PlayerDef[] => (memo.pos.sell === 'ALL' ? club.squad : club.squad.filter((p) => p.role === memo.pos.sell));
+
+  /** Keep the tab's selection while it is in the list; otherwise the row now at its place (the next one after a signing). */
+  const pick = (ids: string[]): string => {
+    const tab = memo.tab;
+    const at = ids.indexOf(memo.sel[tab]);
+    if (at >= 0) {
+      memo.idx[tab] = at;
+      return memo.sel[tab];
+    }
+    if (!ids.length) return (memo.sel[tab] = '');
+    const i = Math.max(0, Math.min(memo.idx[tab], ids.length - 1));
+    memo.idx[tab] = i;
+    showSel = true;
+    return (memo.sel[tab] = ids[i]);
+  };
+
+  // ---- header: the window, the squad, the wage bill
+
+  const subHtml = () => {
     const s = marketSummary(st);
     const w = s.window;
-    const wagePct = Math.min(100, Math.round((s.wages / Math.max(1, s.budget)) * 100));
-    const over = s.drain > 0;
-    // Your own answers and offers first (this week and last, or still unread), then the league's gossip.
-    const news = newsStrip(st, 4, fresh);
-    const wageTitle = over
-      ? `Wages over budget: ${fmt(s.drain)} coins leave after every match and the squad plays ${WAGE_DIP} point down. Sell players or upgrade your stadium to get under budget.`
-      : 'Weekly wages against your budget (a signing must fit under it)';
-    return `<div class="mk-status">
-        <span class="mc-chip ${w.open ? 'home' : 'away'}">${w.open ? 'WINDOW OPEN' : 'WINDOW CLOSED'}</span>
-        <span class="mc-count ${s.squad >= SQUAD_MAX ? 'full' : ''}">SQUAD ${s.squad}/${SQUAD_MAX}${s.pending ? ` +${s.pending}` : ''}</span>
-        <div class="mk-wages ${over ? 'over' : ''}" title="${esc(wageTitle)}"><small>WAGES</small><div class="mc-meter"><i style="width:${wagePct}%"></i></div><b>${fmt(s.wages)} / ${fmt(s.budget)}</b>${
-          over ? `<em class="mk-drain" role="status">OVER BUDGET${dot}&minus;${fmt(s.drain)} A MATCH</em>` : ''
-        }</div>
-      </div>
-      <div class="mk-news" aria-live="polite"><b>NEWS</b><ul>
-        <li class="info">${w.label.charAt(0) + w.label.slice(1).toLowerCase()}</li>
-        ${news.map((n) => `<li class="${n.kind} ${n.own ? 'own' : ''}">${fresh.has(n) ? '<i class="mk-tag new">NEW</i>' : ''}${esc(n.text)}</li>`).join('')}
-      </ul></div>`;
+    return `<b class="mk-win ${w.open ? 'open' : 'shut'}" title="${esc(w.label)}"><i>WINDOW </i>${w.open ? 'OPEN' : 'SHUT'}</b>${dot}<span class="${
+      s.squad >= SQUAD_MAX ? 'mk-full' : ''
+    }">SQUAD ${s.squad}/${SQUAD_MAX}${s.pending ? ` +${s.pending}` : ''}</span>${dot}<span class="mk-wage${s.drain > 0 ? ' over' : ''}">WAGES ${fmt(s.wages)}/${fmt(s.budget)}</span>`;
   };
 
-  // ---- BUY
+  // ---- rows
 
-  const listingRow = (l: Listing) => {
+  const listingRow = (l: Listing, on: boolean, budget: TransferBudget) => {
     const p = l.player;
     const bid = bidFor(st, l.id);
-    const club_ = l.club ? townOf(l.clubName).toUpperCase() : 'FREE AGENT';
-    const tags =
-      (bid ? tag(bid.status === 'countered' ? 'counter' : 'bid', bid.status === 'countered' ? 'COUNTER' : 'OFFER SENT') : '') +
-      (l.youth ? tag('youth', 'YOUTH') : l.hot ? tag('hot', 'HOT') : '') +
-      (st.tm.shortlist.includes(l.id) ? tag('star', 'LISTED') : '');
-    return `<button class="mc-pl mk-row" data-a="open" data-id="${esc(l.id)}" aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}, asking ${fmt(l.asking)}">
-      ${faceHtml(p, rivalKit(l))}
+    const gain = upgradeOf(club, p).gain;
+    const from = l.club ? townOf(l.clubName).toUpperCase() : 'FREE';
+    const t = bid
+      ? tag(bid.status === 'countered' ? 'counter' : 'bid', bid.status === 'countered' ? 'COUNTER' : 'OFFER SENT')
+      : l.youth
+        ? tag('youth', 'YOUTH')
+        : l.hot
+          ? tag('hot', 'HOT')
+          : '';
+    const star = st.tm.shortlist.includes(l.id) ? pixelIcon('star', 'currentColor', 1.3, 'mk-starred') : '';
+    return `<button class="mk-row${on ? ' sel' : ''}" data-a="sel" data-id="${esc(l.id)}" aria-pressed="${on}" aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}, asking ${fmt(l.asking)}">
+      ${faceHtml(p, rivalKit(l), 'sm')}
       ${roleBadge(p.role)}
-      <span class="mc-pname"><b>${esc(p.name)}</b><small>${club_}</small><small>${l.age}Y${dot}${l.contract}YR${dot}${fmt(l.wage)}/WK</small></span>
+      <span class="mk-nm"><b>${esc(p.name)}${star}</b><small>${esc(from)}${dot}${l.age}Y${t}</small></span>
+      ${gain > 0 ? `<i class="mk-gain">+${gain}</i>` : '<i></i>'}
       ${ovrBadge(overall(p))}
-      <span class="mk-price"><b>${fmt(l.asking)}</b>${tags}</span>
+      <b class="mk-price${canAfford(l, budget) ? '' : ' poor'}">${fmt(l.asking)}</b>
     </button>`;
   };
 
-  const buyHtml = () => {
-    const w = marketSummary(st).window;
-    const rows = sortListings(filterListings(st.tm.listings, pos), sort).map(listingRow).join('');
-    const seg = (cls: string, action: string, cur: string, items: [string, string][]) =>
-      `<div class="seg ${cls}">${items.map(([v, l]) => `<button class="${v === cur ? 'on' : ''}" data-a="${action}" data-v="${v}">${l}</button>`).join('')}</div>`;
-    return `<div class="mk-filters">
-        ${seg('mk-pos', 'pos', pos, [['ALL', 'ALL'], ...ROLES.map((r): [string, string] => [r, r])])}
-        ${seg('mk-sort', 'sort', sort, [['price', 'PRICE'], ['ovr', 'OVR'], ['age', 'AGE']])}
-      </div>
-      <p class="mc-hint">${
-        w.open
-          ? 'Tap a player to make an offer (60% to 110% of asking). Clubs answer after your next ROAD TO GLORY match; free agents sign at once at their price.'
-          : 'The window is shut: scout and shortlist now, make offers when it opens.'
-      }</p>
-      ${rows ? `<div class="mc-list">${rows}</div>` : '<p class="mc-empty">Nobody here for that position right now. New names arrive after every match.</p>'}`;
-  };
-
-  // ---- SELL
-
-  const playerRow = (p: PlayerDef, i: number) => {
+  const playerRow = (p: PlayerDef, on: boolean) => {
+    const i = club.squad.indexOf(p);
     const sale = saleFor(st, p.id);
-    const tags = sale ? tag('bid', sale.offers.length ? `${sale.offers.length} OFFER${sale.offers.length > 1 ? 'S' : ''}` : 'LISTED') : '';
-    return `<button class="mc-pl mk-row" data-a="openp" data-id="${esc(p.id)}" aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}, value ${fmt(playerValue(p))}">
-      ${faceHtml(p, club.kit)}
+    const t = sale ? tag('bid', sale.offers.length ? `${sale.offers.length} OFFER${sale.offers.length > 1 ? 'S' : ''}` : 'LISTED') : '';
+    return `<button class="mk-row${on ? ' sel' : ''}" data-a="sel" data-id="${esc(p.id)}" aria-pressed="${on}" aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}, value ${fmt(playerValue(p))}">
+      ${faceHtml(p, club.kit, 'sm')}
       ${roleBadge(p.role)}
-      <span class="mc-pname"><b>${esc(p.name)}</b><small>${i < 11 ? 'STARTER' : 'BENCH'}</small><small>${playerAge(p)}Y${dot}${contractOf(p)}YR${dot}${fmt(wageOf(p))}/WK</small></span>
+      <span class="mk-nm"><b>${esc(p.name)}</b><small>${i < 11 ? 'STARTER' : 'BENCH'}${dot}${playerAge(p)}Y${t}</small></span>
+      <i></i>
       ${ovrBadge(overall(p))}
-      <span class="mk-price"><b>${fmt(playerValue(p))}</b>${tags}</span>
+      <b class="mk-price">${fmt(playerValue(p))}</b>
     </button>`;
   };
 
-  const sellHtml = () =>
-    `<p class="mc-hint">Tap a player to list him: clubs bid after each match while the window is open (70 to 95% of his value), or quick-sell for 45% now. Keep ${SQUAD_MIN} players and a keeper. Someone you signed this season fetches at most 110% of what you paid until he has made ${RESALE_STARTS} starts.</p>
-    <div class="mc-list">${club.squad.map(playerRow).join('')}</div>`;
+  // ---- the selected player (right pane)
 
-  // ---- SHORTLIST
-
-  const shortlistHtml = () => {
-    const rows = shortlisted(st).map(listingRow).join('');
-    return `<p class="mc-hint">Up to ${SHORTLIST_MAX} players you are watching. Scouting (${SCOUT_COST} coins) reveals a young player's potential.</p>
-      ${rows ? `<div class="mc-list">${rows}</div>` : '<p class="mc-empty">Your shortlist is empty. Open a player on the BUY tab and tap SHORTLIST.</p>'}`;
-  };
-
-  // ---- offer sheet (listing)
-
-  const listingSheet = (l: Listing): string => {
+  const listingDetail = (l: Listing): string => {
     const p = l.player;
+    const id = esc(l.id);
     const w = marketSummary(st).window;
     const bid = bidFor(st, l.id);
-    const [lo, hi] = bidRange(l);
-    const cur = pct.get(l.id) ?? 100;
-    const amount = Math.round((l.asking * cur) / 100 / 10) * 10;
+    const up = upgradeOf(club, p);
     const onList = st.tm.shortlist.includes(l.id);
     const from = l.club ? esc(townOf(l.clubName).toUpperCase()) : 'FREE AGENT';
+    const young = l.age <= YOUNG_AGE;
+    const cmp = up.starter
+      ? `<p class="mk-cmp ${up.gain > 0 ? 'up' : up.gain < 0 ? 'down' : ''}"><b>${up.gain > 0 ? '+' : up.gain < 0 ? '&minus;' : ''}${Math.abs(up.gain)} OVR</b><span>VS ${esc(up.starter.name)} ${overall(up.starter)}</span></p>`
+      : `<p class="mk-cmp up"><b>NEW ${p.role}</b><span>NOBODY STARTS THERE</span></p>`;
+    const starBtn = `<button class="btn btn-white mk-ic${onList ? ' on' : ''}" data-a="star" data-id="${id}" aria-pressed="${onList}" aria-label="${
+      onList ? 'Take off your shortlist' : 'Add to your shortlist'
+    }">${pixelIcon('star', 'currentColor', 2.2)}</button>`;
+    // Potential: a young player's stars once scouted (the cell itself is the SCOUT button until then); older players peaked.
+    const pot = !young
+      ? fact('POT', 'PEAKED', true)
+      : l.scouted
+        ? fact('POT', stars(l.potential))
+        : `<button class="mk-fact mk-scout" data-a="scout" data-id="${id}" aria-label="Scout his potential for ${SCOUT_COST} coins"><small>POT</small><b>SCOUT ${SCOUT_COST}</b></button>`;
     let deal: string;
+    let act: string;
     if (bid?.status === 'countered') {
-      deal = `<div class="mk-deal counter"><b>${from} WANT ${fmt(bid.counter)}</b><span>You offered ${fmt(bid.amount)}. Take it now or it lapses at the next match.</span>
-        <div class="btn-row no-stick"><button class="btn btn-go" data-a="accept" data-id="${esc(bid.id)}">ACCEPT ${fmt(bid.counter)}</button><button class="btn btn-red" data-a="withdraw" data-id="${esc(bid.id)}">DECLINE</button></div></div>`;
+      deal = `<p class="mk-deal counter"><b>THEY WANT ${fmt(bid.counter)}</b><span>YOU OFFERED ${fmt(bid.amount)}</span></p>`;
+      act = `<button class="btn btn-white" data-a="withdraw" data-id="${esc(bid.id)}">DECLINE</button><button class="btn btn-go mk-go" data-a="accept" data-id="${esc(bid.id)}">ACCEPT ${fmt(bid.counter)}</button>`;
     } else if (bid) {
-      deal = `<div class="mk-deal"><b>OFFER SENT: ${fmt(bid.amount)}</b><span>${l.club ? `${from} answer after your next match.` : 'His agent answers after your next match.'}</span>
-        <div class="btn-row no-stick"><button class="btn btn-white" data-a="withdraw" data-id="${esc(bid.id)}">WITHDRAW OFFER</button></div></div>`;
+      deal = `<p class="mk-deal"><b>OFFER SENT ${fmt(bid.amount)}</b><span>ANSWER AFTER YOUR NEXT MATCH</span></p>`;
+      act = `${starBtn}<button class="btn btn-white mk-go" data-a="withdraw" data-id="${esc(bid.id)}">WITHDRAW</button>`;
     } else if (!w.open) {
-      deal = `<div class="mk-deal shut"><b>WINDOW CLOSED</b><span>${w.label.charAt(0) + w.label.slice(1).toLowerCase()}. Scout him or add him to your shortlist for now.</span></div>`;
+      deal = `<p class="mk-deal shut"><b>WINDOW SHUT</b><span>${esc(w.label.replace(/^WINDOW /, ''))}</span></p>`;
+      act = `${starBtn}<button class="btn btn-go mk-go" disabled>WINDOW SHUT</button>`;
     } else {
-      const instant = !l.club && cur >= 100;
-      deal = `<div class="mk-bid">
-          <label for="mk-range"><span>YOUR OFFER</span><b data-amt>${fmt(amount)}</b><small data-pct>${cur}% OF ASKING</small></label>
-          <input id="mk-range" type="range" min="60" max="110" step="1" value="${cur}" data-in="bid" data-id="${esc(l.id)}" aria-label="Offer as a percentage of the asking price">
-          <div class="mk-range"><span>${fmt(lo)}</span><span>ASKING ${fmt(l.asking)}</span><span>${fmt(hi)}</span></div>
-          <button class="btn btn-go btn-lg mk-go" data-a="bid" data-id="${esc(l.id)}">${instant ? 'SIGN NOW' : 'MAKE OFFER'} <span data-amt>${fmt(amount)}</span></button>
-        </div>`;
+      const cur = pct.get(l.id) ?? 100;
+      const amt = offerOf(l);
+      const verb = !l.club && cur >= 100 ? 'SIGN' : 'OFFER';
+      deal = `<label class="mk-haggle"><span>OFFER</span><input type="range" min="60" max="110" step="1" value="${cur}" data-in="bid" data-id="${id}" aria-label="Offer as a share of the asking price"><b data-pct>${cur}%</b></label>
+        <p class="mk-hint" data-hint>${hintFor(l, cur)}</p>`;
+      act = `${starBtn}<button class="btn btn-go mk-go${coins() < amt ? ' poor' : ''}" data-a="go" data-id="${id}"><span data-verb>${verb}</span> <span data-amt>${fmt(amt)}</span></button>`;
     }
-    return `<header class="mk-sh">
-        ${faceHtml(p, rivalKit(l), 'lg')}
-        <div class="mk-shid"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}${ovrBadge(overall(p))}<em>${from}</em>${l.youth ? tag('youth', 'YOUTH') : l.hot ? tag('hot', 'HOT') : ''}</span></div>
-        <button class="btn btn-white mk-x" data-a="close" aria-label="Close">✕</button>
-      </header>
-      <div class="mk-facts">
-        <div class="mc-kv"><span>AGE</span><b>${l.age}</b></div>
-        <div class="mc-kv"><span>CONTRACT</span><b>${l.contract} YR</b></div>
-        <div class="mc-kv"><span>WAGE</span><b>${fmt(l.wage)}/WK</b></div>
-        <div class="mc-kv"><span>FORM</span><b>${formText(l.form)}</b></div>
-        <div class="mc-kv"><span>POTENTIAL</span><b>${l.scouted ? (l.age > YOUNG_AGE ? 'PEAKED' : stars(l.potential)) : 'UNKNOWN'}</b></div>
-        <div class="mc-kv"><span>ASKING</span><b>${fmt(l.asking)}</b></div>
+    return `<div class="mk-dh">${faceHtml(p, rivalKit(l), 'md')}<div class="mk-did"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<em>${from}</em>${
+      l.youth ? tag('youth', 'YOUTH') : l.hot ? tag('hot', 'HOT') : ''
+    }</span></div>${bigOvr(overall(p))}</div>
+      <div class="mk-dbody pane-scroll" data-scroll-key="mk-d-${id}">
+        ${cmp}
+        ${keyStats(p)}
+        <div class="mk-facts">${fact('AGE', l.age)}${fact('YEARS', l.contract)}${fact('WAGE', fmt(l.wage))}${pot}</div>
+        ${deal}
       </div>
-      <div class="mc-bars">${keyBars(p)}</div>
-      ${l.hot ? '<p class="mc-hint warn">Other clubs are in for him: a low offer may lose him.</p>' : ''}
-      ${l.youth ? `<p class="mc-hint">Cheap because he is raw: he grows every season. No flipping, though: clubs offer at most 110% of what you pay until he has made ${RESALE_STARTS} starts for you.</p>` : ''}
-      ${deal}
-      <div class="mk-actions">
-        <button class="btn btn-white" data-a="scout" data-id="${esc(l.id)}" ${l.scouted ? 'disabled' : ''}>${l.scouted ? 'SCOUTED' : `SCOUT ${SCOUT_COST}`}</button>
-        <button class="btn ${onList ? 'btn-yellow' : 'btn-white'}" data-a="star" data-id="${esc(l.id)}">${onList ? 'ON SHORTLIST' : 'SHORTLIST'}</button>
-      </div>`;
+      <div class="mk-dact">${act}</div>`;
   };
 
-  // ---- sale sheet (own player)
+  /** The one hint line under the offer slider. */
+  const hintFor = (l: Listing, cur: number): string =>
+    !l.club && cur >= 100 ? 'HE SIGNS AT ONCE' : l.hot && cur < 100 ? 'RIVALS ARE IN: A LOW OFFER MAY LOSE HIM' : 'THEY ANSWER AFTER YOUR NEXT MATCH';
 
-  const playerSheet = (p: PlayerDef): string => {
+  const playerDetail = (p: PlayerDef): string => {
+    const id = esc(p.id);
     const sale = saleFor(st, p.id);
     const age = playerAge(p);
     const quick = sellValue(p);
-    const armed = confirm === `quick${p.id}`;
-    const w = marketSummary(st).window;
     const cap = resaleCap(st, p);
     const m = p as MetaPlayer;
+    const w = marketSummary(st).window;
+    const starter = club.squad.indexOf(p) < 11;
     const offers = sale?.offers.length
       ? `<div class="mk-offers">${sale.offers
           .map(
             (o) => `<div class="mk-offer"><b>${esc(townOf(o.clubName).toUpperCase())}</b><span>${fmt(o.amount)}</span>
-            <button class="btn btn-go" data-a="take" data-id="${esc(p.id)}" data-o="${esc(o.id)}">ACCEPT</button>
-            <button class="btn btn-white" data-a="refuse" data-id="${esc(p.id)}" data-o="${esc(o.id)}">NO</button></div>`,
+            <button class="btn btn-white" data-a="refuse" data-id="${id}" data-o="${esc(o.id)}">NO</button>
+            <button class="btn btn-go" data-a="take" data-id="${id}" data-o="${esc(o.id)}">ACCEPT</button></div>`,
           )
           .join('')}</div>`
-      : sale
-        ? `<p class="mc-hint">No offers yet. ${
-            w.open ? 'Clubs bid after each match while the window is open.' : `${w.label.charAt(0) + w.label.slice(1).toLowerCase()}: clubs only bid while it is open.`
-          }</p>`
-        : '';
-    const capNote =
+      : '';
+    // One hint at most: the resale cap, then what listing costs, then when offers come.
+    const hint =
       cap !== null
-        ? `<p class="mc-hint warn">Signed this season for ${fmt(m.paid ?? 0)}: clubs offer at most ${fmt(cap)} until he has made ${RESALE_STARTS} starts for you (${m.starts ?? 0} so far) or the season ends.</p>`
-        : '';
-    return `<header class="mk-sh">
-        ${faceHtml(p, club.kit, 'lg')}
-        <div class="mk-shid"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}${ovrBadge(overall(p))}<em>#${p.number}</em>${sale ? tag('bid', 'LISTED') : ''}</span></div>
-        <button class="btn btn-white mk-x" data-a="close" aria-label="Close">✕</button>
-      </header>
-      <div class="mk-facts">
-        <div class="mc-kv"><span>AGE</span><b>${age}</b></div>
-        <div class="mc-kv"><span>CONTRACT</span><b>${contractOf(p)} YR</b></div>
-        <div class="mc-kv"><span>WAGE</span><b>${fmt(wageOf(p))}/WK</b></div>
-        <div class="mc-kv"><span>POTENTIAL</span><b>${age > YOUNG_AGE ? 'PEAKED' : stars(playerPotential(p))}</b></div>
-        <div class="mc-kv"><span>VALUE</span><b>${fmt(playerValue(p))}</b></div>
-        <div class="mc-kv"><span>QUICK SALE</span><b>${fmt(quick)}</b></div>
+        ? `CLUBS PAY AT MOST ${fmt(cap)} UNTIL ${RESALE_STARTS} STARTS (${m.starts ?? 0} SO FAR)`
+        : sale
+          ? sale.offers.length
+            ? `LISTED: ${MORALE_DIP} DOWN IN MATCHES`
+            : w.open
+              ? 'OFFERS COME AFTER EACH MATCH'
+              : 'NO OFFERS WHILE THE WINDOW IS SHUT'
+          : `A LISTED PLAYER PLAYS ${MORALE_DIP} DOWN`;
+    return `<div class="mk-dh">${faceHtml(p, club.kit, 'md')}<div class="mk-did"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<em>${starter ? 'STARTER' : 'BENCH'}${dot}${contractOf(p)} YR LEFT</em>${sale ? tag('bid', 'LISTED') : ''}</span></div>${bigOvr(overall(p))}</div>
+      <div class="mk-dbody pane-scroll" data-scroll-key="mk-d-${id}">
+        ${keyStats(p)}
+        <div class="mk-facts">${fact('AGE', age)}${fact('WAGE', fmt(wageOf(p)))}${fact('VALUE', fmt(playerValue(p)))}${fact('POT', age > YOUNG_AGE ? 'PEAKED' : stars(playerPotential(p)), age > YOUNG_AGE)}</div>
+        ${offers}
+        <p class="mk-hint">${hint}</p>
       </div>
-      <div class="mc-bars">${keyBars(p)}</div>
-      ${offers}
-      ${capNote}
-      <p class="mc-hint">A listed player has his mind elsewhere: ${MORALE_DIP} points off every stat in matches until he is unlisted or sold.</p>
-      <div class="mk-actions">
-        <button class="btn ${sale ? 'btn-white' : 'btn-blue'}" data-a="${sale ? 'unlist' : 'list'}" data-id="${esc(p.id)}">${sale ? 'UNLIST' : 'LIST FOR SALE'}</button>
-        <button class="btn ${armed ? 'btn-yellow' : 'btn-red'}" data-a="quick" data-id="${esc(p.id)}">${armed ? `SURE? +${fmt(quick)}` : `QUICK SALE +${fmt(quick)}`}</button>
+      <div class="mk-dact">
+        <button class="btn ${sale ? 'btn-white' : 'btn-blue'}" data-a="${sale ? 'unlist' : 'list'}" data-id="${id}">${sale ? 'UNLIST' : 'LIST'}</button>
+        <button class="btn ${armed === p.id ? 'btn-yellow' : 'btn-red'} mk-go" data-a="quick" data-id="${id}">${armed === p.id ? `SURE? +${fmt(quick)}` : `SELL NOW +${fmt(quick)}`}</button>
       </div>`;
   };
 
-  // ---- sheet plumbing (lives on the screen root, so panel re-renders leave it alone)
+  const emptyPane = (head: string, line: string) => `<div class="mk-empty"><b>${head}</b><span>${line}</span></div>`;
+
+  // ---- sheets (the expensive-offer confirm and the news): on the screen root, so panel re-renders leave them be
 
   let sheetEl: HTMLDivElement | null = null;
-  // Escape closes the sheet and nothing else, wherever focus is (captured before the match / menu listeners).
-  const onKey = (e: KeyboardEvent) => {
+  const onSheetKey = (e: KeyboardEvent) => {
     if ((e.key !== 'Escape' && e.code !== 'Escape') || !sheetEl) return;
     e.stopPropagation();
     e.preventDefault();
     closeSheet();
   };
   const closeSheet = () => {
-    if (sheetEl) window.removeEventListener('keydown', onKey, true);
+    if (sheetEl) window.removeEventListener('keydown', onSheetKey, true);
     sheetEl?.remove();
     sheetEl = null;
-    sheet = null;
-    confirm = '';
   };
   onMetaClose(closeSheet);
-  const drawSheet = () => {
-    if (!sheet) {
-      closeSheet();
-      return;
-    }
-    let html = '';
-    if (sheet.kind === 'listing') {
-      const l = listingById(st, sheet.id);
-      if (!l) {
-        closeSheet();
-        scr.toast('HE HAS LEFT THE MARKET', 'info');
-        draw();
-        return;
-      }
-      html = listingSheet(l);
-    } else {
-      const p = club.squad.find((x) => x.id === sheet!.id);
-      if (!p) {
+  const openSheet = (html: string, on: Handlers) => {
+    closeSheet();
+    const el = document.createElement('div');
+    el.className = 'mk-modal';
+    el.innerHTML = `<div class="mk-sheet" role="dialog" aria-modal="true">${html}</div>`;
+    el.addEventListener('pointerdown', (e) => {
+      if ((e.target as Element).closest('button:not(:disabled)')) sfx.click();
+    });
+    el.addEventListener('click', (e) => {
+      if (e.target === el) {
         closeSheet();
         return;
       }
-      html = playerSheet(p);
-    }
-    if (!sheetEl) {
-      sheetEl = document.createElement('div');
-      sheetEl.className = 'mk-modal';
-      sheetEl.innerHTML = '<div class="mk-sheet" role="dialog" aria-modal="true"></div>';
-      sheetEl.addEventListener('pointerdown', (e) => {
-        if ((e.target as Element).closest('button:not(:disabled)')) sfx.click();
-      });
-      sheetEl.addEventListener('click', (e) => {
-        if (e.target === sheetEl) {
-          closeSheet();
-          return;
-        }
-        const el = (e.target as Element).closest<HTMLElement>('[data-a]');
-        if (!el || (el as HTMLButtonElement).disabled) return;
-        handlers[el.dataset.a ?? '']?.(el);
-      });
-      sheetEl.addEventListener('input', (e) => {
-        const el = e.target as HTMLInputElement;
-        if (el.dataset.in) inputs[el.dataset.in]?.(el);
-      });
-      sheetEl.addEventListener('keydown', (e) => {
-        e.stopPropagation();
-        if (e.key === 'Escape') closeSheet();
-      });
-      window.addEventListener('keydown', onKey, true);
-      scr.root.appendChild(sheetEl);
-    }
-    const box = sheetEl.firstElementChild as HTMLDivElement;
-    const top = box.scrollTop;
-    box.innerHTML = html;
-    box.scrollTop = top;
-    hydrateFaces(box);
-    if (!box.contains(document.activeElement)) box.querySelector<HTMLElement>('input, button:not([disabled])')?.focus({ preventScroll: true });
+      const b = (e.target as Element).closest<HTMLElement>('[data-a]');
+      if (b && !(b as HTMLButtonElement).disabled) on[b.dataset.a ?? '']?.(b);
+    });
+    window.addEventListener('keydown', onSheetKey, true);
+    scr.root.appendChild(el);
+    sheetEl = el;
+    hydrateFaces(el);
+    el.querySelector<HTMLElement>('[data-a=ok], [data-a=close]')?.focus({ preventScroll: true });
   };
+
+  const confirmOffer = (l: Listing, amount: number, instant: boolean) => {
+    const verb = instant ? 'SIGN' : 'OFFER';
+    openSheet(
+      `<div class="mk-dh">${faceHtml(l.player, rivalKit(l), 'md')}<div class="mk-did"><b>${esc(l.player.name)}</b><span>${roleBadge(l.player.role)}<em>${
+        l.club ? esc(townOf(l.clubName).toUpperCase()) : 'FREE AGENT'
+      }</em></span></div>${bigOvr(overall(l.player))}</div>
+      <p class="mk-cfq"><b>${verb} ${fmt(amount)}?</b><span>LEAVES ${fmt(Math.max(0, coins() - amount))} COINS</span></p>
+      <div class="mk-dact"><button class="btn btn-white" data-a="close">CANCEL</button><button class="btn btn-go mk-go" data-a="ok">${verb} ${fmt(amount)}</button></div>`,
+      {
+        close: closeSheet,
+        ok: () => {
+          closeSheet();
+          offer(l.id, amount);
+        },
+      },
+    );
+  };
+
+  const openNews = () => {
+    const w = marketSummary(st).window;
+    const items = newsStrip(st, 8, fresh);
+    newsBadge = 0;
+    draw();
+    openSheet(
+      `<header class="mk-newsh"><b>NEWS</b><button class="btn btn-white" data-a="close">DONE</button></header>
+      <ul class="mk-newsl"><li class="info">${esc(w.label)}</li>${items
+        .map((n) => `<li class="${n.kind}${n.own ? ' own' : ''}">${fresh.has(n) ? tag('new', 'NEW') : ''}${esc(n.text)}</li>`)
+        .join('')}</ul>`,
+      { close: closeSheet },
+    );
+  };
+
+  // ---- actions
 
   const done = (msg: string, kind: 'good' | 'bad' | 'info' = 'good') => {
     app.persist();
     draw();
-    drawSheet();
     scr.toast(msg, kind);
   };
 
+  const offer = (id: string, amount: number) => {
+    const r = placeBid(st, app.save, id, amount);
+    if (!r.ok) {
+      say(r);
+      return;
+    }
+    sfx.coin();
+    if (r.instant && r.player) done(`SIGNED ${r.player.name.toUpperCase()} #${r.player.number}`);
+    else done(`OFFER SENT ${fmt(amount)}`, 'info');
+  };
+
   const handlers: Handlers = {
-    // BACK with a sheet open only closes the sheet; the screen itself goes on the next BACK.
-    back: () => {
-      if (sheetEl) {
-        closeSheet();
-        return;
-      }
-      back();
-    },
+    back,
     tab: (el) => {
-      tab = el.dataset.v as MarketTab;
-      scr.panel.scrollTop = 0;
+      memo.tab = el.dataset.v as MarketTab;
+      armed = '';
+      showSel = true;
       draw();
     },
     pos: (el) => {
-      pos = el.dataset.v as Role | 'ALL';
+      memo.pos[memo.tab] = el.dataset.v as Pos;
+      memo.idx[memo.tab] = 0;
+      scrolls.forget(listKey());
+      resetList = true;
+      showSel = true;
       draw();
     },
-    sort: (el) => {
-      sort = el.dataset.v as SortKey;
+    sort: () => {
+      const i = SORTS.findIndex(([k]) => k === memo.sort);
+      memo.sort = SORTS[(i + 1) % SORTS.length][0];
+      scrolls.forget(listKey());
+      resetList = true;
+      showSel = true;
       draw();
     },
-    open: (el) => {
-      sheet = { kind: 'listing', id: el.dataset.id ?? '' };
-      drawSheet();
-    },
-    openp: (el) => {
-      sheet = { kind: 'player', id: el.dataset.id ?? '' };
-      drawSheet();
-    },
-    close: closeSheet,
-    bid: (el) => {
+    sel: (el) => {
       const id = el.dataset.id ?? '';
-      const l = listingById(st, id);
+      if (memo.sel[memo.tab] === id) return;
+      memo.sel[memo.tab] = id;
+      armed = '';
+      buzz('tap');
+      draw();
+    },
+    news: openNews,
+    go: (el) => {
+      const l = listingById(st, el.dataset.id ?? '');
       if (!l) return;
-      const amount = Math.round((l.asking * (pct.get(id) ?? 100)) / 100 / 10) * 10;
-      const r = placeBid(st, app.save, id, amount);
-      if (!r.ok) {
-        say(r);
+      const amount = offerOf(l);
+      const check = canBid(st, coins(), l.id, amount);
+      if (!check.ok) {
+        say(check);
         return;
       }
-      sfx.coin();
-      if (r.instant && r.player) {
-        closeSheet();
-        done(`SIGNED ${r.player.name.toUpperCase()} #${r.player.number}`);
-      } else done(`OFFER SENT: ${fmt(amount)}. ANSWER AFTER THE NEXT MATCH`, 'info');
+      if (amount > coins() * CONFIRM_SHARE) confirmOffer(l, amount, check.instant);
+      else offer(l.id, amount);
     },
     withdraw: (el) => {
       const r = withdrawBid(st, app.save, el.dataset.id ?? '');
@@ -437,7 +457,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
         say(r);
         return;
       }
-      done('OFFER WITHDRAWN, COINS RETURNED', 'info');
+      done('OFFER WITHDRAWN, COINS BACK', 'info');
     },
     accept: (el) => {
       const r = acceptCounter(st, app.save, el.dataset.id ?? '');
@@ -446,7 +466,6 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
         return;
       }
       sfx.coin();
-      closeSheet();
       done(`SIGNED ${r.player.name.toUpperCase()} #${r.player.number}`);
     },
     scout: (el) => {
@@ -456,7 +475,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
         return;
       }
       sfx.coin();
-      done(r.potential ? `POTENTIAL ${r.potential}/5` : 'SCOUTED: NO GROWTH LEFT', 'info');
+      done(r.potential ? `POTENTIAL ${r.potential}/5` : 'NO GROWTH LEFT', 'info');
     },
     star: (el) => {
       const r = toggleShortlist(st, el.dataset.id ?? '');
@@ -464,7 +483,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
         say(r);
         return;
       }
-      done(r.on ? 'ADDED TO YOUR SHORTLIST' : 'OFF THE SHORTLIST', 'info');
+      done(r.on ? 'ON YOUR SHORTLIST' : 'OFF YOUR SHORTLIST', 'info');
     },
     list: (el) => {
       const r = listPlayer(st, el.dataset.id ?? '');
@@ -472,7 +491,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
         say(r);
         return;
       }
-      done('LISTED. OFFERS COME AFTER EACH MATCH', 'info');
+      done('LISTED: OFFERS AFTER EACH MATCH', 'info');
     },
     unlist: (el) => {
       const r = unlistPlayer(st, el.dataset.id ?? '');
@@ -489,7 +508,6 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
         return;
       }
       sfx.coin();
-      closeSheet();
       done(`SOLD ${r.player.name.toUpperCase()} +${fmt(r.delta)}`);
     },
     refuse: (el) => {
@@ -502,163 +520,137 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, tab0: M
     },
     quick: (el) => {
       const id = el.dataset.id ?? '';
-      if (confirm !== `quick${id}`) {
-        confirm = `quick${id}`;
-        drawSheet();
+      if (armed !== id) {
+        armed = id;
+        draw();
         return;
       }
-      confirm = '';
+      armed = '';
       const p = club.squad.find((x) => x.id === id);
       const r = sellPlayer(st, app.save, id);
       if (!r.ok) {
         scr.toast(failText(r.reason), 'bad');
+        draw();
         return;
       }
       sfx.coin();
-      closeSheet();
       done(`SOLD ${p ? p.name.toUpperCase() : 'PLAYER'} +${fmt(r.delta)}`);
+    },
+    findplayers: () => {
+      memo.tab = 'buy';
+      showSel = true;
+      draw();
     },
   };
 
   const inputs: InputHandlers = {
+    // The slider updates its own row and the button in place (no re-render mid drag).
     bid: (el) => {
-      const id = el.dataset.id ?? '';
-      const l = listingById(st, id);
+      const l = listingById(st, el.dataset.id ?? '');
       if (!l) return;
       const v = Math.max(60, Math.min(110, Number(el.value) || 100));
-      pct.set(id, v);
-      const amount = Math.round((l.asking * v) / 100 / 10) * 10;
-      const box = el.closest('.mk-bid');
-      box?.querySelectorAll('[data-amt]').forEach((n) => (n.textContent = fmt(amount)));
-      const pc = box?.querySelector('[data-pct]');
-      if (pc) pc.textContent = `${v}% OF ASKING`;
-      const go = box?.querySelector<HTMLElement>('.mk-go');
-      if (go) go.firstChild!.textContent = `${!l.club && v >= 100 ? 'SIGN NOW' : 'MAKE OFFER'} `;
+      pct.set(l.id, v);
+      const pane = el.closest('.mk-detail');
+      const amt = offerOf(l);
+      pane?.querySelectorAll('[data-amt]').forEach((n) => (n.textContent = fmt(amt)));
+      const pc = pane?.querySelector('[data-pct]');
+      if (pc) pc.textContent = `${v}%`;
+      const verb = pane?.querySelector('[data-verb]');
+      if (verb) verb.textContent = !l.club && v >= 100 ? 'SIGN' : 'OFFER';
+      const hint = pane?.querySelector('[data-hint]');
+      if (hint) hint.textContent = hintFor(l, v);
+      pane?.querySelector('.mk-go')?.classList.toggle('poor', coins() < amt);
     },
   };
 
-  const TABS: [MarketTab, string][] = [['buy', 'BUY'], ['sell', 'SELL'], ['shortlist', `SHORTLIST${st.tm.shortlist.length ? ` ${st.tm.shortlist.length}` : ''}`]];
+  // ---- draw
+
+  const chipsHtml = () => {
+    const pos = memo.pos[memo.tab];
+    const roles: Pos[] = ['ALL', ...ROLES];
+    const sortLabel = SORTS.find(([k]) => k === memo.sort)?.[1] ?? '';
+    const sortChip =
+      memo.tab === 'buy'
+        ? `<button class="mk-sort" data-a="sort" aria-label="Sorted by ${sortLabel}: tap for the next sort">${pixelIcon('swap', 'currentColor', 1.2, 'mk-sorticon')}${sortLabel}</button>`
+        : '';
+    return `<div class="chips mk-chips">${roles
+      .map((v) => `<button class="${v === pos ? 'on' : ''}" data-a="pos" data-v="${v}" aria-pressed="${v === pos}">${v}</button>`)
+      .join('')}${sortChip}</div>`;
+  };
 
   const draw = () => {
-    const body = tab === 'buy' ? buyHtml() : tab === 'sell' ? sellHtml() : shortlistHtml();
-    const sub = `WEEK ${(st.season?.matchday ?? 0) + 1} OF ${MATCHDAYS}`;
-    TABS[2][1] = `SHORTLIST${st.tm.shortlist.length ? ` ${st.tm.shortlist.length}` : ''}`;
+    const tab = memo.tab;
+    const budget = transferBudget(st, coins());
+    let rows = '';
+    let detail = '';
+    let empty = '';
+    if (tab === 'sell') {
+      const list = sellList();
+      const id = pick(list.map((p) => p.id));
+      rows = list.map((p) => playerRow(p, p.id === id)).join('');
+      const p = list.find((x) => x.id === id);
+      detail = p ? playerDetail(p) : emptyPane('NOBODY THERE', 'TRY ANOTHER POSITION');
+      if (!list.length) empty = emptyPane('NOBODY THERE', 'TRY ANOTHER POSITION');
+    } else {
+      const list = tab === 'buy' ? buyList(budget) : shortlisted(st);
+      const id = pick(list.map((l) => l.id));
+      rows = list.map((l) => listingRow(l, l.id === id, budget)).join('');
+      const l = list.find((x) => x.id === id);
+      detail = l ? listingDetail(l) : emptyPane('NOBODY HERE', 'NEW NAMES AFTER EVERY MATCH');
+      if (!list.length) empty = emptyPane('NOBODY HERE', 'NEW NAMES AFTER EVERY MATCH');
+    }
+    const s = marketSummary(st);
+    const warn = s.drain > 0 ? `<p class="mk-warn" role="status">OVER THE WAGE BUDGET${dot}&minus;${fmt(s.drain)} A MATCH</p>` : '';
+    const head = tab === 'shortlist' ? `<div class="pane-h">WATCHING ${st.tm.shortlist.length}/${SHORTLIST_MAX}</div>` : chipsHtml();
+    const n = st.tm.shortlist.length;
+    const tabs: [MarketTab, string][] = [['buy', 'BUY'], ['sell', 'SELL'], ['shortlist', `SHORTLIST${n ? ` ${n}` : ''}`]];
+    const body =
+      tab === 'shortlist' && !n
+        ? `<div class="mc-body mk-off">${emptyPane('NOBODY ON YOUR SHORTLIST', 'TAP THE STAR ON A PLAYER TO WATCH HIM')}<button class="btn btn-go" data-a="findplayers">FIND PLAYERS</button></div>`
+        : `<div class="mc-body mk-body">
+          <section class="pane mk-listpane">${warn}${head}<div class="pane-scroll mk-list" data-scroll-key="${listKey()}">${empty || rows}</div></section>
+          <section class="pane mk-detail">${detail}</section>
+        </div>`;
+    // Lists keep their place through every re-render (and per tab for the session).
+    scrolls.save(scr.panel);
     scr.render(
-      `${topBar(backLabel, 'TRANSFER MARKET', sub, app.save.coins)}
-      ${statusHtml()}
-      <div class="seg mc-tabs mk-tabs">${TABS.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}</button>`).join('')}</div>
+      `${topBar(backLabel, 'TRANSFERS', subHtml(), coins())}
+      <nav class="mc-tabs mk-tabs"><div class="seg">${tabs
+        .map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}" aria-pressed="${k === tab}">${l}</button>`)
+        .join('')}</div><button class="mk-newsbtn" data-a="news" aria-label="News${newsBadge ? `, ${newsBadge} new` : ''}">NEWS${newsBadge ? `<b>${newsBadge}</b>` : ''}</button></nav>
       ${body}`,
       handlers,
       inputs,
     );
+    scrolls.restore(scr.panel);
+    if (resetList) {
+      resetList = false;
+      const list = scr.panel.querySelector<HTMLElement>('.mk-list');
+      if (list) list.scrollTop = 0;
+    }
     hydrateFaces(scr.panel);
+    if (showSel) {
+      showSel = false;
+      revealInPane(scr.panel.querySelector('.mk-row.sel'));
+    }
   };
+
+  // Up / down walk the list from a focused row (the selection follows, the focus stays on the list).
+  scr.panel.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const row = (e.target as Element).closest?.<HTMLElement>('.mk-row');
+    if (!row) return;
+    e.preventDefault();
+    const rows = [...scr.panel.querySelectorAll<HTMLElement>('.mk-row')];
+    const next = rows[rows.indexOf(row) + (e.key === 'ArrowDown' ? 1 : -1)];
+    if (!next) return;
+    memo.sel[memo.tab] = next.dataset.id ?? '';
+    armed = '';
+    draw();
+    const now = scr.panel.querySelector<HTMLElement>('.mk-row.sel');
+    now?.focus({ preventScroll: true });
+    revealInPane(now);
+  });
+
   draw();
-}
-
-// ------------------------------------------------------------------ styles (scoped to this screen; style.css is shared)
-
-let cssDone = false;
-
-function ensureCss(): void {
-  if (cssDone || typeof document === 'undefined') return;
-  cssDone = true;
-  const s = document.createElement('style');
-  s.id = 'mk-css';
-  s.textContent = `
-.mk-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
-.mk-wages { display: grid; grid-template-columns: auto minmax(60px, 1fr) auto; align-items: center; gap: 8px; flex: 1 1 200px; font: 400 14px var(--round); }
-.mk-wages small { font-size: 13px; letter-spacing: 1px; }
-.mk-wages b { white-space: nowrap; }
-.mk-wages .mc-meter i { background: var(--go); }
-.mk-wages.over .mc-meter i { background: var(--red); }
-.mk-wages.over b { color: var(--red-d); }
-.mk-drain { grid-column: 1 / -1; font: 700 13px var(--px); letter-spacing: 1px; color: #fff; background: var(--red); padding: 4px 7px 2px; justify-self: start; }
-.mk-news li.own { color: var(--ink); font-weight: 700; }
-.mk-news li.own.good { color: var(--go-d); }
-.mk-news li.own.bad { color: var(--red-d); }
-.mk-tag.new { background: var(--yellow); color: var(--ink); margin-right: 6px; vertical-align: 1px; }
-.mk-news { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2); }
-.mk-news > b { font: 700 13px var(--px); letter-spacing: 1px; background: var(--ink); color: var(--yellow); padding: 5px 6px 3px; }
-.mk-news ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; min-width: 0; }
-.mk-news li { font: 400 14px/1.25 var(--round); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mk-news li.good { color: var(--go-d); }
-.mk-news li.bad { color: var(--red-d); }
-.mk-news li.info { color: var(--ink-2); }
-.mk-filters { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px; }
-.mk-filters .seg button { min-height: 40px; padding: 8px 2px 7px; font-size: 14px; }
-.mc-pl.mk-row { grid-template-columns: 44px auto minmax(0, 1fr) auto auto; }
-.mc-pl.mk-row .face { --fs: 44px; grid-column: auto; grid-row: auto; }
-.mc-pl.mk-row .mc-pname { gap: 1px; }
-.mc-pl.mk-row .mc-pname small { font-size: 13px; line-height: 1.15; }
-.mk-price { display: grid; justify-items: end; gap: 3px; min-width: 64px; }
-.mk-price b { font: 700 15px var(--px); color: var(--ink); }
-.mk-tag { display: inline-block; font: 400 11px/1 var(--round); letter-spacing: 0.6px; padding: 3px 5px 2px; background: var(--cream-2); color: var(--ink); }
-.mk-tag.hot { background: var(--red); color: #fff; }
-.mk-tag.youth { background: var(--go); color: #fff; }
-.mk-tag.bid { background: var(--blue); color: #fff; }
-.mk-tag.counter { background: var(--yellow); color: var(--ink); }
-.mk-tag.star { background: var(--ink); color: var(--yellow); }
-.mk-shid .mk-tag { margin-left: 6px; }
-.mk-stars { display: inline-flex; gap: 3px; vertical-align: middle; }
-.mk-stars i { width: 11px; height: 11px; background: var(--cream-2); border: 2px solid var(--ink); }
-.mk-stars i.on { background: var(--yellow); }
-.mk-modal { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; justify-content: center; padding: 12px; background: rgba(38, 38, 46, 0.55); animation: fade 0.18s ease-out; }
-.mk-sheet { width: min(560px, 100%); max-height: min(92%, 100vh - 24px); overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 12px; padding: 14px; background: var(--cream); border: 4px solid var(--ink); box-shadow: 0 8px 0 var(--ink), 0 18px 30px rgba(0, 0, 0, 0.3); animation: pop 0.22s cubic-bezier(0.2, 1.4, 0.4, 1); }
-.mk-sheet .btn-white { --c: #fff; --d: var(--ink-2); box-shadow: inset 0 0 0 3px var(--ink), 0 6px 0 var(--ink-2), 0 10px 0 rgba(38, 38, 46, 0.25); }
-.mk-sheet .btn-white:active { box-shadow: inset 0 0 0 3px var(--ink), 0 1px 0 var(--ink-2), 0 3px 0 rgba(38, 38, 46, 0.25); }
-.mk-sheet .btn:disabled { opacity: 0.55; cursor: default; }
-.mk-sh { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
-.mk-shid { display: grid; gap: 6px; min-width: 0; }
-.mk-shid b { font: 400 20px var(--round); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mk-shid span { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font: 400 14px var(--round); }
-.mk-shid em { font-style: normal; color: var(--ink-2); letter-spacing: 0.5px; }
-.btn.mk-x { min-height: 40px; padding: 8px 12px 6px; font-size: 16px; }
-.mk-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
-.mk-facts .mc-kv { padding: 5px 0; }
-.mk-bid { display: grid; gap: 8px; padding: 12px; background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2); }
-.mk-bid label { display: flex; align-items: baseline; gap: 8px; font: 400 14px var(--round); letter-spacing: 1px; }
-.mk-bid label b { font: 700 20px var(--px); margin-left: auto; }
-.mk-bid label small { font-size: 12px; color: var(--ink-2); }
-.mk-bid input[type=range] { width: 100%; height: 36px; margin: 0; accent-color: var(--blue); cursor: pointer; }
-.mk-range { display: flex; justify-content: space-between; font: 400 13px var(--round); color: var(--ink-2); letter-spacing: 0.5px; }
-.btn.mk-go { width: 100%; }
-.mk-deal { display: grid; gap: 6px; padding: 12px; background: #fff; border: 3px solid var(--blue); font: 400 14px var(--round); }
-.mk-deal.counter { border-color: var(--yellow-d); background: #fff5c4; }
-.mk-deal.shut { border-color: var(--cream-2); }
-.mk-deal b { font: 400 18px var(--round); }
-.mk-deal .btn-row { margin: 4px 0 0; padding: 0; }
-.mk-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.mk-actions .btn { padding-left: 6px; padding-right: 6px; white-space: normal; }
-.mk-offers { display: grid; gap: 6px; }
-.mk-offer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 8px; padding: 6px 8px; background: #fff; border: 2px solid var(--ink); font: 400 15px var(--round); }
-.mk-offer span { font: 700 15px var(--px); }
-.mk-offer .btn { min-height: 40px; padding: 8px 10px 6px; font-size: 14px; }
-@media (max-width: 640px) {
-  .mk-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .mc-pl.mk-row { grid-template-columns: 40px auto minmax(0, 1fr) auto auto; gap: 6px; }
-  .mc-pl.mk-row .face { --fs: 40px; }
-  .mk-price { min-width: 56px; }
-  .mk-filters { grid-template-columns: 1fr; }
-  .mk-news li { white-space: normal; }
-  .mk-modal { padding: 8px; }
-  .mk-sheet { padding: 12px; gap: 10px; }
-}
-@media (max-height: 480px) {
-  /* A phone on its side: the list starts higher. One news line (your latest, else the window's), slimmer tabs and
-     filters, tighter gaps, and no BUY hint (the offer sheet's 60 to 110% slider says the same). */
-  .panel.mc:has(> .mk-tabs) { gap: 8px; }
-  .mk-news { padding: 4px 8px; align-items: center; }
-  .mk-news > b { padding: 4px 6px 2px; }
-  .mk-news li:first-child:not(:only-child), .mk-news li:nth-child(n+3) { display: none; }
-  .mk-tabs button, .mk-filters .seg button { min-height: 32px; padding-top: 5px; padding-bottom: 4px; }
-  .mk-filters + .mc-hint { display: none; }
-  .mk-modal { align-items: center; }
-  .mk-sheet { max-height: calc(100vh - 16px); gap: 8px; padding: 10px 12px; }
-  .mk-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .mk-bid { gap: 4px; padding: 8px 10px; }
-  .mk-bid input[type=range] { height: 28px; }
-}
-`;
-  document.head.appendChild(s);
 }

@@ -1045,9 +1045,10 @@ export class Footballer {
       aR.rotation.set(-1.05, 0, 0.35);
       head.rotation.z = 0.2;
     } else if (kind === SKILL_MOVE.rainbow) {
-      // Rolled up the back of the standing leg, then the heel kicks it up and over: a hop as it goes.
-      const roll = smoothstep(0, 0.38, u);
-      const kick = Math.sin(clamp((u - 0.3) / 0.7, 0, 1) * Math.PI);
+      // Rolled up the back of the standing leg, then the heel kicks it up and over: a hop as it goes. (The heel is at the top
+      // of its kick as the ball leaves it: sim/skills.ts FLICK_AT, ~0.3 of the move.)
+      const roll = smoothstep(0, 0.2, u);
+      const kick = Math.sin(clamp((u - 0.08) / 0.45, 0, 1) * Math.PI);
       lR.rotation.z = lerp(0.35 * roll, -2.1, kick);
       lL.rotation.z = -0.15 + 0.2 * kick;
       torso.rotation.z = -0.25 - 0.3 * kick;

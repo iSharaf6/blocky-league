@@ -303,3 +303,32 @@
     animation: none;
   }
 }
+
+/* Landscape phones and short frames (docs/UX.md: one screen, no scroll): the words on the left, the buttons on the
+   right, the title and BACK across both. */
+@media (max-height: 560px) and (min-width: 600px) {
+  .panel.ac-panel {
+    width: min(760px, 96vw);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-auto-flow: row dense;
+    align-items: center;
+    column-gap: 18px;
+  }
+  .ac-panel > h2,
+  .ac-panel > .btn-row,
+  .ac-panel > .ac-status.busy:first-of-type { grid-column: 1 / -1; }
+  .ac-panel > .fine,
+  .ac-panel > .ac-who,
+  .ac-panel > .ac-status { grid-column: 1; }
+  .ac-panel > .ac-providers,
+  .ac-panel > .btn,
+  .ac-panel > .ac-actions,
+  .ac-panel > .ac-confirm,
+  .ac-panel > .ac-field { grid-column: 2; }
+  .ac-panel .ac-lead,
+  .ac-panel .ac-note { text-align: left; margin: 0; }
+  .panel.ac-panel { row-gap: 8px; }
+  .ac-panel .ac-actions { gap: 8px; }
+  .ac-panel .ac-actions .btn,
+  .ac-panel .ac-providers .btn { min-width: 0; min-height: 42px; padding: 8px 6px 7px; font-size: 13px; letter-spacing: 0.5px; white-space: normal; line-height: 1.1; }
+}

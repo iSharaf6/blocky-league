@@ -98,23 +98,25 @@ export function openOnline(host: OnlineHost): void {
   clearOverlay();
   const d = mount(panel(`
     <h2>ONLINE</h2>
-    <p class="fine big">Play a friend on another machine. Your two games connect directly, peer to peer: no game server in between.</p>
-    <section class="net-sec">
-      <h3>OVER THE INTERNET</h3>
-      <div class="btn-row">
-        <button class="btn btn-go" data-a="host">HOST A MATCH</button>
-        <button class="btn btn-blue" data-a="join">JOIN WITH A CODE</button>
-      </div>
-      <p class="fine">You swap two codes (a chat or a text message is fine). There is no relay server, so some networks can't link up: mobile data and strict office or school Wi-Fi are the usual ones. Home broadband usually works.</p>
-    </section>
-    <section class="net-sec">
-      <h3>ON THIS COMPUTER</h3>
-      <div class="btn-row">
-        <button class="btn btn-white" data-a="lhost">HOST HERE</button>
-        <button class="btn btn-white" data-a="ljoin">JOIN HERE</button>
-      </div>
-      <p class="fine">Two windows of this browser side by side, for trying it out. Only the window in front takes the keyboard.</p>
-    </section>
+    <p class="fine big">Play a friend on another device, peer to peer.</p>
+    <div class="net-cols">
+      <section class="net-sec">
+        <h3>OVER THE INTERNET</h3>
+        <div class="btn-row">
+          <button class="btn btn-go" data-a="host">HOST A MATCH</button>
+          <button class="btn btn-blue" data-a="join">JOIN WITH A CODE</button>
+        </div>
+        <p class="fine">Swap two codes in a chat. Home broadband works best; mobile data and school Wi-Fi often can't link up.</p>
+      </section>
+      <section class="net-sec">
+        <h3>ON THIS COMPUTER</h3>
+        <div class="btn-row">
+          <button class="btn btn-white" data-a="lhost">HOST HERE</button>
+          <button class="btn btn-white" data-a="ljoin">JOIN HERE</button>
+        </div>
+        <p class="fine">Two windows of this browser side by side, to try it out.</p>
+      </section>
+    </div>
     <div class="btn-row"><button class="btn btn-white" data-a="back">BACK</button></div>`));
   const noRtc = !rtcAvailable();
   const noBc = !broadcastAvailable();
@@ -137,14 +139,20 @@ export function openOnline(host: OnlineHost): void {
 async function internetHost(host: OnlineHost): Promise<void> {
   const d = mount(panel(`
     <h2>HOST A MATCH</h2>
-    <p class="fine big"><b>1.</b> Send this code to your friend.</p>
-    <textarea class="net-code" readonly data-f="offer" placeholder="Making your code"></textarea>
-    <div class="btn-row"><button class="btn btn-white" data-a="copy" disabled>COPY CODE</button></div>
-    <p class="fine big"><b>2.</b> Paste the code they send back.</p>
-    <textarea class="net-code" data-f="answer" placeholder="Their code" spellcheck="false"></textarea>
-    <div class="btn-row">
-      <button class="btn btn-white" data-a="paste">PASTE</button>
-      <button class="btn btn-go" data-a="connect" disabled>CONNECT</button>
+    <div class="net-cols">
+      <section class="net-step">
+        <p class="fine big"><b>1.</b> Send this code to your friend.</p>
+        <textarea class="net-code" readonly data-f="offer" placeholder="Making your code"></textarea>
+        <div class="btn-row"><button class="btn btn-white" data-a="copy" disabled>COPY CODE</button></div>
+      </section>
+      <section class="net-step">
+        <p class="fine big"><b>2.</b> Paste the code they send back.</p>
+        <textarea class="net-code" data-f="answer" placeholder="Their code" spellcheck="false"></textarea>
+        <div class="btn-row">
+          <button class="btn btn-white" data-a="paste">PASTE</button>
+          <button class="btn btn-go" data-a="connect" disabled>CONNECT</button>
+        </div>
+      </section>
     </div>
     <p class="net-status" aria-live="polite">Making your code (a few seconds)</p>
     <div class="btn-row"><button class="btn btn-white" data-a="cancel">CANCEL</button></div>`));
@@ -195,16 +203,20 @@ async function internetHost(host: OnlineHost): Promise<void> {
 function internetJoin(host: OnlineHost): void {
   const d = mount(panel(`
     <h2>JOIN A MATCH</h2>
-    <p class="fine big"><b>1.</b> Paste the code your friend sent.</p>
-    <textarea class="net-code" data-f="offer" placeholder="Their code" spellcheck="false"></textarea>
-    <div class="btn-row">
-      <button class="btn btn-white" data-a="paste">PASTE</button>
-      <button class="btn btn-go" data-a="next">NEXT</button>
-    </div>
-    <div class="net-step2" hidden>
-      <p class="fine big"><b>2.</b> Send this code back to them. The lobby opens when they paste it.</p>
-      <textarea class="net-code" readonly data-f="answer"></textarea>
-      <div class="btn-row"><button class="btn btn-white" data-a="copy">COPY CODE</button></div>
+    <div class="net-cols">
+      <section class="net-step">
+        <p class="fine big"><b>1.</b> Paste the code your friend sent.</p>
+        <textarea class="net-code" data-f="offer" placeholder="Their code" spellcheck="false"></textarea>
+        <div class="btn-row">
+          <button class="btn btn-white" data-a="paste">PASTE</button>
+          <button class="btn btn-go" data-a="next">NEXT</button>
+        </div>
+      </section>
+      <section class="net-step net-step2" hidden>
+        <p class="fine big"><b>2.</b> Send this code back. The lobby opens when they paste it.</p>
+        <textarea class="net-code" readonly data-f="answer"></textarea>
+        <div class="btn-row"><button class="btn btn-white" data-a="copy">COPY CODE</button></div>
+      </section>
     </div>
     <p class="net-status" aria-live="polite"></p>
     <div class="btn-row"><button class="btn btn-white" data-a="cancel">CANCEL</button></div>`));
@@ -362,7 +374,7 @@ function clubCard(idx: number, label: string, mine: boolean, ready: boolean, kit
     <span class="tp-label">${label}</span>
     <div class="tp-body">
       ${mine ? '<button class="arrow" data-d="-1" aria-label="Previous club">←</button>' : ''}
-      <div class="tp-kit">${shirtArt(kit, 9)}</div>
+      <div class="tp-kit">${shirtArt(kit, 5)}</div>
       ${mine ? '<button class="arrow" data-d="1" aria-label="Next club">→</button>' : ''}
     </div>
     <b class="tp-name">${crestSvg(c.name, c.short, c.kit, 2)}${escHtml(c.name)}</b>
@@ -391,17 +403,21 @@ function drawLobby(host: OnlineHost, link: OnlineLink, how: string): void {
   const d = mount(panel(`
     <h2>MATCH LOBBY</h2>
     <p class="net-line"><b>CONNECTED</b>${sep()}${how}${sep()}${hostSide ? 'YOU HOST' : 'THEY HOST'}</p>
-    <div class="vs-row">
-      <div class="team-pick" data-side="me">${clubCard(link.me.club, 'YOU', !link.me.ready && !link.error, link.me.ready, myKit)}</div>
-      <div class="vs">VS</div>
-      <div class="team-pick" data-side="them">${peer ? clubCard(peer.club, 'OPPONENT', false, peer.ready, theirKit) : '<span class="tp-label">OPPONENT</span><p class="fine">Connecting</p>'}</div>
+    <div class="net-lobby-body">
+      <div class="vs-row">
+        <div class="team-pick" data-side="me">${clubCard(link.me.club, 'YOU', !link.me.ready && !link.error, link.me.ready, myKit)}</div>
+        <div class="vs">VS</div>
+        <div class="team-pick" data-side="them">${peer ? clubCard(peer.club, 'OPPONENT', false, peer.ready, theirKit) : '<span class="tp-label">OPPONENT</span><p class="fine">Connecting</p>'}</div>
+      </div>
+      <div class="net-rules">
+        <div class="opt-row"><label>MODE</label><div class="seg" data-o="mode"></div></div>
+        <div class="opt-row"><label>HALF</label><div class="seg" data-o="len"></div></div>
+        <div class="opt-row"><label>KICK OFF</label><div class="seg" data-o="tod"></div></div>
+        <div class="opt-row"><label>IF LEVEL</label><div class="seg" data-o="ko"></div></div>
+        ${hostSide ? '' : '<p class="fine">The host sets the rules.</p>'}
+        <p class="net-status" aria-live="polite">${escHtml(status)}</p>
+      </div>
     </div>
-    <div class="opt-row"><label>MODE</label><div class="seg" data-o="mode"></div></div>
-    <div class="opt-row"><label>HALF LENGTH</label><div class="seg" data-o="len"></div></div>
-    <div class="opt-row"><label>KICK OFF</label><div class="seg" data-o="tod"></div></div>
-    <div class="opt-row"><label>IF LEVEL</label><div class="seg" data-o="ko"></div></div>
-    ${hostSide ? '' : '<p class="fine">The host sets the rules.</p>'}
-    <p class="net-status" aria-live="polite">${escHtml(status)}</p>
     <div class="btn-row">
       <button class="btn btn-white" data-a="leave">LEAVE</button>
       <button class="btn ${link.me.ready ? 'btn-yellow' : 'btn-blue'}" data-a="ready">${link.me.ready ? 'NOT READY' : 'READY'}</button>

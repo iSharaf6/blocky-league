@@ -3,8 +3,8 @@
  * seven-crest ladder with the current round lit, perks in force, the next opponent, ABANDON / PLAY), the perk
  * pick after a win (three big cards) and the run-over card (how far you got, what it paid, ONE MORE RUN).
  * Rules and state live in meta/run.ts (save.run); this file renders them and launches the matches through
- * AppContext.startMatch. Chunky style: the meta panel (ui/club.ts mountMeta) plus the rules below, injected
- * once (never style.css). Fits 375×667, 667×375 and desktop: one column that scrolls, the action row pinned.
+ * AppContext.startMatch. Chunky style: the meta panel (ui/club.ts mountMeta) on the app shell (docs/UX.md: one
+ * screen, nothing scrolls, the action pinned bottom right) plus the rules below, injected once (never style.css).
  */
 import type { AppContext, MatchRequest } from '../app';
 import { sfx } from '../audio/sfx';
@@ -44,7 +44,7 @@ export function openRun(app: AppContext, onBack: () => void): void {
 
 function showRun(app: AppContext, onBack: () => void, flash?: Flash): void {
   ensureCss();
-  const scr = mountMeta(app, 'rn-screen');
+  const scr = mountMeta(app, 'rn-screen shell');
   const back = (): void => {
     closeMeta();
     onBack();
@@ -153,7 +153,7 @@ function milestoneHtml(st: RunState): string {
     return `<div class="rn-mile done">${pixelIcon('trophy', '#c7970f', 3)}<div><b>EVERY MILESTONE EARNED</b><small>${st.cleared} FULL ${st.cleared === 1 ? 'CLEAR' : 'CLEARS'}. Go again for the coins and the best run.</small></div></div>`;
   }
   const win = m.round === RUN_ROUNDS ? `WIN ALL ${RUN_ROUNDS}` : `WIN ROUND ${m.round}`;
-  return `<div class="rn-mile">${pixelIcon('trophy', '#c7970f', 3)}<div><b>NEXT MILESTONE: ${win}</b>
+  return `<div class="rn-mile">${pixelIcon('trophy', '#c7970f', 3)}<div><b>MILESTONE: ${win}</b>
     <span class="rn-rw"><em><i class="rn-coin"></i>${fmt(m.coins)}</em><em>${m.xp} XP</em><em>TITLE: ${esc(m.title.toUpperCase())}</em></span></div></div>`;
 }
 
@@ -205,25 +205,24 @@ function startScreen(app: AppContext, scr: MetaScreen, back: () => void, onBack:
     const last = st.last ? `<p class="rn-last"><span>LAST RUN</span> ${lastLine(st)}</p>` : '';
     scr.render(
       `${topBar('MENU', 'CLUB RUN', `${RUN_ROUNDS} WINS${sep()}ONE LIFE`, app.save.coins)}
-      ${ladderHtml(st, 'preview')}
-      <div class="rn-cols">
-        <div class="rn-col">
-          <div class="rn-card rn-intro">
-            <p><b>Win ${RUN_ROUNDS} knockout matches in a row</b> against stronger and stronger clubs. Lose once and the run is over.</p>
-            <p>After every win, pick a perk for the rest of the run. Matches have 1 minute halves, and a draw goes to penalties.</p>
+      <div class="mc-body rn-body">
+        ${ladderHtml(st, 'preview')}
+        <div class="rn-cols">
+          <div class="rn-col">
+            <div class="rn-card rn-setup">
+              <div class="rn-you">${crest(club, 2)}<div><small>YOUR CLUB</small><b>${esc(c.name.toUpperCase())}</b><span class="rn-tags"><em>OVR ${presetOvr(club)}</em><small>CHANGE IT IN QUICK MATCH</small></span></div></div>
+              <div class="rn-diffs" role="group" aria-label="Difficulty">${chips}</div>
+            </div>
           </div>
-          ${statsHtml(st)}
-          ${last}
-        </div>
-        <div class="rn-col">
-          <div class="rn-card rn-setup">
-            <div class="rn-you">${crest(club, 2)}<div><small>YOUR CLUB</small><b>${esc(c.name.toUpperCase())}</b><span class="rn-tags"><em>OVR ${presetOvr(club)}</em><small>Change it in Quick Match.</small></span></div></div>
-            <div class="rn-diffs" role="group" aria-label="Difficulty">${chips}</div>
+          <div class="rn-col">
+            ${milestoneHtml(st)}
+            ${statsHtml(st)}
+            ${last}
           </div>
-          ${milestoneHtml(st)}
         </div>
       </div>
-      <div class="btn-row">
+      <div class="mc-actions">
+        <p class="mc-hint1 rn-hint">A perk after every win${sep()}1 minute halves${sep()}draws go to penalties</p>
         <button class="btn btn-go btn-lg pulse rn-go" data-a="start">START RUN</button>
       </div>`,
       {
@@ -260,40 +259,44 @@ function hubScreen(app: AppContext, scr: MetaScreen, back: () => void, onBack: (
   const render = (confirm: boolean): void => {
     const perkRow = perks.length
       ? `<div class="rn-perks">${perks.map(perkChip).join('')}</div>`
-      : '<p class="rn-none">No perks yet: win this one to pick your first.</p>';
+      : '<p class="rn-none">None yet: win this one to pick your first.</p>';
     const final = r === RUN_ROUNDS;
-    const body = confirm
-      ? `<div class="mc-notice rn-confirm"><p><b>ABANDON THIS RUN?</b></p><p>It ends before round ${r}. Your best run and milestones stay.</p></div>
-         <div class="btn-row">
+    // ABANDON asks first, in the action bar itself (the PLAY button's place), so nothing else moves.
+    const actions = confirm
+      ? `<div class="mc-actions rn-ask">
+           <p class="mc-hint1"><b>ABANDON THE RUN?</b> Your best run and milestones stay.</p>
            <button class="btn btn-white" data-a="keep">KEEP GOING</button>
            <button class="btn btn-red" data-a="abandonYes">ABANDON</button>
          </div>`
-      : `<div class="btn-row">
+      : `<div class="mc-actions">
            <button class="btn btn-white rn-ab" data-a="abandon">ABANDON</button>
+           <span class="grow"></span>
            <button class="btn btn-go btn-lg pulse rn-go" data-a="play">${final ? 'PLAY THE FINAL' : `PLAY ROUND ${r}`}</button>
          </div>`;
     scr.render(
       `${topBar('MENU', 'CLUB RUN', `ROUND ${r} OF ${RUN_ROUNDS}${sep()}${DIFFICULTIES[st.difficulty] ?? 'NORMAL'}`, app.save.coins)}
-      <div class="${reveal ? 'rn-reveal' : ''}">${ladderHtml(st, 'live')}</div>
-      <div class="rn-cols">
-        <div class="rn-col">
-          <div class="rn-card rn-next">
-            <div class="rn-nextcrest">${crest(opp, 4)}</div>
-            <div class="rn-nextbody">
-              <small>${final ? 'THE FINAL' : `ROUND ${r}`}${sep()}KNOCKOUT</small>
-              <b>${esc(c?.name.toUpperCase() ?? '')}</b>
-              <span class="rn-tags"><em>OVR ${presetOvr(opp)}</em><em class="you">YOU ${presetOvr(st.club)}</em><small>A draw goes to penalties.</small></span>
+      <div class="mc-body rn-body">
+        <div class="${reveal ? 'rn-reveal' : ''}">${ladderHtml(st, 'live')}</div>
+        <div class="rn-cols">
+          <div class="rn-col">
+            <div class="rn-card rn-next">
+              <div class="rn-nextcrest">${crest(opp, 4)}</div>
+              <div class="rn-nextbody">
+                <small>${final ? 'THE FINAL' : `ROUND ${r}`}${sep()}KNOCKOUT</small>
+                <b>${esc(c?.name.toUpperCase() ?? '')}</b>
+                <span class="rn-tags"><em>OVR ${presetOvr(opp)}</em><em class="you">YOU ${presetOvr(st.club)}</em><small>DRAW: PENALTIES</small></span>
+              </div>
             </div>
+            ${st.last && st.last.won ? `<p class="rn-last"><span>LAST</span> ${lastLine(st)}</p>` : ''}
           </div>
-          ${st.last && st.last.won ? `<p class="rn-last"><span>LAST</span> ${lastLine(st)}</p>` : ''}
-        </div>
-        <div class="rn-col">
-          <h3 class="mc-h">PERKS IN FORCE</h3>
-          ${perkRow}
-          ${milestoneHtml(st)}
+          <div class="rn-col">
+            <h3 class="mc-h">PERKS IN FORCE</h3>
+            ${perkRow}
+            ${milestoneHtml(st)}
+          </div>
         </div>
       </div>
-      ${body}`,
+      ${actions}`,
       {
         back,
         play: () => playRound(app, onBack),
@@ -328,9 +331,11 @@ function pickScreen(app: AppContext, scr: MetaScreen, back: () => void, onBack: 
     </button>`).join('');
   scr.render(
     `${topBar('MENU', 'PICK A PERK', `ROUND ${st.round} WON`, app.save.coins)}
-    <div class="rn-won"><p>${won}</p>${bonus}<p class="rn-up"><span>NEXT</span> ROUND ${st.round + 1} v ${esc(clubWord(nextOpp))}</p></div>
-    <div class="rn-offer n${st.offer.length}">${cards}</div>
-    ${activePerks(st).length ? `<div class="rn-perks small"><span>HELD</span>${activePerks(st).map(perkChip).join('')}</div>` : ''}`,
+    <div class="mc-body rn-body rn-pickbody">
+      <div class="rn-won"><p>${won}</p>${bonus}<p class="rn-up"><span>NEXT</span> ROUND ${st.round + 1} v ${esc(clubWord(nextOpp))}</p></div>
+      <div class="rn-offer n${st.offer.length}">${cards}</div>
+      ${activePerks(st).length ? `<div class="rn-perks small"><span>HELD</span>${activePerks(st).map(perkChip).join('')}</div>` : ''}
+    </div>`,
     {
       back,
       pick: (el) => {
@@ -360,18 +365,23 @@ function overScreen(app: AppContext, scr: MetaScreen, back: () => void, onBack: 
   const bonus = flash?.bonusXp ? `<em>XP BOOST +${flash.bonusXp} XP</em>` : '';
   scr.render(
     `${topBar('MENU', cleared ? 'INVINCIBLE!' : 'RUN OVER', `ROUND ${reached} OF ${RUN_ROUNDS}`, app.save.coins)}
-    <div class="rn-over ${cleared ? 'win' : ''}">
-      ${cleared ? pixelIcon('trophy', '#ffd23a', 7) : ''}
-      <h3>${headline}</h3>
-      ${l && !cleared ? `<p>${lastLine(st)}</p>` : ''}
-      ${newBest ? '<em class="rn-new">NEW BEST RUN</em>' : `<em class="rn-bestis">${esc(bestText(st))}</em>`}
+    <div class="mc-body rn-body">
+      <div class="rn-over ${cleared ? 'win' : ''}">
+        ${cleared ? pixelIcon('trophy', '#ffd23a', 4) : ''}
+        <h3>${headline}</h3>
+        ${l && !cleared ? `<p>${lastLine(st)}</p>` : ''}
+        ${newBest ? '<em class="rn-new">NEW BEST RUN</em>' : `<em class="rn-bestis">${esc(bestText(st))}</em>`}
+      </div>
+      ${ladderHtml(st, 'over')}
+      <div class="rn-cols">
+        <div class="rn-col">
+          <div class="rn-card rn-take"><span>THIS RUN PAID</span><span class="rn-rw"><em><i class="rn-coin"></i>${fmt(st.coins)}</em><em>${fmt(st.xp)} BONUS XP</em>${bonus}</span></div>
+          ${perksUsed.length ? `<div class="rn-perks small"><span>PERKS</span>${perksUsed.map(perkChip).join('')}</div>` : ''}
+        </div>
+        <div class="rn-col">${milestoneHtml(st)}</div>
+      </div>
     </div>
-    ${ladderHtml(st, 'over')}
-    <div class="rn-card rn-take"><span>THIS RUN PAID</span><span class="rn-rw"><em><i class="rn-coin"></i>${fmt(st.coins)}</em><em>${fmt(st.xp)} BONUS XP</em>${bonus}</span></div>
-    ${perksUsed.length ? `<div class="rn-perks small"><span>PERKS</span>${perksUsed.map(perkChip).join('')}</div>` : ''}
-    ${milestoneHtml(st)}
-    <div class="btn-row">
-      <button class="btn btn-white" data-a="back">MENU</button>
+    <div class="mc-actions">
       <button class="btn btn-go btn-lg pulse rn-go" data-a="again">ONE MORE RUN</button>
     </div>`,
     {
@@ -470,10 +480,13 @@ function ensureCss(): void {
   const s = document.createElement('style');
   s.id = 'rn-css';
   s.textContent = `
-.rn-screen .panel.mc { gap: 12px; }
+.rn-screen.shell .panel.mc { gap: 8px; }
+.rn-screen.shell .panel.mc > .rn-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: auto; align-content: safe center; gap: 10px; }
+.rn-screen .mc-actions .rn-hint { flex: 1 1 auto; }
+.rn-screen .mc-actions.rn-ask .mc-hint1 { flex: 1 1 auto; color: var(--ink); }
 .rn-ladder { list-style: none; margin: 0; padding: 10px 6px 6px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; background: #fff; border: 3px solid var(--ink); box-shadow: 0 5px 0 var(--cream-2); position: relative; }
 .rn-ladder::before { content: ''; position: absolute; left: 7%; right: 7%; top: 34px; height: 6px; background: var(--cream-2); z-index: 0; }
-.rn-rung { position: relative; z-index: 1; display: grid; grid-template-rows: auto auto 16px; justify-items: center; align-content: start; gap: 4px; min-width: 0; }
+.rn-rung { position: relative; z-index: 1; display: grid; grid-template-rows: auto auto; justify-items: center; align-content: start; gap: 3px; min-width: 0; }
 .rn-crest { position: relative; display: grid; place-items: center; width: 100%; max-width: 50px; aspect-ratio: 13 / 15; }
 .rn-crest svg { width: 100%; height: auto; filter: drop-shadow(0 3px 0 rgba(0,0,0,0.18)); }
 .rn-q { display: grid; place-items: center; width: 80%; aspect-ratio: 13 / 15; font: 700 18px var(--px); font-style: normal; color: #b9b5aa; background: var(--cream); border: 3px dashed #cfcabd; }
@@ -488,7 +501,7 @@ function ensureCss(): void {
 .rn-badge { position: absolute; right: -4px; bottom: -2px; display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid var(--ink); }
 .rn-badge.ok { background: var(--go); }
 .rn-badge.no { background: var(--red); }
-.rn-ms { line-height: 0; opacity: 0.8; }
+.rn-ms { position: absolute; left: 0; top: -6px; line-height: 0; opacity: 0.8; }
 .rn-ms.got { opacity: 1; }
 .rn-reveal .rn-rung { animation: rn-pop 0.35s cubic-bezier(.2,1.6,.4,1) both; animation-delay: calc(var(--i) * 70ms); }
 @keyframes rn-pop { from { transform: translateY(14px) scale(0.6); opacity: 0; } }
@@ -504,7 +517,7 @@ function ensureCss(): void {
 .rn-stats { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .rn-stats span { display: grid; gap: 2px; justify-items: center; text-align: center; padding: 8px 6px; background: var(--cream); border: 3px solid var(--cream-2); min-width: 0; }
 .rn-stats b { font: 700 15px var(--px); letter-spacing: 0.5px; color: var(--ink); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rn-stats small { font: 400 12px var(--round); letter-spacing: 1px; color: var(--ink-2); }
+.rn-stats small { max-width: 100%; font: 400 12px var(--round); letter-spacing: 1px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rn-mile { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; padding: 10px 12px; background: #fff7d6; border: 3px solid var(--yellow-d); box-shadow: 0 5px 0 rgba(199, 151, 15, 0.35); }
 .rn-mile div { display: grid; gap: 3px; min-width: 0; }
 .rn-mile b { font: 700 14px var(--px); letter-spacing: 0.5px; color: var(--ink); }
@@ -566,12 +579,9 @@ function ensureCss(): void {
 .rn-take span { font: 400 12px var(--round); letter-spacing: 1px; color: var(--ink-2); }
 .rn-take .rn-rw { justify-content: center; }
 .rn-take .rn-rw em { font-size: 15px; }
-.rn-confirm { display: grid; gap: 4px; }
-.rn-confirm p { margin: 0; }
-.rn-screen .btn-row { display: flex; gap: 10px; flex-wrap: nowrap; }
-.rn-screen .btn-row .btn { min-width: 0; }
-.rn-screen .btn-row .rn-go { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
-.rn-screen .btn-row .rn-ab { flex: 0 0 auto; }
+.rn-screen .mc-actions .btn { min-width: 0; }
+.rn-screen .mc-actions .rn-go { flex: 0 1 auto; min-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.rn-screen .mc-actions .rn-ab { flex: 0 0 auto; }
 @media (max-width: 520px) {
   .rn-offer, .rn-offer.n2 { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .rn-perk { grid-template-columns: 60px minmax(0, 1fr); justify-items: start; text-align: left; align-items: center; column-gap: 12px; row-gap: 2px; padding: 10px 12px; }
@@ -585,14 +595,29 @@ function ensureCss(): void {
   .rn-badge svg { width: 14px; height: 14px; }
   .rn-stats b { font-size: 13px; }
   .rn-diff { font-size: 11px; letter-spacing: 0; }
-  .rn-screen .btn-row .btn-lg { padding: 16px 10px 14px; font-size: 16px; letter-spacing: 1px; }
-  .rn-screen .btn-row .rn-ab { padding: 15px 10px 13px; font-size: 13px; letter-spacing: 0.5px; }
+  .rn-screen .mc-actions .rn-go { min-width: 0; }
 }
 @media (max-height: 460px) {
-  .rn-screen .panel.mc { gap: 10px; }
-  .rn-ladder { padding: 6px 6px 4px; }
-  .rn-crest { max-width: 34px; }
+  .rn-screen.shell .panel.mc > .rn-body { gap: 8px; }
+  .rn-cols, .rn-col { gap: 8px; }
+  .rn-ladder { padding: 6px 6px 3px; }
+  .rn-crest { max-width: 30px; }
   .rn-ladder::before { top: 22px; }
+  .rn-rung b { font-size: 12px; }
+  .rn-card { padding: 8px 10px; }
+  .rn-setup { gap: 8px; }
+  .rn-diff { min-height: 38px; padding: 5px 2px; }
+  .rn-stats b { font-size: 13px; }
+  .rn-stats span { padding: 5px 4px; }
+  .rn-mile { padding: 6px 10px; }
+  .rn-mile b { font-size: 12px; }
+  .rn-rw em { font-size: 13px; padding: 1px 6px 0; }
+  .rn-nextcrest svg { width: 42px; }
+  .rn-over { padding: 0; gap: 2px; }
+  .panel.mc .rn-over h3 { font-size: 22px; }
+  .rn-over p, .rn-bestis { font-size: 14px; }
+  .rn-won { gap: 2px; }
+  .rn-won p { font-size: 15px; }
   .rn-offer { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .rn-offer.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rn-perk { display: grid; grid-template-columns: 1fr; justify-items: center; text-align: center; padding: 10px 8px; gap: 4px; }
@@ -601,6 +626,10 @@ function ensureCss(): void {
   .rn-perk b { font-size: 14px; }
   .rn-perk small { font-size: 13px; }
   .rn-intro p { font-size: 15px; }
+}
+/* Narrow landscape phones (667 wide): the difficulty names keep their letters. */
+@media (max-width: 760px) {
+  .rn-diff { font-size: 11px; letter-spacing: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .rn-reveal .rn-rung, .rn-perk, .rn-rung.now .rn-crest::after, .rn-new { animation: none; }

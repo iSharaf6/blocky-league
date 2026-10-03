@@ -263,6 +263,111 @@ describe('SKILL: the new moves', () => {
   });
 });
 
+describe('SKILL: the RAINBOW FLICK does what a rainbow flick does', () => {
+  /**
+   * The owner (2026-10-03): "rainbow flick is basically failing dosnt go over the player goes back". A man in its lane (side
+   * on, or off the line: not squared up, which would be a nutmeg), the dribbler jogging or sprinting with the stick ahead,
+   * timed (PERFECT) or not: up over the man, down a few metres beyond him along the run, never back, and his again before
+   * anyone of theirs touches it.
+   */
+  const flickOver = (seed: number, perfect: boolean, sprint: boolean, lat: number, dist: number) => {
+    const m = scenario(seed);
+    const p = carrier(m, -20);
+    const run = pad(1, 0, { autoSprint: sprint });
+    steps(m, 40, run);
+    p.ballT = 2;
+    m.drainEvents();
+    const o = m.players[14];
+    place(o, p.pos.x + dist, p.pos.z + lat);
+    o.facing = Math.abs(lat) > 1 ? Math.PI : Math.PI / 2;
+    if (perfect) {
+      startTell(m, o, p, false, true);
+      steps(m, 4, run);
+    }
+    const evs = steps(m, 1, pad(1, 0, { skill: true, autoSprint: sprint }));
+    const x0 = m.ball.pos.x;
+    let overY = -1;
+    let backwards = false;
+    let land = NaN;
+    let got = false;
+    let theirs = false;
+    for (let i = 0; i < 150 && !got && !theirs; i++) {
+      m.step(DT, run);
+      for (const e of m.drainEvents()) {
+        if (e.type === 'control' && e.player === p.idx) got = true;
+        else if ((e.type === 'control' && m.players[e.player].side === 1) || (e.type === 'tackle' && e.won && m.players[e.by].side === 1)) theirs = true;
+      }
+      const b = m.ball;
+      if (b.owner < 0 && b.vel.x < -0.2) backwards = true;
+      if (overY < 0 && b.owner < 0 && b.pos.x >= o.pos.x) overY = b.pos.y;
+      if (Number.isNaN(land) && b.owner < 0 && b.pos.y < 0.35 && b.vel.y < 0 && b.pos.x - x0 > 1) land = b.pos.x - o.pos.x;
+    }
+    const mv = evs.find((e) => e.type === 'skillMove');
+    return { move: mv && mv.type === 'skillMove' ? mv.move : '', overY, backwards, land, got, theirs };
+  };
+
+  it('goes up over the man, comes down beyond him, and is his again: always when timed, and with no tell too', () => {
+    const rows: string[] = [];
+    for (const perfect of [true, false]) {
+      for (const sprint of [false, true]) {
+        for (const [lat, dist] of [[1.15, 2.6], [-1.15, 2.6], [0.3, 2.4], [0.3, 3.6]] as [number, number][]) {
+          const r = flickOver(600 + Math.round(lat * 10) + dist * 7 + (sprint ? 3 : 0), perfect, sprint, lat, dist);
+          rows.push(`${perfect ? 'PERFECT' : 'untimed'} ${sprint ? 'sprint' : 'jog'} man ${dist} m (${lat}): ${r.move} over ${r.overY.toFixed(2)} m, down ${r.land.toFixed(1)} m beyond him, his again ${r.got}`);
+          expect(r.move).toBe('rainbow');
+          expect(r.backwards).toBe(false);
+          expect(r.got).toBe(true);
+          expect(r.theirs).toBe(false);
+          // (Over his head where it crosses his line, unless he stood to the side of it.)
+          if (Math.abs(lat) < 1) expect(r.overY).toBeGreaterThan(2.3);
+          if (!Number.isNaN(r.land)) {
+            expect(r.land).toBeGreaterThan(1.5);
+            expect(r.land).toBeLessThan(6);
+          }
+        }
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(rows.join('\n'));
+  }, 120_000);
+
+  it('with nobody in front it is a forward lift he runs onto; near a touchline it stays in play', () => {
+    const m = scenario(77);
+    const p = carrier(m, -20);
+    steps(m, 40, pad(1, 0));
+    const x0 = m.ball.pos.x;
+    steps(m, 1, pad(1, 0, { skill: true }));
+    let top = 0;
+    let got = -1;
+    for (let i = 0; i < 120 && got < 0; i++) {
+      m.step(DT, pad(1, 0));
+      if (m.drainEvents().some((e) => e.type === 'control' && e.player === p.idx)) got = i;
+      top = Math.max(top, m.ball.pos.y);
+    }
+    expect(top).toBeGreaterThan(1.8);
+    expect(got).toBeGreaterThan(30);
+    expect(m.ball.pos.x - x0).toBeGreaterThan(3);
+    // Running at the touchline: shortened to land inside it.
+    const n = scenario(78);
+    const q = n.players[9];
+    place(q, -20, HALF_W - 8);
+    q.facing = Math.PI / 2;
+    giveBall(n, q);
+    steps(n, 20, pad(0, 1));
+    steps(n, 1, pad(0, 1, { skill: true }));
+    // (Until it's his again: after that he's the one running it out.)
+    let maxZ = 0;
+    let his = false;
+    for (let i = 0; i < 120 && !his; i++) {
+      n.step(DT, pad(0, 1));
+      his = n.drainEvents().some((e) => e.type === 'control' && e.player === q.idx);
+      maxZ = Math.max(maxZ, n.ball.pos.z);
+    }
+    expect(his).toBe(true);
+    expect(maxZ).toBeLessThan(HALF_W - 2);
+    expect(n.phase).toBe('play');
+  }, 60_000);
+});
+
 describe('the pad on the wire', () => {
   it('AUTO SPRINT survives quantising and the packet', () => {
     const p: Pad = { ...EMPTY_PAD, mx: 0.9, mz: 0.1, autoSprint: true, skill: true };
