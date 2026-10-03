@@ -21,7 +21,7 @@ import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 
 const LANDSCAPE = 16 / 9;
 const PORTRAIT = 9 / 19.5;
-const ZOOMS: CamZoom[] = ['wide', 'normal', 'close'];
+const ZOOMS: CamZoom[] = ['wide', 'normal', 'close', 'cinematic'];
 /** Standing head height fed to the rig (MatchView.headTop on desktop). */
 const TALL = 1.94;
 /**
@@ -489,71 +489,122 @@ describe('broadcast camera: locked on, and wide enough to see who to pass to', {
 });
 
 describe('dynamic resolution (World.adapt)', () => {
-  const feedDts = (g: ResolutionGovernor, seconds: number, dt: (i: number) => number): number[] => {
+  /** Feed `seconds` of frames (`dt(i, ratio)` s each); the ratio after every frame, and when it changed. */
+  const feed = (g: ResolutionGovernor, seconds: number, dt: (i: number, ratio: number) => number, quiet: (t: number) => boolean = () => true, work = 0) => {
     const out: number[] = [];
+    const changes: { t: number; ratio: number }[] = [];
     let t = 0;
     for (let i = 0; t < seconds; i++) {
-      const d = dt(i);
+      const d = dt(i, g.ratio);
       t += d;
-      g.frame(d);
+      const r = g.frame(d, work, quiet(t));
+      if (r !== null) changes.push({ t, ratio: r });
       out.push(g.ratio);
     }
-    return out;
+    return { out, changes };
   };
+  const feedDts = (g: ResolutionGovernor, seconds: number, dt: (i: number) => number): number[] => feed(g, seconds, dt).out;
+  /** A GPU just over budget at 60 Hz: every other frame dropped. */
+  const overloaded = (i: number) => (i % 2 ? 1 / 30 : 1 / 60);
+  /** Seeded uniform [0, 1). */
+  const rng = (seed: number) => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 
   it('rAF jitter at 60 Hz (and 120 Hz falling back to 60) never costs resolution', () => {
-    const g = new ResolutionGovernor(2);
+    const g = new ResolutionGovernor(2, 1.5);
     // Headless Chrome's vsync intervals: 15.2 .. 18.7 ms.
     const r = feedDts(g, 20, (i) => (i % 3 === 0 ? 0.0187 : i % 3 === 1 ? 0.0152 : 0.0161));
     expect(Math.min(...r)).toBe(2);
-    const g2 = new ResolutionGovernor(2);
+    const g2 = new ResolutionGovernor(2, 1.5);
     expect(Math.min(...feedDts(g2, 10, (i) => (i % 2 ? 1 / 120 : 1 / 60)))).toBe(2);
   });
 
-  it('a sudden load drops the pixel ratio within ~1.5 s and it is all back ~7 s after the load ends', () => {
-    const g = new ResolutionGovernor(2);
+  it('a steady capped rate is the display\'s pace, not a slow GPU: Low Power Mode\'s 30 Hz keeps HIGH sharp', () => {
+    // (The old governor took every 30 Hz frame as GPU bound: 2x down to 0.6x in ~3 s, a smear on a 3x phone.)
+    const g = new ResolutionGovernor(2, 1.5);
+    const r = feed(g, 60, () => 1 / 30);
+    expect(r.changes).toEqual([]);
+    expect(1 / g.pace).toBeCloseTo(30, 0);
+    // Some 50 ms frames on top (a late vsync) are jank, not a reason to blur the picture.
+    const next = rng(3);
+    expect(feed(new ResolutionGovernor(2, 1.5), 60, () => (next() < 0.1 ? 0.05 : 1 / 30)).changes).toEqual([]);
+    // Low Power Mode switched on mid-match: the pace moves to 30 Hz, the pixels stay.
+    let t = 0;
+    const g3 = new ResolutionGovernor(2, 1.5);
+    expect(feed(g3, 60, () => {
+      const d = t < 20 ? 1 / 60 : 1 / 30;
+      t += d;
+      return d;
+    }).changes).toEqual([]);
+  });
+
+  it('a lone hitch or a few dropped frames a second never cost resolution', () => {
+    // (Each of these sank the old governor to 0.6x within seconds, apart from the lone hitch.)
+    expect(feed(new ResolutionGovernor(2, 1.5), 60, (i) => (i % 180 === 0 ? 0.08 : 1 / 60)).changes).toEqual([]);
+    expect(feed(new ResolutionGovernor(2, 1.5), 60, (i) => (i % 30 < 2 ? 1 / 30 : 1 / 60)).changes).toEqual([]);
+    const next = rng(1);
+    expect(feed(new ResolutionGovernor(2, 1.5), 60, () => (next() < 0.06 ? 1 / 30 : 1 / 60)).changes).toEqual([]);
+  });
+
+  it('a GPU that cannot keep up gives up pixels a step at a time, never under the floor, and gets them back', () => {
+    const g = new ResolutionGovernor(2, 1.5);
     feedDts(g, 2, () => 1 / 60);
-    // Every other frame dropped (a GPU just over budget at 60 Hz), for 3 s.
-    const loaded = feedDts(g, 3, (i) => (i % 2 ? 1 / 30 : 1 / 60));
-    const at = (arr: number[], s: number, dt: number) => arr[Math.min(arr.length - 1, Math.floor(s / dt))];
-    expect(at(loaded, 1.6, 1 / 40)).toBeLessThanOrEqual(1.05);
-    const low = g.ratio;
-    expect(low).toBeGreaterThanOrEqual(0.6);
-    const calm = feedDts(g, 10, () => 1 / 60);
-    const back = calm.findIndex((r) => r >= 2);
-    expect(back).toBeGreaterThan(0);
-    expect(back / 60).toBeLessThan(9);
+    const loaded = feed(g, 20, overloaded);
+    // A step within ~2 s, the floor (HIGH's 1.5x) a few seconds later, and never under it.
+    expect(loaded.changes.length).toBe(2);
+    expect(loaded.changes[0].t).toBeLessThan(2.5);
+    expect(loaded.changes[0].ratio).toBeCloseTo(1.75, 2);
+    expect(g.ratio).toBe(1.5);
+    expect(Math.min(...loaded.out)).toBe(1.5);
+    const calm = feed(g, 40, () => 1 / 60);
+    expect(calm.changes.length).toBe(2);
+    expect(g.ratio).toBe(2);
+    expect(calm.changes[1].t).toBeLessThan(30);
+    // MEDIUM goes down to 1x, and nothing ever goes under it.
+    const m = new ResolutionGovernor(1.5, 1);
+    feedDts(m, 30, overloaded);
+    expect(m.ratio).toBe(1);
+    const any = new ResolutionGovernor(2);
+    feedDts(any, 60, overloaded);
+    expect(any.ratio).toBe(1);
   });
 
   it('slow frames our own main-thread work explains (a busy CPU) cost no pixels: fewer would not help', () => {
-    const g = new ResolutionGovernor(2);
+    const g = new ResolutionGovernor(2, 1.5);
     let t = 0;
     for (let i = 0; t < 6; i++) {
-      const dt = i % 2 ? 1 / 30 : 1 / 60;
+      const dt = overloaded(i);
       t += dt;
       g.frame(dt, dt * 0.9);
     }
     expect(g.ratio).toBe(2);
   });
 
-  it('a lone hitch (a GC pause) is ignored, and a raise that brings the stutter back is not tried again at once', () => {
-    const g = new ResolutionGovernor(2);
-    const r = feedDts(g, 10, (i) => (i === 300 ? 0.08 : 1 / 60));
-    expect(Math.min(...r)).toBe(2);
-    // A GPU that manages 60 Hz at ratio <= 1.2 only: it settles instead of sawing up and down.
-    const g2 = new ResolutionGovernor(2);
-    let changes = 0;
-    let last = g2.ratio;
-    let t = 0;
-    for (let i = 0; t < 30; i++) {
-      const dt = g2.ratio > 1.2 ? (i % 2 ? 1 / 30 : 1 / 60) : 1 / 60;
-      t += dt;
-      g2.frame(dt);
-      if (g2.ratio !== last && t > 10) changes++;
-      last = g2.ratio;
-    }
-    expect(g2.ratio).toBeLessThanOrEqual(1.2);
-    expect(changes).toBeLessThanOrEqual(4);
+  it('a raise that brings the stutter back is undone at once and not tried again for a while: it settles', () => {
+    // A GPU that manages 60 Hz at 1.75x but not at 2x.
+    const g = new ResolutionGovernor(2, 1.5);
+    const r = feed(g, 120, (i, ratio) => (ratio > 1.76 ? overloaded(i) : 1 / 60));
+    expect(g.ratio).toBeCloseTo(1.75, 2);
+    // Down once, then a probe up, straight back within a second, again only 45 s later (then 90...): never sawing.
+    expect(r.changes.length).toBeLessThanOrEqual(5);
+    for (let k = 2; k < r.changes.length; k += 2) expect(r.changes[k].t - r.changes[k - 1].t).toBeLessThan(1);
+    expect(r.changes[3].t - r.changes[1].t).toBeGreaterThan(40);
+  });
+
+  it('a change waits for a quiet moment (no resize hitch mid-move); a needed drop goes after a few seconds anyway', () => {
+    // Overloaded in unbroken play: the drop waits, then goes.
+    const g = new ResolutionGovernor(2, 1.5);
+    const play = feed(g, 10, overloaded, () => false);
+    expect(play.changes.length).toBeGreaterThan(0);
+    expect(play.changes[0].t).toBeGreaterThan(5);
+    // The ball goes out at 3 s: the drop lands then.
+    const g2 = new ResolutionGovernor(2, 1.5);
+    const out = feed(g2, 4, overloaded, (t) => t > 3);
+    expect(out.changes[0].t).toBeGreaterThan(3);
+    expect(out.changes[0].t).toBeLessThan(3.05);
+    // Getting the pixels back never interrupts play: only at the next dead ball.
+    const back = feed(g2, 60, () => 1 / 60, (t) => t > 50);
+    expect(back.changes.length).toBeGreaterThan(0);
+    expect(back.changes[0].t).toBeGreaterThan(50);
   });
 });
 

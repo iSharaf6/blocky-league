@@ -136,6 +136,17 @@ export const FACE_HOLD_T = 0.12;
 export const HUMAN_ACCEL = 2.1;
 export const HUMAN_TURN = 1.75;
 const HUMAN_STOP = 60 * TEMPO;
+/**
+ * The human's man on the ball keeps more of his pace (the owner, on his phone: "the dribbling is slow"): HUMAN_DRIBBLE_MULT
+ * of his running pace instead of an AI carrier's DRIBBLE_MULT. A sprinting dribble is still caught by a defender at full
+ * tilt; a jog with it leaves a jogging marker behind.
+ */
+export const HUMAN_DRIBBLE_MULT = 0.97;
+/**
+ * The human's man sprints far more than anyone the AI runs (a held button, and on touch AUTO SPRINT whenever the stick
+ * is pushed all the way), so his sprint drains HUMAN_SPRINT_DRAIN as fast: a man he has run all half still has legs.
+ */
+export const HUMAN_SPRINT_DRAIN = 0.45;
 /** Close control (the human's dribbler jogging, not sprinting): he turns this much quicker again. */
 export const CLOSE_TURN = 1.2;
 /**
@@ -481,7 +492,7 @@ export class Player {
     const sprinting = this.sprint && sp > this.jog * 0.95;
     const fit = this.stat.stamina / 100;
     let rate: number;
-    if (sprinting) rate = -SPRINT_DRAIN * (1.35 - fit);
+    if (sprinting) rate = -SPRINT_DRAIN * (1.35 - fit) * (agile ? HUMAN_SPRINT_DRAIN : 1);
     else if (sp > this.jog * 0.5) rate = -JOG_DRAIN * (1.3 - fit * 0.6);
     else rate = RECOVERY;
     this.stamina = clamp(this.stamina + rate * this.fatigue * dt, 0.15, 1);
@@ -502,7 +513,8 @@ export class Player {
     let max = this.sprint ? this.sprintPace() : this.jogPace();
     if (this.state === 'celebrate' && this.sprint) max = Math.max(max, CELEBRATE_SPRINT);
     if (this.burstT > 0) max = Math.max(max, this.top) * 1.1;
-    if (dribbling) max *= DRIBBLE_MULT * (0.9 + (this.stat.dribbling / 100) * 0.12);
+    // (The human's quicker dribble only while the stick drives him: shaping up to a shot he plants, as anyone does.)
+    if (dribbling) max *= (agile && this.quickLegs ? HUMAN_DRIBBLE_MULT : DRIBBLE_MULT) * (0.9 + (this.stat.dribbling / 100) * 0.12);
     let tx = this.wantX;
     let tz = this.wantZ;
     const tl = Math.sqrt(tx * tx + tz * tz);

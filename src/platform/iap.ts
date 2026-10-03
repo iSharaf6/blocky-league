@@ -108,6 +108,17 @@ export interface IapProduct {
   doubler: boolean;
   /** A coin pack never bought before: this buy pays FIRST_BUY_MULT times its coins. */
   firstBonus: boolean;
+  /**
+   * The store can sell it right now. False only on Iap.shelf()'s stand-ins: the app's store hasn't answered for
+   * this product (not set up in App Store Connect yet, offline), so the card shows the catalogue price and a tap
+   * says the store isn't ready. Nothing is ever granted without the store.
+   */
+  sellable: boolean;
+}
+
+/** The catalogue's own price ("$3.99"): the US price set in the store consoles, shown until the store gives its own. */
+export function cataloguePrice(e: Pick<IapEntry, 'usd'>): string {
+  return `$${e.usd.toFixed(2)}`;
 }
 
 /** What a delivered purchase changed. */
@@ -491,15 +502,45 @@ export class Iap {
     const prices = new Map(this.impl.prices().map((p) => [p.id, p.price]));
     return CATALOGUE.flatMap((e) => {
       const price = prices.get(e.id);
-      if (!price) return [];
-      return [{
-        id: e.id, title: e.title, price, kind: e.kind, coins: coinsOf(e), baseCoins: e.coins, bonusPct: e.bonusPct,
-        items: e.items.map((it) => itemKey(it.cat, it.id)), noAds: !!e.noAds, tag: e.tag,
-        owned: !!this.ctx && (e.pass ? passActive(this.ctx.save) : e.kind === 'non-consumable' && ownsProduct(this.ctx.save, e.id)),
-        pass: !!e.pass, doubler: !!e.doubler,
-        firstBonus: isCoinPack(e) && !!this.ctx && !iapOf(this.ctx.save).firsts.includes(e.id),
-      }];
+      return price ? [this.product(e, price, true)] : [];
     });
+  }
+
+  /**
+   * This build sells for real money: the iPhone / iPad app (whether or not its store has answered yet), or the dev
+   * store. False on the web and the portals: coins come from play and rewarded ads there, and no price is shown.
+   */
+  get storefront(): boolean {
+    if (import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') return false;
+    return this.available || inNativeApp();
+  }
+
+  /**
+   * Everything for sale, in display order, for the shop in the app: the store's own products where it has them,
+   * else a stand-in at the catalogue price with `sellable` false (the store can't sell it yet: a tap says so).
+   * So the Club Pass, NO ADS, the Coin Doubler, the Starter Pack and the coin packs always show in the app, even
+   * before App Store Connect has them. Empty off the storefront (the web, the portals).
+   */
+  shelf(): IapProduct[] {
+    if (!this.storefront) return [];
+    const live = new Map(this.products().map((p) => [p.id, p]));
+    return CATALOGUE.map((e) => live.get(e.id) ?? this.product(e, cataloguePrice(e), false));
+  }
+
+  /** The store can sell this product right now (a tap on a stand-in that can't says the store isn't ready). */
+  canSell(id: string): boolean {
+    return this.products().some((p) => p.id === id);
+  }
+
+  private product(e: IapEntry, price: string, sellable: boolean): IapProduct {
+    return {
+      id: e.id, title: e.title, price, kind: e.kind, coins: coinsOf(e), baseCoins: e.coins, bonusPct: e.bonusPct,
+      items: e.items.map((it) => itemKey(it.cat, it.id)), noAds: !!e.noAds, tag: e.tag,
+      owned: !!this.ctx && (e.pass ? passActive(this.ctx.save) : e.kind === 'non-consumable' && ownsProduct(this.ctx.save, e.id)),
+      pass: !!e.pass, doubler: !!e.doubler,
+      firstBonus: isCoinPack(e) && !!this.ctx && !iapOf(this.ctx.save).firsts.includes(e.id),
+      sellable,
+    };
   }
 
   /** A one-time product the player already has. */

@@ -9,13 +9,13 @@ import { headerAtGoal, naturalPass, pickReceiver as pickPassMate, reaimShot, ROL
 import { Ball, groundPassSpeed, type BallHit } from './ball';
 import { blitzClear, blitzGoal, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, megaHands } from './blitz';
 import {
-  AssistState, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAIN, PRESS_GAP, PRESS_LEAD, pressSteal,
+  AssistState, autoRun, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAIN, PRESS_GAP, PRESS_LEAD, pressSteal,
   standingFoulChance, standingTackleChance, STAND_REACH, tackleClosing, vsHuman, HUMAN_SLIDE_BOOST, HUMAN_SLIDE_MIN,
   HUMAN_SLIDE_REACH, HUMAN_SLIDE_T, humanSlideFoul,
 } from './dribble';
 import { humanSkill, SkillState, skillGoal, skillTells } from './skills';
 import {
-  AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
+  AIR_DRAG, BALL_R, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
   PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SHOT_TEMPO, SIX_DEPTH, SIX_W, SPRINT_SPEED, TEMPO, DDA_TACKLE, KEEPER_BOOST,
 } from './constants';
 import { FORMATIONS, kickoffSlot, type Slot } from './formations';
@@ -93,6 +93,11 @@ export interface Pad {
   power?: boolean;
   /** SKILL: a skill move with the ball (optional; a press, not a hold: skills.ts). */
   skill?: boolean;
+  /**
+   * Optional: AUTO SPRINT (the touch thumbstick, Settings > Controls): the stick pushed all the way sprints without
+   * SPRINT (dribble.ts autoRun). The button's own presses (the knock-on's double tap, a TACKLE tap with it held) stay its.
+   */
+  autoSprint?: boolean;
 }
 
 export interface Restart {
@@ -483,6 +488,24 @@ const HUMAN_RESTART_LOCK = 0.2;
 const PEN_AUTO_POWER = 0.65;
 const KEEPER_HOLD_MIN = 0.7;
 const KEEPER_HOLD_SPAN = 0.8;
+/**
+ * Added time (the owner: "if theres an attack perhaps let it happen and stop the game, if theres time wasting then
+ * stop the game"). Once the clock runs out the referee blows at the first natural stoppage: the ball dead, a goal,
+ * a foul, the keeper holding it, or the attack breaking down (the other side wins it, or it goes back over
+ * ADDED_BACK_M into the attackers' own half). The ball in its own side's half (no attack on: time wasting) and he
+ * blows at once. ADDED_FRAC of the half (ADDED_MIN_S..ADDED_MAX_S s, about four of its 45 minutes) is the most
+ * open play he lets run on; then he blows once no shot is live, the ball is down and no advantage is pending, and
+ * ADDED_LAST_S past that whatever is happening. A penalty is always taken (ADDED_PEN_S is the safety net), and a
+ * corner or a free kick in range given by halfway through the allowance too. A ball just gone out gets
+ * ADDED_SETTLE_S to come down before the whistle freezes the picture.
+ */
+const ADDED_FRAC = 4 / 45;
+const ADDED_MIN_S = 5;
+const ADDED_MAX_S = 12;
+const ADDED_LAST_S = 5;
+const ADDED_PEN_S = 20;
+const ADDED_BACK_M = 2;
+const ADDED_SETTLE_S = 0.4;
 
 /** A human pass being charged (PASS / THROUGH held), or let go and waiting on his body turn / wind-up. */
 interface PassCharge {
@@ -943,6 +966,12 @@ export class Match {
   private hits: BallHit[] = [];
   private firstKickoff: Side = 0;
   private pendingRestart: Restart | null = null;
+  /** Match.clock when the last restart was given (added time: was it given in time to be taken?). */
+  private restartGivenAt = 0;
+  /** Added time: the side whose attack the referee is letting finish, or null (not looked yet / not in open play). */
+  private addedAttack: Side | null = null;
+  /** Added time: a penalty is being taken, or its shot is still live (it has until ADDED_PEN_S). */
+  private addedPen = false;
   private pathT = 0;
   /** Increments on every strike of the ball; lets players react once per kick. */
   kickId = 0;
@@ -1602,6 +1631,11 @@ export class Match {
       return;
     }
     if (this.phase === 'halftime' || this.phase === 'fulltime') return;
+    // A goal in added time: the teams have lined up for the kick-off, and the referee blows instead.
+    if (this.phase === 'kickoff' && this.clock >= this.cfg.halfLength) {
+      this.endHalf();
+      return;
+    }
     if (this.phase === 'shootout') {
       this.stepShootout(dt, pads);
       this.keepPads(pads);
@@ -1697,14 +1731,7 @@ export class Match {
     if (this.phase === 'play' || this.phase === 'out' || this.phase === 'restart') {
       this.clock += dt;
       if (this.possessionSide !== -1) this.stats.possession[this.possessionSide as Side] += dt;
-      if (this.clock >= this.cfg.halfLength && this.phase === 'play') {
-        const b = this.ball.pos;
-        const danger = Math.abs(b.x) > HALF_L - BOX_DEPTH - 6 && Math.abs(b.z) < BOX_W / 2 + 4;
-        // Never blow while the ball is in the air, a shot is live or a set piece has just been taken.
-        // (Nor while the referee is waiting to see whether an advantage comes off.)
-        const live = b.y > 1 || this.shotClock < 1.5 || this.phaseT < 2.5 || this.adv !== null;
-        if ((!danger && !live) || this.clock > this.cfg.halfLength + 8) this.endHalf();
-      }
+      if (this.clock >= this.cfg.halfLength && this.addedTimeUp()) this.endHalf();
     }
     this.passT += dt;
     if (this.passT > 3.2) this.passTarget = -1;
@@ -1733,7 +1760,54 @@ export class Match {
     for (const side of SIDES) if (this.human[side] || side === this.viewSide) this.ctl[side].prev = { ...pads[side] };
   }
 
+  /** Added time (see ADDED_FRAC): the most open play (s) the referee lets run on past the half's length. */
+  addedCap(): number {
+    return clamp(this.cfg.halfLength * ADDED_FRAC, ADDED_MIN_S, ADDED_MAX_S);
+  }
+
+  /** Added time: a restart the referee still lets be taken (see ADDED_FRAC). */
+  private addedRestartTaken(r: Restart): boolean {
+    if (r.kind === 'penalty') return true;
+    if (!isCrossingRestart(this, r) && !isDirectFreeKick(this, r)) return false;
+    return this.restartGivenAt - this.cfg.halfLength <= this.addedCap() / 2;
+  }
+
+  /** The clock has run out (Match.clock past the half): does the referee blow now? (See ADDED_FRAC.) */
+  private addedTimeUp(): boolean {
+    const over = this.clock - this.cfg.halfLength;
+    const cap = this.addedCap();
+    const b = this.ball;
+    if (this.phase !== 'play') {
+      // The ball is dead. A penalty, a corner or a free kick in range is taken; anything else ends the half.
+      this.addedAttack = null;
+      const r = this.phase === 'out' ? this.pendingRestart : this.restart;
+      this.addedPen = r?.kind === 'penalty';
+      if (r && this.addedRestartTaken(r)) return over > cap + (this.addedPen ? ADDED_PEN_S : ADDED_LAST_S);
+      return this.phase !== 'out' || this.phaseT >= ADDED_SETTLE_S || b.pos.y < 1.2;
+    }
+    // Never while a shot is live, the ball is in the air or an advantage is being played: up to ADDED_LAST_S past
+    // the allowance (a penalty's shot, ADDED_PEN_S).
+    const live = !!this.adv || this.shotClock < 1.5 || (!b.held && b.pos.y > 1.2);
+    if (!live) this.addedPen = false;
+    if (over > cap + (this.addedPen ? ADDED_PEN_S : ADDED_LAST_S)) return true;
+    if (live) return false;
+    if (over > cap) return true;
+    const owner = b.owner >= 0 ? this.players[b.owner] : null;
+    const side = owner ? owner.side : b.lastTouchSide;
+    if (this.addedAttack === null) {
+      // The time is up: an attack on (the ball in the other half) is let finish; anything else is blown now.
+      if (side === -1 || b.pos.x * this.attackDir(side) <= 0) return true;
+      this.addedAttack = side;
+      return false;
+    }
+    // The attack has broken down: the other side has the ball (their keeper too), or it's back in the attackers' half.
+    const att = this.addedAttack;
+    return (!!owner && owner.side !== att) || b.pos.x * this.attackDir(att) < -ADDED_BACK_M;
+  }
+
   private endHalf(): void {
+    this.addedAttack = null;
+    this.addedPen = false;
     if (this.cfg.mode === 'blitz') blitzClear(this);
     this.ball.owner = -1;
     this.offWatch = null;
@@ -2136,7 +2210,9 @@ export class Match {
     } else {
       this.passTarget = L.target;
       this.passT = 0;
-      if (this.isHumanControlled(p) && this.phase === 'play' && L.kind === 'pass' && p.sprint && !p.isKeeper) p.giveGoT = 2.4;
+      // (AUTO SPRINT's sprint makes the run only from the halfway line on: a centre-back's pass out isn't a one-two.)
+      if (this.isHumanControlled(p) && this.phase === 'play' && L.kind === 'pass' && p.sprint && !p.isKeeper &&
+        (this.ctl[p.side].prev.sprint || p.pos.x * this.attackDir(p.side) > -HALF_L * 0.1)) p.giveGoT = 2.4;
       if (L.target >= 0) this.stats.passes[p.side]++;
       // (The human's own ball: its receiver's first touch is kind to it, HUMAN_PASS_TRAP.)
       if (this.isHumanControlled(p)) this.humanPassKick = this.kickId;
@@ -2429,7 +2505,7 @@ export class Match {
         const p = this.players[this.h.active];
         p.wantX = pad.mx;
         p.wantZ = pad.mz;
-        p.sprint = pad.sprint;
+        p.sprint = pad.sprint || autoRun(this.h.assist, pad, stickLen);
         p.faceTarget = null;
       }
       return;
@@ -2466,7 +2542,9 @@ export class Match {
     const move = hasBall && pad.shoot && !this.h.defendingShotHold ? SHOOT_CHARGE_MOVE : 1;
     p.wantX = pad.mx * move;
     p.wantZ = pad.mz * move;
-    p.sprint = pad.sprint && move === 1;
+    // (AUTO SPRINT: the stick pushed all the way sprints too; `run` is the button or the stick.)
+    const run = pad.sprint || autoRun(this.h.assist, pad, stickLen);
+    p.sprint = run && move === 1;
     // Dribble assists: close control, skill cuts, shielding, path assist (dribble.ts).
     if (hasBall && !b.held) humanDribble(this, p, pad, stickLen, dt);
     // A locked receive settled with the stick left alone: he turns up field with it (LOCK_SETTLE_T).
@@ -2642,6 +2720,18 @@ export class Match {
         p.wantZ = vz / max;
         if (d < 3.5) p.faceTarget = Math.atan2(b.pos.z - p.pos.z, b.pos.x - p.pos.x);
         pressSteal(this, p, c);
+      } else if (pad.through && loose && !incoming && !clearing && stickLen < 0.3 && p.state === 'move' && !p.order) {
+        // PRESS with the ball loose (not a pass to him, not their ball in the air to clear): he goes and wins it, flat out
+        // to where he meets it. (On touch, without the ball the big button is PRESS: ui/touch.ts.)
+        const i = intercept(this, p);
+        const tx = i.x - p.pos.x;
+        const tz = i.z - p.pos.z;
+        const tl = Math.hypot(tx, tz);
+        if (tl > 0.3) {
+          p.wantX = (tx / tl) * Math.min(1, tl / 1.2);
+          p.wantZ = (tz / tl) * Math.min(1, tl / 1.2);
+          p.sprint = tl > 1.5;
+        }
       }
       // TACKLE (SHOOT) while they have it: tap for a standing tackle (closing first from further off), hold or
       // double-tap for a slide (dribble.ts).
@@ -2658,7 +2748,7 @@ export class Match {
           // (Nothing else steers him: not the move assist's run, not the stick.)
           p.wantX = p.wantZ = 0;
           p.faceTarget = null;
-          p.sprint = pad.sprint;
+          p.sprint = run;
         }
         // (A ball in the air, a cross or a corner, he attacks as he always did: his aerial duels are as they were.)
         const ground = this.kickKind === 'pass' || this.kickKind === 'through';
@@ -2766,7 +2856,7 @@ export class Match {
     const mag = Math.min(1, stickLen) * (1 - wp) + pace * wp;
     p.wantX = dx * mag;
     p.wantZ = dz * mag;
-    p.sprint = sprint || (pad.sprint && pace > 0.9);
+    p.sprint = sprint || ((pad.sprint || this.h.assist.autoRun) && pace > 0.9);
   }
 
   /**
@@ -3014,7 +3104,7 @@ export class Match {
     const tap = hp.t <= PASS_TAP_MAX;
     p.wantX = pad.mx * (tap ? PASS_TAP_MOVE : PASS_CHARGE_MOVE);
     p.wantZ = pad.mz * (tap ? PASS_TAP_MOVE : PASS_CHARGE_MOVE);
-    p.sprint = tap && pad.sprint;
+    p.sprint = tap && (pad.sprint || this.h.assist.autoRun);
     if (!hp.released) return true;
     // Turned right away from it: a frame or two more for the turn (the wind-up squares him up the rest of the way).
     const level = assistLevel(this, mode, p.side);
@@ -3161,7 +3251,7 @@ export class Match {
         }
       }
       this.h.runTaken = true;
-      p.sprint = run.sprint || pad.sprint;
+      p.sprint = run.sprint || pad.sprint || this.h.assist.autoRun;
     } else p.sprint = false;
     p.wantX = run.wantX;
     p.wantZ = run.wantZ;
@@ -3601,7 +3691,10 @@ export class Match {
     // Choose the taker now so everyone can take up set-piece positions while the ball is dead.
     this.pendingRestart.taker = this.pickTaker(this.pendingRestart).idx;
     this.restart = this.pendingRestart;
+    this.restartGivenAt = this.clock;
     for (const p of this.players) p.order = null;
+    // Time is up and this one won't be taken: no short whistle, no set piece; the long one follows (addedTimeUp).
+    if (this.clock >= this.cfg.halfLength && !this.addedRestartTaken(this.pendingRestart)) return;
     this.events.push({ type: 'whistle', kind: 'short' }, { type: 'restart', kind, side });
     if (kind === 'corner') this.stats.corners[side]++;
     // A stoppage: the AI benches can make their late changes (not while a penalty is given).

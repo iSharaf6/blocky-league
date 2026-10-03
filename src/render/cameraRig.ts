@@ -102,8 +102,27 @@ const MAX_GLIDE = 30;
  * The normal shot shows the nearby passing options, wide pulls back further, and close favours player detail.
  * Portrait (the end-on lens) widens / narrows its field of view by the matching PORTRAIT_ZOOM factor instead.
  */
-const ZOOM_K: Record<CamZoom, number> = { wide: 0.85, normal: 1, close: 1.3 };
-const PORTRAIT_ZOOM: Record<CamZoom, number> = { wide: 1.12, normal: 1, close: 0.88 };
+const ZOOM_K: Record<CamZoom, number> = { wide: 0.85, normal: 1, close: 1.3, cinematic: 1.08 };
+const PORTRAIT_ZOOM: Record<CamZoom, number> = { wide: 1.12, normal: 1, close: 0.88, cinematic: 0.94 };
+/**
+ * CINEMATIC (Settings, or the HUD's camera button): the TV match camera of FIFA / DLS in open play. A lower lens
+ * (CINE_PITCH_DEG against the gantry's PITCH_DEG) that sees the players more side-on, a touch closer than NORMAL
+ * (ZOOM_K) and framed on the ball (half the controlled man's pull), on a softer follow (CINE_RATE of the usual
+ * rate) so it glides with the play. As an attack gets into the final third the lens zooms in (a zoom, not a dolly:
+ * the camera itself stays put), up to CINE_PUSH of the width (the ball CINE_DEEP_FROM m up the pitch and on over
+ * CINE_DEEP_SPAN m, ~1.5 s each way at CINE_PUSH_W), and back out as the attack breaks down, so the passing options
+ * stay in shot. Play towards the near touchline
+ * lifts it back to the gantry's angle (between CINE_NEAR_FROM and CINE_NEAR_TO m of look target z), and the near
+ * stand and bottom HUD rules hold as for every setting. Set pieces keep their own framing.
+ */
+const CINE_PITCH_DEG = 17;
+const CINE_RATE = 0.75;
+const CINE_PUSH = 0.1;
+const CINE_PUSH_W = 1.4;
+const CINE_DEEP_FROM = 14;
+const CINE_DEEP_SPAN = 20;
+const CINE_NEAR_FROM = -6;
+const CINE_NEAR_TO = 14;
 /**
  * Corners (always filmed at the wide width: the whole box has to fit): where the penalty spot sits on
  * screen, NDC y (+0.07 = 46.5% down from the top). Touch layouts lift the framing ~28% (the spot to ~33%
@@ -305,6 +324,8 @@ export class CameraRig {
   private leanE = new Ease();
   private zoomE = new Ease();
   private feetE = new Ease();
+  /** CINEMATIC's attack push-in (0..1). */
+  private cineE = new Ease();
   private spE = 0;
   private spPrimed = false;
   /** Attacking direction of the side the lean favours (+1 / -1, 0 = nobody yet), and a challenger's claim on it. */
@@ -355,6 +376,7 @@ export class CameraRig {
     this.leanE.reset();
     this.zoomE.reset();
     this.feetE.reset();
+    this.cineE.reset();
     this.spPrimed = false;
     this.pieceShot = null;
     this.pieceHold = 0;
@@ -614,12 +636,18 @@ export class CameraRig {
     } else {
       this.yaw = 0;
       const piece = f.setPiece;
+      // CINEMATIC (see CINE_PITCH_DEG): open play only.
+      const cine = this.zoomSetting === 'cinematic' && !piece;
+      const deep = this.leanSide !== 0 ? clamp((f.bx * this.leanSide - CINE_DEEP_FROM) / CINE_DEEP_SPAN, 0, 1) : 0;
+      const push = this.cineE.to(cine ? deep : 0, CINE_PUSH_W, dt);
       // Corners keep the wide shot whatever the setting: the whole box has to be in the frame.
       const W = piece?.corner ? this.wideWidth() : this.broadcastWidth();
       const small = typeof window !== 'undefined' && window.innerHeight < 420;
-      let fx = f.bx * (1 - AX_K) + ax * AX_K + this.lead.x + lean;
-      // Aim a little beyond the ball so the far boards and a few stand rows frame the top.
-      let fz = small ? f.bz * 0.9 : f.bz * 0.6 - 5 + this.lead.y * 0.5;
+      const axK = cine ? AX_K / 2 : AX_K;
+      let fx = f.bx * (1 - axK) + ax * axK + this.lead.x + lean;
+      // Aim a little beyond the ball so the far boards and a few stand rows frame the top. (The low cinematic
+      // lens sees further up the pitch already: it aims nearer the ball.)
+      let fz = small ? f.bz * 0.9 : cine ? f.bz * 0.7 - 3 + this.lead.y * 0.5 : f.bz * 0.6 - 5 + this.lead.y * 0.5;
       if (piece) {
         // Taker and target together, but never let the taker leave the frame.
         let mx = (piece.x + piece.tx) / 2;
@@ -668,7 +696,7 @@ export class CameraRig {
       const near = 1 - smoothstep(10, 18, Math.hypot(axo, azo));
       const extra = this.feetE.to(piece ? 0 : Math.max(0, azo * near), FEET_W, dt);
       const bz = piece ? Math.max(piece.z, f.bz) : f.bz + extra;
-      const a0 = PITCH_DEG * DEG;
+      const a0 = (cine ? lerp(CINE_PITCH_DEG, PITCH_DEG, smoothstep(CINE_NEAR_FROM, CINE_NEAR_TO, tz)) : PITCH_DEG) * DEG;
       const aMax = NEAR_PITCH_MAX * DEG;
       let a = a0;
       if (piece?.corner) {
@@ -740,9 +768,10 @@ export class CameraRig {
       px = tx;
       py = d * Math.sin(a);
       pz = tz + d * Math.cos(a);
-      fov = c > 0 ? (2 * Math.atan(Math.tan(hf) * (1 - PUSH_IN * c))) / DEG : FOV;
+      const lens = (1 - PUSH_IN * c) * (1 - CINE_PUSH * push);
+      fov = lens < 1 ? (2 * Math.atan(Math.tan(hf) * lens)) / DEG : FOV;
     }
-    this.bRate = f.setPiece ? 2.4 : 3.2 + this.spE * 0.08;
+    this.bRate = f.setPiece ? 2.4 : (3.2 + this.spE * 0.08) * (this.zoomSetting === 'cinematic' && !this.portrait ? CINE_RATE : 1);
     const s = this.bShot;
     s.tx = tx; s.ty = 0; s.tz = tz; s.px = px; s.py = py; s.pz = pz; s.fov = fov;
     return s;

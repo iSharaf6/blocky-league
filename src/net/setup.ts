@@ -13,12 +13,17 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
 
 /**
  * Wire version of the lobby and lockstep protocol: peers on different versions don't start a match. (3: the SKILL
- * button on the pad, and the AI's telegraphed challenges on a human's carrier: sim/skills.ts.)
+ * button on the pad, and the AI's telegraphed challenges on a human's carrier: sim/skills.ts. 4: AUTO SPRINT on the pad,
+ * the new skill moves and their shield, the human's quicker dribble; and the added-time whistle, sim/match.ts
+ * addedTimeUp, which changes when every half ends.)
  */
-export const NET_VERSION = 3;
+export const NET_VERSION = 4;
 
-/** A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local). */
-export type NetControls = Omit<ControlSettings, 'trainer'>;
+/**
+ * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides
+ * on each pad, Pad.autoSprint, and VIBRATION is his phone's).
+ */
+export type NetControls = Omit<ControlSettings, 'trainer' | 'autoSprint' | 'vibration'>;
 
 export interface MatchSetup {
   /** The match's number on this link (0, then 1 for the first rematch...): stale packets are told apart by it. */

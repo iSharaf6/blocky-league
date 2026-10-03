@@ -17,11 +17,20 @@ type AppAd = 'rewarded' | 'interstitial';
 type AdMobModule = typeof import('@capacitor-community/admob');
 
 /**
- * App interstitials, our own cap (the portals cap theirs): one at most every APP_AD_EVERY natural breaks and never
- * within APP_AD_GAP_MS of the last, so a session's first matches run clean and nobody sees one every match.
+ * App interstitials, our own policy (the portals cap theirs). The owner: "half time in between breaks should have an
+ * ad". One at every half-time (the natural break), and one before the next match's kick-off, but never within
+ * APP_AD_GAP_MS of the last ad of any kind (a rewarded one included), counted from when it closed, so two never come
+ * back to back. The callers keep them out of the basics, the tutorial and a new player's first match (main.ts);
+ * NO ADS owners never see one (adFree).
  */
-export const APP_AD_EVERY = 2;
-export const APP_AD_GAP_MS = 240_000;
+export const APP_AD_GAP_MS = 90_000;
+/**
+ * Before a kick-off the gap is longer: the half-time ad is the regular one, so a short match (2 min halves) gets one
+ * ad, not two, and the pre-match one only comes back after a longer spell without any (a quick rematch run).
+ */
+export const APP_AD_MATCH_GAP_MS = 180_000;
+/** A Football Moment is a short try, retried often: an interstitial before one at most this often (ms). */
+export const APP_AD_MOMENT_GAP_MS = 240_000;
 /** Longest a full-screen ad may hold the game before it carries on regardless. */
 const APP_AD_MAX_MS = 180_000;
 
@@ -132,8 +141,7 @@ export class Ads {
   private appLoaded: Record<AppAd, boolean> = { rewarded: false, interstitial: false };
   private appLoading: Record<AppAd, boolean> = { rewarded: false, interstitial: false };
   private appRetry: Record<AppAd, number> = { rewarded: 0, interstitial: 0 };
-  /** Natural breaks since the last app interstitial, and when that one played (ms, Date.now). */
-  private appBreaks = 0;
+  /** When the last app ad (either kind) closed (ms, Date.now): the next interstitial waits APP_AD_GAP_MS from it. */
   private appLastAt = -Infinity;
   private readyFns = new Set<() => void>();
 
@@ -264,33 +272,35 @@ export class Ads {
       let earned = false;
       let done = false;
       const handles: { remove(): Promise<void> }[] = [];
-      const finish = () => {
+      const finish = (closed = false) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        // (One the player sat through starts the gap to the next interstitial; one that never showed doesn't.)
+        if (closed || earned) this.appLastAt = Date.now();
         for (const h of handles) void h.remove().catch(() => {});
         this.prepareApp(kind);
         resolve(earned);
       };
-      const timer = setTimeout(finish, APP_AD_MAX_MS);
+      const timer = setTimeout(() => finish(true), APP_AD_MAX_MS);
       const listen = async () => {
         if (kind === 'rewarded') {
           const E = M.RewardAdPluginEvents;
           handles.push(await A.addListener(E.Rewarded, () => { earned = true; }));
-          handles.push(await A.addListener(E.Dismissed, finish));
-          handles.push(await A.addListener(E.FailedToShow, finish));
+          handles.push(await A.addListener(E.Dismissed, () => finish(true)));
+          handles.push(await A.addListener(E.FailedToShow, () => finish()));
         } else {
           const E = M.InterstitialAdPluginEvents;
-          handles.push(await A.addListener(E.Dismissed, finish));
-          handles.push(await A.addListener(E.FailedToShow, finish));
+          handles.push(await A.addListener(E.Dismissed, () => finish(true)));
+          handles.push(await A.addListener(E.FailedToShow, () => finish()));
         }
       };
       listen().then(() => {
         if (done) return;
         this.setAdMute(true);
         const show = kind === 'rewarded' ? A.showRewardVideoAd().then(() => { earned = true; }) : A.showInterstitial();
-        show.catch(finish);
-      }, finish);
+        show.catch(() => finish());
+      }, () => finish());
     });
   }
 
@@ -347,20 +357,22 @@ export class Ads {
   }
 
   /**
-   * Interstitial at a natural break, just before gameplay resumes (next kick-off / second half).
-   * No local cooldown: both SDKs decide whether an ad actually plays (CrazyGames caps at 1 per 3 min).
+   * Interstitial at a natural break: 'match' just before a new match kicks off ('moment': a Football Moment's
+   * try), 'halftime' as the half-time screen comes up. The portals: no local cooldown, both SDKs decide whether an
+   * ad actually plays (CrazyGames caps at 1 per 3 min), and they keep their one break before a kick-off (no
+   * half-time one). The app: see APP_AD_GAP_MS.
    */
-  async midgame(): Promise<void> {
+  async midgame(at: 'match' | 'moment' | 'halftime' = 'match'): Promise<void> {
     if (!this.ok || !this.adsAllowed || this.adInFlight || this.adFree()) return;
     if (this.portal === 'app') {
-      // Our own cap (APP_AD_EVERY breaks, APP_AD_GAP_MS apart), and only an ad that is already loaded.
-      this.appBreaks++;
-      if (this.appBreaks < APP_AD_EVERY || Date.now() - this.appLastAt < APP_AD_GAP_MS || !this.appLoaded.interstitial) {
+      // Every break, clear of the last ad, and only an ad that is already loaded.
+      const gap = at === 'moment' ? APP_AD_MOMENT_GAP_MS : at === 'match' ? APP_AD_MATCH_GAP_MS : APP_AD_GAP_MS;
+      if (Date.now() - this.appLastAt < gap || !this.appLoaded.interstitial) {
         this.prepareApp('interstitial');
         return;
       }
-      this.appBreaks = 0;
-      this.appLastAt = Date.now();
+    } else if (at === 'halftime') {
+      return;
     }
     this.gameplayStop();
     this.adInFlight = true;

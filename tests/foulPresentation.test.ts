@@ -109,7 +109,7 @@ function sessionFor(m: Match) {
     holdKick: null, foulOn: -1, foulAt: { x: 0, z: 0 }, foulBy: { x: 0, z: 0 },
     world: { quality: 'high', camera: {}, focusShadows: vi.fn() },
     stadium: { setArchVisible: vi.fn(), updateGlare: vi.fn(), update: vi.fn() },
-    effects: { dust: vi.fn(), grass: vi.fn(), update: vi.fn() },
+    effects: { dust: vi.fn(), grass: vi.fn(), update: vi.fn() }, fxKit: { update: vi.fn() },
     weather: { kind: 'clear', update: vi.fn() }, flash: { update: vi.fn() }, clips: { update: vi.fn(), recording: false },
     holdLesson: () => false, updateFrameFx: vi.fn(), updateBlitz: vi.fn(), updateFades: vi.fn(),
     updateAtmosphere: vi.fn(), updateHud: vi.fn(), updateGhost: vi.fn(),

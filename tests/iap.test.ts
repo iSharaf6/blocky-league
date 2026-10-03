@@ -516,3 +516,66 @@ describe('saves', () => {
     expect(isSmall(coinsOnly)).toBe(false);
   });
 });
+
+// ------------------------------------------------------------------ the app's shelf (the shop shows everything, even before the store answers)
+
+describe('the shelf in the app', () => {
+  it('off the storefront (the web, the portals) there is no shelf and nothing for sale', () => {
+    const iap = new Iap();
+    iap.bind({ save: defaultSave(), persist: vi.fn() });
+    expect(iap.storefront).toBe(false);
+    expect(iap.shelf()).toEqual([]);
+    expect(iap.canSell(PRODUCT_NOADS)).toBe(false);
+  });
+
+  it('in the app before the store answers: every product shows at the catalogue price, none sells, nothing is granted', async () => {
+    const { cataloguePrice } = await import('../src/platform/iap');
+    vi.stubGlobal('window', { Capacitor: { isNativePlatform: () => true } });
+    const save = defaultSave();
+    const iap = new Iap();
+    iap.bind({ save, persist: vi.fn() });
+    expect(iap.available).toBe(false);
+    expect(iap.storefront).toBe(true);
+    const shelf = iap.shelf();
+    expect(shelf.map((p) => p.id)).toEqual(CATALOGUE.map((e) => e.id));
+    expect(shelf.every((p) => !p.sellable)).toBe(true);
+    expect(shelf.find((p) => p.id === PRODUCT_NOADS)!.price).toBe('$3.99');
+    expect(shelf.find((p) => p.id === PRODUCT_PASS)!.price).toBe(cataloguePrice(entryOf(PRODUCT_PASS)!));
+    expect(iap.canSell(PRODUCT_PASS)).toBe(false);
+    expect(await iap.buy(PRODUCT_NOADS)).toBe('failed');
+    expect(adFree(save)).toBe(false);
+    expect(save.coins).toBe(defaultSave().coins);
+  });
+
+  it('a portal build is never a storefront, even inside a native shell', () => {
+    vi.stubEnv('VITE_PORTAL', 'poki');
+    vi.stubGlobal('window', { Capacitor: { isNativePlatform: () => true } });
+    const iap = new Iap();
+    iap.bind({ save: defaultSave(), persist: vi.fn() });
+    expect(iap.storefront).toBe(false);
+    expect(iap.shelf()).toEqual([]);
+  });
+
+  it('the dev store: the shelf is the store\'s own products, all for sale', async () => {
+    const { iap } = await devStore();
+    expect(iap.storefront).toBe(true);
+    expect(iap.shelf()).toEqual(iap.products());
+    expect(iap.shelf().every((p) => p.sellable)).toBe(true);
+  });
+
+  it('a store missing a product: that one is a stand-in at the catalogue price, the rest the store\'s own', async () => {
+    const cdv = fakeCdv();
+    const get = cdv.store.get;
+    cdv.store.get = (id: string) => (id === PRODUCT_PASS ? { id, getOffer: () => undefined } : get(id)) as ReturnType<typeof get>;
+    const { iap } = await nativeStore(cdv);
+    expect(iap.available).toBe(true);
+    const pass = iap.shelf().find((p) => p.id === PRODUCT_PASS)!;
+    expect(pass.sellable).toBe(false);
+    expect(pass.price).toBe('$3.99');
+    expect(iap.canSell(PRODUCT_PASS)).toBe(false);
+    const noAds = iap.shelf().find((p) => p.id === PRODUCT_NOADS)!;
+    expect(noAds.sellable).toBe(true);
+    expect(noAds.price).toBe('EUR 3.99');
+    expect(iap.shelf()).toHaveLength(CATALOGUE.length);
+  });
+});

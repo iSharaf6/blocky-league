@@ -378,7 +378,7 @@ export const PSTATE = {
 } as const;
 
 /** The skill moves by their frame code (sim/skills.ts SKILL_CODE). */
-const SKILL_MOVE = { roulette: 1, rainbow: 2, stepover: 3, dragback: 4 } as const;
+const SKILL_MOVE = { roulette: 1, rainbow: 2, stepover: 3, dragback: 4, elastico: 5, croqueta: 6, nutmeg: 7, heelchop: 8, ballroll: 9 } as const;
 
 /**
  * Celebration styles (frame channel 13, PoseInput.celebrate). 0-3 are the sim's scorer styles (arms-up hop,
@@ -1020,7 +1020,10 @@ export class Footballer {
   /**
    * The SKILL moves (sim/skills.ts), over their 0..1 progress (kickT): the ROULETTE's full turn with a sole on the
    * ball each half, the RAINBOW FLICK's heel kicked up behind, the STEPOVER's two legs circling the ball with the
-   * hips swaying after them, the DRAG BACK's sole rolling it back under him.
+   * hips swaying after them, the DRAG BACK's sole rolling it back under him, the ELASTICO's boot out and snapped back
+   * in, LA CROQUETA's quick foot to foot hop, the NUTMEG's toe poke low through the legs, the HEEL CHOP's boot whipped
+   * behind the standing leg as he turns away, the BALL ROLL's sole dragging it across him. The side (the stick's,
+   * kickLeg) mirrors the side moves.
    */
   private skillMove(p: PoseInput, time: number, dt: number, ph: number, run: number, swing: number): void {
     const body = this.body, torso = this.torso, head = this.head;
@@ -1066,6 +1069,68 @@ export class Footballer {
       body.position.y = HIP_Y - 0.06;
       aL.rotation.set(0.5 + 0.4 * lift * (first ? 0 : 1), 0, 0.25);
       aR.rotation.set(-0.5 - 0.4 * lift * (first ? 1 : 0), 0, 0.25);
+    } else if (kind === SKILL_MOVE.elastico) {
+      // Out with the outside of the boot, then snapped back in across the body: the hips follow it, arms flung wide.
+      const s = p.kickLeg >= 0 ? 1 : -1;
+      const leg = s > 0 ? lL : lR;
+      const out = Math.sin(clamp(u / 0.4, 0, 1) * Math.PI * 0.5);
+      const snap = smoothstep(0.35, 0.8, u);
+      const sweep = lerp(-0.55 * out, 0.6, snap) * s;
+      leg.rotation.z = 0.45 + 0.2 * Math.sin(u * Math.PI);
+      leg.rotation.x = sweep;
+      body.rotation.x = -0.6 * sweep * 0.45;
+      torso.rotation.y = 0.35 * sweep;
+      body.position.y = HIP_Y - 0.05;
+      aL.rotation.set(0.9, 0, 0.6);
+      aR.rotation.set(-0.9, 0, 0.6);
+      head.rotation.z = 0.12;
+    } else if (kind === SKILL_MOVE.croqueta) {
+      // Foot to foot: a quick hop across, the ball tapped from one boot to the other.
+      const s = p.kickLeg >= 0 ? 1 : -1;
+      const a = Math.sin(clamp(u / 0.5, 0, 1) * Math.PI);
+      const b = Math.sin(clamp((u - 0.45) / 0.55, 0, 1) * Math.PI);
+      lR.rotation.x = s * (0.45 * a - 0.15 * b);
+      lL.rotation.x = s * (0.45 * b - 0.15 * a);
+      lR.rotation.z = 0.25 * a;
+      lL.rotation.z = 0.25 * b;
+      body.rotation.x = -s * 0.22 * Math.sin(u * Math.PI);
+      body.position.y = HIP_Y + 0.06 * Math.sin(u * Math.PI);
+      torso.rotation.z = -0.12;
+      aL.rotation.set(1.1, 0, 0.4);
+      aR.rotation.set(-1.1, 0, 0.4);
+    } else if (kind === SKILL_MOVE.nutmeg) {
+      // A low toe poke straight through: the boot out along the grass, the body bent over it, then off round him.
+      const poke = Math.sin(clamp(u / 0.75, 0, 1) * Math.PI);
+      lR.rotation.z = 1.05 * poke - 0.1;
+      lL.rotation.z = -0.2 * poke;
+      torso.rotation.z = -0.3 * poke;
+      head.rotation.z = -0.25 * poke;
+      body.position.y = HIP_Y - 0.08 * poke;
+      aL.rotation.set(0.4 + 0.5 * poke, 0, -0.5 * poke);
+      aR.rotation.set(-0.4 - 0.5 * poke, 0, -0.5 * poke);
+    } else if (kind === SKILL_MOVE.heelchop) {
+      // Planted, the boot whipped behind the standing leg, and the body swung round the other way after it.
+      const s = p.kickLeg >= 0 ? 1 : -1;
+      const leg = s > 0 ? lR : lL;
+      const chop = Math.sin(clamp(u / 0.6, 0, 1) * Math.PI);
+      leg.rotation.z = -0.85 * chop;
+      leg.rotation.x = -s * 0.55 * chop;
+      body.rotation.y = s * 0.9 * smoothstep(0.2, 0.95, u);
+      body.position.y = HIP_Y - 0.06 * chop;
+      torso.rotation.z = 0.15 * chop;
+      aL.rotation.set(0.8, 0, 0.5 + 0.3 * chop);
+      aR.rotation.set(-0.8, 0, 0.5 + 0.3 * chop);
+    } else if (kind === SKILL_MOVE.ballroll) {
+      // The sole on top of it, rolled across in front of him as he side-steps after it.
+      const s = p.kickLeg >= 0 ? 1 : -1;
+      const leg = s > 0 ? lL : lR;
+      const roll = smoothstep(0.05, 0.85, u);
+      leg.rotation.z = 0.55 * Math.sin(Math.min(1, u * 1.2) * Math.PI);
+      leg.rotation.x = s * lerp(-0.25, 0.5, roll);
+      body.rotation.x = -s * 0.18 * Math.sin(u * Math.PI);
+      body.position.y = HIP_Y - 0.04;
+      aL.rotation.set(0.7, 0, 0.45);
+      aR.rotation.set(-0.7, 0, 0.45);
     } else {
       // DRAG BACK: the sole on top of it, drawn back under him as he leans back off it.
       const pull = smoothstep(0.08, 0.72, u);
@@ -1222,62 +1287,238 @@ export class Footballer {
 }
 
 /**
- * Ball skins (progression unlocks; SessionOptions.ballSkin): the base colour, the patch colour and how big
- * the patches are (the dot-product threshold: lower = bigger). 'classic' is the white ball with dark pentagons.
+ * Ball skins (progression unlocks and SHOP looks; SessionOptions.ballSkin). Each is painted cell by cell on a
+ * voxel sphere, so a look can be a pattern (the classic pentagons, beach ball gores, an eight ball's number) or
+ * a shape (ice spikes, a cut gem, a planet's ring, a melon's stalk). 'classic' is the white ball with dark
+ * pentagons. Ids are saved and owned: add new ones at the end, never rename or remove one (core/save.ts
+ * BALL_SKIN_IDS lists the same ids).
  */
-export const BALL_SKINS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold', 'diamond'] as const;
+export const BALL_SKINS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold', 'diamond', 'beach', 'melon', 'hoops', 'eight', 'moon', 'disco', 'planet'] as const;
 export type BallSkin = (typeof BALL_SKINS)[number];
-const BALL_LOOK: Record<BallSkin, { base: number; patch: number; size: number }> = {
-  classic: { base: 0xfbfbf6, patch: 0x26262e, size: 0.9 },
-  // Telstar: bigger black hexes on white.
-  retro: { base: 0xffffff, patch: 0x111114, size: 0.8 },
-  blaze: { base: 0xff7a1a, patch: 0xd8241a, size: 0.86 },
-  ice: { base: 0xf2fbff, patch: 0x3aa0ff, size: 0.88 },
-  neon: { base: 0x4bff6a, patch: 0x17301c, size: 0.86 },
-  gold: { base: 0xffc23a, patch: 0x8a5a00, size: 0.88 },
-  // Legendary: ice-bright facets with sky-blue panels.
-  diamond: { base: 0xeafcff, patch: 0x3fb8ff, size: 0.84 },
+
+/** The 12 pentagon centres of a football (icosahedron vertices, unit length). */
+const ICO: readonly (readonly [number, number, number])[] = (() => {
+  const phi = (1 + Math.sqrt(5)) / 2;
+  return [
+    [-1, phi, 0], [1, phi, 0], [-1, -phi, 0], [1, -phi, 0],
+    [0, -1, phi], [0, 1, phi], [0, -1, -phi], [0, 1, -phi],
+    [phi, 0, -1], [phi, 0, 1], [-phi, 0, -1], [-phi, 0, 1],
+  ].map(([x, y, z]) => {
+    const l = Math.hypot(x, y, z);
+    return [x / l, y / l, z / l] as const;
+  });
+})();
+
+/** The closest and second-closest pentagon centres' dot products with unit direction (ux, uy, uz). */
+function icoDots(ux: number, uy: number, uz: number): [number, number] {
+  let a = -2, b = -2;
+  for (const v of ICO) {
+    const d = ux * v[0] + uy * v[1] + uz * v[2];
+    if (d > a) {
+      b = a;
+      a = d;
+    } else if (d > b) b = d;
+  }
+  return [a, b];
+}
+
+/** A cheap, fixed hash of a cell (0..1): speckle, tiles, sparkle. */
+const cellHash = (x: number, y: number, z: number): number => {
+  const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
+  return h - Math.floor(h);
 };
+
+interface BallLook {
+  /** Cells across the ball itself (8: the chunky classic). */
+  n: number;
+  /** Extra cells of grid all round (for spikes, a stalk, a ring). */
+  pad: number;
+  /**
+   * The colour of cell (x, y, z) (integers from the grid centre), at unit direction (ux, uy, uz) and `d` cells
+   * out, on a ball `r` cells in radius: null leaves it empty. Cells past the ball's surface are asked too.
+   */
+  paint: (ux: number, uy: number, uz: number, d: number, r: number, x: number, y: number, z: number) => number | null;
+}
+
+/** Only the ball itself (nothing outside its surface). */
+const sphere = (fn: BallLook['paint']): BallLook['paint'] => (ux, uy, uz, d, r, x, y, z) => (d > r - 0.05 ? null : fn(ux, uy, uz, d, r, x, y, z));
+
+/** The football: `base` with pentagon patches of `patch` (dot threshold `size`: lower = bigger patches). */
+const panels = (base: number, patch: number, size: number): BallLook['paint'] =>
+  sphere((ux, uy, uz) => (icoDots(ux, uy, uz)[0] > size ? patch : base));
+
+export const BALL_LOOK: { readonly [k in BallSkin]: BallLook } = {
+  classic: { n: 8, pad: 0, paint: panels(0xfbfbf6, 0x26262e, 0.9) },
+  // Retro: an old brown leather ball, panels stitched in threes, and its laces.
+  retro: {
+    n: 10, pad: 0, paint: sphere((ux, uy, uz, _d, _r, x, y, z) => {
+      const ax = Math.abs(ux), ay = Math.abs(uy), az = Math.abs(uz);
+      const m = Math.max(ax, ay, az);
+      // The face this cell is on, and the two coordinates across it (turned face to face, like the real thing).
+      const p = m === ax ? uy : m === ay ? uz : ux;
+      const q = m === ax ? uz : m === ay ? ux : uy;
+      if (m === ay && uy > 0 && Math.abs(ux) < 0.12 && Math.abs(uz) < 0.42) return (Math.round(z) & 1) === 0 ? 0xf4e1c6 : 0x4a2a16;
+      const edge = m - Math.max(Math.abs(p), Math.abs(q)) < 0.1;
+      const seam = Math.abs(Math.abs(p) / m - 0.36) < 0.1;
+      if (edge || seam) return 0x4a2a16;
+      return cellHash(x, y, z) < 0.25 ? 0x9a6234 : 0xb87a44;
+    }),
+  },
+  // Magma: dark cooled rock, lava glowing through the cracks between the plates.
+  blaze: {
+    n: 10, pad: 0, paint: sphere((ux, uy, uz, _d, _r, x, y, z) => {
+      const [a, b] = icoDots(ux, uy, uz);
+      const gap = a - b;
+      if (gap < 0.035) return 0xffd23a;
+      if (gap < 0.09) return 0xff7a1a;
+      return cellHash(x, y, z) < 0.3 ? 0x4a3430 : 0x2e2220;
+    }),
+  },
+  // Frozen: frosted ice with icicle spikes standing out of it.
+  ice: {
+    n: 8, pad: 1, paint: (ux, uy, uz, d, r, x, y, z) => {
+      if (d <= r - 0.05) {
+        const frost = Math.sin(uy * 7 + ux * 3) > 0.55;
+        return frost ? 0xa8e4ff : cellHash(x, y, z) < 0.25 ? 0xffffff : 0xdff4ff;
+      }
+      if (d > r + 1.3) return null;
+      return icoDots(ux, uy, uz)[0] > 0.965 ? 0xeaf8ff : null;
+    },
+  },
+  // Neon: a black ball with glowing green grid lines, like a light cycle.
+  neon: {
+    n: 10, pad: 0, paint: sphere((ux, uy, uz) => {
+      const lon = Math.atan2(uz, ux);
+      const seg = (lon / (Math.PI / 3)) % 1;
+      const onLon = Math.abs(seg) < 0.12 || Math.abs(seg) > 0.88;
+      const onLat = Math.abs(uy) < 0.11 || Math.abs(Math.abs(uy) - 0.62) < 0.1;
+      return onLon || onLat ? 0x4bff6a : 0x15181e;
+    }),
+  },
+  // Gold: polished, a bright highlight and engraved panels.
+  gold: {
+    n: 8, pad: 0, paint: sphere((ux, uy, uz) => {
+      const lit = (-ux + uy + uz) / Math.sqrt(3);
+      if (lit > 0.8) return 0xfff0b0;
+      if (icoDots(ux, uy, uz)[0] > 0.92) return 0xd99a1e;
+      return lit < -0.45 ? 0xe0a82a : 0xffc23a;
+    }),
+  },
+  // Diamond: a cut gem, facets in white and ice blue (the ball's corners cut flat).
+  diamond: {
+    n: 8, pad: 0, paint: (ux, uy, uz, d, r, x, y, z) => {
+      if (d > r - 0.05) return null;
+      const cut = (Math.abs(x) + Math.abs(y) + Math.abs(z)) / r;
+      if (cut > 1.32) return null;
+      if (cellHash(x, y, z) < 0.12) return 0xffffff;
+      return [0xeafcff, 0xb8ecff, 0x7fdcff][((ux > 0 ? 1 : 0) + (uy > 0 ? 1 : 0) + (uz > 0 ? 1 : 0)) % 3];
+    },
+  },
+  // Beach ball: six gores pole to pole, white caps.
+  beach: {
+    n: 10, pad: 0, paint: sphere((ux, uy, uz) => {
+      if (Math.abs(uy) > 0.86) return Math.abs(uy) > 0.97 ? 0xec4a3e : 0xfbfbf4;
+      const seg = Math.floor(((Math.atan2(uz, ux) + Math.PI) / (Math.PI * 2)) * 6) % 6;
+      return [0xec4a3e, 0xfbfbf4, 0x2f7be8, 0xfbfbf4, 0xffd23a, 0xfbfbf4][seg];
+    }),
+  },
+  // Watermelon: wavy dark stripes on pale green, and a stalk.
+  melon: {
+    n: 10, pad: 1, paint: (ux, uy, uz, d, r, x, y, z) => {
+      if (d > r - 0.05) return d <= r + 1.2 && uy > 0.9 && Math.abs(x) < 1 && Math.abs(z) < 1 ? 0x6a4a2e : null;
+      const lon = Math.atan2(uz, ux);
+      if (Math.sin(lon * 8 + Math.sin(uy * 6) * 0.9) > 0.3) return 0x1f6b2a;
+      return cellHash(x, y, z) < 0.2 ? 0x8fdb6a : 0x6fcf4a;
+    },
+  },
+  // Hoops: a basketball, pebbled orange with black seams.
+  hoops: {
+    n: 10, pad: 0, paint: sphere((ux, uy, uz, _d, _r, x, y, z) => {
+      if (Math.abs(uy) < 0.09 || Math.abs(uz) < 0.09 || Math.abs(Math.abs(ux) - 0.72) < 0.07) return 0x26262e;
+      return cellHash(x, y, z) < 0.3 ? 0xd8641a : 0xe8742a;
+    }),
+  },
+  // Eight ball: black and glossy, a white spot with the 8 on it.
+  eight: {
+    n: 12, pad: 0, paint: sphere((ux, uy, uz) => {
+      if (ux > 0.7) {
+        const gx = Math.round(uz / 0.14) + 1;
+        const gy = 2 - Math.round(uy / 0.12);
+        const glyph = ['###', '#.#', '###', '#.#', '###'];
+        if (gx >= 0 && gx <= 2 && gy >= 0 && gy <= 4 && glyph[gy][gx] === '#') return 0x15151a;
+        return 0xfbfbf4;
+      }
+      return (-ux + uy + uz) / Math.sqrt(3) > 0.82 ? 0x5a5a66 : 0x15151a;
+    }),
+  },
+  // Moon: grey with dark seas and craters dented into it.
+  moon: {
+    n: 10, pad: 0, paint: (ux, uy, uz, d, r) => {
+      if (d > r - 0.05) return null;
+      const craters: readonly (readonly [number, number, number])[] = [[0.6, 0.6, 0.53], [-0.7, 0.2, 0.68], [0.1, -0.8, 0.59], [-0.2, 0.5, -0.84], [0.8, -0.3, -0.5]];
+      for (const [cx, cy, cz] of craters) {
+        const dot = ux * cx + uy * cy + uz * cz;
+        if (dot > 0.95 && d > r - 1.1) return null;
+        if (dot > 0.95) return 0x8a8e96;
+        if (dot > 0.9) return 0xdfe3e8;
+      }
+      return Math.sin(ux * 5) * Math.sin(uz * 4 + uy * 2) > 0.35 ? 0x9a9ea6 : 0xc2c6cc;
+    },
+  },
+  // Disco: mirror tiles catching the floodlights, the odd pink or cyan glint.
+  disco: {
+    n: 10, pad: 0, paint: sphere((_ux, _uy, _uz, _d, _r, x, y, z) => {
+      const h = cellHash(x, y, z);
+      if (h < 0.05) return 0xff7ad9;
+      if (h < 0.1) return 0x5cc8f5;
+      return [0xffffff, 0xd8dee8, 0xaab3c2, 0x8a93a3][Math.floor(h * 40) % 4];
+    }),
+  },
+  // Planet: oceans, continents and ice caps, with a tilted ring round it.
+  planet: {
+    n: 8, pad: 3, paint: (ux, uy, uz, d, r, x, y, z) => {
+      if (d <= r - 0.05) {
+        if (Math.abs(uy) > 0.8) return 0xfbfbf4;
+        const land = Math.sin(ux * 4.2 + uy * 2) + Math.sin(uz * 3.6 - ux * 1.7) > 0.6;
+        return land ? (cellHash(x, y, z) < 0.3 ? 0x7ae05a : 0x3cc15a) : 0x2f7be8;
+      }
+      // The ring: a band of cells round a tilted plane, clear of the ball.
+      const nx = 0.32, ny = 0.93, nz = 0.18;
+      const off = x * nx + y * ny + z * nz;
+      if (d < r + 0.9 || d > r + 2.8 || Math.abs(off) > 0.5) return null;
+      return d < r + 1.8 ? 0xe8c890 : 0xc9a46a;
+    },
+  },
+};
+
 /** A known skin id (anything else, undefined included, is the classic ball). */
 export function ballSkinOf(id: string | undefined): BallSkin {
   return (BALL_SKINS as readonly string[]).includes(id ?? '') ? (id as BallSkin) : 'classic';
 }
 const ballGeoCache = new Map<string, THREE.BufferGeometry>();
 
-/** Voxel ball: an 8³ sphere with patches (a skin's colours; cached per radius and skin). */
+/** Voxel ball (`radius` m: the ball itself, whatever sticks out of it) in a skin's look; cached per radius and skin. */
 export function buildBallGeometry(radius: number, skin: BallSkin = 'classic'): THREE.BufferGeometry {
   const key = `${radius}:${skin}`;
   const cached = ballGeoCache.get(key);
   if (cached) return cached;
-  const look = BALL_LOOK[skin];
-  const n = 8;
-  const g = new VoxelGrid(n, n, n);
-  const c = (n - 1) / 2;
-  const phi = (1 + Math.sqrt(5)) / 2;
-  const ico = [
-    [-1, phi, 0], [1, phi, 0], [-1, -phi, 0], [1, -phi, 0],
-    [0, -1, phi], [0, 1, phi], [0, -1, -phi], [0, 1, -phi],
-    [phi, 0, -1], [phi, 0, 1], [-phi, 0, -1], [-phi, 0, 1],
-  ].map(([x, y, z]) => {
-    const l = Math.hypot(x, y, z);
-    return [x / l, y / l, z / l];
-  });
+  const look = BALL_LOOK[skin] ?? BALL_LOOK.classic;
+  const n = look.n;
+  const N = n + look.pad * 2;
+  const g = new VoxelGrid(N, N, N);
+  const c = (N - 1) / 2;
   const r = n / 2;
-  for (let x = 0; x < n; x++)
-    for (let y = 0; y < n; y++)
-      for (let z = 0; z < n; z++) {
+  for (let x = 0; x < N; x++)
+    for (let y = 0; y < N; y++)
+      for (let z = 0; z < N; z++) {
         const dx = x - c, dy = y - c, dz = z - c;
         const d = Math.hypot(dx, dy, dz);
-        if (d > r - 0.05) continue;
-        let col = look.base;
         const l = d || 1;
-        for (const v of ico) {
-          if ((dx * v[0] + dy * v[1] + dz * v[2]) / l > look.size) col = look.patch;
-        }
-        g.set(x, y, z, col);
+        const col = look.paint(dx / l, dy / l, dz / l, d, r, dx, dy, dz);
+        if (col !== null) g.set(x, y, z, col);
       }
   const s = (radius * 2) / n;
-  const geo = meshVoxels(g, { scale: s, pivot: [n / 2, n / 2, n / 2], faceTint: true });
+  const geo = meshVoxels(g, { scale: s, pivot: [N / 2, N / 2, N / 2], faceTint: true });
   ballGeoCache.set(key, geo);
   return geo;
 }

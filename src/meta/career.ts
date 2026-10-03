@@ -14,6 +14,11 @@ import {
   recordStarts, syncLegacyMarket, wageDrain,
   type Bid, type Listing, type MarketState, type NewsKind,
 } from './market';
+// Runtime import cycle too (cup.ts imports this file): only ever used inside functions, never at module top level.
+import {
+  CUP_JOIN_BY, CUP_SIZE, ROUND_NAMES, ROUND_SHORT, cupFinish, cupRoundDue, drawCup, readCupTie, recordCupTie, settleCup, syncCup, userTie,
+  type CupClub, type CupStatus, type RateClub, type SeasonCup, type TieOutcome,
+} from './cup';
 import { sep } from '../ui/text';
 
 export const CAREER_VERSION = 1 as const;
@@ -107,6 +112,11 @@ export interface SeasonState {
   fixtures: Fixture[];
   /** Index of the next matchday to play (MATCHDAYS once the season is complete). */
   matchday: number;
+  /**
+   * This season's BLOCKY CUP (meta/cup.ts): its ties come between league matchdays. Null only for a season that
+   * was already too far along when the cup joined the career (a save from before it): the next season has one.
+   */
+  cup: SeasonCup | null;
 }
 
 export type Outcome = 'promoted' | 'relegated' | 'stayed';
@@ -125,6 +135,8 @@ export interface SeasonSummary {
   nextDivision: number;
   lines: PrizeLine[];
   prize: number;
+  /** How far the BLOCKY CUP run went (cup.ts FINISH_NAMES: 0 QF .. 3 winners); absent in a season without the cup. */
+  cup?: number;
 }
 
 export interface HistoryEntry {
@@ -132,6 +144,8 @@ export interface HistoryEntry {
   division: number;
   position: number;
   outcome: Outcome;
+  /** The BLOCKY CUP run that season (0 out in the QF .. 3 winners: a trophy); absent before the cup joined the career. */
+  cup?: number;
 }
 
 export interface CareerState {
@@ -176,7 +190,9 @@ export interface TableRow {
 }
 
 export interface NextMatch {
+  /** The league matchday it is played on, or before (a cup tie comes between matchdays). */
   md: number;
+  /** The league fixture; for a cup tie, the tie as a fixture (YOU and the rival's id, never in season.fixtures). */
   fixture: Fixture;
   userHome: boolean;
   rival: LeagueClub;
@@ -184,6 +200,18 @@ export interface NextMatch {
   away: TeamDef;
   /** Worn kits: the home side keeps its kit, the away side changes on a clash. */
   kits: [Kit, Kit];
+  /** A league matchday or a BLOCKY CUP tie. */
+  competition: 'league' | 'cup';
+  /** What the match is, for cards and the menu tile: "MATCHDAY 3" or "BLOCKY CUP QUARTER FINAL". */
+  label: string;
+  /** The same, short, for tight spaces: "MD 3" or "CUP QF". */
+  tag: string;
+  /** Cup ties: the round (0 QF, 1 SF, 2 final); -1 for a league match. */
+  cupRound: number;
+  /** The rival's division (a cup draw can bring a club from another division). */
+  rivalDivision: number;
+  /** The cup final: a neutral ground (the big bowl), neither side at home. */
+  neutral: boolean;
 }
 
 // ------------------------------------------------------------------ small helpers
@@ -493,7 +521,9 @@ export function newSeason(state: CareerState, division: number, number: number):
     });
   }
   const fixtures = buildFixtures([YOU, ...rivals.map((r) => r.id)], rng);
-  const season: SeasonState = { number, division: div, seed, rivals, fixtures, matchday: 0 };
+  // The cup draw has its own seeded stream (cup.ts), so the league above comes out as it always did.
+  const cup = drawCup(seed, div, rivals, state.club);
+  const season: SeasonState = { number, division: div, seed, rivals, fixtures, matchday: 0, cup };
   state.season = season;
   state.summary = null;
   // A fresh market for the season (any offer still live is refunded through tm.owed).
@@ -559,6 +589,8 @@ export function simulateMatchday(state: CareerState, md: number): void {
 export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, hg: number, ag: number, forfeit = false): boolean {
   const season = state.season;
   if (!season || !state.club || state.summary || season.matchday !== md || md >= MATCHDAYS) return false;
+  // A cup tie that is due comes first (nextMatch offers it before the matchday).
+  if (cupRoundDue(season.cup, season.matchday) >= 0) return false;
   const f = userFixture(season, md);
   if (!f || f.hg !== null) return false;
   f.hg = Math.max(0, Math.round(hg));
@@ -567,6 +599,8 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
   simulateMatchday(state, md);
   recordStarts(state.club);
   season.matchday++;
+  // Out of the cup: its later rounds are still played, as the calendar reaches them.
+  if (season.cup) syncCup(season.cup, season.matchday, clubRater(state));
   // The wage bill: over budget, 1.5× the overspend leaves the wallet after every matchday (market.ts).
   applyWageDrain(state, wallet);
   if (season.matchday >= MATCHDAYS) finishSeason(state, wallet);
@@ -577,6 +611,45 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
 /** Forfeit scoreline (home, away) when the player walks off: a 3-0 defeat. */
 export function forfeitScore(userHome: boolean): [number, number] {
   return userHome ? [0, 3] : [3, 0];
+}
+
+// ------------------------------------------------------------------ the BLOCKY CUP in the season
+
+/** Ratings the cup's simulated ties use: your club as it is now, league rivals as the league rates them. */
+function clubRater(state: CareerState): RateClub {
+  const rivals = new Map((state.season?.rivals ?? []).map((r) => [r.id, r.rating]));
+  return (id) => (id === YOU ? (state.club ? clubRating(state.club) : 50) : rivals.get(id) ?? 50);
+}
+
+/** Every club in this season's cup draw by id (you, your league rivals, the guests), each with its division. */
+export function cupClubs(state: CareerState): Map<string, CupClub> {
+  const out = new Map<string, CupClub>();
+  const season = state.season;
+  if (!season) return out;
+  for (const c of leagueClubs(state)) out.set(c.id, { ...c, division: season.division });
+  for (const g of season.cup?.guests ?? []) out.set(g.id, g);
+  return out;
+}
+
+/** The cup round due before the next league matchday, or -1 (none due, out, or no cup this season). */
+export function cupDue(state: CareerState): number {
+  const s = state.season;
+  if (!s || state.summary || !state.club) return -1;
+  return cupRoundDue(s.cup, s.matchday);
+}
+
+/**
+ * Record the player's BLOCKY CUP tie: goals for and against after 90, `won` settles a level tie (the shootout),
+ * `pens` the shootout goals [yours, theirs]. The rest of the round is settled and the next drawn. The round's prize
+ * comes back in the outcome, for the full-time reward to pay with the match (cupTieReward). Null (and nothing
+ * changes) when no tie is due: a stale request can't play a tie twice.
+ */
+export function resolveCupTie(state: CareerState, my: number, their: number, won: boolean, pens: [number, number] | null = null): TieOutcome | null {
+  const season = state.season;
+  if (!season?.cup || !state.club || cupDue(state) < 0) return null;
+  // (No market week passes and no wages drain: those go by league matchdays. Nor do cup starts lift a signing's
+  // resale cap: that counts league starts, market.ts RESALE_STARTS.)
+  return recordCupTie(season.cup, season.division, season.matchday, clubRater(state), my, their, won, pens);
 }
 
 export function computeTable(clubs: { id: string; name: string }[], fixtures: Fixture[]): TableRow[] {
@@ -648,6 +721,10 @@ export function finishSeason(state: CareerState, wallet: Wallet): SeasonSummary 
   const lines = seasonPrizeLines(position, season.division);
   const prize = lines.reduce((s, l) => s + l.coins, 0);
   wallet.coins += prize;
+  // The cup is over by now (the league waits for every tie); a damaged save's leftover tie is settled here.
+  const cup = season.cup;
+  if (cup) settleCup(cup, season.division, clubRater(state));
+  const finish = cup ? cupFinish(cup) : -1;
   const summary: SeasonSummary = {
     season: season.number,
     division: season.division,
@@ -658,8 +735,10 @@ export function finishSeason(state: CareerState, wallet: Wallet): SeasonSummary 
     lines,
     prize,
   };
+  const entry: HistoryEntry = { season: season.number, division: season.division, position, outcome };
+  if (finish >= 0) summary.cup = entry.cup = finish;
   state.summary = summary;
-  state.history = [...state.history, { season: season.number, division: season.division, position, outcome }].slice(-30);
+  state.history = [...state.history, entry].slice(-30);
   clearMarket(state, wallet);
   return summary;
 }
@@ -672,14 +751,48 @@ export function startNextSeason(state: CareerState): SeasonState | null {
   return newSeason(state, s.nextDivision, s.season + 1);
 }
 
+/**
+ * The player's next match: a BLOCKY CUP tie when one is due (it comes before the league matchday it precedes),
+ * otherwise the league fixture. Null when the season is over (or there's no club).
+ */
 export function nextMatch(state: CareerState): NextMatch | null {
   const { club, season } = state;
   if (!club || !season || state.summary || season.matchday >= MATCHDAYS) return null;
+  const due = cupDue(state);
+  if (due >= 0 && season.cup) return nextCupTie(state, club, season, season.cup, due);
   const fixture = userFixture(season, season.matchday);
   if (!fixture) return null;
   const userHome = fixture.home === YOU;
   const rival = season.rivals.find((r) => r.id === (userHome ? fixture.away : fixture.home));
   if (!rival) return null;
+  const md = season.matchday;
+  const [home, away] = matchSides(state, club, rival, userHome);
+  return {
+    md, fixture, userHome, rival, home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)],
+    competition: 'league', label: `MATCHDAY ${md + 1}`, tag: `MD ${md + 1}`, cupRound: -1, rivalDivision: season.division, neutral: false,
+  };
+}
+
+function nextCupTie(state: CareerState, club: ClubState, season: SeasonState, cup: SeasonCup, round: number): NextMatch | null {
+  const ut = userTie(cup);
+  const rivalId = ut ? cup.slots[ut.rival] : undefined;
+  const rival = rivalId ? cupClubs(state).get(rivalId) : undefined;
+  if (!ut || !rivalId || !rival) return null;
+  // The final is at a neutral ground: you wear your own kit (listed first), neither side is at home.
+  const neutral = round === 2;
+  const userHome = neutral || ut.userHome;
+  const [home, away] = matchSides(state, club, rival, userHome);
+  const md = season.matchday;
+  const fixture: Fixture = { md, home: userHome ? YOU : rivalId, away: userHome ? rivalId : YOU, hg: null, ag: null };
+  return {
+    md, fixture, userHome, rival, home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)],
+    competition: 'cup', label: `BLOCKY CUP ${ROUND_NAMES[round]}`, tag: `CUP ${ROUND_SHORT[round]}`, cupRound: round,
+    rivalDivision: rival.division, neutral,
+  };
+}
+
+/** [home, away] teams for a match of yours against `rival`: your XI as it plays now, and the rival's. */
+function matchSides(state: CareerState, club: ClubState, rival: LeagueClub, userHome: boolean): [TeamDef, TeamDef] {
   const you = clubTeam(club);
   // Players you have put up for sale have their mind elsewhere (a small stat dip until unlisted or sold), and
   // a squad whose wages are over budget plays a point down across the board.
@@ -695,9 +808,7 @@ export function nextMatch(state: CareerState): NextMatch | null {
   const them = rivalTeam(rival);
   // No surname twice in the fixture: the rival's clashing players get another (deterministic) name.
   dedupeSurnames(you, them);
-  const home = userHome ? you : them;
-  const away = userHome ? them : you;
-  return { md: season.matchday, fixture, userHome, rival, home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)] };
+  return userHome ? [you, them] : [them, you];
 }
 
 function rivalBase(r: LeagueClub): TeamDef {
@@ -771,6 +882,17 @@ export function matchReward(division: number, stadium: number, my: number, their
   const s = clamp(stadium, 0, STADIUM_MAX);
   // (HTML: the post-match reward line renders it; the divider is the ui/text.ts element, not a glyph.)
   return { coins: matchCoins(division, stadium, my, their), label: s > 0 ? `${base}${sep()}+${s * 10}% GATE` : base };
+}
+
+/**
+ * What a BLOCKY CUP tie pays at full time: the usual match fee (as a league match: result, goals, your ground's
+ * gate) plus the round's prize when you go through (`outcome` from resolveCupTie; null = a stale tie, fee only).
+ */
+export function cupTieReward(division: number, stadium: number, my: number, their: number, outcome: TieOutcome | null): { coins: number; label: string } {
+  const fee = matchCoins(division, stadium, my, their);
+  if (!outcome) return { coins: fee, label: 'CUP TIE' };
+  const label = outcome.trophy ? 'CUP WINNERS!' : outcome.won ? `${ROUND_SHORT[outcome.round]} WIN BONUS` : 'KNOCKED OUT';
+  return { coins: fee + outcome.coins, label };
 }
 
 // ------------------------------------------------------------------ transfers
@@ -994,7 +1116,38 @@ function readFixture(v: unknown, ids: Set<string>): Fixture | null {
   return f;
 }
 
-function readSeason(v: unknown): SeasonState | null {
+const CUP_STATUS: CupStatus[] = ['active', 'won', 'out'];
+
+/** The season's saved cup, validated against its league (every slot a club that exists), or null. */
+function readCup(v: unknown, rivals: LeagueClub[]): SeasonCup | null {
+  if (!isObj(v) || !Array.isArray(v.slots) || !Array.isArray(v.guests) || !Array.isArray(v.ties) || v.ties.length !== 7) return null;
+  if (!CUP_STATUS.includes(v.status as CupStatus)) return null;
+  const known = new Set<string>([YOU, ...rivals.map((r) => r.id)]);
+  const guests: CupClub[] = [];
+  for (const g of v.guests) {
+    const c = readLeagueClub(g);
+    if (!c || !isObj(g) || known.has(c.id)) return null;
+    known.add(c.id);
+    guests.push({ ...c, division: clampDivision(isNum(g.division) ? g.division : BOTTOM_DIVISION) });
+  }
+  const slots = v.slots;
+  if (slots.length !== CUP_SIZE || new Set(slots).size !== CUP_SIZE || !slots.every((s): s is string => isStr(s) && known.has(s))) return null;
+  const ties = v.ties.map(readCupTie);
+  if (ties.some((t) => t === null)) return null;
+  return {
+    seed: isNum(v.seed) ? v.seed >>> 0 : 1,
+    slots: [...slots],
+    guests,
+    user: slots.indexOf(YOU),
+    ties: ties as SeasonCup['ties'],
+    round: int(v.round, 0, 3, 0),
+    status: v.status as CupStatus,
+    earned: int(v.earned, 0, 1e9, 0),
+    celebrated: v.celebrated === true,
+  };
+}
+
+function readSeason(v: unknown, club: ClubState | null): SeasonState | null {
   if (!isObj(v) || !Array.isArray(v.rivals) || !Array.isArray(v.fixtures)) return null;
   const rivals: LeagueClub[] = [];
   for (const r of v.rivals) {
@@ -1011,14 +1164,22 @@ function readSeason(v: unknown): SeasonState | null {
     fixtures.push(f);
   }
   if (fixtures.length !== (CLUBS_PER_DIVISION / 2) * MATCHDAYS) return null;
-  return {
+  const season: SeasonState = {
     number: int(v.number, 1, 1e6, 1),
     division: clampDivision(isNum(v.division) ? v.division : BOTTOM_DIVISION),
     seed: isNum(v.seed) ? v.seed >>> 0 : 1,
     rivals,
     fixtures,
     matchday: int(v.matchday, 0, MATCHDAYS, 0),
+    cup: null,
   };
+  // The BLOCKY CUP as saved. A save from before the cup (or a damaged one) gets this season's draw while there is
+  // still room for it (CUP_JOIN_BY; a round already passed is played straight away); later on, next season has it.
+  // A cup saved as null (no room when it joined) stays that way.
+  if (v.cup !== null) {
+    season.cup = readCup(v.cup, rivals) ?? (season.matchday <= CUP_JOIN_BY ? drawCup(season.seed, season.division, rivals, club) : null);
+  }
+  return season;
 }
 
 const OUTCOMES: Outcome[] = ['promoted', 'relegated', 'stayed'];
@@ -1028,7 +1189,7 @@ function readSummary(v: unknown): SeasonSummary | null {
   const lines: PrizeLine[] = Array.isArray(v.lines)
     ? v.lines.filter((l): l is { label: string; coins: number } => isObj(l) && isStr(l.label) && isNum(l.coins)).map((l) => ({ label: l.label, coins: l.coins }))
     : [];
-  return {
+  const s: SeasonSummary = {
     season: int(v.season, 1, 1e6, 1),
     division: clampDivision(isNum(v.division) ? v.division : BOTTOM_DIVISION),
     position: int(v.position, 1, CLUBS_PER_DIVISION, CLUBS_PER_DIVISION),
@@ -1038,19 +1199,34 @@ function readSummary(v: unknown): SeasonSummary | null {
     lines,
     prize: int(v.prize, 0, 1e9, 0),
   };
+  if (isNum(v.cup)) s.cup = int(v.cup, 0, 3, 0);
+  return s;
 }
 
 function readHistory(v: unknown): HistoryEntry[] {
   if (!Array.isArray(v)) return [];
   return v
     .filter((h): h is Obj => isObj(h) && OUTCOMES.includes(h.outcome as Outcome))
-    .map((h) => ({
-      season: int(h.season, 1, 1e6, 1),
-      division: clampDivision(isNum(h.division) ? h.division : BOTTOM_DIVISION),
-      position: int(h.position, 1, CLUBS_PER_DIVISION, CLUBS_PER_DIVISION),
-      outcome: h.outcome as Outcome,
-    }))
+    .map((h) => {
+      const e: HistoryEntry = {
+        season: int(h.season, 1, 1e6, 1),
+        division: clampDivision(isNum(h.division) ? h.division : BOTTOM_DIVISION),
+        position: int(h.position, 1, CLUBS_PER_DIVISION, CLUBS_PER_DIVISION),
+        outcome: h.outcome as Outcome,
+      };
+      // The cup run that season (a 3 is a trophy); seasons from before the cup have none.
+      if (isNum(h.cup)) e.cup = int(h.cup, 0, 3, 0);
+      return e;
+    })
     .slice(-30);
+}
+
+/** Trophies won: league titles (finished first) and BLOCKY CUPs, over the club's history. */
+export function trophyCount(state: CareerState): { titles: number; cups: number } {
+  return {
+    titles: state.history.filter((h) => h.position === 1).length,
+    cups: state.history.filter((h) => h.cup === 3).length,
+  };
 }
 
 const BID_STATUS = ['pending', 'countered'];
@@ -1161,7 +1337,7 @@ export function migrateCareer(raw: unknown, freshSeed: number): CareerState {
   const base = defaultCareer(freshSeed);
   if (!isObj(raw)) return base;
   const club = readClub(raw.club);
-  const season = club ? readSeason(raw.season) : null;
+  const season = club ? readSeason(raw.season, club) : null;
   const summary = season ? readSummary(raw.summary) : null;
   const live = !!season && !summary;
   const tm = readMarket(raw.tm, live);

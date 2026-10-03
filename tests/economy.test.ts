@@ -28,10 +28,20 @@ describe('rarity and the Legendary looks', () => {
     const all = shopItems().filter((i) => !i.pass);
     expect(all.filter((i) => i.price === 0).every((i) => itemTier(i) === 'common')).toBe(true);
     const legendary = all.filter((i) => itemTier(i) === 'legendary');
-    expect(legendary.map((i) => `${i.cat}:${i.id}`).sort()).toEqual(['ball:diamond', 'goalfx:diamond', 'goalfx:supernova', 'trail:comet', 'trail:lightning']);
+    expect(legendary.map((i) => `${i.cat}:${i.id}`).sort()).toEqual([
+      'ball:diamond', 'ball:planet', 'goalfx:diamond', 'goalfx:galaxy', 'goalfx:meteor', 'goalfx:supernova', 'trail:comet', 'trail:lightning',
+    ]);
     // A keen free player banks roughly 2,500 to 3,500 coins a day: each is one to three days of saving, the set weeks.
     for (const i of legendary) expect(i.price).toBeGreaterThanOrEqual(4500);
     expect(legendary.reduce((n, i) => n + i.price, 0)).toBeGreaterThanOrEqual(25_000);
+    // The fairness line: a free player can own the whole catalogue eventually (about a month of keen play).
+    const total = all.reduce((n, i) => n + i.price, 0);
+    expect(total).toBeLessThanOrEqual(100_000);
+    // The rarer, the bigger the show: in every category the dearest look is a Legendary one.
+    for (const cat of ['ball', 'goalfx', 'trail'] as const) {
+      const top = all.filter((i) => i.cat === cat).sort((a, b) => b.price - a.price)[0];
+      expect(itemTier(top)).toBe('legendary');
+    }
   });
 });
 

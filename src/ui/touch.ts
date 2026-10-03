@@ -3,13 +3,29 @@ import { pixelIcon } from './pixelIcons';
 
 export type TouchContext = 'attack' | 'defend' | 'setpiece';
 
+/**
+ * The three action buttons' labels by where they sit: the big one bottom right (data-k pass), the one left of it
+ * (shoot) and the one above it (through). Without the ball PRESS is the big one under the thumb and SWITCH goes up top
+ * (the owner: "the switch and press button should be switched when not with the ball"): see SENDS.
+ */
 const LABELS: Record<TouchContext, [string, string, string]> = {
   attack: ['PASS', 'SHOOT', 'THROUGH'],
-  defend: ['SWITCH', 'TACKLE', 'PRESS'],
+  defend: ['PRESS', 'TACKLE', 'SWITCH'],
   setpiece: ['PASS', 'SHOOT', 'CROSS'],
 };
 
 type BtnKey = 'pass' | 'shoot' | 'through' | 'sprint' | 'skill';
+
+/**
+ * What a button sends by context (its own key unless listed): defending, the big bottom-right button is PRESS (the
+ * sim's THROUGH held: the goal-side jockey, or a run at a loose ball) and the top one SWITCH (the sim's PASS). A press
+ * keeps what it sent at its start until it's let go, so a context change under the thumb never swaps a held button.
+ */
+const SENDS: Record<TouchContext, Partial<Record<BtnKey, BtnKey>>> = {
+  attack: {},
+  defend: { pass: 'through', through: 'pass' },
+  setpiece: {},
+};
 
 /** How long (ms) a power button tap stays down at least, so a tap shorter than a frame still reaches the sim as a press. */
 const POWER_TAP_MS = 70;
@@ -31,6 +47,11 @@ const FIXED_REACH = 150;
 export class TouchControls {
   /** The stick style for new overlays (main.ts sets it from the save; setStickMode changes a live one). */
   static stickMode: StickMode = 'floating';
+  /**
+   * AUTO SPRINT (Settings > Controls, default on; main.ts sets it from the save): the thumbstick pushed all the way
+   * sprints (the session puts it on the pad while touch is the device in hand: Pad.autoSprint, sim/dribble.ts autoRun).
+   */
+  static autoSprint = true;
   readonly root: HTMLDivElement;
   private mode: StickMode = TouchControls.stickMode;
   private knob: HTMLDivElement;
@@ -149,7 +170,6 @@ export class TouchControls {
       pw.classList.add('down');
       this.onPower?.();
       input.lastDevice = 'touch';
-      navigator.vibrate?.(8);
       window.clearTimeout(this.powerTimer);
       this.powerTimer = window.setTimeout(() => {
         this.powerTimer = 0;
@@ -164,22 +184,25 @@ export class TouchControls {
 
     this.root.querySelectorAll<HTMLButtonElement>('.tb:not(.tb-power)').forEach((b) => {
       this.btns.push(b);
-      const k = b.dataset.k as BtnKey;
-      const set = (v: boolean) => {
-        t[k] = v;
-        b.classList.toggle('down', v);
+      const own = b.dataset.k as BtnKey;
+      // (What this press sends: fixed at the press, see SENDS.)
+      let sent: BtnKey = own;
+      const up = () => {
+        t[sent] = false;
+        b.classList.remove('down');
       };
       b.addEventListener('pointerdown', (e) => {
         b.setPointerCapture(e.pointerId);
-        set(true);
-        this.onPress?.(k);
+        sent = SENDS[this.ctx][own] ?? own;
+        t[sent] = true;
+        b.classList.add('down');
+        this.onPress?.(sent);
         input.lastDevice = 'touch';
-        navigator.vibrate?.(8);
         e.preventDefault();
       });
-      b.addEventListener('pointerup', () => set(false));
-      b.addEventListener('pointercancel', () => set(false));
-      b.addEventListener('lostpointercapture', () => set(false));
+      b.addEventListener('pointerup', up);
+      b.addEventListener('pointercancel', up);
+      b.addEventListener('lostpointercapture', up);
       b.addEventListener('contextmenu', (e) => e.preventDefault());
     });
 
@@ -292,7 +315,7 @@ export class TouchControls {
 
   /**
    * Pass charge on the buttons (called every frame): PASS and THROUGH fill from the bottom while held, 0..1
-   * (-1 = not charging). Nothing fills while defending, where those buttons are SWITCH and PRESS.
+   * (-1 = not charging). Nothing fills while defending, where those buttons are PRESS and SWITCH.
    */
   setCharge(pass: number, through: number): void {
     const def = this.ctx === 'defend';
@@ -309,6 +332,11 @@ export class TouchControls {
     b.classList.toggle('charging', q >= 0);
     b.classList.toggle('full', q >= 1);
     b.style.setProperty('--charge', q >= 0 ? String(q) : '0');
+  }
+
+  /** The labels in force (for tests and the HOW TO PLAY screen): the big, the left and the top button. */
+  get labels(): readonly [string, string, string] {
+    return LABELS[this.ctx];
   }
 
   setContext(c: TouchContext): void {

@@ -9,6 +9,101 @@ class GameViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(GameCenterPlugin())
         bridge?.registerPluginInstance(AppReviewPlugin())
+        bridge?.registerPluginInstance(HapticsPlugin())
+    }
+}
+
+/// Haptic taps for the web game (src/platform/haptics.ts, which picks them, throttles them and honours Settings >
+/// VIBRATION): an impact { style: light | medium | heavy | rigid | soft, intensity: 0...1, count, apart (ms) }, a
+/// selection tick, a notification { type: success | warning | error }, and prepare (wake the generators so the next tap
+/// lands on time). Fire and forget: each call resolves at once and the tap plays on the main thread.
+@objc(HapticsPlugin)
+public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
+    public let identifier = "HapticsPlugin"
+    public let jsName = "Haptics"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "impact", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "selection", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "notify", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "prepare", returnType: CAPPluginReturnPromise),
+    ]
+
+    // (Made on the main thread on first use, and kept prepared after every tap so the next one has no lag.)
+    private var impacts: [String: UIImpactFeedbackGenerator] = [:]
+    private var selector: UISelectionFeedbackGenerator?
+    private var notice: UINotificationFeedbackGenerator?
+
+    private func impactGenerator(_ style: String) -> UIImpactFeedbackGenerator {
+        if let g = impacts[style] { return g }
+        let kind: UIImpactFeedbackGenerator.FeedbackStyle
+        switch style {
+        case "heavy": kind = .heavy
+        case "medium": kind = .medium
+        case "rigid": kind = .rigid
+        case "soft": kind = .soft
+        default: kind = .light
+        }
+        let g = UIImpactFeedbackGenerator(style: kind)
+        impacts[style] = g
+        return g
+    }
+
+    private func selectionGenerator() -> UISelectionFeedbackGenerator {
+        if selector == nil { selector = UISelectionFeedbackGenerator() }
+        return selector!
+    }
+
+    private func noticeGenerator() -> UINotificationFeedbackGenerator {
+        if notice == nil { notice = UINotificationFeedbackGenerator() }
+        return notice!
+    }
+
+    @objc func impact(_ call: CAPPluginCall) {
+        let style = call.getString("style") ?? "light"
+        let intensity = CGFloat(min(1, max(0, call.getDouble("intensity") ?? 1)))
+        let count = max(1, min(3, call.getInt("count") ?? 1))
+        let apart = max(0.05, min(0.4, (call.getDouble("apart") ?? 110) / 1000))
+        call.resolve()
+        DispatchQueue.main.async {
+            let g = self.impactGenerator(style)
+            g.impactOccurred(intensity: intensity)
+            g.prepare()
+            for i in 1..<count {
+                DispatchQueue.main.asyncAfter(deadline: .now() + apart * Double(i)) {
+                    g.impactOccurred(intensity: intensity)
+                    g.prepare()
+                }
+            }
+        }
+    }
+
+    @objc func selection(_ call: CAPPluginCall) {
+        call.resolve()
+        DispatchQueue.main.async {
+            let g = self.selectionGenerator()
+            g.selectionChanged()
+            g.prepare()
+        }
+    }
+
+    @objc func notify(_ call: CAPPluginCall) {
+        let type = call.getString("type") ?? "success"
+        call.resolve()
+        DispatchQueue.main.async {
+            let g = self.noticeGenerator()
+            let kind: UINotificationFeedbackGenerator.FeedbackType = type == "error" ? .error : type == "warning" ? .warning : .success
+            g.notificationOccurred(kind)
+            g.prepare()
+        }
+    }
+
+    @objc func prepare(_ call: CAPPluginCall) {
+        call.resolve()
+        DispatchQueue.main.async {
+            for style in ["light", "medium", "heavy", "rigid", "soft"] { self.impactGenerator(style).prepare() }
+            self.selectionGenerator().prepare()
+            self.noticeGenerator().prepare()
+        }
     }
 }
 

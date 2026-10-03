@@ -712,7 +712,8 @@ function organiseAttack(m: Match, side: Side, c: Player, brain: TeamBrain, dt: n
   // ---- Overlapping full-back on the ball's flank.
   brain.overlapT -= dt;
   if (brain.overlap >= 0 && (brain.overlapT <= 0 || cN < -0.05 || m.players[brain.overlap].state !== 'move')) brain.overlap = -1;
-  if (brain.overlap < 0 && cN > 0.02 && cN < 0.75 && isWide(m, c) && c.role !== 'DF' && m.rng.chance(dt * 0.4 * (1 + m.mentality[c.side] * 0.6))) {
+  if (brain.overlap < 0 && cN > 0.02 && cN < 0.75 && isWide(m, c) && c.role !== 'DF' &&
+    m.rng.chance(dt * 0.4 * (1 + m.mentality[c.side] * 0.6) * (hum ? HUMAN_OVERLAP : 1))) {
     const sgn = Math.sign(slotOf(m, c).z);
     // (Only the full-back on the flank the carrier is on now: never across the pitch.)
     const onFlank = Math.sign(c.pos.z * ad) === sgn;
@@ -812,7 +813,14 @@ const SUPPORT_AHEAD = 17;
 function humanFlow(m: Match, side: Side, c: Player | null): boolean {
   return m.human[side] && !!c && c.side === side && m.isHumanControlled(c);
 }
-const HUMAN_RUN_BOOST = 1.6;
+/**
+ * (2026-10-03, the owner: "its hard to play to score and make runs": 1.6 -> 2.2, and with fewer than HUMAN_RUNNERS men
+ * already running a winger is due as well as a forward, so a through ball has someone to find; his overlaps come
+ * HUMAN_OVERLAP x as often.)
+ */
+const HUMAN_RUN_BOOST = 2.2;
+const HUMAN_RUNNERS = 2;
+const HUMAN_OVERLAP = 2.5;
 const HUMAN_WIDE = 0.33;
 const HUMAN_WIDE_FINAL = 0.32;
 const HUMAN_BOX_REACH = 45;
@@ -903,7 +911,9 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
   const breaking = st.counter > 0 && m.sincePossession < st.counter && !hum;
   const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45) * (hum ? HUMAN_RUN_BOOST : 1 + AI_INTENT_RUNS * intentVsHuman(m, p.side)) *
     st.runs * (breaking ? COUNTER_RUNS : 1);
-  const due = hum && p.role === 'FW' && !m.teamPlayers(p.side).some((t) => t.running && !t.sentOff);
+  let runners = 0;
+  if (hum) for (const t of m.teamPlayers(p.side)) if (t.running && !t.sentOff) runners++;
+  const due = hum && ((p.role === 'FW' && runners === 0) || ((p.role === 'FW' || isWide(m, p)) && runners < HUMAN_RUNNERS));
   // (The roll is made either way, as it always was: a forward who's due doesn't change the rng's course.)
   if (pr > (hum ? 1.5 : 2.2) && facingFwd && n > line - 0.32 && line < 0.8 && (m.rng.chance(chance) || due)) {
     p.running = true;

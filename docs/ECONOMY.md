@@ -44,12 +44,40 @@ coins a day**. A Normal win pays about 210, a draw 90, a loss 30, and win streak
 |---|---|---|
 | COMMON | 250 to 450 | Two to four matches. Something new in the first session |
 | RARE | 500 to 900 | A day |
-| EPIC | 1,000 to 2,500 | A few days |
-| LEGENDARY | 4,500 to 7,500 (Supernova, Diamond Rain, Lightning, Comet Tail, Diamond ball) | One to three days each, **28,500 for the set**: weeks |
+| EPIC | 1,000 to 2,800 | A few days |
+| LEGENDARY | 4,500 to 7,500 (Supernova, Diamond Rain, Meteor Strike, Black Hole, Lightning and Comet Tail trails, Diamond and Planet balls) | One to three days each, **45,500 for the set**: weeks |
 | CLUB PASS | Not for coins | Only on that month's pass track |
 
-The whole catalogue costs about 46,000 coins. A free player can own it eventually, which is the fairness line.
-A payer gets there in days. The Diamond ball is also free at level 30, like every ball.
+The whole catalogue costs about 86,000 coins, about a month of keen free play. A free player can own it
+eventually, which is the fairness line. A payer gets there in days. Every ball is also free at its level (the
+Planet at 27, the Diamond at 30).
+
+**What the looks are (meta/shop.ts, render/fx).** Every look is its own effect, never a recolour, and the rarer it is
+the bigger the show. The owner's playtest: "every other thing looks like a different colour so wtf is the point".
+- Goal explosions (render/fx/goals.ts), each a scripted show the wide shot holds on for 1.8 s after your goal:
+  Shockwave 300, Balloon Party 350, Confetti Cannons 450, Popcorn 600, Gold Rush (a coin geyser) 700, Frostbite (the
+  goal freezes and shatters) 800, Pinata 900, Inferno (flame jets) 1,200, Rainbow (an arch over the box) 1,400, Neon
+  Disco (mirror ball, lasers, dance floor) 1,800, Fireworks 2,200, Volcano 2,500, Thunderbolt 2,800, Black Hole 4,500,
+  Meteor Strike 5,000, Diamond Rain 6,000, Supernova 7,500. Club Colours (the kit-colour burst) is free.
+- Trails (render/fx/trails.ts) on the player you control when he sprints, and behind the ball on your side's hard
+  shots: Toon Dash 300, Hearts 350, Bubblegum 400, Popcorn 450, Music Notes 600, Slime 650, Ice Trail (frozen boot
+  prints) 750, Afterburner 900, Golden Boots (coins) 1,200, Glitch 1,500, Rainbow Ribbon 2,000, Lightning 4,500,
+  Comet Tail 6,000. Chalk is free.
+- Balls (render/characters.ts BALL_LOOK), shapes and patterns: Retro (leather and laces) 250, Beach 400, Melon 450,
+  Blaze (magma) 600, Hoops 700, Eight 800, Ice (spiky) 900, Neon (grid lines) 1,000, Moon 1,200, Disco 1,800, Gold
+  2,500, Planet (with a ring) 4,500, Diamond (a cut gem) 7,500.
+
+**Road to Glory seasons and the Blocky Cup.** A season is 7 league matchdays plus up to 3 Blocky Cup ties (the
+quarter-final after matchday 2, the semi-final after 4, the final after 6). The cup is no longer a mode of its own.
+- A cup tie pays the same match fee as a league match (result, goals, your ground's gate), plus a prize when you go
+  through. XP is per match as always.
+- Prizes scale by division (`CUP_DIV_SCALE`, src/meta/cup.ts): QF 40, SF 80, final 160 and the trophy 400 in the
+  Sunday League (680 for a winning run), up to 1,530 for a winning run in the Elite League.
+- A winning cup run always pays less than winning the league in the same division (1,040 in the Sunday League,
+  2,640 in the Elite League), and getting knocked out pays only the match fee.
+- An average season (a typical run: through one round, out in the next) gains about two matches and roughly a third
+  more coins, so coins per match rise by well under 10%: a bonus, not a second economy. The old standalone cup paid
+  1,700 for three wins on Normal; the career cup pays less per match. (Estimates, from the prize tables.)
 
 ## What money buys (the app's store, platform/iap.ts)
 
@@ -69,7 +97,10 @@ A payer gets there in days. The Diamond ball is also free at level 30, like ever
 - It is the same 30 tiers as the free season, about 30 matches a month, so it's finishable at about 4 days of play a
   week. Supercell found 85% of players never finished a pass that was too long.
 - The pass track pays 60 to 200 coins a tier, plus 300 at tier 5, 500 at 15, 700 at 25 and 1,500 at 30. Tier 10 is
-  the month's sprint trail and tier 20 its goal explosion: 12 colourways, one per monthly theme.
+  the month's sprint trail and tier 20 its goal explosion: each month its own effect, themed to the month (a snow
+  tornado in January, a mud splat in February, flowers in March, rain clouds in April, a trophy in May, a big wave in
+  June, a grinning sun in July, a ball barrage in August, a leaf gust in September, searchlights in October,
+  Catherine wheels in November, presents in December), never a colourway.
 - If bought late, every reached tier is claimable at once. At month end, unclaimed pass coins carry into the next
   month and unclaimed looks stay claimable. Nothing reached is lost.
 - It is a consumable store product, so it can be bought again each month. The store refuses a second buy in the same
@@ -109,6 +140,7 @@ A payer gets there in days. The Diamond ball is also free at level 30, like ever
 | What | Where |
 |---|---|
 | Item prices and the rarity cut-offs | src/meta/shop.ts (`itemTier`) |
+| Blocky Cup prizes and calendar | src/meta/cup.ts `ROUND_PRIZE`, `TROPHY_PRIZE`, `CUP_DIV_SCALE`, `CUP_AFTER` |
 | Today's deal discount | src/meta/shop.ts `DEAL_OFF` |
 | Pass rewards | src/meta/season.ts `passReward`, `PASS_BIG_COINS` |
 | Pack token costs | src/meta/shop.ts `PACK_TOKENS` |

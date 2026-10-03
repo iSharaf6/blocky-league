@@ -4,6 +4,7 @@ import {
   WALL_DIST,
 } from './constants';
 import { blitzDive } from './blitz';
+import { vsHuman } from './dribble';
 import type { Match } from './match';
 import type { Player } from './player';
 import type { Side } from './types';
@@ -44,6 +45,13 @@ const KEEPER_REACT = 0.33;
 const AI_STRIKE_UNREAD = 0.025;
 /** ... from inside this far (m) out: one from range he still reads for its whole flight (SHOT_READ_T). */
 const AI_UNREAD_D = 20;
+/**
+ * The AI's keeper reads the human's open-play strike from inside HUMAN_UNREAD_D m this much (s) later (2026-10-03, the
+ * owner: "its hard to score"; in whole matches a casual player's shots from 14 to 18 m that beat the blocks were saved
+ * seven times in ten). A placed one from the edge of the box beats him now and then; from range he still has it.
+ */
+const HUMAN_STRIKE_UNREAD = 0.025;
+const HUMAN_UNREAD_D = 20;
 /** Extra reaction time (s) to a free kick struck over the wall. */
 const FK_UNSIGHTED = 0.05;
 /**
@@ -369,7 +377,9 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
         // (The base reaction rides on the shot tempo; the wall's and the curler's late read don't.)
         const reaction = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) / SHOT_TEMPO + (m.freeKickShot() ? FK_UNSIGHTED : 0) +
           (finesse ? FINESSE_READ : 0) +
-          (m.anyHuman || m.shotKick !== m.kickId || m.kickKind !== 'shot' || m.shotDist > AI_UNREAD_D ? 0 : AI_STRIKE_UNREAD);
+          (m.anyHuman || m.shotKick !== m.kickId || m.kickKind !== 'shot' || m.shotDist > AI_UNREAD_D ? 0 : AI_STRIKE_UNREAD) +
+          (m.shotByHuman && !finesse && m.shotKick === m.kickId && m.kickKind === 'shot' && m.shotStyle !== 'finesse' && !m.freeKickShot() &&
+            m.shotDist <= HUMAN_UNREAD_D ? HUMAN_STRIKE_UNREAD * vsHuman(m.aiSkill(k.side)).shotHelp : 0);
         const lateral = zc - k.pos.z;
         const high = yc > HIGH_DIVE_Y;
         // A dropper (a floated long shot coming down steeply: over his head where he stands, under the bar at

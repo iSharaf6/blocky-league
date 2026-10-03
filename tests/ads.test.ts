@@ -140,6 +140,17 @@ describe('ads and audio', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('keeps the portals to their one break before a kick-off (the half-time ad is the app\'s)', async () => {
+    const { sdk } = crazy();
+    sdk.ad.requestAd = vi.fn((_type, callbacks) => callbacks.adFinished?.());
+    const ads = new Ads();
+    await ads.init();
+    await ads.midgame('halftime');
+    expect(sdk.ad.requestAd).not.toHaveBeenCalled();
+    await ads.midgame();
+    expect(sdk.ad.requestAd).toHaveBeenCalledWith('midgame', expect.anything());
+  });
+
   it('allows a later attempt after an unfilled ad, and only rewards completion', async () => {
     const { sdk } = crazy();
     let callbacks!: AdCallbacks;

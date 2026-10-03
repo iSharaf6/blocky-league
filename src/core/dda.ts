@@ -9,7 +9,8 @@
  *  - Quick match / PLAY NOW: DDA.streak defeats in a row at one difficulty, then DDA.quick at that difficulty
  *    until a win there (and the full-time screen suggests EASY).
  *  - A draw breaks a run that hasn't reached the streak yet; once the ease is on, only a win turns it off.
- *  - Moments, the basics, the cup and Club Run have no loss-streak ease (a request can still set its own).
+ *  - Moments, the basics and Club Run have no loss-streak ease (a request can still set its own). Blocky Cup ties
+ *    are ROAD TO GLORY matches (kind 'career'), so they count as career matches above.
  */
 import type { MatchKind } from '../app';
 

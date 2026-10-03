@@ -37,27 +37,33 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * The fix for "players spaz out" draws the body with a face-target hold (Player.drawFacing, FACE_HOLD_T) and leaves
  * the sim's facing alone, so all six AI v AI rows (ai*, aiKo*) are bit-identical to before. No driver or comparison
  * was relaxed.
+ * Revision 2026-10-03 (NET_VERSION 4) re-recorded every row. The rows with a human in them moved with the controls
+ * work: AUTO SPRINT on the pad (Pad.autoSprint, a new bit on the wire), the human's quicker dribble and lighter sprint
+ * drain (player.ts), the SKILL moves' shield and the five new moves (skills.ts), PRESS on a loose ball, his shot help
+ * (actions.ts shotPressure, keeper.ts HUMAN_STRIKE_UNREAD) and busier runs off his ball (ai.ts humanFlow). The AI v AI
+ * rows (ai*, aiKo*) moved with the referee's added time (match.ts addedTimeUp: a half now ends at a natural stoppage),
+ * not with the controls work: with its sim edits taken out, the AI rows come out exactly as recorded here.
  */
 const BEFORE: Record<string, Row> = {
-  aiClassic: [2262850705, 2447626034, 19417, 2, 3, 0],
-  aiBlitz: [513065991, 663489125, 11382, 0, 2, 0],
-  aiStyles: [2891120658, 2774569015, 11673, 1, 2, 0],
-  botSide0: [4018342276, 2847971312, 15921, 6, 0, 0],
-  botPerks: [1256534990, 1190657039, 11391, 2, 1, 0],
-  botFirstMatch: [419490953, 422137024, 11141, 1, 0, 0],
-  fuzzSide1: [1765176342, 1498320739, 11591, 3, 0, 0],
-  fuzzBlitz0: [3264831548, 444990822, 11085, 0, 0, 0],
-  fuzzBlitzPerks1: [4063850517, 1852493949, 11103, 1, 0, 0],
-  penTaker0: [628411677, 3333066141, 7588, 0, 0, 0],
-  penTaker1Low: [2432999293, 1714160249, 7946, 0, 1, 0],
-  penTimeout1: [465348317, 1904918744, 7616, 1, 1, 0],
-  penKeeper1: [3738431922, 1903557219, 8078, 1, 0, 0],
-  ko1: [3342705198, 2341050154, 5121, 0, 0, 1],
-  ko3: [1861822237, 1933322066, 7958, 0, 0, 1],
-  ko6: [2418784713, 319717197, 5633, 0, 0, 1],
-  aiKo1: [47845968, 1192999698, 5817, 0, 0, 1],
-  aiKo4: [2291840460, 860824426, 3346, 0, 1, 0],
-  aiKo7: [4112032605, 1756315151, 5108, 0, 0, 1],
+  aiClassic: [3857206067, 2114493345, 19536, 2, 1, 0],
+  aiBlitz: [973803513, 3241739498, 11862, 0, 2, 0],
+  aiStyles: [2660539149, 3277525662, 11755, 0, 3, 0],
+  botSide0: [3160630083, 2272953628, 15454, 4, 0, 0],
+  botPerks: [1792871590, 1802863702, 11858, 3, 1, 0],
+  botFirstMatch: [2467454663, 3169156977, 12334, 4, 0, 0],
+  fuzzSide1: [1567449356, 1437678220, 11034, 0, 0, 0],
+  fuzzBlitz0: [2627891867, 746009896, 11831, 0, 4, 0],
+  fuzzBlitzPerks1: [791116711, 823139453, 11520, 2, 0, 0],
+  penTaker0: [3286159086, 3708378327, 7333, 0, 0, 0],
+  penTaker1Low: [2461084787, 3305714708, 8226, 1, 3, 0],
+  penTimeout1: [192063246, 4035757176, 7623, 1, 0, 0],
+  penKeeper1: [2242256683, 2332648774, 8062, 3, 0, 0],
+  ko1: [535862607, 534958651, 3422, 1, 0, 0],
+  ko3: [4087653139, 1883247289, 5212, 0, 0, 1],
+  ko6: [626281894, 358611498, 5670, 0, 0, 1],
+  aiKo1: [304532972, 837311316, 4876, 0, 0, 1],
+  aiKo4: [1910068503, 1128895319, 4024, 0, 1, 0],
+  aiKo7: [1282669707, 2382932321, 5085, 0, 0, 1],
 };
 
 describe('single-player stays bit-identical', () => {
@@ -435,8 +441,10 @@ describe('lockstep engine', () => {
     expect(a.lock.status).toBe('play');
     expect(b.lock.status).toBe('play');
     expect(a.m.phase).toBe('fulltime');
-    agree(a, b);
-    expect(stateHash(a.m)).toBe(stateHash(b.m));
+    const n = agree(a, b);
+    // (As in the full match above: one may have stood a tick longer at full time when the run stopped.)
+    expect(Math.abs(a.hashes.length - b.hashes.length)).toBeLessThanOrEqual(DELAY_MAX);
+    expect(a.hashes[n - 1]).toBe(b.hashes[n - 1]);
   }, 60_000);
 
   it('notices the other side leaving, the link closing, and the silence of a dead link', () => {

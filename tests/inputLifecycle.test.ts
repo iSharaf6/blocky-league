@@ -168,6 +168,38 @@ describe('touch lifecycle', () => {
     touch.dispose();
   });
 
+  it('without the ball the big button is PRESS and the top one SWITCH; a held press keeps what it sent', () => {
+    const input = new Input();
+    const touch = new TouchControls(input);
+    touch.setEnabled(true);
+    const pressed: string[] = [];
+    touch.onPress = (k) => pressed.push(k);
+    const el = touch.root as unknown as Element;
+    const big = el.querySelector('.tb-pass');
+    const top = el.querySelector('.tb-through');
+    expect(touch.labels).toEqual(['PASS', 'SHOOT', 'THROUGH']);
+    touch.setContext('defend');
+    expect(touch.labels).toEqual(['PRESS', 'TACKLE', 'SWITCH']);
+    pointer(big, 'pointerdown', 1);
+    expect(input.read().through).toBe(true);
+    expect(input.read().pass).toBe(false);
+    // Won the ball mid-press: the held button is still PRESS until it's let go.
+    touch.setContext('attack');
+    expect(input.read().through).toBe(true);
+    pointer(big, 'pointerup', 1);
+    expect(input.read().through).toBe(false);
+    pointer(big, 'pointerdown', 2);
+    expect(input.read().pass).toBe(true);
+    pointer(big, 'pointerup', 2);
+    touch.setContext('defend');
+    pointer(top, 'pointerdown', 3);
+    expect(input.read().pass).toBe(true);
+    expect(input.read().through).toBe(false);
+    pointer(top, 'pointerup', 3);
+    expect(pressed).toEqual(['through', 'pass', 'pass']);
+    touch.dispose();
+  });
+
   it('disposes held controls and tap timers before the next match reuses Input', () => {
     const input = new Input();
     const touch = new TouchControls(input);

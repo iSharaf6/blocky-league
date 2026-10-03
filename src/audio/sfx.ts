@@ -57,6 +57,12 @@ export class Sfx {
   private rainActive = false;
   musicOn = true;
   private muted = false;
+  /** The page is hidden (the app in the background, another tab): the context sleeps until it's back (wake). */
+  private hidden = false;
+  private wakeOn = false;
+  /** The context needs building again from the next tap: iOS left it stuck, or its clock stopped (see wake). */
+  private stale = false;
+  private aliveTimer: number | null = null;
 
   get sfxOn(): boolean { return this.effectsEnabled; }
   set sfxOn(on: boolean) { this.effectsEnabled = on; this.mixAmbience(); }
@@ -106,8 +112,109 @@ export class Sfx {
       this.applyStadium();
       this.setRain(this.rainActive);
       this.mixAmbience();
+      this.installWake();
+      // A call, Siri or a full-screen ad taking the audio session while we're on screen: try to come straight back
+      // (the next tap does it if the system wants a gesture first).
+      c.addEventListener?.('statechange', () => {
+        const st = c.state as string;
+        if (this.ctx === c && !this.hidden && st !== 'running' && st !== 'closed') this.wake(false);
+      });
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    // (WebKit also has 'interrupted': a call, Siri, the app sent to the background.)
+    if ((this.ctx.state as string) !== 'running') void this.ctx.resume().catch(() => {});
+  }
+
+  /**
+   * Leaving the app and coming back (the owner: "audio is compleetely silent"). iOS interrupts the context when the
+   * app goes to the background and may leave it 'interrupted' or 'suspended', which a resume from script can't
+   * always undo. So: the context sleeps while the page is hidden; on the way back (visibilitychange, pageshow,
+   * focus) it is resumed; while it still isn't running, the next tap, click or key resumes it (a user gesture
+   * always may); and if even that leaves it stuck, or it says 'running' with its clock stood still (WebKit's
+   * silent context), the tap after builds the whole graph again: crowd beds, rain, the room and the menu music
+   * (rebuild), the old context closed first so nothing plays twice.
+   */
+  private installWake(): void {
+    if (this.wakeOn || typeof window === 'undefined' || typeof document === 'undefined') return;
+    if (typeof window.addEventListener !== 'function' || typeof document.addEventListener !== 'function') return;
+    this.wakeOn = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') this.sleep();
+      else this.wake(false);
+    });
+    window.addEventListener('pagehide', () => this.sleep());
+    window.addEventListener('pageshow', () => this.wake(false));
+    window.addEventListener('focus', () => this.wake(false));
+    const gesture = (): void => {
+      const c = this.ctx;
+      if (c && (this.stale || (c.state as string) !== 'running')) this.wake(true);
+    };
+    for (const type of ['pointerdown', 'touchstart', 'touchend', 'mousedown', 'keydown'] as const) {
+      window.addEventListener(type, gesture, { capture: true, passive: true });
+    }
+  }
+
+  private sleep(): void {
+    this.hidden = true;
+    const c = this.ctx;
+    if (c && c.state === 'running') void c.suspend().catch(() => {});
+  }
+
+  /** Bring the context back (`gesture`: from inside a tap / click / key handler, where a resume is always allowed). */
+  private wake(gesture: boolean): void {
+    if (typeof document === 'undefined' || document.visibilityState === 'hidden') return;
+    this.hidden = false;
+    const c = this.ctx;
+    if (!c) return;
+    if (gesture && this.stale) {
+      this.rebuild();
+      return;
+    }
+    if ((c.state as string) === 'running') {
+      this.watchClock(c);
+      return;
+    }
+    c.resume().then(
+      () => {
+        if (this.ctx !== c) return;
+        if ((c.state as string) === 'running') this.watchClock(c);
+        else if (gesture) this.stale = true;
+      },
+      () => {
+        if (gesture && this.ctx === c) this.stale = true;
+      },
+    );
+  }
+
+  /** A 'running' context whose clock doesn't move is a silent one: the next tap builds it again. */
+  private watchClock(c: AudioContext): void {
+    if (this.aliveTimer !== null) return;
+    const t0 = c.currentTime;
+    this.aliveTimer = window.setTimeout(() => {
+      this.aliveTimer = null;
+      if (this.ctx === c && !this.hidden && (c.state as string) === 'running' && c.currentTime - t0 < 0.15) this.stale = true;
+    }, 600);
+  }
+
+  /** A fresh context with everything that was playing on the old one (from a user gesture: see installWake). */
+  private rebuild(): void {
+    const old = this.ctx;
+    this.stale = false;
+    const music = this.musicTimer !== null;
+    this.stopMusic();
+    this.endCapture();
+    this.ctx = null;
+    this.ends = [];
+    this.rainGain = null;
+    this.tap = null;
+    this.tapping = false;
+    // (Times on the old context's clock: the new one starts again from zero.)
+    this.roarUntil = 0;
+    this.lastOoh = -9;
+    if (old) void old.close().catch(() => {});
+    this.unlock();
+    if (!this.ctx) return;
+    this.setExcitement(this.excitement);
+    if (music) this.startMusic();
   }
 
   private startCrowd(): void {
@@ -384,6 +491,8 @@ export class Sfx {
     this.muted = m;
     if (!this.ctx) return;
     this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.ctx.currentTime, 0.05);
+    // (A full-screen ad can take the audio session; the game's sound comes back when it closes.)
+    if (!m) this.wake(false);
   }
 
   /** Menu / pause / match transitions share one gate, so weather cannot leak between games. */

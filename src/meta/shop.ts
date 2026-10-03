@@ -49,7 +49,7 @@ export interface ShopItem {
  * Prices, tuned to what a match pays (main.ts standardReward: a win on Normal ~170-210, a draw ~90, a loss ~50,
  * x1.1 a win in a row up to x2) plus the daily gift (100-400) and challenges (100-220 each). The ladder (docs/ECONOMY.md):
  * COMMON something new every two to four matches early on (250-450); RARE and EPIC a few days to a week of play
- * (500-2500); LEGENDARY a few weeks for a free player (4500-7500), the looks to aim at and the reason a coin pack is
+ * (500-2800); LEGENDARY a few weeks for a free player (4500-7500), the looks to aim at and the reason a coin pack is
  * ever worth it. Club Pass looks are never on sale for coins.
  */
 const CELEB_PRICE: { readonly [k in (typeof CELEBRATION_IDS)[number]]: number } = {
@@ -64,59 +64,103 @@ const CELEB_BLURB: { readonly [k in (typeof CELEBRATION_IDS)[number]]: string } 
   backflip: 'A full backflip. Stick the landing.',
   pile: 'Hit the deck and the whole team piles on.',
 };
+// Every look is its own thing, not a recolour: shapes and patterns for the balls (render/characters.ts BALL_LOOK),
+// a scripted show for each goal explosion (render/fx/goals.ts) and an emitter for each trail (render/fx/trails.ts).
+// The rarer it is, the bigger the show: LEGENDARY is the most spectacular in each category.
 const BALL_PRICE: { readonly [k in (typeof BALL_SKIN_IDS)[number]]: number } = {
-  classic: 0, retro: 250, blaze: 500, ice: 600, neon: 800, gold: 2500, diamond: 7500,
+  classic: 0, retro: 250, beach: 400, melon: 450, blaze: 600, hoops: 700, eight: 800, ice: 900, neon: 1000, moon: 1200, disco: 1800,
+  gold: 2500, planet: 4500, diamond: 7500,
 };
 const BALL_BLURB: { readonly [k in (typeof BALL_SKIN_IDS)[number]]: string } = {
   classic: 'The match ball.',
-  retro: 'Big black panels, old school.',
-  blaze: 'Burnt orange with red panels.',
-  ice: 'Frosty white with blue panels.',
-  neon: 'Glows green under the lights.',
-  gold: 'Solid gold. For legends only.',
-  diamond: 'Cut like a gem. The rarest ball in the game.',
+  retro: 'Old brown leather, stitched panels and laces.',
+  beach: 'Six bright stripes, straight off the beach.',
+  melon: 'A striped watermelon, stalk and all.',
+  blaze: 'Cracked rock with lava glowing through.',
+  hoops: 'A basketball that thinks it is a football.',
+  eight: 'Black and glossy with the 8 on it.',
+  ice: 'Frozen solid, icicles sticking out.',
+  neon: 'A black ball with glowing grid lines.',
+  moon: 'Grey, cratered and out of this world.',
+  disco: 'Mirror tiles that catch the floodlights.',
+  gold: 'Polished gold. For legends only.',
+  planet: 'A tiny world with oceans and a ring round it.',
+  diamond: 'A cut gem. The rarest ball in the game.',
 };
 type Look = { name: string; price: number; blurb: string };
 const GOAL_FX: { readonly [k in Exclude<(typeof GOAL_FX_IDS)[number], PassId>]: Look } = {
-  club: { name: 'Club Colours', price: 0, blurb: 'Your kit colours, every goal.' },
-  gold: { name: 'Gold Rush', price: 400, blurb: 'A shower of gold over the goal mouth.' },
-  fire: { name: 'Inferno', price: 450, blurb: 'Your goals go up in flames.' },
-  ice: { name: 'Frostbite', price: 450, blurb: 'A blizzard in the six yard box.' },
-  neon: { name: 'Neon Rave', price: 650, blurb: 'Rave colours, full volume.' },
-  rainbow: { name: 'Rainbow', price: 900, blurb: 'Every colour at once.' },
-  galaxy: { name: 'Galaxy', price: 1500, blurb: 'Purple, blue and stardust.' },
-  diamond: { name: 'Diamond Rain', price: 4500, blurb: 'It rains diamonds every time you score.' },
-  supernova: { name: 'Supernova', price: 6000, blurb: 'A star explodes over the goal mouth.' },
+  club: { name: 'Club Colours', price: 0, blurb: 'A burst and confetti in your kit colours.' },
+  shockwave: { name: 'Shockwave', price: 300, blurb: 'A ring of force rolls out over the grass.' },
+  balloons: { name: 'Balloon Party', price: 350, blurb: 'A bunch of balloons floats up out of the net.' },
+  confetti: { name: 'Confetti Cannons', price: 450, blurb: 'Two cannons pop up and blast the box with confetti.' },
+  popcorn: { name: 'Popcorn', price: 600, blurb: 'A bucket pops up and the kernels go everywhere.' },
+  gold: { name: 'Gold Rush', price: 700, blurb: 'A geyser of gold coins out of the net.' },
+  ice: { name: 'Frostbite', price: 800, blurb: 'The goal freezes solid, then shatters.' },
+  pinata: { name: 'Pinata', price: 900, blurb: 'Whack, whack! It bursts into sweets.' },
+  fire: { name: 'Inferno', price: 1200, blurb: 'Flame jets go off along the goal line.' },
+  rainbow: { name: 'Rainbow', price: 1400, blurb: 'A voxel rainbow arches out of the goal.' },
+  neon: { name: 'Neon Disco', price: 1800, blurb: 'A mirror ball, lasers and a dance floor.' },
+  fireworks: { name: 'Fireworks', price: 2200, blurb: 'Rockets launch from behind the net and burst in the sky.' },
+  volcano: { name: 'Volcano', price: 2500, blurb: 'A volcano bursts out of the box and erupts.' },
+  lightning: { name: 'Thunderbolt', price: 2800, blurb: 'Lightning strikes the goal mouth three times.' },
+  galaxy: { name: 'Black Hole', price: 4500, blurb: 'A vortex swallows the stars, then bursts.' },
+  meteor: { name: 'Meteor Strike', price: 5000, blurb: 'A flaming meteor craters the goal mouth.' },
+  diamond: { name: 'Diamond Rain', price: 6000, blurb: 'A giant diamond shatters and it rains gems.' },
+  supernova: { name: 'Supernova', price: 7500, blurb: 'A star gathers light over the box, then goes off.' },
 };
 const TRAILS: { readonly [k in Exclude<(typeof TRAIL_IDS)[number], PassId>]: Look } = {
   white: { name: 'Chalk', price: 0, blurb: 'Clean white speed lines.' },
-  fire: { name: 'Afterburner', price: 300, blurb: 'Flames off your heels on every sprint.' },
-  ice: { name: 'Ice Trail', price: 300, blurb: 'Cold blue streaks behind you.' },
-  lime: { name: 'Toxic', price: 350, blurb: 'Radioactive green.' },
-  pink: { name: 'Bubblegum', price: 350, blurb: 'Pink, loud and proud.' },
-  gold: { name: 'Golden Boots', price: 1000, blurb: 'Gold lines behind every sprint.' },
-  rainbow: { name: 'Rainbow Dash', price: 1400, blurb: 'Leave a rainbow behind you.' },
-  lightning: { name: 'Lightning', price: 4500, blurb: 'Every sprint crackles.' },
-  comet: { name: 'Comet Tail', price: 6000, blurb: 'A blazing comet behind every run.' },
+  toon: { name: 'Toon Dash', price: 300, blurb: 'Cartoon dust puffs and inky speed lines.' },
+  hearts: { name: 'Hearts', price: 350, blurb: 'Little hearts float up behind you.' },
+  pink: { name: 'Bubblegum', price: 400, blurb: 'Bubbles drift up behind you and pop.' },
+  popcorn: { name: 'Popcorn', price: 450, blurb: 'Kernels pop off your heels and bounce.' },
+  notes: { name: 'Music Notes', price: 600, blurb: 'Notes bob up behind you in a wavy line.' },
+  lime: { name: 'Slime', price: 650, blurb: 'Goo drips off your boots and splats.' },
+  ice: { name: 'Ice Trail', price: 750, blurb: 'Frozen boot prints and falling snow.' },
+  fire: { name: 'Afterburner', price: 900, blurb: 'Pixel flames lick off your heels.' },
+  gold: { name: 'Golden Boots', price: 1200, blurb: 'Gold coins spill off your heels.' },
+  glitch: { name: 'Glitch', price: 1500, blurb: 'You break up into flickering pixels.' },
+  rainbow: { name: 'Rainbow Ribbon', price: 2000, blurb: 'A rainbow ribbon streams out behind you.' },
+  lightning: { name: 'Lightning', price: 4500, blurb: 'Bolts crackle off your heels and arc round you.' },
+  comet: { name: 'Comet Tail', price: 6000, blurb: 'A blazing tail of stardust and stars.' },
+};
+
+/** What each month's Club Pass looks do (January first): its own goal explosion and trail, not a colourway. */
+const PASS_BLURB: { readonly [k in 'goalfx' | 'trail']: readonly string[] } = {
+  goalfx: [
+    'A snow tornado spins up out of the goal.', 'A giant ball of mud splats the whole box.', 'Flowers burst up all over the box.',
+    'Rain clouds roll in and it pours.', 'A giant trophy rises out of the goal.', 'A big wave crashes out of the net.',
+    'A grinning sun rises over the goal.', 'Footballs pour out of the net.', 'A gust of autumn leaves and pumpkins.',
+    'Searchlights sweep the night sky.', 'Catherine wheels spin on the posts.', 'A big present bursts open into gifts.',
+  ],
+  trail: [
+    'A flurry of snowflakes whirls off you.', 'Muddy boot prints and flying mud.', 'Flowers spring up in your footsteps.',
+    'Your own little rain cloud follows you.', 'Gold stars and ticker tape.', 'Every step splashes.',
+    'Little suns spin up off you.', 'Training cones pop up in a slalom.', 'Autumn leaves kicked up behind you.',
+    'A neon light line painted behind you.', 'A sparkler fizzing off you.', 'Tiny presents bounce out behind you.',
+  ],
 };
 
 /** A Club Pass look of the season theme at index `m` (January 0): its goal explosion or its trail. */
 const passLook = (cat: 'goalfx' | 'trail', m: number): Look => ({
   name: SEASON_THEMES[m].name,
   price: 0,
-  blurb: `Club Pass only: the ${SEASON_THEMES[m].name} ${cat === 'goalfx' ? 'goal explosion' : 'sprint trail'}.`,
+  blurb: `Club Pass only: ${PASS_BLURB[cat][m]}`,
 });
 const isPass = (id: string): id is PassId => (PASS_IDS as readonly string[]).includes(id);
+
+/** Shop order within a category: the free one, then cheapest first, the Club Pass looks last (by month). */
+const byPrice = (list: ShopItem[]): ShopItem[] => list.sort((a, b) => (a.pass ? 1 : 0) - (b.pass ? 1 : 0) || a.price - b.price);
 
 const ITEMS: readonly ShopItem[] = [
   ...CELEBRATION_IDS.map((id): ShopItem => ({
     cat: 'celebration', id, name: CELEBRATION_NAMES[id].replace(/-/g, ' '), price: CELEB_PRICE[id], level: CELEBRATION_LEVEL[id], blurb: CELEB_BLURB[id],
   })),
-  ...BALL_SKIN_IDS.map((id): ShopItem => ({
+  ...byPrice(BALL_SKIN_IDS.map((id): ShopItem => ({
     cat: 'ball', id, name: BALL_SKIN_NAMES[id], price: BALL_PRICE[id], level: BALL_SKIN_LEVEL[id], blurb: BALL_BLURB[id],
-  })),
-  ...GOAL_FX_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'goalfx', id, ...passLook('goalfx', PASS_IDS.indexOf(id)), pass: true } : { cat: 'goalfx', id, ...GOAL_FX[id] })),
-  ...TRAIL_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'trail', id, ...passLook('trail', PASS_IDS.indexOf(id)), pass: true } : { cat: 'trail', id, ...TRAILS[id] })),
+  }))),
+  ...byPrice(GOAL_FX_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'goalfx', id, ...passLook('goalfx', PASS_IDS.indexOf(id)), pass: true } : { cat: 'goalfx', id, ...GOAL_FX[id] }))),
+  ...byPrice(TRAIL_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'trail', id, ...passLook('trail', PASS_IDS.indexOf(id)), pass: true } : { cat: 'trail', id, ...TRAILS[id] }))),
 ].map((it) => (it.price === 0 ? { ...it, level: undefined } : it));
 
 /** The Club Pass looks of season `id` ("2026-10"): its goal explosion and its trail. */

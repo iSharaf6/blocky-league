@@ -38,7 +38,10 @@ function checkBands(halfLength: number, n: number): void {
   // AI moving it on sooner, strikes SHOT_TEMPO faster against an unscaled dive.)
   within(s.goals, 2.5, 4.5);
   within(s.shots, 12 * k + (k < 1 ? 0.4 : 0), 22);
-  within(s.onTargetPct, 40, 60);
+  // (2026-10-03: the natural half-time whistle, which lets an attack finish, ends the first half at a different step and
+  // re-draws every second half on these fixed seeds: 60.7% at 2x150 s from 59.0%. Over 64 fresh seeds it measured
+  // 58.0% against 58.9% before, so the ceiling has 1.5 points of headroom for seed noise.)
+  within(s.onTargetPct, 40, 61.5);
   expect(s.longShots).toBeLessThan(s.boxShots);
   // (Round 8: with ground passes capped at 22 m/s and lofted balls at 26, ~0.4 fewer balls a match are won
   // back in a tackle: 6.38 at 2x120 s, 7.94 at 2x150 s on these seeds, against 7.05 / 9.05 before.)

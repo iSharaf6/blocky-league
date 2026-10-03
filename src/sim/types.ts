@@ -206,7 +206,7 @@ export type MatchEvent =
 
 export type KickKind = 'pass' | 'through' | 'lob' | 'shot' | 'clear' | 'header' | 'throw' | 'keeper';
 /** The SKILL button's moves (sim/skills.ts: the stick against his run picks one). */
-export type SkillMoveKind = 'roulette' | 'rainbow' | 'stepover' | 'dragback';
+export type SkillMoveKind = 'roulette' | 'rainbow' | 'stepover' | 'dragback' | 'elastico' | 'croqueta' | 'nutmeg' | 'heelchop' | 'ballroll';
 /**
  * How a SKILL move came off: a PERFECT (timed into a defender's tell), a GOOD (it wrong-footed a man near him), a
  * plain move (a man near, not fooled) or a show-off one (nobody near).

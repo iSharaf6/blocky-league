@@ -1,6 +1,6 @@
 import { sfx } from '../audio/sfx';
-import { moveKeys, type Input } from '../core/input';
-import { CELEBRATION_IDS, type CamZoom, type CelebrationId } from '../core/save';
+import { freeKey, freePadButton, moveKeys, type Input } from '../core/input';
+import { CAM_ZOOMS, CELEBRATION_IDS, type CamZoom, type CelebrationId } from '../core/save';
 import { clamp, damp, smoothstep, wrapAngle } from '../core/math';
 import { BlitzFx, POWER_COLOR, POWER_LIGHT } from '../render/blitz';
 import { CameraRig, type CamFocus } from '../render/cameraRig';
@@ -8,6 +8,9 @@ import { AI_CELEBRATIONS, type CelebCue } from '../render/celebration';
 import { setCharacterFill, setCharacterHemiFill, setCharacterWhiteBalance } from '../render/characters';
 import { goalFxColors, trailColors } from '../render/cosmetics';
 import { Effects } from '../render/effects';
+import { goalShow } from '../render/fx/goals';
+import { FxKit, TrailState, type FxCue } from '../render/fx/kit';
+import { emitTrail } from '../render/fx/trails';
 import { GhostArc } from '../render/ghostArc';
 import {
   HARD_STRIKE, HIT_STOP, KEEPER_FLASH_FRAMES, PLAYER_FLASH_FRAMES, SHAKE_PX, SLOW_POST, TRAIL_LOOK, endHeat, impactBits, kickTrailStyle, trailStrength,
@@ -37,6 +40,7 @@ import { SEP_MARK } from '../ui/text';
 import { QuickSubCard } from '../ui/quickSub';
 import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
+import { buzz, hapticForEvent, primeHaptics } from '../platform/haptics';
 import { Trainer } from '../ui/trainer';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { playFocus } from './camFocus';
@@ -114,6 +118,28 @@ export interface MatchResult {
 
 /** Seconds on the wide shot after a goal (the ball in the net) before cutting to the scorer. */
 const GOAL_WIDE_S = 0.7;
+/**
+ * ...and after a goal of yours with a SHOP goal explosion on (render/fx/goals.ts): long enough to see it go off.
+ * The celebration starts that much later too, so its moment still lands after the cut (render/celebration.ts).
+ */
+const GOAL_FX_WIDE_S = 1.8;
+/** Your side's strikes at least this hard (and this fast, m/s) carry your SHOP trail behind the ball. */
+const SHOT_FX_POWER = 0.5;
+const SHOT_FX_MS = 9;
+/** The trails are drawn this much bigger than in the shop's close-up: they're seen from the gantry. */
+const TRAIL_FX_K = 1.35;
+
+/** The SHOP effects' sound cues (render/fx/kit.ts FxCue), each at most once per 90 ms however busy the show. */
+const cueAt: { [k in FxCue]?: number } = {};
+function fxCue(c: FxCue): void {
+  const now = performance.now();
+  if (now - (cueAt[c] ?? -1e9) < 90) return;
+  cueAt[c] = now;
+  if (c === 'coin') sfx.coin();
+  else if (c === 'whoosh') sfx.whoosh();
+  else if (c === 'pop') sfx.click();
+  else sfx.thump();
+}
 /** The replay rolls once the celebration has had its moment (the scorer has been mobbed). */
 const REPLAY_AT = 2.6;
 /** A goal that gets no replay (an ordinary tap-in by either side): the celebration runs this long, then the kick-off. */
@@ -131,6 +157,9 @@ const REPLAY_BUILD_RATE = 0.85;
 const REPLAY_SLOW_RATE = 0.5;
 const REPLAY_SLOW_FROM = 1.2;
 const HALFTIME_HOLD_S = 1.0;
+/** The match camera's key and gamepad button (VIEW / BACK, standard mapping), when no action is bound to them. */
+const CAM_KEY = 'KeyV';
+const CAM_PAD = 8;
 const FULLTIME_HOLD_S = 1.8;
 const SHOOTOUT_HOLD_S = 3.4;
 /**
@@ -288,6 +317,8 @@ export class MatchSession {
   readonly view: MatchView;
   readonly stadium: Stadium;
   readonly effects = new Effects();
+  /** The SHOP cosmetics: your goal explosion and your trail (render/fx/kit.ts). */
+  readonly fxKit = new FxKit();
   readonly weather = new Weather();
   readonly cam: CameraRig;
   readonly hud: Hud | null;
@@ -394,6 +425,11 @@ export class MatchSession {
    */
   private latch = { pass: false, shoot: false, through: false, power: false, skill: false };
   private offKey: (() => void) | null = null;
+  /** The camera's own key (CAM_KEY) while a match is on, and the pad's VIEW button last frame (an edge, not a hold). */
+  private offCamKey: (() => void) | null = null;
+  private padCamHeld = false;
+  /** The camera button / key / pad changed the camera: main.ts keeps the choice in Settings. */
+  onCamZoom: ((z: CamZoom) => void) | null = null;
   /** Off-screen team-mate arrows (see EDGE_FADE_S), their eased opacity, and the HUD boxes they keep off. */
   private edge: EdgeArrows | null = null;
   private edgeFade = 0;
@@ -420,7 +456,17 @@ export class MatchSession {
   private trailStyle: TrailStyle = 'strike';
   private kickLogT = new Float32Array(KICK_LOG).fill(-1e9);
   private kickLogS: TrailStyle[] = new Array(KICK_LOG).fill('strike');
+  /** ...and whether each was a hard strike of the human side's (it wears the SHOP trail). */
+  private kickLogMine = new Uint8Array(KICK_LOG);
   private kickLogI = 0;
+  /** The last kick was a hard strike of the human side's: the ball wears the SHOP trail till someone has it. */
+  private shotFx = false;
+  /** The SHOP trail's emitters: the player you control, and the ball. */
+  private trailFx = new TrailState();
+  private ballFx = new TrailState();
+  /** This goal's wide shot (GOAL_FX_WIDE_S for a goal explosion), and a celebration waiting for it to end. */
+  private goalWideS = GOAL_WIDE_S;
+  private celebDue: Side | -1 = -1;
   /** The set-piece ghost arc (Easy / Normal), its path scratch and launch. */
   private ghost: GhostArc | null = null;
   private ghostPath = new Float32Array(GHOST_MAX_PTS * 3);
@@ -507,12 +553,19 @@ export class MatchSession {
     this.view.group.position.y = PITCH_Y;
     this.effects.mesh.position.y = PITCH_Y;
     world.scene.add(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
+    this.fxKit.group.position.y = PITCH_Y;
+    world.scene.add(this.fxKit.group);
+    this.warmFx();
+    this.fxKit.onCue = fxCue;
     this.cam = new CameraRig(world.camera);
     this.cam.players = this.view.frame;
     // Reduced motion (the setting, or the OS preference): no screen shake, no camera punch.
     const reduce = opt.reducedMotion ?? (typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches);
     this.cam.setReducedMotion(!!reduce);
     world.scene.add(this.flash.mesh);
+    // The set-piece ghost arc, built now (hidden, no dots) so World.warmShaders compiles it with the rest, not
+    // at the first free kick's aim.
+    if (!this.demo && this.match.cfg.humanSide >= 0) this.ghost = this.makeGhost();
     // The crowd: louder and singing more in a bigger, fuller ground.
     sfx.setStadium(level, Math.max(0, Math.min(1, opt.attendance * stadiumFill(level))));
     this.cam.touchLayout = !this.demo && isTouchDevice();
@@ -529,6 +582,16 @@ export class MatchSession {
         opt.humanSide,
       );
       this.hud.onPause = () => this.requestPause();
+      this.hud.onCamera = () => this.cycleCamZoom();
+      if (typeof window !== 'undefined') {
+        const camKey = (e: KeyboardEvent): void => {
+          if (e.repeat || e.code !== CAM_KEY || !freeKey(e.code) || this.paused) return;
+          if (e.target instanceof HTMLElement && (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))) return;
+          this.cycleCamZoom();
+        };
+        window.addEventListener('keydown', camKey);
+        this.offCamKey = () => window.removeEventListener('keydown', camKey);
+      }
       document.getElementById('ui')!.appendChild(this.hud.root);
       this.trainer = new Trainer();
       this.hud.root.appendChild(this.trainer.root);
@@ -547,6 +610,8 @@ export class MatchSession {
       }
       this.touch = new TouchControls(input);
       document.getElementById('ui')!.appendChild(this.touch.root);
+      // (The haptic generators woken for the match's first tap: platform/haptics.ts.)
+      primeHaptics();
       this.touch.setEnabled(isTouchDevice());
       // With the touch buttons on screen, the trainer and hints name them (PASS, SHOOT), not keys, until a key or a
       // pad is actually used. (Some phones and tablets show the buttons without reporting a coarse pointer.)
@@ -595,6 +660,40 @@ export class MatchSession {
     this.opt.celebration = id;
   }
 
+  /**
+   * Build the SHOP effects' props now, off screen (the first goal or sprint of the match shouldn't hitch building
+   * them): the equipped goal explosion's show and trail, run through once and cleared.
+   */
+  private warmFx(): void {
+    const k = this.fxKit;
+    const show = goalShow(this.opt.goalFx);
+    if (show) {
+      k.play(show.run, show.dur, 0, -60, 0, 1, 0, 1, goalFxColors(this.opt.goalFx, [0xffffff]), 0);
+      for (let i = 0; i < 4; i++) k.update(show.dur / 3, this.world.camera);
+    }
+    const st = new TrailState();
+    for (let i = 0; i < 8; i++) emitTrail(k, st, this.opt.trail, trailColors(this.opt.trail), i, -60, 0, 1, 0, 8, 0.1);
+    k.update(0.1, this.world.camera);
+    k.clear();
+  }
+
+  /** Dev (ui/shopStage.ts window.__blfx.goal): set goal explosion `id` off at the goal nearest the camera, now. */
+  previewGoalFx(id: string): boolean {
+    const show = goalShow(id);
+    if (!show) return false;
+    const gx = (Math.sign(this.cam.focusX) || 1) * HALF_L;
+    this.fxKit.play(show.run, show.dur, gx, 0, 0, -Math.sign(gx), 0, 1, goalFxColors(id, [0xffffff, 0xffd23a]), 0);
+    return true;
+  }
+
+  /** Dev (window.__blfx.trail): wear trail `id` from now on (the player you control on a sprint, your hard shots). */
+  previewTrail(id: string): void {
+    this.opt.trail = id;
+    this.trailCols = null;
+    this.trailFx.reset();
+    this.ballFx.reset();
+  }
+
   /** Light the match for a time of day and weather (sky, lights, stadium, footballers, particles, rain audio). */
   applyTimeOfDay(tod: TimeOfDay, wx: WeatherKind): void {
     const world = this.world;
@@ -619,6 +718,20 @@ export class MatchSession {
 
   setCamZoom(z: CamZoom): void {
     this.cam.setZoom(z);
+  }
+
+  /**
+   * The match camera, live (the owner: "zoom in or zoom out or perhaps a cinematic camera while playing"): the
+   * HUD's camera button, V on a keyboard or VIEW on a pad steps WIDE, NORMAL, CLOSE, CINEMATIC; the board says which
+   * and main.ts keeps it (onCamZoom), so Settings > CAMERA shows the same.
+   */
+  cycleCamZoom(): void {
+    if (this.demo) return;
+    const z = CAM_ZOOMS[(CAM_ZOOMS.indexOf(this.cam.zoom) + 1) % CAM_ZOOMS.length];
+    this.cam.setZoom(z);
+    this.hud?.toastMsg(`${z.toUpperCase()} CAMERA`, 1.2);
+    buzz('camera');
+    this.onCamZoom?.(z);
   }
 
   /** Settings > QUICK SUBS changed mid-match (off: the card goes, a queued change with it). */
@@ -680,11 +793,16 @@ export class MatchSession {
     // swallowed (with anything latched off it) until every button has been let go.
     if (this.eatButtons) {
       this.clearLatch();
-      if (c.pass || c.shoot || c.through) return { mx: w.x, mz: w.z, sprint: c.sprint, pass: false, shoot: false, through: false, digital: this.input.lastDevice === 'keyboard', power: false };
+      if (c.pass || c.shoot || c.through) {
+        return { mx: w.x, mz: w.z, sprint: c.sprint, pass: false, shoot: false, through: false, digital: this.input.lastDevice === 'keyboard', power: false,
+          autoSprint: this.autoSprint() };
+      }
       this.eatButtons = false;
     }
     const pad: Pad = {
       mx: w.x, mz: w.z, sprint: c.sprint, pass: c.pass || l.pass, shoot: c.shoot || l.shoot, through: c.through || l.through,
+      // AUTO SPRINT (touch): the thumbstick pushed all the way sprints (sim/dribble.ts autoRun).
+      autoSprint: this.autoSprint(),
       // Keys give 8-way digital input: the sim turns set-piece aim gradually for those.
       digital: this.input.lastDevice === 'keyboard',
       // Blitz: use the held power-up (keyboard E / pad Y / the touch button, once the input maps it).
@@ -694,6 +812,11 @@ export class MatchSession {
     };
     this.clearLatch();
     return pad;
+  }
+
+  /** AUTO SPRINT is on for the pad: the setting (TouchControls.autoSprint) with the touch stick in hand. */
+  private autoSprint(): boolean {
+    return TouchControls.autoSprint && this.input.lastDevice === 'touch' && !!this.touch;
   }
 
   /** Note whichever action buttons are down right now (called on every key-down). */
@@ -1027,6 +1150,7 @@ export class MatchSession {
     this.view.updateReferee(presentationPaused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
     this.effects.update(held || this.paused ? 0 : dt);
+    this.fxKit.update(held || this.paused ? 0 : dt, this.world.camera);
     this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time, this.world.camera.position);
     this.updateAtmosphere(dt);
     this.updateHud(dt);
@@ -1079,11 +1203,18 @@ export class MatchSession {
         return;
       }
       // A beat on the wide shot (the ball in the net), then cut to the scorer and his team-mates.
-      if (!this.replay && !this.replayDone && this.cam.mode !== 'celebrate' && m.phaseT > GOAL_WIDE_S) this.cam.setMode('celebrate');
+      if (!this.replay && !this.replayDone && this.cam.mode !== 'celebrate' && m.phaseT > this.goalWideS) this.cam.setMode('celebrate');
+      // (A goal explosion's longer wide shot pushes the celebration, the replay and the kick-off back by as much.)
+      const late = this.goalWideS - GOAL_WIDE_S;
+      if (this.celebDue !== -1 && m.phaseT > late) {
+        const sd = this.celebDue;
+        this.celebDue = -1;
+        this.startCelebration(sd);
+      }
       // The replay rolls for a goal worth seeing again; a plain one goes straight from the celebration to the
       // kick-off (round 9's critic: every goal replayed cost 8.5 s, ~7% of a two-minute half).
       // (An iconic celebration holds the replay / kick-off until its moment has landed: celeb.holdS.)
-      const at = Math.max(this.replayWanted ? REPLAY_AT : NO_REPLAY_AT, this.view.celeb.holdS);
+      const at = Math.max(this.replayWanted ? REPLAY_AT : NO_REPLAY_AT, this.view.celeb.holdS) + late;
       if (this.moment?.outcome) {
         // The goal settled the moment: no replay, no kick-off; the verdict once the celebration has landed
         // (the party plays on under it).
@@ -1127,11 +1258,18 @@ export class MatchSession {
    */
   private netFlow(): void {
     const m = this.match;
-    if (m.phase === 'goal' && this.cam.mode !== 'celebrate' && m.phaseT > GOAL_WIDE_S) this.cam.setMode('celebrate');
+    if (m.phase === 'goal' && this.cam.mode !== 'celebrate' && m.phaseT > this.goalWideS) this.cam.setMode('celebrate');
+    // (A celebration held back for a goal explosion starts as in flow().)
+    if (this.celebDue !== -1 && m.phase === 'goal' && m.phaseT > this.goalWideS - GOAL_WIDE_S) {
+      const sd = this.celebDue;
+      this.celebDue = -1;
+      this.startCelebration(sd);
+    }
     const was = this.netPhase;
     if (m.phase !== was) {
       this.netPhase = m.phase;
       if (was === 'goal') {
+        this.celebDue = -1;
         this.view.celeb.end();
         this.cam.setMode('broadcast');
         this.view.setMarkerVisible(true);
@@ -1342,11 +1480,26 @@ export class MatchSession {
   // ------------------------------------------------------------------ juice helpers
 
   /** Note a kick's trail style at the session time its frame is stamped with (replays look it up). */
-  private logKick(style: TrailStyle): void {
+  private logKick(style: TrailStyle, mine = false): void {
     const i = this.kickLogI;
     this.kickLogT[i] = this.time;
     this.kickLogS[i] = style;
+    this.kickLogMine[i] = mine ? 1 : 0;
     this.kickLogI = (i + 1) % KICK_LOG;
+  }
+
+  /** Whether the last kick at or before session time `t` was a hard strike of the human side's (as styleAt). */
+  private mineAt(t: number): boolean {
+    let best = -1;
+    let bt = -Infinity;
+    for (let i = 0; i < KICK_LOG; i++) {
+      const k = this.kickLogT[i];
+      if (k <= t + 1e-4 && k > bt) {
+        bt = k;
+        best = i;
+      }
+    }
+    return best >= 0 && this.kickLogMine[best] === 1;
   }
 
   /** The trail style of the last kick at or before session time `t` (a replayed frame's own stamp). */
@@ -1378,7 +1531,7 @@ export class MatchSession {
         c = 1;
         cam.chanceGoal = ad;
       }
-    } else if (!this.replay && m.phase === 'goal' && m.phaseT < GOAL_WIDE_S) {
+    } else if (!this.replay && m.phase === 'goal' && m.phaseT < this.goalWideS) {
       c = 1;
       cam.chanceGoal = Math.sign(m.ball.pos.x) || 1;
     }
@@ -1541,6 +1694,7 @@ export class MatchSession {
     // No confetti / grass flecks from the live celebration drifting over the replayed build-up; no pickups
     // either (the replay frames don't carry them; they come back with live play).
     this.effects.clear();
+    this.fxKit.clear();
     if (this.blitz) this.blitz.group.visible = false;
     this.cam.replayAngle = Math.floor(Math.random() * 2);
     this.cam.replayGoalSign = this.match.attackDir(this.match.goalSide);
@@ -1603,7 +1757,12 @@ export class MatchSession {
 
   private handleEvents(events: MatchEvent[]): void {
     const m = this.match;
+    const hs = m.cfg.humanSide;
     for (const e of events) {
+      // Haptics (platform/haptics.ts): his pass and shot, a tackle won or lost, a skill that beat a man, a goal, the
+      // woodwork, the whistle; throttled there.
+      const hk = hs === 0 || hs === 1 ? hapticForEvent(e, m, hs, this.ownerBefore) : null;
+      if (hk && !this.demo) buzz(hk);
       // Every event goes to the commentary ticker too (a moment's own ending has no half-time / full-time line:
       // the verdict card is that beat).
       const endOfHalf = e.type === 'halftime' || e.type === 'fulltime';
@@ -1626,7 +1785,9 @@ export class MatchSession {
           else sfx.kick(e.power);
           // The trail it leaves (juice.ts kickTrailStyle), logged for the replay.
           this.trailStyle = kickTrailStyle(e.kind, e.power, e.y, firstTime);
-          this.logKick(this.trailStyle);
+          // (A hard shot or header of the human side's wears the SHOP trail behind the ball: render/fx/trails.ts.)
+          this.shotFx = (e.kind === 'shot' || e.kind === 'header') && e.power >= SHOT_FX_POWER && kicker >= 0 && m.players[kicker].side === m.cfg.humanSide;
+          this.logKick(this.trailStyle, this.shotFx);
           // Struck hard: the ball flashes white and pops (a throw is no strike).
           if (e.power >= HARD_STRIKE && e.kind !== 'throw' && e.kind !== 'keeper') this.view.flashBall();
           if (firstTime && e.kind === 'shot' && e.power >= HARD_STRIKE && kicker >= 0 && m.players[kicker].side === m.cfg.humanSide) {
@@ -1702,13 +1863,22 @@ export class MatchSession {
           // (Your goals burst in the SHOP theme you equipped: render/cosmetics.ts.)
           const cols = golden ? [0xffd23a, 0xffb300, 0xfff0b0, 0xfbfbf4] : side === human ? goalFxColors(this.opt.goalFx, kitCols) : kitCols;
           const gx = Math.sign(m.ball.pos.x) * HALF_L;
+          // (A goal of yours with a SHOP goal explosion on: its own show, render/fx/goals.ts, and the wide shot
+          // holds on it. Otherwise the burst and confetti below.)
+          const show = side === human && !this.demo ? goalShow(this.opt.goalFx) : null;
+          this.goalWideS = show ? GOAL_FX_WIDE_S : GOAL_WIDE_S;
           // Juice: a hold on the impact frame, a decaying shake, the net rippling, a fat burst in the scorer's
           // colours out of the goal mouth, confetti from the roof and the ground and the whole bowl flashing.
           this.hold(HIT_STOP_GOAL);
           this.view.flashBall();
-          this.effects.burst(gx, 1.5, m.ball.pos.z, cols, 90, 13, 2.4);
-          this.effects.burst(gx - Math.sign(gx) * 2, 0.3, m.ball.pos.z, cols, 50, 9, 2);
-          this.effects.confetti(gx * 0.7, 0, cols, 320, 60);
+          if (show) {
+            const dir = -Math.sign(gx);
+            this.fxKit.play(show.run, show.dur, gx, 0, 0, dir, 0, 1, goalFxColors(this.opt.goalFx, kitCols), Math.max(-3.4, Math.min(3.4, dir * m.ball.pos.z)));
+          } else {
+            this.effects.burst(gx, 1.5, m.ball.pos.z, cols, 90, 13, 2.4);
+            this.effects.burst(gx - Math.sign(gx) * 2, 0.3, m.ball.pos.z, cols, 50, 9, 2);
+            this.effects.confetti(gx * 0.7, 0, cols, 320, 60);
+          }
           this.stadium.punchNet(gx, Math.max(0.6, Math.min(2, m.ball.pos.y)), m.ball.pos.z, 24);
           this.stadium.flashBurst(golden ? 90 : 60);
           if (golden) this.effects.burst(gx - Math.sign(gx) * 3, 2.4, m.ball.pos.z, [0xffd23a, 0xfff0b0, 0xffb300], 70, 11, 3);
@@ -1716,7 +1886,9 @@ export class MatchSession {
           this.cam.kick(0.12);
           this.view.setMarkerVisible(false);
           this.celebG = 0;
-          this.startCelebration(side);
+          // (Behind a goal explosion the celebration waits for it, so its moment still lands after the cut.)
+          if (show) this.celebDue = side;
+          else this.startCelebration(side);
           void s;
           break;
         }
@@ -2095,18 +2267,20 @@ export class MatchSession {
         this.fxAcc[i] = 0;
         continue;
       }
+      // The player you control wears your SHOP trail (render/fx/trails.ts: popcorn, hearts, lightning...), in
+      // place of the chalk lines; everyone else, and the Chalk trail, keeps the lines.
+      if (!turbo && i === f[BALL_OFS + 8] && this.match.players[i]?.side === this.match.cfg.humanSide &&
+        emitTrail(this.fxKit, this.trailFx, this.opt.trail, (this.trailCols ??= trailColors(this.opt.trail)), x, 0, z, ux, uz, speed, dt, k * TRAIL_FX_K)) {
+        this.fxAcc[i] = 0;
+        continue;
+      }
       // Speed lines and dust off the boots: subtle white streaks trailing back, a puff every few frames.
       this.fxAcc[i] += dt * (turbo ? 40 : 22);
       while (this.fxAcc[i] >= 1) {
         this.fxAcc[i] -= 1;
         const sway = (Math.random() - 0.5) * 0.5 * k;
-        // (Your side's lines in the SHOP trail you equipped: render/cosmetics.ts.)
-        const mine = this.match.players[i]?.side === this.match.cfg.humanSide;
-        const tc = (this.trailCols ??= trailColors(this.opt.trail));
-        const col = turbo ? (Math.random() < 0.5 ? POWER_COLOR.turbo : POWER_LIGHT.turbo) : mine ? tc[(Math.random() * tc.length) | 0] : 0xf4f4ea;
-        // (A coloured trail is drawn a little bolder and longer-lived than the chalk one, so it reads from the gantry.)
-        const bold = mine && !turbo && (tc.length > 1 || tc[0] !== 0xf4f4ea);
-        fx.streak(x - ux * 0.6 - uz * sway, 0.14 + Math.random() * 0.5 * k, z - uz * 0.6 + ux * sway, facing, 0.5 + Math.random() * 0.5, bold ? 0.07 : 0.045, col, bold ? 0.2 : 0.14, -ux * 3, -uz * 3);
+        const col = turbo ? (Math.random() < 0.5 ? POWER_COLOR.turbo : POWER_LIGHT.turbo) : 0xf4f4ea;
+        fx.streak(x - ux * 0.6 - uz * sway, 0.14 + Math.random() * 0.5 * k, z - uz * 0.6 + ux * sway, facing, 0.5 + Math.random() * 0.5, 0.045, col, 0.14, -ux * 3, -uz * 3);
         if (Math.random() < (turbo ? 0.6 : 0.4)) fx.dust(x - ux * 0.35, z - uz * 0.35, 1, 0.3, -ux, -uz, 0.05);
         if (turbo && Math.random() < 0.5) fx.sparks(x - ux * 0.3, 0.3 * k, z - uz * 0.3, [POWER_COLOR.turbo, POWER_LIGHT.turbo], 1, 3, 0.2, 2);
       }
@@ -2139,6 +2313,10 @@ export class MatchSession {
         }
       }
     } else this.ballFxAcc = 0;
+    // Your side's hard shots carry your SHOP trail too, till someone has the ball (live, and in the replay).
+    const shot = this.replay ? this.mineAt(f[BALL_OFS + 9]) : this.shotFx;
+    if (!(shot && !hot && bs > SHOT_FX_MS && f[BALL_OFS + 7] < 0 &&
+      emitTrail(this.fxKit, this.ballFx, this.opt.trail, (this.trailCols ??= trailColors(this.opt.trail)), bx, by, bz, bvx, bvz, bs, dt, TRAIL_FX_K, true))) this.ballFx.reset();
   }
 
   /** Blitz power-up events: the pickup's burst, each power's own voice and burst, and the side-wide effects. */
@@ -2644,6 +2822,9 @@ export class MatchSession {
     const c = this.input.gamepadPause();
     if (c && !this.padPauseHeld && !this.paused) this.requestPause();
     this.padPauseHeld = c;
+    const v = freePadButton(CAM_PAD);
+    if (v && !this.padCamHeld && !this.paused) this.cycleCamZoom();
+    this.padCamHeld = v;
   }
 
   /**
@@ -2827,7 +3008,7 @@ export class MatchSession {
       this.edgeAvoid = [];
       safeAreaInsets(this.edgeInset);
       const boxes = [this.hud?.root.querySelector('.hud-radar'), this.touch?.isVisible ? this.touch.root.querySelector('.touch-btns') : null,
-        this.hud?.root.querySelector('.hud-qsub.on')];
+        this.hud?.root.querySelector('.hud-qsub.on'), this.hud?.root.querySelector('.hud-pause'), this.hud?.root.querySelector('.hud-cam')];
       for (const el of boxes) {
         const r = el?.getBoundingClientRect();
         if (r && r.width > 0 && r.height > 0) this.edgeAvoid.push({ l: r.left, t: r.top, r: r.right, b: r.bottom });
@@ -2964,6 +3145,8 @@ export class MatchSession {
     sfx.setAmbienceActive(false);
     this.offKey?.();
     this.offKey = null;
+    this.offCamKey?.();
+    this.offCamKey = null;
     this.offPointer?.();
     this.offPointer = null;
     this.clips.dispose();
@@ -2983,6 +3166,7 @@ export class MatchSession {
       if (mesh.geometry) mesh.geometry.dispose();
     });
     this.stadium.dispose();
+    this.fxKit.dispose();
   }
 }
 

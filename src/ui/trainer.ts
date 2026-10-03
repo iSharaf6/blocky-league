@@ -202,7 +202,8 @@ export class Lesson {
       this.done('move');
       return null;
     }
-    if (cue.done === 'sprint' && c?.sprint) {
+    // (AUTO SPRINT on touch: the stick pushed all the way is a sprint too.)
+    if (cue.done === 'sprint' && (c?.sprint || (m.active >= 0 && m.players[m.active].sprint && m.players[m.active].speed() > 4))) {
       this.sprintT += dt;
       if (this.sprintT > 0.35) {
         this.done('sprint');

@@ -153,6 +153,8 @@ export class Hud {
   /** Every match event, before the commentary (main.ts counts goals, headers, tackles ... for XP and challenges). */
   onEvent: ((e: MatchEvent, m: Match) => void) | null = null;
   onPause: (() => void) | null = null;
+  /** The camera button (beside pause): the session cycles WIDE / NORMAL / CLOSE / CINEMATIC. */
+  onCamera: (() => void) | null = null;
   /**
    * Rewrites (or drops, by returning null) a banner before it shows: LEARN THE BASICS turns the moment's
    * FAILED / COMPLETE! verdicts into its own words and drops the last-seconds countdown (main.ts sets it).
@@ -177,6 +179,7 @@ export class Hud {
         <div class="sb-cards a"></div>
       </div>
       <button class="hud-pause" aria-label="Pause">II</button>
+      <button class="hud-cam" aria-label="Camera" tabindex="-1">${pixelIcon('camera', '#fbfbf4', 3)}</button>
       <div class="hud-power" role="status" aria-live="polite" hidden>
         <span class="pw-slot"><i class="pw-ico"></i><svg class="pw-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="pw-ring-bg" cx="20" cy="20" r="17"/><circle class="pw-ring-fg" cx="20" cy="20" r="17"/></svg></span>
         <span class="pw-text"><b class="pw-name">NO POWER UP</b><kbd class="pw-key">E</kbd></span>
@@ -231,6 +234,19 @@ export class Hud {
       this.onPause?.();
     });
     pause.addEventListener('click', () => this.onPause?.());
+    const cam = this.root.querySelector<HTMLButtonElement>('.hud-cam')!;
+    // (As pause: a second finger while the first holds the stick; the click that follows a touch is swallowed.)
+    let camTouch = 0;
+    cam.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      e.preventDefault();
+      camTouch = performance.now();
+      this.onCamera?.();
+    });
+    cam.addEventListener('click', () => {
+      if (performance.now() - camTouch > 600) this.onCamera?.();
+      cam.blur();
+    });
     if (humanSide < 0) this.chip.style.display = 'none';
   }
 
@@ -422,7 +438,7 @@ export class Hud {
     const g = W < 480 ? 8 : 12;
     const sb = this.rectOf('.scorebug', false);
     if (!sb) return;
-    const pause = this.rectOf('.hud-pause', false);
+    const pause = this.topRight();
     type Cand = { l: number; w: number; t: number };
     const apply = (c: Cand) => {
       st.left = `${Math.round(c.l)}px`;
@@ -552,7 +568,7 @@ export class Hud {
     opts.push(box(W / 2, topY));
     const goals = this.goalRects();
     const solid = [
-      '#ui > .touch:not(.hidden) .touch-btns', '#ui > .touch:not(.hidden) .touch-base', '.scorebug', '.hud-pause', '.hud-toast.on',
+      '#ui > .touch:not(.hidden) .touch-btns', '#ui > .touch:not(.hidden) .touch-base', '.scorebug', '.hud-pause', '.hud-cam', '.hud-toast.on',
       '.hud-tip.on', '.hud-hint.on', '.hud-cm.on:not(.blocked)', '.hud-radar',
     ]
       .map((sel) => this.rectOf(sel, false))
@@ -715,6 +731,14 @@ export class Hud {
     this.cm.classList.remove('on');
   }
 
+  /** The top-right buttons (pause and the camera beside it) as one box: where the top band ends. */
+  private topRight(): Rect | null {
+    const p = this.rectOf('.hud-pause', false);
+    const c = this.rectOf('.hud-cam', false);
+    if (!p || !c) return p ?? c;
+    return { l: Math.min(p.l, c.l), t: Math.min(p.t, c.t), r: Math.max(p.r, c.r), b: Math.max(p.b, c.b) };
+  }
+
   private rectOf(sel: string, visible = true): Rect | null {
     const el = this.root.querySelector<HTMLElement>(sel) ?? document.querySelector<HTMLElement>(sel);
     if (!el) return null;
@@ -810,7 +834,7 @@ export class Hud {
     const H = window.innerHeight;
     const g = W < 480 ? 8 : 12;
     const sb = this.rectOf('.scorebug', false);
-    const pause = this.rectOf('.hud-pause', false);
+    const pause = this.topRight();
     if (!sb) return;
     const h = this.cm.offsetHeight || 34;
     const card = this.cardBannerRect();
@@ -967,7 +991,7 @@ export class Hud {
     const take = (q: Rect | null) => {
       if (q && q.t < H * 0.4 && q.r > l && q.l < r) y = Math.max(y, q.b);
     };
-    for (const sel of ['.scorebug', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause', '.hud-qsub.on']) take(this.rectOf(sel, false));
+    for (const sel of ['.scorebug', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause', '.hud-cam', '.hud-qsub.on']) take(this.rectOf(sel, false));
     // The minimap only while it shows (it is off for set pieces).
     if (!this.radarHidden && !this.root.classList.contains('dead')) take(this.rectOf('.hud-radar'));
     // Landscape: a little lower than the top row, which belongs to the ticker and the event flag.

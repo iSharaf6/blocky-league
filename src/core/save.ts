@@ -6,6 +6,7 @@ import type { Quality, TimeOfDay } from '../render/world';
 import type { AssistLevel, MatchMode } from '../sim/types';
 import { normalizeDda, type DdaState } from './dda';
 import { normalizeKeyMap, normalizePadMap, type KeyMap, type PadMap } from './input';
+import type { HapticLevel } from '../platform/haptics';
 import { normalizeOnboarding, type OnboardingState } from './onboarding';
 import { Rng, hashString } from './rng';
 
@@ -16,6 +17,11 @@ export interface Settings {
   music: boolean;
   crowd: boolean;
   quality: Quality;
+  /**
+   * The player chose `quality` himself (Settings > GRAPHICS). Until he does it is always HIGH: an older save
+   * still on a build's own default (phones used to start on MEDIUM) moves up to HIGH on load.
+   */
+  qualityPicked?: boolean;
   difficulty: number;
   halfMinutes: number;
   autoSwitch: boolean;
@@ -42,6 +48,13 @@ export interface Settings {
   trainer?: boolean;
   /** Play a ground pass on the press. Turn off for hold-to-power passing. */
   quickPass?: boolean;
+  /** AUTO SPRINT (default on): the touch thumbstick pushed all the way sprints, no SPRINT button needed. Touch only. */
+  autoSprint?: boolean;
+  /**
+   * VIBRATION (the app only; platform/haptics.ts): OFF, LIGHT (only the big moments: goals, wins, level ups, rewards) or
+   * FULL (the default). Older saves' true / false read as FULL / OFF.
+   */
+  vibration?: HapticLevel;
   /** The mode Quick Match last kicked off in (default classic; older saves lack it). */
   lastMode?: MatchMode;
   /** Keyboard and gamepad bindings (Settings > Controls > KEYS; core/input.ts reads them). Always whole once loaded. */
@@ -55,13 +68,19 @@ export interface Settings {
   quickSubs?: boolean;
   /** ROAD TO GLORY's "how it works" panel has been shown once (ui/career.ts; it stays one tap away on the hub). */
   roadIntroSeen?: boolean;
+  /** Menu and HUD text size (Settings > TEXT SIZE; ui/textSize.ts). MEDIUM is the designed size; touch controls, pitch and camera never change. */
+  textSize?: TextSize;
 }
+
+export type TextSize = 'small' | 'medium' | 'large';
+
+export const TEXT_SIZES: readonly TextSize[] = ['small', 'medium', 'large'];
 
 export type StickMode = 'floating' | 'fixed';
 
-export type CamZoom = 'wide' | 'normal' | 'close';
+export type CamZoom = 'wide' | 'normal' | 'close' | 'cinematic';
 
-export const CAM_ZOOMS: readonly CamZoom[] = ['wide', 'normal', 'close'];
+export const CAM_ZOOMS: readonly CamZoom[] = ['wide', 'normal', 'close', 'cinematic'];
 
 export const ASSIST_LEVELS: readonly AssistLevel[] = ['assisted', 'semi', 'manual'];
 
@@ -74,6 +93,8 @@ export interface ControlSettings {
   timedFinish: boolean;
   trainer: boolean;
   quickPass: boolean;
+  autoSprint: boolean;
+  vibration: HapticLevel;
 }
 
 export const CONTROL_DEFAULTS: Readonly<ControlSettings> = {
@@ -84,6 +105,8 @@ export const CONTROL_DEFAULTS: Readonly<ControlSettings> = {
   timedFinish: true,
   trainer: true,
   quickPass: true,
+  autoSprint: true,
+  vibration: 'full',
 };
 
 /** The control options in these settings, with the default for anything missing. */
@@ -96,6 +119,8 @@ export function controlsOf(s: Settings): ControlSettings {
     timedFinish: s.timedFinish ?? CONTROL_DEFAULTS.timedFinish,
     trainer: s.trainer ?? CONTROL_DEFAULTS.trainer,
     quickPass: s.quickPass ?? CONTROL_DEFAULTS.quickPass,
+    autoSprint: s.autoSprint ?? CONTROL_DEFAULTS.autoSprint,
+    vibration: s.vibration ?? CONTROL_DEFAULTS.vibration,
   };
 }
 
@@ -108,6 +133,12 @@ export function normalizeSettings(raw: unknown): Settings {
   const s: Settings = { ...base, ...(raw && typeof raw === 'object' ? (raw as Partial<Settings>) : {}) };
   for (const k of ['sfx', 'music', 'crowd'] as const) if (typeof s[k] !== 'boolean') s[k] = base[k];
   if (s.quality !== 'high' && s.quality !== 'medium' && s.quality !== 'low') s.quality = base.quality;
+  // Graphics start on HIGH everywhere. A save from before the flag that sits on LOW chose it (no build ever
+  // started there); MEDIUM was the phones' old default, so it goes up like any quality nobody picked.
+  // (The stored flag, not the default spread under it.)
+  const picked = raw && typeof raw === 'object' ? (raw as Partial<Settings>).qualityPicked : undefined;
+  s.qualityPicked = typeof picked === 'boolean' ? picked : s.quality === 'low';
+  if (!s.qualityPicked) s.quality = 'high';
   if (!Number.isInteger(s.difficulty) || s.difficulty < 0 || s.difficulty > 3) s.difficulty = base.difficulty;
   if (typeof s.halfMinutes !== 'number' || !Number.isFinite(s.halfMinutes) || s.halfMinutes < 0.5 || s.halfMinutes > 10) s.halfMinutes = base.halfMinutes;
   if (!['day', 'sunset', 'night', 'random'].includes(s.timeOfDay)) s.timeOfDay = base.timeOfDay;
@@ -123,15 +154,19 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof s.colorblind !== 'boolean') s.colorblind = false;
   if (typeof s.quickSubs !== 'boolean') s.quickSubs = true;
   if (typeof s.roadIntroSeen !== 'boolean') s.roadIntroSeen = false;
+  if (!TEXT_SIZES.includes(s.textSize as TextSize)) s.textSize = 'medium';
   if (s.ballSkin !== undefined && !(BALL_SKIN_IDS as readonly string[]).includes(s.ballSkin)) s.ballSkin = undefined;
   if (s.celebration !== undefined && !(CELEBRATION_IDS as readonly string[]).includes(s.celebration)) s.celebration = undefined;
   if (s.goalFx !== undefined && !(GOAL_FX_IDS as readonly string[]).includes(s.goalFx)) s.goalFx = undefined;
   if (s.trail !== undefined && !(TRAIL_IDS as readonly string[]).includes(s.trail)) s.trail = undefined;
   if (!ASSIST_LEVELS.includes(s.groundAssist as AssistLevel)) s.groundAssist = CONTROL_DEFAULTS.groundAssist;
   if (!ASSIST_LEVELS.includes(s.throughAssist as AssistLevel)) s.throughAssist = CONTROL_DEFAULTS.throughAssist;
-  for (const k of ['autoSwitch', 'moveAssist', 'timedFinish', 'trainer', 'quickPass'] as const) {
+  for (const k of ['autoSwitch', 'moveAssist', 'timedFinish', 'trainer', 'quickPass', 'autoSprint'] as const) {
     if (typeof s[k] !== 'boolean') s[k] = CONTROL_DEFAULTS[k];
   }
+  // (VIBRATION was a switch for a moment: on is FULL, off is OFF.)
+  const vib = s.vibration as unknown;
+  s.vibration = vib === false ? 'off' : vib === 'off' || vib === 'light' || vib === 'full' ? vib : CONTROL_DEFAULTS.vibration;
   return s;
 }
 
@@ -302,13 +337,12 @@ export interface DailyState {
 
 const KEY = 'blocky-league-save-v1';
 
-/** Start phones with fewer shadow casters and pixels; a saved graphics choice always takes precedence. */
+/**
+ * Every device starts on HIGH (phones included: World keeps it crisp and smooth there, see ResolutionGovernor);
+ * a graphics setting the player picked himself always takes precedence (Settings.qualityPicked).
+ */
 function defaultQuality(): Quality {
-  try {
-    return typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 'medium' : 'high';
-  } catch {
-    return 'high';
-  }
+  return 'high';
 }
 
 export function defaultSave(): SaveData {
@@ -318,10 +352,10 @@ export function defaultSave(): SaveData {
     clubIdx: 5,
     opponentIdx: 6,
     settings: {
-      sfx: true, music: true, crowd: true, quality: defaultQuality(), difficulty: 1, halfMinutes: 2, timeOfDay: 'random', weather: 'random',
+      sfx: true, music: true, crowd: true, quality: defaultQuality(), qualityPicked: false, difficulty: 1, halfMinutes: 2, timeOfDay: 'random', weather: 'random',
       commentary: true, camZoom: 'normal', ...CONTROL_DEFAULTS,
       keys: normalizeKeyMap(undefined), pad: normalizePadMap(undefined), stick: 'floating', colorblind: false,
-      quickSubs: true, roadIntroSeen: false,
+      quickSubs: true, roadIntroSeen: false, textSize: 'medium',
     },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
@@ -712,10 +746,16 @@ export function advanceDaily(d: DailyState, cs: readonly Challenge[], s: MatchSu
 // ------------------------------------------------------------------ unlocks (earned only: levels and stars)
 
 /** Ball looks (src/render/characters BALL_SKINS) and the level that earns each; 'classic' is always there. */
-export const BALL_SKIN_IDS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold', 'diamond'] as const;
+// (Saved and owned: never rename or drop one. Listed in ladder order, so the next one to earn comes first.)
+export const BALL_SKIN_IDS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold', 'beach', 'melon', 'hoops', 'eight', 'moon', 'disco', 'planet', 'diamond'] as const;
 export type BallSkinId = (typeof BALL_SKIN_IDS)[number];
-export const BALL_SKIN_LEVEL: { readonly [k in BallSkinId]: number } = { classic: 1, retro: 2, blaze: 4, ice: 6, neon: 8, gold: 12, diamond: 30 };
-export const BALL_SKIN_NAMES: { readonly [k in BallSkinId]: string } = { classic: 'Classic', retro: 'Retro', blaze: 'Blaze', ice: 'Ice', neon: 'Neon', gold: 'Gold', diamond: 'Diamond' };
+export const BALL_SKIN_LEVEL: { readonly [k in BallSkinId]: number } = {
+  classic: 1, retro: 2, blaze: 4, ice: 6, neon: 8, gold: 12, beach: 15, melon: 17, hoops: 19, eight: 21, moon: 23, disco: 25, planet: 27, diamond: 30,
+};
+export const BALL_SKIN_NAMES: { readonly [k in BallSkinId]: string } = {
+  classic: 'Classic', retro: 'Retro', blaze: 'Blaze', ice: 'Ice', neon: 'Neon', gold: 'Gold', diamond: 'Diamond',
+  beach: 'Beach', melon: 'Melon', hoops: 'Hoops', eight: 'Eight', moon: 'Moon', disco: 'Disco', planet: 'Planet',
+};
 
 export function skinUnlocked(id: BallSkinId, level: number): boolean {
   return level >= BALL_SKIN_LEVEL[id];
@@ -790,7 +830,11 @@ export function celebrationUnlocked(id: CelebrationId, level: number): boolean {
  */
 export const PASS_IDS = ['pass01', 'pass02', 'pass03', 'pass04', 'pass05', 'pass06', 'pass07', 'pass08', 'pass09', 'pass10', 'pass11', 'pass12'] as const;
 export type PassId = (typeof PASS_IDS)[number];
-export const GOAL_FX_IDS = ['club', 'gold', 'fire', 'ice', 'neon', 'rainbow', 'galaxy', 'diamond', 'supernova', ...PASS_IDS] as const;
+// (Saved and owned: never rename or drop one; new ones go before the pass ids. The shop sorts them by price.)
+export const GOAL_FX_IDS = [
+  'club', 'gold', 'fire', 'ice', 'neon', 'rainbow', 'galaxy', 'diamond', 'supernova',
+  'shockwave', 'balloons', 'confetti', 'popcorn', 'pinata', 'fireworks', 'volcano', 'lightning', 'meteor', ...PASS_IDS,
+] as const;
 export type GoalFxId = (typeof GOAL_FX_IDS)[number];
-export const TRAIL_IDS = ['white', 'fire', 'ice', 'lime', 'pink', 'gold', 'rainbow', 'lightning', 'comet', ...PASS_IDS] as const;
+export const TRAIL_IDS = ['white', 'fire', 'ice', 'lime', 'pink', 'gold', 'rainbow', 'lightning', 'comet', 'toon', 'hearts', 'popcorn', 'notes', 'glitch', ...PASS_IDS] as const;
 export type TrailId = (typeof TRAIL_IDS)[number];

@@ -7,7 +7,7 @@ const { readFileSync } = process.getBuiltinModule('node:fs');
 
 const LABELS = ['EASY', 'NORMAL', 'HARD', 'LEGEND'];
 
-describe('LEGEND is earned in the Cup and Club Run, as in Quick Match', () => {
+describe('LEGEND is earned in Club Run, as in Quick Match', () => {
   it('until 10 match stars: LEGEND reads locked with the stars it takes, and a pick of it stays on HARD', () => {
     const p = { stars: LEGEND_STARS - 1 };
     const labels = difficultyLabels(LABELS, p);
@@ -32,8 +32,9 @@ describe('LEGEND is earned in the Cup and Club Run, as in Quick Match', () => {
     expect(playableDifficulty(1.7, { stars: 0 })).toBe(1);
   });
 
-  it('the cup entry and the run start card both go through the gate (and Quick Match words it the same way)', () => {
-    for (const f of ['src/ui/cup.ts', 'src/ui/run.ts']) {
+  // (The BLOCKY CUP has no difficulty pick of its own any more: it is played inside ROAD TO GLORY, at the division's.)
+  it('the run start card goes through the gate (and Quick Match words it the same way)', () => {
+    for (const f of ['src/ui/run.ts']) {
       const src = readFileSync(f, 'utf8');
       expect(src, f).toMatch(/difficultyLabels\(DIFFICULTIES, progress\)/);
       expect(src, f).toMatch(/let diff = playableDifficulty\(/);

@@ -7,12 +7,15 @@ import {
 import { APP_VERSION, CONTACT_EMAIL, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
 import { pixelIcon } from './pixelIcons';
+import { buzz, hapticsAvailable, type HapticLevel } from '../platform/haptics';
 import { coachText } from './coach';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
 import { owns, shopOf } from '../meta/shop';
 import { KitPreview, faceHtml, hydrateFaces } from './preview';
 import { crestSvg } from './crest';
+import type { CaptainCard, RoadCard, SeasonCard } from './hubInfo';
+import { TEXT_SIZE_LABEL, nextTextSize } from './textSize';
 import {
   DEFAULT_KEYS, DEFAULT_PAD, Input, KEY_ACTIONS, KEY_SLOTS, PAD_ACTIONS, PAD_SLOTS, actionKey, bindKey, bindPad, currentDevice, isKey, keyLabel, moveKeys, normCode,
   normalizeKeyMap, normalizePadMap, padLabel, unbindKey, unbindPad, type KeyAction, type KeyMap, type PadAction, type PadMap,
@@ -36,7 +39,12 @@ export const HALF_OPTIONS = [1.5, 2, 3, 4];
 const $ = <T extends HTMLElement>(root: ParentNode, sel: string) => root.querySelector(sel) as T;
 
 /** Settings > Controls: one row per option, with a plain-English line for each value (keep them short: one line on a phone). */
-type ControlRow = { k: keyof ControlSettings; kind: 'level' | 'switch'; label: string; why: Record<string, string> };
+type ControlRow = {
+  k: keyof ControlSettings; kind: 'level' | 'switch'; label: string; why: Record<string, string>;
+  /** A level row's own values (else the pass assist's ASSISTED / SEMI / MANUAL), and a row only the app shows. */
+  opts?: [string, string][];
+  appOnly?: boolean;
+};
 const CONTROL_ROWS: ControlRow[] = [
   {
     k: 'trainer', kind: 'switch', label: 'PITCH TRAINER',
@@ -74,17 +82,31 @@ const CONTROL_ROWS: ControlRow[] = [
     k: 'timedFinish', kind: 'switch', label: 'TIMED FINISHING',
     why: { true: '{Tap} SHOOT again as you strike: a perfect finish', false: 'Just hold and let go: no second press' },
   },
+  {
+    k: 'autoSprint', kind: 'switch', label: 'AUTO SPRINT',
+    why: { true: `Thumbstick all the way: sprint${sep()}a light push jogs`, false: 'Hold SPRINT to sprint' },
+  },
+  {
+    // (The app only: the web and the portals have nothing to feel. platform/haptics.ts says what fires where.)
+    k: 'vibration', kind: 'level', label: 'VIBRATION', appOnly: true, opts: [['off', 'OFF'], ['light', 'LIGHT'], ['full', 'FULL']],
+    why: { off: 'No vibration', light: `Only the big moments${sep()}goals, wins, rewards`, full: `Passes, tackles, skills, goals${sep()}and every reward` },
+  },
 ];
 
-/** Live info for the main menu tiles. */
+/** Live info for the main menu (the hub): ui/hubInfo.ts works most of it out from the save. */
 export interface MainInfo {
-  captain?: { def: PlayerDef; kit: Kit; club: string; ovr: number };
-  /** What PLAY NOW starts ("ARS v CHE · NORMAL") and what QUICK MATCH offers. Plain " · " here: the menu draws the dividers. */
+  /** The player on the left, in YOUR club's kit (MY CLUB once founded, else the Quick Match club). */
+  captain?: CaptainCard;
+  /** What PLAY NOW starts ("ARS v CHE · NORMAL"). Plain " · " here: the menu draws the dividers. */
   playNow?: string;
-  quick?: string;
-  career?: string;
-  club?: string;
-  cup?: string;
+  /** The ROAD TO GLORY hero card: CREATE YOUR CLUB, the next fixture, or the season's end. */
+  road?: RoadCard;
+  /** The SEASON tile: tier of 30, rewards waiting, the Club Pass. */
+  season?: SeasonCard;
+  /** REMOVE ADS in the top bar (the app, until NO ADS is bought), with its price. */
+  noAds?: { price: string };
+  /** Unread news about your own transfers (a count on TRANSFERS). */
+  transfers?: number;
   gift?: { amount: number; streak: number };
   /** Level badge: level, title and progress into the level. */
   level?: { level: number; title: string; into: number; need: number };
@@ -96,9 +118,9 @@ export interface MainInfo {
   unlock?: { name: string; level: number; xpLeft: number } | null;
   /** Signed-in name for the ACCOUNT button (cloud saves), if any. */
   account?: string;
-  /** MOMENTS tile subtitle ("SHORT CHALLENGES · ★ 4"). Plain " · ": the menu draws the dividers. */
+  /** MOMENTS card subtitle on EVENTS ("SHORT CHALLENGES · ★ 4"). Plain " · ": the menu draws the dividers. */
   moments?: string;
-  /** CLUB RUN tile subtitle ("BEST: ROUND 3"). */
+  /** CLUB RUN card subtitle on EVENTS ("BEST: ROUND 3"). */
   run?: string;
   /**
    * The big first tile when it isn't PLAY NOW: LEARN THE BASICS (step n of 3) or FIRST MATCH (the campaign,
@@ -107,10 +129,6 @@ export interface MainInfo {
   hero?: { title: string; kind: 'basics' | 'first' | 'play' };
   /** Modes still waiting for the first goal: drawn locked ("SCORE YOUR FIRST GOAL"). */
   locked?: readonly LockedFeature[];
-  /** The nearest mastery badge tier ("2 MORE GOALS FOR FINISHER II"), shown on the level badge. */
-  badgeGoal?: string;
-  /** Badge / season rewards waiting on the BADGES screen (a dot on the level badge). */
-  badgesPending?: number;
   /** SHOP news (meta/shop.ts newInShop: affordable items not yet seen, the free daily pack): a count on the coins. */
   shopNew?: number;
 }
@@ -264,7 +282,7 @@ function howtoKeys(): string {
       <p>Hold ${k('shoot')}, press ${k('through')}: chip${sep()}a soft diagonal shot curls</p>
       <p>${k('sprint')} sprint${sep()}press twice to knock it past a defender</p>
       <p>${k('skill')} skill move: press it as a defender lunges (the <b>!</b> over him) for a <b>PERFECT</b></p>
-      <p>Stick with ${k('skill')}: across = roulette${sep()}ahead = rainbow flick${sep()}back = drag back${sep()}none = stepover</p>
+      <p>Stick with ${k('skill')}: ahead = rainbow flick (a man squared up: nutmeg)${sep()}half across = elastico${sep()}across = roulette (slow: la croqueta)${sep()}half back = heel chop${sep()}back = drag back${sep()}none = stepover (standing: ball roll)</p>
       <p><b>Crosses:</b> keep moving as one arrives to bring it down${sep()}stand still to head it${sep()}${k('shoot')} to head at goal</p>
     </div>
     <div class="ht-col">
@@ -294,7 +312,7 @@ function howtoPad(): string {
       <p>Hold ${k('shoot')}, press ${k('through')}: chip${sep()}a soft diagonal shot curls</p>
       <p>${k('sprint')} sprint${sep()}press twice to knock it past</p>
       <p>${k('skill')} skill move: press it as a defender lunges (the <b>!</b> over him) for a <b>PERFECT</b></p>
-      <p>Stick with ${k('skill')}: across = roulette${sep()}ahead = rainbow flick${sep()}back = drag back${sep()}none = stepover</p>
+      <p>Stick with ${k('skill')}: ahead = rainbow flick (a man squared up: nutmeg)${sep()}half across = elastico${sep()}across = roulette (slow: la croqueta)${sep()}half back = heel chop${sep()}back = drag back${sep()}none = stepover (standing: ball roll)</p>
       <p><b>Crosses:</b> keep moving as one arrives to bring it down${sep()}stand still to head it${sep()}${k('shoot')} to head at goal</p>
     </div>
     <div class="ht-col">
@@ -327,11 +345,11 @@ const howtoTouch = (): string => `
     <table class="ht-table">
       <thead><tr><th></th><th>WITH THE BALL</th><th>DEFENDING</th></tr></thead>
       <tbody>
-        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed teammate${sep()}aim to pick another</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
-        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold, aim, let go${sep()}a longer hold lifts it</td><td><b>TACKLE</b> tap to tackle${sep()}hold, or tap while sprinting, to slide</td></tr>
-        <tr><td>${dot('through')}</td><td><b>THROUGH</b> through ball${sep()}hold, then let go to cross</td><td><b>PRESS</b> hold: stay goal-side, steal loose touches</td></tr>
-        <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> hold${sep()}double-tap to knock it past</td><td><b>SPRINT</b> hold to chase</td></tr>
-        <tr class="ht-finish"><td>${dot('skill')}</td><td colspan="2"><b>SKILL</b> (shown with the ball) tap as a defender lunges, the <b>!</b> over him, for a PERFECT${sep()}the stick picks the move: across = roulette, ahead = rainbow flick, back = drag back, none = stepover${sep()}keys ${kc('skill', 'keyboard')} pad ${kc('skill', 'gamepad')}</td></tr>
+        <tr><td>${dot('pass')}</td><td><b>PASS</b> to the ringed teammate${sep()}aim to pick another</td><td>${dot('through')}<b>PRESS</b> hold: stay goal-side, steal loose touches${sep()}or go win a loose ball</td></tr>
+        <tr><td>${dot('shoot')}</td><td><b>SHOOT</b> hold, aim, let go${sep()}a longer hold lifts it</td><td><b>TACKLE</b> tap to tackle${sep()}hold to slide</td></tr>
+        <tr><td>${dot('through')}</td><td><b>THROUGH</b> through ball${sep()}hold, then let go to cross</td><td>${dot('def')}<b>SWITCH</b> player</td></tr>
+        <tr><td>${dot('sprint')}</td><td><b>SPRINT</b> push the stick all the way (AUTO SPRINT)${sep()}or hold SPRINT${sep()}double tap it to knock it past</td><td><b>SPRINT</b> stick all the way to chase</td></tr>
+        <tr class="ht-finish"><td>${dot('skill')}</td><td colspan="2"><b>SKILL</b> (shown with the ball) tap as a defender lunges, the <b>!</b> over him, for a PERFECT${sep()}the stick picks the move: ahead = rainbow flick (a man squared up: nutmeg)${sep()}half across = elastico${sep()}across = roulette (slow: la croqueta)${sep()}half back = heel chop${sep()}back = drag back${sep()}none = stepover (standing: ball roll)${sep()}keys ${kc('skill', 'keyboard')} pad ${kc('skill', 'gamepad')}</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>PERFECT FINISH</b> tap SHOOT again as you strike (mistime it and it flies)</td></tr>
         <tr class="ht-finish"><td>${dot('shoot')}</td><td colspan="2"><b>CHIP</b> hold SHOOT, tap THROUGH${sep()}<b>CURL</b> a soft diagonal shot</td></tr>
         <tr class="ht-finish"><td>${dot('through')}</td><td colspan="2"><b>CROSSES</b> keep the stick pushed as one arrives to bring it down${sep()}let go to head it${sep()}SHOOT to head at goal</td></tr>
@@ -353,6 +371,16 @@ const howtoBlitz = (use: string) => `
       <li><i>${pixelIcon('shield', '#8a5cf6', 2)}</i><b>SHIELD</b><span>nobody can tackle you</span></li>
     </ul>
   </div>`;
+
+/** A shopping bag in the pixel icons' style (ui/pixelIcons.ts: a 10 by 10 grid), for the hub's SHOP tile. */
+function bagIcon(color: string, px: number): string {
+  const rows = ['...XXXX...', '..XX..XX..', '..X....X..', 'XXXXXXXXXX', 'XXXXXXXXXX', 'XXX.XX.XXX', 'XXXXXXXXXX', 'XXXXXXXXXX', 'XXXXXXXXXX', '.XXXXXXXX.'];
+  let rects = '';
+  rows.forEach((r, y) => [...r].forEach((c, x) => {
+    if (c === 'X') rects += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
+  }));
+  return `<svg class="picon" width="${10 * px}" height="${10 * px}" viewBox="0 0 10 10" shape-rendering="crispEdges" fill="${color}" aria-hidden="true">${rects}</svg>`;
+}
 
 /** Settings > KEYS: what each bindable action is called on screen. */
 const KEY_ACTION_NAMES: Record<KeyAction, string> = {
@@ -455,124 +483,260 @@ export class Menus {
   }
 
   /**
-   * The main menu, most important first: PLAY NOW (when `h.playNow` is given: straight into a match, no setup) and
-   * ROAD TO GLORY are the two big tiles, then QUICK MATCH (the setup screen), MY CLUB, BLOCKY CUP, MOMENTS, CLUB RUN,
-   * BLITZ, ONLINE and a slim SETTINGS (src/style.css "round 14" lays that order out in two columns or four).
-   * ACCOUNT (cloud saves) shows beside the coins when `h.account` is given. The level badge opens the whole unlock
-   * ladder when `h.unlocks` is given.
+   * The main menu, a hub with your club first (as in Dream League Soccer). Left: your captain in YOUR club's kit
+   * (tap: MY CLUB). The hero card is ROAD TO GLORY: your club against its next opponent and PLAY (CREATE YOUR CLUB
+   * before there is one); until the first goal opens it, PLAY NOW (LEARN THE BASICS, FIRST MATCH) leads instead,
+   * ROAD TO GLORY locked under it. Beside the hero: MY CLUB, TRANSFERS, SHOP and SEASON. Under it, smaller: QUICK
+   * MATCH, EVENTS (MOMENTS, CLUB RUN, BLITZ, ONLINE) and today's challenges, compact (a tap lists all three). The
+   * top bar: the level (tap: the unlock ladder), DAILY GIFT, ACCOUNT, REMOVE ADS (the app, until bought), the coins
+   * (tap: the shop's coins), HOW TO PLAY and the SETTINGS gear. Layout: src/style.css "round 15: the hub".
    */
   main(
     save: SaveData,
     h: {
-      quick: () => void; career: () => void; cup: () => void; club: () => void; settings: () => void; howto: () => void;
-      gift?: () => void; blitz?: () => void; playNow?: () => void; account?: () => void; moments?: () => void; unlocks?: () => void;
-      shop?: () => void;
-      online?: () => void;
-      run?: () => void; locked?: (f: LockedFeature) => void;
+      quick: () => void; career: () => void; club: () => void; settings: () => void; howto: () => void;
+      transfers?: () => void; shop?: () => void; season?: () => void; events?: () => void;
+      gift?: () => void; playNow?: () => void; account?: () => void; unlocks?: () => void;
+      /** The coins in the top bar: the shop's COINS tab where coins can be topped up (absent: the shop). */
+      coins?: () => void;
+      /** REMOVE ADS in the top bar (drawn with `info.noAds`). */
+      removeAds?: () => void;
+      locked?: (f: LockedFeature) => void;
     },
     info?: MainInfo,
   ): void {
-    const r = save.record;
     const lv = info?.level;
-    const dl = info?.daily;
-    const dailyDone = dl ? dl.claimed.filter(Boolean).length : 0;
-    const daily = dl
-      ? `<div class="daily ${dl.fresh ? 'fresh' : ''}" aria-label="Daily challenges">
-          <div class="daily-h"><b>DAILY CHALLENGES</b>${dl.fresh ? '<em class="daily-new">NEW DAY</em>' : ''}<span class="daily-n">${dailyDone}/3</span></div>
-          <ul class="daily-list">${dl.list.slice(0, 3).map((c, i) => {
-            const p = Math.min(c.goal, dl.progress[i] ?? 0);
-            const done = !!dl.claimed[i];
-            return `<li class="${done ? 'done' : ''}"><span class="dc-text">${c.text}</span><span class="dc-bar"><i style="width:${Math.round((p / c.goal) * 100)}%"></i></span><b class="dc-n">${done ? '✓' : `${p}/${c.goal}`}</b><em class="dc-coins">+${c.coins}</em></li>`;
-          }).join('')}</ul>
-        </div>`
-      : '';
-    const wdl = `W ${r.won}${sep()}D ${r.drawn}${sep()}L ${r.lost}${sep()}${r.goalsFor} GOALS`;
-    // The level badge is a button when the ladder screen is offered: the whole list of unlocks sits behind it.
-    const badgeBody = lv
-      ? `<b>LV ${lv.level}${sep()}${escHtml(lv.title.toUpperCase())}${info?.streak && info.streak >= 2 ? `${sep()}${pixelIcon('fire', '#ff9a3a', 1.5, 'inl')}${info.streak}` : ''}${info?.badgesPending ? `<em class="lvl-dot" aria-label="${info.badgesPending} rewards to claim">${info.badgesPending}</em>` : ''}${h.unlocks ? '<u class="chev" aria-hidden="true">▸</u>' : ''}</b><span>${info?.badgeGoal ? escHtml(info.badgeGoal) : wdl}</span><i class="lvl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="lvl-next">NEXT: ${info.unlock.name.toUpperCase()}${sep()}${info.unlock.xpLeft} XP</small>` : h.unlocks ? '<small class="lvl-next">EVERYTHING EARNED</small>' : ''}`
-      : '';
-    const badge = lv
-      ? h.unlocks
-        ? `<button class="record-chip lvl" data-a="unlocks" title="${lv.into} / ${lv.need} XP to the next level. Tap for every unlock" aria-label="Level ${lv.level}, ${lv.title}. ${lv.into} of ${lv.need} XP to the next level. Open the unlock ladder">${badgeBody}</button>`
-        : `<span class="record-chip lvl" title="${lv.into} / ${lv.need} XP to the next level">${badgeBody}</span>`
-      : `<span class="record-chip">${wdl}</span>`;
-    // A tile's subtitle: dividers in the tile, plain " / " in its tooltip.
-    const sub = (s?: string) => (s ? `<small title="${escHtml(sepText(s))}">${seps(escHtml(s))}</small>` : '');
-    // A mode still waiting for the first goal: the same tile, greyed, with a lock and what opens it.
     const locked = new Set(info?.locked ?? []);
-    const lockable = (f: LockedFeature, html: string) => {
-      if (!locked.has(f)) return html;
-      const side = html.includes('tile-side');
-      return html
-        .replace('class="btn ', `aria-disabled="true" data-locked="${f}" class="btn locked `)
-        .replace(/<svg class="picon"[\s\S]*?<\/svg>/, pixelIcon('lock', '#f1efe8', side ? 5 : 6))
-        .replace(/<small[^>]*>[\s\S]*?<\/small>/, '')
-        .replace('</button>', '<small class="lock-note">SCORE YOUR FIRST GOAL</small></button>');
-    };
-    // The gift / coins bar lives in the tile column: on the desktop it is pinned top-right of the screen; on a
-    // landscape phone it becomes the column's first row, so PLAY NOW never runs under it.
-    const d = this.mount(`
-      <div class="main-wrap ${info?.captain ? 'with-captain' : ''}">
-        ${info?.captain ? `<div class="captain"><canvas class="captain-3d"></canvas><div class="captain-tag"><b>${info.captain.club}</b><span>OVR ${info.captain.ovr}</span></div></div>` : ''}
-        <div class="main-col">
-        <div class="topbar">
-          ${h.gift && info?.gift ? `<button class="btn btn-yellow gift pulse" data-a="gift">${pixelIcon('gift', '#26262e', 2, 'inl')}<span class="gift-w">DAILY </span>GIFT <b>+${info.gift.amount}</b></button>` : ''}
-          ${h.account ? `<button class="btn btn-white acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
-          ${h.shop
-            ? `<button class="coins shop-btn" data-a="shop" aria-label="Shop: ${save.coins.toLocaleString()} coins${info?.shopNew ? `, ${info.shopNew} new` : ''}"><i></i><span>${save.coins.toLocaleString()}</span><b class="shop-tag">SHOP</b>${info?.shopNew ? `<em class="shop-new">${info.shopNew > 9 ? '9+' : info.shopNew}</em>` : ''}</button>`
-            : `<div class="coins"><i></i><span>${save.coins.toLocaleString()}</span></div>`}
-        </div>
-        <h1 class="logo small"><span class="l1">BLOCKY</span><span class="l2">LEAGUE</span></h1>
-        <div class="tiles t14 ${info?.hero && info.hero.kind !== 'play' ? 'campaign' : ''} ${h.online ? 'has-online' : ''}">
-          ${h.playNow ? `<button class="btn btn-go tile tile-wide ${info?.hero && info.hero.kind !== 'play' ? 'pulse' : ''}" data-a="playnow">${pixelIcon('ball', '#fff', 6)}<span>${escHtml(info?.hero?.title ?? 'PLAY NOW')}</span>${sub(info?.playNow)}</button>` : ''}
-          ${lockable('career', `<button class="btn btn-blue tile tile-wide tile-road" data-a="career">${pixelIcon('trophy', '#ffd23a', 6)}<span>ROAD TO GLORY</span>${sub(info?.career)}</button>`)}
-          <button class="btn ${h.playNow ? 'btn-white' : 'btn-go'} tile" data-a="quick">${pixelIcon('ball', h.playNow ? '#26262e' : '#fff', 6)}<span>QUICK MATCH</span>${sub(info?.quick)}</button>
-          <button class="btn btn-yellow tile" data-a="club">${pixelIcon('shirt', '#26262e', 6)}<span>MY CLUB</span>${sub(info?.club)}</button>
-          <button class="btn btn-red tile tile-side tile-cup" data-a="cup">${pixelIcon('trophy', '#ffd23a', 5)}<span>BLOCKY CUP</span>${sub(info?.cup)}</button>
-          ${h.moments ? lockable('moments', `<button class="btn btn-teal tile tile-side tile-moments" data-a="moments">${pixelIcon('star', '#ffd23a', 5)}<span>MOMENTS</span>${sub(info?.moments ?? 'SHORT CHALLENGES')}</button>`) : ''}
-          ${h.run ? lockable('run', `<button class="btn btn-orange tile tile-side tile-run" data-a="run">${pixelIcon('trophy', '#fff', 5)}<span>CLUB RUN</span>${sub(info?.run ?? 'ONE MORE RUN')}</button>`) : ''}
-          ${lockable('blitz', `<button class="btn btn-purple tile tile-side tile-blitz" data-a="blitz">${pixelIcon('bolt', '#ffd23a', 5)}<span>BLITZ</span><small>POWER UPS</small></button>`)}
-          ${h.online ? `<button class="btn btn-blue tile tile-side tile-online" data-a="online">${pixelIcon('duo', '#fff', 5)}<span>ONLINE</span><small>PLAY A FRIEND</small></button>` : ''}
-          <button class="btn btn-white tile tile-side tile-set" data-a="settings">${pixelIcon('gear', '#26262e', 5)}<span>SETTINGS</span></button>
-        </div>
-        ${daily}
-        <div class="main-foot">
-          <button class="btn btn-ghost" data-a="howto">HOW TO PLAY</button>
-          ${badge}
-        </div>
-        </div>
-      </div>`, 'main');
-    const cap = d.querySelector<HTMLCanvasElement>('.captain-3d');
-    if (cap && info?.captain) {
-      this.preview = new KitPreview();
-      if (this.preview.ok) this.preview.set(0, cap, info.captain.def, info.captain.kit);
-      else cap.remove();
+    // The first session: PLAY NOW (LEARN THE BASICS, FIRST MATCH) leads until the first goal opens ROAD TO GLORY.
+    const campaign = !!h.playNow && locked.has('career');
+    const crest = (c: { name: string; short: string; kit: Kit }, px = 3) => crestSvg(c.name, c.short, c.kit, px);
+    const play = (t: string) => `<span class="hh-play">${escHtml(t)}<i class="hh-tri" aria-hidden="true"></i></span>`;
+    const head = (meta = '') => `<span class="hh-head"><b class="hh-title">ROAD TO GLORY</b>${meta ? `<em class="hh-meta">${escHtml(meta)}</em>` : ''}</span>`;
+    const side = (c: { name: string; short: string; kit: Kit; ovr: number }, full = false) =>
+      `<span class="hh-side">${crest(c, full ? 4 : 3)}<b>${escHtml(full ? c.name : c.short)}</b><small>OVR ${c.ovr}</small></span>`;
+    const road: RoadCard = info?.road ?? { kind: 'create' };
+    let hero: string;
+    if (campaign) {
+      const title = info?.hero?.title ?? 'PLAY NOW';
+      hero = `<button class="hub-hero now" data-a="playnow" aria-label="${escHtml(title)}">
+          <span class="hh-head"><b class="hh-title">${escHtml(title)}</b></span>
+          <span class="hh-art">${pixelIcon('ball', '#fff', 6)}</span>
+          ${info?.playNow ? `<span class="hh-sub" title="${escHtml(sepText(info.playNow))}">${seps(escHtml(info.playNow))}</span>` : ''}
+          ${play('PLAY')}
+        </button>
+        <button class="hub-lockroad" data-locked="career" aria-disabled="true">${pixelIcon('lock', '#f1efe8', 3)}<b>ROAD TO GLORY</b><small>SCORE YOUR FIRST GOAL TO OPEN IT</small></button>`;
+    } else if (road.kind === 'next') {
+      const me = side(road.club);
+      const them = side(road.rival);
+      // (A BLOCKY CUP tie inside the season says so: "BLOCKY CUP QUARTER FINAL".)
+      const what = road.label ?? `MATCHDAY ${road.md} OF ${road.of}`;
+      const venue = road.neutral ? 'NEUTRAL GROUND' : road.home ? 'HOME' : 'AWAY';
+      hero = `<button class="hub-hero road ${road.cup ? 'cup' : ''}" data-a="career" aria-label="Road to Glory. ${escHtml(road.club.name)} against ${escHtml(road.rival.name)}, ${escHtml(what.toLowerCase())}. Play">
+          ${head(road.cup ? 'BLOCKY CUP' : road.division)}
+          <span class="hh-fix">${road.home || road.neutral ? me : them}<span class="hh-vs">${road.cup ? pixelIcon('trophy', '#ffd23a', 2) : ''}VS</span>${road.home || road.neutral ? them : me}</span>
+          <span class="hh-sub">SEASON ${road.season}${sep()}${escHtml(what)}${sep()}${venue}</span>
+          ${play('PLAY')}
+        </button>`;
+    } else if (road.kind === 'create') {
+      hero = `<button class="hub-hero road create" data-a="career" aria-label="Road to Glory. Create your club">
+          ${head()}
+          <span class="hh-art">${pixelIcon('shirt', '#ffd23a', 6)}</span>
+          <span class="hh-big">BUILD YOUR OWN CLUB</span>
+          <span class="hh-sub">YOUR NAME, YOUR KIT, SIX DIVISIONS TO CLIMB</span>
+          ${play('CREATE YOUR CLUB')}
+        </button>`;
+    } else {
+      // A club with no season yet (the first starts on the way in), or a finished season (its summary waits there).
+      hero = `<button class="hub-hero road" data-a="career" aria-label="Road to Glory. ${escHtml(road.club.name)}">
+          ${head(road.division)}
+          <span class="hh-fix solo">${side(road.club, true)}</span>
+          <span class="hh-sub">${road.kind === 'over' ? `SEASON ${road.season} IS OVER` : 'YOUR FIRST SEASON STARTS HERE'}</span>
+          ${play(road.kind === 'over' ? 'SEE THE RESULTS' : 'KICK OFF')}
+        </button>`;
     }
-    d.querySelector('[data-a=gift]')?.addEventListener('click', () => h.gift?.());
-    d.querySelector('[data-a=playnow]')?.addEventListener('click', () => h.playNow?.());
-    // Locked tiles say what opens them instead of opening (capture: before the tile's own handler).
+
+    // Second tier: MY CLUB, TRANSFERS, SHOP and SEASON (a count where something is new or waiting).
+    const count = (n: number | undefined, what: string) => (n ? `<em class="hub-badge" aria-label="${n} ${what}">${n > 9 ? '9+' : n}</em>` : '');
+    const tile = (a: string, cls: string, icon: string, title: string, sub: string, extra = '') =>
+      `<button class="hub-tile ${cls}" data-a="${a}"><i class="ht-ic">${icon}</i><b class="ht-t">${title}</b><small class="ht-s">${sub}</small>${extra}</button>`;
+    const sc = info?.season;
+    const seasonTile = sc
+      ? `<button class="hub-tile t-season ${sc.pending ? 'ready' : ''} ${sc.offer ? 'offer' : ''}" data-a="season" aria-label="Season ${escHtml(sc.name)}: tier ${sc.tier} of ${sc.tiers}${sc.pending ? `, ${sc.pending} rewards to claim` : ''}${sc.offer ? '. Club Pass' : ''}">
+          <i class="ht-ic">${pixelIcon('crown', '#ffd23a', 4)}</i>
+          <b class="ht-t">SEASON</b>
+          <span class="hs-tier">TIER <em>${sc.tier}</em>/${sc.tiers}</span>
+          <span class="hs-bar"><u style="width:${Math.round(sc.frac * 100)}%"></u></span>
+          ${sc.offer ? '<em class="hs-pass">CLUB PASS</em>' : `<small class="ht-s">${sc.pending ? 'REWARDS TO CLAIM' : sc.pass ? 'CLUB PASS ON' : `${sc.days} ${sc.days === 1 ? 'DAY' : 'DAYS'} LEFT`}</small>`}
+          ${count(sc.pending, 'rewards to claim')}
+        </button>`
+      : '';
+    const tier2 = `<div class="hub-t2">
+        ${tile('club', 't-club', pixelIcon('shirt', '#26262e', 4), 'MY CLUB', 'SQUAD, KIT, STADIUM')}
+        ${h.transfers ? tile('transfers', 't-transfers', pixelIcon('swap', '#fff', 4), 'TRANSFERS', 'BUY AND SELL PLAYERS', count(info?.transfers, 'new')) : ''}
+        ${h.shop ? tile('shoptile', 't-shop', bagIcon('#fff', 4), 'SHOP', 'LOOKS, PACKS, COINS', count(info?.shopNew, 'new')) : ''}
+        ${h.season ? seasonTile : ''}
+      </div>`;
+
+    // Today's challenges, compact: the next one to do and its bar; a tap lists all three.
+    const dl = info?.daily;
+    let daily = '';
+    if (dl) {
+      const list = dl.list.slice(0, 3);
+      const done = dl.claimed.filter(Boolean).length;
+      const pct = (c: Challenge, i: number) => Math.round((Math.min(c.goal, dl.progress[i] ?? 0) / c.goal) * 100);
+      const i = list.findIndex((_, k) => !dl.claimed[k]);
+      const next = i >= 0
+        ? `<span class="hd-text">${list[i].text}</span><span class="hd-bar"><i style="width:${pct(list[i], i)}%"></i></span><em class="hd-coins">+${list[i].coins}</em>`
+        : '<span class="hd-text">ALL DONE. NEW ONES TOMORROW</span>';
+      const rows = list.map((c, k) => {
+        const p = Math.min(c.goal, dl.progress[k] ?? 0);
+        const ok = !!dl.claimed[k];
+        return `<li class="${ok ? 'done' : ''}"><span class="dc-text">${c.text}</span><span class="dc-bar"><i style="width:${pct(c, k)}%"></i></span><b class="dc-n">${ok ? '✓' : `${p}/${c.goal}`}</b><em class="dc-coins">+${c.coins}</em></li>`;
+      }).join('');
+      daily = `<div class="hub-daily-wrap">
+          <button class="hub-daily ${dl.fresh ? 'fresh' : ''}" data-a="daily" aria-expanded="false" aria-controls="hub-dl" aria-label="Daily challenges, ${done} of 3 done">
+            <span class="hd-h"><b>DAILY</b><em>${done}/3</em></span>${next}
+          </button>
+          <ul class="hub-dl" id="hub-dl" hidden>${rows}</ul>
+        </div>`;
+    }
+    const foot = `<div class="hub-foot">
+        <button class="hub-mini t-quick" data-a="quick">${pixelIcon('ball', '#26262e', 3)}<b>QUICK MATCH</b></button>
+        ${h.events ? `<button class="hub-mini t-events" data-a="events">${pixelIcon('bolt', '#ffd23a', 3)}<b>EVENTS</b></button>` : ''}
+        ${daily}
+      </div>`;
+
+    // The top bar.
+    const streak = info?.streak && info.streak >= 2 ? `<span class="hl-fire">${pixelIcon('fire', '#ff9a3a', 1.5, 'inl')}${info.streak}</span>` : '';
+    const lvTag = h.unlocks ? 'button' : 'div';
+    const lvChip = lv
+      ? `<${lvTag} class="hub-lv" ${h.unlocks ? 'data-a="unlocks"' : ''} aria-label="Level ${lv.level}, ${escHtml(lv.title)}. ${lv.into} of ${lv.need} XP to the next level${h.unlocks ? '. Every unlock' : ''}">
+          <b class="hl-n"><small>LV</small>${lv.level}</b>
+          <span class="hl-txt"><b>${escHtml(lv.title.toUpperCase())}${streak}</b><i class="hl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="hl-next">NEXT: ${escHtml(info.unlock.name.toUpperCase())}${sep()}${info.unlock.xpLeft} XP</small>` : ''}</span>
+        </${lvTag}>`
+      : '<span></span>';
+    const coins = save.coins.toLocaleString();
+    const wallet = h.coins || h.shop
+      ? `<button class="coins shop-btn hub-coins" data-a="coins" aria-label="${coins} coins. ${h.coins ? 'Get coins' : 'Shop'}"><i></i><span>${coins}</span><b class="shop-tag">${h.coins ? '+' : 'SHOP'}</b></button>`
+      : `<div class="coins hub-coins"><i></i><span>${coins}</span></div>`;
+    const top = `<header class="hub-top">
+        ${lvChip}
+        <div class="hub-acts">
+          ${h.gift && info?.gift ? `<button class="btn btn-yellow hub-gift" data-a="gift" aria-label="Daily gift, ${info.gift.amount} coins">${pixelIcon('gift', '#26262e', 2, 'inl')}<span class="hg-w">GIFT</span><b>+${info.gift.amount}</b></button>` : ''}
+          ${h.account ? `<button class="btn btn-white hub-acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
+          ${h.removeAds && info?.noAds ? `<button class="btn btn-red hub-noads" data-a="noads" aria-label="Remove ads, ${escHtml(info.noAds.price)}">${pixelIcon('film', '#fff', 2, 'inl')}<span>REMOVE ADS</span><b class="hn-p">${escHtml(info.noAds.price)}</b></button>` : ''}
+          ${wallet}
+          <button class="hub-ico" data-a="howto" aria-label="How to play"><b>?</b></button>
+          <button class="hub-ico" data-a="settings" aria-label="Settings">${pixelIcon('gear', '#fbfbf4', 3)}</button>
+        </div>
+      </header>`;
+
+    // Left: your captain in your club's kit.
+    const cap = info?.captain;
+    const captain = cap
+      ? `<button class="hub-cap ${cap.own ? 'own' : ''}" data-a="captain" aria-label="${cap.own ? `My club, ${escHtml(cap.club)}` : 'Create your club'}">
+          <canvas class="hub-cap3d" aria-hidden="true"></canvas>
+          <span class="hub-captag">
+            <b>${crest({ name: cap.club, short: cap.short, kit: cap.kit }, 2)}<span>${escHtml(cap.club)}</span></b>
+            <span class="hc-meta">OVR ${cap.ovr}</span>
+            ${cap.division ? `<span class="hc-div">${escHtml(cap.division)}</span>` : ''}
+            ${cap.own ? '' : '<em class="hc-cta">CREATE YOUR CLUB</em>'}
+          </span>
+        </button>`
+      : '';
+
+    const d = this.mount(`
+      <div class="hub ${campaign ? 'campaign' : ''} ${cap ? 'with-cap' : ''}">
+        ${top}
+        ${captain}
+        <div class="hub-body">
+          <div class="hub-main">${hero}</div>
+          ${tier2}
+        </div>
+        ${foot}
+      </div>`, 'hub-screen');
+    const cv = d.querySelector<HTMLCanvasElement>('.hub-cap3d');
+    if (cv && cap) {
+      this.preview = new KitPreview();
+      if (this.preview.ok) this.preview.set(0, cv, cap.def, cap.kit);
+      else cv.remove();
+    }
+    this.wireLocked(d, h.locked);
+    const on = (a: string, fn?: () => void) => d.querySelector(`[data-a=${a}]`)?.addEventListener('click', () => fn?.());
+    on('playnow', h.playNow);
+    on('career', h.career);
+    on('captain', h.club);
+    on('club', h.club);
+    on('transfers', h.transfers);
+    on('shoptile', h.shop);
+    on('season', h.season);
+    on('quick', h.quick);
+    on('events', h.events);
+    on('gift', h.gift);
+    on('account', h.account);
+    on('noads', h.removeAds);
+    on('coins', h.coins ?? h.shop);
+    on('unlocks', h.unlocks);
+    on('howto', h.howto);
+    on('settings', h.settings);
+    const dBtn = d.querySelector<HTMLButtonElement>('[data-a=daily]');
+    const dList = d.querySelector<HTMLElement>('.hub-dl');
+    if (dBtn && dList) {
+      dBtn.addEventListener('click', () => {
+        dList.hidden = !dList.hidden;
+        dBtn.setAttribute('aria-expanded', String(!dList.hidden));
+      });
+    }
+  }
+
+  /** A locked tile or card says what opens it instead of opening (capture: before its own handler), with a little shake. */
+  private wireLocked(d: HTMLElement, onLocked?: (f: LockedFeature) => void): void {
     d.querySelectorAll<HTMLElement>('[data-locked]').forEach((el) =>
       el.addEventListener('click', (e) => {
         e.stopImmediatePropagation();
         el.classList.remove('nope');
         void el.offsetWidth;
         el.classList.add('nope');
-        h.locked?.(el.dataset.locked as LockedFeature);
+        onLocked?.(el.dataset.locked as LockedFeature);
       }, true),
     );
-    d.querySelector('[data-a=moments]')?.addEventListener('click', () => h.moments?.());
-    d.querySelector('[data-a=online]')?.addEventListener('click', () => h.online?.());
-    d.querySelector('[data-a=run]')?.addEventListener('click', () => h.run?.());
-    d.querySelector('[data-a=unlocks]')?.addEventListener('click', () => h.unlocks?.());
-    d.querySelector('[data-a=account]')?.addEventListener('click', () => h.account?.());
-    d.querySelector('[data-a=shop]')?.addEventListener('click', () => h.shop?.());
-    $(d, '[data-a=quick]').addEventListener('click', h.quick);
-    $(d, '[data-a=career]').addEventListener('click', h.career);
-    $(d, '[data-a=cup]').addEventListener('click', h.cup);
-    $(d, '[data-a=blitz]').addEventListener('click', () => (h.blitz ?? h.quick)());
-    $(d, '[data-a=club]').addEventListener('click', h.club);
-    $(d, '[data-a=settings]').addEventListener('click', h.settings);
-    $(d, '[data-a=howto]').addEventListener('click', h.howto);
+  }
+
+  /**
+   * EVENTS (from the hub): the quick modes between ROAD TO GLORY matches. MOMENTS, CLUB RUN and BLITZ, each locked
+   * until the first goal and saying so, and ONLINE where the build has it (the web).
+   */
+  events(
+    h: { back: () => void; moments?: () => void; run?: () => void; blitz?: () => void; online?: () => void; locked?: (f: LockedFeature) => void },
+    info?: Pick<MainInfo, 'moments' | 'run' | 'locked'>,
+  ): void {
+    const locked = new Set(info?.locked ?? []);
+    const card = (a: string, f: LockedFeature | null, cls: string, icon: string, title: string, line: string, sub: string) => {
+      const lock = !!f && locked.has(f);
+      return `<button class="ev-card ${cls} ${lock ? 'locked' : ''}" data-a="${a}" ${lock ? `data-locked="${f}" aria-disabled="true"` : ''}>
+          <i class="ev-ic">${lock ? pixelIcon('lock', '#f1efe8', 5) : icon}</i>
+          <b>${title}</b>
+          <span>${line}</span>
+          <small>${lock ? 'SCORE YOUR FIRST GOAL' : sub}</small>
+        </button>`;
+    };
+    const cards = [
+      h.moments ? card('moments', 'moments', 'ev-mom', pixelIcon('star', '#ffd23a', 5), 'MOMENTS', 'Short challenges, up to three stars each', seps(escHtml(info?.moments ?? 'SHORT CHALLENGES'))) : '',
+      h.run ? card('run', 'run', 'ev-run', pixelIcon('trophy', '#fff', 5), 'CLUB RUN', 'Seven matches in a row: lose one and the run ends', seps(escHtml(info?.run ?? 'ONE MORE RUN'))) : '',
+      h.blitz ? card('blitz', 'blitz', 'ev-blitz', pixelIcon('bolt', '#ffd23a', 5), 'BLITZ', 'Football with power ups on the pitch', 'TURBO, MEGA SHOT, FREEZE') : '',
+      h.online ? card('online', null, 'ev-online', pixelIcon('duo', '#fff', 5), 'ONLINE', 'Play a friend on another device', 'SHARE A CODE') : '',
+    ].join('');
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel ev-panel">
+          <h2>EVENTS</h2>
+          <div class="ev-grid">${cards}</div>
+          <div class="btn-row"><button class="btn btn-white" data-a="back">BACK</button></div>
+        </div>
+      </div>`, 'events-screen');
+    this.wireLocked(d, h.locked);
+    for (const k of ['moments', 'run', 'blitz', 'online'] as const) d.querySelector(`[data-a=${k}]`)?.addEventListener('click', () => h[k]?.());
+    $(d, '[data-a=back]').addEventListener('click', h.back);
   }
 
   quickMatch(
@@ -1247,6 +1411,7 @@ export class Menus {
           void up.offsetWidth;
           up.classList.add('on');
           sfx.coin();
+          buzz('success');
         }
         if (k < 1) requestAnimationFrame(tick);
       };
@@ -1340,7 +1505,8 @@ export class Menus {
   }
 
   /**
-   * Settings, in three tabs: GENERAL (sound, commentary, colour-blind aid, graphics, camera, the ball look and
+   * Settings, in three tabs: GENERAL (REMOVE ADS first where the app sells it (`opts.removeAds`), sound, commentary,
+   * colour-blind aid, graphics, camera, TEXT SIZE (menus and HUD only: ui/textSize.ts), the ball look and
    * celebration earned by levelling up, and BACKUP when `opts.backup` is given: the main menu offers it, the
    * pause menu not), CONTROLS (pass assistance, switching, timed finishing, the touch THUMBSTICK; each option
    * says in a line what it does) and KEYS (rebind the keyboard and gamepad, with swaps on a conflict and RESET).
@@ -1348,14 +1514,21 @@ export class Menus {
    * once via onChange.
    */
   settings(
-    save: SaveData, onChange: () => void, onBack: () => void, tab: 'general' | 'controls' | 'keys' = 'general', opts: { backup?: () => void } = {},
+    save: SaveData, onChange: () => void, onBack: () => void, tab: 'general' | 'controls' | 'keys' = 'general',
+    opts: {
+      backup?: () => void;
+      /** REMOVE ADS, first in GENERAL (the app): its price, whether it is owned, and the purchase (true once bought). */
+      removeAds?: { price: string; owned: boolean; buy: () => Promise<boolean> };
+    } = {},
   ): void {
     const s = save.settings;
     // Each row carries both forms of a switch: the one-button ON / OFF toggle (portrait: label inside it) and
     // an ON | OFF segment (landscape phones: label and its line on the left, the value on the right). CSS
     // shows one; both drive the same setting.
+    // (VIBRATION only where it can work: the app.)
+    const rows = CONTROL_ROWS.filter((r) => !r.appOnly || hapticsAvailable());
     const ctlRow = (r: ControlRow) => {
-      const opts = r.kind === 'level' ? ASSIST_LEVELS.map((l) => [l, l.toUpperCase()]) : [['true', 'ON'], ['false', 'OFF']];
+      const opts = r.opts ?? (r.kind === 'level' ? ASSIST_LEVELS.map((l) => [l, l.toUpperCase()]) : [['true', 'ON'], ['false', 'OFF']]);
       return `<div class="ctl-row ${r.kind}" data-c="${r.k}">
           <span class="ctl-label" id="ctl-${r.k}">${r.label}</span>
           <div class="seg ctl-seg" role="radiogroup" aria-labelledby="ctl-${r.k}">
@@ -1384,6 +1557,7 @@ export class Menus {
           </div>
           <div class="set-pane" data-pane="general" role="tabpanel">
             <div class="toggles">
+              ${opts.removeAds ? `<button class="set-noads ${opts.removeAds.owned ? 'owned' : ''}" data-a="noads" ${opts.removeAds.owned ? 'disabled' : ''} aria-label="${opts.removeAds.owned ? 'No ads: on' : `Remove ads, ${escHtml(opts.removeAds.price)}`}"><span>${opts.removeAds.owned ? 'NO ADS' : 'REMOVE ADS'}</span><b class="${opts.removeAds.owned ? '' : 'link'}">${opts.removeAds.owned ? 'ON' : escHtml(opts.removeAds.price)}</b></button>` : ''}
               <button data-k="sfx"></button>
               <button data-k="crowd"></button>
               <button data-k="music"></button>
@@ -1392,6 +1566,7 @@ export class Menus {
               <button data-k="colorblind"></button>
               <button data-k="quality"></button>
               <button data-k="camZoom"></button>
+              <button data-k="textSize"></button>
               <button data-k="ballSkin"></button>
               <button data-k="celebration"></button>
               ${opts.backup ? '<button data-a="backup" aria-label="Backup: export or import your save"><span>BACKUP</span><b class="link">EXPORT / IMPORT</b></button>' : ''}
@@ -1400,7 +1575,7 @@ export class Menus {
             <p class="set-about">${lynxSvg(1, STUDIO_BLUE, '#fff', 'lynx sm')}<span>Blocky League v${APP_VERSION} by ${STUDIO}</span></p>
           </div>
           <div class="set-pane ctl-pane" data-pane="controls" role="tabpanel">
-            ${CONTROL_ROWS.map(ctlRow).join('')}
+            ${rows.map(ctlRow).join('')}
             <div class="ctl-row level ctl-stick" data-c="stick">
               <span class="ctl-label" id="ctl-stick">THUMBSTICK</span>
               <div class="seg ctl-seg" role="radiogroup" aria-labelledby="ctl-stick">
@@ -1438,7 +1613,7 @@ export class Menus {
     // Controls: an ASSISTED / SEMI / MANUAL row per pass type, an ON / OFF switch for the rest.
     const drawControls = () => {
       const c = controlsOf(s);
-      for (const r of CONTROL_ROWS) {
+      for (const r of rows) {
         const row = $(d, `.ctl-row[data-c=${r.k}]`);
         const v = c[r.k];
         row.querySelectorAll<HTMLButtonElement>('.ctl-seg button').forEach((b) => {
@@ -1466,20 +1641,21 @@ export class Menus {
       });
       $(sr, '.ctl-why').innerHTML = STICK_WHY[stick];
     };
-    for (const r of CONTROL_ROWS) {
+    for (const r of rows) {
       const row = $(d, `.ctl-row[data-c=${r.k}]`);
       row.querySelectorAll<HTMLButtonElement>('.ctl-seg button').forEach((b) =>
         b.addEventListener('click', () => {
           const v = b.dataset.v!;
           if (r.k === 'groundAssist') s.groundAssist = v as AssistLevel;
           else if (r.k === 'throughAssist') s.throughAssist = v as AssistLevel;
+          else if (r.k === 'vibration') s.vibration = v as HapticLevel;
           else s[r.k] = v === 'true';
           drawControls();
           onChange();
         }),
       );
       row.querySelector('[data-t]')?.addEventListener('click', () => {
-        if (r.kind === 'switch' && r.k !== 'groundAssist' && r.k !== 'throughAssist') s[r.k] = !controlsOf(s)[r.k];
+        if (r.kind === 'switch' && r.k !== 'groundAssist' && r.k !== 'throughAssist' && r.k !== 'vibration') s[r.k] = !controlsOf(s)[r.k];
         drawControls();
         onChange();
       });
@@ -1642,7 +1818,7 @@ export class Menus {
 
     const labels: Record<string, string> = {
       sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', colorblind: 'COLOUR BLIND', quality: 'GRAPHICS',
-      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION', quickSubs: 'QUICK SUBS',
+      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION', quickSubs: 'QUICK SUBS', textSize: 'TEXT SIZE',
     };
     const draw = () => {
       d.querySelectorAll<HTMLButtonElement>('.toggles button[data-k]').forEach((b) => {
@@ -1664,6 +1840,11 @@ export class Menus {
           b.innerHTML = `<span>${labels[k]}</span><b>${CELEBRATION_NAMES[id].toUpperCase()}${locked ? `<small class="lock">${sep()}${pixelIcon('lock', 'currentColor', 1.2, 'inl')}${CELEBRATION_NAMES[locked].toUpperCase()} LV${CELEBRATION_LEVEL[locked]}</small>` : ''}</b>`;
           return;
         }
+        if (k === 'textSize') {
+          // Menu and HUD text only (ui/textSize.ts): SMALL, MEDIUM, LARGE.
+          b.innerHTML = `<span>${labels[k]}</span><b>${TEXT_SIZE_LABEL[s.textSize ?? 'medium']}</b>`;
+          return;
+        }
         const on = k === 'colorblind' ? v === true : k === 'quickSubs' ? v !== false : v;
         const val = k === 'quality' ? String(v).toUpperCase() : k === 'camZoom' ? (s.camZoom ?? 'normal').toUpperCase() : on ? 'ON' : 'OFF';
         b.innerHTML = `<span>${labels[k]}</span><b class="${on === false ? 'off' : ''}">${val}</b>`;
@@ -1675,7 +1856,11 @@ export class Menus {
         if (b.disabled) return;
         sfx.click();
         const k = b.dataset.k as keyof typeof s;
-        if (k === 'quality') s.quality = s.quality === 'high' ? 'medium' : s.quality === 'medium' ? 'low' : 'high';
+        if (k === 'quality') {
+          s.quality = s.quality === 'high' ? 'medium' : s.quality === 'medium' ? 'low' : 'high';
+          // His own choice from now on (an unpicked quality is always HIGH: see Settings.qualityPicked).
+          s.qualityPicked = true;
+        }
         // Camera distance: WIDE -> NORMAL -> CLOSE -> WIDE.
         else if (k === 'camZoom') s.camZoom = CAM_ZOOMS[(CAM_ZOOMS.indexOf(s.camZoom ?? 'normal') + 1) % CAM_ZOOMS.length];
         else if (k === 'ballSkin') {
@@ -1689,6 +1874,7 @@ export class Menus {
           const cur = open.indexOf((s.celebration ?? 'classic') as CelebrationId);
           s.celebration = open[(cur + 1) % open.length];
         } else if (k === 'colorblind') s.colorblind = !s.colorblind;
+        else if (k === 'textSize') s.textSize = nextTextSize(s.textSize);
         else if (k === 'quickSubs') s.quickSubs = s.quickSubs === false;
         else (s as unknown as Record<string, boolean>)[k] = !s[k];
         draw();
@@ -1704,6 +1890,18 @@ export class Menus {
     d.querySelector('[data-a=backup]')?.addEventListener('click', () => {
       stopListening();
       opts.backup?.();
+    });
+    // REMOVE ADS: the store's own sheet confirms the purchase; once bought the row reads NO ADS: ON.
+    const noAds = d.querySelector<HTMLButtonElement>('[data-a=noads]');
+    noAds?.addEventListener('click', async () => {
+      if (!opts.removeAds || noAds.disabled) return;
+      noAds.disabled = true;
+      const bought = await opts.removeAds.buy().catch(() => false);
+      if (!noAds.isConnected) return;
+      if (bought) {
+        noAds.classList.add('owned');
+        noAds.innerHTML = '<span>NO ADS</span><b>ON</b>';
+      } else noAds.disabled = false;
     });
     $(d, '[data-a=back]').addEventListener('click', () => {
       stopListening();
@@ -1887,6 +2085,7 @@ export class Menus {
       d.querySelectorAll('button').forEach((b) => ((b as HTMLButtonElement).disabled = true));
       await h.claim(double);
       sfx.coin();
+      buzz('success');
       h.back();
     };
     $(d, '[data-a=claim]').addEventListener('click', () => void go(false));

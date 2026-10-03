@@ -1,5 +1,5 @@
 import { angleDiff, clamp, dist2 } from '../core/math';
-import { BALL_R, GRAVITY } from './constants';
+import { BALL_R, GRAVITY, ROLL_A, ROLL_B } from './constants';
 import { PROTECT_T, vsHuman, wrongFoot } from './dribble';
 import type { Match, Pad } from './match';
 import type { Player } from './player';
@@ -10,12 +10,17 @@ import type { MatchEvent, Side, SkillGrade, SkillMoveKind } from './types';
  * timing counter that makes them pay. Everything here acts only on a human-controlled carrier and on the AI defenders
  * going in on him, so AI-vs-AI play never reaches it. Randomness comes from `m.rng` only.
  *
- * The move: SKILL with the stick against his run picks it (skillKind):
- * - across his run: a ROULETTE, a spin that slips him ROULETTE_SLIP m to that side with the ball;
- * - along it: a RAINBOW FLICK, the ball flicked up over a man in front (FLICK_APEX m high), landing FLICK_LAND m on
- *   for him to run onto;
+ * The move: SKILL with the stick against his run picks it (skillKind), each with its use:
+ * - along it: a NUTMEG with a man squared up in front of him (NUTMEG_R m: through his legs and round him to it), else
+ *   a RAINBOW FLICK, the ball flicked up over a man in front (FLICK_APEX m high: it goes over a slide too), landing
+ *   FLICK_LAND m on for him to run onto;
+ * - half across it: an ELASTICO, out and back in with the outside of the boot: ELASTICO_SLIP m to that side at speed;
+ * - across his run: a ROULETTE at pace, a spin that slips him ROULETTE_SLIP m to that side with the ball, or LA
+ *   CROQUETA from a jog or less (the ball shifted foot to foot, CROQUETA_SLIP m, quick);
+ * - half back: a HEEL CHOP, cut behind the standing leg and away that way at speed (reverse away from pressure);
  * - back the way he came: a DRAG BACK, the sole pulling it back as he turns away with it;
- * - the stick left alone: a STEPOVER, the feint where he stands.
+ * - the stick left alone: a STEPOVER, the feint where he stands (a BALL ROLL standing still: the sole rolls it across
+ *   him, away from the nearest man).
  * Each plays for SKILL_T s; there are SKILL_COOL s between two and each costs SKILL_STAMINA of his legs. While one
  * plays (and he isn't protected) the ball is off his foot: tackles on him come off SKILL_EXPOSED x as often.
  *
@@ -23,8 +28,10 @@ import type { MatchEvent, Side, SkillGrade, SkillMoveKind } from './types';
  * chase slide) shows it first: tellTime s of wind-up (the tell: the render's crouch, the HUD's badge over him; he is
  * set meanwhile, so no skill cut fools him as a committed man) before he goes in (with a lunge, TELL_LUNGE). SKILL
  * within the window (the tell and PERFECT_GRACE s more) is a PERFECT: he bites, planted and stumbling for PERFECT_BEAT
- * s (a slide on its way goes under nothing), and the dribbler is protected for
- * PERFECT_PROTECT s with a burst of pace out of it. Otherwise a move with a defender within GOOD_R m is a GOOD when it
+ * s (a slide on its way goes under nothing), he can't touch the ball again until the move is done and PERFECT_SHIELD s
+ * more (SkillState.shield: no tackle, no touch, no header; only a covering man or the keeper can still stop it: the
+ * owner, "skill when done perfectly always gets intercepted"), and the dribbler is protected for PERFECT_PROTECT s
+ * with a burst of pace out of it (PERFECT_BURST, and PERFECT_KICK of his sprint the moment the move ends). Otherwise a move with a defender within GOOD_R m is a GOOD when it
  * wrong-foots him on a roll like the skill cut's (half as likely straight after another move: SPAM_T / SPAM_K); a
  * plain move when it doesn't; with nobody within SHOW_R m a show-off move, nothing more. A challenge from behind him
  * (out of view, OUT_OF_VIEW) goes in at once, untold, as every challenge always did and AI-vs-AI ones still do.
@@ -34,23 +41,36 @@ import type { MatchEvent, Side, SkillGrade, SkillMoveKind } from './types';
  */
 
 /** How long each move plays (s): the animation, and the time the ball is off his foot. */
-export const SKILL_T: Readonly<Record<SkillMoveKind, number>> = { roulette: 0.42, rainbow: 0.36, stepover: 0.34, dragback: 0.32 };
+export const SKILL_T: Readonly<Record<SkillMoveKind, number>> = {
+  roulette: 0.42, rainbow: 0.36, stepover: 0.34, dragback: 0.32, elastico: 0.3, croqueta: 0.26, nutmeg: 0.3, heelchop: 0.28, ballroll: 0.36,
+};
 /** Names for the pop over him (Silkscreen: no hyphens). */
 export const SKILL_NAMES: Readonly<Record<SkillMoveKind | ChainKind, string>> = {
-  roulette: 'ROULETTE', rainbow: 'RAINBOW FLICK', stepover: 'STEPOVER', dragback: 'DRAG BACK', cut: 'SKILL CUT', knock: 'KNOCK ON',
-  past: 'SKINNED HIM',
+  roulette: 'ROULETTE', rainbow: 'RAINBOW FLICK', stepover: 'STEPOVER', dragback: 'DRAG BACK', elastico: 'ELASTICO', croqueta: 'LA CROQUETA',
+  nutmeg: 'NUTMEG', heelchop: 'HEEL CHOP', ballroll: 'BALL ROLL', cut: 'SKILL CUT', knock: 'KNOCK ON', past: 'SKINNED HIM',
 };
 /** The chain's other links: a skill cut and a knock-on (dribble.ts), and dribbling clean past a man (`past`: watchPast). */
 export type ChainKind = 'cut' | 'knock' | 'past';
 /** Frame code per move (replay.ts writeFrame: the render's skill pose). */
-export const SKILL_CODE: Readonly<Record<SkillMoveKind, number>> = { roulette: 1, rainbow: 2, stepover: 3, dragback: 4 };
+export const SKILL_CODE: Readonly<Record<SkillMoveKind, number>> = {
+  roulette: 1, rainbow: 2, stepover: 3, dragback: 4, elastico: 5, croqueta: 6, nutmeg: 7, heelchop: 8, ballroll: 9,
+};
 /** Seconds between the start of one move and the next, and the stamina each one costs (times Player.fatigue). */
 export const SKILL_COOL = 0.7;
 export const SKILL_STAMINA = 0.03;
-/** The stick: under this it's left alone (a stepover); within FORWARD_ARC of his run a rainbow, beyond BACK_ARC a drag back. */
+/**
+ * The stick against his run: under STICK_DEAD it's left alone (a stepover, a ball roll standing); within FORWARD_ARC of
+ * his run a nutmeg or a rainbow flick, to ELASTICO_ARC an elastico, to CROSS_ARC a roulette (la croqueta under
+ * ROULETTE_PACE m/s), to BACK_ARC a heel chop, beyond it a drag back.
+ */
 const STICK_DEAD = 0.3;
-const FORWARD_ARC = (50 * Math.PI) / 180;
-const BACK_ARC = (130 * Math.PI) / 180;
+const FORWARD_ARC = (25 * Math.PI) / 180;
+const ELASTICO_ARC = (65 * Math.PI) / 180;
+const CROSS_ARC = (115 * Math.PI) / 180;
+const BACK_ARC = (155 * Math.PI) / 180;
+const ROULETTE_PACE = 3.5;
+/** Under this pace (m/s) with the stick left alone it's a ball roll, not a stepover. */
+const BALL_ROLL_PACE = 1.6;
 /**
  * The tell (s) by the AI's difficulty (Match.aiSkill: EASY 0.6 ~0.36 s, NORMAL 1.8 ~0.32, HARD 3 ~0.28, LEGEND 4
  * ~0.24), and the grace after it (the lunge's first frames) that still counts: the PERFECT window is both.
@@ -101,7 +121,15 @@ const COMMIT_T = 0.55;
 export const PERFECT_BEAT_MIN = 0.8;
 export const PERFECT_BEAT_MAX = 1.0;
 export const PERFECT_PROTECT = 0.8;
-export const PERFECT_BURST = 0.45;
+export const PERFECT_BURST = 0.9;
+/** PERFECT: the man who bit can't touch the ball for the move and this long (s) after it (a flick or a nutmeg: till he has it back). */
+export const PERFECT_SHIELD = 1.2;
+/** The shield's lock-out is topped up this far (s) ahead each step (SkillState.shield, applyShield). */
+const SHIELD_STEP = 0.1;
+/** GOOD: a man the move wrong-footed can't touch it until the move is done (a flick or a nutmeg: till he has it back). */
+export const GOOD_SHIELD = 0.15;
+/** PERFECT: out of the move he goes at this share of his sprint at once (the burst). */
+export const PERFECT_KICK = 0.92;
 /** GOOD: defenders within GOOD_R m can be wrong-footed; with nobody within SHOW_R m it's a show-off move. */
 export const GOOD_R = 3.2;
 export const SHOW_R = 4.5;
@@ -131,6 +159,40 @@ const FLICK_CHASE = 0.6;
 /** STEPOVER: his pace meanwhile (share of his pace going in); DRAG BACK: his pace back the other way (m/s). */
 const STEPOVER_ON = 0.35;
 const DRAG_PACE = 3;
+/** ELASTICO: out and back in, ELASTICO_SLIP m to the stick's side (ELASTICO_FEINT m the other way first), at ELASTICO_ON of his pace. */
+const ELASTICO_SLIP = 1.5;
+const ELASTICO_FEINT = 0.25;
+const ELASTICO_ON = 0.8;
+/** LA CROQUETA: foot to foot, CROQUETA_SLIP m to the side, on at CROQUETA_ON of his pace (at most CROQUETA_MAX m/s). */
+const CROQUETA_SLIP = 1.15;
+const CROQUETA_ON = 0.35;
+const CROQUETA_MAX = 2.4;
+/** BALL ROLL: the sole rolls it BALL_ROLL_SLIP m across him. */
+const BALL_ROLL_SLIP = 1.0;
+/** HEEL CHOP: off the other way (the stick's) at HEEL_CHOP_ON of his pace going in, at least HEEL_CHOP_MIN m/s, from HEEL_CHOP_AT of the move. */
+const HEEL_CHOP_ON = 0.7;
+const HEEL_CHOP_MIN = 4;
+const HEEL_CHOP_AT = 0.25;
+/**
+ * NUTMEG: a man squared up in front (within NUTMEG_R m along the run, NUTMEG_LANE m of its line, facing him) gets it
+ * through his legs: knocked NUTMEG_AT s into the move to roll NUTMEG_PAST m beyond him, and the dribbler goes round him
+ * (NUTMEG_ROUND m to the side) to run onto it, until NUTMEG_CHASE s after it stops at most.
+ */
+const NUTMEG_R = 3.2;
+const NUTMEG_LANE = 0.9;
+const NUTMEG_AT = 0.12;
+const NUTMEG_PAST = 2.6;
+const NUTMEG_ROUND = 1.1;
+const NUTMEG_CHASE = 0.8;
+/**
+ * A move that fits the moment fools a man more often (gradeMove's GOOD roll): a nutmeg on the man squared up, a rainbow
+ * over a slide, a side move (elastico, roulette, la croqueta) past a man in front, a heel chop or drag back away from a
+ * man closing in. Added to the roll's odds.
+ */
+const FIT_NUTMEG = 0.15;
+const FIT_OVER_SLIDE = 0.25;
+const FIT_SIDE = 0.05;
+const FIT_AWAY = 0.1;
 
 /** A move under way. `ux, uz`: his run going in; `lx, lz`: the roulette's side; `bx, bz`: the drag back's way. */
 export interface SkillMove {
@@ -147,11 +209,17 @@ export interface SkillMove {
   /** His pace going in (m/s). */
   entry: number;
   grade: SkillGrade;
-  /** RAINBOW FLICK: the ball is up (and where it comes down, and until when he chases it: move time). */
+  /**
+   * RAINBOW FLICK / NUTMEG: the ball is off his foot on purpose (up over the man, or through his legs), where it comes
+   * down (or stops), and until when he chases it (move time).
+   */
   flicked: boolean;
   landX: number;
   landZ: number;
   chaseEnd: number;
+  /** NUTMEG: the man it goes through (-1: none), and the side (+1 / -1 across the run) he goes round him. */
+  through: number;
+  round: number;
 }
 
 /** A defender's telegraphed challenge on him: `until` (skill clock) closes the PERFECT window. */
@@ -186,6 +254,11 @@ export class SkillState {
   readonly ahead: number[] = new Array(22).fill(-9);
   /** A defender a PERFECT beat, stumbling (the render): who, from when (skill clock), how long. */
   stumble: { idx: number; at: number; dur: number } | null = null;
+  /**
+   * Men a move beat who can't touch the ball until `until` (skill clock; a flick or a nutmeg's: till the dribbler has
+   * it back, `flick`): no tackle, no touch on a loose ball, no header, no slide (applyShield). PERFECT_SHIELD, GOOD_SHIELD.
+   */
+  readonly shield: { idx: number; until: number; flick: boolean }[] = [];
   /** This match: tells shown, moves made, PERFECTs, the best chain, SKILL GOALs. */
   tells = 0;
   moves = 0;
@@ -213,6 +286,21 @@ export class SkillState {
   exposure(idx: number): number {
     const mv = this.move;
     return mv && mv.player === idx && mv.t < mv.dur && !mv.flicked ? SKILL_EXPOSED : 1;
+  }
+
+  /** Is `idx` out of it, beaten by a move (shield)? */
+  shielded(idx: number): boolean {
+    return this.shield.some((s) => s.idx === idx && s.until > this.t);
+  }
+
+  /** `o` can't touch the ball for `dur` s from now (the longer of this and any he already has). */
+  guard(o: Player, dur: number, flick: boolean): void {
+    const until = this.t + dur;
+    const e = this.shield.find((s) => s.idx === o.idx);
+    if (e) {
+      e.until = Math.max(e.until, until);
+      e.flick ||= flick;
+    } else this.shield.push({ idx: o.idx, until, flick });
   }
 }
 
@@ -312,7 +400,39 @@ export function humanSkill(m: Match, p: Player, pad: Pad, dt: number): void {
   if (st.threat && st.t > st.threat.until) st.threat = null;
   if (pad.skill && !h.prev.skill) trySkill(m, p, pad, st);
   if (st.move) stepMove(m, p, pad, st, dt);
+  applyShield(m, p, st);
   watchPast(m, p, st);
+}
+
+/**
+ * The men a move beat (SkillState.shield) stay out of it: no tackle (tackleCooldown), no touch on a loose ball
+ * (kickCooldown: Match.checkPossession), no header or volley ordered this step (it runs after the AI's, before the
+ * orders are struck), no slide reaching it (slideHit), no new tell. It ends when their side has the ball, or with the
+ * dribbler's flick / nutmeg once he has it back (and GOOD_SHIELD more).
+ */
+function applyShield(m: Match, p: Player, st: SkillState): void {
+  if (!st.shield.length) return;
+  const b = m.ball;
+  const mv = st.move;
+  const theirs = b.owner >= 0 && m.players[b.owner].side !== p.side;
+  for (let i = st.shield.length - 1; i >= 0; i--) {
+    const e = st.shield[i];
+    // (A flick's or nutmeg's shield lasts till he has it back: the move ends then.)
+    if (e.flick && mv && mv.flicked && mv.player === b.lastTouch) e.until = Math.max(e.until, st.t + GOOD_SHIELD);
+    const left = e.until - st.t;
+    if (left <= 0 || theirs || m.phase !== 'play') {
+      st.shield.splice(i, 1);
+      continue;
+    }
+    const o = m.players[e.idx];
+    // (Topped up a step or two ahead each step: once the shield ends, so does his lock-out.)
+    const hold = Math.min(left, SHIELD_STEP);
+    o.kickCooldown = Math.max(o.kickCooldown, hold);
+    o.tackleCooldown = Math.max(o.tackleCooldown, hold);
+    o.tellT = 0;
+    if (o.order?.firstTime) o.order = null;
+    if (o.state === 'slide') o.slideHit = true;
+  }
 }
 
 /**
@@ -336,13 +456,38 @@ function watchPast(m: Match, p: Player, st: SkillState): void {
   }
 }
 
-/** Which move the stick picks against his run (`ux, uz`), and the roulette's side (+1: the stick's turn is anticlockwise). */
-export function skillKind(ux: number, uz: number, mx: number, mz: number): { kind: SkillMoveKind; turn: number } {
-  if (Math.hypot(mx, mz) < STICK_DEAD) return { kind: 'stepover', turn: 1 };
+/**
+ * Which move the stick (`mx, mz`) picks against his run (`ux, uz`) at `pace` m/s, with a man squared up in front of him
+ * or not (`squared`: a nutmeg), and its side (+1: the stick's turn is anticlockwise).
+ */
+export function skillKind(ux: number, uz: number, mx: number, mz: number, pace = 9, squared = false): { kind: SkillMoveKind; turn: number } {
+  if (Math.hypot(mx, mz) < STICK_DEAD) return { kind: pace < BALL_ROLL_PACE ? 'ballroll' : 'stepover', turn: 1 };
   const a = angleDiff(Math.atan2(uz, ux), Math.atan2(mz, mx));
-  if (Math.abs(a) < FORWARD_ARC) return { kind: 'rainbow', turn: 1 };
-  if (Math.abs(a) > BACK_ARC) return { kind: 'dragback', turn: 1 };
-  return { kind: 'roulette', turn: Math.sign(a) || 1 };
+  const turn = Math.sign(a) || 1;
+  const abs = Math.abs(a);
+  if (abs < FORWARD_ARC) return { kind: squared ? 'nutmeg' : 'rainbow', turn: 1 };
+  if (abs < ELASTICO_ARC) return { kind: 'elastico', turn };
+  if (abs < CROSS_ARC) return { kind: pace >= ROULETTE_PACE ? 'roulette' : 'croqueta', turn };
+  if (abs < BACK_ARC) return { kind: 'heelchop', turn };
+  return { kind: 'dragback', turn: 1 };
+}
+
+/** The man squared up in front of `p` (along his run `ux, uz`) a nutmeg would go through, or null. */
+function squaredUp(m: Match, p: Player, ux: number, uz: number): Player | null {
+  let best: Player | null = null;
+  let bd = NUTMEG_R;
+  for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
+    if (o.isKeeper || o.sentOff || o.state !== 'move') continue;
+    const ox = o.pos.x - p.pos.x;
+    const oz = o.pos.z - p.pos.z;
+    const along = ox * ux + oz * uz;
+    if (along < 0.6 || along > bd || Math.abs(-uz * ox + ux * oz) > NUTMEG_LANE) continue;
+    // (Facing him, more or less: a man turned side-on or running away has his legs closed to it.)
+    if (-(Math.cos(o.facing) * ux + Math.sin(o.facing) * uz) < 0.35) continue;
+    bd = along;
+    best = o;
+  }
+  return best;
 }
 
 function trySkill(m: Match, p: Player, pad: Pad, st: SkillState): void {
@@ -354,7 +499,10 @@ function trySkill(m: Match, p: Player, pad: Pad, st: SkillState): void {
   const sp = p.speed();
   const ux = sp > 1 ? p.vel.x / sp : Math.cos(p.facing);
   const uz = sp > 1 ? p.vel.z / sp : Math.sin(p.facing);
-  const { kind, turn } = skillKind(ux, uz, pad.mx, pad.mz);
+  const sq = squaredUp(m, p, ux, uz);
+  const pick = skillKind(ux, uz, pad.mx, pad.mz, sp, sq !== null);
+  const kind = pick.kind;
+  const turn = kind === 'ballroll' ? awaySide(m, p, ux, uz) : pick.turn;
   const sl = Math.hypot(pad.mx, pad.mz);
   const since = st.t - st.last;
   st.last = st.t;
@@ -363,11 +511,47 @@ function trySkill(m: Match, p: Player, pad: Pad, st: SkillState): void {
   const mv: SkillMove = {
     kind, player: p.idx, t: 0, dur: SKILL_T[kind], ux, uz, lx: -uz * turn, lz: ux * turn,
     bx: sl >= STICK_DEAD ? pad.mx / sl : -ux, bz: sl >= STICK_DEAD ? pad.mz / sl : -uz, entry: sp, grade: 'show',
-    flicked: false, landX: 0, landZ: 0, chaseEnd: 0,
+    flicked: false, landX: 0, landZ: 0, chaseEnd: 0, through: kind === 'nutmeg' && sq ? sq.idx : -1, round: 1,
   };
+  if (kind === 'nutmeg' && sq) mv.round = -Math.sign(-uz * (sq.pos.x - p.pos.x) + ux * (sq.pos.z - p.pos.z)) || 1;
   st.move = mv;
   mv.grade = gradeMove(m, p, st, since);
   if (mv.grade === 'perfect') p.burstT = Math.max(p.burstT, mv.dur + PERFECT_BURST);
+}
+
+/** BALL ROLL: across him away from the nearest man (+1 / -1 across his facing `ux, uz`; nobody near: +1). */
+function awaySide(m: Match, p: Player, ux: number, uz: number): number {
+  let best = Infinity;
+  let side = 1;
+  for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
+    if (o.sentOff) continue;
+    const d = dist2(o.pos.x, o.pos.z, p.pos.x, p.pos.z);
+    if (d >= best) continue;
+    best = d;
+    side = -Math.sign(-uz * (o.pos.x - p.pos.x) + ux * (o.pos.z - p.pos.z)) || 1;
+  }
+  return side;
+}
+
+/** How well the move suits beating `o` (FIT_*: added to the GOOD roll's odds). */
+function moveFit(p: Player, mv: SkillMove, o: Player): number {
+  const ox = o.pos.x - p.pos.x;
+  const oz = o.pos.z - p.pos.z;
+  const ol = Math.hypot(ox, oz) || 1;
+  const front = (ox * mv.ux + oz * mv.uz) / ol;
+  switch (mv.kind) {
+    case 'nutmeg': return o.idx === mv.through ? FIT_NUTMEG : 0;
+    case 'rainbow': return o.state === 'slide' ? FIT_OVER_SLIDE : 0;
+    case 'elastico':
+    case 'roulette':
+    case 'croqueta': return front > 0.5 ? FIT_SIDE : 0;
+    case 'heelchop':
+    case 'dragback': {
+      const closing = -(o.vel.x * ox + o.vel.z * oz) / ol;
+      return closing > 2 ? FIT_AWAY : 0;
+    }
+    default: return 0;
+  }
 }
 
 /**
@@ -398,10 +582,13 @@ function gradeMove(m: Match, p: Player, st: SkillState, since: number): SkillGra
     const edge = (p.stat.dribbling - o.stat.defending) / 100;
     const shift = vsHuman(m.aiSkill(o.side)).cut;
     const late = o.commitT > 0 || o.state === 'slide';
-    const pWin = (late ? clamp(0.5 + edge * 0.6 + shift, 0.3, 0.7) : clamp(0.3 + edge * 0.6 + shift, 0.12, 0.5)) * spam;
+    const fit = moveFit(p, st.move!, o);
+    const pWin = (late ? clamp(0.5 + edge * 0.6 + shift + fit, 0.3, 0.8) : clamp(0.3 + edge * 0.6 + shift + fit, 0.12, 0.6)) * spam;
     if (m.rng.chance(pWin)) {
       wrongFoot(m, p, o);
       if (o.state === 'slide') o.slideHit = true;
+      // (Beaten: he doesn't get it back off the move itself; a flick or a nutmeg till the dribbler has it again.)
+      st.guard(o, st.move!.dur + GOOD_SHIELD, st.move!.kind === 'rainbow' || st.move!.kind === 'nutmeg');
       beat = true;
     }
   }
@@ -428,6 +615,9 @@ function beatPerfect(m: Match, p: Player, o: Player, st: SkillState): void {
   if (o.state === 'slide') o.slideHit = true;
   st.stumble = { idx: o.idx, at: st.t, dur };
   st.perfects++;
+  // Out of it: he can't touch the ball for the move and PERFECT_SHIELD s more (a flick or a nutmeg: till it's back).
+  const mv = st.move!;
+  st.guard(o, mv.dur + PERFECT_SHIELD, mv.kind === 'rainbow' || mv.kind === 'nutmeg');
 }
 
 /** The move under way: how it carries him and the ball this step; it ends on time, or the moment the ball isn't his. */
@@ -439,6 +629,7 @@ function stepMove(m: Match, p: Player, pad: Pad, st: SkillState, dt: number): vo
     st.move = null;
     return;
   }
+  const u0 = clamp(mv.t / mv.dur, 0, 1);
   mv.t += dt;
   const u = clamp(mv.t / mv.dur, 0, 1);
   // (The skill cut isn't read off the stick meanwhile: the move is the stick's.)
@@ -447,6 +638,12 @@ function stepMove(m: Match, p: Player, pad: Pad, st: SkillState, dt: number): vo
   as.hist.length = 0;
   const run = Math.atan2(mv.uz, mv.ux);
   const pace = Math.max(1, p.jogPace());
+  /** Slip him sideways (mv.lx, lz) by the change in `f` (m) over this step. */
+  const slip = (f: (x: number) => number) => {
+    const d = f(u) - f(u0);
+    p.pos.x += mv.lx * d;
+    p.pos.z += mv.lz * d;
+  };
   switch (mv.kind) {
     case 'roulette': {
       // On along his run, slower, while the spin carries him across: ROULETTE_SLIP m over the move (sin-shaped).
@@ -455,9 +652,30 @@ function stepMove(m: Match, p: Player, pad: Pad, st: SkillState, dt: number): vo
       p.wantZ = (mv.uz * on) / pace;
       p.sprint = false;
       p.faceTarget = run;
-      const slip = ROULETTE_SLIP * (Math.PI / 2) * Math.sin(Math.PI * u) * (dt / mv.dur);
-      p.pos.x += mv.lx * slip;
-      p.pos.z += mv.lz * slip;
+      slip((x) => ROULETTE_SLIP * 0.5 * (1 - Math.cos(Math.PI * x)));
+      break;
+    }
+    case 'elastico': {
+      // Out with the outside of the boot (a feint the other way), then snapped back in across him, at speed.
+      runAt(p, mv.ux, mv.uz, Math.max(2.5, mv.entry * ELASTICO_ON));
+      p.faceTarget = run;
+      slip((x) => (x < 0.35 ? -ELASTICO_FEINT * Math.sin((Math.PI / 2) * (x / 0.35)) :
+        -ELASTICO_FEINT + (ELASTICO_SLIP + ELASTICO_FEINT) * smooth((x - 0.35) / 0.65)));
+      break;
+    }
+    case 'croqueta': {
+      // Foot to foot: a quick shift across him, still going.
+      runAt(p, mv.ux, mv.uz, Math.min(mv.entry * CROQUETA_ON + 1, CROQUETA_MAX));
+      p.faceTarget = run;
+      slip((x) => CROQUETA_SLIP * smooth(x));
+      break;
+    }
+    case 'ballroll': {
+      // Standing: the sole rolls it across him, away from his man; he keeps his shape.
+      p.wantX = p.wantZ = 0;
+      p.sprint = false;
+      p.faceTarget = run;
+      slip((x) => BALL_ROLL_SLIP * smooth(x));
       break;
     }
     case 'stepover': {
@@ -477,19 +695,42 @@ function stepMove(m: Match, p: Player, pad: Pad, st: SkillState, dt: number): vo
       p.faceTarget = u > 0.25 ? Math.atan2(mv.bz, mv.bx) : run;
       break;
     }
-    case 'rainbow': {
+    case 'heelchop': {
+      // Planted, then chopped behind the standing leg and away the stick's way at pace.
+      if (u < HEEL_CHOP_AT) {
+        p.wantX = mv.ux * 0.2;
+        p.wantZ = mv.uz * 0.2;
+        p.sprint = false;
+        p.faceTarget = run;
+      } else {
+        runAt(p, mv.bx, mv.bz, Math.max(HEEL_CHOP_MIN, mv.entry * HEEL_CHOP_ON));
+        p.faceTarget = Math.atan2(mv.bz, mv.bx);
+      }
+      break;
+    }
+    case 'rainbow':
+    case 'nutmeg': {
       if (!mv.flicked) {
         p.wantX = mv.ux * 0.55;
         p.wantZ = mv.uz * 0.55;
         p.sprint = false;
         p.faceTarget = run;
-        if (mv.t >= FLICK_AT) flick(m, p, mv);
+        if (mv.kind === 'rainbow' && mv.t >= FLICK_AT) flick(m, p, mv);
+        else if (mv.kind === 'nutmeg' && mv.t >= NUTMEG_AT) nutmeg(m, p, mv);
         break;
       }
-      // After it: onto where it comes down, unless the stick takes him somewhere else.
+      // After it: onto where it comes down (round the man it went through), unless the stick takes him elsewhere.
       m.ctl[p.side].switchT = 0;
-      const tx = mv.landX - p.pos.x;
-      const tz = mv.landZ - p.pos.z;
+      let gx = mv.kind === 'nutmeg' ? b.pos.x : mv.landX;
+      let gz = mv.kind === 'nutmeg' ? b.pos.z : mv.landZ;
+      const o = mv.through >= 0 ? m.players[mv.through] : null;
+      if (o && (o.pos.x - p.pos.x) * mv.ux + (o.pos.z - p.pos.z) * mv.uz > -0.3) {
+        // Not past him yet: round his side first.
+        gx = o.pos.x - mv.uz * mv.round * NUTMEG_ROUND + mv.ux * 0.6;
+        gz = o.pos.z + mv.ux * mv.round * NUTMEG_ROUND + mv.uz * 0.6;
+      }
+      const tx = gx - p.pos.x;
+      const tz = gz - p.pos.z;
       const tl = Math.hypot(tx, tz);
       const sl = Math.hypot(pad.mx, pad.mz);
       const own = sl > STICK_DEAD && tl > 0.5 && (pad.mx * tx + pad.mz * tz) / (sl * tl) < 0.5;
@@ -503,7 +744,38 @@ function stepMove(m: Match, p: Player, pad: Pad, st: SkillState, dt: number): vo
       return;
     }
   }
-  if (mv.t >= mv.dur) st.move = null;
+  if (mv.t >= mv.dur) {
+    st.move = null;
+    // A PERFECT: off and away at once (the burst: PERFECT_BURST, Player.burstT).
+    if (mv.grade === 'perfect') {
+      const back = mv.kind === 'dragback' || mv.kind === 'heelchop';
+      const sl = Math.hypot(pad.mx, pad.mz);
+      let dx = back ? mv.bx : mv.ux;
+      let dz = back ? mv.bz : mv.uz;
+      if (!back && sl > STICK_DEAD && (pad.mx * dx + pad.mz * dz) / sl > -0.2) {
+        dx = pad.mx / sl;
+        dz = pad.mz / sl;
+      }
+      const v = Math.max(p.speed(), p.sprintPace() * PERFECT_KICK);
+      p.vel.x = dx * v;
+      p.vel.z = dz * v;
+    }
+  }
+}
+
+const smooth = (x: number) => {
+  const t = clamp(x, 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+/** Run him at `v` m/s along (`dx, dz`) with the ball: a sprint when a jog can't make it. */
+function runAt(p: Player, dx: number, dz: number, v: number): void {
+  const jog = Math.max(1, p.jogPace() * 0.95);
+  p.sprint = v > jog;
+  const top = Math.max(1, p.sprint ? p.sprintPace() * 0.95 : jog);
+  const k = Math.min(1, v / top);
+  p.wantX = dx * k;
+  p.wantZ = dz * k;
 }
 
 /** RAINBOW FLICK: the ball up off the back of his heel, over a man in front, to come down FLICK_LAND m on. */
@@ -526,6 +798,40 @@ function flick(m: Match, p: Player, mv: SkillMove): void {
   mv.landX = b.pos.x + mv.ux * FLICK_LAND * 0.94;
   mv.landZ = b.pos.z + mv.uz * FLICK_LAND * 0.94;
   mv.chaseEnd = mv.t + T + FLICK_CHASE;
+}
+
+/** NUTMEG: knocked through the man's legs (mv.through) to stop NUTMEG_PAST m beyond him; he goes round to it. */
+function nutmeg(m: Match, p: Player, mv: SkillMove): void {
+  const b = m.ball;
+  const o = mv.through >= 0 ? m.players[mv.through] : null;
+  const along = o ? Math.max(1, (o.pos.x - b.pos.x) * mv.ux + (o.pos.z - b.pos.z) * mv.uz) : 2;
+  const D = along + NUTMEG_PAST;
+  const v = rollSpeedFor(D);
+  b.owner = -1;
+  b.vel.x = mv.ux * v;
+  b.vel.z = mv.uz * v;
+  b.vel.y = 0;
+  b.lastTouch = p.idx;
+  b.lastTouchSide = p.side;
+  p.kickCooldown = Math.max(p.kickCooldown, FLICK_COOL);
+  m.passTarget = -1;
+  mv.flicked = true;
+  mv.landX = b.pos.x + mv.ux * D;
+  mv.landZ = b.pos.z + mv.uz * D;
+  mv.chaseEnd = mv.t + (2 * D) / v + NUTMEG_CHASE;
+}
+
+/** The pace (m/s) a ball rolled along the grass needs to stop `d` m on (ROLL_A + ROLL_B v of rolling resistance). */
+function rollSpeedFor(d: number): number {
+  const dist = (v: number) => (v - (ROLL_A / ROLL_B) * Math.log(1 + (ROLL_B * v) / ROLL_A)) / ROLL_B;
+  let lo = 0;
+  let hi = 30;
+  for (let i = 0; i < 30; i++) {
+    const mid = (lo + hi) / 2;
+    if (dist(mid) < d) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
 }
 
 /**
@@ -560,7 +866,9 @@ export function skillPose(m: Match, p: Player): { kind: 'move' | 'load' | 'stumb
   }
   const own = m.ctl[p.side].skill.move;
   if (own && own.player === p.idx && own.t < own.dur) {
-    const turn = own.kind === 'roulette' ? (-own.uz * own.lx + own.ux * own.lz >= 0 ? 1 : -1) : 1;
+    const sided = own.kind === 'roulette' || own.kind === 'elastico' || own.kind === 'croqueta' || own.kind === 'ballroll';
+    const chop = own.kind === 'heelchop' ? (-own.uz * own.bx + own.ux * own.bz >= 0 ? 1 : -1) : 1;
+    const turn = sided ? (-own.uz * own.lx + own.ux * own.lz >= 0 ? 1 : -1) : own.kind === 'nutmeg' ? own.round : chop;
     return { kind: 'move', code: SKILL_CODE[own.kind], t: own.t, dur: own.dur, turn };
   }
   const st = m.ctl[p.side === 0 ? 1 : 0].skill;

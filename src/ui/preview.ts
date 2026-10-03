@@ -173,7 +173,8 @@ export class StadiumPreview {
     try {
       this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+      // (2x like the kit previews: a small card, sharp on a phone's 3x screen.)
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     } catch {
       this.renderer = null; // No second WebGL context: the caller keeps its flat drawing.
     }

@@ -204,7 +204,9 @@ describe('finishing (human 1v1 against the keeper)', () => {
     // (Round 6 made aiming with the stick reliable: a corner picked from an angle is found more often.)
     expect(angled.goal).toBeLessThanOrEqual(0.45);
     expect(close.goal).toBeGreaterThan(angled.goal);
-    expect(close.goal).toBeLessThanOrEqual(0.72);
+    // (2026-10-03, the owner: "its hard to score": the AI keeper reads the human's strike from inside 20 m a beat later,
+    // keeper.ts HUMAN_STRIKE_UNREAD, and his finish is a touch truer: 12 m alone ~75%, from 71%. 0.72 -> 0.8.)
+    expect(close.goal).toBeLessThanOrEqual(0.8);
     expect(mid.goal).toBeGreaterThan(long.goal);
     // Keepers hold or push out more of the long ones (it was 30-60% parried behind for corners).
     expect(long.parriedToCorner).toBeLessThanOrEqual(0.2);
@@ -317,9 +319,10 @@ describe('edge-of-the-box finishing (shd.js)', () => {
     expect(stick16.goal).toBeGreaterThanOrEqual(0.25);
     expect(stick16.wide).toBeLessThanOrEqual(0.25);
     // Close in stays the better chance, without being a formality.
+    // (2026-10-03: 0.75 -> 0.82, see the 12 m 1v1 above: a full strike from 12 m ~78%.)
     for (const r of [tap12, full12]) {
       expect(r.goal).toBeGreaterThanOrEqual(0.4);
-      expect(r.goal).toBeLessThanOrEqual(0.75);
+      expect(r.goal).toBeLessThanOrEqual(0.82);
     }
     expect(long25.goal).toBeLessThan(tap16.goal);
     // Parries go back into play (or into the box) far more often than behind for corners.
@@ -328,7 +331,9 @@ describe('edge-of-the-box finishing (shd.js)', () => {
     // eslint-disable-next-line no-console
     console.log(`saves ending in a corner: ${corners}/${saves}`);
     expect(saves).toBeGreaterThan(60);
-    expect(corners / saves).toBeLessThanOrEqual(0.3);
+    // (2026-10-03: 0.3 -> 0.35. The AI keeper reads the human's strike from inside 20 m a beat later, keeper.ts
+    // HUMAN_STRIKE_UNREAD, so more of the saves he still makes are at full stretch, pushed behind: 29 of 88 here.)
+    expect(corners / saves).toBeLessThanOrEqual(0.35);
   }, 120_000);
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOTTOM_DIVISION, MATCHDAYS, SQUAD_MAX, SQUAD_MIN, YOU,
-  buyPlayer, canBuy, createClub, migrateCareer, newSeason, nextMatch, playerPrice, refreshMarket, resolveMatchday, rivalRating, rivalSquad,
+  buyPlayer, canBuy, createClub, cupDue, migrateCareer, newSeason, nextMatch, playerPrice, refreshMarket, resolveCupTie, resolveMatchday, rivalRating, rivalSquad,
   rivalTeam, startNextSeason, tuneToOverall, userFixture,
   type CareerState, type LeagueClub,
 } from '../src/meta/career';
@@ -28,6 +28,8 @@ function career(seed = 7, division = BOTTOM_DIVISION): CareerState {
 
 /** Play the current matchday (a draw) so the market ticks over to the next week. */
 function play(st: CareerState, wallet: { coins: number }, my = 1, their = 1): boolean {
+  // A BLOCKY CUP tie due comes first (the league waits for it): the same score, through on penalties if level.
+  if (cupDue(st) >= 0) resolveCupTie(st, my, their, my >= their);
   const s = st.season!;
   const f = userFixture(s, s.matchday);
   const home = f ? f.home === YOU : true;

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Ads, APP_AD_EVERY, APP_AD_GAP_MS } from '../src/platform/ads';
+import { Ads, APP_AD_GAP_MS, APP_AD_MATCH_GAP_MS, APP_AD_MOMENT_GAP_MS } from '../src/platform/ads';
 
 /**
  * The iPhone / iPad app's ads (platform/ads.ts, provider 'app'): Google AdMob through the Capacitor plugin, mocked
- * here. Kid-safe settings, ads loaded ahead, a reward only on the reward event, interstitials capped, NO ADS kept.
+ * here. Kid-safe settings, ads loaded ahead, a reward only on the reward event, an interstitial at every break but
+ * never back to back, NO ADS kept.
  */
 
 const h = vi.hoisted(() => {
@@ -113,32 +114,99 @@ describe('ads in the iPhone / iPad app (AdMob)', () => {
     expect(h.AdMob.showRewardVideoAd).toHaveBeenCalledTimes(1);
   });
 
-  it(`interstitials: one at most every ${APP_AD_EVERY} breaks and ${APP_AD_GAP_MS / 60_000} minutes apart`, async () => {
+  it(`interstitials: at the very first half-time, then every break at least ${APP_AD_GAP_MS / 1000} s after the last ad closed`, async () => {
     const ads = await appAds();
     h.AdMob.showInterstitial.mockImplementation(async () => { queueMicrotask(() => h.emit('interstitialAdDismissed')); });
-    const breaks = async (n: number) => {
-      for (let i = 0; i < n; i++) {
-        await ads.midgame();
-        await flush();
-      }
+    const brk = async (at: 'match' | 'halftime') => {
+      await ads.midgame(at);
+      await flush();
     };
-    await breaks(APP_AD_EVERY - 1);
-    expect(h.AdMob.showInterstitial).not.toHaveBeenCalled();
-    await breaks(1);
+    // (The owner saw none: the old cap wanted two breaks first, and only counted the ones between matches.)
+    await brk('halftime');
     expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(1);
-    // Enough breaks again, but too soon after the last one.
-    await breaks(APP_AD_EVERY * 2);
+    // The next match's kick-off right after it: no second ad back to back. A kick-off waits the longer
+    // APP_AD_MATCH_GAP_MS (half-time is the regular one), a half-time APP_AD_GAP_MS.
+    await brk('match');
     expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(1);
-    vi.setSystemTime(Date.now() + APP_AD_GAP_MS);
-    await breaks(1);
+    vi.setSystemTime(Date.now() + APP_AD_MATCH_GAP_MS - 1000);
+    await brk('match');
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 1000);
+    await brk('match');
     expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(Date.now() + APP_AD_GAP_MS - 1000);
+    await brk('halftime');
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(Date.now() + 1000);
+    await brk('halftime');
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(3);
+  });
+
+  it('the gap counts from when the ad closed, a rewarded one too; one that never showed starts no gap', async () => {
+    const ads = await appAds();
+    // A long ad: closed APP_AD_GAP_MS after it began. The next break straight after it waits.
+    h.AdMob.showInterstitial.mockImplementationOnce(async () => {
+      setTimeout(() => h.emit('interstitialAdDismissed'), APP_AD_GAP_MS);
+    });
+    const shown = ads.midgame('halftime');
+    await vi.advanceTimersByTimeAsync(APP_AD_GAP_MS);
+    await shown;
+    await flush();
+    await ads.midgame('match');
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(1);
+    // A rewarded ad the player chose: the half-time straight after it runs clean.
+    vi.setSystemTime(Date.now() + APP_AD_GAP_MS);
+    h.AdMob.showRewardVideoAd.mockImplementationOnce(async () => {
+      h.emit('onRewardedVideoAdReward');
+      h.emit('onRewardedVideoAdDismissed');
+      return { type: 'coins', amount: 1 };
+    });
+    expect(await ads.rewarded()).toBe(true);
+    await flush();
+    await ads.midgame('halftime');
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(1);
+    // One that fails to show: the very next break may try again (a kick-off one too, once clear of its longer gap).
+    vi.setSystemTime(Date.now() + APP_AD_MATCH_GAP_MS);
+    h.AdMob.showInterstitial.mockImplementationOnce(async () => { queueMicrotask(() => h.emit('interstitialAdFailedToShow')); });
+    await ads.midgame('halftime');
+    await flush();
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(2);
+    h.AdMob.showInterstitial.mockImplementationOnce(async () => { queueMicrotask(() => h.emit('interstitialAdDismissed')); });
+    await ads.midgame('match');
+    await flush();
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(3);
+  });
+
+  it(`a Football Moment's quick retries: one before a try at most every ${APP_AD_MOMENT_GAP_MS / 60_000} minutes`, async () => {
+    const ads = await appAds();
+    h.AdMob.showInterstitial.mockImplementation(async () => { queueMicrotask(() => h.emit('interstitialAdDismissed')); });
+    await ads.midgame('moment');
+    await flush();
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + APP_AD_GAP_MS + 1000);
+    await ads.midgame('moment');
+    await flush();
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + APP_AD_MOMENT_GAP_MS);
+    await ads.midgame('moment');
+    await flush();
+    expect(h.AdMob.showInterstitial).toHaveBeenCalledTimes(2);
+  });
+
+  it('an interstitial that is not loaded yet is skipped (the game never waits on one) and asked for again', async () => {
+    h.AdMob.prepareInterstitial.mockImplementationOnce(() => new Promise(() => {}));
+    const ads = await appAds();
+    await ads.midgame('halftime');
+    expect(h.AdMob.showInterstitial).not.toHaveBeenCalled();
   });
 
   it('NO ADS stops every interstitial; rewarded ads stay (they are the player\'s choice)', async () => {
     const ads = await appAds();
     ads.adFree = () => true;
-    vi.setSystemTime(Date.now() + APP_AD_GAP_MS * 3);
-    for (let i = 0; i < APP_AD_EVERY * 3; i++) await ads.midgame();
+    for (let i = 0; i < 6; i++) {
+      vi.setSystemTime(Date.now() + APP_AD_GAP_MS * 2);
+      await ads.midgame(i % 2 ? 'match' : 'halftime');
+    }
     expect(h.AdMob.showInterstitial).not.toHaveBeenCalled();
     expect(ads.rewardedAvailable).toBe(true);
   });

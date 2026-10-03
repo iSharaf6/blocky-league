@@ -19,6 +19,7 @@ import {
   type ShopItem,
 } from '../meta/shop';
 import { ads } from '../platform/ads';
+import { buzz } from '../platform/haptics';
 import { FIRST_BUY_MULT, PRODUCT_NOADS, PRODUCT_STARTER, iap, type IapGrant, type IapProduct } from '../platform/iap';
 import { passTotals } from '../meta/pass';
 import { seasonDaysLeft, seasonOf, seasonTheme } from '../meta/season';
@@ -39,10 +40,16 @@ export type ShopTab = ShopCat | 'players' | 'coins';
 
 const isCat = (t: ShopTab): t is ShopCat => t !== 'players' && t !== 'coins';
 
-/** The COINS tab exists where coins can be topped up: a store's coin packs (the apps) or a portal's rewarded ads. Plain web: no tab. */
+/**
+ * The COINS tab exists where coins can be topped up: the app (its store's Club Pass, NO ADS, packs: shown even before
+ * the store has answered, see Iap.shelf) or a portal's rewarded ads. Plain web: no tab.
+ */
 function coinsTab(): boolean {
-  return iap.available || ads.portal !== 'none';
+  return iap.storefront || ads.portal !== 'none';
 }
+
+/** A tap on something the app's store can't sell yet (not set up in App Store Connect, offline): said plainly, nothing charged. */
+export const STORE_NOT_READY = "THE APP STORE ISN'T READY YET. TRY AGAIN SOON";
 
 let open = false;
 /** The shop is on screen (main.ts then leaves a late purchase's message to it). */
@@ -185,6 +192,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     app.persist();
     sfx.coin();
     window.setTimeout(() => sfx.powerup(), 120);
+    buzz('success');
     draw();
     // (A restore reports once, as a whole: see handlers.restore.)
     if (!g.restored) say(grantText(g), 'good');
@@ -192,7 +200,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   onMetaClose(offGrant);
 
   const storeHtml = (): string => {
-    const list = iap.products();
+    // (Every product, the store's own where it has them; until it answers, stand-ins at the catalogue price.)
+    const list = iap.shelf();
     const packs = list.filter((p) => p.kind === 'consumable' && !p.pass);
     const starter = list.find((p) => p.id === PRODUCT_STARTER);
     const noAds = list.find((p) => p.id === PRODUCT_NOADS);
@@ -207,8 +216,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         <small>${p.firstBonus ? `DOUBLED ON YOUR FIRST BUY` : p.bonusPct ? `${fmt(p.baseCoins)} + ${p.bonusPct}% BONUS` : 'A QUICK TOP UP'}</small>
         <em class="sh-tag price buy">${esc(busy === p.id ? 'ONE MOMENT' : p.price)}</em>
       </button>`;
-    // The Starter Pack is a one-time offer: gone once bought. NO ADS only where this build has ads to remove.
-    const showNoAds = noAds && (noAds.owned || ads.showsInterstitials || iap.provider === 'dev');
+    // The Starter Pack is a one-time offer: gone once bought. NO ADS: always in the app (it shows ads).
+    const showNoAds = !!noAds;
     const season = seasonOf(save);
     const totals = passTotals(season.id);
     const days = seasonDaysLeft();
@@ -221,19 +230,22 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
           <div class="sh-dealtxt"><b>COIN DOUBLER</b><span>Every match pays double coins, for good. Challenges and gifts stay as they are.</span></div>
           ${doubler.owned ? '<em class="sh-tag own">OWNED</em>' : `<button class="btn btn-white" data-a="iap" data-id="${esc(doubler.id)}" ${off}>${esc(busy === doubler.id ? 'ONE MOMENT' : doubler.price)}</button>`}
         </section>` : '';
+    // Club Pass first, then the one-time offers (NO ADS, the Starter Pack), the coin packs and the Coin Doubler.
     return `<p class="sh-lede">Coins buy looks and more. Every match pays coins too, so top up only if you like.</p>
+      ${iap.available ? '' : '<p class="sh-wait">The App Store isn\'t ready yet, so nothing can be bought right now. Prices are in US dollars.</p>'}
       ${passCard}
-      <div class="sh-iaps">${packs.map(pack).join('')}</div>
-      ${doublerCard}
+      ${showNoAds && noAds ? `<section class="sh-deal noads">
+          <span class="sh-dealart" aria-hidden="true">${pixelIcon('film', '#fff', 5)}</span>
+          <div class="sh-dealtxt"><b>REMOVE ADS</b><span>No ad breaks between matches, for good. Ads you choose to watch for a bonus stay.</span></div>
+          ${noAds.owned ? '<em class="sh-tag own">OWNED</em>' : `<button class="btn btn-red" data-a="iap" data-id="${esc(noAds.id)}" ${off}>${esc(busy === noAds.id ? 'ONE MOMENT' : noAds.price)}</button>`}
+        </section>` : ''}
       ${starter && !starter.owned ? `<section class="sh-deal starter">
           <span class="sh-dealart" aria-hidden="true">${pixelIcon('ball', '#ffd23a', 6)}</span>
           <div class="sh-dealtxt"><b>STARTER PACK</b><span>${fmt(starter.coins)} COINS AND THE GOLD BALL${sep()}ONE TIME ONLY</span></div>
           <button class="btn btn-yellow" data-a="iap" data-id="${esc(starter.id)}" ${off}>${esc(busy === starter.id ? 'ONE MOMENT' : starter.price)}</button>
         </section>` : ''}
-      ${showNoAds ? `<section class="sh-deal noads">
-          <div class="sh-dealtxt"><b>NO ADS</b><span>No ad breaks between matches. Ads you choose to watch for a bonus stay.</span></div>
-          ${noAds.owned ? '<em class="sh-tag own">OWNED</em>' : `<button class="btn btn-white" data-a="iap" data-id="${esc(noAds.id)}" ${off}>${esc(busy === noAds.id ? 'ONE MOMENT' : noAds.price)}</button>`}
-        </section>` : ''}
+      <div class="sh-iaps">${packs.map(pack).join('')}</div>
+      ${doublerCard}
       <div class="sh-restore"><button class="btn btn-white" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE PURCHASES'}</button></div>
       <p class="mc-hint">Coins have no cash value and can't buy scout packs (those take Scout Tokens, earned by playing). Nothing you buy changes a match.</p>`;
   };
@@ -257,22 +269,47 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       </section>`;
   };
 
-  const coinsHtml = (): string => `<div class="sh-coins">${iap.available ? storeHtml() : ''}${ads.portal !== 'none' ? freeHtml() : ''}</div>`;
+  const coinsHtml = (): string => `<div class="sh-coins">${iap.storefront ? storeHtml() : ''}${ads.portal !== 'none' ? freeHtml() : ''}</div>`;
 
   // ---- cosmetics
 
-  const artOf = (it: ShopItem): string => {
-    if (it.cat === 'goalfx') return burstArt(it.id === 'club' ? [star.kit.shirt, star.kit.shirt2, 0xffd23a, 0xfbfbf4] : GOAL_FX_COLORS[it.id as keyof typeof GOAL_FX_COLORS]);
-    if (it.cat === 'trail') return trailArt(TRAIL_COLORS[it.id as keyof typeof TRAIL_COLORS]);
-    const key = `${it.cat}:${it.id}|${it.cat === 'celebration' ? kitKey : ''}`;
+  // A goal explosion or trail tile is a still of the real effect at its best moment (the stage runs the effect up
+  // to it): ~20 ms each, so they are taken one a frame after the tab draws, the flat art standing in till then.
+  const fxQueue: ShopItem[] = [];
+  let fxRaf = 0;
+  const fxKey = (it: ShopItem) => `${it.cat}:${it.id}|${kitKey}`;
+  const takeFxStill = () => {
+    fxRaf = 0;
+    const it = fxQueue.shift();
+    if (!it || !scr.panel.isConnected) return;
+    const key = fxKey(it);
     let url = stills.get(key);
-    if (!url && stage.ok) {
+    if (!url) {
+      url = stage.still({ cat: it.cat, id: it.id }, undefined, 144) ?? undefined;
+      if (url) stills.set(key, url);
+    }
+    const art = scr.panel.querySelector<HTMLElement>(`.sh-tile[data-id="${CSS.escape(it.id)}"] .sh-art`);
+    if (url && art) art.innerHTML = `<img class="sh-img" src="${url}" alt="" draggable="false">`;
+    if (fxQueue.length) fxRaf = requestAnimationFrame(takeFxStill);
+  };
+  onMetaClose(() => cancelAnimationFrame(fxRaf));
+
+  const artOf = (it: ShopItem): string => {
+    const fx = it.cat === 'goalfx' || it.cat === 'trail';
+    const key = fx ? fxKey(it) : `${it.cat}:${it.id}|${it.cat === 'celebration' ? kitKey : ''}`;
+    let url = stills.get(key);
+    if (!url && stage.ok && fx) {
+      if (!fxQueue.includes(it)) fxQueue.push(it);
+      if (!fxRaf) fxRaf = requestAnimationFrame(takeFxStill);
+    } else if (!url && stage.ok) {
       // A characteristic moment of each move (seconds into its loop on the stage).
       const at: { [k: string]: number } = { classic: 0.4, knee: 1.5, shush: 1.6, plane: 0.9, robot: 0.6, backflip: 1.32, pile: 2.6 };
       url = stage.still({ cat: it.cat, id: it.id }, it.cat === 'ball' ? 0.95 : at[it.id] ?? 1, 144) ?? undefined;
       if (url) stills.set(key, url);
     }
     if (url) return `<img class="sh-img" src="${url}" alt="" draggable="false">`;
+    if (it.cat === 'goalfx') return burstArt(it.id === 'club' ? [star.kit.shirt, star.kit.shirt2, 0xffd23a, 0xfbfbf4] : GOAL_FX_COLORS[it.id as keyof typeof GOAL_FX_COLORS]);
+    if (it.cat === 'trail') return trailArt(TRAIL_COLORS[it.id as keyof typeof TRAIL_COLORS]);
     return it.cat === 'ball' ? pixelIcon('ball', '#fbfbf4', 5) : pixelIcon('star', '#ffd23a', 5);
   };
 
@@ -313,7 +350,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     if (s === 'owned') return `<button class="btn btn-go btn-lg sh-act" data-a="equip">EQUIP</button>`;
     if (s === 'pass') {
       return `<p class="sh-short">EARN IT IN THE ${esc(it.name.toUpperCase())} CLUB PASS</p>
-        ${iap.available ? '<button class="btn btn-blue sh-more" data-a="tab" data-v="coins">SEE THE CLUB PASS</button>' : ''}`;
+        ${iap.storefront ? '<button class="btn btn-blue sh-more" data-a="tab" data-v="coins">SEE THE CLUB PASS</button>' : ''}`;
     }
     const price = priceOf(it);
     const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s> ` : '';
@@ -456,6 +493,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       ticks = [];
       sheet.classList.add('flipped');
       sfx.whoosh();
+      // (Felt card by card: a legend or an epic is a success.)
+      buzz(card.rarity === 'legend' || card.rarity === 'epic' ? 'success' : 'reveal');
       // The bigger the pull, the bigger the noise: a coin, the power-up chime, a cheer, the stadium horn.
       if (card.rarity === 'legend') sfx.goal();
       else if (card.rarity === 'epic') {
@@ -555,11 +594,14 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   const draw = () => {
     const cats = TABS.filter(([k]) => k !== 'coins' || coinsTab()).map(([k, long, short]) => {
       const dot = k === 'players' ? freePackReady(save, today()) : false;
-      return `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}"><span class="sh-long">${long}</span><span class="sh-shortl">${short}</span>${dot ? '<i class="sh-dot">FREE</i>' : ''}</button>`;
+      // The money tab stands out (gold); in the app it sells the Club Pass and NO ADS too, and says so.
+      const money = k === 'coins';
+      const name = money && iap.storefront ? 'PASS AND COINS' : long;
+      return `<button class="${k === tab ? 'on' : ''} ${money ? 'sh-money' : ''}" data-a="tab" data-v="${k}"><span class="sh-long">${name}</span><span class="sh-shortl">${short}</span>${dot ? '<i class="sh-dot">FREE</i>' : ''}</button>`;
     }).join('');
     const body = tab === 'players' ? playersHtml() : tab === 'coins' ? coinsHtml() : catHtml(tab);
     scr.render(
-      `${topBar(backLabel, 'SHOP', iap.available ? 'EARN COINS PLAYING OR TOP UP' : 'COINS COME FROM PLAYING', shownCoins)}
+      `${topBar(backLabel, 'SHOP', iap.storefront ? 'EARN COINS PLAYING OR TOP UP' : 'COINS COME FROM PLAYING', shownCoins)}
       <div class="seg mc-tabs sh-tabs">${cats}</div>
       ${body}`,
       handlers,
@@ -629,6 +671,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       popKey = itemKey(tab, id);
       sfx.coin();
       window.setTimeout(() => sfx.powerup(), 120);
+      buzz('success');
       draw();
       burst(scr, r.item);
       say(`${r.item.name.toUpperCase()} IS YOURS. EQUIPPED!`, 'good');
@@ -672,6 +715,11 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     iap: async (el: HTMLElement) => {
       const id = el.dataset.id;
       if (!id || busy) return;
+      // A stand-in the store can't sell yet: say so, and nothing happens (no purchase is ever faked).
+      if (!iap.canSell(id)) {
+        say(STORE_NOT_READY, 'info');
+        return;
+      }
       busy = id;
       draw();
       const r = await iap.buy(id);
@@ -716,6 +764,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         app.persist();
         shownCoins = Math.min(shownCoins, r.coins - FREE_AD_COINS);
         sfx.coin();
+        buzz('success');
         draw();
         say(`+${FREE_AD_COINS} COINS${r.left > 0 ? `. ${r.left} MORE ${r.left === 1 ? 'AD' : 'ADS'} TODAY` : '. THAT IS TODAY\'S LAST ONE'}`, 'good');
         return;
@@ -746,7 +795,7 @@ function grantText(g: IapGrant): string {
     if (it) things.push(`THE ${it.name.toUpperCase()} ${CAT_LABEL[it.cat].toUpperCase()}`);
   }
   if (g.noAds) things.push('NO ADS IS ON');
-  if (g.pass) things.push('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN BADGES, SEASON');
+  if (g.pass) things.push('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN SEASON');
   if (g.doubler) things.push('EVERY MATCH NOW PAYS DOUBLE');
   if (g.firstBonus) things.push('FIRST BUY DOUBLED');
   return things.length ? things.join(' AND ') : 'THANK YOU';

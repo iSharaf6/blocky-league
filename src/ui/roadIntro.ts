@@ -40,7 +40,7 @@ export function roadIntro(app: AppContext, o: RoadIntroOptions): void {
   const points: [string, string, string][] = [
     ['shirt', 'START AT THE BOTTOM', `Found your club with a scrappy squad in the ${title(DIVISION_NAMES[BOTTOM_DIVISION])}.`],
     ['gear', 'BUILD IT UP', 'Win matches for coins. Sign players, train your squad and upgrade your ground.'],
-    ['trophy', 'CLIMB TO THE TOP', `Finish in the top two to go up. ${n[0].toUpperCase()}${n.slice(1)} divisions stand between you and the ${title(DIVISION_NAMES[TOP_DIVISION])}.`],
+    ['trophy', 'CLIMB TO THE TOP', `Finish in the top two to go up, and chase the Blocky Cup every season. ${n[0].toUpperCase()}${n.slice(1)} divisions stand between you and the ${title(DIVISION_NAMES[TOP_DIVISION])}.`],
   ];
   scr.render(
     `${topBar(o.first ? 'MENU' : 'BACK', 'ROAD TO GLORY', 'BUILD YOUR CLUB FROM THE BOTTOM UP', app.save.coins)}

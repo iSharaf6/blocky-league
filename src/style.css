@@ -1200,6 +1200,32 @@ kbd {
   cursor: pointer;
 }
 
+/* The match camera button (WIDE / NORMAL / CLOSE / CINEMATIC): in the top row beside pause, clear of the touch
+   controls along the bottom, the minimap and the notch (the safe-area inset, as pause). */
+.hud-cam {
+  top: max(12px, env(safe-area-inset-top));
+  right: calc(max(12px, env(safe-area-inset-right)) + 54px);
+  pointer-events: auto;
+  appearance: none;
+  border: 0;
+  padding: 0;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  background: var(--ink);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.hud-cam .picon { width: 26px; height: 26px; }
+.hud-cam:active { transform: translateY(2px); box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); }
+@media (max-width: 720px), (max-height: 480px) {
+  .hud-cam { width: 38px; height: 38px; right: calc(max(12px, env(safe-area-inset-right)) + 44px); }
+  .hud-cam .picon { width: 22px; height: 22px; }
+}
+
 .hud-banner {
   inset: 0;
   display: grid;
@@ -1866,8 +1892,10 @@ kbd {
 .tb-through { --c: var(--blue); --cd: var(--blue-d); right: 4px; bottom: 106px; width: 90px; height: 90px; }
 .tb-sprint { --c: var(--ink-2); --cd: var(--ink); right: 106px; bottom: 104px; width: 72px; height: 72px; font-size: 16px; }
 
-/* Defending: PASS becomes SWITCH (yellow, dark label for contrast). */
-.touch[data-ctx='defend'] .tb-pass { --c: var(--yellow); --cd: var(--yellow-d); color: var(--ink); text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4); }
+/* Defending (ui/touch.ts SENDS): the big button is PRESS (blue, under the thumb) and the top one SWITCH (yellow, dark
+   label for contrast). */
+.touch[data-ctx='defend'] .tb-pass { --c: var(--blue); --cd: var(--blue-d); }
+.touch[data-ctx='defend'] .tb-through { --c: var(--yellow); --cd: var(--yellow-d); color: var(--ink); text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4); }
 
 /* Dead-ball moments (goal celebration, replay, half / full time, any menu) hide the controls; the HUD is
    "dead" then too, except for our own behind-the-ball set pieces, which always carry a hint. */
@@ -3853,6 +3881,44 @@ button.mc-pl:active {
   .cup-bracket { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cup-hero { padding: 10px 12px; gap: 12px; }
   .cup-hero p { font-size: 15px; }
+}
+
+/* BLOCKY CUP inside ROAD TO GLORY (ui/cup.ts, ui/career.ts): the cup chip and card, the compact draw on the hub's
+   BLOCKY CUP tab, the cup rows in YOUR SEASON, the trophy cabinet and the summary's cup line. */
+.mc-chip.cup { background: var(--yellow); color: var(--ink); }
+.mc-chip.cup .picon.inl { margin-right: 0.35em; }
+.mc-next.cup-next { border-color: var(--yellow-d); box-shadow: 0 5px 0 var(--yellow-d); }
+.cup-head { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--ink); color: var(--cream); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25); }
+.cup-head .picon { flex: none; }
+.cup-status { display: grid; gap: 3px; min-width: 0; }
+.cup-status b { font: 700 18px var(--px); color: var(--yellow); }
+.cup-status span { font: 400 14px var(--round); letter-spacing: 1px; }
+.cup-bracket.compact { gap: 8px; }
+.panel.mc .cup-bracket.compact .cup-rh { font-size: 13px; padding: 4px 4px 3px; }
+.cup-bracket.compact .cup-ties { gap: 6px; }
+.cup-bracket.compact .cup-tie { border-width: 2px; box-shadow: 0 3px 0 var(--cream-2); }
+.cup-bracket.compact .cup-tie.next { box-shadow: 0 3px 0 var(--blue-d); }
+.cup-bracket.compact .ct-row { padding: 4px 5px 3px; font-size: 14px; }
+.cup-bracket.compact .cup-winner { padding: 8px 4px 6px; font-size: 15px; }
+.ct-row span em { margin-left: 5px; font-size: 11px; font-style: normal; letter-spacing: 0.5px; color: var(--ink-2); }
+.mc-ys.cup { box-shadow: inset 6px 0 0 var(--yellow); }
+.mc-ys.cup .mc-ysmd { padding-left: 4px; font-size: 12px; letter-spacing: 0; }
+.cup-cabinet { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px; background: #fff; border: 3px solid var(--ink); font: 400 14px var(--round); letter-spacing: 1px; }
+.cup-cabinet b { margin-left: auto; font-weight: 400; }
+.cup-sumline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; background: #fff; border: 3px solid var(--ink); font: 400 15px var(--round); letter-spacing: 1px; }
+.cup-sumline.won { background: var(--yellow); box-shadow: 0 4px 0 var(--yellow-d); }
+.cup-sumline b { font: 700 16px var(--px); }
+.cup-sumline em { margin-left: auto; font-style: normal; font-size: 14px; }
+.mc-hist .picon.inl { margin: 0 0 0 0.35em; }
+/* The trophy lift's title fits its panel (CHAMPIONS! at 58px ran off the right edge). */
+.cup-trophy-screen .panel .cup-champ-title { font-size: clamp(30px, 6vw, 48px); }
+@media (max-height: 450px) {
+  .cup-head { padding: 6px 10px; }
+  .cup-status b { font-size: 16px; }
+  /* Landscape phones: a smaller trophy, so the title, the club and the prize money show above CONTINUE. */
+  .cup-trophy-screen .cup-lift { gap: 6px; padding-top: 6px; }
+  .cup-trophy-screen .cup-big .picon { width: 96px; height: 96px; }
+  .cup-trophy-screen .panel .cup-champ-title { font-size: 36px; }
 }
 
 /* Trophy lift. */
@@ -6197,3 +6263,367 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 @media (max-height: 400px) {
   .main-wrap.with-captain .main-col { padding-left: 10px; }
 }
+
+/* ================================================================ round 15: the hub (ui/menus.ts main())
+   Your club first, as in Dream League Soccer. A top bar across the screen (the level; GIFT, REMOVE ADS, the coins,
+   HOW TO PLAY, the SETTINGS gear), your captain down the left in your club's kit, then the ROAD TO GLORY hero card
+   beside the four second-tier tiles (MY CLUB, TRANSFERS, SHOP, SEASON), and under them the small third tier (QUICK
+   MATCH, EVENTS) with today's challenges in one strip. Type is sized with --ts (Settings > TEXT SIZE). Fits phones on
+   their side (852 by 393, 667 by 375), the iPad, the 900 by 506 and 800 by 450 portal frames and the desktop; an
+   upright window (the web) stacks it and scrolls. (The old .main-wrap / .tiles.t14 rules above are no longer drawn.) */
+
+:root { --ts: 1; }
+:root.ts-small { --ts: 0.88; }
+:root.ts-large { --ts: 1.18; }
+
+.screen.hub-screen {
+  align-items: stretch;
+  justify-content: center;
+  overflow: hidden;
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+}
+.hub {
+  --gap: clamp(6px, 1.3vmin, 14px);
+  width: 100%;
+  max-width: 1240px;
+  height: 100%;
+  max-height: 780px;
+  margin: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "top" "body" "foot";
+  gap: var(--gap);
+  min-height: 0;
+}
+.hub.with-cap {
+  grid-template-columns: clamp(104px, 19vw, 290px) minmax(0, 1fr);
+  grid-template-areas: "top top" "cap body" "cap foot";
+}
+.hub button { -webkit-tap-highlight-color: transparent; }
+.hub button:focus-visible { outline: 4px solid var(--yellow); outline-offset: 3px; }
+
+/* ---- the top bar */
+.hub-top { grid-area: top; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.hub-acts { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: none; }
+.hub-lv {
+  appearance: none; border: 0; margin: 0; padding: 0; font: inherit; cursor: pointer;
+  display: flex; align-items: stretch; min-width: 0; max-width: 300px; flex: 0 1 auto; overflow: hidden;
+  color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3); text-align: left;
+  transition: transform 0.06s, box-shadow 0.06s;
+}
+div.hub-lv { cursor: default; }
+.hub-lv .hl-n {
+  flex: none; display: grid; place-items: center; align-content: center; gap: 1px; min-width: calc(46px * var(--ts)); padding: 4px 8px 3px;
+  font: 400 calc(21px * var(--ts)) / 1 var(--round); color: var(--ink); background: var(--yellow); box-shadow: inset 0 -4px 0 var(--yellow-d);
+}
+.hub-lv .hl-n small { font: 400 calc(10px * var(--ts)) / 1 var(--round); letter-spacing: 1px; }
+.hub-lv .hl-txt { display: grid; gap: 4px; align-content: center; min-width: 0; padding: 5px 12px 6px 10px; }
+.hub-lv .hl-txt > b { font: 400 calc(15px * var(--ts)) / 1.05 var(--round); letter-spacing: 0.5px; color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-lv .hl-fire { margin-left: 6px; color: #ff9a3a; }
+.hub-lv .hl-bar { display: block; height: 6px; min-width: 84px; background: rgba(255, 255, 255, 0.2); }
+.hub-lv .hl-bar u { display: block; height: 100%; background: var(--go); text-decoration: none; }
+.hub-lv .hl-next { font: 400 calc(11px * var(--ts)) / 1 var(--round); letter-spacing: 0.5px; color: #cfcab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3); }
+.hub-acts .btn {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 0; height: calc(38px * var(--ts)); padding: 0 12px;
+  font: 400 calc(15px * var(--ts)) / 1 var(--round); letter-spacing: 0.5px; box-shadow: 0 4px 0 var(--d), 0 6px 0 rgba(38, 38, 46, 0.2);
+}
+.hub-acts .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--d); }
+.hub-gift b { color: var(--red-d); }
+.hub-gift { animation: hub-throb 1.6s ease-in-out infinite; }
+.hub-noads .hn-p { padding: 3px 5px 2px; font: inherit; background: rgba(0, 0, 0, 0.22); }
+.hub-acts .coins.hub-coins { height: calc(38px * var(--ts)); padding: 0 5px 0 8px; gap: 8px; font-size: calc(17px * var(--ts)); }
+.hub-coins .shop-tag { padding: 5px 8px 4px; font-size: calc(15px * var(--ts)); }
+.hub-ico {
+  appearance: none; border: 0; margin: 0; padding: 0; cursor: pointer; flex: none;
+  display: grid; place-items: center; width: calc(38px * var(--ts)); height: calc(38px * var(--ts));
+  font: 400 calc(21px * var(--ts)) / 1 var(--round); color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  transition: transform 0.06s, box-shadow 0.06s;
+}
+.hub-ico .picon { width: calc(22px * var(--ts)); height: calc(22px * var(--ts)); }
+
+/* ---- your captain */
+.hub-cap {
+  grid-area: cap; appearance: none; border: 0; margin: 0; padding: 0; font: inherit; color: inherit; background: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; min-height: 0;
+}
+.hub-cap3d { display: block; flex: 1 1 0; width: 100%; min-height: 0; filter: drop-shadow(0 10px 0 rgba(38, 38, 46, 0.25)); }
+.hub-captag {
+  display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 4px; min-width: 0; padding: 7px 8px 8px; text-align: center;
+  color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3); transition: transform 0.06s;
+}
+.hub-captag > b { display: flex; align-items: center; justify-content: center; gap: 6px; max-width: 100%; font: 400 calc(15px * var(--ts)) / 1.05 var(--round); letter-spacing: 0.5px; }
+.hub-captag > b > span { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-align: left; }
+.hub-captag .hc-div { max-width: 100%; font: 400 calc(11px * var(--ts)) / 1.1 var(--round); letter-spacing: 0.5px; color: #cfcab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-captag .crest-svg { flex: none; width: calc(18px * var(--ts)); height: auto; }
+.hub-captag .hc-meta { max-width: 100%; font: 400 calc(12px * var(--ts)) / 1.1 var(--round); letter-spacing: 0.5px; color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-captag .hc-cta { max-width: 100%; padding: 4px 6px 3px; font: 400 calc(12px * var(--ts)) / 1 var(--round); font-style: normal; letter-spacing: 0.5px; color: var(--ink); background: var(--yellow); box-shadow: inset 0 -3px 0 var(--yellow-d); }
+.hub-cap:active .hub-captag { transform: translateY(3px); }
+
+/* ---- the hero: ROAD TO GLORY (or PLAY NOW until the first goal) */
+.hub-body { grid-area: body; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: var(--gap); min-height: 0; min-width: 0; }
+.hub-main { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; min-height: 0; }
+.hub-hero {
+  appearance: none; border: 4px solid var(--ink); margin: 0; font: inherit; cursor: pointer;
+  position: relative; overflow: hidden; flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 4px;
+  padding: clamp(8px, 2vmin, 20px) clamp(10px, 2vmin, 22px) clamp(10px, 2.2vmin, 22px);
+  color: #fff; text-align: center;
+  background: linear-gradient(160deg, #3f8cf2 0%, #2f7be8 35%, #1c4fa3 100%);
+  box-shadow: 0 6px 0 var(--ink), 0 12px 0 rgba(38, 38, 46, 0.2), inset 0 -8px 0 rgba(0, 0, 0, 0.18);
+  transition: transform 0.06s, box-shadow 0.06s;
+}
+/* Mown stripes, like a pitch from above. */
+.hub-hero::before { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0 28px, transparent 28px 56px); pointer-events: none; }
+.hub-hero > * { position: relative; }
+.hub-hero:active { transform: translateY(5px); box-shadow: 0 1px 0 var(--ink), inset 0 -8px 0 rgba(0, 0, 0, 0.18); }
+.hub-hero.now { background: linear-gradient(160deg, #4fd06b 0%, #3cc15a 35%, #238a3b 100%); }
+.hh-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; }
+.hub-hero.now .hh-head, .hub-hero.create .hh-head { justify-content: center; }
+.hh-title { font: 400 calc(clamp(18px, 2.5vw, 32px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; color: var(--yellow); text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); white-space: nowrap; }
+.hub-hero.now .hh-title { color: #fff; }
+.hh-meta { min-width: 0; padding: 4px 7px 3px; font: 400 calc(11px * var(--ts)) / 1 var(--round); font-style: normal; letter-spacing: 1px; color: var(--ink); background: var(--cream); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hh-fix { display: flex; align-items: center; justify-content: center; gap: clamp(6px, 2vw, 26px); width: 100%; min-width: 0; }
+.hh-side { display: grid; justify-items: center; gap: 3px; flex: 1 1 0; min-width: 0; }
+.hh-fix.solo .hh-side { flex: 0 1 auto; }
+.hh-side .crest-svg { width: calc(clamp(30px, 6.5vmin, 66px) * var(--ts)); height: auto; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.3)); }
+.hh-side b { max-width: 100%; font: 400 calc(clamp(16px, 2.3vw, 28px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hh-side small { font: 400 calc(11px * var(--ts)) / 1 var(--round); letter-spacing: 1px; color: #d5e4ff; }
+.hh-vs { flex: none; padding: 5px 8px 4px; font: 400 calc(clamp(14px, 1.9vw, 22px) * var(--ts)) / 1 var(--round); color: var(--yellow); background: rgba(0, 0, 0, 0.28); }
+.hh-sub { max-width: 100%; font: 400 calc(12px * var(--ts)) / 1.2 var(--round); letter-spacing: 1px; color: #e6eeff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-hero.now .hh-sub { color: #effff2; }
+.hub-hero.create .hh-sub { white-space: normal; }
+.hh-big { font: 400 calc(clamp(17px, 2.3vw, 28px) * var(--ts)) / 1.05 var(--round); letter-spacing: 1px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3); }
+.hh-art { line-height: 0; }
+.hh-art .picon { width: calc(clamp(30px, 7.5vmin, 72px) * var(--ts)); height: auto; filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.3)); }
+.hh-play {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; max-width: 380px;
+  min-height: calc(42px * var(--ts)); padding: 7px 16px 6px;
+  font: 400 calc(clamp(17px, 2.3vw, 28px) * var(--ts)) / 1 var(--round); letter-spacing: 2px; white-space: nowrap;
+  color: #fff; background: var(--go); box-shadow: 0 5px 0 var(--go-d), inset 0 -4px 0 rgba(0, 0, 0, 0.15); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
+  animation: hub-throb 1.6s ease-in-out infinite;
+}
+.hub-hero.now .hh-play { color: var(--ink); background: var(--yellow); box-shadow: 0 5px 0 var(--yellow-d); text-shadow: none; }
+.hh-tri { flex: none; width: 0; height: 0; border-top: 0.42em solid transparent; border-bottom: 0.42em solid transparent; border-left: 0.62em solid currentColor; }
+@keyframes hub-throb { 50% { transform: scale(1.04); } }
+/* ROAD TO GLORY waiting for the first goal. */
+.hub-lockroad {
+  appearance: none; border: 0; margin: 0; font: inherit; cursor: pointer; flex: none;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; align-items: center; padding: 6px 12px 6px 10px; text-align: left;
+  color: #f7f5ee; background: #8f8c85; box-shadow: 0 4px 0 #62605b;
+}
+.hub-lockroad .picon { grid-row: 1 / span 2; }
+.hub-lockroad b { font: 400 calc(15px * var(--ts)) / 1 var(--round); letter-spacing: 1px; }
+.hub-lockroad small { font: 400 calc(11px * var(--ts)) / 1.15 var(--round); letter-spacing: 0.5px; }
+.hub-lockroad.nope, .ev-card.locked.nope { animation: tile-nope 0.32s ease-in-out; }
+
+/* ---- second tier: MY CLUB, TRANSFERS, SHOP, SEASON */
+.hub-t2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: var(--gap); min-width: 0; min-height: 0; }
+.hub-tile {
+  --c: var(--cream); --d: #b9b5aa; --t: var(--ink);
+  appearance: none; border: 3px solid var(--ink); margin: 0; font: inherit; cursor: pointer;
+  position: relative; overflow: hidden; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px;
+  padding: clamp(6px, 1.5vmin, 16px) clamp(8px, 1.5vmin, 16px); text-align: left;
+  color: var(--t); background: var(--c); box-shadow: 0 5px 0 var(--d), inset 0 -5px 0 rgba(0, 0, 0, 0.12);
+  transition: transform 0.06s, box-shadow 0.06s;
+}
+.hub-tile:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--d), inset 0 -5px 0 rgba(0, 0, 0, 0.12); }
+.hub-tile .ht-ic { line-height: 0; margin-bottom: 2px; }
+.hub-tile .ht-ic .picon { width: calc(clamp(22px, 5.2vmin, 46px) * var(--ts)); height: auto; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.22)); }
+.hub-tile .ht-t { max-width: 100%; font: 400 calc(clamp(15px, 1.9vw, 24px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-tile .ht-s {
+  max-width: 100%; font: 400 calc(11px * var(--ts)) / 1.15 var(--round); letter-spacing: 0.4px; opacity: 0.92;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.hub-tile.t-club { --c: var(--yellow); --d: var(--yellow-d); }
+.hub-tile.t-transfers { --c: var(--blue); --d: var(--blue-d); --t: #fff; }
+.hub-tile.t-shop { --c: #ff7a2f; --d: #c4520f; --t: #fff; }
+.hub-tile.t-season { --c: #6a35d6; --d: #3a1f78; --t: #fff; background: linear-gradient(150deg, #9a6cff 0%, #6a35d6 45%, #4a22a8 100%); }
+.hub-tile.t-transfers .ht-t, .hub-tile.t-shop .ht-t, .hub-tile.t-season .ht-t { text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
+.hub-badge {
+  position: absolute; top: 5px; right: 5px; min-width: calc(22px * var(--ts)); padding: 4px 5px 3px;
+  font: 400 calc(13px * var(--ts)) / 1 var(--round); font-style: normal; text-align: center;
+  color: #fff; background: var(--red); box-shadow: 0 3px 0 var(--red-d);
+}
+.t-season .ht-t { color: var(--yellow); }
+.t-season .hs-tier { font: 400 calc(12px * var(--ts)) / 1 var(--round); letter-spacing: 1px; color: #e9e0ff; }
+.t-season .hs-tier em { font-style: normal; font-size: 1.4em; color: #fff; }
+.t-season .hs-bar { display: block; width: 100%; height: 7px; background: rgba(0, 0, 0, 0.32); }
+.t-season .hs-bar u { display: block; height: 100%; background: var(--yellow); text-decoration: none; }
+.t-season.offer { padding-bottom: calc(clamp(6px, 1.5vmin, 16px) + 20px * var(--ts)); }
+.t-season .hs-pass {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 6px 3px;
+  font: 400 calc(12px * var(--ts)) / 1 var(--round); font-style: normal; letter-spacing: 1.5px; text-align: center;
+  color: var(--ink); background: var(--yellow); box-shadow: inset 0 -3px 0 var(--yellow-d);
+}
+.t-season.ready .hub-badge { animation: hub-throb 1.1s ease-in-out infinite; }
+
+/* ---- third tier: QUICK MATCH, EVENTS, today's challenges */
+.hub-foot { grid-area: foot; position: relative; display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: var(--gap); align-items: stretch; min-width: 0; }
+.hub-mini {
+  appearance: none; border: 3px solid var(--ink); margin: 0; font: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px; min-height: calc(44px * var(--ts)); padding: 0 14px 0 10px; white-space: nowrap;
+  color: var(--ink); background: var(--cream); box-shadow: 0 4px 0 #b9b5aa; transition: transform 0.06s, box-shadow 0.06s;
+}
+.hub-mini b { font: 400 calc(15px * var(--ts)) / 1 var(--round); letter-spacing: 1px; }
+.hub-mini .picon { width: calc(20px * var(--ts)); height: auto; }
+.hub-mini.t-events { color: #fff; background: #1fb3a6; box-shadow: 0 4px 0 #13786f; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.2); }
+.hub-mini:active { transform: translateY(3px); box-shadow: 0 1px 0 #b9b5aa; }
+.hub-daily-wrap { position: relative; display: grid; min-width: 0; }
+.hub-daily {
+  appearance: none; border: 0; margin: 0; font: inherit; cursor: pointer;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(36px, 20%) auto; align-items: center; gap: 10px;
+  min-width: 0; padding: 0 12px; text-align: left; color: var(--cream); background: rgba(38, 38, 46, 0.88); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+}
+.hub-daily.fresh { box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3), inset 0 0 0 3px var(--yellow); }
+.hub-daily .hd-h { display: grid; justify-items: start; gap: 2px; }
+.hub-daily .hd-h b { font: 400 calc(13px * var(--ts)) / 1 var(--round); letter-spacing: 1px; color: var(--yellow); }
+.hub-daily .hd-h em { font: 400 calc(12px * var(--ts)) / 1 var(--round); font-style: normal; opacity: 0.85; }
+.hub-daily .hd-text { min-width: 0; font: 400 calc(13px * var(--ts)) / 1.15 var(--round); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-daily .hd-bar { display: block; height: 8px; background: rgba(255, 255, 255, 0.18); }
+.hub-daily .hd-bar i { display: block; height: 100%; background: var(--go); }
+.hub-daily .hd-coins { font: 400 calc(13px * var(--ts)) / 1 var(--round); font-style: normal; color: var(--yellow); }
+.hub-dl {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 5; width: min(440px, 92vw); margin: 0; padding: 10px 12px; list-style: none;
+  display: grid; gap: 7px; color: var(--cream); background: rgba(38, 38, 46, 0.96); border-top: 3px solid var(--yellow); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3);
+}
+.hub-dl[hidden] { display: none; }
+.hub-dl li { display: grid; grid-template-columns: minmax(0, 1fr) 64px auto auto; align-items: center; gap: 8px; font: 400 calc(13px * var(--ts)) / 1.2 var(--round); }
+.hub-dl .dc-bar { display: block; height: 7px; background: rgba(255, 255, 255, 0.18); }
+.hub-dl .dc-bar i { display: block; height: 100%; background: var(--go); }
+.hub-dl .dc-n { font-weight: 400; }
+.hub-dl .dc-coins { font-style: normal; color: var(--yellow); }
+.hub-dl li.done { opacity: 0.7; }
+.hub-dl li.done .dc-n { color: var(--go); }
+
+/* ---- EVENTS (ui/menus.ts events()) */
+.ev-panel { width: min(760px, 94vw); }
+.ev-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.ev-card {
+  --c: var(--cream); --d: #b9b5aa;
+  appearance: none; border: 3px solid var(--ink); margin: 0; font: inherit; cursor: pointer; color: #fff; text-align: left;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto auto; column-gap: 12px; row-gap: 3px; align-items: center;
+  padding: 12px; background: var(--c); box-shadow: 0 5px 0 var(--d), inset 0 -5px 0 rgba(0, 0, 0, 0.12); transition: transform 0.06s, box-shadow 0.06s;
+}
+.ev-card:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--d); }
+.ev-card .ev-ic { grid-row: 1 / span 3; line-height: 0; }
+.ev-card .ev-ic .picon { width: 40px; height: 40px; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.22)); }
+.ev-card b { font: 400 20px / 1 var(--round); letter-spacing: 1px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
+.ev-card span { font: 400 14px / 1.2 var(--round); }
+.ev-card small { font: 400 12px / 1.1 var(--round); letter-spacing: 0.5px; opacity: 0.9; text-transform: uppercase; }
+.ev-card.ev-mom { --c: #1fb3a6; --d: #13786f; }
+.ev-card.ev-run { --c: #ff8a2a; --d: #c45f12; }
+.ev-card.ev-blitz { --c: #8a5cf6; --d: #5b36b8; }
+.ev-card.ev-online { --c: var(--blue); --d: var(--blue-d); }
+.ev-card.locked { --c: #8f8c85; --d: #62605b; }
+@media (max-height: 450px) {
+  .ev-grid { gap: 10px; }
+  .ev-card { padding: 9px 10px; }
+  .ev-card .ev-ic .picon { width: 32px; height: 32px; }
+  .ev-card b { font-size: 18px; }
+}
+
+/* ---- sizes */
+/* Phones on their side, and short frames: the level's next unlock and the gift's word step aside. */
+@media (max-height: 520px) {
+  .hub-lv .hl-next { display: none; }
+  .hub-lv .hl-txt { gap: 5px; }
+}
+@media (max-width: 760px) {
+  .hub-acts .hg-w, .hub-noads .hn-p { display: none; }
+  .hub-daily { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .hub-daily .hd-bar { display: none; }
+  .hub-acts { gap: 6px; }
+  .hub-acts .btn { padding: 0 10px; }
+  .hub-lv { max-width: 190px; }
+}
+/* The smallest phones on their side (667 by 375): the hero's crests and the tiles' icons come down a step. */
+@media (max-height: 380px) {
+  .hub-tile .ht-ic .picon { width: calc(20px * var(--ts)); }
+  .hh-side .crest-svg { width: calc(28px * var(--ts)); }
+}
+/* Big screens (an iPad, a desktop): room for more air and bigger captions. */
+@media (min-height: 700px) and (min-width: 1000px) {
+  .hub-tile .ht-s, .hh-sub, .hub-daily .hd-text { font-size: calc(15px * var(--ts)); }
+  .hh-side small, .hh-meta { font-size: calc(13px * var(--ts)); }
+  .hub-acts .btn, .hub-acts .coins.hub-coins, .hub-ico { height: calc(46px * var(--ts)); }
+  .hub-ico { width: calc(46px * var(--ts)); }
+  .hub-mini { min-height: calc(54px * var(--ts)); padding: 0 20px 0 14px; }
+  .hub-mini b { font-size: calc(18px * var(--ts)); }
+  .hub-lv .hl-txt > b { font-size: calc(17px * var(--ts)); }
+  /* (The hero and the tiles grow with the screen's height, not only its width.) */
+  .hh-title { font-size: calc(clamp(24px, 4.4vmin, 42px) * var(--ts)); }
+  .hh-side .crest-svg { width: calc(clamp(40px, 11vmin, 112px) * var(--ts)); }
+  .hh-side b { font-size: calc(clamp(20px, 4.4vmin, 44px) * var(--ts)); }
+  .hh-side small, .hh-meta { font-size: calc(clamp(13px, 2vmin, 18px) * var(--ts)); }
+  .hh-vs { font-size: calc(clamp(18px, 3.4vmin, 32px) * var(--ts)); padding: 8px 12px 6px; }
+  .hh-sub { font-size: calc(clamp(15px, 2.2vmin, 20px) * var(--ts)); }
+  .hh-big { font-size: calc(clamp(22px, 4.2vmin, 40px) * var(--ts)); }
+  .hh-play { max-width: 460px; min-height: calc(64px * var(--ts)); font-size: calc(clamp(22px, 4vmin, 36px) * var(--ts)); }
+  .hub-tile .ht-ic .picon { width: calc(clamp(36px, 8vmin, 72px) * var(--ts)); }
+  .hub-tile .ht-t { font-size: calc(clamp(20px, 3.6vmin, 34px) * var(--ts)); }
+  .hub-tile .ht-s { font-size: calc(clamp(14px, 2vmin, 18px) * var(--ts)); }
+  .t-season .hs-tier { font-size: calc(clamp(14px, 2.2vmin, 20px) * var(--ts)); }
+  .t-season .hs-bar { height: 10px; }
+  .t-season .hs-pass { font-size: calc(clamp(14px, 2vmin, 18px) * var(--ts)); padding: 7px 8px 6px; }
+  .t-season.offer { padding-bottom: calc(clamp(6px, 1.5vmin, 16px) + 32px * var(--ts)); }
+  .hub-captag > b { font-size: calc(18px * var(--ts)); }
+  .hub-captag .hc-meta { font-size: calc(15px * var(--ts)); }
+  .hub-captag .hc-div { font-size: calc(13px * var(--ts)); }
+}
+/* Upright windows (the web on a phone held upright): one column that scrolls. */
+@media (max-aspect-ratio: 1/1) {
+  .screen.hub-screen { overflow-y: auto; align-items: flex-start; }
+  .hub, .hub.with-cap {
+    height: auto; max-height: none; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto;
+    grid-template-areas: "top" "cap" "body" "foot";
+  }
+  .hub-top { flex-wrap: wrap; }
+  .hub-cap { height: 30vh; }
+  .hub-body { grid-template-columns: minmax(0, 1fr); }
+  .hub-hero { min-height: 240px; }
+  .hub-t2 { grid-template-rows: auto; }
+  .hub-tile { min-height: 104px; }
+  .hub-foot { grid-template-columns: 1fr 1fr; }
+  .hub-daily-wrap { grid-column: 1 / -1; }
+  .hub-daily { min-height: 48px; }
+  .hub-dl { left: 0; width: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hh-play, .hub-gift, .t-season.ready .hub-badge { animation: none; }
+}
+
+/* ---------------------------------------------------------------- text size (Settings > TEXT SIZE, ui/textSize.ts)
+   MEDIUM is the designed size. SMALL and LARGE scale the hub's type (--ts above), every panel's contents (menus,
+   ROAD TO GLORY, the shop, full time: CSS zoom on the panel's children, the pinned button row left as it is) and the
+   HUD's words (font sizes: the HUD places some boxes itself, so they are never zoomed). The touch controls, the
+   pitch and the camera never read it. */
+:root:is(.ts-small, .ts-large) .panel > :not(.btn-row:last-child) { zoom: var(--ts); }
+:root:is(.ts-small, .ts-large) .menu-toast { font-size: calc(15px * var(--ts)); }
+:root:is(.ts-small, .ts-large) .scorebug { font-size: calc(clamp(16px, 1.8vw, 22px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-toast { font-size: calc(clamp(16px, 1.6vw, 20px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-hint { font-size: calc(clamp(16px, 1.5vw, 17px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-tip { font-size: calc(clamp(14px, 1.6vw, 18px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .cm-tag { font-size: calc(16px * var(--ts)); }
+:root:is(.ts-small, .ts-large) .cm-text { font-size: calc(clamp(15px, 1.35vw, 18px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-chip { font-size: calc(16px * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-replay b { font-size: calc(22px * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-replay span { font-size: calc(16px * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-timing em { font-size: calc(16px * var(--ts)); }
+@media (max-height: 450px) {
+  :root:is(.ts-small, .ts-large) .scorebug { font-size: calc(16px * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .hud-tip { font-size: calc(14px * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .cm-text { font-size: calc(14px * var(--ts)); }
+}
+/* (Before your club exists the hero has room: its shirt is the big picture.) */
+.hub-hero.create .hh-art .picon, .hub-hero.now .hh-art .picon { width: calc(clamp(40px, 13vmin, 110px) * var(--ts)); }
+/* A BLOCKY CUP tie inside the season: the hero turns cup red. */
+.hub-hero.road.cup { background: linear-gradient(160deg, #f0604f 0%, #ec4a3e 35%, #a62b22 100%); }
+.hub-hero.road.cup .hh-meta { color: var(--ink); background: var(--yellow); }
+.hh-vs .picon { display: block; margin: 0 auto 3px; width: calc(clamp(18px, 4vmin, 36px) * var(--ts)); height: auto; }
+/* Settings: REMOVE ADS, first in GENERAL in the app, in the shop's red. */
+.toggles button.set-noads { border-color: var(--red-d); background: #ffece9; }
+.toggles button.set-noads > span { color: var(--red-d); }
+.toggles button.set-noads > b.link { color: #fff; background: var(--red); box-shadow: 0 3px 0 var(--red-d); }

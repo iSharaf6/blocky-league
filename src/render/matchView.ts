@@ -320,6 +320,11 @@ export class MatchView {
     this.ball = new THREE.Mesh(buildBallGeometry(BALL_R * 1.25), charMaterial);
     this.ball.castShadow = true;
     this.group.add(this.ball);
+    // The strike flash's material, made now on a hidden stand-in: World.warmShaders compiles it with the rest
+    // instead of the first hard shot stalling on it.
+    const flashWarm = new THREE.Mesh(this.ball.geometry, this.flashMatBall());
+    flashWarm.visible = false;
+    this.group.add(flashWarm);
     // A soft blob keeps the ball readable when high in the air.
     const blob = new THREE.Mesh(
       new THREE.CircleGeometry(0.3, 16).rotateX(-Math.PI / 2),

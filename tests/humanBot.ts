@@ -42,6 +42,19 @@ export interface BotOptions {
    * it every ~0.75 s whenever a defender is within 3 m, whatever he is doing, the stick anywhere.
    */
   skills?: 'off' | 'react' | 'spam';
+  /**
+   * SPRINT (default 'button'): held the way a keyboard player holds it; 'none' never (a thumb on a phone with no
+   * free finger for it, and so no knock-on double taps either); 'auto' the touch AUTO SPRINT (Pad.autoSprint: the
+   * stick pushed all the way sprints).
+   */
+  sprint?: 'button' | 'none' | 'auto';
+  /**
+   * A casual phone player (default false), the way the owner plays rather than a tidy bot: slower to decide (0.3 to
+   * 0.45 s), passes aimed 30 degrees either way, shoots from up to 22 m whether the lane is clear or not (SHOOT held
+   * 0.2 to 0.6 s), turns sharply past a man less often, answers three tells in five and later (0.2 to 0.45 s), and
+   * taps SKILL with the thumb still pushing the stick the way he runs half the time.
+   */
+  casual?: boolean;
 }
 
 export interface BotTally {
@@ -132,7 +145,7 @@ export class HumanBot {
   constructor(seed: number, opts: BotOptions = {}) {
     this.s = (Math.imul(seed + 17, 2654435761) >>> 0) || 1;
     this.sk = (Math.imul(seed + 71, 2246822519) >>> 0) || 1;
-    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, skills: 'off', ...opts };
+    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, skills: 'off', sprint: 'button', casual: false, ...opts };
   }
 
   private skRnd(): number {
@@ -173,7 +186,13 @@ export class HumanBot {
       this.dbl--;
     }
     out.through = this.pressHeld;
-    for (const b of ['pass', 'shoot', 'through', 'sprint'] as Btn[]) {
+    const btns: Btn[] = this.o.sprint === 'button' ? ['pass', 'shoot', 'through', 'sprint'] : ['pass', 'shoot', 'through'];
+    if (this.o.sprint !== 'button') {
+      out.sprint = false;
+      this.dbl = 0;
+      if (this.o.sprint === 'auto') out.autoSprint = true;
+    }
+    for (const b of btns) {
       if (this.down[b] > 0) {
         if (b === 'sprint') out.sprint = true;
         else out[b] = true;
@@ -262,13 +281,13 @@ export class HumanBot {
     const hx = sp > 1 ? a.vel.x / sp : Math.cos(a.facing);
     const hz = sp > 1 ? a.vel.z / sp : Math.sin(a.facing);
     if (this.o.skills === 'react') {
-      if (!fresh || this.skRnd() >= 0.8) return;
+      if (!fresh || this.skRnd() >= (this.o.casual ? 0.6 : 0.8)) return;
       const thr = m.ctl[HS].skill.threat;
       const o = thr ? m.players[thr.by] : null;
-      // Across the run, away from the side he comes from.
+      // Across the run, away from the side he comes from (casual: half the time the thumb is still pushing ahead).
       const side = o ? lateral(a, o, hx, hz) : 1;
-      this.skillDir = { x: -hz * side, z: hx * side };
-      this.skillAt = this.frame + Math.round((0.16 + this.skRnd() * 0.14) / DT);
+      this.skillDir = this.o.casual && this.skRnd() < 0.5 ? { x: hx, z: hz } : { x: -hz * side, z: hx * side };
+      this.skillAt = this.frame + Math.round((this.o.casual ? 0.2 + this.skRnd() * 0.25 : 0.16 + this.skRnd() * 0.14) / DT);
       return;
     }
     // 'spam'
@@ -336,7 +355,7 @@ export class HumanBot {
     }
     this.think -= DT;
     if (this.think > 0) return;
-    this.think = 0.15 + this.rnd() * 0.06;
+    this.think = this.o.casual ? 0.3 + this.rnd() * 0.15 : 0.15 + this.rnd() * 0.06;
 
     const toGx = gx - c.pos.x;
     const toGz = -c.pos.z;
@@ -359,16 +378,17 @@ export class HumanBot {
 
     // ---- Shoot: inside ~18 m, at a decent angle, with a clear lane (from close in, whatever).
     const ang = Math.abs(Math.atan2(Math.abs(c.pos.z), Math.abs(gx - c.pos.x)));
-    if (dGoal < 19 && ang < 1.0 && this.ownT > 0.15) {
+    const cas = this.o.casual;
+    if (dGoal < (cas ? 22 : 19) && ang < (cas ? 1.1 : 1.0) && this.ownT > 0.15) {
       const k = m.keeperOf(1);
       const side = k && Math.abs(k.pos.z) > 0.3 ? -Math.sign(k.pos.z) : this.rnd() < 0.5 ? -1 : 1;
       const tz = side * GOAL_W * (0.28 + this.rnd() * 0.1);
       const clear = laneClear(m, c.pos.x, c.pos.z, gx, tz, 0.8);
-      if ((clear && this.rnd() < 0.85) || (dGoal < 12 && this.rnd() < 0.55)) {
+      if ((clear && this.rnd() < 0.85) || (dGoal < (cas ? 22 : 12) && this.rnd() < (cas ? 0.5 : 0.55))) {
         const sx = gx - c.pos.x;
         const sz = tz - c.pos.z;
         const sl = Math.hypot(sx, sz) || 1;
-        const hold = 0.22 + this.rnd() * 0.18 + (dGoal > 14 ? 0.05 : 0);
+        const hold = cas ? 0.2 + this.rnd() * 0.4 : 0.22 + this.rnd() * 0.18 + (dGoal > 14 ? 0.05 : 0);
         this.plan = { kind: 'shoot', t: 0, hold, x: sx / sl, z: sz / sl };
         this.down.shoot = Math.round(hold / DT);
         this.gap.shoot = 0;
@@ -394,7 +414,7 @@ export class HumanBot {
         this.tally.knockOns++;
         return;
       }
-      if (this.o.cuts && r < 0.45) {
+      if (this.o.cuts && r < (this.o.casual ? 0.2 : 0.45)) {
         // Away from the side he's shading, 80-100 degrees off the run.
         const side = lateral(c, no, hx, hz);
         const turn = (80 + this.rnd() * 20) * (Math.PI / 180);
@@ -428,7 +448,7 @@ export class HumanBot {
       if (t) {
         const run = t.vel.x * ad > 4 && (t.pos.x - c.pos.x) * ad > 6;
         const kind = run && this.rnd() < 0.35 ? 'through' : 'pass';
-        const err = (this.rnd() * 2 - 1) * (20 * Math.PI / 180);
+        const err = (this.rnd() * 2 - 1) * ((this.o.casual ? 30 : 20) * Math.PI / 180);
         const a = Math.atan2(t.pos.z - c.pos.z, t.pos.x - c.pos.x) + err;
         this.plan = { kind, t: 0, x: Math.cos(a), z: Math.sin(a) };
         this.stick.x = Math.cos(a);
@@ -486,7 +506,7 @@ export class HumanBot {
     // Holding a slide: keep the button down (the scripted hold), stick along the chase.
     if (this.down.shoot > 0) return;
     if (this.think > 0) return;
-    this.think = 0.15 + this.rnd() * 0.06;
+    this.think = this.o.casual ? 0.3 + this.rnd() * 0.15 : 0.15 + this.rnd() * 0.06;
     // Far from it, and a teammate much nearer: switch.
     if (d > 14 && this.switchCool <= 0) {
       let best = Infinity;

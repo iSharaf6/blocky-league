@@ -68,6 +68,19 @@ const PATH_LANE = 1.1;
 /** Close control: the ball pulled this much (m) nearer his body, and the stride's push-on scaled by this. */
 const CLOSE_PULL = 0.18;
 const CLOSE_PULSE = 0.5;
+/**
+ * ... and at a sprint (the owner: "the dribbling is slow"; with AUTO SPRINT his man sprints whenever the stick is
+ * pushed all the way): the stride still pushes it on, SPRINT_PULSE as far, so a sprinting dribble isn't a ball left
+ * a metre off his boot for every poke.
+ */
+const SPRINT_PULSE = 0.6;
+/**
+ * AUTO SPRINT (touch, Settings > Controls; Pad.autoSprint): the stick pushed this far over (0..1, past the dead zone)
+ * sprints without the SPRINT button, and keeps sprinting until it drops under AUTO_SPRINT_OFF (a thumb resting near
+ * the edge doesn't flicker between a jog and a sprint). A light push still jogs, with the close control.
+ */
+export const AUTO_SPRINT_ON = 0.7;
+export const AUTO_SPRINT_OFF = 0.58;
 /** A 'skill' event is emitted for a cut near a defender at most this often (s). */
 const SKILL_GAP = 1.2;
 
@@ -118,6 +131,17 @@ export class AssistState {
   /** TACKLE: the press being played out (tap / hold; `born`: Match.clock when pressed), and when the last one was. */
   tackle: { t: number; held: boolean; target: number; player: number; born: number } | null = null;
   lastPress = -9;
+  /** AUTO SPRINT is sprinting his man (autoRun: the stick's past AUTO_SPRINT_ON, and not yet back under AUTO_SPRINT_OFF). */
+  autoRun = false;
+}
+
+/**
+ * AUTO SPRINT (Pad.autoSprint, the touch thumbstick): does the stick (`stickLen`, 0..1) sprint his man this step?
+ * Only the SPRINT button's own presses stay the button's (the knock-on's double tap, a TACKLE tap with it held).
+ */
+export function autoRun(st: AssistState, pad: Pad, stickLen: number): boolean {
+  st.autoRun = !!pad.autoSprint && stickLen >= (st.autoRun ? AUTO_SPRINT_OFF : AUTO_SPRINT_ON);
+  return st.autoRun;
 }
 
 // ------------------------------------------------------------------ dribbling
@@ -303,7 +327,8 @@ export function closeTouch(m: Match, p: Player, pulse: number): number {
     }
     return pulse;
   }
-  if (p.sprint || p.touchT > 0 || p.state !== 'move') return pulse;
+  if (p.touchT > 0 || p.state !== 'move') return pulse;
+  if (p.sprint) return pulse * SPRINT_PULSE;
   return pulse * CLOSE_PULSE - CLOSE_PULL;
 }
 
@@ -397,6 +422,12 @@ export interface VsHuman {
    * within TIGHT_R m (closeTouch): fewer exposed touches for his PRESS steal and his taps to poke away.
    */
   tight: number;
+  /**
+   * How much of the human's shot help he gets (0..1; 2026-10-03, the owner: "its hard to score"): a man on him spoils
+   * his strike less (actions.ts HUMAN_PRESSURE) and the AI's keeper reads it a beat later (keeper.ts
+   * HUMAN_STRIKE_UNREAD). All of it on EASY and NORMAL, half on HARD, none on LEGEND.
+   */
+  shotHelp: number;
 }
 
 /** The menu's difficulty levels (MatchConfig.difficulty), and vsHuman's value at each (linear between). */
@@ -418,6 +449,7 @@ const VS_HUMAN: Record<keyof VsHuman, number[]> = {
   auto: [0.8, 0.26, 0.24, 0.2],
   read: [0.3, 10.5, 12, 15],
   tight: [0, 0.64, 0.68, 0.75],
+  shotHelp: [1, 1, 0.5, 0],
 };
 /** The human's man this near (m) an AI carrier: the carrier keeps it tighter (vsHuman.tight). */
 const TIGHT_R = 3.5;
@@ -430,7 +462,7 @@ export function vsHuman(skill: number): VsHuman {
   const at = (k: keyof VsHuman) => VS_HUMAN[k][i] + (VS_HUMAN[k][i + 1] - VS_HUMAN[k][i]) * f;
   return {
     press: at('press'), tackle: at('tackle'), resist: at('resist'), cut: at('cut'), takeOn: at('takeOn'), beaten: at('beaten'), auto: at('auto'),
-    read: at('read'), tight: at('tight'),
+    read: at('read'), tight: at('tight'), shotHelp: at('shotHelp'),
   };
 }
 

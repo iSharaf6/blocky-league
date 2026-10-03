@@ -20,7 +20,7 @@ import { MatchSession, type MatchResult, type SessionOptions } from './game/matc
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
 import { CAT_LABEL, DEFAULT_ID, earnTokens, equippedId, iapOf, inReach, newInShop, shopItem, shopOf, type ShopCat, type ShopItem } from './meta/shop';
 import { ads } from './platform/ads';
-import { adFree, coinDoubler, iap, PRODUCT_STARTER } from './platform/iap';
+import { adFree, coinDoubler, iap, PRODUCT_NOADS, PRODUCT_STARTER } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
 import { BOX_DEPTH, BOX_W, HALF_L } from './sim/constants';
@@ -28,13 +28,14 @@ import { finishScenario } from './sim/scenario';
 import type { Match } from './sim/match';
 import type { FormationId, KickKind, MatchEvent, MatchMode, Side } from './sim/types';
 import { DIFFICULTIES, DIFF_LEVEL, Menus, type MainInfo } from './ui/menus';
-import { DIVISION_NAMES, clubRating, clubTeam, migrateCareer, nextMatch, type ClubState } from './meta/career';
-import { ROUND_NAMES, clubRating as presetRating, migrateCup } from './meta/cup';
-import { overall } from './sim/types';
+import { clubRating, clubTeam, type ClubState } from './meta/career';
+import { clubRating as presetRating } from './meta/cup';
 import { openCareer } from './ui/career';
-import { openCup } from './ui/cup';
 import { careerState, closeMeta, openClub } from './ui/club';
-import { openShop, shopOpen } from './ui/shop';
+import { STORE_NOT_READY, openShop, shopOpen } from './ui/shop';
+import { captainCard, careerOf, roadCard, seasonCard, transfersNews } from './ui/hubInfo';
+import { openMarket } from './ui/market';
+import { applyTextSize } from './ui/textSize';
 import type { Projector } from './ui/hud';
 import { openMoments } from './ui/moments';
 import type { OnlineHost } from './ui/online';
@@ -45,11 +46,12 @@ import { saveClip, shareClip } from './ui/clips';
 import { openRun } from './ui/run';
 import { openBadges } from './ui/badges';
 import { BASICS } from './meta/moments';
-import { badgePending, nextBadgeGoal, recordMatchMeta, wornTitle, type MasteryMatch } from './meta/mastery';
+import { recordMatchMeta, wornTitle, type MasteryMatch } from './meta/mastery';
 import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
 import { gameCenterSignIn, queueGameCenterSync, syncGameCenter } from './platform/gameCenter';
+import { buzz, installUiHaptics, setHapticsLevel, setHapticsQuiet } from './platform/haptics';
 import { inNativeApp } from './platform/native';
 import { maybeAskForReview } from './platform/review';
 
@@ -244,7 +246,12 @@ function applySettings(): void {
   setBindings(s.keys, s.pad);
   TouchControls.stickMode = s.stick === 'fixed' ? 'fixed' : 'floating';
   menus.stick = TouchControls.stickMode;
+  // AUTO SPRINT (the touch stick) and VIBRATION (haptics), Settings > Controls.
+  TouchControls.autoSprint = controlsOf(s).autoSprint;
+  setHapticsLevel(controlsOf(s).vibration);
   document.body.classList.toggle('cb', !!s.colorblind);
+  // Menu and HUD text size (Settings > TEXT SIZE): never the touch controls, the pitch or the camera.
+  applyTextSize(s.textSize);
   if (session) {
     // (Not online: each side's controls there were agreed before the kick-off, and a change on one machine
     // only would split the two games apart.)
@@ -310,9 +317,8 @@ function giftToday(): { amount: number; streak: number } | null {
 }
 
 function mainInfo(): MainInfo {
-  const info: MainInfo = {};
+  const info: MainInfo = modeInfo();
   const q = PRESET_CLUBS[save.clubIdx];
-  const o = PRESET_CLUBS[save.opponentIdx];
   // The campaign (core/onboarding.ts): the big tile is the next basics drill, then the first match, then PLAY NOW.
   const hero = heroOf(onboarding(), played());
   if (hero.kind === 'basics') {
@@ -323,41 +329,34 @@ function mainInfo(): MainInfo {
     if (hero.kind === 'first') info.hero = { title: 'FIRST MATCH', kind: 'first' };
     info.playNow = `${p.club?.short ?? q.short} v ${PRESET_CLUBS[p.rival].short} ${SEP_MARK} ${DIFFICULTIES[p.difficulty]}`;
   }
-  info.locked = LOCKED_FEATURES.filter((f) => !featureOpen(onboarding(), f));
-  const run = save.run;
-  try {
-    info.run = runTileText(save);
-  } catch {
-    info.run = run?.best ? `BEST: ROUND ${run.best}` : 'ONE MORE RUN';
-  }
-  if (q && o) info.quick = `PICK TEAMS ${SEP_MARK} RULES`;
-  const moStars = momentStarsTotal(save);
-  info.moments = moStars ? `SHORT CHALLENGES ${SEP_MARK} ★ ${moStars}` : 'SHORT CHALLENGES';
   const user = cloudUser();
   if (user) info.account = user.name;
+  // The hub (ui/hubInfo.ts): your captain in your club's kit, ROAD TO GLORY's next fixture, the transfer news.
+  let career: ReturnType<typeof careerOf> = null;
   try {
-    const career = save.career ? migrateCareer(save.career, 1) : null;
-    const club = career?.club ?? null;
-    if (club && career) {
-      const nm = nextMatch(career);
-      const div = career.season ? DIVISION_NAMES[career.season.division] ?? '' : '';
-      // Opponent first: on small tiles the subtitle is cut with an ellipsis, and the next match matters most.
-      info.career = nm ? `v ${nm.rival.short} ${SEP_MARK} ${div}` : div || 'SEASON DONE';
-      info.club = `OVR ${clubRating(club)}`;
-      const star = [...club.squad.slice(0, 11)].sort((a, b) => overall(b) - overall(a))[0];
-      if (star) info.captain = { def: star, kit: club.kit, club: club.name.toUpperCase(), ovr: clubRating(club) };
-    } else {
-      info.career = 'START AT THE BOTTOM';
-      info.club = `KIT ${SEP_MARK} SQUAD`;
-    }
-    const cup = migrateCup(save.cup);
-    info.cup = cup && cup.status === 'active' ? `NEXT: ${ROUND_NAMES[Math.min(cup.round, 2)]}` : 'WIN THE TROPHY';
+    career = careerOf(save);
+    info.road = roadCard(career);
+    info.transfers = transfersNews(career);
   } catch {
     // A damaged career blob must never break the menu.
+    career = null;
+    info.road = { kind: 'create' };
   }
-  if (!info.captain && q) {
-    const team = makeTeam(q);
-    info.captain = { def: team.players[9], kit: q.kit, club: q.name.toUpperCase(), ovr: presetRating(save.clubIdx) };
+  try {
+    info.captain = captainCard(save, career);
+  } catch {
+    info.captain = undefined;
+  }
+  try {
+    // The SEASON tile: tier of 30, rewards waiting (badges too), and the Club Pass where this build sells it.
+    info.season = seasonCard(save, iap.storefront);
+  } catch {
+    // (Retention bookkeeping never breaks the menu.)
+  }
+  // REMOVE ADS in the top bar: the app, until NO ADS is bought (the store's price, else the catalogue's).
+  if (iap.storefront && !adFree(save)) {
+    const noAds = iap.shelf().find((x) => x.id === PRODUCT_NOADS);
+    if (noAds) info.noAds = { price: noAds.price };
   }
   const gift = giftToday();
   if (gift) info.gift = gift;
@@ -365,16 +364,9 @@ function mainInfo(): MainInfo {
   const p = save.progress;
   const lv = levelOf(p.xp);
   info.level = { level: lv.level, title: wornTitle(save) ?? levelTitle(lv.level), into: lv.into, need: lv.need };
-  try {
-    // The nearest badge tier (always a near goal on the level badge) and anything waiting to be claimed.
-    info.badgeGoal = save.mastery ? nextBadgeGoal(save.mastery)?.text : undefined;
-    info.badgesPending = badgePending(save);
-  } catch {
-    // (Retention bookkeeping never breaks the menu.)
-  }
   info.unlock = nextUnlock(save.progress.xp, shopOf(save).owned);
   try {
-    // The count on the coins / SHOP button: affordable things not seen yet, and the free daily pack.
+    // The count on the SHOP tile: affordable things not seen yet, and the free daily pack.
     info.shopNew = newInShop(save, localDay());
   } catch {
     // (The shop's bookkeeping never breaks the menu.)
@@ -384,6 +376,20 @@ function mainInfo(): MainInfo {
   if (daily.day !== dayBefore) persist();
   info.daily = { list: dailyChallenges(daily.day), progress: daily.progress, claimed: daily.claimed, fresh: daily.fresh };
   info.streak = p.streak;
+  return info;
+}
+
+/** What EVENTS shows (and the hub's locks): MOMENTS' stars, the Club Run's best, the modes still locked. */
+function modeInfo(): Pick<MainInfo, 'moments' | 'run' | 'locked'> {
+  const info: Pick<MainInfo, 'moments' | 'run' | 'locked'> = {};
+  info.locked = LOCKED_FEATURES.filter((f) => !featureOpen(onboarding(), f));
+  try {
+    info.run = runTileText(save);
+  } catch {
+    info.run = save.run?.best ? `BEST: ROUND ${save.run.best}` : 'ONE MORE RUN';
+  }
+  const moStars = momentStarsTotal(save);
+  info.moments = moStars ? `SHORT CHALLENGES ${SEP_MARK} ★ ${moStars}` : 'SHORT CHALLENGES';
   return info;
 }
 
@@ -429,7 +435,11 @@ function mainMenu(): void {
   const info = mainInfo();
   const backup = (): void => menus.backup(save, { onImport: reload, back: () => settings() });
   // (No BACKUP inside the iPhone / iPad app: its export is a browser download, and iOS backs the app up itself.)
-  const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', { backup: inNativeApp() ? undefined : backup });
+  // REMOVE ADS, first in Settings where this build sells it (the app): bought, it reads NO ADS: ON.
+  const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', {
+    backup: inNativeApp() ? undefined : backup,
+    removeAds: iap.storefront ? { price: info.noAds?.price ?? '', owned: adFree(save), buy: buyNoAds } : undefined,
+  });
   menus.main(save, {
     playNow: () => playNow(),
     account: cloudAvailable() ? () => openAccount({ save, persist, reload }, mainMenu) : undefined,
@@ -456,26 +466,64 @@ function mainMenu(): void {
       });
     },
     quick: () => quickMatch(),
-    blitz: () => quickMatch('blitz'),
-    moments: () => openMoments(app, mainMenu),
-    // (The condition written out here, not through a variable: the bundler drops the whole branch, the import
-    // with it, only when it can see the literal: see ONLINE below.)
-    online: !import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none'
-      ? inNativeApp() ? undefined : () => void import('./ui/online').then((o) => o.openOnline(onlineHost))
-      : undefined,
-    run: () => openRun(app, mainMenu),
+    events: () => eventsMenu(),
     locked: (f) => menus.toast(`SCORE YOUR FIRST GOAL TO UNLOCK ${FEATURE_NAMES[f]}`),
     unlocks: () => {
       const ladder = (): void => menus.unlocks(save, mainMenu, () => openBadges(app, ladder));
       ladder();
     },
     career: () => openCareer(app),
-    cup: () => openCup(app),
     club: () => openClub(app),
+    // TRANSFERS: straight into the market (no club yet: MY CLUB founds one first); its BACK comes home.
+    transfers: () => openMarket(app),
+    season: () => openBadges(app, mainMenu, 'season'),
     shop: () => openShop(app),
+    // The coins: the shop's COINS tab where coins can be topped up (the app's store, a portal's free coins).
+    coins: iap.storefront || ads.portal !== 'none' ? () => openShop(app, { tab: 'coins' }) : undefined,
+    removeAds: info.noAds
+      ? () => void buyNoAds().then((ok) => {
+        // (Bought: the hub loses the button, if the player is still on it.)
+        if (ok && atMenu && !session && document.querySelector('.hub-screen')) mainMenu();
+      })
+      : undefined,
     settings,
     howto: () => menus.howTo(mainMenu, input.lastDevice),
   }, info);
+}
+
+/**
+ * REMOVE ADS from the hub or Settings (the app): the store's own sheet confirms the purchase. Where the store can't
+ * sell it yet (not set up in App Store Connect, offline) it says so and nothing happens: no purchase is ever faked.
+ */
+async function buyNoAds(): Promise<boolean> {
+  if (!iap.canSell(PRODUCT_NOADS)) {
+    menus.toast(STORE_NOT_READY);
+    return false;
+  }
+  const r = await iap.buy(PRODUCT_NOADS);
+  if (r === 'ok') {
+    menus.toast('NO ADS IS ON. THANK YOU!');
+    buzz('success');
+  }
+  else if (r === 'pending') menus.toast('WAITING FOR THE STORE. NO ADS SWITCHES ON WHEN IT CONFIRMS');
+  else if (r === 'failed') menus.toast('THAT DID NOT GO THROUGH. TRY AGAIN IN A MOMENT');
+  return r === 'ok';
+}
+
+/** EVENTS (the hub's third tier): MOMENTS, CLUB RUN, BLITZ and, on the web, ONLINE. Their BACK comes here. */
+function eventsMenu(): void {
+  menus.events({
+    back: () => mainMenu(),
+    moments: () => openMoments(app, eventsMenu),
+    run: () => openRun(app, eventsMenu),
+    blitz: () => quickMatch('blitz'),
+    // (The condition written out here, not through a variable: the bundler drops the whole branch, the import
+    // with it, only when it can see the literal: see ONLINE below.)
+    online: !import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none'
+      ? inNativeApp() ? undefined : () => void import('./ui/online').then((o) => o.openOnline(onlineHost))
+      : undefined,
+    locked: (f) => menus.toast(`SCORE YOUR FIRST GOAL TO UNLOCK ${FEATURE_NAMES[f]}`),
+  }, modeInfo());
 }
 
 /*
@@ -788,7 +836,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
   const basics = req.kind === 'basics';
   // Portal interstitial only at a natural break before a new kick-off: never the first thing this visit, never
   // in or right after the basics, never before the first real match.
-  if (finishedThisVisit > 0 && !basics && !req.firstMatch && played() > 0) await ads.midgame();
+  if (finishedThisVisit > 0 && !basics && !req.firstMatch && played() > 0) await ads.midgame(req.scenario ? 'moment' : 'match');
   demo?.dispose();
   demo = null;
   const { kits, humanSide } = req;
@@ -866,6 +914,11 @@ async function startMatch(req: MatchRequest): Promise<void> {
     };
   }
   const s = session;
+  // The HUD's camera button (and V / VIEW) steps the camera: kept, so Settings > CAMERA and the next match agree.
+  s.onCamZoom = (z) => {
+    save.settings.camZoom = z;
+    persist();
+  };
   ads.gameplayStart();
   const tacticsMenu = (back: () => void) =>
     menus.tactics(s.match, humanSide, kits, {
@@ -916,7 +969,10 @@ async function startMatch(req: MatchRequest): Promise<void> {
         s.continueSecondHalf();
         ads.gameplayStart();
       }, () => tacticsMenu(ht));
-    ht();
+    // The app's half-time ad (platform/ads.ts APP_AD_GAP_MS), then the half-time screen. Never in the basics, a
+    // moment, the tutorial or a new player's first match.
+    if (!basics && !req.scenario && !req.firstMatch && save.seenTutorial && played() > 0) void ads.midgame('halftime').then(ht, ht);
+    else ht();
   };
   s.onFinish = (r) => {
     ads.gameplayStop();
@@ -1128,18 +1184,63 @@ function basicsWatch(dt: number): void {
   }
 }
 
+/**
+ * The iPhone / iPad app's perf line, every PERF_S s of a match (read off the phone through the device console):
+ * frame rate, slow frames, the pixel ratio drawn at, the graphics setting and the viewport, then the display's
+ * own pace (Hz), our main-thread ms a frame (mean / worst) and the longest frame. (`import.meta.env.VITE_PORTAL`
+ * is a literal in every build: the portal builds drop all of it.)
+ */
+const PERF_BUILD = !import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none';
+const PERF_S = 10;
+const perf = { t: 0, frames: 0, slow: 0, work: 0, workMax: 0, worst: 0 };
+function perfLog(dt: number, work: number): void {
+  const g = world.governor;
+  if (!session || session.paused) {
+    perf.t = perf.frames = perf.work = perf.workMax = perf.worst = 0;
+    perf.slow = g.slowFrames;
+    return;
+  }
+  // (Longer is the app coming back from the background, not a frame.)
+  if (dt > 0.25) return;
+  perf.t += dt;
+  perf.frames++;
+  perf.work += work;
+  perf.workMax = Math.max(perf.workMax, work);
+  perf.worst = Math.max(perf.worst, dt);
+  if (perf.t < PERF_S) return;
+  const ms = (s: number) => (s * 1000).toFixed(1);
+  console.log(`[perf] fps ${(perf.frames / perf.t).toFixed(1)} slow ${g.slowFrames - perf.slow} ratio ${world.pixelRatio.toFixed(2)} q ${world.quality} ${window.innerWidth}x${window.innerHeight}`
+    + ` hz ${g.pace > 0 ? Math.round(1 / g.pace) : 0} work ${ms(perf.work / perf.frames)}/${ms(perf.workMax)}ms worst ${ms(perf.worst)}ms dpr ${window.devicePixelRatio}`);
+  perf.t = perf.frames = perf.work = perf.workMax = perf.worst = 0;
+  perf.slow = g.slowFrames;
+}
+
 let last = performance.now();
+/** The match (or menu demo) whose shaders are all compiled (World.warmShaders). */
+let warmed: MatchSession | null = null;
 function frame(now: number): void {
-  const dt = Math.min(0.1, (now - last) / 1000);
+  const raw = (now - last) / 1000;
+  const dt = Math.min(0.1, raw);
   last = now;
   // (Our own work this frame, for the dynamic resolution: a CPU-bound hitch is no reason to drop pixels.)
   const t0 = performance.now();
   canvasRect = canvas.getBoundingClientRect();
-  (session ?? demo)?.update(dt);
+  const shown = session ?? demo;
+  shown?.update(dt);
   basicsWatch(dt);
   syncControlsUi(session);
+  // A new match: every shader up front, not one hitch per first goal, effect or marker mid-play.
+  if (shown && shown !== warmed) {
+    warmed = shown;
+    world.warmShaders();
+  }
   world.render();
-  world.adapt(dt, (performance.now() - t0) / 1000);
+  const work = (performance.now() - t0) / 1000;
+  // A resolution change (a canvas reallocation: a hitch) waits for a dead ball, a pause or the menus, never
+  // mid-move. (The real frame time: a stall over the 0.1 s cap is a hidden app, not a slow GPU.)
+  const phase = session?.match.phase;
+  world.adapt(raw, work, !session || session.paused || (phase !== 'play' && phase !== 'shootout'));
+  if (PERF_BUILD && inNativeApp()) perfLog(raw, work);
   requestAnimationFrame(frame);
 }
 
@@ -1147,9 +1248,17 @@ async function boot(): Promise<void> {
   world.setQuality(save.settings.quality);
   // Bindings before anything reads a key (the title's SPACE / ENTER is fixed; the match keys are the player's).
   setBindings(save.settings.keys, save.settings.pad);
+  applyTextSize(save.settings.textSize);
   TouchControls.stickMode = save.settings.stick === 'fixed' ? 'fixed' : 'floating';
+  TouchControls.autoSprint = controlsOf(save.settings).autoSprint;
+  setHapticsLevel(controlsOf(save.settings).vibration);
+  // (Haptics: a tick on the primary buttons, platform/haptics.ts; none while an ad is up, below.)
+  installUiHaptics(document);
   menus.stick = TouchControls.stickMode;
-  ads.onMute = (m) => sfx.setMuted(m);
+  ads.onMute = (m) => {
+    sfx.setMuted(m);
+    setHapticsQuiet(m);
+  };
   // The store (the apps' native one, or the dev fake): loads in the background, the shop looks when it opens.
   void iap.init();
   // Every screen's text goes through the divider guard (see ui/text.ts): no glyph the fonts lack.

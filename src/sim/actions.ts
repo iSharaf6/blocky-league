@@ -8,6 +8,7 @@ import type { Match } from './match';
 import type { KickOrder, Player } from './player';
 import { STUMBLE_LOST } from './player';
 import { megaLaunch } from './blitz';
+import { vsHuman } from './dribble';
 import type { AssistLevel, KickKind, ShotStyle, Side } from './types';
 
 export interface Launch {
@@ -73,8 +74,8 @@ const AI_POST_AIM = 0.12;
 const STICK_POST_AIM = 1.2;
 /** ... and from 11 m or closer. */
 const STICK_POST_AIM_CLOSE = 0.45;
-/** A human's lateral finishing error relative to the base model (the stick does the aiming)... */
-const HUMAN_FINISH = 0.8;
+/** A human's lateral finishing error relative to the base model (the stick does the aiming; 0.8 until 2026-10-03)... */
+const HUMAN_FINISH = 0.75;
 /** ... and how much of the base model's extra lift (a blasted shot climbing over the bar) he gets. */
 const HUMAN_LIFT = 0.8;
 /**
@@ -672,6 +673,21 @@ function aiFinish(m: Match, p: Player, header = false): number {
 function pressureErr(m: Match, p: Player): number {
   const d = nearestOppDist(m, p);
   return 1 + clamp((2.8 - d) / 1.8, 0, 1) * 0.8;
+}
+
+/**
+ * The human's open-play strike feels a man on him only HUMAN_PRESSURE as much (the owner: "its hard to score"). In real
+ * matches nineteen of his shots in twenty went off with a defender within 2.8 m, and the miss that put on (up to 1.8 x
+ * the error) sent ~40% of his shots from 10 to 18 m wide or over; keepers weren't the problem (a set 1v1 is beaten as
+ * it was: finishing.test.ts).
+ */
+const HUMAN_PRESSURE = 0.35;
+function shotPressure(m: Match, p: Player, header: boolean): number {
+  const k = pressureErr(m, p);
+  if (header || !m.isHumanControlled(p)) return k;
+  // (By difficulty: all of the help on EASY and NORMAL, none on LEGEND: dribble.ts vsHuman.shotHelp.)
+  const help = vsHuman(m.aiSkill(p.side === 0 ? 1 : 0)).shotHelp;
+  return 1 + (k - 1) * (1 - (1 - HUMAN_PRESSURE) * help);
 }
 
 function passError(p: Player, m: Match, scale: number): number {
@@ -1413,7 +1429,7 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
   const power = clamp(order.power, 0, 1);
   const hw = GOAL_W / 2;
   const sk = skillErr(m, p) * aiFinish(m, p, header);
-  const press = pressureErr(m, p);
+  const press = shotPressure(m, p, header);
 
   // Aim: an explicit point on the goal line (a free kick aimed with the arrow), else the stick across
   // the goal picks a corner; otherwise the side the keeper leaves open.

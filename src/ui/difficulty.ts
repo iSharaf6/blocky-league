@@ -1,6 +1,6 @@
 /**
  * LEGEND is earned (LEGEND_STARS match stars: core/save.ts legendUnlocked), wherever a difficulty is picked: Quick
- * Match (ui/menus.ts), the Blocky Cup entry (ui/cup.ts) and the Club Run start card (ui/run.ts) show it the same
+ * Match (ui/menus.ts) and the Club Run start card (ui/run.ts) show it the same
  * way, "LEGEND" with a pixel lock and "10★" until then, and a pick of it does nothing.
  */
 import { LEGEND_STARS, legendUnlocked, type Progress } from '../core/save';

@@ -511,7 +511,9 @@ export class Stadium {
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = THREE.RepeatWrapping;
-    tex.anisotropy = 4;
+    // A long strip seen edge-on from the gantry: squeezed far more along than up, so plain mipmaps blur the
+    // words. The GPU's best anisotropic filter (three clamps 16 to what it has) keeps them sharp, on phones too.
+    tex.anisotropy = 16;
     this.boardTex.push(tex);
     return tex;
   }
@@ -789,7 +791,8 @@ export class Stadium {
     });
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
+    // (A 2048 x 64 ribbon squeezed along its length: see the boards.)
+    tex.anisotropy = 16;
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(farSpan * 2 + 1, 0.95), new THREE.MeshBasicMaterial({ map: tex }));
     tex.repeat.x = (farSpan * 2 + 1) / (HALF_L * 2 + 11);
     tex.wrapS = THREE.RepeatWrapping;
@@ -1607,6 +1610,8 @@ export class Stadium {
       if (lynx) drawLynx(g, 256 + lynx / 2 - w / 2 - lynx, 18, 5, cssHex(fg));
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
+      // (Draped over the stand, seen at a slant: see the boards.)
+      tex.anisotropy = 16;
       const bm = new THREE.MeshLambertMaterial({ map: tex });
       this.bannerMats.push(bm);
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(10, 1.9), bm);

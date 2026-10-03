@@ -199,6 +199,12 @@ describe('unlock ladder (earned only)', () => {
     expect(skinUnlocked('retro', 1)).toBe(false);
     expect(skinUnlocked('retro', BALL_SKIN_LEVEL.retro)).toBe(true);
     expect(skinUnlocked('gold', BALL_SKIN_LEVEL.gold - 1)).toBe(false);
+    // The ladder climbs in list order, one ball a level at most, the Diamond last at 30 (14 looks: the later ones
+    // fill the levels past the last celebration, so a long career keeps earning something).
+    for (let i = 1; i < BALL_SKIN_IDS.length; i++) expect(BALL_SKIN_LEVEL[BALL_SKIN_IDS[i]]).toBeGreaterThan(BALL_SKIN_LEVEL[BALL_SKIN_IDS[i - 1]]);
+    expect(BALL_SKIN_IDS[BALL_SKIN_IDS.length - 1]).toBe('diamond');
+    expect(BALL_SKIN_LEVEL.diamond).toBe(30);
+    expect(BALL_SKIN_IDS.filter((id) => BALL_SKIN_LEVEL[id] > CELEBRATION_LEVEL.pile).length).toBeGreaterThanOrEqual(5);
   });
   it('xpAt is the running total of the per-level needs', () => {
     expect(xpAt(1)).toBe(0);

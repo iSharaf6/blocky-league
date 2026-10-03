@@ -23,22 +23,40 @@ afterEach(() => {
 });
 
 describe('settings: controls', () => {
-  it('starts a fresh touch device on medium graphics while preserving a saved high choice', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true }));
-    expect(defaultSave().settings.quality).toBe('medium');
-    stubStorage(null);
-    expect(loadSave().settings.quality).toBe('medium');
-    stubStorage({ ...defaultSave(), settings: { ...defaultSave().settings, quality: 'high' } });
-    expect(loadSave().settings.quality).toBe('high');
-    vi.stubGlobal('matchMedia', () => ({ matches: false }));
-    expect(defaultSave().settings.quality).toBe('high');
+  it('every device starts on HIGH graphics; an old save on the phones\' old MEDIUM default moves up; a picked one stays', () => {
+    // A phone (coarse pointer) as much as a desktop.
+    for (const coarse of [true, false]) {
+      vi.stubGlobal('matchMedia', () => ({ matches: coarse }));
+      expect(defaultSave().settings).toMatchObject({ quality: 'high', qualityPicked: false });
+      stubStorage(null);
+      expect(loadSave().settings.quality).toBe('high');
+    }
     vi.stubGlobal('matchMedia', () => { throw new Error('unavailable'); });
     expect(defaultSave().settings.quality).toBe('high');
+    // A save from before the flag, still on the old phone default: HIGH now.
+    const old = { ...defaultSave().settings, quality: 'medium' } as Record<string, unknown>;
+    delete old.qualityPicked;
+    stubStorage({ ...defaultSave(), settings: old });
+    expect(loadSave().settings).toMatchObject({ quality: 'high', qualityPicked: false });
+    // ...but one on LOW chose it (no build ever started there): kept, and his from now on.
+    stubStorage({ ...defaultSave(), settings: { ...old, quality: 'low' } });
+    expect(loadSave().settings).toMatchObject({ quality: 'low', qualityPicked: true });
+    // Picked in Settings: kept, whatever it is, through an export too.
+    stubStorage({ ...defaultSave(), settings: { ...defaultSave().settings, quality: 'medium', qualityPicked: true } });
+    const picked = loadSave();
+    expect(picked.settings.quality).toBe('medium');
+    expect(importSave(exportSave(picked))!.settings).toMatchObject({ quality: 'medium', qualityPicked: true });
+    // Never picked: HIGH, whatever is stored.
+    expect(normalizeSettings({ quality: 'low', qualityPicked: false }).quality).toBe('high');
+    expect(normalizeSettings({ quality: 'medium', qualityPicked: 'yes' }).quality).toBe('high');
   });
 
   it('new saves start on the default controls (ground assisted, through assisted, switches on)', () => {
     const s = defaultSave().settings;
-    expect(controlsOf(s)).toEqual({ groundAssist: 'assisted', throughAssist: 'assisted', autoSwitch: true, moveAssist: true, timedFinish: true, trainer: true, quickPass: true });
+    expect(controlsOf(s)).toEqual({
+      groundAssist: 'assisted', throughAssist: 'assisted', autoSwitch: true, moveAssist: true, timedFinish: true, trainer: true, quickPass: true,
+      autoSprint: true, vibration: 'full',
+    });
     expect(controlsOf(s)).toEqual(CONTROL_DEFAULTS);
   });
 
@@ -74,6 +92,16 @@ describe('settings: controls', () => {
     expect(s.camZoom).toBe('normal');
     expect(normalizeSettings({ groundAssist: 'manual', timedFinish: false }).groundAssist).toBe('manual');
     expect(normalizeSettings({ groundAssist: 'manual', timedFinish: false }).timedFinish).toBe(false);
+  });
+
+  it('AUTO SPRINT on unless switched off; VIBRATION OFF / LIGHT / FULL (FULL by default); junk becomes the default', () => {
+    expect(controlsOf(normalizeSettings({}))).toMatchObject({ autoSprint: true, vibration: 'full' });
+    expect(controlsOf(normalizeSettings({ autoSprint: false, vibration: 'light' }))).toMatchObject({ autoSprint: false, vibration: 'light' });
+    expect(normalizeSettings({ vibration: 'off' }).vibration).toBe('off');
+    // (A build that had it as a switch: off stays off, on is FULL.)
+    expect(normalizeSettings({ vibration: false }).vibration).toBe('off');
+    expect(normalizeSettings({ vibration: true }).vibration).toBe('full');
+    expect(normalizeSettings({ autoSprint: 'yes', vibration: 0 })).toMatchObject({ autoSprint: true, vibration: 'full' });
   });
 
   it('a damaged settings blob still loads', () => {
@@ -302,5 +330,42 @@ describe('settings: key bindings (Settings > Controls > KEYS)', () => {
     expect(back.settings.keys!.pass[0]).toBe('KeyQ');
     expect(back.settings.stick).toBe('fixed');
     expect(back.settings.colorblind).toBe(true);
+  });
+});
+
+describe('settings: text size (menus and HUD only)', () => {
+  it('new saves are MEDIUM (the designed size); old saves without it load as MEDIUM', () => {
+    expect(defaultSave().settings.textSize).toBe('medium');
+    const old = { ...defaultSave().settings } as Record<string, unknown>;
+    delete old.textSize;
+    expect(normalizeSettings(old).textSize).toBe('medium');
+  });
+
+  it('keeps SMALL and LARGE; anything else becomes MEDIUM', () => {
+    for (const ok of ['small', 'medium', 'large'] as const) expect(normalizeSettings({ ...defaultSave().settings, textSize: ok }).textSize).toBe(ok);
+    for (const bad of ['huge', 3, null, true, 'LARGE']) expect(normalizeSettings({ ...defaultSave().settings, textSize: bad }).textSize).toBe('medium');
+  });
+
+  it('survives an export / import round trip', () => {
+    const s = defaultSave();
+    s.settings.textSize = 'large';
+    expect(importSave(exportSave(s))!.settings.textSize).toBe('large');
+  });
+
+  it('the Settings row cycles MEDIUM, LARGE, SMALL, and puts a class on the page (MEDIUM: none)', async () => {
+    const { applyTextSize, nextTextSize, TEXT_SIZE_LABEL } = await import('../src/ui/textSize');
+    expect(nextTextSize('medium')).toBe('large');
+    expect(nextTextSize('large')).toBe('small');
+    expect(nextTextSize('small')).toBe('medium');
+    expect(nextTextSize(undefined)).toBe('large');
+    expect(TEXT_SIZE_LABEL.small).toBe('SMALL');
+    const classes = new Set<string>();
+    vi.stubGlobal('document', { documentElement: { classList: { toggle: (c: string, on: boolean) => (on ? classes.add(c) : classes.delete(c)) } } });
+    applyTextSize('large');
+    expect([...classes]).toEqual(['ts-large']);
+    applyTextSize('small');
+    expect([...classes]).toEqual(['ts-small']);
+    applyTextSize('medium');
+    expect([...classes]).toEqual([]);
   });
 });

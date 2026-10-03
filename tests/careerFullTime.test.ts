@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppContext, MatchRequest } from '../src/app';
 import { defaultSave } from '../src/core/save';
 import type { MatchResult } from '../src/game/matchSession';
-import { BOTTOM_DIVISION, createClub, migrateCareer, newSeason, userFixture, YOU } from '../src/meta/career';
+import { BOTTOM_DIVISION, createClub, cupDue, matchCoins, migrateCareer, newSeason, resolveMatchday, userFixture, YOU } from '../src/meta/career';
+import { CUP_AFTER, cupPrize, userTie } from '../src/meta/cup';
 import { KIT_COLORS } from '../src/meta/data';
 import type { Match } from '../src/sim/match';
 import type { Kit } from '../src/sim/types';
@@ -50,6 +51,38 @@ describe('career match at full time', () => {
     expect(reward.coins).toBeGreaterThan(0);
     expect(st.season!.matchday).toBe(md + 1);
     expect([f.hg, f.ag]).toEqual(score);
+  });
+
+  it('a BLOCKY CUP tie is a knockout: settled at full time (penalties count), paid with its prize, and only once', () => {
+    const { app, st, started } = rig();
+    // Two league matchdays, then the quarter-final is up next.
+    for (let i = 0; i < CUP_AFTER[0]; i++) {
+      const f = userFixture(st.season!, st.season!.matchday)!;
+      expect(resolveMatchday(st, app.save, st.season!.matchday, f.home === YOU ? 1 : 0, f.home === YOU ? 0 : 1)).toBe(true);
+    }
+    expect(cupDue(st)).toBe(0);
+    playMatchday(app, st);
+    const req = started()!;
+    expect(req.knockout).toBe(true);
+    expect(req.kind).toBe('career');
+    const cup = st.season!.cup!;
+    const ut = userTie(cup)!;
+    const hs = req.humanSide;
+    expect(hs).toBe(ut.userHome ? 0 : 1);
+    // 1-1 after 90, the player's side wins the shootout.
+    const r = { score: [1, 1], humanSide: hs, match: {} as Match, winner: hs } as MatchResult;
+    const reward = req.reward(r);
+    expect(cup.ties[ut.idx].winner).toBe(cup.user);
+    expect(cup.round).toBe(1);
+    expect(reward).toEqual({ coins: matchCoins(st.season!.division, st.stadium, 1, 1) + cupPrize(0, true, st.season!.division), label: 'QF WIN BONUS' });
+    // The league did not move; a second full time for the same request changes nothing and pays the fee only.
+    expect(st.season!.matchday).toBe(CUP_AFTER[0]);
+    const again = req.reward({ ...r, score: [0, 3], winner: hs === 0 ? 1 : 0 } as MatchResult);
+    expect(again.label).toBe('CUP TIE');
+    expect(cup.status).toBe('active');
+    expect(cup.round).toBe(1);
+    // Next up is the league again.
+    expect(cupDue(st)).toBe(-1);
   });
 
   it('a stale request cannot play the same fixture twice', () => {

@@ -41,9 +41,18 @@ const club = (seed = 7): ClubState => createClub({ name: 'Test Town', short: 'TS
 describe('catalogue', () => {
   it('lists every celebration, ball look, goal theme and trail, each with one free default', () => {
     expect(shopItems('celebration').map((i) => i.id)).toEqual([...CELEBRATION_IDS]);
-    expect(shopItems('ball').map((i) => i.id)).toEqual([...BALL_SKIN_IDS]);
-    expect(shopItems('goalfx').map((i) => i.id)).toEqual([...GOAL_FX_IDS]);
-    expect(shopItems('trail').map((i) => i.id)).toEqual([...TRAIL_IDS]);
+    // (Every id, in shop order: the free one, then cheapest first, the Club Pass looks last.)
+    expect(shopItems('ball').map((i) => i.id).sort()).toEqual([...BALL_SKIN_IDS].sort());
+    expect(shopItems('goalfx').map((i) => i.id).sort()).toEqual([...GOAL_FX_IDS].sort());
+    expect(shopItems('trail').map((i) => i.id).sort()).toEqual([...TRAIL_IDS].sort());
+    for (const cat of ['ball', 'goalfx', 'trail'] as const) {
+      const list = shopItems(cat);
+      for (let i = 1; i < list.length; i++) {
+        if (list[i].pass) continue;
+        expect(list[i - 1].pass).toBeFalsy();
+        expect(list[i].price).toBeGreaterThanOrEqual(list[i - 1].price);
+      }
+    }
     for (const cat of SHOP_CATS) {
       // (Club Pass looks cost no coins but are earned on the pass, never a free default.)
       const free = shopItems(cat).filter((i) => i.price === 0 && !i.pass);
@@ -225,7 +234,7 @@ describe('nudges', () => {
   it('the SHOP badge counts affordable items not yet seen, plus the free pack; looking clears them', () => {
     const s = fresh(320);
     const cheap = affordable(s).map((i) => itemKey(i.cat, i.id));
-    expect(cheap).toEqual(expect.arrayContaining(['ball:retro', 'celebration:knee', 'trail:fire', 'trail:ice']));
+    expect(cheap).toEqual(expect.arrayContaining(['ball:retro', 'celebration:knee', 'trail:toon', 'goalfx:shockwave']));
     expect(newInShop(s, DAY)).toBe(cheap.length + 1);
     markSeen(s, 'trail');
     expect(newInShop(s, DAY)).toBe(cheap.filter((k) => !k.startsWith('trail:')).length + 1);
@@ -242,9 +251,11 @@ describe('nudges', () => {
     expect(inReach(s, 280, 470)?.price).toBe(450);
     expect(inReach(s, 500, 520)).toBeNull();
     s.coins = 5000;
-    buyItem(s, 'goalfx', 'fire');
-    buyItem(s, 'goalfx', 'ice');
+    // (Everything at 450: a celebration, a ball, a goal explosion and a trail.)
     buyItem(s, 'celebration', 'shush');
+    buyItem(s, 'ball', 'melon');
+    buyItem(s, 'goalfx', 'confetti');
+    buyItem(s, 'trail', 'popcorn');
     // Owned items are never "in reach".
     expect(inReach(s, 420, 460)).toBeNull();
   });

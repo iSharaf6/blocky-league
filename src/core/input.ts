@@ -345,6 +345,18 @@ export function isKey(action: KeyAction, code: string): boolean {
   return keysNow[action].includes(normCode(code));
 }
 
+/** `code` isn't bound to any action (a fixed extra key, like the match camera's V, gives way to a binding). */
+export function freeKey(code: string): boolean {
+  const c = normCode(code);
+  return !KEY_ACTIONS.some((a) => keysNow[a].includes(c));
+}
+
+/** Gamepad button `i` is down on any pad and isn't bound to any action (the match camera's VIEW / BACK button). */
+export function freePadButton(i: number): boolean {
+  if (PAD_ACTIONS.some((a) => padNow[a].includes(i))) return false;
+  return gamepads().some((gp) => !!gp?.buttons[i]?.pressed);
+}
+
 /** A key the game uses: the page mustn't scroll or tab away on it while playing. */
 function gameKey(code: string): boolean {
   if (code === 'Space' || code.startsWith('Arrow')) return true;

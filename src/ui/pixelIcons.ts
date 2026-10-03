@@ -100,6 +100,11 @@ const ICON_ROWS = {
     '...XXXX...', '....XX....', '..XXXXXX..', '.XX.XX.XX.', 'XX..XX..XX',
     'XX..XXXXXX', 'XX......XX', '.XX....XX.', '..XXXXXX..', '..........',
   ],
+  /** A film camera: two reels on the body, the lens to the right (the match camera button). */
+  camera: [
+    '.XX..XX...', 'X..XX..X..', 'X..XX..X..', '.XX..XX...', 'XXXXXXX..X',
+    'XXXXXXX.XX', 'XXXXXXXXXX', 'XXXXXXX.XX', 'XXXXXXX..X', '..........',
+  ],
 } satisfies Record<string, readonly string[]>;
 
 export type IconName = keyof typeof ICON_ROWS;

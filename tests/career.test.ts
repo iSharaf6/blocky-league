@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOTTOM_DIVISION, CAREER_VERSION, CLUBS_PER_DIVISION, MARKET_SIZE, MATCHDAYS, SQUAD_MAX, SQUAD_MIN, STADIUM_MAX, STAT_CAP, YOU,
-  autoPick, buyPlayer, canBuy, canSell, clubTeam, computeTable, createClub, deriveShort, divisionLevel, divisionPlayerOverall,
-  finishSeason, forfeitScore,
+  autoPick, buyPlayer, canBuy, canSell, clubTeam, computeTable, createClub, cupDue, deriveShort, divisionLevel, divisionPlayerOverall,
+  finishSeason, forfeitScore, resolveCupTie,
   leagueTable, lineupIssues, matchAttendance, matchCoins, matchDifficulty, migrateCareer, newSeason, nextMatch, playerPrice,
   refreshMarket, resolveMatchday, sanitizeName, sanitizeShort, seasonOutcome, seasonPrizeLines, sellPlayer, sellValue, setFormation,
   stadiumUpgradeCost, startNextSeason, swapPlayers, trainPlayer, trainingCost, upgradeStadium, userFixture,
@@ -23,8 +23,12 @@ function freshCareer(seed = 7, division = BOTTOM_DIVISION): CareerState {
   return st;
 }
 
-/** Play the player's match for the current matchday with the given goals-for / goals-against. */
+/**
+ * Play the player's match for the current matchday with the given goals-for / goals-against. A BLOCKY CUP tie due
+ * first (the league waits for it) is played with the same score, through on penalties if level.
+ */
 function playMine(st: CareerState, wallet: { coins: number }, my: number, their: number): boolean {
+  if (cupDue(st) >= 0) resolveCupTie(st, my, their, my >= their);
   const s = st.season!;
   const f = userFixture(s, s.matchday);
   const home = f ? f.home === YOU : true;
@@ -323,7 +327,8 @@ describe('matchday flow', () => {
     expect(st.summary).toBeNull();
     expect(st.season).toMatchObject({ number: 2, division: 5, matchday: 0 });
     expect(st.season!.rivals.map((r) => r.name).join()).not.toBe(oldRivals);
-    expect(st.history).toEqual([{ season: 1, division: 6, position: 1, outcome: 'promoted' }]);
+    // (Every cup tie won 9-0 as well: the BLOCKY CUP went in the cabinet too.)
+    expect(st.history).toEqual([{ season: 1, division: 6, position: 1, outcome: 'promoted', cup: 3 }]);
   });
 
   it('losing every game at the bottom division keeps you in division 6', () => {
