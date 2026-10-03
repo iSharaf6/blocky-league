@@ -195,6 +195,13 @@ export interface ShopState {
    * card again (meta/shop.ts pendingCard), so it is never lost. Null when there is none.
    */
   pending: PendingPack | null;
+  /** Today's deal (meta/shop.ts dailyDeal): the local day and the item key it picked, fixed for that day. */
+  deal: { day: string; key: string } | null;
+  /**
+   * Scout Tokens: what scout packs cost (meta/shop.ts PACK_TOKENS). Earned only (a daily challenge done is one),
+   * never sold, so nothing random is ever bought with money (docs/ECONOMY.md). A new or older save starts with 2.
+   */
+  tokens: number;
 }
 
 export interface PendingPack {
@@ -208,14 +215,19 @@ export interface PendingPack {
 /** A shop blob as stored by any build (or none) made whole: unknown entries dropped, numbers sane. */
 export function normalizeShop(raw: unknown): ShopState {
   const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<ShopState>) : {};
+  // (Item ids may carry digits: the Club Pass's pass01 to pass12.)
+  const KEY = /^[a-z]+:[a-z0-9]+$/;
   const keys = (v: unknown): string[] =>
-    Array.isArray(v) ? [...new Set(v.filter((k): k is string => typeof k === 'string' && /^[a-z]+:[a-z]+$/.test(k)))].slice(0, 200) : [];
+    Array.isArray(v) ? [...new Set(v.filter((k): k is string => typeof k === 'string' && KEY.test(k)))].slice(0, 200) : [];
+  const d = r.deal && typeof r.deal === 'object' ? (r.deal as Partial<NonNullable<ShopState['deal']>>) : null;
   return {
     owned: keys(r.owned),
     seen: keys(r.seen),
     freePack: typeof r.freePack === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.freePack) ? r.freePack : '',
     packs: num(r.packs),
     pending: normalizePending(r.pending),
+    deal: d && typeof d.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.day) && typeof d.key === 'string' && KEY.test(d.key) ? { day: d.day, key: d.key } : null,
+    tokens: typeof r.tokens === 'number' && Number.isFinite(r.tokens) ? Math.max(0, Math.min(999, Math.floor(r.tokens))) : 2,
   };
 }
 
@@ -242,6 +254,10 @@ export interface IapState {
   applied: string[];
   /** Rewarded ads watched for coins on one local day (YYYY-MM-DD; '' = none yet): the FREE COINS daily cap. */
   freeAds: { day: string; count: number };
+  /** Coin packs bought at least once, by store id: the first buy of each pays double (platform/iap.ts). */
+  firsts: string[];
+  /** The one-time welcome offer (the Starter Pack, after the first win) has been shown. */
+  welcome: boolean;
 }
 
 /** How many paid-out transaction ids a save keeps (a store re-delivers within days, never hundreds of purchases later). */
@@ -258,6 +274,8 @@ export function normalizeIap(raw: unknown): IapState {
     owned: strings(r.owned, /^[A-Za-z0-9._-]{1,64}$/, 50),
     applied: strings(r.applied, /^[^\0]{1,160}$/, IAP_APPLIED_MAX),
     freeAds: { day, count: day ? Math.min(99, num(f.count)) : 0 },
+    firsts: strings(r.firsts, /^[A-Za-z0-9._-]{1,64}$/, 50),
+    welcome: r.welcome === true,
   };
 }
 
@@ -694,10 +712,10 @@ export function advanceDaily(d: DailyState, cs: readonly Challenge[], s: MatchSu
 // ------------------------------------------------------------------ unlocks (earned only: levels and stars)
 
 /** Ball looks (src/render/characters BALL_SKINS) and the level that earns each; 'classic' is always there. */
-export const BALL_SKIN_IDS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold'] as const;
+export const BALL_SKIN_IDS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold', 'diamond'] as const;
 export type BallSkinId = (typeof BALL_SKIN_IDS)[number];
-export const BALL_SKIN_LEVEL: { readonly [k in BallSkinId]: number } = { classic: 1, retro: 2, blaze: 4, ice: 6, neon: 8, gold: 12 };
-export const BALL_SKIN_NAMES: { readonly [k in BallSkinId]: string } = { classic: 'Classic', retro: 'Retro', blaze: 'Blaze', ice: 'Ice', neon: 'Neon', gold: 'Gold' };
+export const BALL_SKIN_LEVEL: { readonly [k in BallSkinId]: number } = { classic: 1, retro: 2, blaze: 4, ice: 6, neon: 8, gold: 12, diamond: 30 };
+export const BALL_SKIN_NAMES: { readonly [k in BallSkinId]: string } = { classic: 'Classic', retro: 'Retro', blaze: 'Blaze', ice: 'Ice', neon: 'Neon', gold: 'Gold', diamond: 'Diamond' };
 
 export function skinUnlocked(id: BallSkinId, level: number): boolean {
   return level >= BALL_SKIN_LEVEL[id];
@@ -766,7 +784,13 @@ export function celebrationUnlocked(id: CelebrationId, level: number): boolean {
  * SHOP cosmetics with no level ladder (coins only; src/meta/shop.ts prices them, render/cosmetics.ts colours
  * them): goal explosion themes ('club' = your kit's colours, always yours) and sprint trails ('white' always yours).
  */
-export const GOAL_FX_IDS = ['club', 'gold', 'fire', 'ice', 'neon', 'rainbow', 'galaxy'] as const;
+/**
+ * Club Pass looks: one goal explosion and one sprint trail per season theme (meta/season.ts SEASON_THEMES, January
+ * first), earned on that month's pass track only, never sold for coins (meta/shop.ts `pass`).
+ */
+export const PASS_IDS = ['pass01', 'pass02', 'pass03', 'pass04', 'pass05', 'pass06', 'pass07', 'pass08', 'pass09', 'pass10', 'pass11', 'pass12'] as const;
+export type PassId = (typeof PASS_IDS)[number];
+export const GOAL_FX_IDS = ['club', 'gold', 'fire', 'ice', 'neon', 'rainbow', 'galaxy', 'diamond', 'supernova', ...PASS_IDS] as const;
 export type GoalFxId = (typeof GOAL_FX_IDS)[number];
-export const TRAIL_IDS = ['white', 'fire', 'ice', 'lime', 'pink', 'gold', 'rainbow'] as const;
+export const TRAIL_IDS = ['white', 'fire', 'ice', 'lime', 'pink', 'gold', 'rainbow', 'lightning', 'comet', ...PASS_IDS] as const;
 export type TrailId = (typeof TRAIL_IDS)[number];

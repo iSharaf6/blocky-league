@@ -10,7 +10,9 @@
  * - A new calendar month starts a new season (its own theme). Nothing reached is lost: at the roll-over the coins
  *   of reached, unclaimed tiers move to `carry` (one CLAIM on the next season's screen) and the reached
  *   5th-tier titles are archived in `titles`.
- * Nothing here can be bought, and nothing touches the pitch.
+ * - The Club Pass (meta/pass.ts) adds a second track to the same tiers for the month it is bought in: more coins
+ *   and that month's own goal explosion and sprint trail. Buying it late hands over every tier already reached.
+ * Nothing on the pitch can be bought: the pass is looks and coins.
  */
 export const SEASON_TIERS = 30;
 
@@ -23,6 +25,12 @@ export interface SeasonState {
   titles: string[];
   /** Coins from a past season's reached tiers that were never claimed (claimable once), or null. */
   carry: { id: string; coins: number } | null;
+  /** The Club Pass is on for THIS season (bought with the store's 'bl.pass': platform/iap.ts, meta/pass.ts). */
+  pass: boolean;
+  /** Pass-track tiers already claimed this season. */
+  passClaimed: number[];
+  /** Club Pass looks a past season's pass reached but never claimed (`cat:id` keys): handed over by meta/pass.ts. */
+  carryItems: string[];
 }
 
 export function seasonId(now: Date = new Date()): string {
@@ -30,7 +38,7 @@ export function seasonId(now: Date = new Date()): string {
 }
 
 export function defaultSeason(now: Date = new Date()): SeasonState {
-  return { id: seasonId(now), xp: 0, claimed: [], titles: [], carry: null };
+  return { id: seasonId(now), xp: 0, claimed: [], titles: [], carry: null, pass: false, passClaimed: [], carryItems: [] };
 }
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
@@ -47,9 +55,15 @@ export function normalizeSeason(raw: unknown, now: Date = new Date()): SeasonSta
     : [];
   const c = r.carry;
   const carry = c && typeof c === 'object' && typeof c.id === 'string' && num(c.coins) > 0 ? { id: c.id, coins: num(c.coins) } : null;
+  const passClaimed = Array.isArray(r.passClaimed)
+    ? [...new Set(r.passClaimed.filter((x) => Number.isInteger(x) && x >= 1 && x <= SEASON_TIERS))].sort((a, b) => a - b)
+    : [];
+  const carryItems = Array.isArray(r.carryItems)
+    ? [...new Set(r.carryItems.filter((k): k is string => typeof k === 'string' && /^(goalfx|trail):pass\d{2}$/.test(k)))]
+    : [];
   // Progress under an id we can't read belongs to no season we know: start this one afresh (titles and carry stay).
-  if (typeof r.id !== 'string' || !/^\d{4}-\d{2}$/.test(r.id)) return { ...defaultSeason(now), titles, carry };
-  const s: SeasonState = { id: r.id, xp: num(r.xp), claimed, titles, carry };
+  if (typeof r.id !== 'string' || !/^\d{4}-\d{2}$/.test(r.id)) return { ...defaultSeason(now), titles, carry, carryItems };
+  const s: SeasonState = { id: r.id, xp: num(r.xp), claimed, titles, carry, pass: r.pass === true, passClaimed, carryItems };
   rollSeason(s, now);
   return s;
 }
@@ -134,6 +148,37 @@ export function seasonReward(t: number, id: string): { coins: number; title?: st
   return { coins: Math.round((20 + 3 * t) / 5) * 5 };
 }
 
+// ------------------------------------------------------------------ the Club Pass track (meta/pass.ts sells and pays it)
+
+/** Coins on pass tiers 5, 15, 25 and 30 (10 and 20 are the month's own looks). */
+export const PASS_BIG_COINS: { readonly [t: number]: number } = { 5: 300, 15: 500, 25: 700, 30: 1500 };
+
+/** The Club Pass look id of season `id` (core/save.ts PASS_IDS: 'pass10' in October). */
+export function passItemId(id: string): string {
+  return `pass${String(monthOf(id) + 1).padStart(2, '0')}`;
+}
+
+/**
+ * What pass tier t (1..30) of season `id` pays, on top of the free track: coins, or the month's sprint trail
+ * (tier 10) or goal explosion (tier 20). About 6,000 coins and both looks over a season (docs/ECONOMY.md).
+ */
+export function passReward(t: number, id: string): { coins: number; item?: { cat: 'goalfx' | 'trail'; id: string } } {
+  if (t === 10) return { coins: 0, item: { cat: 'trail', id: passItemId(id) } };
+  if (t === 20) return { coins: 0, item: { cat: 'goalfx', id: passItemId(id) } };
+  const big = PASS_BIG_COINS[t];
+  if (big) return { coins: big };
+  return { coins: Math.round((50 + 5 * t) / 10) * 10 };
+}
+
+/** Reached pass tiers not yet claimed (none without the pass), lowest first. */
+export function unclaimedPassTiers(s: SeasonState): number[] {
+  if (!s.pass) return [];
+  const out: number[] = [];
+  const reached = seasonTier(s.xp);
+  for (let t = 1; t <= reached; t++) if (!s.passClaimed.includes(t)) out.push(t);
+  return out;
+}
+
 /** Days left in the season, today included (1 on the last day). */
 export function seasonDaysLeft(now: Date = new Date()): number {
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -156,10 +201,19 @@ export function rollSeason(s: SeasonState, now: Date = new Date()): boolean {
     if (!s.claimed.includes(t)) coins += rw.coins;
     if (rw.title && !s.titles.includes(rw.title)) s.titles.push(rw.title);
   }
+  // The pass's reached, unclaimed tiers are kept too: coins into the carry, its looks into carryItems.
+  for (const t of unclaimedPassTiers(s)) {
+    const rw = passReward(t, s.id);
+    coins += rw.coins;
+    const key = rw.item ? `${rw.item.cat}:${rw.item.id}` : '';
+    if (key && !s.carryItems.includes(key)) s.carryItems.push(key);
+  }
   if (coins > 0) s.carry = { id: s.id, coins: (s.carry?.coins ?? 0) + coins };
   s.id = id;
   s.xp = 0;
   s.claimed = [];
+  s.pass = false;
+  s.passClaimed = [];
   return true;
 }
 
@@ -216,7 +270,7 @@ export function seasonTitles(s: SeasonState): string[] {
 
 /** Things waiting to be claimed (for a dot on the menu button). */
 export function seasonPending(s: SeasonState): number {
-  return unclaimedTiers(s).length + (s.carry ? 1 : 0);
+  return unclaimedTiers(s).length + unclaimedPassTiers(s).length + (s.carry ? 1 : 0) + (s.carryItems.length ? 1 : 0);
 }
 
 /** The save's season, created if missing (a brand-new save from defaultSave() has none until it's reloaded). */

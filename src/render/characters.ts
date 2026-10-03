@@ -1225,7 +1225,7 @@ export class Footballer {
  * Ball skins (progression unlocks; SessionOptions.ballSkin): the base colour, the patch colour and how big
  * the patches are (the dot-product threshold: lower = bigger). 'classic' is the white ball with dark pentagons.
  */
-export const BALL_SKINS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold'] as const;
+export const BALL_SKINS = ['classic', 'retro', 'blaze', 'ice', 'neon', 'gold', 'diamond'] as const;
 export type BallSkin = (typeof BALL_SKINS)[number];
 const BALL_LOOK: Record<BallSkin, { base: number; patch: number; size: number }> = {
   classic: { base: 0xfbfbf6, patch: 0x26262e, size: 0.9 },
@@ -1235,6 +1235,8 @@ const BALL_LOOK: Record<BallSkin, { base: number; patch: number; size: number }>
   ice: { base: 0xf2fbff, patch: 0x3aa0ff, size: 0.88 },
   neon: { base: 0x4bff6a, patch: 0x17301c, size: 0.86 },
   gold: { base: 0xffc23a, patch: 0x8a5a00, size: 0.88 },
+  // Legendary: ice-bright facets with sky-blue panels.
+  diamond: { base: 0xeafcff, patch: 0x3fb8ff, size: 0.84 },
 };
 /** A known skin id (anything else, undefined included, is the classic ball). */
 export function ballSkinOf(id: string | undefined): BallSkin {

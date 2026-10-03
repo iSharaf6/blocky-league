@@ -4,7 +4,7 @@ import {
   ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData, BALL_SKIN_IDS,
   BALL_SKIN_LEVEL, BALL_SKIN_NAMES, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, type BallSkinId, CELEBRATION_IDS, CELEBRATION_LEVEL,
   CELEBRATION_NAMES, celebrationUnlocked, type CelebrationId, exportSave, importSave, unlockLadder, xpAt } from '../core/save';
-import { APP_VERSION, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
+import { APP_VERSION, CONTACT_EMAIL, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
 import { pixelIcon } from './pixelIcons';
 import { coachText } from './coach';
@@ -1395,6 +1395,7 @@ export class Menus {
               <button data-k="ballSkin"></button>
               <button data-k="celebration"></button>
               ${opts.backup ? '<button data-a="backup" aria-label="Backup: export or import your save"><span>BACKUP</span><b class="link">EXPORT / IMPORT</b></button>' : ''}
+              <button data-a="feedback" aria-label="Send feedback by email"><span>FEEDBACK</span><b class="link">EMAIL US</b></button>
             </div>
             <p class="set-about">${lynxSvg(1, STUDIO_BLUE, '#fff', 'lynx sm')}<span>Blocky League v${APP_VERSION} by ${STUDIO}</span></p>
           </div>
@@ -1695,6 +1696,11 @@ export class Menus {
       }),
     );
     draw();
+    // FEEDBACK: an email to the studio (the app hands mailto: to Mail), with the version for context.
+    d.querySelector('[data-a=feedback]')?.addEventListener('click', () => {
+      const subject = encodeURIComponent(`Blocky League feedback (v${APP_VERSION})`);
+      location.href = `mailto:${CONTACT_EMAIL}?subject=${subject}`;
+    });
     d.querySelector('[data-a=backup]')?.addEventListener('click', () => {
       stopListening();
       opts.backup?.();
@@ -1835,6 +1841,29 @@ export class Menus {
     $(d, '[data-a=back]').addEventListener('click', onBack);
   }
 
+  /**
+   * The welcome offer, once ever, after the first win (main.ts; the app's store only): the Starter Pack with its
+   * real price and worth. No timer and no pressure: it says plainly that the pack stays in the shop.
+   */
+  welcomeOffer(o: { price: string; coins: number; worth: number }, h: { see: () => void; later: () => void }): void {
+    const n = (v: number) => v.toLocaleString('en-US');
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel narrow gift-panel">
+          <h2>FIRST WIN!</h2>
+          <p class="fine big">A thank you for new players: the STARTER PACK, one time only.</p>
+          <div class="reward"><i></i><span>${n(o.coins)} COINS</span><em>AND THE GOLD BALL</em></div>
+          <p class="fine">Worth ${n(o.worth)} coins in the shop, for ${escHtml(o.price)}. It stays in the shop if you'd rather decide later.</p>
+          <div class="btn-row">
+            <button class="btn btn-white" data-a="later">NOT NOW</button>
+            <button class="btn btn-yellow btn-lg" data-a="see">SEE THE PACK</button>
+          </div>
+        </div>
+      </div>`, 'gift-screen');
+    d.querySelector('[data-a=see]')?.addEventListener('click', () => h.see());
+    d.querySelector('[data-a=later]')?.addEventListener('click', () => h.later());
+  }
+
   gift(amount: number, streak: number, canDouble: boolean, h: { claim: (double: boolean) => Promise<boolean>; back: () => void }): void {
     const days = Array.from({ length: 7 }, (_, i) => {
       const n = 100 + 50 * i;
@@ -1846,8 +1875,8 @@ export class Menus {
         <div class="panel narrow gift-panel">
           <h2>DAILY GIFT</h2>
           <ul class="gift-days">${days}</ul>
-          <div class="reward"><i></i><span>+${amount}</span><em>DAY ${streak} STREAK</em></div>
-          <p class="fine">Spend it in the SHOP: celebrations, balls, goal effects and scout packs. Come back tomorrow to keep the streak going.</p>
+          <div class="reward"><i></i><span>+${amount}</span><em>DAY ${streak} OF 7</em></div>
+          <p class="fine">Spend it in the SHOP: celebrations, balls, goal effects and trails. Come back tomorrow for the next one. Miss a day and you keep your place.</p>
           <div class="btn-row">
             ${canDouble ? `<button class="btn btn-white" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× GIFT</button>` : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>

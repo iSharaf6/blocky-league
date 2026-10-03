@@ -554,3 +554,53 @@
   .sh-back { animation: none; }
   .sh-pack.p-free, .sh-dot, .sh-new, .shop-new { animation: none; }
 }
+
+/* ---- Economy v2 (docs/ECONOMY.md): rarity, today's deal, the Club Pass and Coin Doubler cards, Scout Tokens. */
+.sh-tier {
+  position: absolute;
+  top: -10px;
+  right: -8px;
+  z-index: 1;
+  padding: 4px 5px 3px;
+  font: 700 10px / 1 var(--px);
+  font-style: normal;
+  letter-spacing: 0.5px;
+  color: #fff;
+  background: var(--blue);
+  box-shadow: 0 3px 0 var(--blue-d);
+}
+.sh-tier.t-epic { background: #8a55d8; box-shadow: 0 3px 0 #5e3499; }
+.sh-tier.t-legendary { color: var(--ink); background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
+.sh-tier.t-season { background: #ff3c9e; box-shadow: 0 3px 0 #b81f6c; }
+.sh-kind b.t-rare { color: var(--blue); }
+.sh-kind b.t-epic { color: #8a55d8; }
+.sh-kind b.t-legendary { color: var(--yellow-d); }
+.sh-kind b.t-season { color: #d42b80; }
+.sh-tile:has(.t-legendary) { border-color: var(--yellow-d); }
+/* (Below the rarity badge, over the art: a narrow tile's top edge can't hold both.) */
+.sh-new.deal { top: 16px; color: #fff; background: var(--red); box-shadow: 0 3px 0 var(--red-d); }
+.sh-tag.pass { color: #fff; background: #ff3c9e; box-shadow: inset 0 -3px 0 #b81f6c; }
+.sh-was { opacity: 0.6; font-size: 0.85em; }
+.sh-dealbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #fff5c4;
+  border: 3px solid var(--yellow-d);
+  box-shadow: 0 4px 0 #ecd889;
+}
+.sh-dealbar > b { font: 700 13px var(--px); letter-spacing: 1px; color: var(--red-d); }
+.sh-dealbar > span { font: 400 15px / 1.25 var(--round); color: var(--ink); min-width: 0; }
+.sh-dealbar s { opacity: 0.6; }
+.sh-ribbon.first { background: var(--red); box-shadow: 0 3px 0 var(--red-d); color: #fff; }
+.sh-deal.pass { grid-template-columns: minmax(0, 1fr) auto; border-color: #b81f6c; background: #ffe6f3; box-shadow: 0 4px 0 #f2b6d4; }
+.sh-deal.doubler { grid-template-columns: minmax(0, 1fr) auto; }
+.sh-tokens { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font: 700 14px var(--px); letter-spacing: 1px; color: var(--ink); }
+.sh-tokens b { font-size: 20px; color: var(--blue); }
+.sh-tokens span { font: 400 14px / 1.25 var(--round); letter-spacing: 0; color: var(--ink-2); }
+@media (max-width: 640px) {
+  .sh-dealbar { grid-template-columns: minmax(0, 1fr) auto; }
+  .sh-dealbar > b { grid-column: 1 / -1; }
+}

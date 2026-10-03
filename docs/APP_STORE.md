@@ -4,7 +4,7 @@ Everything App Store Connect asks for, ready to paste, and the order to do it in
 Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape only, no account, no online play.
 
 - **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (coin packs,
-  Starter Pack, NO ADS).
+  Starter Pack, NO ADS, Club Pass, Coin Doubler). The design is docs/ECONOMY.md.
 - **Game Center:** 21 achievements.
 - **Build:** version **1.0**, build **1**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
 
@@ -16,7 +16,10 @@ Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape only, no accou
 | Full time | **Double your coins** with a rewarded ad | Optional |
 | Daily gift | **Double the gift** with a rewarded ad | Optional |
 | Before a kick-off | A full-screen ad (interstitial) | At most every 2 breaks and 4 minutes apart; never mid-match; never in the first match or the basics |
-| Shop, COINS tab | Coin packs US$0.99 to $14.99, Starter Pack $1.99, **NO ADS $3.99** | NO ADS removes the full-screen ads; rewarded ads stay (they're the player's choice) |
+| Shop, COINS tab | Coin packs US$0.99 to $14.99 (the first buy of each doubled), Starter Pack $1.99, **NO ADS $3.99** | NO ADS removes the full-screen ads; rewarded ads stay (they're the player's choice) |
+| Shop, COINS tab and BADGES, SEASON | **Club Pass** $3.99 a month: about 6,000 coins and that month's own goal explosion and trail | Buying late unlocks reached tiers; nothing reached is lost |
+| Shop, COINS tab | **Coin Doubler** $4.99 once: every match pays double coins | Looks and coins only, never an edge in a match |
+| After the first win | A one-time welcome offer for the Starter Pack | No timer; it stays in the shop |
 
 **Kid-safe:** every ad request is child-directed, so ads are family-rated (G), never personalised, and there's no
 tracking prompt. It earns less per ad than tracked ads; it's the right line for a game kids play (and US law,
@@ -58,10 +61,12 @@ COPPA). The switch is `ADMOB_KID_SAFE` in `src/platform/adConfig.ts`.
    - Bundle ID `com.calynx.blockyleague`, SKU `blocky-league-ios`.
 
    Then:
-   - **In-App Purchases:** create the six products exactly as docs/MONETIZATION.md section 1 lists them (ids,
-     types, prices).
-   - **Game Center:** turn it on for the app, then add the 21 achievements below, each with its image from
-     `store-assets/game-center/<id>.png`.
+   - **In-App Purchases:** create the eight products exactly as docs/MONETIZATION.md section 1 lists them (ids,
+     types, prices). That includes the **Club Pass** (`bl.pass`, Consumable, $3.99) and the **Coin Doubler**
+     (`bl.doubler`, Non-Consumable, $4.99). Each needs a display name, a description and a review screenshot.
+     Use a shop screenshot from the simulator.
+   - **Game Center:** turn it on for the app, then add the 21 achievements and the 4 leaderboards below, each
+     achievement with its image from `store-assets/game-center/<id>.png`.
    - Fill in the fields below, pick the uploaded build, and add the in-app purchases to the version.
 7. **Try it first:** the TestFlight tab, then add yourself as an internal tester and install it on your iPhone.
    Purchases there are free sandbox ones. Check:
@@ -78,7 +83,7 @@ COPPA). The switch is `ADMOB_KID_SAFE` in `src/platform/adConfig.ts`.
 | Subtitle (30 max) | Voxel football. Big goals. |
 | Category | Games. Subcategories: Sports, then Arcade |
 | Content rights | Does not contain, show or access third-party content |
-| Age rating | None or No to every content question. If asked: advertising yes, in-app purchases yes. Expected: 4+ |
+| Age rating | None or No to every content question, **loot boxes No** (scout packs cost earned-only tokens, never money). If asked: advertising yes, in-app purchases yes. Expected: 4+ |
 | Copyright | 2026 Calynx |
 | Price | Free, all countries |
 | Sign-in required for review | No |
@@ -193,6 +198,20 @@ Add all 21 under the app's Game Center section, with each image from `store-asse
 | `bl.ach.keeper.3` | Cat Reflexes | 30 | KEEPER badge: 25 saves by your keeper. | KEEPER badge earned: 25 saves by your keeper. |
 | `bl.ach.keeper.5` | Golden Glove | 60 | KEEPER badge: 65 saves by your keeper. | KEEPER badge earned: 65 saves by your keeper. |
 
+## Game Center leaderboards
+
+All four use score format Integer, submission type Best Score, sort High to Low (src/meta/leaderboards.ts).
+
+| ID | Name | Type | Description | Suffix |
+|---|---|---|---|---|
+| `bl.lb.goals` | Goals Scored | Classic | Every goal your team has scored. | goal / goals |
+| `bl.lb.wins` | Matches Won | Classic | Every match you have won. | win / wins |
+| `bl.lb.streak` | Best Win Streak | Classic | Your most wins in a row. | win / wins |
+| `bl.lb.season` | Best Season | Classic | Most XP earned in one monthly season. | XP / XP |
+
+Apple has no calendar-month recurring leaderboard (its longest repeat is 30 days, which drifts off the months), so
+Best Season is a Classic board of each player's best month.
+
 ## Notes for the reviewer (App Review Information)
 
 > Blocky League is a single-player football game. No account or login is needed. The app is landscape only on iPhone and iPad.
@@ -203,9 +222,9 @@ Add all 21 under the app's Game Center section, with each image from `store-asse
 >
 > Ads (Google AdMob, family-rated, child-directed, no tracking): an optional rewarded video for coins (SHOP, COINS, FREE COINS; also "double" offers at full time and on the daily gift), and an occasional full-screen ad before a kick-off, never during play.
 >
-> In-app purchases are in SHOP, COINS: four coin packs, a Starter Pack and NO ADS (removes the full-screen ads), with RESTORE PURCHASES. Coins are also earned by playing. Player scout packs in SHOP, PLAYERS are bought with coins and show their odds before purchase.
+> In-app purchases are in SHOP, COINS: four coin packs (the first buy of each pays double), a Starter Pack, NO ADS (removes the full-screen ads), the Club Pass (this month's extra season track, also shown in BADGES, SEASON) and the Coin Doubler, with RESTORE PURCHASES. Coins are also earned by playing. Player scout packs in SHOP, PLAYERS cost Scout Tokens, which are earned by playing and can't be bought; their odds are shown.
 >
-> Game Center achievements are reported as you play; BADGES, GAME CENTER ACHIEVEMENTS opens them.
+> Game Center achievements and leaderboards are reported as you play; BADGES has GAME CENTER ACHIEVEMENTS and LEADERBOARDS buttons. After some wins the app may show Apple's own rating prompt.
 
 Also fill in your name, phone and email as the review contact.
 

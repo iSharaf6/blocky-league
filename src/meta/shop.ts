@@ -15,9 +15,10 @@
  */
 import { Rng, hashString } from '../core/rng';
 import {
-  BALL_SKIN_IDS, BALL_SKIN_LEVEL, BALL_SKIN_NAMES, CELEBRATION_IDS, CELEBRATION_LEVEL, CELEBRATION_NAMES, GOAL_FX_IDS, TRAIL_IDS, levelOf,
-  normalizeIap, normalizeShop, type IapState, type SaveData, type ShopState,
+  BALL_SKIN_IDS, BALL_SKIN_LEVEL, BALL_SKIN_NAMES, CELEBRATION_IDS, CELEBRATION_LEVEL, CELEBRATION_NAMES, GOAL_FX_IDS, PASS_IDS, TRAIL_IDS, levelOf,
+  normalizeIap, normalizeShop, type IapState, type PassId, type SaveData, type ShopState,
 } from '../core/save';
+import { SEASON_THEMES } from './season';
 import { FORMATIONS } from '../sim/formations';
 import { overall, type PlayerDef, type Role } from '../sim/types';
 import { SQUAD_MAX, SQUAD_MIN, clonePlayer, clubRating, freeNumber, sellPlayer, swapPlayers, tuneToOverall, type CareerState, type ClubState, type Wallet } from './career';
@@ -40,12 +41,16 @@ export interface ShopItem {
   level?: number;
   /** One line for the showcase. */
   blurb: string;
+  /** A Club Pass look: earned on its month's pass track only, never sold for coins (core/save.ts PASS_IDS). */
+  pass?: true;
 }
 
 /**
  * Prices, tuned to what a match pays (main.ts standardReward: a win on Normal ~170-210, a draw ~90, a loss ~50,
- * x1.1 a win in a row up to x2) plus the daily gift (100-400) and challenges (100-220 each): something new every
- * two to four matches early on (250-500), the middle of the range a week of play, and a few to aim at (1500+).
+ * x1.1 a win in a row up to x2) plus the daily gift (100-400) and challenges (100-220 each). The ladder (docs/ECONOMY.md):
+ * COMMON something new every two to four matches early on (250-450); RARE and EPIC a few days to a week of play
+ * (500-2500); LEGENDARY a few weeks for a free player (4500-7500), the looks to aim at and the reason a coin pack is
+ * ever worth it. Club Pass looks are never on sale for coins.
  */
 const CELEB_PRICE: { readonly [k in (typeof CELEBRATION_IDS)[number]]: number } = {
   classic: 0, knee: 300, shush: 450, plane: 600, robot: 800, backflip: 1200, pile: 1800,
@@ -60,7 +65,7 @@ const CELEB_BLURB: { readonly [k in (typeof CELEBRATION_IDS)[number]]: string } 
   pile: 'Hit the deck and the whole team piles on.',
 };
 const BALL_PRICE: { readonly [k in (typeof BALL_SKIN_IDS)[number]]: number } = {
-  classic: 0, retro: 250, blaze: 500, ice: 600, neon: 800, gold: 2500,
+  classic: 0, retro: 250, blaze: 500, ice: 600, neon: 800, gold: 2500, diamond: 7500,
 };
 const BALL_BLURB: { readonly [k in (typeof BALL_SKIN_IDS)[number]]: string } = {
   classic: 'The match ball.',
@@ -69,8 +74,10 @@ const BALL_BLURB: { readonly [k in (typeof BALL_SKIN_IDS)[number]]: string } = {
   ice: 'Frosty white with blue panels.',
   neon: 'Glows green under the lights.',
   gold: 'Solid gold. For legends only.',
+  diamond: 'Cut like a gem. The rarest ball in the game.',
 };
-const GOAL_FX: { readonly [k in (typeof GOAL_FX_IDS)[number]]: { name: string; price: number; blurb: string } } = {
+type Look = { name: string; price: number; blurb: string };
+const GOAL_FX: { readonly [k in Exclude<(typeof GOAL_FX_IDS)[number], PassId>]: Look } = {
   club: { name: 'Club Colours', price: 0, blurb: 'Your kit colours, every goal.' },
   gold: { name: 'Gold Rush', price: 400, blurb: 'A shower of gold over the goal mouth.' },
   fire: { name: 'Inferno', price: 450, blurb: 'Your goals go up in flames.' },
@@ -78,8 +85,10 @@ const GOAL_FX: { readonly [k in (typeof GOAL_FX_IDS)[number]]: { name: string; p
   neon: { name: 'Neon Rave', price: 650, blurb: 'Rave colours, full volume.' },
   rainbow: { name: 'Rainbow', price: 900, blurb: 'Every colour at once.' },
   galaxy: { name: 'Galaxy', price: 1500, blurb: 'Purple, blue and stardust.' },
+  diamond: { name: 'Diamond Rain', price: 4500, blurb: 'It rains diamonds every time you score.' },
+  supernova: { name: 'Supernova', price: 6000, blurb: 'A star explodes over the goal mouth.' },
 };
-const TRAILS: { readonly [k in (typeof TRAIL_IDS)[number]]: { name: string; price: number; blurb: string } } = {
+const TRAILS: { readonly [k in Exclude<(typeof TRAIL_IDS)[number], PassId>]: Look } = {
   white: { name: 'Chalk', price: 0, blurb: 'Clean white speed lines.' },
   fire: { name: 'Afterburner', price: 300, blurb: 'Flames off your heels on every sprint.' },
   ice: { name: 'Ice Trail', price: 300, blurb: 'Cold blue streaks behind you.' },
@@ -87,7 +96,17 @@ const TRAILS: { readonly [k in (typeof TRAIL_IDS)[number]]: { name: string; pric
   pink: { name: 'Bubblegum', price: 350, blurb: 'Pink, loud and proud.' },
   gold: { name: 'Golden Boots', price: 1000, blurb: 'Gold lines behind every sprint.' },
   rainbow: { name: 'Rainbow Dash', price: 1400, blurb: 'Leave a rainbow behind you.' },
+  lightning: { name: 'Lightning', price: 4500, blurb: 'Every sprint crackles.' },
+  comet: { name: 'Comet Tail', price: 6000, blurb: 'A blazing comet behind every run.' },
 };
+
+/** A Club Pass look of the season theme at index `m` (January 0): its goal explosion or its trail. */
+const passLook = (cat: 'goalfx' | 'trail', m: number): Look => ({
+  name: SEASON_THEMES[m].name,
+  price: 0,
+  blurb: `Club Pass only: the ${SEASON_THEMES[m].name} ${cat === 'goalfx' ? 'goal explosion' : 'sprint trail'}.`,
+});
+const isPass = (id: string): id is PassId => (PASS_IDS as readonly string[]).includes(id);
 
 const ITEMS: readonly ShopItem[] = [
   ...CELEBRATION_IDS.map((id): ShopItem => ({
@@ -96,9 +115,28 @@ const ITEMS: readonly ShopItem[] = [
   ...BALL_SKIN_IDS.map((id): ShopItem => ({
     cat: 'ball', id, name: BALL_SKIN_NAMES[id], price: BALL_PRICE[id], level: BALL_SKIN_LEVEL[id], blurb: BALL_BLURB[id],
   })),
-  ...GOAL_FX_IDS.map((id): ShopItem => ({ cat: 'goalfx', id, ...GOAL_FX[id] })),
-  ...TRAIL_IDS.map((id): ShopItem => ({ cat: 'trail', id, ...TRAILS[id] })),
+  ...GOAL_FX_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'goalfx', id, ...passLook('goalfx', PASS_IDS.indexOf(id)), pass: true } : { cat: 'goalfx', id, ...GOAL_FX[id] })),
+  ...TRAIL_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'trail', id, ...passLook('trail', PASS_IDS.indexOf(id)), pass: true } : { cat: 'trail', id, ...TRAILS[id] })),
 ].map((it) => (it.price === 0 ? { ...it, level: undefined } : it));
+
+/** The Club Pass looks of season `id` ("2026-10"): its goal explosion and its trail. */
+export function seasonPassItems(id: string): { goalfx: ShopItem; trail: ShopItem } {
+  const m = Math.max(0, Math.min(11, (Number(id.slice(5, 7)) || 1) - 1));
+  return { goalfx: shopItem('goalfx', PASS_IDS[m])!, trail: shopItem('trail', PASS_IDS[m])! };
+}
+
+// ------------------------------------------------------------------ rarity (status: shown on every tile)
+
+export type ItemTier = 'common' | 'rare' | 'epic' | 'legendary' | 'season';
+export const ITEM_TIER_NAMES: { readonly [k in ItemTier]: string } = {
+  common: 'COMMON', rare: 'RARE', epic: 'EPIC', legendary: 'LEGENDARY', season: 'CLUB PASS',
+};
+
+/** An item's rarity, by price (the free starters are common); Club Pass looks are their own tier. */
+export function itemTier(it: Pick<ShopItem, 'price' | 'pass'>): ItemTier {
+  if (it.pass) return 'season';
+  return it.price >= 3000 ? 'legendary' : it.price >= 1000 ? 'epic' : it.price >= 500 ? 'rare' : 'common';
+}
 
 /** Every item in a category (all of them without one), in shop order (cheapest first after the free one). */
 export function shopItems(cat?: ShopCat): readonly ShopItem[] {
@@ -159,24 +197,60 @@ export function bought(save: Pick<SaveData, 'shop'>, cat: ShopCat, id: string): 
 export function owns(save: Pick<SaveData, 'shop' | 'progress'>, cat: ShopCat, id: string): boolean {
   const it = shopItem(cat, id);
   if (!it) return false;
+  // (A Club Pass look is free of coins but never a starter: owned only once its pass track hands it over.)
+  if (it.pass) return bought(save, cat, id);
   if (it.price === 0) return true;
   if (it.level !== undefined && levelOf(save.progress.xp).level >= it.level) return true;
   return bought(save, cat, id);
 }
 
-export type BuyResult = { ok: true; item: ShopItem; coins: number } | { ok: false; reason: 'unknown' | 'owned' | 'no-coins'; short: number };
+// ------------------------------------------------------------------ today's deal
+
+/** Today's deal: one look a day at this much off (honest: it rotates daily, and every look comes round again). */
+export const DEAL_OFF = 25;
+
+/**
+ * Today's deal for this save on local `day`: a look it doesn't own yet (never a Club Pass one), at DEAL_OFF % off.
+ * Picked once per day and kept in the save, so buying it (or anything else) doesn't swap it for another; null when
+ * there is nothing left to sell.
+ */
+export function dailyDeal(save: Pick<SaveData, 'shop' | 'progress'>, day: string): { item: ShopItem; price: number } | null {
+  const shop = shopOf(save);
+  if (shop.deal?.day !== day) {
+    const pool = ITEMS.filter((it) => it.price > 0 && !it.pass && !owns(save, it.cat, it.id));
+    const pick = pool.length ? pool[hashString(`deal|${day}`) % pool.length] : null;
+    shop.deal = pick ? { day, key: itemKey(pick.cat, pick.id) } : null;
+  }
+  if (!shop.deal) return null;
+  const [cat, id] = shop.deal.key.split(':') as [ShopCat, string];
+  const item = shopItem(cat, id);
+  if (!item || item.pass || item.price <= 0) return null;
+  return { item, price: Math.round((item.price * (100 - DEAL_OFF)) / 100 / 10) * 10 };
+}
+
+/** What `it` costs on `day` (today's deal price for the deal look, else its price). */
+export function priceOn(save: Pick<SaveData, 'shop' | 'progress'>, it: ShopItem, day?: string): number {
+  if (!day) return it.price;
+  const deal = dailyDeal(save, day);
+  return deal && deal.item.cat === it.cat && deal.item.id === it.id ? deal.price : it.price;
+}
+
+export type BuyResult = { ok: true; item: ShopItem; coins: number } | { ok: false; reason: 'unknown' | 'owned' | 'no-coins' | 'pass'; short: number };
 
 /**
  * Buy an item: the price comes out of the wallet (never below zero: short of it, nothing changes and `short`
- * says by how much), it is owned for good and marked seen. Equipping is separate (equipItem).
+ * says by how much), it is owned for good and marked seen. Equipping is separate (equipItem). With `day`, today's
+ * deal price applies to the deal look. Club Pass looks aren't for sale.
  */
-export function buyItem(save: Pick<SaveData, 'shop' | 'progress' | 'coins'>, cat: ShopCat, id: string): BuyResult {
+export function buyItem(save: Pick<SaveData, 'shop' | 'progress' | 'coins'>, cat: ShopCat, id: string, day?: string): BuyResult {
   const it = shopItem(cat, id);
   if (!it) return { ok: false, reason: 'unknown', short: 0 };
   if (owns(save, cat, id)) return { ok: false, reason: 'owned', short: 0 };
+  if (it.pass) return { ok: false, reason: 'pass', short: 0 };
+  const price = priceOn(save, it, day);
   const coins = wallet(save);
-  if (coins < it.price) return { ok: false, reason: 'no-coins', short: it.price - coins };
-  save.coins = coins - it.price;
+  if (coins < price) return { ok: false, reason: 'no-coins', short: price - coins };
+  save.coins = coins - price;
   const shop = shopOf(save);
   const key = itemKey(cat, id);
   shop.owned.push(key);
@@ -290,6 +364,26 @@ export function claimFreeAd(save: Pick<SaveData, 'iap' | 'coins'>, day: string):
 // ------------------------------------------------------------------ scout packs
 
 export type PackKind = 'scout' | 'elite';
+
+/**
+ * What each pack costs in Scout Tokens (core/save.ts ShopState.tokens). Tokens are earned only, one for every daily
+ * challenge done, and never sold: coins (which the app's store sells) can't buy a random card. Apple and PEGI
+ * treat paid random items as loot boxes (age ratings, and bans for minors in some countries): this keeps the game
+ * 4+ and fair for kids, while the free daily pack and the transfer market's chosen signings stay as they were.
+ */
+export const PACK_TOKENS: { readonly [k in PackKind]: number } = { scout: 1, elite: 3 };
+
+/** Scout Tokens in hand. */
+export function scoutTokens(save: Pick<SaveData, 'shop'>): number {
+  return shopOf(save).tokens;
+}
+
+/** Add earned Scout Tokens (a daily challenge done); the new count. */
+export function earnTokens(save: Pick<SaveData, 'shop'>, n: number): number {
+  const shop = shopOf(save);
+  shop.tokens = Math.min(999, shop.tokens + Math.max(0, Math.floor(Number.isFinite(n) ? n : 0)));
+  return shop.tokens;
+}
 export type Rarity = 'common' | 'rare' | 'epic' | 'legend';
 export const RARITIES: readonly Rarity[] = ['common', 'rare', 'epic', 'legend'];
 
@@ -357,11 +451,11 @@ export function rollPack(kind: PackKind, base: number, seed: number, avoid: Iter
   return { player, rarity, ovr: overall(player) };
 }
 
-export type PackResult = { ok: true; card: PackCard; price: number; free: boolean } | { ok: false; reason: 'no-club' | 'no-coins' | 'free-used'; short: number };
+export type PackResult = { ok: true; card: PackCard; price: number; free: boolean } | { ok: false; reason: 'no-club' | 'no-tokens' | 'free-used'; short: number };
 
 /**
- * Open a pack for `club`: the price (packPrice at the club's rating, or nothing for the day's free scout pack)
- * leaves the wallet, never below zero, and the card is drawn from the save's own pack count (so a reload draws
+ * Open a pack for `club`: its Scout Tokens (PACK_TOKENS, or nothing for the day's free scout pack) are spent,
+ * never below zero; `price` is the card's coin value (packPrice at the club's rating), and the card is drawn from the save's own pack count (so a reload draws
  * the same card again: no rerolling). The card is not signed yet: see signCard / sellCard.
  */
 export function openPack(
@@ -375,10 +469,11 @@ export function openPack(
     if (kind !== 'scout' || !freePackReady(save, day)) return { ok: false, reason: 'free-used', short: 0 };
     shop.freePack = day;
   } else {
+    const cost = PACK_TOKENS[kind];
+    if (shop.tokens < cost) return { ok: false, reason: 'no-tokens', short: cost - shop.tokens };
+    shop.tokens -= cost;
+    // (Its coin value, kept with the card: what a sale may fetch and the resale cap go by it, as before.)
     price = packPrice(kind, rating);
-    const coins = wallet(save);
-    if (coins < price) return { ok: false, reason: 'no-coins', short: price - coins };
-    save.coins = coins - price;
   }
   const seed = hashString(`${club.short}|${club.name}|${shop.packs}`);
   shop.packs++;

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CHALLENGE_POOL, LEVEL_TITLES, MAX_LEVEL, advanceDaily, dailyChallenges, dailyFor, defaultProgress, defaultSave, levelOf, levelTitle,
   loadSave, matchStars, matchXp, nextStreak, normalizeProgress, normalizeSettings, streakMult, xpToNext, type MatchSummary, BALL_SKIN_LEVEL, LEGEND_STARS, legendUnlocked, nextUnlock, skinUnlocked, xpAt,
-  CELEBRATION_IDS, CELEBRATION_LEVEL, celebrationUnlocked, unlockLadder, momentStars, momentStarsTotal, momentXp, normalizeMoments, recordMoment } from '../src/core/save';
+  BALL_SKIN_IDS, CELEBRATION_IDS, CELEBRATION_LEVEL, celebrationUnlocked, unlockLadder, momentStars, momentStarsTotal, momentXp, normalizeMoments, recordMoment } from '../src/core/save';
 
 const KEY = 'blocky-league-save-v1';
 
@@ -214,7 +214,7 @@ describe('unlock ladder (earned only)', () => {
   });
   it('the ladder holds every ball look and celebration in level order, balls first on a shared level', () => {
     const ladder = unlockLadder();
-    expect(ladder.length).toBe(6 + CELEBRATION_IDS.length);
+    expect(ladder.length).toBe(BALL_SKIN_IDS.length + CELEBRATION_IDS.length);
     for (let i = 1; i < ladder.length; i++) expect(ladder[i].level).toBeGreaterThanOrEqual(ladder[i - 1].level);
     expect(ladder[0]).toMatchObject({ kind: 'ball', id: 'classic', level: 1 });
     expect(ladder[1]).toMatchObject({ kind: 'celebration', id: 'classic', level: 1 });

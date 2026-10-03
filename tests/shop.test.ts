@@ -9,7 +9,7 @@ import { quickSaleValue } from '../src/meta/market';
 import {
   CAT_LABEL, DEFAULT_ID, PACKS, PACK_OVR_CAP, RARITIES, RARITY_OVR, SHOP_CATS, affordable, buyItem, equipItem, equippedId, freePackReady, inReach,
   itemKey, makeRoom, markSeen, newInShop, openPack, owns, packPrice, pendingCard, releaseCandidate, rollPack, sellCard, settlePack, shopItem, shopItems, shopOf,
-  signCard,
+  signCard, PACK_TOKENS, earnTokens, scoutTokens,
   type PackCard,
 } from '../src/meta/shop';
 import { GOAL_FX_COLORS, TRAIL_COLORS, goalFxColors, trailColors } from '../src/render/cosmetics';
@@ -45,7 +45,8 @@ describe('catalogue', () => {
     expect(shopItems('goalfx').map((i) => i.id)).toEqual([...GOAL_FX_IDS]);
     expect(shopItems('trail').map((i) => i.id)).toEqual([...TRAIL_IDS]);
     for (const cat of SHOP_CATS) {
-      const free = shopItems(cat).filter((i) => i.price === 0);
+      // (Club Pass looks cost no coins but are earned on the pass, never a free default.)
+      const free = shopItems(cat).filter((i) => i.price === 0 && !i.pass);
       expect(free.map((i) => i.id)).toEqual([DEFAULT_ID[cat]]);
       expect(CAT_LABEL[cat].length).toBeGreaterThan(0);
     }
@@ -170,7 +171,7 @@ describe('equipping', () => {
 
 describe('saves', () => {
   it('a brand-new save has a whole, empty shop', () => {
-    expect(defaultSave().shop).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null });
+    expect(defaultSave().shop).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null, deal: null, tokens: 2 });
   });
 
   it('old saves (no shop, no goal theme or trail) load and own nothing bought', () => {
@@ -182,7 +183,7 @@ describe('saves', () => {
     old.coins = 900;
     stubStorage(old);
     const s = loadSave();
-    expect(s.shop).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null });
+    expect(s.shop).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null, deal: null, tokens: 2 });
     expect(s.coins).toBe(900);
     expect(s.settings.goalFx).toBeUndefined();
     expect(equippedId(s, 'goalfx')).toBe('club');
@@ -197,7 +198,7 @@ describe('saves', () => {
     s.shop!.packs = 4;
     stubStorage(s);
     const back = loadSave();
-    expect(back.shop).toEqual({ owned: ['goalfx:gold'], seen: ['goalfx:gold'], freePack: DAY, packs: 4, pending: null });
+    expect(back.shop).toEqual({ owned: ['goalfx:gold'], seen: ['goalfx:gold'], freePack: DAY, packs: 4, pending: null, deal: null, tokens: 2 });
     expect(back.settings.goalFx).toBe('gold');
     expect(owns(back, 'goalfx', 'gold')).toBe(true);
     const imported = importSave(JSON.stringify(back));
@@ -206,16 +207,16 @@ describe('saves', () => {
 
   it('a damaged shop blob is made whole: junk dropped, numbers sane, ids unknown to the settings cleared', () => {
     expect(normalizeShop({ owned: ['ball:gold', 'ball:gold', 7, '<b>', 'x'], seen: 'nope', freePack: 'yesterday', packs: -3 }))
-      .toEqual({ owned: ['ball:gold'], seen: [], freePack: '', packs: 0, pending: null });
-    expect(normalizeShop(null)).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null });
-    expect(normalizeShop([1, 2])).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null });
+      .toEqual({ owned: ['ball:gold'], seen: [], freePack: '', packs: 0, pending: null, deal: null, tokens: 2 });
+    expect(normalizeShop(null)).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null, deal: null, tokens: 2 });
+    expect(normalizeShop([1, 2])).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null, deal: null, tokens: 2 });
     const st = normalizeSettings({ goalFx: 'lava', trail: 42 });
     expect(st.goalFx).toBeUndefined();
     expect(st.trail).toBeUndefined();
     // A save whose shop went missing at run time (an old cloud copy) is made whole on first use.
     const s = fresh();
     delete s.shop;
-    expect(shopOf(s)).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null });
+    expect(shopOf(s)).toEqual({ owned: [], seen: [], freePack: '', packs: 0, pending: null, deal: null, tokens: 2 });
     expect(s.shop).toBeDefined();
   });
 });
@@ -286,18 +287,25 @@ describe('scout packs', () => {
     }
   });
 
-  it('opening one costs its price (scaled to the club), never below zero; the free one is once a day', () => {
+  it('opening one costs Scout Tokens (earned, never coins: nothing random is bought with money); the free one is once a day', () => {
     const c = club();
+    // (The card's coin value still scales with the club: its sale and resale cap go by it.)
     const price = packPrice('scout', clubRating(c));
     expect(price).toBe(PACKS.scout.price);
     expect(packPrice('scout', 80)).toBeGreaterThan(PACKS.scout.price);
     expect(packPrice('elite', 200)).toBe(PACKS.elite.price * 4);
-    const s = fresh(price + 10);
+    const s = fresh(10);
+    expect(scoutTokens(s)).toBe(2);
     const r = openPack(s, c, 'scout', DAY);
-    expect(r.ok).toBe(true);
+    expect(r).toMatchObject({ ok: true, price });
     expect(s.coins).toBe(10);
+    expect(scoutTokens(s)).toBe(2 - PACK_TOKENS.scout);
     expect(s.shop!.packs).toBe(1);
-    expect(openPack(s, c, 'scout', DAY)).toEqual({ ok: false, reason: 'no-coins', short: price - 10 });
+    expect(openPack(s, c, 'elite', DAY)).toEqual({ ok: false, reason: 'no-tokens', short: PACK_TOKENS.elite - 1 });
+    expect(scoutTokens(s)).toBe(1);
+    earnTokens(s, 2);
+    expect(openPack(s, c, 'elite', DAY).ok).toBe(true);
+    expect(scoutTokens(s)).toBe(0);
     expect(s.coins).toBe(10);
     // The free daily pack: costs nothing, once a day.
     expect(freePackReady(s, DAY)).toBe(true);
@@ -316,6 +324,7 @@ describe('scout packs', () => {
 
   it('a card opened but not signed or sold comes back (a closed tab never loses a paid pack)', () => {
     const s = fresh(5000);
+    earnTokens(s, PACK_TOKENS.elite);
     const c = club();
     const r = openPack(s, c, 'elite', DAY);
     expect(r.ok).toBe(true);

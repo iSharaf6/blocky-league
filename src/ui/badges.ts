@@ -16,13 +16,16 @@ import {
   earnedTitles, tierReward, trackProgress, wearTitle, wornTitle, type MasteryState, type MasteryTrack,
 } from '../meta/mastery';
 import {
-  SEASON_TIERS, claimCarry, claimSeasonTier, rollSeason, seasonOf, seasonDaysLeft, seasonName, seasonProgress,
+  PASS_BIG_COINS, SEASON_TIERS, claimCarry, claimSeasonTier, passReward, rollSeason, seasonOf, seasonDaysLeft, seasonName, seasonProgress,
   seasonReward, seasonTheme, seasonTier, type SeasonState,
 } from '../meta/season';
-import { gameCenterReady, showGameCenterAchievements } from '../platform/gameCenter';
+import { claimAllPass, claimCarryItems, claimPassTier, passTotals } from '../meta/pass';
+import { gameCenterReady, showGameCenterAchievements, showGameCenterLeaderboards } from '../platform/gameCenter';
+import { iap } from '../platform/iap';
 import { closeMeta, esc, fmt, mountMeta, topBar, type MetaScreen } from './club';
 import { pixelIcon } from './menus';
 import { maskIcon } from './run';
+import { openShop } from './shop';
 
 export type BadgesTab = 'badges' | 'season' | 'titles';
 
@@ -66,11 +69,12 @@ function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesT
     `${topBar('MENU', 'BADGES', sub, app.save.coins)}
     <div class="seg mc-tabs bd-tabs">${tabs.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}">${l}${dot(k)}</button>`).join('')}</div>
     ${body}
-    ${tab === 'badges' && gameCenterReady() ? '<div class="btn-row no-stick"><button class="btn btn-white" data-a="gc">GAME CENTER ACHIEVEMENTS</button></div>' : ''}
+    ${tab === 'badges' && gameCenterReady() ? '<div class="btn-row no-stick"><button class="btn btn-white" data-a="gc">GAME CENTER ACHIEVEMENTS</button><button class="btn btn-white" data-a="gcBoards">LEADERBOARDS</button></div>' : ''}
     ${pending ? `<div class="btn-row"><button class="btn btn-yellow btn-lg pulse bd-all" data-a="all">CLAIM ALL (${pending})</button></div>` : ''}`,
     {
       back,
       gc: () => void showGameCenterAchievements(),
+      gcBoards: () => void showGameCenterLeaderboards(),
       tab: (el) => render(app, scr, back, (el.dataset.v as BadgesTab) ?? 'badges'),
       claimTrack: (el) => {
         const k = el.dataset.k as MasteryTrack;
@@ -92,17 +96,47 @@ function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesT
           scr.toast(`TIER ${t}: ${rw.title ? `${rw.title.toUpperCase()}, ` : ''}${state}`);
         }
       },
+      ptier: (el) => {
+        const t = Number(el.dataset.t);
+        const s = season(app);
+        if (!s.pass) {
+          scr.toast(iap.available ? 'GET THE CLUB PASS TO CLAIM THIS TIER' : 'THE CLUB PASS IS IN THE IPHONE AND IPAD APP', 'info');
+          return;
+        }
+        const got = claimPassTier(app.save, t);
+        if (got.coins > 0) paid(app, scr, got.coins, `PASS TIER ${t}`);
+        if (got.items.length) {
+          app.persist();
+          sfx.coin();
+          scr.toast('NEW LOOK: EQUIP IT IN THE SHOP', 'good');
+        }
+        if (!got.coins && !got.items.length) scr.toast(t > seasonTier(s.xp) ? `REACH TIER ${t} TO CLAIM IT` : `PASS TIER ${t} CLAIMED`, 'info');
+        render(app, scr, back, tab);
+      },
+      passGet: () => openShop(app, { tab: 'coins', backLabel: 'BADGES', onBack: () => render(app, scr, back, 'season') }),
+      pcarry: () => {
+        const items = claimCarryItems(app.save);
+        if (items.length) {
+          app.persist();
+          sfx.coin();
+          scr.toast(items.length === 1 ? 'NEW LOOK: EQUIP IT IN THE SHOP' : `${items.length} NEW LOOKS: EQUIP THEM IN THE SHOP`, 'good');
+        }
+        render(app, scr, back, tab);
+      },
       carry: () => {
         const coins = claimCarry(season(app));
         if (coins > 0) paid(app, scr, coins, 'LAST SEASON');
         render(app, scr, back, tab);
       },
       all: () => {
-        const coins = claimAll(app.save);
-        if (coins > 0) {
+        // (claimAll pays its own coins into the wallet; the pass's are returned, so they're paid here.)
+        const pass = claimAllPass(app.save);
+        app.save.coins += pass.coins;
+        const coins = claimAll(app.save) + pass.coins;
+        if (coins > 0 || pass.items.length) {
           app.persist();
           sfx.coin();
-          scr.toast(`+${fmt(coins)} COINS`, 'good');
+          scr.toast(`+${fmt(coins)} COINS${pass.items.length ? ' AND NEW LOOKS: EQUIP THEM IN THE SHOP' : ''}`, 'good');
         }
         render(app, scr, back, tab);
       },
@@ -192,6 +226,9 @@ function seasonHtml(app: AppContext): string {
     ? `<div class="mc-notice bd-carry"><p><b>${esc(seasonName(s.carry.id))}</b> left ${fmt(s.carry.coins)} coins unclaimed.</p><button class="btn btn-go" data-a="carry">CLAIM</button></div>`
     : '';
   const ranks = [5, 10, 15, 20, 25, 30].map((t) => seasonReward(t, s.id).title ?? '').map((x) => esc(x.split(' ').pop() ?? '')).join(', ');
+  // The Club Pass track (meta/pass.ts): shown in the app (where the store sells it), locked until it's bought.
+  const passOn = s.pass;
+  const pass = passOn || iap.available ? passTrackHtml(app) : '';
   return `<div class="bd-season" style="--c:${th.color}">
       <div class="bd-shead"><b>${esc(th.name.toUpperCase())}</b><small>${seasonName(s.id)}</small><small class="bd-days">${days === 1 ? 'LAST DAY' : `${days} DAYS LEFT`}</small></div>
       <div class="bd-stier"><span>TIER</span><b>${p.tier}</b><small>OF ${SEASON_TIERS}</small></div>
@@ -200,7 +237,44 @@ function seasonHtml(app: AppContext): string {
     <p class="mc-hint">All the XP you earn counts. A new season starts on the 1st: nothing you reached is lost.</p>
     ${carry}
     <div class="bd-grid">${tiles.join('')}</div>
-    <p class="bd-legend">${pixelIcon('star', '#c7970f', 1.6)} Every 5th tier: a bigger prize and a season title (${esc(th.name)} ${ranks}).</p>`;
+    <p class="bd-legend">${pixelIcon('star', '#c7970f', 1.6)} Every 5th tier: a bigger prize and a season title (${esc(th.name)} ${ranks}).</p>
+    ${pass}`;
+}
+
+/** The Club Pass row: every tier's pass reward (locked tiles until the pass is on), the offer, last month's looks. */
+function passTrackHtml(app: AppContext): string {
+  const s = season(app);
+  const th = seasonTheme(s.id);
+  const reached = seasonTier(s.xp);
+  const totals = passTotals(s.id);
+  const tiles: string[] = [];
+  for (let t = 1; t <= SEASON_TIERS; t++) {
+    const rw = passReward(t, s.id);
+    const got = s.passClaimed.includes(t);
+    const ready = s.pass && !got && t <= reached;
+    const cls = ['bd-tile', 'ptile', got ? 'got' : ready ? 'ready' : 'lock', rw.item || PASS_BIG_COINS[t] ? 'big' : ''].join(' ');
+    const what = rw.item ? `the ${th.name} ${rw.item.cat === 'trail' ? 'sprint trail' : 'goal explosion'}` : `${rw.coins} coins`;
+    const label = `Club Pass tier ${t}: ${what}${got ? ', claimed' : ready ? ', ready to claim' : s.pass ? '' : ', with the pass'}`;
+    const prize = rw.item
+      ? `<span class="bd-coins">${rw.item.cat === 'trail' ? 'TRAIL' : 'GOAL FX'}</span>`
+      : `<span class="bd-coins">${got ? maskIcon('tick', '#238a3b', 1.6) : `<i class="bd-coin"></i>${rw.coins}`}</span>`;
+    tiles.push(`<button class="${cls}" data-a="ptier" data-t="${t}" aria-label="${esc(label)}">
+      <b>${t}</b>
+      ${rw.item ? `<span class="bd-star">${pixelIcon(rw.item.cat === 'trail' ? 'bolt' : 'star', got ? '#26262e' : th.color, 1.6)}</span>` : ''}
+      ${prize}
+      ${ready ? '<em>CLAIM</em>' : ''}
+    </button>`);
+  }
+  const offer = s.pass
+    ? '<p class="mc-hint">CLUB PASS ON for this month. Every tier you reach pays out here too.</p>'
+    : `<div class="mc-notice bd-pass"><p><b>CLUB PASS</b> ${fmt(totals.coins)} more coins and the ${esc(th.name)} trail and goal explosion, only in the pass. Tiers you have already reached unlock at once.</p><button class="btn btn-yellow" data-a="passGet">GET THE PASS</button></div>`;
+  const carried = s.carryItems.length
+    ? `<div class="mc-notice bd-carry"><p>Last month's Club Pass left ${s.carryItems.length === 1 ? 'a look' : `${s.carryItems.length} looks`} unclaimed.</p><button class="btn btn-go" data-a="pcarry">CLAIM</button></div>`
+    : '';
+  return `<h3 class="bd-ptitle">CLUB PASS</h3>
+    ${offer}
+    ${carried}
+    <div class="bd-grid pass ${s.pass ? 'on' : ''}">${tiles.join('')}</div>`;
 }
 
 // ------------------------------------------------------------------ titles
@@ -268,6 +342,11 @@ function ensureCss(): void {
 .bd-stier b { font: 700 28px/1 var(--px); }
 .bd-season .bd-bar { grid-column: 1 / -1; --c: var(--yellow); background: rgba(255,255,255,0.85); }
 .bd-carry { gap: 10px; }
+.bd-ptitle { margin: 6px 0 0; font: 700 16px var(--px); letter-spacing: 2px; color: #d42b80; }
+.bd-pass { gap: 10px; border-color: #b81f6c; background: #ffe6f3; }
+.bd-pass p { font-size: 15px; }
+.bd-grid.pass .bd-tile { border-color: #b81f6c; }
+.bd-grid.pass:not(.on) .bd-tile { opacity: 0.75; background: #fff0f7; }
 .bd-carry p { font-size: 15px; }
 .bd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 8px; }
 .bd-tile { position: relative; display: grid; justify-items: center; align-content: center; gap: 2px; min-height: 64px; padding: 6px 2px 5px; font: inherit; color: var(--ink); background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2); cursor: pointer; }

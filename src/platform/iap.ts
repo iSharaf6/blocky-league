@@ -20,6 +20,7 @@
  * See docs/MONETIZATION.md.
  */
 import { IAP_APPLIED_MAX, type SaveData } from '../core/save';
+import { activatePass, passActive } from '../meta/pass';
 import { creditCoins, grantItem, iapOf, itemKey, type ShopCat } from '../meta/shop';
 import { inNativeApp } from './native';
 
@@ -42,6 +43,10 @@ export interface IapEntry {
   items: readonly { cat: ShopCat; id: string }[];
   /** NO ADS: no interstitial ads (rewarded ads stay: they are the player's choice). */
   noAds?: true;
+  /** The Club Pass: the pass track of the season it is bought in (meta/pass.ts). Consumable: a new one each month. */
+  pass?: true;
+  /** The Coin Doubler: every match pays double coins, for good (main.ts full time). */
+  doubler?: true;
   /** A tag on the card: an editorial call, keep it true if the prices move. */
   tag?: 'POPULAR' | 'BEST VALUE';
   /** The price to set in the store consoles, in US dollars (docs and the dev store only: the UI shows the store's own string). */
@@ -50,6 +55,8 @@ export interface IapEntry {
 
 export const PRODUCT_STARTER = 'bl.starter';
 export const PRODUCT_NOADS = 'bl.noads';
+export const PRODUCT_PASS = 'bl.pass';
+export const PRODUCT_DOUBLER = 'bl.doubler';
 
 /**
  * What is for sale, in display order. About what a Normal win pays (170 to 210 coins): 500 coins is two or three
@@ -63,7 +70,13 @@ export const CATALOGUE: readonly IapEntry[] = [
   { id: 'bl.coins.10000', kind: 'consumable', title: '10000 Coins', coins: 10000, bonusPct: 40, items: [], usd: 14.99, tag: 'BEST VALUE' },
   { id: PRODUCT_STARTER, kind: 'non-consumable', title: 'Starter Pack', coins: 2000, bonusPct: 0, items: [{ cat: 'ball', id: 'gold' }], usd: 1.99 },
   { id: PRODUCT_NOADS, kind: 'non-consumable', title: 'No Ads', coins: 0, bonusPct: 0, items: [], noAds: true, usd: 3.99 },
+  { id: PRODUCT_PASS, kind: 'consumable', title: 'Club Pass', coins: 0, bonusPct: 0, items: [], pass: true, usd: 3.99 },
+  { id: PRODUCT_DOUBLER, kind: 'non-consumable', title: 'Coin Doubler', coins: 0, bonusPct: 0, items: [], doubler: true, usd: 4.99 },
 ];
+
+/** A coin pack (not the pass): the first buy of each pays double (FIRST_BUY_MULT, IapState.firsts). */
+export const isCoinPack = (e: Pick<IapEntry, 'kind' | 'pass' | 'coins'>): boolean => e.kind === 'consumable' && !e.pass && e.coins > 0;
+export const FIRST_BUY_MULT = 2;
 
 export function entryOf(id: string): IapEntry | undefined {
   return CATALOGUE.find((e) => e.id === id);
@@ -89,8 +102,12 @@ export interface IapProduct {
   items: string[];
   noAds: boolean;
   tag?: IapEntry['tag'];
-  /** A one-time product the player already has (never true for coin packs). */
+  /** A one-time product the player already has (never true for coin packs; the Club Pass: on for this month). */
   owned: boolean;
+  pass: boolean;
+  doubler: boolean;
+  /** A coin pack never bought before: this buy pays FIRST_BUY_MULT times its coins. */
+  firstBonus: boolean;
 }
 
 /** What a delivered purchase changed. */
@@ -99,6 +116,12 @@ export interface IapGrant {
   coins: number;
   items: string[];
   noAds: boolean;
+  /** Extra coins from the first-buy bonus (already in `coins`). */
+  firstBonus: number;
+  /** The Club Pass went on for this month. */
+  pass: boolean;
+  /** The Coin Doubler is now owned. */
+  doubler: boolean;
   /** Came with a restore (or the store's owned list), not a fresh purchase. */
   restored: boolean;
 }
@@ -119,6 +142,11 @@ export function adFree(save: Pick<SaveData, 'iap'>): boolean {
   return iapOf(save).owned.includes(PRODUCT_NOADS);
 }
 
+/** The Coin Doubler is owned: every match pays double coins. */
+export function coinDoubler(save: Pick<SaveData, 'iap'>): boolean {
+  return iapOf(save).owned.includes(PRODUCT_DOUBLER);
+}
+
 /** A one-time product is already owned. */
 export function ownsProduct(save: Pick<SaveData, 'iap'>, id: string): boolean {
   return iapOf(save).owned.includes(id);
@@ -136,13 +164,21 @@ export function applyPurchase(save: SaveData, entry: IapEntry, txId: string, res
   const key = `${txId}|${entry.id}`;
   if (st.applied.includes(key)) return null;
   if (entry.kind === 'non-consumable' && st.owned.includes(entry.id)) return null;
-  const coins = restored && entry.kind === 'non-consumable' ? 0 : coinsOf(entry);
+  let coins = restored && entry.kind === 'non-consumable' ? 0 : coinsOf(entry);
+  // The first buy of each coin pack pays double, once ever per pack (the save remembers which were bought).
+  let firstBonus = 0;
+  if (isCoinPack(entry) && !st.firsts.includes(entry.id)) {
+    firstBonus = coins * (FIRST_BUY_MULT - 1);
+    coins += firstBonus;
+    st.firsts.push(entry.id);
+  }
   if (coins > 0) creditCoins(save, coins);
   const items = entry.items.filter((it) => grantItem(save, it.cat, it.id)).map((it) => itemKey(it.cat, it.id));
+  const pass = !!entry.pass && activatePass(save);
   if (entry.kind === 'non-consumable') st.owned.push(entry.id);
   st.applied.push(key);
   if (st.applied.length > IAP_APPLIED_MAX) st.applied.splice(0, st.applied.length - IAP_APPLIED_MAX);
-  return { productId: entry.id, coins, items, noAds: !!entry.noAds, restored: false };
+  return { productId: entry.id, coins, items, noAds: !!entry.noAds, firstBonus, pass, doubler: !!entry.doubler, restored: false };
 }
 
 // ------------------------------------------------------------------ cordova-plugin-purchase (v13): the slice we use
@@ -459,7 +495,9 @@ export class Iap {
       return [{
         id: e.id, title: e.title, price, kind: e.kind, coins: coinsOf(e), baseCoins: e.coins, bonusPct: e.bonusPct,
         items: e.items.map((it) => itemKey(it.cat, it.id)), noAds: !!e.noAds, tag: e.tag,
-        owned: e.kind === 'non-consumable' && !!this.ctx && ownsProduct(this.ctx.save, e.id),
+        owned: !!this.ctx && (e.pass ? passActive(this.ctx.save) : e.kind === 'non-consumable' && ownsProduct(this.ctx.save, e.id)),
+        pass: !!e.pass, doubler: !!e.doubler,
+        firstBonus: isCoinPack(e) && !!this.ctx && !iapOf(this.ctx.save).firsts.includes(e.id),
       }];
     });
   }
@@ -477,8 +515,9 @@ export class Iap {
   async buy(id: string): Promise<IapBuyResult> {
     const e = entryOf(id);
     if (!this.impl || !e || !this.ctx) return 'failed';
-    // A one-time product is buyable once (the Starter Pack, NO ADS).
+    // A one-time product is buyable once (the Starter Pack, NO ADS, the Coin Doubler); the Club Pass once a month.
     if (e.kind === 'non-consumable' && this.owns(id)) return 'failed';
+    if (e.pass && passActive(this.ctx.save)) return 'failed';
     if (this.buying) return 'pending';
     this.buying = true;
     try {

@@ -37,6 +37,11 @@ Prices are set in the store consoles. The shop shows the store's own price strin
 | `bl.coins.10000` | Consumable | 10,000 + 40% bonus = **14,000** coins | US$14.99 | BEST VALUE |
 | `bl.starter` | Non-consumable | 2,000 coins and the Gold ball. Buyable once; the shop hides it once owned | US$1.99 | none |
 | `bl.noads` | Non-consumable | No interstitial ads between matches. Rewarded ads you choose to watch stay | US$3.99 | none |
+| `bl.pass` | Consumable | The Club Pass for the month it is bought in: about 6,060 coins and that month's goal explosion and trail on the pass track (meta/pass.ts). The store refuses a second buy in the same month | US$3.99 | none |
+| `bl.doubler` | Non-consumable | Coin Doubler: every match pays double coins, for good | US$4.99 | none |
+
+The first buy of each coin pack pays double (`FIRST_BUY_MULT`, remembered in `SaveData.iap.firsts`). The economy design
+behind these numbers is docs/ECONOMY.md.
 
 Ids are final: neither store lets you rename or reuse one. They are lower case with dots, which both stores accept.
 

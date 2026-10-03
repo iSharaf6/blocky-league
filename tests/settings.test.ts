@@ -160,7 +160,7 @@ describe('save backup (Settings > BACKUP)', () => {
   });
 
   it('a save from an older build, or a hand-edited one, is made whole: defaults fill the gaps and bad values are dropped', () => {
-    const got = importSave({ version: 1, coins: -5, clubIdx: 'x', settings: { camZoom: 'huge', ballSkin: 'diamond', lastMode: 'turbo' }, record: { played: 3 }, gift: { last: '2026-09-20', streak: 2 } })!;
+    const got = importSave({ version: 1, coins: -5, clubIdx: 'x', settings: { camZoom: 'huge', ballSkin: 'platinum', lastMode: 'turbo' }, record: { played: 3 }, gift: { last: '2026-09-20', streak: 2 } })!;
     expect(got).not.toBeNull();
     expect(got.coins).toBe(500);
     expect(got.clubIdx).toBe(defaultSave().clubIdx);

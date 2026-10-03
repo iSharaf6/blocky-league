@@ -8,6 +8,8 @@ import { LOGO_ROWS, MARK_ROWS, rowsSvg } from '../core/calynxArt';
  */
 export const STUDIO = 'Calynx';
 export const STUDIO_BLUE = '#2230d6';
+/** Where players reach the studio (public/support.html and privacy.html give the same address). */
+export const CONTACT_EMAIL = 'calynx@zohomail.com.au';
 export const APP_VERSION: string = version;
 
 /**

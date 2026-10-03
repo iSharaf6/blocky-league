@@ -5,7 +5,7 @@ import { owns, FREE_AD_COINS, FREE_AD_DAILY_CAP, claimFreeAd, freeAdsLeft } from
 import { Ads } from '../src/platform/ads';
 import { isSmall, normalizeCloud } from '../src/platform/cloud';
 import {
-  CATALOGUE, PRODUCT_NOADS, PRODUCT_STARTER, Iap, adFree, applyPurchase, coinsOf, entryOf,
+  CATALOGUE, FIRST_BUY_MULT, PRODUCT_DOUBLER, PRODUCT_NOADS, PRODUCT_PASS, PRODUCT_STARTER, Iap, adFree, applyPurchase, coinsOf, entryOf, isCoinPack,
   type CdvPurchaseGlobal, type CdvTransaction, type IapGrant,
 } from '../src/platform/iap';
 
@@ -48,17 +48,21 @@ afterEach(() => {
 // ------------------------------------------------------------------ the catalogue and the economy
 
 describe('catalogue and economy', () => {
-  it('sells the six products under their stable ids, bonuses included', () => {
-    expect(CATALOGUE.map((e) => e.id)).toEqual(['bl.coins.500', 'bl.coins.1500', 'bl.coins.4000', 'bl.coins.10000', 'bl.starter', 'bl.noads']);
-    expect(CATALOGUE.map((e) => e.kind)).toEqual(['consumable', 'consumable', 'consumable', 'consumable', 'non-consumable', 'non-consumable']);
-    expect(CATALOGUE.filter((e) => e.kind === 'consumable').map(coinsOf)).toEqual([500, 1650, 5000, 14000]);
+  it('sells the eight products under their stable ids, bonuses included', () => {
+    expect(CATALOGUE.map((e) => e.id)).toEqual(['bl.coins.500', 'bl.coins.1500', 'bl.coins.4000', 'bl.coins.10000', 'bl.starter', 'bl.noads', 'bl.pass', 'bl.doubler']);
+    expect(CATALOGUE.map((e) => e.kind)).toEqual(['consumable', 'consumable', 'consumable', 'consumable', 'non-consumable', 'non-consumable', 'consumable', 'non-consumable']);
+    expect(CATALOGUE.filter(isCoinPack).map(coinsOf)).toEqual([500, 1650, 5000, 14000]);
+    // The Club Pass is bought again each month (consumable) and is no coin pack; the Coin Doubler is for good.
+    expect(entryOf(PRODUCT_PASS)!.pass).toBe(true);
+    expect(isCoinPack(entryOf(PRODUCT_PASS)!)).toBe(false);
+    expect(entryOf(PRODUCT_DOUBLER)!.doubler).toBe(true);
     expect(coinsOf(entryOf(PRODUCT_STARTER)!)).toBe(2000);
     expect(entryOf(PRODUCT_STARTER)!.items).toEqual([{ cat: 'ball', id: 'gold' }]);
     expect(entryOf(PRODUCT_NOADS)!.noAds).toBe(true);
   });
 
   it('keeps the packs honest: the bigger the pack the better the rate, and the smallest is two or three wins', () => {
-    const packs = CATALOGUE.filter((e) => e.kind === 'consumable');
+    const packs = CATALOGUE.filter(isCoinPack);
     const perDollar = packs.map((e) => coinsOf(e) / e.usd);
     for (let i = 1; i < perDollar.length; i++) expect(perDollar[i]).toBeGreaterThan(perDollar[i - 1]);
     // A Normal win pays about 170 to 210 coins (main.ts standardReward): 500 coins is two or three of them.
@@ -72,21 +76,23 @@ describe('catalogue and economy', () => {
 // ------------------------------------------------------------------ paying out once
 
 describe('consumable coin packs', () => {
-  it('credit the right coins once, even if the store delivers the transaction twice', async () => {
+  it('credit the right coins once, even if the store delivers the transaction twice (the first buy of a pack doubled)', async () => {
     const { iap, save, persist } = await devStore();
     const grants: IapGrant[] = [];
     iap.onGrant((g) => grants.push(g));
     const start = save.coins;
+    expect(iap.products().find((p) => p.id === 'bl.coins.1500')!.firstBonus).toBe(true);
     expect(iap.deliver('bl.coins.1500', 'tx-1', false)).toBe('applied');
-    expect(save.coins).toBe(start + 1650);
+    expect(save.coins).toBe(start + 1650 * FIRST_BUY_MULT);
     expect(persist).toHaveBeenCalledTimes(1);
     expect(iap.deliver('bl.coins.1500', 'tx-1', false)).toBe('duplicate');
-    expect(save.coins).toBe(start + 1650);
+    expect(save.coins).toBe(start + 1650 * FIRST_BUY_MULT);
     expect(persist).toHaveBeenCalledTimes(1);
-    expect(grants).toEqual([{ productId: 'bl.coins.1500', coins: 1650, items: [], noAds: false, restored: false }]);
-    // A different transaction is a different purchase, and the same pack can be bought again.
+    expect(grants).toEqual([{ productId: 'bl.coins.1500', coins: 3300, items: [], noAds: false, firstBonus: 1650, pass: false, doubler: false, restored: false }]);
+    // A different transaction is a different purchase, and the same pack can be bought again: at its normal size now.
+    expect(iap.products().find((p) => p.id === 'bl.coins.1500')!.firstBonus).toBe(false);
     expect(iap.deliver('bl.coins.1500', 'tx-2', false)).toBe('applied');
-    expect(save.coins).toBe(start + 3300);
+    expect(save.coins).toBe(start + 3300 + 1650);
   });
 
   it('are bought through the store and never marked as owned', async () => {
@@ -95,7 +101,8 @@ describe('consumable coin packs', () => {
     expect(iap.available).toBe(true);
     expect(await iap.buy('bl.coins.500')).toBe('ok');
     expect(await iap.buy('bl.coins.500')).toBe('ok');
-    expect(save.coins).toBe(start + 1000);
+    // (The first buy of a pack pays double, once.)
+    expect(save.coins).toBe(start + 1000 + 500);
     expect(save.iap!.owned).toEqual([]);
     expect(iap.products().find((p) => p.id === 'bl.coins.500')!.owned).toBe(false);
   });
@@ -222,7 +229,8 @@ describe('restore purchases', () => {
     const twice = await again.restore();
     expect(twice).toEqual({ ok: true, restored: [] });
     expect(fresh.coins).toBe(defaultSave().coins);
-    expect(save.coins).toBe(defaultSave().coins + 5000 + 2000);
+    // (The 4000 pack's first buy paid double.)
+    expect(save.coins).toBe(defaultSave().coins + 5000 * FIRST_BUY_MULT + 2000);
   });
 
   it('reports a store that cannot be reached, and nothing without one', async () => {
@@ -362,7 +370,7 @@ describe('the native store', () => {
     const { iap, save, persist } = await nativeStore(cdv);
     const start = save.coins;
     expect(await iap.buy('bl.coins.500')).toBe('ok');
-    expect(save.coins).toBe(start + 500);
+    expect(save.coins).toBe(start + 500 * FIRST_BUY_MULT);
     expect(cdv.finishes).toHaveLength(1);
     expect(cdv.finishes[0]).toHaveBeenCalledTimes(1);
     // Saved before the store was told: a crash in between only re-delivers a purchase we recognise.
@@ -371,7 +379,7 @@ describe('the native store', () => {
     const txId = save.iap!.applied[0].split('|')[0];
     cdv.redeliver('bl.coins.500', txId);
     await Promise.resolve();
-    expect(save.coins).toBe(start + 500);
+    expect(save.coins).toBe(start + 500 * FIRST_BUY_MULT);
     expect(persist).toHaveBeenCalledTimes(1);
     expect(cdv.finishes[1]).toHaveBeenCalledTimes(1); // finished again: harmless, and it clears the store's queue
   });
@@ -402,7 +410,7 @@ describe('the native store', () => {
     expect(save.coins).toBe(start);
     cdv.redeliver('bl.coins.500', 'late-1');
     await Promise.resolve();
-    expect(save.coins).toBe(start + 500);
+    expect(save.coins).toBe(start + 500 * FIRST_BUY_MULT);
     expect(grants).toHaveLength(1);
   });
 
@@ -470,9 +478,9 @@ describe('saves', () => {
     delete old.iap;
     stubStorage(old);
     const loaded = loadSave();
-    expect(loaded.iap).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 } });
-    expect(importSave(old)!.iap).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 } });
-    expect(normalizeCloud(old).iap).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 } });
+    expect(loaded.iap).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 }, firsts: [], welcome: false });
+    expect(importSave(old)!.iap).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 }, firsts: [], welcome: false });
+    expect(normalizeCloud(old).iap).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 }, firsts: [], welcome: false });
     expect(adFree(loaded)).toBe(false);
   });
 
@@ -487,15 +495,15 @@ describe('saves', () => {
   });
 
   it('are made whole when damaged', () => {
-    expect(normalizeIap('nonsense')).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 } });
+    expect(normalizeIap('nonsense')).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 }, firsts: [], welcome: false });
     expect(normalizeIap({ owned: 5, applied: [1, 'a|b', 'a|b'], freeAds: { day: 'yesterday', count: -3 } }))
-      .toEqual({ owned: [], applied: ['a|b'], freeAds: { day: '', count: 0 } });
+      .toEqual({ owned: [], applied: ['a|b'], freeAds: { day: '', count: 0 }, firsts: [], welcome: false });
     expect(normalizeIap({ owned: ['bl.noads', '<script>'], freeAds: { day: '2026-10-02', count: 7.9 } }))
-      .toEqual({ owned: ['bl.noads'], applied: [], freeAds: { day: '2026-10-02', count: 7 } });
+      .toEqual({ owned: ['bl.noads'], applied: [], freeAds: { day: '2026-10-02', count: 7 }, firsts: [], welcome: false });
     const broken = defaultSave();
     (broken as { iap?: unknown }).iap = 'x';
     expect(adFree(broken)).toBe(false);
-    expect(broken.iap).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 } });
+    expect(broken.iap).toEqual({ owned: [], applied: [], freeAds: { day: '', count: 0 }, firsts: [], welcome: false });
   });
 
   it('with a purchase are never "barely started" for cloud sync, so they are not given away unasked', () => {

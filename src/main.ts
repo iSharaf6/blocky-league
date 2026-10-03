@@ -18,9 +18,9 @@ import {
 import { SKILL_GOAL_COINS, adoptPortalStore } from './core/save';
 import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
-import { CAT_LABEL, DEFAULT_ID, equippedId, inReach, newInShop, shopOf, type ShopCat, type ShopItem } from './meta/shop';
+import { CAT_LABEL, DEFAULT_ID, earnTokens, equippedId, iapOf, inReach, newInShop, shopItem, shopOf, type ShopCat, type ShopItem } from './meta/shop';
 import { ads } from './platform/ads';
-import { adFree, iap } from './platform/iap';
+import { adFree, coinDoubler, iap, PRODUCT_STARTER } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
 import { BOX_DEPTH, BOX_W, HALF_L } from './sim/constants';
@@ -49,8 +49,9 @@ import { badgePending, nextBadgeGoal, recordMatchMeta, wornTitle, type MasteryMa
 import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
 import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
-import { gameCenterSignIn, queueAchievementSync, syncAchievements } from './platform/gameCenter';
+import { gameCenterSignIn, queueGameCenterSync, syncGameCenter } from './platform/gameCenter';
 import { inNativeApp } from './platform/native';
+import { maybeAskForReview } from './platform/review';
 
 /** A brief studio entrance on the standalone site; portals only wait for actual loading. */
 const bootAt = performance.now();
@@ -76,7 +77,7 @@ let atMenu = false;
 function persist(): void {
   writeSave(save);
   // (Game Center, in the app: anything a save moved goes up once the burst settles. A no-op elsewhere.)
-  queueAchievementSync(save);
+  queueGameCenterSync(save);
 }
 
 // Store purchases (platform/iap.ts) pay out into the one save and store it before the store is told it arrived.
@@ -295,12 +296,16 @@ const app: AppContext = {
   mainMenu: () => mainMenu(),
 };
 
-/** Today's gift if not yet claimed: 100 coins on day 1, +50 per consecutive day up to day 7. */
+/**
+ * Today's gift if not yet claimed: 100 coins on day 1, +50 a day up to day 7, then round again. It counts the days
+ * the gift was claimed, not days in a row: missing a day never costs the player their place (rewarding a return,
+ * never punishing an absence: docs/ECONOMY.md).
+ */
 function giftToday(): { amount: number; streak: number } | null {
   const g = save.gift;
   const today = localDay();
   if (g?.last === today) return null;
-  const streak = g && g.last === localDay(-1) ? (g.streak % 7) + 1 : 1;
+  const streak = g ? (g.streak % 7) + 1 : 1;
   return { amount: 100 + 50 * (streak - 1), streak };
 }
 
@@ -405,6 +410,20 @@ function mainMenu(): void {
     ob.unlockSeen = true;
     persist();
     menus.unlocked(() => mainMenu());
+    return;
+  }
+  // The welcome offer, once ever, after the first win, where a store sells it (the app): the Starter Pack, told
+  // plainly. Never shown twice and never on a timer.
+  const starter = iap.available && !iap.owns(PRODUCT_STARTER) && !iapOf(save).welcome && save.record.won >= 1
+    ? iap.products().find((x) => x.id === PRODUCT_STARTER) : undefined;
+  if (starter) {
+    iapOf(save).welcome = true;
+    persist();
+    const worth = starter.coins + (shopItem('ball', 'gold')?.price ?? 0);
+    menus.welcomeOffer({ price: starter.price, coins: starter.coins, worth }, {
+      see: () => openShop(app, { tab: 'coins' }),
+      later: () => mainMenu(),
+    });
     return;
   }
   const info = mainInfo();
@@ -962,7 +981,9 @@ async function startMatch(req: MatchRequest): Promise<void> {
     p.bestStreak = Math.max(p.bestStreak, p.streak);
     const mult = won ? streakMult(p.streak) : 1;
     const base = req.reward(r);
-    const reward = { coins: Math.round(base.coins * mult), label: base.label };
+    // The Coin Doubler (a store purchase) doubles what the match itself pays (not challenges or ads).
+    const doubler = coinDoubler(save);
+    const reward = { coins: Math.round(base.coins * mult * (doubler ? 2 : 1)), label: doubler && base.coins > 0 ? `${base.label} X2` : base.label };
     const summary: MatchSummary = {
       won, drawn, goals: my, conceded: their,
       assists: (r.ratings ?? []).filter((x) => x.side === hs).reduce((n, x) => n + x.assists, 0),
@@ -977,6 +998,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     const daily = dailyFor(p, localDay());
     const done = advanceDaily(daily, dailyChallenges(daily.day), summary);
     const bonus = done.reduce((n, x) => n + x.challenge.coins, 0);
+    // Each daily challenge done also earns a Scout Token (packs cost tokens: earned, never bought).
+    if (done.length) earnTokens(save, done.length);
     // SKILL GOALs pay a little on top (shown with the challenges done on the full-time screen).
     const skillCoins = tally.skillGoals * SKILL_GOAL_COINS;
     const skillLine = tally.skillGoals ? [{ text: tally.skillGoals > 1 ? `${tally.skillGoals} SKILL GOALS` : 'SKILL GOAL', coins: skillCoins }] : [];
@@ -1012,6 +1035,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     }, p.xp - xpFrom);
     persist();
     let doubled = false;
+    // A happy moment: after a win, Apple's own rating prompt (the app only, rarely: platform/review.ts).
+    if (won) window.setTimeout(() => void maybeAskForReview(save), 2500);
     menus.fulltime(r.match, kits, humanSide, reward, ads.rewardedAvailable && reward.coins > 0, {
       nextLabel: req.nextLabel,
       double: async () => {
@@ -1038,7 +1063,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
         void startMatch({ ...req, ...easy, firstMatch: false, skipIntro: true });
       } : undefined,
     }, r.ratings, {
-      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: [...done.map((x) => ({ text: x.challenge.text, coins: x.challenge.coins })), ...skillLine],
+      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: [...done.map((x) => ({ text: `${x.challenge.text} +1 TOKEN`, coins: x.challenge.coins })), ...skillLine],
       owned: shopOf(save).owned,
     }, { tierUps, tryEasy, clip: clipOf(s), noAds: firstEver, shopReach: reach ? { name: reach.name, kind: CAT_LABEL[reach.cat] } : undefined });
   };
@@ -1180,9 +1205,9 @@ async function boot(): Promise<void> {
   // The browser chrome was grey for the splash; the game itself sits under a sky.
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#5cc8f5');
   ads.loadingDone();
-  // Game Center (the iPhone / iPad app only): sign in, then report anything earned since last time.
+  // Game Center (the iPhone / iPad app only): sign in, then report anything earned or beaten since last time.
   void gameCenterSignIn().then((ok) => {
-    if (ok) void syncAchievements(save);
+    if (ok) void syncGameCenter(save);
   });
   const params = new URLSearchParams(location.search);
   if (import.meta.env.DEV && params.has('quick')) {

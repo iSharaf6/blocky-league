@@ -13,12 +13,15 @@ import { STAT_SHORT, KEY_STATS, SQUAD_MAX, clubRating, type ClubState } from '..
 import { PRESET_CLUBS, makeTeam } from '../meta/data';
 import {
   CAT_LABEL, DEFAULT_ID, FREE_AD_COINS, FREE_AD_DAILY_CAP, PACKS, pendingCard, settlePack, RARITIES, RARITY_OVR, buyItem, claimFreeAd, equipItem, equippedId, freeAdsLeft,
-  freePackReady, itemKey, makeRoom, markSeen, openPack, owns,
+  freePackReady, itemKey, makeRoom, markSeen, openPack, owns, PACK_TOKENS, scoutTokens, DEAL_OFF, ITEM_TIER_NAMES, dailyDeal, itemTier, priceOn,
+  seasonPassItems,
   packPrice, releaseCandidate, sellCard, shopItem, shopItems, shopOf, signCard, type PackCard, type PackKind, type Rarity, type ShopCat,
   type ShopItem,
 } from '../meta/shop';
 import { ads } from '../platform/ads';
-import { PRODUCT_NOADS, PRODUCT_STARTER, iap, type IapGrant, type IapProduct } from '../platform/iap';
+import { FIRST_BUY_MULT, PRODUCT_NOADS, PRODUCT_STARTER, iap, type IapGrant, type IapProduct } from '../platform/iap';
+import { passTotals } from '../meta/pass';
+import { seasonDaysLeft, seasonOf, seasonTheme } from '../meta/season';
 import { quickSaleValue, squadWages, wageBudget, wageOf } from '../meta/market';
 import { GOAL_FX_COLORS, TRAIL_COLORS } from '../render/cosmetics';
 import { cssHex } from '../render/palette';
@@ -190,22 +193,38 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
 
   const storeHtml = (): string => {
     const list = iap.products();
-    const packs = list.filter((p) => p.kind === 'consumable');
+    const packs = list.filter((p) => p.kind === 'consumable' && !p.pass);
     const starter = list.find((p) => p.id === PRODUCT_STARTER);
     const noAds = list.find((p) => p.id === PRODUCT_NOADS);
+    const pass = list.find((p) => p.pass);
+    const doubler = list.find((p) => p.doubler);
     const off = busy !== '' ? 'disabled' : '';
     const pack = (p: IapProduct, i: number) => `<button class="sh-iap ${p.tag ? 'tagged' : ''} ${busy === p.id ? 'wait' : ''}" data-a="iap" data-id="${esc(p.id)}" ${off}
         aria-label="${fmt(p.coins)} coins, ${esc(p.price)}${p.tag ? `, ${p.tag.toLowerCase()}` : ''}">
-        ${p.tag ? `<i class="sh-ribbon ${p.tag === 'BEST VALUE' ? 'best' : 'pop'}">${p.tag}</i>` : ''}
+        ${p.firstBonus ? `<i class="sh-ribbon first">FIRST BUY X${FIRST_BUY_MULT}</i>` : p.tag ? `<i class="sh-ribbon ${p.tag === 'BEST VALUE' ? 'best' : 'pop'}">${p.tag}</i>` : ''}
         <span class="sh-pile">${coinPile(i + 1)}</span>
-        <b>${fmt(p.coins)} COINS</b>
-        <small>${p.bonusPct ? `${fmt(p.baseCoins)} + ${p.bonusPct}% BONUS` : 'A QUICK TOP UP'}</small>
+        <b>${fmt(p.coins * (p.firstBonus ? FIRST_BUY_MULT : 1))} COINS</b>
+        <small>${p.firstBonus ? `DOUBLED ON YOUR FIRST BUY` : p.bonusPct ? `${fmt(p.baseCoins)} + ${p.bonusPct}% BONUS` : 'A QUICK TOP UP'}</small>
         <em class="sh-tag price buy">${esc(busy === p.id ? 'ONE MOMENT' : p.price)}</em>
       </button>`;
     // The Starter Pack is a one-time offer: gone once bought. NO ADS only where this build has ads to remove.
     const showNoAds = noAds && (noAds.owned || ads.showsInterstitials || iap.provider === 'dev');
-    return `<p class="sh-lede">Coins buy looks, scout packs and more. Every match pays coins too, so top up only if you like.</p>
+    const season = seasonOf(save);
+    const totals = passTotals(season.id);
+    const days = seasonDaysLeft();
+    const passCard = pass ? `<section class="sh-deal pass">
+          <div class="sh-dealtxt"><b>CLUB PASS: ${esc(seasonTheme(season.id).name.toUpperCase())}</b>
+            <span>${fmt(totals.coins)} coins on top of the free season, plus the ${esc(seasonTheme(season.id).name)} trail and goal explosion: only in the pass. Tiers you have already reached unlock at once. ${days} ${days === 1 ? 'day' : 'days'} left this month.</span></div>
+          ${pass.owned ? '<em class="sh-tag own">ON THIS MONTH</em>' : `<button class="btn btn-yellow" data-a="iap" data-id="${esc(pass.id)}" ${off}>${esc(busy === pass.id ? 'ONE MOMENT' : pass.price)}</button>`}
+        </section>` : '';
+    const doublerCard = doubler ? `<section class="sh-deal doubler">
+          <div class="sh-dealtxt"><b>COIN DOUBLER</b><span>Every match pays double coins, for good. Challenges and gifts stay as they are.</span></div>
+          ${doubler.owned ? '<em class="sh-tag own">OWNED</em>' : `<button class="btn btn-white" data-a="iap" data-id="${esc(doubler.id)}" ${off}>${esc(busy === doubler.id ? 'ONE MOMENT' : doubler.price)}</button>`}
+        </section>` : '';
+    return `<p class="sh-lede">Coins buy looks and more. Every match pays coins too, so top up only if you like.</p>
+      ${passCard}
       <div class="sh-iaps">${packs.map(pack).join('')}</div>
+      ${doublerCard}
       ${starter && !starter.owned ? `<section class="sh-deal starter">
           <span class="sh-dealart" aria-hidden="true">${pixelIcon('ball', '#ffd23a', 6)}</span>
           <div class="sh-dealtxt"><b>STARTER PACK</b><span>${fmt(starter.coins)} COINS AND THE GOLD BALL${sep()}ONE TIME ONLY</span></div>
@@ -216,7 +235,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
           ${noAds.owned ? '<em class="sh-tag own">OWNED</em>' : `<button class="btn btn-white" data-a="iap" data-id="${esc(noAds.id)}" ${off}>${esc(busy === noAds.id ? 'ONE MOMENT' : noAds.price)}</button>`}
         </section>` : ''}
       <div class="sh-restore"><button class="btn btn-white" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE PURCHASES'}</button></div>
-      <p class="mc-hint">Coins have no cash value. Scout packs are random and their odds are on every pack. Nothing you buy gives an edge online.</p>`;
+      <p class="mc-hint">Coins have no cash value and can't buy scout packs (those take Scout Tokens, earned by playing). Nothing you buy changes a match.</p>`;
   };
 
   const freeHtml = (): string => {
@@ -257,19 +276,31 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     return it.cat === 'ball' ? pixelIcon('ball', '#fbfbf4', 5) : pixelIcon('star', '#ffd23a', 5);
   };
 
-  /** The state an item is in for the wallet and the save. */
-  const stateOf = (it: ShopItem): 'on' | 'owned' | 'buy' | 'poor' =>
-    equippedId(save, it.cat) === it.id ? 'on' : owns(save, it.cat, it.id) ? 'owned' : save.coins >= it.price ? 'buy' : 'poor';
+  /** What a look costs today (today's deal price for the deal look). */
+  const priceOf = (it: ShopItem): number => priceOn(save, it, today());
+  const dealOf = (it: ShopItem): boolean => priceOf(it) < it.price;
+
+  /** The state an item is in for the wallet and the save ('pass': a Club Pass look not yet earned). */
+  const stateOf = (it: ShopItem): 'on' | 'owned' | 'buy' | 'poor' | 'pass' =>
+    equippedId(save, it.cat) === it.id ? 'on' : owns(save, it.cat, it.id) ? 'owned' : it.pass ? 'pass' : save.coins >= priceOf(it) ? 'buy' : 'poor';
+
+  /** The rarity badge (status): every look above COMMON wears one. */
+  const tierHtml = (it: ShopItem): string => {
+    const t = itemTier(it);
+    return t === 'common' ? '' : `<i class="sh-tier t-${t}">${ITEM_TIER_NAMES[t]}</i>`;
+  };
 
   const tileHtml = (it: ShopItem, selected: boolean, fresh: boolean) => {
     const s = stateOf(it);
     const tag =
       s === 'on' ? '<em class="sh-tag on">EQUIPPED</em>'
         : s === 'owned' ? '<em class="sh-tag own">OWNED</em>'
-          : `<em class="sh-tag price ${s}">${coin(it.price)}</em>`;
+          : s === 'pass' ? '<em class="sh-tag pass">CLUB PASS</em>'
+            : `<em class="sh-tag price ${s}">${coin(priceOf(it))}</em>`;
     return `<button class="sh-tile ${s} ${selected ? 'sel' : ''} ${popKey === itemKey(it.cat, it.id) ? 'pop' : ''}" data-a="pick" data-id="${esc(it.id)}"
-        aria-label="${esc(it.name)}, ${s === 'on' ? 'equipped' : s === 'owned' ? 'owned' : `${it.price} coins`}" aria-pressed="${selected}">
-      ${fresh ? '<i class="sh-new">NEW</i>' : ''}
+        aria-label="${esc(it.name)}, ${s === 'on' ? 'equipped' : s === 'owned' ? 'owned' : s === 'pass' ? 'Club Pass' : `${priceOf(it)} coins`}" aria-pressed="${selected}">
+      ${fresh ? '<i class="sh-new">NEW</i>' : dealOf(it) && s !== 'on' && s !== 'owned' ? `<i class="sh-new deal">${DEAL_OFF}% OFF</i>` : ''}
+      ${tierHtml(it)}
       <span class="sh-art">${artOf(it)}</span>
       <b>${esc(it.name.toUpperCase())}</b>
       ${tag}
@@ -280,9 +311,15 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const s = stateOf(it);
     if (s === 'on') return '<button class="btn btn-white btn-lg sh-act" disabled>EQUIPPED</button>';
     if (s === 'owned') return `<button class="btn btn-go btn-lg sh-act" data-a="equip">EQUIP</button>`;
-    if (s === 'buy') return `<button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY ${coin(it.price)}</button>`;
-    return `<button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short">${coin(it.price)}</button>
-      <p class="sh-short" id="sh-short">${fmt(it.price - save.coins)} COINS SHORT${sep()}EVERY MATCH PAYS</p>
+    if (s === 'pass') {
+      return `<p class="sh-short">EARN IT IN THE ${esc(it.name.toUpperCase())} CLUB PASS</p>
+        ${iap.available ? '<button class="btn btn-blue sh-more" data-a="tab" data-v="coins">SEE THE CLUB PASS</button>' : ''}`;
+    }
+    const price = priceOf(it);
+    const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s> ` : '';
+    if (s === 'buy') return `<button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY ${was}${coin(price)}</button>`;
+    return `<button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short">${was}${coin(price)}</button>
+      <p class="sh-short" id="sh-short">${fmt(price - save.coins)} COINS SHORT${sep()}EVERY MATCH PAYS</p>
       ${coinsTab() ? '<button class="btn btn-blue sh-more" data-a="tab" data-v="coins">GET COINS</button>' : ''}`;
   };
 
@@ -295,7 +332,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
           <div class="sh-burst" aria-hidden="true"></div>
         </div>
         <div class="sh-info">
-          <small class="sh-kind">${CAT_LABEL[it.cat].toUpperCase()}</small>
+          <small class="sh-kind">${CAT_LABEL[it.cat].toUpperCase()}${itemTier(it) === 'common' ? '' : `${sep()}<b class="t-${itemTier(it)}">${ITEM_TIER_NAMES[itemTier(it)]}</b>`}</small>
           <h3 class="sh-name">${esc(it.name.toUpperCase())}</h3>
           <p class="sh-blurb">${esc(it.blurb)}</p>
           ${actionHtml(it)}
@@ -304,12 +341,25 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       </section>`;
   };
 
+  /** Today's deal, on top of every looks tab: one look a day at DEAL_OFF % off, honestly rotating. */
+  const dealHtml = (): string => {
+    const d = dailyDeal(save, today());
+    if (!d) return '';
+    return `<section class="sh-dealbar">
+        <b>TODAY'S DEAL</b>
+        <span>${esc(d.item.name.toUpperCase())} ${CAT_LABEL[d.item.cat].toUpperCase()}, ${DEAL_OFF}% OFF: <s>${fmt(d.item.price)}</s> ${coin(d.price)}. A new deal every day.</span>
+        <button class="btn btn-yellow" data-a="deal">SEE IT</button>
+      </section>`;
+  };
+
   const catHtml = (cat: ShopCat): string => {
-    const items = shopItems(cat);
+    // Club Pass looks: this month's (to earn) and any already earned; past months' don't clutter the shop.
+    const passId = seasonPassItems(seasonOf(save).id)[cat === 'goalfx' ? 'goalfx' : 'trail'].id;
+    const items = shopItems(cat).filter((x) => !x.pass || x.id === passId || owns(save, x.cat, x.id));
     const seen = new Set(shopOf(save).seen);
     const it = shopItem(cat, pick[cat]) ?? items[0];
     const tiles = items.map((x) => tileHtml(x, x.id === it.id, x.price > 0 && x.price <= save.coins && !owns(save, x.cat, x.id) && !seen.has(itemKey(x.cat, x.id)))).join('');
-    return `${showcaseHtml(it)}<div class="sh-grid">${tiles}</div>`;
+    return `${dealHtml()}${showcaseHtml(it)}<div class="sh-grid">${tiles}</div>`;
   };
 
   // ---- players (scout packs + the market)
@@ -329,17 +379,18 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const full = club.squad.length >= SQUAD_MAX;
     const wages = squadWages(club);
     const odds = (k: PackKind) => `<ul class="sh-odds">${RARITIES.map((r, i) => (PACKS[k].odds[i] ? `<li class="r-${r}"><i></i>${RARITY_NAME[r]} ${PACKS[k].odds[i]}%</li>` : '')).join('')}</ul>`;
+    const tokens = scoutTokens(save);
     const pack = (k: PackKind, free: boolean) => {
-      const price = packPrice(k, rating);
-      const poor = !free && save.coins < price;
+      const cost = PACK_TOKENS[k];
+      const poor = !free && tokens < cost;
       const name = free ? 'FREE DAILY PACK' : PACKS[k].name;
       const lo = RARITY_OVR[k === 'elite' ? 'rare' : 'common'][0];
-      return `<button class="sh-pack p-${free ? 'free' : k} ${poor ? 'poor' : ''}" data-a="pack" data-k="${k}" data-free="${free ? 1 : 0}" aria-label="${name}, ${free ? 'free' : `${price} coins`}">
+      return `<button class="sh-pack p-${free ? 'free' : k} ${poor ? 'poor' : ''}" data-a="pack" data-k="${k}" data-free="${free ? 1 : 0}" aria-label="${name}, ${free ? 'free' : `${cost} scout ${cost === 1 ? 'token' : 'tokens'}`}">
           <span class="sh-cardback" aria-hidden="true"><i></i></span>
           <b>${name}</b>
           <small>${free ? 'A SCOUT PACK ON THE HOUSE, EVERY DAY' : `OVR ${Math.max(30, rating + lo)} TO ${Math.min(95, rating + 16)}`}</small>
           ${odds(k)}
-          <em class="sh-tag price ${poor ? 'poor' : 'buy'}">${free ? 'FREE' : coin(price)}</em>
+          <em class="sh-tag price ${poor ? 'poor' : 'buy'}">${free ? 'FREE' : `${cost} ${cost === 1 ? 'TOKEN' : 'TOKENS'}`}</em>
         </button>`;
     };
     return `<section class="sh-club">
@@ -348,6 +399,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         <button class="btn btn-white" data-a="squad">SQUAD</button>
       </section>
       ${full ? `<p class="mc-hint warn">Squad full (${SQUAD_MAX}): a new card can still join if you let your weakest sub go, or sell him on.</p>` : ''}
+      <p class="sh-tokens"><b>${tokens}</b> SCOUT ${tokens === 1 ? 'TOKEN' : 'TOKENS'}<span>Every daily challenge you finish earns one. Tokens are earned, never sold.</span></p>
       <div class="sh-packs">
         ${freePackReady(save, day) ? pack('scout', true) : ''}
         ${pack('scout', false)}
@@ -542,6 +594,15 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       if (isCat(tab)) stage.set({ cat: tab, id: pick[tab] });
       draw();
     },
+    // TODAY'S DEAL: its tab, with the look on the stage.
+    deal: () => {
+      const d = dailyDeal(save, today());
+      if (!d) return;
+      tab = d.item.cat;
+      scr.panel.scrollTop = 0;
+      showItem(d.item.cat, d.item.id);
+      draw();
+    },
     pick: (el: HTMLElement) => {
       if (!isCat(tab)) return;
       showItem(tab, el.dataset.id ?? DEFAULT_ID[tab]);
@@ -551,7 +612,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       if (!isCat(tab)) return;
       const id = pick[tab];
       const before = save.coins;
-      const r = buyItem(save, tab, id);
+      const r = buyItem(save, tab, id, today());
       if (!r.ok) {
         if (r.reason === 'no-coins') {
           say(`${fmt(r.short)} MORE COINS NEEDED`, 'bad');
@@ -597,7 +658,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       const before = save.coins;
       const r = openPack(save, clubOf(), kind, today(), free);
       if (!r.ok) {
-        if (r.reason === 'no-coins') say(`${fmt(r.short)} MORE COINS NEEDED`, 'bad');
+        if (r.reason === 'no-tokens') say(`${r.short} MORE SCOUT ${r.short === 1 ? 'TOKEN' : 'TOKENS'} NEEDED. DAILY CHALLENGES EARN THEM`, 'bad');
         else if (r.reason === 'free-used') say('TODAY\'S FREE PACK IS OPENED. BACK TOMORROW', 'info');
         return;
       }
@@ -685,6 +746,9 @@ function grantText(g: IapGrant): string {
     if (it) things.push(`THE ${it.name.toUpperCase()} ${CAT_LABEL[it.cat].toUpperCase()}`);
   }
   if (g.noAds) things.push('NO ADS IS ON');
+  if (g.pass) things.push('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN BADGES, SEASON');
+  if (g.doubler) things.push('EVERY MATCH NOW PAYS DOUBLE');
+  if (g.firstBonus) things.push('FIRST BUY DOUBLED');
   return things.length ? things.join(' AND ') : 'THANK YOU';
 }
 

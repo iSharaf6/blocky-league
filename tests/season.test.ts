@@ -121,7 +121,7 @@ describe('monthly roll-over', () => {
     expect(s.xp).toBe(0);
     expect(s.carry).toEqual({ id: '2026-09', coins: seasonReward(2, '2026-09').coins });
     const same = normalizeSeason({ id: '2026-10', xp: 250, claimed: [1, 1, 99, 'x'] }, OCT);
-    expect(same).toEqual({ id: '2026-10', xp: 250, claimed: [1], titles: [], carry: null });
+    expect(same).toEqual({ id: '2026-10', xp: 250, claimed: [1], titles: [], carry: null, pass: false, passClaimed: [], carryItems: [] });
     expect(normalizeSeason(undefined, OCT)).toEqual(defaultSeason(OCT));
     expect(normalizeSeason({ id: 'junk', xp: 900 }, OCT).xp).toBe(0);
   });
