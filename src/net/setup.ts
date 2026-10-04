@@ -25,9 +25,13 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * standing tackle takes possession consistently. Both peers must use these challenge and possession rules.
  * 8: agreed weather and deterministic wet-patch skids on hard sprint cuts; clear-weather physics are unchanged.
  * 9: automatic tackles require movement or PRESS and respect recovery; defenders circle an unattended carrier's
- * shield and can take his exposed stationary ball after the grace. Active dribbling and skills retain their rules.)
+ * shield and can take his exposed stationary ball after the grace. Active dribbling and skills retain their rules.
+ * 10: match and possession clocks pause at dead balls and resume on the restart strike. Paused stoppages no longer
+ * inflate added time; the one-minute minimum and live-chance endings remain. First-match AI penalties use a finite
+ * phaseT preparation window rather than waiting on the paused match clock. AI foul odds ease from 0.8 to 0.66
+ * without reducing challenge frequency or clean-tackle success, preserving tempo over the extra live play.)
  */
-export const NET_VERSION = 9;
+export const NET_VERSION = 10;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides

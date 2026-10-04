@@ -7,9 +7,9 @@
  * them (a 180° turn, like Match.setupKickoff) when the human attacks -x, so a spec reads the same whichever
  * side or half it runs in. Facings are radians in that frame (0 = towards the goal you attack).
  *
- * TIME: the moment's `seconds` are seconds of LIVE play. Match.clock runs while the ball is dead too ('out'
- * and 'restart' phases: the wait for a corner, a keeper's hold before a goal kick), so the judge keeps its own
- * count of the clock's advance during the 'play' phase only. A corner moment isn't burned by the restart wait
+ * TIME: the moment's `seconds` are seconds of LIVE play. Match.clock also pauses while the ball is dead; the
+ * judge keeps its own count of that clock's advance during the 'play' phase for the moment's independent limit.
+ * A corner moment isn't burned by the restart wait
  * (a human taker has HUMAN_RESTART_WINDOW s to take it, none of which counts), and a goal celebration doesn't
  * count either. Use `scenarioSecondsLeft` for the HUD countdown, never `spec.clock + spec.seconds - m.clock`.
  *

@@ -6,9 +6,9 @@ import type { Player } from '../src/sim/player';
 import type { MatchEvent, RestartKind, Side } from '../src/sim/types';
 
 /**
- * Added time by the Laws of the Game (sim/match.ts STOP_BASE_S, addedTimeUp). The owner: "look at the rules of the game
- * and perfect when to call half time or full time". The time lost is earned through the half and shown on the fourth
- * official's board at 45:00 / 90:00; that minimum is always played; then the referee ends it at the right moment
+ * Added time with the owner's live-only clock (sim/match.ts BOARD_MIN, addedTimeUp). The fourth official keeps the
+ * existing one-minute minimum at 45:00 / 90:00; paused breaks cannot inflate it a second time. The minimum is played
+ * with a live ball; then the referee ends it at the right moment
  * (never on a shot or a ball in the air in the box, a penalty always taken, a set piece given in time taken, an attack
  * on let finish but only so long), and the same rules hold for both sides.
  */
@@ -94,13 +94,12 @@ function stepTo(m: Match, t: number, each?: () => void): MatchEvent[] {
 type Private = {
   goOut(k: RestartKind, s: Side, x: number, z: number): void;
   goal(s: Side): void;
-  loseTime(gameS: number): void;
 };
 const priv = (m: Match) => m as unknown as Private;
 /** A bench outfielder of `side`'s. */
 const outfield = (m: Match, side: Side) => m.bench[side].findIndex((d) => d.role !== 'GK');
 
-describe('added time is earned and announced (Law 7.3)', () => {
+describe('added time is announced without double-counting paused breaks', () => {
   it('at 45:00 the board goes up: a quiet half gets the least, one minute', () => {
     const m = newMatch();
     carry(m, 0, -20);
@@ -111,29 +110,36 @@ describe('added time is earned and announced (Law 7.3)', () => {
     expect(m.phase).toBe('play');
   });
 
-  it('the time lost is added up: goals, substitutions, cards, a penalty, slow restarts', () => {
+  it('substitutions and goals happen on a paused clock and do not inflate the board', () => {
     const m = newMatch();
-    // Two changes (25 s each), and time lost that the half's events told of (a goal 45, a card 20, a penalty 30, slow
-    // restarts): 30 base + 50 + 175 = 255 s, the board says 4.
+    m.clock = 20;
+    priv(m).goOut('throwin', 0, -10, HALF_W);
     expect(m.substitute(0, 3, outfield(m, 0))).toBe(true);
     expect(m.substitute(1, 4, outfield(m, 1))).toBe(true);
-    priv(m).loseTime(45 + 20 + 30 + 80);
+    priv(m).goal(0);
+    for (let i = 0; i < 60 * 4; i++) m.step(DT, EMPTY_PAD);
+    expect(m.clock).toBe(20);
+    m.phase = 'play';
+    m.restart = null;
     carry(m, 0, -20);
     m.clock = HL - DT / 2;
     m.step(DT, EMPTY_PAD);
-    expect(m.addedBoard).toBe(4);
+    expect(m.addedBoard).toBe(1);
   });
 
-  it('a restart dawdled over is time-wasting, and it goes on the board', () => {
+  it('a held restart preserves live time instead of adding a second allowance', () => {
     const m = newMatch(3, 1, { humanSide: 0 });
     m.clock = HL - 15;
-    // His own throw-in, held as long as he's let (HUMAN_RESTART_WINDOW): the time past a normal restart is put back.
+    // His own throw-in gets the whole preparation window with no live minutes lost.
     priv(m).goOut('throwin', 0, -10, HALF_W);
+    for (let i = 0; i < 60 * 4; i++) m.step(DT, EMPTY_PAD);
+    expect(m.clock).toBe(HL - 15);
+    expect(m.phase).toBe('restart');
     stepTo(m, HL - 1);
     carry(m, 0, -20);
     m.clock = HL - DT / 2;
     m.step(DT, EMPTY_PAD);
-    expect(m.addedBoard).toBeGreaterThanOrEqual(2);
+    expect(m.addedBoard).toBe(1);
   }, 60_000);
 
   it('the board is a minimum: a side keeping it in its own half still plays it all, then the whistle at once', () => {
@@ -149,15 +155,21 @@ describe('added time is earned and announced (Law 7.3)', () => {
     expect(events).toContainEqual({ type: 'whistle', kind: 'long' });
   });
 
-  it('time lost inside the added time goes back on: a substitution in it is played on top', () => {
+  it('a substitution inside added time leaves the same live allowance to play', () => {
     const m = newMatch();
     carry(m, 0, -20);
     m.clock = HL - DT / 2;
     m.step(DT, EMPTY_PAD);
     expect(m.addedBoard).toBe(1);
+    const clock = m.clock;
+    priv(m).goOut('throwin', 1, -10, HALF_W);
     expect(m.substitute(1, 4, outfield(m, 1))).toBe(true);
-    // 25 s of the match back on top of the board's minute.
-    stepTo(m, HL + MIN_S + (25 * HL) / 2700 - 0.05, () => carry(m, 0, -20));
+    for (let i = 0; i < 30; i++) m.step(DT, EMPTY_PAD);
+    expect(m.clock).toBe(clock);
+    // Resume this fixture in a neutral area: the board's existing minute is still the whole allowance.
+    m.phase = 'play';
+    m.restart = null;
+    stepTo(m, HL + MIN_S - 0.05, () => carry(m, 0, -20));
     expect(m.phase).toBe('play');
     toWhistle(m, 60 * 5, () => carry(m, 0, -20));
     expect(m.phase).toBe('halftime');

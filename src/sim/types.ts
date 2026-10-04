@@ -216,7 +216,7 @@ export type MatchEvent =
    */
   | { type: 'hypeFull'; side: Side }
   | { type: 'superShot'; side: Side; player: number }
-  /** The clock has reached 45:00 / 90:00: the fourth official's board, `minutes` of added time (sim/match.ts STOP_BASE_S). */
+  /** The live clock has reached 45:00 / 90:00: the board's `minutes` of extra live play (sim/match.ts BOARD_MIN). */
   | { type: 'addedTime'; minutes: number }
   /**
    * The AI coach (sim/coach.ts, MatchConfig.coach): `side` has changed how it plays. `plan` is the game plan now (and

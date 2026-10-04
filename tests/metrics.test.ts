@@ -10,6 +10,12 @@ const BASE_SEEDS = [11, 23, 37, 41, 53, 67, 79, 97, 109, 127, 131, 149, 163, 179
 const extra = Number((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.MSEEDS ?? 0);
 const seeds = (n: number) => Array.from({ length: Math.max(n, extra) }, (_, i) => 11 + i * 14);
 
+// Independently measured from ca81c08's Match + this harness, using the same 128/64 fixed seeds, before
+// protocol 10 paused dead-ball clocks. Discipline bands describe event density over that live exposure,
+// not how many dead seconds were allowed to use up a match. Keep the raw volumes printed and capped too.
+const BASELINE_LIVE_SECONDS: Record<number, number> = { 120: 224.0055989584037, 150: 282.6791666667382 };
+const MIN_LIVE_SHARE = 0.78;
+
 const within = (v: number, lo: number, hi: number) => {
   expect(v).toBeGreaterThanOrEqual(lo);
   expect(v).toBeLessThanOrEqual(hi);
@@ -56,8 +62,12 @@ function checkBands(halfLength: number, n: number): void {
   // (Round 8: lofted balls capped at 26 m/s are overhit into touch less often: 4.65 a match at 2x120 s on these
   // seeds, 5.21 before; over 256 seeds it was already 4.97 before the cap, 4.41-4.64 after.)
   within(s.throwins, halfLength <= 120 ? 4.4 : 5, halfLength <= 120 ? 8 : 10);
-  within(s.fouls, 3, 5);
-  within(s.slides, 2 * k, 6);
+  const exposure = BASELINE_LIVE_SECONDS[halfLength] / s.liveT;
+  within(s.fouls * exposure, 3, 5);
+  within(s.slides * exposure, 2 * k, 6);
+  // Conservative absolute guardrails use the original 78% tempo floor as headroom, alongside the tighter rates.
+  expect(s.fouls).toBeLessThanOrEqual(5 / MIN_LIVE_SHARE);
+  expect(s.slides).toBeLessThanOrEqual(6 / MIN_LIVE_SHARE);
   within(s.yellows, 0, 2);
   expect(s.reds).toBeLessThan(0.5);
   // Saves only count for shots that were on target.
@@ -114,7 +124,7 @@ function checkBands(halfLength: number, n: number): void {
   expect(s.passPct).toBeGreaterThan(75);
   // Round 9 (the owner: "very very slow"): the ball is in open play at least 78% of the time, counting the dead
   // ball and the goal celebrations (~83% now: shorter waits at restarts and kick-offs, keepers who hold it less).
-  expect(s.livePct).toBeGreaterThanOrEqual(78);
+  expect(s.livePct).toBeGreaterThanOrEqual(MIN_LIVE_SHARE * 100);
   // The keeper reads a long shot for its whole flight (keeper.ts SHOT_READ_T): from 25 m and further the AI
   // converts ~1% (it was ~5%, and a floated one from near halfway used to sail in over a keeper who never dived).
   expect(s.long25GoalPct).toBeLessThanOrEqual(3);

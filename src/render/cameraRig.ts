@@ -257,6 +257,9 @@ export class CameraRig {
   yaw = 0;
   /** Replay shot: 'build' = the move, 'goal' = goal-line slow-mo. */
   replayShot: 'build' | 'goal' = 'build';
+  /** Incident footage stays with the challenge / flagged runner rather than cutting to the goal mouth. */
+  replayKind: 'goal' | 'incident' = 'goal';
+  replayActors: readonly number[] = [];
   replayAngle = 0;
   /** Which goal (+1 / -1) the replayed goal went into. */
   replayGoalSign = 1;
@@ -1017,7 +1020,29 @@ export class CameraRig {
       case 'replay': {
         tx = f.bx; ty = Math.min(f.by, 2.2) * 0.5 + 0.6; tz = f.bz;
         const gs = this.replayGoalSign;
-        if (this.replayShot === 'goal') {
+        if (this.replayKind === 'incident') {
+          let minX = f.bx, maxX = f.bx, minZ = f.bz, maxZ = f.bz;
+          for (const actor of this.replayActors) {
+            if (!Number.isInteger(actor) || actor < 0 || actor >= 22) continue;
+            const x = this.players?.[actor * PF], z = this.players?.[actor * PF + 1];
+            if (typeof x !== 'number' || typeof z !== 'number' || !Number.isFinite(x) || !Number.isFinite(z)) continue;
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+            minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+          }
+          tx = (minX + maxX) / 2;
+          tz = (minZ + maxZ) / 2;
+          ty = Math.max(0.7, f.by * 0.5);
+          // Fit the ball and participants, including a flagged runner still ahead of the pass. The smaller
+          // portrait axis sets the distance, so phones show the reason for the decision as well as the ball.
+          fov = 36;
+          const radius = Math.hypot(maxX - minX, maxZ - minZ, Math.max(2, f.by)) * 0.5 + 3;
+          const distance = Math.max(20, radius / (Math.tan(fov * DEG / 2) * Math.min(1, Math.max(0.2, this.camera.aspect))) * 1.25);
+          px = tx - gs * distance * 0.11;
+          py = ty + distance * 0.66;
+          pz = tz + distance * 0.74;
+          rate = 5;
+          glide = true;
+        } else if (this.replayShot === 'goal') {
           // Low three-quarter angle from beside the six-yard box, across the goal mouth from where the ball
           // crossed the line: the finish is seen through the mouth (never through side netting or from inside
           // the net), and 5 m out from the line the ball in the back of the net is still framed.
@@ -1134,7 +1159,7 @@ export class CameraRig {
     }
     // Low cameras (goal line, celebrations) step around anyone standing where the lens would be. (The card
     // close-up holds its framing: anyone that close to it is faded out of the shot instead.)
-    if ((this.mode === 'replay' && this.replayShot === 'goal') || this.mode === 'celebrate') {
+    if ((this.mode === 'replay' && this.replayKind === 'goal' && this.replayShot === 'goal') || this.mode === 'celebrate') {
       const o = this.clearOfPlayers(px, pz, f.subject ?? -1);
       px = o.x;
       pz = o.z;

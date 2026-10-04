@@ -374,13 +374,16 @@ describe('set-ups', () => {
     // Attackers loaded the box.
     const inBox = m.teamPlayers(0).filter((p) => !p.isKeeper && Math.abs(p.pos.x) > HALF_L - 16 && Math.abs(p.pos.z) < 19).length;
     expect(inBox).toBeGreaterThanOrEqual(3);
-    // The human hasn't taken it: the sim's clock ran (out + restart), the moment's didn't.
+    // The human hasn't taken it: live match time and the moment count both wait, while restart readiness advances.
+    const restartClock = m.clock;
+    const restartPhaseT = m.phaseT;
     for (let i = 0; i < 120; i++) {
       m.step(DT, EMPTY_PAD);
       judgeScenario(m, mo.spec);
     }
     expect(m.phase).toBe('restart');
-    expect(m.clock).toBeGreaterThan(2);
+    expect(m.clock).toBe(restartClock);
+    expect(m.phaseT).toBeCloseTo(restartPhaseT + 120 * DT, 9);
     expect(scenarioSecondsLeft(m, mo.spec)).toBe(30);
     // Left alone, the sim takes it and play goes live; then the moment's clock runs.
     let o: ScenarioOutcome | null = null;

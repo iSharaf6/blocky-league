@@ -1306,12 +1306,19 @@ export class Hud {
     if (this.replay.classList.contains('skip-only') !== on) this.replay.classList.toggle('skip-only', on);
   }
 
-  setReplay(on: boolean): void {
+  setReplay(on: boolean, label = 'REPLAY'): void {
     this.replay.classList.remove('skip-only');
+    const badge = this.replay.querySelector('b');
+    if (badge) badge.textContent = on ? label : 'REPLAY';
     this.replay.classList.toggle('on', on);
     this.root.classList.toggle('replaying', on);
+    // A decision/result has its own replay badge; its earlier announcement must not cover the footage.
     // Replays are silent on the ticker: nothing queued comes back afterwards either.
-    if (on) this.hideLine();
+    if (on) {
+      this.bannerTimer = 0;
+      this.banner?.classList.remove('on');
+      this.hideLine();
+    }
   }
 
   setPlayer(num: number, name: string, stamina: number): void {

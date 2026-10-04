@@ -205,7 +205,8 @@ export const OFFSIDE_TOL = 0.8;
  * The AI's missed standing tackles and slides give a foul this much as often (round 13: the shape's presser is on the
  * ball more, a possession side holds it longer, and AI v AI fouls went from ~4 to ~5.2 a match, past the 3-5 band).
  */
-const AI_FOUL_K = 0.8;
+// Longer live-clock matches keep the same challenge frequency and success, with fewer mistimed AI contacts.
+const AI_FOUL_K = 0.66;
 /** Athletic edge per AI difficulty level above/below 2 (the human side is never scaled). */
 const AI_PACE_EDGE = 0.02;
 /** The human side's keeper bonus at EASY (0.6), and how much of it goes per difficulty level (see keeperBonus). */
@@ -579,15 +580,12 @@ const KEEPER_BOX_IN = 0.8;
 const KEEPER_PANIC_R = 2.6;
 const KEEPER_FEET_MAX = 4;
 /**
- * Added time, by the Laws of the Game (Law 7.3) and the way a good referee ends a half (2026-10-04, the owner: "look
- * at the rules of the game and perfect when to call half time or full time"). The same rules for both sides.
+ * Added time and the way a good referee ends a half. The same rules for both sides.
  *
- * EARNED. Through the half the referee notes the time lost, in the match's own seconds (the half is 45 minutes of
- * them): STOP_BASE_S of routine stoppages, STOP_GOAL_S for a goal and its celebration, STOP_SUB_S a substitution,
- * STOP_CARD_S a caution or a sending-off, STOP_PEN_S a penalty given, and STOP_SLOW_K of every restart that took
- * longer than RESTART_NORMAL_S real seconds (slow restarts, time-wasting). At 45:00 / 90:00 the fourth official's
- * board shows it in whole minutes (BOARD_MIN..BOARD_MAX: the 'addedTime' event, Match.addedBoard). That is a
- * minimum: it is always played, and time lost inside it (a goal, a sub, a penalty, a slow restart) goes back on top.
+ * LIVE TIME. The match clock pauses while the ball is dead, including a goal celebration, substitution, kick-off,
+ * foul, penalty or ball out. Restart waits and animations use phaseT and still progress. Dead-ball time is already
+ * protected by that pause, so it cannot also inflate the added-time board. At 45:00 / 90:00 the fourth official
+ * keeps the existing BOARD_MIN minute of extra live play (the 'addedTime' event, Match.addedBoard).
  *
  * ENDED at the right moment once it is up (addedTimeUp):
  * - never while a shot is in flight (SHOT_LIVE_S from the strike), the ball is in the air in or around a box, or the
@@ -605,15 +603,7 @@ const KEEPER_FEET_MAX = 4;
  *   just gone out gets ADDED_SETTLE_S to come down first.
  * After the whistle everyone eases to a stop and the ball rolls dead (WIND_DOWN_S): never a frozen picture.
  */
-const STOP_BASE_S = 30;
-const STOP_GOAL_S = 45;
-const STOP_SUB_S = 25;
-const STOP_CARD_S = 20;
-const STOP_PEN_S = 30;
-const STOP_SLOW_K = 0.5;
-const RESTART_NORMAL_S = 2.5;
 const BOARD_MIN = 1;
-const BOARD_MAX = 6;
 const SHOT_LIVE_S = 1.5;
 const BREAK_SPEED = 4.5;
 const SHOT_RANGE_M = 26;
@@ -628,7 +618,7 @@ const ADDED_SP_S = 10;
 const ADDED_SETTLE_S = 0.4;
 const WIND_DOWN_S = 1.6;
 const WIND_BALL_DRAG = 2.5;
-/** How a half ended once its added time was up (Match.addedEnd): see STOP_BASE_S. */
+/** How a half ended once its added time was up (Match.addedEnd): see BOARD_MIN. */
 export type AddedEnd = 'dead' | 'neutral' | 'attackOver' | 'penalty' | 'ceiling' | 'goal';
 
 /** A human pass being charged (PASS / THROUGH held), or let go and waiting on his body turn / wind-up. */
@@ -1131,16 +1121,9 @@ export class Match {
   private pendingRestart: Restart | null = null;
   /** Match.clock when the last restart was given (added time: was it given in time to be taken?). */
   private restartGivenAt = 0;
-  /**
-   * Added time (see STOP_BASE_S). The time lost this half before the board (the match's seconds), real seconds the
-   * ball has been dead in this stoppage, and the substitutions already counted (both sides).
-   */
-  private stopLost = 0;
-  private deadRun = 0;
-  private subsSeen = 0;
   /** The fourth official's board this half (whole minutes), null until the time is up. */
   addedBoard: number | null = null;
-  /** Real seconds of added time to play: the board, and time lost inside it put back. */
+  /** Seconds of extra live play represented by the board. */
   private addedDue = 0;
   /** How the last half ended once its time was up (null: before its board), and whose attack was on (-1: none). */
   addedEnd: AddedEnd | null = null;
@@ -1469,7 +1452,7 @@ export class Match {
     return !!this.cfg.firstMatch && (this.human[0] || this.human[1]) && this.half === 1 && this.clock < FIRST_MATCH_EASE;
   }
 
-  /** ... and for the first FIRST_MATCH_PATIENT s it never shoots: a patient build-up (ai.carrierAI, aerialOrVolley). */
+  /** ... and for the first FIRST_MATCH_PATIENT live seconds it avoids open-play shots; an awarded penalty still gets taken. */
   firstMatchPatient(): boolean {
     return this.firstMatchEase() && this.clock < FIRST_MATCH_PATIENT;
   }
@@ -1797,9 +1780,7 @@ export class Match {
     if (this.phase !== 'halftime') return;
     this.half = 2;
     this.clock = 0;
-    // A fresh half's added time (half-time changes are made in the break: not stoppages of this half).
-    this.stopLost = this.deadRun = 0;
-    this.subsSeen = this.subsUsed[0] + this.subsUsed[1];
+    // A fresh half's added time; half-time changes happen while match time is paused.
     this.addedBoard = null;
     this.addedDue = 0;
     this.setupKickoff(this.firstKickoff === 0 ? 1 : 0);
@@ -1822,8 +1803,6 @@ export class Match {
     this.phaseT += dt;
     // (HYPE reads the events this step pushes: hype.ts.)
     const ev0 = this.events.length;
-    // (Added time counts the stoppages this step's events tell of: countStoppages.)
-    const evStop = this.events.length;
     // Telegraphed challenges on a human's carrier count down (skills.ts); out of open play the moves stop.
     skillTells(this, dt);
     // The AI coach (coach.ts): the plan for the scoreline, changed at a dead ball.
@@ -1953,12 +1932,16 @@ export class Match {
       if (this.phaseT > beat && pr) this.beginRestart(pr);
     }
 
-    if (this.phase === 'play' || this.phase === 'out' || this.phase === 'restart') {
+    // Only a live ball uses match time. The restart's phaseT, orders and animations above still run, so a
+    // throw-in, foul or penalty cannot eat the remaining half while the taker prepares. A strike switches
+    // to play in resolveOrders and starts the clock on that very step; a whistle stops it on its step.
+    if (this.phase === 'play') {
       this.clock += dt;
       if (this.possessionSide !== -1) this.stats.possession[this.possessionSide as Side] += dt;
-      this.countStoppages(dt, evStop);
+    }
+    if (this.phase === 'play' || this.phase === 'out' || this.phase === 'restart') {
       if (this.clock >= this.cfg.halfLength && this.addedTimeUp()) this.endHalf();
-    } else if (this.phase === 'goal' || this.phase === 'kickoff') this.countStoppages(dt, evStop);
+    }
     this.passT += dt;
     if (this.passT > 3.2) this.passTarget = -1;
     this.shotClock += dt;
@@ -1988,36 +1971,6 @@ export class Match {
     for (const side of SIDES) if (this.human[side] || side === this.viewSide) this.ctl[side].prev = { ...pads[side] };
   }
 
-  /** Time lost (the match's seconds): onto the allowance before the board, back on top inside the added time. */
-  private loseTime(gameS: number): void {
-    if (gameS <= 0) return;
-    if (this.addedBoard === null) this.stopLost += gameS;
-    else if (this.clock < this.cfg.halfLength + this.addedDue) this.addedDue += (gameS * this.cfg.halfLength) / 2700;
-  }
-
-  /** The stoppages this step (see STOP_BASE_S): goals and cards from its events, substitutions, slow restarts. */
-  private countStoppages(dt: number, from: number): void {
-    let lost = 0;
-    for (let i = from; i < this.events.length; i++) {
-      const t = this.events[i].type;
-      if (t === 'goal') lost += STOP_GOAL_S;
-      else if (t === 'card') lost += STOP_CARD_S;
-    }
-    const subs = this.subsUsed[0] + this.subsUsed[1];
-    if (subs > this.subsSeen) {
-      lost += (subs - this.subsSeen) * STOP_SUB_S;
-      this.subsSeen = subs;
-    }
-    if (this.phase === 'out' || this.phase === 'restart') this.deadRun += dt;
-    else {
-      if (this.phase === 'play' && this.deadRun > RESTART_NORMAL_S) {
-        lost += ((this.deadRun - RESTART_NORMAL_S) * STOP_SLOW_K * 2700) / this.cfg.halfLength;
-      }
-      this.deadRun = 0;
-    }
-    this.loseTime(lost);
-  }
-
   /** The half ends now (`end`) or not; how it ended is kept (Match.addedEnd). */
   private addedOver(end: boolean, why: AddedEnd): boolean {
     if (end) {
@@ -2045,11 +1998,11 @@ export class Match {
 
   /**
    * The clock is past the half (Match.clock >= halfLength): does the referee blow now? The board goes up first, and
-   * its time is always played. (See STOP_BASE_S.)
+   * its time is always played. (See BOARD_MIN.)
    */
   private addedTimeUp(): boolean {
     if (this.addedBoard === null) {
-      const n = clamp(Math.round((STOP_BASE_S + this.stopLost) / 60), BOARD_MIN, BOARD_MAX);
+      const n = BOARD_MIN;
       this.addedBoard = n;
       this.addedDue = (n * 60 * this.cfg.halfLength) / 2700;
       this.addedEnd = null;
@@ -4191,9 +4144,9 @@ export class Match {
         break;
       }
       case 'penalty': {
-        // Give a first-time player the same opening grace at a penalty as in open play. The restart
-        // clock keeps advancing, so the taker prepares until the patient period ends, then strikes.
-        if (!this.human[r.side] && this.firstMatchPatient()) return;
+        // Give a first-time keeper time to line up, then take it. Match time is paused at a restart,
+        // so waiting for firstMatchPatient's live-clock threshold here would strand this penalty.
+        if (!this.human[r.side] && this.firstMatchPatient() && this.phaseT < HUMAN_RESTART_WINDOW) return;
         const zAim = this.rng.chance(0.5) ? 1 : -1;
         this.order(t, 'shot', 0, zAim, 0.72 + this.rng.next() * 0.2, -1, false);
         break;
@@ -4367,7 +4320,6 @@ export class Match {
     this.restart = this.pendingRestart;
     this.restartGivenAt = this.clock;
     for (const p of this.players) p.order = null;
-    if (kind === 'penalty') this.loseTime(STOP_PEN_S);
     // The added time is up and this one won't be taken (only a penalty is, now): no short whistle, no set piece; the
     // long one follows (addedTimeUp).
     if (this.addedBoard !== null && this.clock >= this.cfg.halfLength + this.addedDue && kind !== 'penalty') return;

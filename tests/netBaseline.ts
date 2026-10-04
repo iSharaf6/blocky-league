@@ -24,6 +24,8 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
  * The protocol-9 idle-possession revision (2026-10-05b), including moving challenges on a ball exposed beyond its
  * carrier's body, re-recorded nine changed human rows. All six AI-only rows and
  * four human rows are still bit-identical; tests/net.test.ts identifies them. Drivers and exact assertions are unchanged.
+ * The protocol-10 live-clock revision (2026-10-05c) re-recorded all nineteen rows: dead-ball preparations pause the
+ * match clock and no longer inflate added time. Restart timers keep running. Drivers and exact assertions are unchanged.
  */
 export type Row = [number, number, number, number, number, number];
 

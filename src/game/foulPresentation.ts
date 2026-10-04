@@ -18,7 +18,7 @@ export interface BookingShot {
 
 type Verdict = { event: Extract<MatchEvent, { type: 'restart' }>; restart: Restart | null };
 
-/** Local presentation only: simulation, advantage, input and restart clocks keep running. */
+/** Local presentation only; rendered time advances this beat even while an incident recap holds its restart. */
 export class FoulPresentation {
   private left = 0;
   private side: Side | null = null;

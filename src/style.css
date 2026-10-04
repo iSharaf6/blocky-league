@@ -1749,6 +1749,7 @@ kbd {
   gap: 4px;
   opacity: 0;
   transition: opacity 0.2s;
+  max-width: calc(100vw - max(12px, env(safe-area-inset-left)) - max(12px, env(safe-area-inset-right)) - 52px);
 }
 
 .hud-replay.on,
@@ -1775,6 +1776,8 @@ kbd {
   padding: 7px 12px 5px;
   box-shadow: 0 5px 0 var(--red-d);
   animation: blink 1s steps(2) infinite;
+  justify-self: start;
+  overflow-wrap: anywhere;
 }
 
 .hud-replay span {

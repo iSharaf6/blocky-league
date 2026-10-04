@@ -40,8 +40,9 @@ function rig() {
   input.lastDevice = 'touch';
   input.touch.enabled = true;
   const replayClasses = classList();
+  const replayBadge = { textContent: 'REPLAY' };
   const hud = Object.assign(Object.create(Hud.prototype), {
-    replay: { classList: replayClasses }, root: { classList: classList() }, cm: { classList: classList() },
+    replay: { classList: replayClasses, querySelector: () => replayBadge }, root: { classList: classList() }, cm: { classList: classList() },
     cmLine: null, cmPending: null, show: vi.fn(), setScore: vi.fn(), commentary: vi.fn(),
   }) as Hud;
   const frame = new Float32Array(FRAME_LEN);

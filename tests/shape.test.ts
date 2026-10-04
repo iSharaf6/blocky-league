@@ -155,7 +155,9 @@ function styleSeries(style: TeamStyle, n: number): MatchMetrics[] {
 
 describe('team styles (round 13)', () => {
   it('each style changes its signature in the expected direction against the same balanced side', () => {
-    const N = 24;
+    // Paused stoppages change the seeded second-half paths. Retain the original 24 seeds and add the next
+    // 24 to reduce sampling noise; all style directions and margins below remain unchanged.
+    const N = 48;
     const base = sideSummary(styleSeries('balanced', N));
     const res: Record<string, ReturnType<typeof sideSummary>> = {};
     for (const st of ['high-press', 'park-bus', 'possession', 'counter'] as TeamStyle[]) res[st] = sideSummary(styleSeries(st, N));

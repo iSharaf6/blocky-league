@@ -176,9 +176,11 @@ describe('the tackle has time to read before the referee decision', () => {
     expect(h.hud.show).not.toHaveBeenCalled();
     expect(h.beat.impact(m.phase, m.restart)).toBe(true);
     const clock = m.clock;
+    const phaseT = m.phaseT;
     for (let i = 0; i < 5; i++) h.session.update(0.1);
     h.session.update(0.09);
-    expect(m.clock).toBeGreaterThan(clock); // This is camera pacing, not a simulation pause.
+    expect(m.clock).toBe(clock); // The foul's decision advances while the stopped match clock waits.
+    expect(m.phaseT).toBeGreaterThan(phaseT);
     expect(h.view.showCard).not.toHaveBeenCalled();
     expect(h.cam.mode).toBe('broadcast');
     expect(h.cam.update.mock.lastCall?.[1]).toMatchObject(contact);

@@ -4,6 +4,12 @@ Ordinary solo matches use short, skippable scenes built from the actual eligible
 
 Every goal in an ordinary local match automatically gets the TV replay, including close-range finishes and opposition goals. The replay starts after the celebration's signature moment and shows the recorded build-up and finish. A deliberate tap during the celebration skips through to kick-off; a fresh tap or gameplay button during the replay skips that replay. Held controls are consumed at kick-off. Demos, online matches, Football Moments and an already-scored goal restored from a checkpoint omit the replay. Reopening resumes the match without requiring historical video frames to be saved.
 
+Offsides, fouls, yellow and red cards, penalty awards and settled penalty results also receive recorded recaps in ordinary local matches. A foul, its card and penalty award share one clip. The contact and referee decision read first; a compact corner badge names the replay without covering the players. Offside footage retains the original pass release and briefly slows that moment, then shows the receiver's involvement. Shootouts replay scored, saved and missed kicks. An in-match penalty goal uses the normal goal replay; a parry or post remains live until the ball is controlled or the referee stops play. Live advantage is uninterrupted, with any recap waiting for the next stoppage.
+
+Incident playback holds the exact live match state, then restores its camera and resumes the existing restart or settled possession. A fresh tap or gameplay-button edge skips the clip; held inputs cannot take the next restart. Incident recaps do not run the goal lifecycle, advance shootout results or pay match rewards. Restored checkpoints discard unfinished recap footage and resume the saved match state.
+
+Match time and possession statistics count only while the ball is live. Fouls, balls out, penalty preparation, other restarts and kick-off waits pause those clocks, while restart timers and animations keep running. Time resumes on the actual strike. Advantage and penalty flight count as live play. Paused breaks do not also increase added time: the existing one-minute minimum board and protection for an ongoing chance or awarded penalty remain.
+
 | Beat | Duration | Action |
 | --- | --- | --- |
 | Lineup | 3 s | Camera follows the XI to their captain; a worn club title appears beside the captain and in the fixture subtitle. |
