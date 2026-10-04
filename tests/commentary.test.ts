@@ -49,7 +49,8 @@ describe('commentary', () => {
     expect(surname('I. Chunk')).toBe('Chunk');
   });
 
-  it('commentates a whole match with filled-in lines', () => {
+  // (Two whole matches: with added time by the Laws they run longer, so this has its own limit, not the 5 s default.)
+  it('commentates a whole match with filled-in lines', { timeout: 60_000 }, () => {
     for (const seed of [3, 11]) {
       const { m, lines } = commentate(seed);
       expect(m.phase).toBe('fulltime');

@@ -129,7 +129,7 @@ describe('match feel metrics (AI vs AI, difficulty 2, half-time AI subs)', () =>
 
   it('stays inside the DLS-style target bands at 2x150 s halves', () => {
     checkBands(150, 64);
-  }, 180_000);
+  }, 360_000);
 
   it('is deterministic for a given seed', () => {
     const a = runMatch({ seed: 4242 });
