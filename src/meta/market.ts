@@ -14,7 +14,7 @@ import type { PlayerDef, PlayerStats, Role } from '../sim/types';
 import { makePlayer, surnameOf } from './data';
 import {
   KEY_STATS, SQUAD_MAX, SQUAD_MIN, STAT_CAP, STAT_KEYS, canSell, clonePlayer, divisionLevel, divisionPlayerOverall, freeNumber,
-  playerPrice, removeFromSquad, rivalRating, rivalSquad, tuneToOverall,
+  playerPrice, removeFromSquad, rivalRating, rivalSquad, tuneToOverall, wageBudgetFor,
   type CareerState, type ClubState, type LeagueClub, type TxFail, type Wallet,
 } from './career';
 
@@ -142,6 +142,8 @@ export interface NewsItem {
   own: boolean;
   /** Read: set for everything once the market screen has been opened (see markNewsSeen / marketUnread). */
   seen?: boolean;
+  /** The club's story, not a transfer (derby talk, cup runs, milestones, farewells: meta/story.ts). */
+  story?: boolean;
 }
 
 export interface MarketState {
@@ -261,6 +263,11 @@ export function wageBudget(division: number, stadium: number): number {
   return round10((typ ** 2 / WAGE_DIV) * SQUAD_MAX * (1 + 0.05 * clamp(stadium, 0, 5)));
 }
 
+/** Your club's wage budget: the division's and the ground's, moved by board confidence and the legacy perk (career.ts). */
+export function clubWageBudget(state: CareerState): number {
+  return wageBudgetFor(state, wageBudget(state.season?.division ?? 6, state.stadium));
+}
+
 /** Price multiplier by age: peak 24-28, cheap raw kids and veterans. */
 export function ageFactor(age: number): number {
   if (age <= 19) return 0.9;
@@ -324,9 +331,12 @@ function rivalById(state: CareerState, id: string | null): LeagueClub | undefine
   return id ? state.season?.rivals.find((r) => r.id === id) : undefined;
 }
 
-function pushNews(state: CareerState, text: string, kind: NewsKind, own = false): void {
+/** Put a line at the top of the club's NEWS (also used by meta/story.ts for derby talk, cup runs and milestones). */
+export function pushNews(state: CareerState, text: string, kind: NewsKind, own = false, story = false): void {
   const tm = state.tm;
-  tm.news = [{ season: state.season?.number ?? 0, week: marketWeek(state), text, kind, own, seen: false }, ...tm.news].slice(0, NEWS_MAX);
+  const item: NewsItem = { season: state.season?.number ?? 0, week: marketWeek(state), text, kind, own, seen: false };
+  if (story) item.story = true;
+  tm.news = [item, ...tm.news].slice(0, NEWS_MAX);
 }
 
 const fmtN = (n: number) => n.toLocaleString('en-US');
@@ -406,7 +416,7 @@ export function marketSummary(state: CareerState): MarketSummary {
     window: windowInfo(week),
     squad: state.club?.squad.length ?? 0,
     wages: state.club ? squadWages(state.club) : 0,
-    budget: wageBudget(state.season?.division ?? 6, state.stadium),
+    budget: clubWageBudget(state),
     pending: c.players - (state.club?.squad.length ?? 0),
     drain: wageDrain(state),
   };
@@ -417,7 +427,7 @@ export function marketSummary(state: CareerState): MarketSummary {
 /** The weekly overspend (0 when wages fit the budget). */
 export function wageOverspend(state: CareerState): number {
   if (!state.club) return 0;
-  return Math.max(0, squadWages(state.club) - wageBudget(state.season?.division ?? 6, state.stadium));
+  return Math.max(0, squadWages(state.club) - clubWageBudget(state));
 }
 
 /** What an over-budget wage bill costs after each matchday: WAGE_DRAIN × the overspend; nothing under budget. */
@@ -436,7 +446,7 @@ export function applyWageDrain(state: CareerState, wallet: Wallet): number {
   const taken = Math.min(drain, Math.max(0, Math.floor(wallet.coins)));
   wallet.coins -= taken;
   const wages = squadWages(state.club);
-  const budget = wageBudget(state.season?.division ?? 6, state.stadium);
+  const budget = clubWageBudget(state);
   pushNews(
     state,
     `Wages over budget (${fmtN(wages)} of ${fmtN(budget)} a week): ${fmtN(taken)} coins deducted${taken < drain ? ', all you had' : ''}`,
@@ -579,7 +589,7 @@ function rotateListings(state: CareerState, week: number, rng: Rng): void {
 function signListing(state: CareerState, listing: Listing, paid: number): MetaPlayer | 'squad-full' | 'wages' {
   const club = state.club!;
   if (club.squad.length >= SQUAD_MAX) return 'squad-full';
-  if (squadWages(club) + listing.wage > wageBudget(state.season?.division ?? 6, state.stadium)) return 'wages';
+  if (squadWages(club) + listing.wage > clubWageBudget(state)) return 'wages';
   const p = pinMeta({ ...clonePlayer(listing.player), id: `c${club.nextId++}`, number: freeNumber(club.squad, listing.player.role) }, {
     age: listing.age,
     potential: listing.potential,
@@ -612,7 +622,7 @@ export function canBid(state: CareerState, coins: number, listingId: string, amo
   if (!Number.isFinite(amount) || amount < lo || amount > hi) return fail('bad-amount');
   const c = committed(state);
   if (c.players >= SQUAD_MAX) return fail('squad-full');
-  if (c.wages + l.wage > wageBudget(state.season.division, state.stadium)) return fail('wages');
+  if (c.wages + l.wage > clubWageBudget(state)) return fail('wages');
   if (coins < amount) return fail('no-coins');
   // A free agent has no club to consult: his asking price signs him on the spot.
   return { ok: true, instant: !l.club && amount >= l.asking };

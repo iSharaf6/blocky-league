@@ -72,6 +72,139 @@
 .mc-top .coins.spend { animation: sh-spend 0.65s ease-out; }
 @keyframes sh-spend { 30% { transform: scale(1.12); color: #fff; } }
 
+/* ---- the body: the rail on the left, the section on the right (docs/UX.md: one screen, only lists scroll) */
+
+.sh-screen .panel.mc > .mc-body.sh-body { grid-template-columns: 124px minmax(0, 1fr); gap: 10px; }
+.sh-content { min-height: 0; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr); gap: 10px; overflow: hidden; }
+
+/* The rail: one button a section, grouped (featured, looks, goals, the rest, the money) by a little gap. */
+.sh-rail { display: flex; flex-direction: column; gap: 4px; padding: 2px 6px 6px 1px; }
+.sh-rb {
+  position: relative;
+  appearance: none;
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px 0 5px;
+  font: 400 14px / 1 var(--round);
+  letter-spacing: 0.5px;
+  color: var(--ink);
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--cream-2);
+  cursor: pointer;
+  text-align: left;
+}
+.sh-rb.gap { margin-top: 5px; }
+.sh-rb:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--cream-2); }
+.sh-rb:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.sh-ri { flex: none; display: grid; place-items: center; width: 24px; height: 24px; background: var(--ink); }
+.sh-ri .picon { width: 16px; height: 16px; }
+.sh-rl { min-width: 0; line-height: 1.02; }
+.sh-rb.on { background: var(--ink); color: var(--yellow); box-shadow: 0 3px 0 var(--ink-2); }
+.sh-rb.on .sh-ri { background: #3a3a48; }
+.sh-rb.feat:not(.on) { background: #fff5c4; border-color: var(--yellow-d); }
+.sh-rb.money:not(.on) { background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
+.sh-rb.money .sh-ri { background: #fff3b0; }
+.sh-rb .sh-dot { top: -8px; right: -6px; }
+.sh-dot.new { background: var(--red); box-shadow: 0 3px 0 var(--red-d); }
+
+/* Slot chips over a slot category's tiles (players, stadium): the worn slots are underlined green. */
+.chips.sh-slots { padding: 2px 2px 4px; }
+.chips.sh-slots > button { position: relative; min-height: 34px; padding: 4px 10px 3px; font-size: 13px; }
+.chips.sh-slots .sh-dot { top: -9px; right: -6px; padding: 2px 3px 1px; font-size: 8px; animation: none; }
+.chips.sh-slots { padding-top: 9px; padding-right: 8px; }
+.chips.sh-slots > button.worn:not(.on) { box-shadow: inset 0 -4px 0 var(--go); }
+
+/* The stage's own controls in its corners: CAPTAIN or TEAM, NIGHT, TRY IT ON, the item's set. */
+.sh-ctl { position: absolute; z-index: 2; display: flex; gap: 6px; pointer-events: none; max-width: calc(100% - 12px); }
+.sh-ctl > * { pointer-events: auto; }
+.sh-ctl.tl { top: 6px; left: 6px; }
+.sh-ctl.tr { top: 6px; right: 6px; }
+.sh-ctl.bl { bottom: 6px; left: 6px; }
+.sh-ctl.br { bottom: 6px; right: 6px; }
+.sh-chip, .sh-seg button {
+  appearance: none;
+  min-height: 34px;
+  padding: 4px 10px 3px;
+  font: 700 11px / 1 var(--px);
+  letter-spacing: 1px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.94);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 rgba(38, 38, 46, 0.35);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sh-chip:active, .sh-seg button:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(38, 38, 46, 0.35); }
+.sh-chip.on, .sh-seg button.on { background: var(--ink); color: var(--yellow); }
+.sh-chip.try:not(.on) { background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
+.sh-chip.set { background: #ff3c9e; color: #fff; box-shadow: 0 3px 0 #b81f6c; overflow: hidden; text-overflow: ellipsis; }
+.sh-seg { display: flex; }
+.sh-seg button + button { border-left: 0; }
+
+/* FEATURED: the week's set (wide), the four looks, the sets (wide rows). */
+.sh-weeknote { font: 700 10px / 1 var(--px); letter-spacing: 1px; color: var(--ink-2); white-space: nowrap; }
+.sh-sect { grid-column: 1 / -1; margin: 4px 0 -4px; font: 700 11px / 1 var(--px); letter-spacing: 1.5px; color: var(--blue-d); }
+.sh-set {
+  position: relative;
+  appearance: none;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 6px;
+  font: inherit;
+  color: #fff;
+  text-align: left;
+  background: var(--sb);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink-2);
+  cursor: pointer;
+  min-width: 0;
+}
+.sh-set:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink-2); }
+.sh-set:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2px; }
+.sh-set.sel { box-shadow: 0 0 0 3px var(--blue), 0 5px 0 3px var(--blue-d); transform: translateY(-2px); }
+.sh-set .sh-art { width: 84px; aspect-ratio: 4 / 3; background: rgba(255, 255, 255, 0.16); }
+.sh-set .sh-art .picon { width: 40px; height: 40px; }
+.sh-set.hero { grid-template-columns: 132px minmax(0, 1fr) auto; padding: 8px 10px 8px 8px; }
+.sh-set.hero .sh-art { width: 132px; }
+.sh-settxt { display: grid; gap: 4px; min-width: 0; }
+.sh-settxt b { font: 400 17px / 1 var(--round); letter-spacing: 0.6px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.32); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-set.hero .sh-settxt b { font-size: 21px; }
+.sh-settxt small { font: 700 10px / 1.2 var(--px); letter-spacing: 0.5px; color: var(--sa); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4); }
+.sh-new.feat { left: auto; right: -8px; color: var(--ink); background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
+.sh-new.prog { left: 64px; background: #ff3c9e; box-shadow: 0 3px 0 #b81f6c; }
+
+/* A set's detail: the set's colour behind the stage, its parts as chips (owned in green: a tap shows it). */
+.sh-setdetail .sh-stage { background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--sb) 45%, #fff) 0%, var(--sb) 78%); }
+.sh-parts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.sh-part {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  min-width: 0;
+  padding: 3px 6px 2px 4px;
+  font: 400 12px / 1 var(--round);
+  letter-spacing: 0.3px;
+  color: #fff;
+  background: var(--ink);
+  border: 0;
+  box-shadow: 0 3px 0 var(--ink-2);
+  cursor: pointer;
+}
+.sh-part .picon { flex: none; width: 14px; height: 14px; }
+.sh-part span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-part i { display: none; }
+.sh-part.got { color: var(--ink); background: #8fe39a; box-shadow: 0 3px 0 var(--go-d); }
+
 /* The tabs: one slim row (short names on narrow screens). */
 .sh-tabs button { position: relative; white-space: nowrap; }
 .shell .mc-tabs.sh-tabs button { padding-left: 2px; padding-right: 2px; }
@@ -99,7 +232,7 @@
 
 /* ---- a looks tab: the tiles (left, scrolling) and the picked look's stage and button (right, fixed) */
 
-.mc-body.split.sh-cat { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+.sh-content.split.sh-cat { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
 .sh-listh { min-height: 34px; gap: 8px; }
 .sh-count { font: 400 13px var(--round); letter-spacing: 1px; color: var(--ink-2); white-space: nowrap; }
 
@@ -275,7 +408,7 @@
 
 /* ---- PLAYERS: one club bar, the packs side by side, one line of fine print */
 
-.sh-screen .panel.mc > .mc-body.sh-players { grid-template-rows: auto minmax(0, 1fr) auto; }
+.sh-screen .sh-content.sh-players { grid-template-rows: auto minmax(0, 1fr) auto; }
 .sh-club {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto auto;
@@ -388,12 +521,12 @@
 
 /* ---- PASS AND COINS: every money card on one screen; the Club Pass the biggest, on the left */
 
-.sh-screen .panel.mc > .mc-body.sh-money {
+.sh-screen .sh-content.sh-money {
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 2.3fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas: 'pass offers' 'pass packs' 'pass foot';
 }
-.sh-screen .panel.mc > .mc-body.sh-money.free-only { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: 'offers'; place-items: center; }
+.sh-screen .sh-content.sh-money.free-only { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: 'offers'; place-items: center; }
 
 .sh-passcard {
   grid-area: pass;
@@ -655,6 +788,21 @@
 /* ---------------------------------------------------------------- short screens (landscape phones, portal frames) */
 
 @media (max-height: 560px) {
+  .sh-screen .panel.mc > .mc-body.sh-body { grid-template-columns: 116px minmax(0, 1fr); gap: 8px; }
+  .sh-rb { font-size: 13px; gap: 6px; }
+  .sh-ri { width: 22px; height: 22px; }
+  .chips.sh-slots > button { min-height: 32px; padding: 3px 8px 2px; font-size: 12px; }
+  .sh-chip, .sh-seg button { min-height: 32px; padding: 3px 8px 2px; font-size: 10px; }
+  .sh-set { grid-template-columns: 70px minmax(0, 1fr) auto; gap: 6px; padding: 5px 6px 5px 5px; }
+  .sh-set .sh-art { width: 70px; }
+  .sh-set.hero { grid-template-columns: 104px minmax(0, 1fr) auto; }
+  .sh-set.hero .sh-art { width: 104px; }
+  .sh-settxt b { font-size: 15px; }
+  .sh-set.hero .sh-settxt b { font-size: 18px; }
+  .sh-settxt small { font-size: 9px; }
+  .sh-parts { gap: 3px; }
+  .sh-part { min-height: 26px; font-size: 11px; }
+  .sh-weeknote { display: none; }
   .sh-listh { min-height: 30px; }
   .sh-dealchip { min-height: 32px; padding: 3px 8px 2px; gap: 6px; }
   .sh-dealchip > span { font-size: 13px; }
@@ -714,7 +862,7 @@
   .sh-grid { grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); }
   .sh-dealchip > b { font-size: 10px; }
   .sh-count { display: none; }
-  .sh-screen .panel.mc > .mc-body.sh-money { grid-template-columns: minmax(0, 0.8fr) minmax(0, 2.2fr); }
+  .sh-screen .sh-content.sh-money { grid-template-columns: minmax(0, 0.8fr) minmax(0, 2.2fr); }
   .shell .mc-tabs.sh-tabs button.sh-money { font-size: 11px; letter-spacing: 0; }
 }
 
@@ -728,9 +876,12 @@
 
 /* Tall narrow screens (a portrait window on the web): the panes stack, the list below the stage. */
 @media (max-width: 600px) and (min-height: 561px) {
-  .sh-screen .panel.mc > .mc-body.split.sh-cat { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .sh-screen .panel.mc > .mc-body.sh-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .sh-rail { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; }
+  .sh-rb { flex: none; min-height: 40px; }
+  .sh-screen .sh-content.split.sh-cat { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .sh-cat .sh-detail { grid-row: 1; }
-  .sh-screen .panel.mc > .mc-body.sh-money { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto auto; grid-template-areas: 'pass' 'offers' 'packs' 'foot'; overflow-y: auto; }
+  .sh-screen .sh-content.sh-money { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto auto; grid-template-areas: 'pass' 'offers' 'packs' 'foot'; overflow-y: auto; }
   .sh-iaps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sh-offers { grid-template-columns: minmax(0, 1fr); }
   .sh-club { grid-template-columns: auto minmax(0, 1fr) auto; }

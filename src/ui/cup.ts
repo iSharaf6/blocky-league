@@ -188,6 +188,7 @@ export function cupTrophyScreen(app: AppContext, st: CareerState, onNext: () => 
   conf.innerHTML = bits;
   scr.root.appendChild(conf);
   sfx.goal();
+  sfx.fanfare('trophy');
   sfx.coin();
   buzz('win');
 }

@@ -1,4 +1,5 @@
 import { sfx } from '../audio/sfx';
+import { matchAudio } from '../audio/director';
 import { freeKey, freePadButton, moveKeys, type Input } from '../core/input';
 import { CAM_ZOOMS, CELEBRATION_IDS, type CamZoom, type CelebrationId } from '../core/save';
 import { clamp, damp, smoothstep, wrapAngle } from '../core/math';
@@ -10,7 +11,8 @@ import { goalFxColors, trailColors } from '../render/cosmetics';
 import { Effects } from '../render/effects';
 import { goalShow } from '../render/fx/goals';
 import { FxKit, TrailState, type FxCue } from '../render/fx/kit';
-import { emitTrail } from '../render/fx/trails';
+import { BOOT_STEP_M, bootStep, emitTrail } from '../render/fx/trails';
+import type { StyledKit } from '../render/kitDesigns';
 import { GhostArc } from '../render/ghostArc';
 import {
   HARD_STRIKE, HIT_STOP, KEEPER_FLASH_FRAMES, PLAYER_FLASH_FRAMES, SHAKE_PX, SLOW_POST, TRAIL_LOOK, endHeat, impactBits, kickTrailStyle, trailStrength,
@@ -22,8 +24,10 @@ import { actionKey } from '../core/input';
 import { skillWindow, type SkillEvent } from '../sim/skills';
 import { SkillHud } from '../ui/skillHud';
 import { CutFlash } from '../render/transition';
-import { PITCH_Y, Stadium, stadiumFill } from '../render/stadium';
+import { PITCH_Y, Stadium, stadiumFill, type StadiumParts } from '../render/stadium';
+import { StadiumDecor } from '../render/stadiumStyle';
 import { Weather, type WeatherKind } from '../render/weather';
+import type { DecorStyle } from '../meta/style';
 import type { TimeOfDay, World } from '../render/world';
 import { isCrossingRestart } from '../sim/ai';
 import { BALL_R, DT, GOAL_W, HALF_L, HALF_W } from '../sim/constants';
@@ -50,6 +54,8 @@ import { GHOST_MAX_PTS, flyGhost, lobLaunch, penaltyGhost, strikeLaunch, type Gh
 import { contrastAwayKit } from './kitContrast';
 import { QuickSubs, quickSubsAllowed } from './quickSub';
 import { MatchTally, type PlayerRating } from './ratings';
+import { FunPresenter } from './funPresent';
+import type { FunSummary } from './funLayer';
 import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
 
 export type { PlayerRating } from './ratings';
@@ -62,6 +68,8 @@ export interface SessionOptions extends MatchConfig {
   weather?: WeatherKind;
   /** Home stadium size 0..5 (5 = full bowl). */
   stadiumLevel?: number;
+  /** Your ground built part by part (ROAD TO GLORY home matches): render/stadium.ts StadiumParts. */
+  ground?: StadiumParts;
   /** Show first-match control tips. */
   tutorial?: boolean;
   /** No fly-in intro: straight to the kick-off framing (a rematch). */
@@ -75,6 +83,8 @@ export interface SessionOptions extends MatchConfig {
   /** SHOP cosmetics for the human side (render/cosmetics.ts): its goals' explosion colours, its sprint speed lines. */
   goalFx?: string;
   trail?: string;
+  /** SHOP stadium style for a home match of the human's (meta/style.ts decorOf; render/stadiumStyle.ts draws it). */
+  decor?: DecorStyle | null;
   /** A Football Moment to run instead of a full match (src/sim/scenario.ts applies and judges it). */
   scenario?: ScenarioSpec;
   /** Colour-blind aid: shape cues on rings and markers (dashed opponent rings, a chevron on your team), not colour alone. */
@@ -114,6 +124,8 @@ export interface MatchResult {
   winner?: Side;
   /** A Football Moment's verdict (only when SessionOptions.scenario was set). */
   scenarioOutcome?: ScenarioOutcome;
+  /** The in-match fun layer's verdict for the human (game/funLayer.ts): live goals' coins and XP, SHOWTIME, super shots. */
+  fun?: FunSummary;
 }
 
 /** Seconds on the wide shot after a goal (the ball in the net) before cutting to the scorer. */
@@ -145,6 +157,14 @@ const REPLAY_AT = 2.6;
 /** A goal that gets no replay (an ordinary tap-in by either side): the celebration runs this long, then the kick-off. */
 const NO_REPLAY_AT = 3.4;
 /**
+ * A goal against the human (no replay): the cut to the kick-off comes this soon (s), however long the scorers' move
+ * (2026-10-04, the owner: "sloggy", "slow and boring": watching the AI celebrate 3.4 s was dead time). Any goal can
+ * be tapped through once the wide shot has had its moment (a goal explosion's 1.8 s one included): GOAL_SKIP_GRACE s
+ * after it, a tap ends the celebration and skips the replay.
+ */
+const THEIR_GOAL_AT = 2.4;
+const GOAL_SKIP_GRACE = 0.15;
+/**
  * Presentation pace (owner playtest: "the gameplay is very very slow"): the pre-match fly-in, the replay's
  * lead-in before the goal and tail after it (s of match time), the build-up's playback rate and the slow-mo
  * finish's (from REPLAY_SLOW_FROM s before the goal: ~5.5 s of replay in all, always skippable), and the
@@ -156,11 +176,11 @@ const REPLAY_TAIL_S = 0.9;
 const REPLAY_BUILD_RATE = 0.85;
 const REPLAY_SLOW_RATE = 0.5;
 const REPLAY_SLOW_FROM = 1.2;
-const HALFTIME_HOLD_S = 1.0;
+const HALFTIME_HOLD_S = 1.4;
 /** The match camera's key and gamepad button (VIEW / BACK, standard mapping), when no action is bound to them. */
 const CAM_KEY = 'KeyV';
 const CAM_PAD = 8;
-const FULLTIME_HOLD_S = 1.8;
+const FULLTIME_HOLD_S = 1.5;
 const SHOOTOUT_HOLD_S = 3.4;
 /**
  * Football Moments (SessionOptions.scenario): the brief holds the sim this long before "GO!"; a settled
@@ -282,7 +302,7 @@ export const PRESENTATION = {
   buildRate: REPLAY_BUILD_RATE, slowRate: REPLAY_SLOW_RATE, slowFromS: REPLAY_SLOW_FROM, halftimeHoldS: HALFTIME_HOLD_S,
   fulltimeHoldS: FULLTIME_HOLD_S, hitStopTackle: HIT_STOP_TACKLE, hitStopGoal: HIT_STOP_GOAL,
   hitStopPost: HIT_STOP.post, hitStopPostSlow: HIT_STOP.postSlow, hitStopSlide: HIT_STOP.slide, hitStopSave: HIT_STOP.save,
-  foulBeatS: FOUL_BEAT_S,
+  foulBeatS: FOUL_BEAT_S, noReplayAtS: NO_REPLAY_AT, theirGoalAtS: THEIR_GOAL_AT, goalSkipGraceS: GOAL_SKIP_GRACE,
 } as const;
 
 /** White chips off the woodwork. */
@@ -319,6 +339,8 @@ export class MatchSession {
   readonly effects = new Effects();
   /** The SHOP cosmetics: your goal explosion and your trail (render/fx/kit.ts). */
   readonly fxKit = new FxKit();
+  /** The human's home ground dressed in its SHOP stadium style (null: none, an away match, or the menu demo). */
+  private decor: StadiumDecor | null = null;
   readonly weather = new Weather();
   readonly cam: CameraRig;
   readonly hud: Hud | null;
@@ -447,6 +469,10 @@ export class MatchSession {
    */
   private skillHud: SkillHud | null = null;
   private slowT = 0;
+  /** The slow motion's rate (a PERFECT skill's, or a super shot's: game/funPresent.ts). */
+  private slowRate = SKILL_SLOW_RATE;
+  /** HYPE, live goals, SHOWTIME, goal callouts, the final minutes (game/funPresent.ts); null in the menu's demo. */
+  readonly fun: FunPresenter | null = null;
   private skillTells = 0;
   private skillPerfects = 0;
   /** The ball's owner and pace before the last sim step (who was tackled; was a strike first-time; how hard it hit the post). */
@@ -500,6 +526,10 @@ export class MatchSession {
   private tryAt = new Float32Array(22).fill(-1e9);
   /** Per player: the pose state drawn last frame (dust on a dive / a fall) and a particle-rate accumulator. */
   private lastState = new Float32Array(22).fill(-1);
+  /** LIGHT UP BOOTS (a SHOP player look) per side, and each player's distance since his last glowing step and which foot. */
+  private lightBoots: [boolean, boolean] = [false, false];
+  private stepDist = new Float32Array(22);
+  private stepSide = new Float32Array(22).fill(1);
   private fxAcc = new Float32Array(22);
   private ballFxAcc = 0;
   /** The human side's sprint speed-line colours (SessionOptions.trail), looked up on the first sprint. */
@@ -544,11 +574,13 @@ export class MatchSession {
       // vertex cost).
       attendance: opt.attendance * stadiumFill(level) * (world.quality === 'low' ? 0.45 : world.quality === 'medium' ? 0.75 : 1),
       level,
+      parts: opt.ground,
       // (A draw from the sim's own rng: online, both machines build the session the same way, so they draw it
       // alike. Never draw from match.rng on anything local, like the graphics quality: the two games would part.)
       seed: this.match.rng.int(1e9),
     });
     this.view = new MatchView(teams, opt.kits, opt.humanSide, !!opt.colorblind);
+    for (const sd of [0, 1] as const) this.lightBoots[sd] = (opt.kits[sd] as StyledKit).looks?.boots === 'bootlight';
     this.applyTimeOfDay(opt.timeOfDay ?? 'day', opt.weather ?? 'clear');
     this.view.group.position.y = PITCH_Y;
     this.effects.mesh.position.y = PITCH_Y;
@@ -575,6 +607,13 @@ export class MatchSession {
     const intro = !this.demo && !opt.skipIntro && !this.moment;
     this.cam.setMode(this.demo ? 'menu' : intro ? 'intro' : 'broadcast');
     if (intro) this.introLeft = INTRO_S;
+    // Stadium style (decorative layers over the home ground): the walkout goes off as the fly-in starts (its high
+    // shot sees the fireworks over the stands), or soon after a kick-off without one.
+    if (opt.decor && !this.demo) {
+      this.decor = new StadiumDecor(this.stadium.decorAnchors(), opt.decor, this.fxKit);
+      this.decor.setTimeOfDay(opt.timeOfDay ?? 'day');
+      this.decor.kickoffIn(intro ? 0.15 : 0.8);
+    }
     this.holdFirst = !this.demo && !!opt.firstMatch && !this.moment && (opt.humanSide === 0 || opt.humanSide === 1);
     if (!this.demo) {
       this.hud = new Hud(
@@ -639,9 +678,25 @@ export class MatchSession {
       this.hud = null;
       this.touch = null;
     }
+    if (this.hud) {
+      // The fun layer: live goals and SHOWTIME only in an ordinary match against the AI (not online, not a moment).
+      const solo = !opt.humanSides && !this.moment && (opt.humanSide === 0 || opt.humanSide === 1);
+      this.fun = new FunPresenter({
+        match: this.match, hud: this.hud, view: this.view, cam: this.cam, effects: this.effects, stadium: this.stadium, camera: world.camera,
+        kits: opt.kits, bounties: solo, showtime: solo, reducedMotion: !!reduce,
+        hold: (frames) => this.hold(frames),
+        slow: (seconds, rate) => {
+          this.slowT = seconds;
+          this.slowRate = rate;
+        },
+        replaying: () => !!this.replay,
+      });
+    }
     writeFrame(this.match, this.cur, 0);
     this.prev.set(this.cur);
     sfx.setAmbienceActive(!this.demo);
+    // The crowd's and the music's cues for this match (src/audio/director.ts; never the menu's demo).
+    if (!this.demo) matchAudio.begin(this.match, { scenario: !!this.moment });
     if (this.hud && this.moment) {
       const s = this.moment.spec;
       // Practice waits on its teaching cue, never on a timed intro that swallows the first action.
@@ -702,6 +757,7 @@ export class MatchSession {
     if (!this.demo) document.body.classList.toggle('night', tod === 'night');
     this.stadium.setTimeOfDay(tod);
     this.stadium.setWeather(wx);
+    this.decor?.setTimeOfDay(tod);
     this.view.setTimeOfDay(tod, this.stadium.lightTowers);
     // Sunset: the footballers keep only ~8% of the orange light's tint, so a white kit stays white.
     if (tod === 'sunset') setCharacterWhiteBalance(world.sun.color, world.sun.intensity, world.hemi.color, world.hemi.intensity);
@@ -941,7 +997,7 @@ export class MatchSession {
     } else {
       const drv = this.driver;
       // (A PERFECT skill move's slow-motion beat: against the AI only, never in an online match's lockstep.)
-      const slow = !drv && this.slowT > 0 ? SKILL_SLOW_RATE : 1;
+      const slow = !drv && this.slowT > 0 ? this.slowRate : 1;
       if (this.slowT > 0) this.slowT -= dt;
       this.acc += drv ? dt * drv.pace() : dt * slow;
       let steps = 0;
@@ -965,7 +1021,10 @@ export class MatchSession {
         m.step(DT, pad);
         drv?.after(m);
         // (Events first: a TACKLE press this step is baked into this very frame as the lunge.)
-        this.handleEvents(m.drainEvents());
+        const evs = m.drainEvents();
+        this.handleEvents(evs);
+        matchAudio.events(evs, m);
+        this.fun?.after(evs);
         if (this.moment) this.judgeMoment();
         for (let i = 0; i < 22; i++) if (this.lunge[i] >= 0 && (this.lunge[i] += DT) >= LUNGE_S) this.lunge[i] = -1;
         writeFrame(m, this.cur, this.time, this.lunge, this.lungeLeg);
@@ -1149,11 +1208,13 @@ export class MatchSession {
     this.view.faceCamera(this.world.camera);
     this.view.updateReferee(presentationPaused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
+    this.decor?.update(this.paused ? 0 : dt, this.time);
     this.effects.update(held || this.paused ? 0 : dt);
     this.fxKit.update(held || this.paused ? 0 : dt, this.world.camera);
     this.weather.update(dt, this.cam.focusX, this.cam.focusZ, this.time, this.world.camera.position);
     this.updateAtmosphere(dt);
     this.updateHud(dt);
+    this.fun?.frame(this.paused ? 0 : dt);
     this.updateQuickSub(dt);
     // Online: the man the other player controls gets his own ring.
     if (this.driver) {
@@ -1214,7 +1275,18 @@ export class MatchSession {
       // The replay rolls for a goal worth seeing again; a plain one goes straight from the celebration to the
       // kick-off (round 9's critic: every goal replayed cost 8.5 s, ~7% of a two-minute half).
       // (An iconic celebration holds the replay / kick-off until its moment has landed: celeb.holdS.)
-      const at = Math.max(this.replayWanted ? REPLAY_AT : NO_REPLAY_AT, this.view.celeb.holdS) + late;
+      const theirs = m.cfg.humanSide >= 0 && m.goalSide !== m.cfg.humanSide && !this.replayWanted;
+      const at = theirs ? THEIR_GOAL_AT + late : Math.max(this.replayWanted ? REPLAY_AT : NO_REPLAY_AT, this.view.celeb.holdS) + late;
+      // A tap once the wide shot has had its moment gets on with it: no more celebration, no replay.
+      const skippable = !this.moment && !this.replayDone && m.phaseT > this.goalWideS + GOAL_SKIP_GRACE;
+      this.hud?.setSkippable(skippable);
+      if (skippable && this.anyPress) {
+        this.replayWanted = false;
+        this.replayDone = true;
+        this.hud?.setSkippable(false);
+        // (The press that skipped it is never also the kick-off.)
+        this.eatButtons = true;
+      }
       if (this.moment?.outcome) {
         // The goal settled the moment: no replay, no kick-off; the verdict once the celebration has landed
         // (the party plays on under it).
@@ -1247,6 +1319,7 @@ export class MatchSession {
       if (this.demo) return;
       this.onFinish?.({
         score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings(), winner: this.winner(),
+        fun: this.fun?.summary(),
       });
     }
   }
@@ -1290,6 +1363,7 @@ export class MatchSession {
       this.finishFired = true;
       this.onFinish?.({
         score: [...m.score] as [number, number], humanSide: m.cfg.humanSide, match: m, ratings: this.ratings(), winner: this.winner(),
+        fun: this.fun?.summary(),
       });
     }
   }
@@ -1840,7 +1914,7 @@ export class MatchSession {
           this.replayWanted = (human < 0 || e.side === human || e.own) && special;
           const golden = this.goldenGoalArmed;
           this.goldenGoalArmed = false;
-          sfx.goal();
+          sfx.goal(e.side);
           // The human's goal: a poster frame now (the impact, on the hold) and a clip (the replay, or the
           // celebration when no replay rolls).
           const ours = human >= 0 && e.side === human && !this.demo;
@@ -1889,11 +1963,20 @@ export class MatchSession {
           // (Behind a goal explosion the celebration waits for it, so its moment still lands after the cut.)
           if (show) this.celebDue = side;
           else this.startCelebration(side);
+          // Your home crowd's party: the mascot dances, the lights go wild (render/stadiumStyle.ts).
+          if (side === human) this.decor?.goal();
           void s;
           break;
         }
         case 'whistle':
-          sfx.whistle(e.kind);
+          // Half-time: two short and a long; full time: three (audio/sfx.ts).
+          if (e.kind === 'long') sfx.whistleHalf();
+          else if (e.kind === 'end') sfx.whistleFull();
+          else sfx.whistle(e.kind);
+          break;
+        case 'addedTime':
+          // The fourth official's board goes up by the clock (Law 7.3: the minimum the half has left).
+          if (!this.moment) this.hud?.showAddedBoard(e.minutes);
           break;
         case 'post': {
           // Off the woodwork: a hold on the clang, the picture jolting, the ball flashing and white chips of
@@ -2097,9 +2180,14 @@ export class MatchSession {
         }
         case 'halftime':
           if (!this.moment) this.hud?.show('HALF TIME', `${m.score[0]} - ${m.score[1]}`, 'small', 3);
+          // The board comes down; the referee's arm goes up as everyone eases to a stop (Match.windDown).
+          this.hud?.showAddedBoard(null);
+          this.view.refSignal(1.6, 'arm');
           break;
         case 'fulltime':
           if (!this.moment) this.hud?.show('FULL TIME', `${m.score[0]} - ${m.score[1]}`, 'small', 3);
+          this.hud?.showAddedBoard(null);
+          this.view.refSignal(1.6, 'arm');
           break;
         case 'shootoutKick': {
           // A short beat per kick: banner + burst, never the goal replay.
@@ -2186,6 +2274,7 @@ export class MatchSession {
       this.hold(HIT_STOP.skillPerfect);
       // (The slow motion counts down only once the hold is over: it follows it.)
       this.slowT = SKILL_SLOW_S;
+      this.slowRate = SKILL_SLOW_RATE;
       this.cam.shakePx(SHAKE_PX.skillPerfect);
       this.view.flashBall();
       if (e.on >= 0) this.view.flashPlayer(e.on, PLAYER_FLASH_FRAMES);
@@ -2250,6 +2339,15 @@ export class MatchSession {
         const keeper = i === 0 || i === 11;
         fx.dust(x, z, state === STATE_CODE.dive || keeper ? 12 : 7, keeper ? 1 : 0.8, -ux * 0.5, -uz * 0.5);
         if (state === STATE_CODE.dive || keeper) fx.grass(x, z, 4, 0.5);
+      }
+      // Light up boots: a glowing print at every footstep (render/fx/trails.ts bootStep), jogging or sprinting.
+      if (this.lightBoots[i < 11 ? 0 : 1] && speed > 2 && state !== STATE_CODE.slide && f[o + 2] < 0.15) {
+        this.stepDist[i] += speed * dt;
+        if (this.stepDist[i] >= BOOT_STEP_M) {
+          this.stepDist[i] = 0;
+          this.stepSide[i] = -this.stepSide[i];
+          bootStep(this.fxKit, x, z, ux, uz, this.stepSide[i], k);
+        }
       }
       if (state === STATE_CODE.slide && f[o + 5] < 0.9) {
         // A long trail of dust and turf off the hip, back along the path.
@@ -2673,6 +2771,7 @@ export class MatchSession {
     }
     sfx.setEnds(left, right);
     sfx.tick(this.paused ? 0 : dt);
+    matchAudio.frame(this.paused ? 0 : dt, m);
   }
 
   private updateHud(dt: number): void {
@@ -2694,17 +2793,17 @@ export class MatchSession {
         }
       }
     } else {
-      // Broadcast clock: game time mm:ss, frozen at 45:00 / 90:00 with "+N" added time.
+      // Broadcast clock: game time mm:ss, held at 45:00 / 90:00 while the added time counts on beside it ("+0:37").
       const halfGame = 45 * 60;
       const played = Math.min(m.clock / m.cfg.halfLength, 1) * halfGame;
       const gameSec = Math.floor((m.half - 1) * halfGame + played);
-      const extra = m.clock > m.cfg.halfLength ? Math.max(1, Math.ceil(((m.clock - m.cfg.halfLength) / m.cfg.halfLength) * 45)) : 0;
-      const key10 = gameSec * 10 + extra;
-      if (key10 !== this.lastMinute) {
-        this.lastMinute = key10;
-        hud.setClock(gameSec, extra);
+      const added = m.clock > m.cfg.halfLength ? Math.floor(((m.clock - m.cfg.halfLength) / m.cfg.halfLength) * halfGame) : -1;
+      const key = gameSec * 10000 + added + 1;
+      if (key !== this.lastMinute) {
+        this.lastMinute = key;
+        hud.setClock(gameSec, added >= 0 ? added : null);
         const minute = Math.floor(gameSec / 60);
-        this.stadium.setScore(m.score[0], m.score[1], extra ? `${minute}+${extra}'` : `${minute}'`);
+        this.stadium.setScore(m.score[0], m.score[1], added >= 0 ? `${minute}+${Math.floor(added / 60) + 1}'` : `${minute}'`);
       }
     }
     // The minimap sits bottom-centre: off for set pieces, the low cameras, the shootout, and whenever play
@@ -3003,12 +3102,14 @@ export class MatchSession {
     const H = window.innerHeight;
     this.edgeAvoidT -= dt;
     if (this.edgeAvoidT <= 0) {
-      // The minimap, (touch) the action buttons and the quick-sub card: re-measured twice a second.
+      // The minimap, (touch) the action buttons, the quick-sub card and the score bug: re-measured twice a second.
       this.edgeAvoidT = RADAR_RECT_S;
       this.edgeAvoid = [];
       safeAreaInsets(this.edgeInset);
       const boxes = [this.hud?.root.querySelector('.hud-radar'), this.touch?.isVisible ? this.touch.root.querySelector('.touch-btns') : null,
-        this.hud?.root.querySelector('.hud-qsub.on'), this.hud?.root.querySelector('.hud-pause'), this.hud?.root.querySelector('.hud-cam')];
+        this.hud?.root.querySelector('.hud-qsub.on'), this.hud?.root.querySelector('.hud-pause'), this.hud?.root.querySelector('.hud-cam'),
+        // (The score bug grows with the HYPE bars and a live goal under it: game/funPresent.ts.)
+        this.hud?.root.querySelector('.scorebug')];
       for (const el of boxes) {
         const r = el?.getBoundingClientRect();
         if (r && r.width > 0 && r.height > 0) this.edgeAvoid.push({ l: r.left, t: r.top, r: r.right, b: r.bottom });
@@ -3143,6 +3244,7 @@ export class MatchSession {
     setCharacterWhiteBalance();
     sfx.setRain(false);
     sfx.setAmbienceActive(false);
+    matchAudio.end(this.match);
     this.offKey?.();
     this.offKey = null;
     this.offCamKey?.();
@@ -3165,6 +3267,8 @@ export class MatchSession {
       const mesh = o as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
     });
+    this.decor?.dispose();
+    this.fun?.dispose();
     this.stadium.dispose();
     this.fxKit.dispose();
   }

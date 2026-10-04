@@ -7,11 +7,14 @@ import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
 import { Rng } from '../core/rng';
 import {
-  KEY_STATS, PATTERNS, SQUAD_MAX, STADIUM_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_STEP,
-  clubRating, createClub, keeperColor, lineupIssues, matchAttendance, migrateCareer, randomKit,
-  sanitizeName, sanitizeShort, setFormation, stadiumUpgradeCost, swapPlayers, trainPlayer, trainingCost, upgradeStadium,
+  KEY_STATS, PATTERNS, SQUAD_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_STEP,
+  buildPart, clubRating, createClub, keeperColor, lineupIssues, migrateCareer, newClubLevel, randomKit,
+  sanitizeName, sanitizeShort, setFormation, swapPlayers, trainPlayer, trainingCost, trainingDiscount,
   type CareerState, type ClubState, type TxFail,
 } from '../meta/career';
+import { PARTS as GROUND_PARTS, capacity, groundLevel, nextBuild, partView, stadiumParts, type GroundState, type PartId } from '../meta/ground';
+import { pixelIcon } from './pixelIcons';
+import './forever.css';
 import { NAME_DISALLOWED, cleanName, fallbackShort, isNameAllowed, nameProblem } from '../core/names';
 import { KIT_COLORS } from '../meta/data';
 import { SHORTLIST_MAX, WAGE_DIP, marketSummary, wageOf } from '../meta/market';
@@ -20,13 +23,13 @@ import { buzz } from '../platform/haptics';
 import { openMarket } from './market';
 import { sep } from './text';
 import { cssHex } from '../render/palette';
-import { STADIUM_LEVELS } from '../render/stadium';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, type FormationId, type Kit, type KitPattern, type PlayerDef, type PlayerStats } from '../sim/types';
 import { bindDragSwap } from './dragSwap';
 import { pitchLayout, shirtArt } from './menus';
 import { paneScrolls, restorePaneScrolls, revealInPane } from './panes';
 import { StadiumPreview, faceHtml, hydrateFaces, stadiumIsoSvg } from './preview';
+import { partSpot } from '../render/stadium';
 // The club screens' and the in-match tactics screen's layout (pitch plus bench, master and detail).
 import './squad.css';
 
@@ -334,7 +337,7 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
         },
         create: () => {
           if (!valid()) return;
-          st.club = createClub({ name: d.name, short: d.short, kit: d.kit, formation: d.formation }, st.seed);
+          st.club = createClub({ name: d.name, short: d.short, kit: d.kit, formation: d.formation }, st.seed, newClubLevel(st));
           app.persist();
           sfx.coin();
           onDone();
@@ -417,7 +420,8 @@ function lastName(name: string): string {
  *   scrolls). Swap by tap then tap, or drag and drop, with both ends on screen. AUTO PICK in the bench pane's header.
  * - TRAIN: the squad list on the left, the picked player's stats and +2 buttons on the right. TRAIN BEST on the list.
  * - KIT: the preview and the name on the left, the colours and patterns on the right.
- * - STADIUM: the ground now and next on the left, the numbers and UPGRADE (with its cost) on the right.
+ * - STADIUM: the ground's parts on the left (stands, lights, the dome, the screen, the megastore, the fan zone, the
+ *   training ground, the academy), the picked one on the right: the ground with it, its numbers and BUILD.
  */
 function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTab, back: () => void, backLabel: string): void {
   const scr = mountMeta(app, 'mc-club-screen shell');
@@ -520,7 +524,8 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
   const trainHtml = () => {
     trainIdx = Math.max(0, Math.min(club.squad.length - 1, trainIdx));
     const p = club.squad[trainIdx];
-    const cost = trainingCost(p);
+    // (The TRAINING GROUND and the legacy coach perk take some off: meta/ground.ts, meta/legacy.ts.)
+    const cost = trainingCost(p, trainingDiscount(st));
     const poor = app.save.coins < cost;
     const keys = KEY_STATS[p.role];
     // His role's key stats first (green), then the rest.
@@ -564,7 +569,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     const p = club.squad[trainIdx];
     const was = p.stats[k];
     const ovr = overall(p);
-    const r = trainPlayer(club, app.save, p.id, k);
+    const r = trainPlayer(club, app.save, p.id, k, trainingDiscount(st));
     if (!r.ok) {
       scr.toast(failText(r.reason), 'bad');
       return;
@@ -594,9 +599,9 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       </div>
     </div>`;
 
-  // ---- STADIUM
+  // ---- STADIUM: the ground, part by part (meta/ground.ts)
 
-  /** Upgrade-screen 3D grounds (now / next), alive only while the STADIUM tab is showing. */
+  /** Upgrade-screen 3D ground, alive only while the STADIUM tab is showing. */
   let pv: StadiumPreview | null = null;
   const dropPreview = () => {
     pv?.dispose();
@@ -607,50 +612,96 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     pv ??= new StadiumPreview({ home: club.kit.shirt, homeName: club.name });
     return pv.ok;
   };
+  /** The part picked on the list: the one going up, else the cheapest you can build, else the main stand. */
+  let partSel: PartId = st.ground.building?.id ?? nextBuild(st.ground)?.id ?? 'main';
+  /** Parts that opened since the last look (a NEW chip each), taken when the tab first draws. */
+  let freshParts = new Set<PartId>();
+  const takeOpened = () => {
+    if (!st.ground.opened.length) return;
+    freshParts = new Set(st.ground.opened);
+    st.ground.opened = [];
+    app.persist();
+  };
 
-  const stadiumView = (l: number, when: 'NOW' | 'NEXT', solo: boolean, gl: boolean) => `
-    <figure class="mc-stadview ${when === 'NEXT' ? 'next' : 'now'} ${solo ? 'solo' : ''}">
-      ${gl ? `<canvas class="mc-stad3d" data-slot="${when === 'NOW' ? 0 : 1}" aria-label="${STADIUM_NAMES[l]} preview"></canvas>` : stadiumIsoSvg(l)}
-      <figcaption><span>${when}</span><b>${STADIUM_NAMES[l]}</b></figcaption>
-    </figure>`;
+  /** The ground with the picked part's next step on it (what you would get), for the preview. */
+  const withPart = (g: GroundState, id: PartId): GroundState => {
+    const v = partView(g, id);
+    if (v.status === 'built') return g;
+    const level = v.status === 'building' ? (g.building?.level ?? v.level + 1) : v.level + 1;
+    return { ...g, built: { ...g.built, [id]: level } };
+  };
 
   const stadiumHtml = () => {
-    const lvl = st.stadium;
-    const maxed = lvl >= STADIUM_MAX;
-    const cost = stadiumUpgradeCost(lvl);
-    const crowd = (l: number) => `${Math.round(matchAttendance(l) * 100)}%`;
-    const cap = (l: number) => fmt(STADIUM_LEVELS[l]?.capacity ?? 0);
-    const next = (a: string, b: string) => (maxed ? `<b>${a}</b>` : `<b>${a} <em>→ ${b}</em></b>`);
+    const g = st.ground;
+    const v = partView(g, partSel);
+    const after = withPart(g, partSel);
     const gl = has3d();
-    // The grounds now and next on the left; the numbers and UPGRADE (its cost on the button) pinned on the right.
-    return `<div class="mc-body split-r sd-body ${maxed ? 'maxed' : ''}">
-        <div class="pane sd-views">
-          ${stadiumView(lvl, 'NOW', maxed, gl)}
-          ${maxed ? '' : stadiumView(lvl + 1, 'NEXT', false, gl)}
+    const status = (x: ReturnType<typeof partView>) =>
+      x.status === 'built'
+        ? '<em class="sd-ps ok">✓ BUILT</em>'
+        : x.status === 'building'
+          ? `<em class="sd-ps go">${pixelIcon('clock', 'currentColor', 1.3, 'inl')}${x.left} MD</em>`
+          : x.status === 'locked'
+            ? `<em class="sd-ps no">${pixelIcon('lock', 'currentColor', 1.3, 'inl')}</em>`
+            : `<em class="sd-ps"><span class="sd-cost"><i></i>${fmt(x.next!.cost)}</span></em>`;
+    const rows = GROUND_PARTS.map((def) => {
+      const x = partView(g, def.id);
+      const steps = def.steps.length;
+      const lv = steps > 1 ? `<small>${x.level}/${steps}</small>` : '';
+      return `<button class="sd-part ${x.status} ${def.id === partSel ? 'sel' : ''}" data-a="part" data-v="${def.id}" aria-pressed="${def.id === partSel}">
+          ${pixelIcon(def.icon, 'currentColor', 1.6)}<span class="sd-pn">${def.name}${lv}${freshParts.has(def.id) ? '<b class="sd-new">NEW</b>' : ''}</span>${status(x)}
+        </button>`;
+    }).join('');
+    const seats = capacity(g);
+    const seatsAfter = capacity(after);
+    const lvl = groundLevel(g);
+    const lvlAfter = groundLevel(after);
+    const next = v.next;
+    const name = next?.name ?? v.def.steps[v.def.steps.length - 1].name;
+    const poor = !!next && app.save.coins < next.cost;
+    const busy = !!g.building && g.building.id !== partSel;
+    const btn =
+      v.status === 'built'
+        ? '<button class="btn btn-go sd-up" disabled>BUILT</button>'
+        : v.status === 'building'
+          ? `<button class="btn btn-go sd-up" disabled>OPENS IN ${v.left} ${v.left === 1 ? 'MATCHDAY' : 'MATCHDAYS'}</button>`
+          : v.status === 'locked'
+            ? `<button class="btn btn-go sd-up" disabled>${esc(v.needs ?? 'LOCKED')}</button>`
+            : busy
+              ? '<button class="btn btn-go sd-up" disabled>ONE BUILD AT A TIME</button>'
+              : `<button class="btn btn-go sd-up ${poor ? 'poor' : ''}" data-a="build">BUILD <span class="sd-cost"><i></i>${fmt(next!.cost)}</span></button>`;
+    const fact = (label: string, a: string, b: string) => `<span class="sd-fact"><small>${label}</small><b>${a}${a !== b ? ` <em>→ ${b}</em>` : ''}</b></span>`;
+    return `<div class="mc-body split-l sd-body sd-parts">
+        <div class="pane">
+          <div class="pane-h"><span class="sq-ph">THE GROUND</span><span class="grow"></span><span class="sd-seats">${fmt(seats)} SEATS</span></div>
+          <div class="pane-scroll sd-list" data-scroll-key="sd-list">${rows}</div>
         </div>
         <div class="pane sd-info">
-          <b class="mc-stadname">${STADIUM_NAMES[lvl]}</b>
-          <span class="mc-stadlvl">LEVEL ${lvl} OF ${STADIUM_MAX}</span>
-          <div class="mc-kv"><span>CAPACITY</span>${next(cap(lvl), cap(lvl + 1))}</div>
-          <div class="mc-kv"><span>CROWD</span>${next(crowd(lvl), crowd(lvl + 1))}</div>
-          <div class="mc-kv"><span>MATCH COINS</span>${next(`+${lvl * 10}%`, `+${(lvl + 1) * 10}%`)}</div>
-          <span class="grow"></span>
-          <button class="btn btn-go sd-up ${app.save.coins < cost ? 'poor' : ''}" data-a="upgrade" ${maxed ? 'disabled' : ''}>${maxed ? 'FULLY UPGRADED' : `UPGRADE <span class="sd-cost"><i></i>${fmt(cost)}</span>`}</button>
+          <figure class="mc-stadview solo sd-one">
+            ${gl ? `<canvas class="mc-stad3d" data-slot="0" aria-label="${esc(name)} preview"></canvas>` : stadiumIsoSvg(lvlAfter)}
+            <figcaption><span>${v.status === 'built' ? 'NOW' : 'WITH IT'}</span><b>${esc(name)}</b></figcaption>
+          </figure>
+          <span class="mc-stadlvl">${esc(v.def.does)}</span>
+          <div class="sd-facts">
+            ${fact('SEATS', fmt(seats), fmt(seatsAfter))}
+            ${lvl !== lvlAfter ? fact('GROUND', STADIUM_NAMES[lvl], STADIUM_NAMES[lvlAfter]) : ''}
+            ${next ? `<span class="sd-fact"><small>BUILD</small><b>${next.weeks} ${next.weeks === 1 ? 'MATCHDAY' : 'MATCHDAYS'}</b></span>` : ''}
+          </div>
+          ${btn}
         </div>
       </div>`;
   };
 
-  /** After a render: point the previews at the fresh canvases (or free them off the STADIUM tab). */
+  /** After a render: point the preview at the fresh canvas (or free it off the STADIUM tab). */
   const bindPreview = () => {
     if (tab !== 'stadium') {
       dropPreview();
       return;
     }
     if (!pv?.ok) return;
-    const lvl = st.stadium;
-    const canvases = scr.panel.querySelectorAll<HTMLCanvasElement>('.mc-stad3d');
-    canvases.forEach((c) => pv!.set(Number(c.dataset.slot), c, lvl + Number(c.dataset.slot)));
-    if (lvl >= STADIUM_MAX) pv.clear(1);
+    const after = withPart(st.ground, partSel);
+    const c = scr.panel.querySelector<HTMLCanvasElement>('.mc-stad3d');
+    if (c) pv.set(0, c, groundLevel(after), stadiumParts(after), partSpot(partSel));
   };
 
   // ---- the screen
@@ -659,6 +710,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
   const sub = () => `<i class="mc-clubname">${esc(club.name.toUpperCase())}</i><b class="mc-ovrchip">OVR ${clubRating(club)}</b>`;
 
   const draw = () => {
+    if (tab === 'stadium') takeOpened();
     const body = tab === 'squad' ? squadHtml() : tab === 'train' ? trainHtml() : tab === 'kit' ? kitHtml() : stadiumHtml();
     scr.render(
       `${topBar(backLabel, 'MY CLUB', sub(), app.save.coins)}
@@ -724,16 +776,22 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           app.persist();
           draw();
         }),
-        upgrade: () => {
-          const r = upgradeStadium(st, app.save);
+        part: (el) => {
+          partSel = el.dataset.v as PartId;
+          draw();
+        },
+        build: () => {
+          const r = buildPart(st, app.save, partSel);
           if (!r.ok) {
-            scr.toast(failText(r.reason), 'bad');
+            scr.toast(r.reason === 'no-coins' ? 'NOT ENOUGH COINS' : r.reason === 'busy' ? 'ONE BUILD AT A TIME' : 'NOT YET', 'bad');
             return;
           }
           app.persist();
           sfx.coin();
+          buzz('success');
           draw();
-          scr.toast(`WELCOME TO THE ${STADIUM_NAMES[st.stadium]}!`, 'good');
+          const name = partView(st.ground, partSel).def.name;
+          scr.toast(`BUILDING THE ${name}: READY IN ${r.weeks} ${r.weeks === 1 ? 'MATCHDAY' : 'MATCHDAYS'}`, 'good');
         },
       },
       {

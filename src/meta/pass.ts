@@ -61,7 +61,7 @@ export function claimCarryItems(save: Pick<SaveData, 'season' | 'shop'>): string
   const out: string[] = [];
   for (const key of s.carryItems) {
     const [cat, id] = key.split(':');
-    if ((cat === 'goalfx' || cat === 'trail') && grantItem(save, cat, id)) out.push(key);
+    if ((cat === 'goalfx' || cat === 'trail' || cat === 'kit' || cat === 'look') && grantItem(save, cat, id)) out.push(key);
   }
   s.carryItems = [];
   return out;

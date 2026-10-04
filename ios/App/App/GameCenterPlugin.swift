@@ -1,4 +1,5 @@
 import Capacitor
+import CoreHaptics
 import GameKit
 import StoreKit
 import UIKit
@@ -58,19 +59,80 @@ public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
         return notice!
     }
 
+    // Core Haptics first: the engine games use. It plays crisp, strong taps with set intensity and sharpness. The
+    // UIKit generators above only fire with Settings > Sounds & Haptics > System Haptics on and feel faint, so they
+    // are the fallback for hardware without Core Haptics. The engine idles off by itself and restarts on the next tap.
+    private var engine: CHHapticEngine?
+    private var engineOK = CHHapticEngine.capabilitiesForHardware().supportsHaptics
+
+    private func hapticEngine() -> CHHapticEngine? {
+        guard engineOK else { return nil }
+        if let e = engine { return e }
+        do {
+            let e = try CHHapticEngine()
+            e.playsHapticsOnly = true
+            e.isAutoShutdownEnabled = true
+            // (After an interruption, a call or the app going to the background, the engine resets: start it again.)
+            e.resetHandler = { [weak e] in try? e?.start() }
+            try e.start()
+            engine = e
+            return e
+        } catch {
+            engineOK = false
+            return nil
+        }
+    }
+
+    /// Play transient taps (time s, intensity 0...1, sharpness 0...1) plus an optional low rumble (duration s).
+    /// False when Core Haptics can't, so the caller falls back to the UIKit generators.
+    private func play(_ taps: [(Double, Float, Float)], rumble: Double = 0, rumbleLevel: Float = 0.5) -> Bool {
+        guard let e = hapticEngine() else { return false }
+        var events = taps.map { t in
+            CHHapticEvent(eventType: .hapticTransient, parameters: [
+                CHHapticEventParameter(parameterID: .hapticIntensity, value: t.1),
+                CHHapticEventParameter(parameterID: .hapticSharpness, value: t.2),
+            ], relativeTime: t.0)
+        }
+        if rumble > 0 {
+            events.append(CHHapticEvent(eventType: .hapticContinuous, parameters: [
+                CHHapticEventParameter(parameterID: .hapticIntensity, value: rumbleLevel),
+                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.15),
+            ], relativeTime: 0, duration: rumble))
+        }
+        do {
+            let player = try e.makePlayer(with: CHHapticPattern(events: events, parameters: []))
+            try e.start()
+            try player.start(atTime: CHHapticTimeImmediate)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Each style's strength and feel: a light tap is still clearly felt, a heavy one thumps, rigid is crisp.
+    private static let feel: [String: (Float, Float)] = [
+        "light": (0.62, 0.55), "medium": (0.8, 0.5), "heavy": (1.0, 0.32), "rigid": (0.9, 1.0), "soft": (0.6, 0.12),
+    ]
+
     @objc func impact(_ call: CAPPluginCall) {
         let style = call.getString("style") ?? "light"
-        let intensity = CGFloat(min(1, max(0, call.getDouble("intensity") ?? 1)))
+        let level = min(1, max(0, call.getDouble("intensity") ?? 1))
         let count = max(1, min(3, call.getInt("count") ?? 1))
         let apart = max(0.05, min(0.4, (call.getDouble("apart") ?? 110) / 1000))
         call.resolve()
         DispatchQueue.main.async {
+            let (base, sharp) = HapticsPlugin.feel[style] ?? (0.62, 0.55)
+            // (A floor of 40% of the style's strength, so the soft end of a range is still felt.)
+            let strength = min(1, base * Float(0.4 + 0.6 * level))
+            let taps = (0..<count).map { i in (apart * Double(i), strength, sharp) }
+            let rumble = style == "heavy" && count > 1 ? apart * Double(count) + 0.12 : 0
+            if self.play(taps, rumble: rumble, rumbleLevel: 0.55) { return }
             let g = self.impactGenerator(style)
-            g.impactOccurred(intensity: intensity)
+            g.impactOccurred(intensity: CGFloat(level))
             g.prepare()
             for i in 1..<count {
                 DispatchQueue.main.asyncAfter(deadline: .now() + apart * Double(i)) {
-                    g.impactOccurred(intensity: intensity)
+                    g.impactOccurred(intensity: CGFloat(level))
                     g.prepare()
                 }
             }
@@ -80,6 +142,7 @@ public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func selection(_ call: CAPPluginCall) {
         call.resolve()
         DispatchQueue.main.async {
+            if self.play([(0, 0.5, 0.9)]) { return }
             let g = self.selectionGenerator()
             g.selectionChanged()
             g.prepare()
@@ -90,6 +153,10 @@ public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
         let type = call.getString("type") ?? "success"
         call.resolve()
         DispatchQueue.main.async {
+            let taps: [(Double, Float, Float)] = type == "error"
+                ? [(0, 1, 0.8), (0.1, 1, 0.8), (0.2, 1, 0.8)]
+                : type == "warning" ? [(0, 0.85, 0.6), (0.16, 0.6, 0.4)] : [(0, 0.7, 0.5), (0.12, 1, 0.7)]
+            if self.play(taps) { return }
             let g = self.noticeGenerator()
             let kind: UINotificationFeedbackGenerator.FeedbackType = type == "error" ? .error : type == "warning" ? .warning : .success
             g.notificationOccurred(kind)
@@ -100,6 +167,7 @@ public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func prepare(_ call: CAPPluginCall) {
         call.resolve()
         DispatchQueue.main.async {
+            if self.hapticEngine() != nil { return }
             for style in ["light", "medium", "heavy", "rigid", "soft"] { self.impactGenerator(style).prepare() }
             self.selectionGenerator().prepare()
             self.noticeGenerator().prepare()

@@ -19,9 +19,19 @@ export class VoxelGrid {
     return x >= 0 && y >= 0 && z >= 0 && x < this.nx && y < this.ny && z < this.nz;
   }
 
-  set(x: number, y: number, z: number, color: number | null): void {
+  /**
+   * `fx` (0..7) is a material channel carried to the mesh as its `aFx` attribute (render/characters.ts kitFxMaterial:
+   * 1 metallic sheen, 2 glows at night, 3 iridescent, 4 always lit). 0 = plain, and a grid with no fx at all
+   * meshes exactly as before.
+   */
+  set(x: number, y: number, z: number, color: number | null, fx = 0): void {
     if (!this.inside(x, y, z)) return;
-    this.data[this.i(x, y, z)] = color === null ? 0 : (color & 0xffffff) | 0x1000000;
+    this.data[this.i(x, y, z)] = color === null ? 0 : ((color & 0xffffff) | 0x1000000 | ((fx & 7) << 25)) >>> 0;
+  }
+
+  /** The fx channel of a cell (0 = none). */
+  fx(x: number, y: number, z: number): number {
+    return (this.get(x, y, z) >>> 25) & 7;
   }
 
   get(x: number, y: number, z: number): number {
@@ -67,6 +77,8 @@ export function meshVoxels(g: VoxelGrid, opt: MeshOptions): THREE.BufferGeometry
   const pos: number[] = [];
   const nor: number[] = [];
   const col: number[] = [];
+  const fxs: number[] = [];
+  let anyFx = false;
   const idx: number[] = [];
   const s = opt.scale;
   const [px, py, pz] = opt.pivot;
@@ -79,6 +91,8 @@ export function meshVoxels(g: VoxelGrid, opt: MeshOptions): THREE.BufferGeometry
         if (!v) continue;
         tmpColor.setHex(v & 0xffffff);
         const r0 = tmpColor.r, g0 = tmpColor.g, b0 = tmpColor.b;
+        const fx = (v >>> 25) & 7;
+        if (fx) anyFx = true;
         for (let f = 0; f < 6; f++) {
           const F = FACES[f];
           const nx = x + F.n[0], ny = y + F.n[1], nz = z + F.n[2];
@@ -104,6 +118,7 @@ export function meshVoxels(g: VoxelGrid, opt: MeshOptions): THREE.BufferGeometry
             let k = AO_CURVE[a];
             if (tint) k *= f === 2 ? 1.0 : f === 3 ? 0.7 : 0.9;
             col.push(r0 * k, g0 * k, b0 * k);
+            fxs.push(fx);
           }
           // Flip the quad diagonal to follow the AO gradient.
           if (ao[0] + ao[2] > ao[1] + ao[3]) idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -116,6 +131,8 @@ export function meshVoxels(g: VoxelGrid, opt: MeshOptions): THREE.BufferGeometry
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  // (Only a grid that used the fx channel carries it: everything else is the same geometry as ever.)
+  if (anyFx) geo.setAttribute('aFx', new THREE.Float32BufferAttribute(fxs, 1));
   geo.setIndex(idx);
   geo.computeBoundingSphere();
   return geo;

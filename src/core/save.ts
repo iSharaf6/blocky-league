@@ -39,6 +39,12 @@ export interface Settings {
   goalFx?: string;
   /** Sprint speed-line colour for your side (SHOP; see TRAIL_IDS); undefined = chalk white. */
   trail?: string;
+  /** Your club's premium kit (SHOP; see KIT_IDS); undefined = the club's own kit. */
+  kit?: string;
+  /** Player looks by slot (SHOP; see LOOK_IDS): an empty slot wears nothing extra. Always an object once loaded. */
+  looks?: { [k in LookSlot]?: string };
+  /** Stadium style by slot for home matches (SHOP; see DECOR_IDS). Always an object once loaded. */
+  decor?: { [k in DecorSlot]?: string };
   /** Pass assistance (default ground 'assisted', through 'assisted'), switch move assist and timed finishing (default on). */
   groundAssist?: AssistLevel;
   throughAssist?: AssistLevel;
@@ -159,6 +165,9 @@ export function normalizeSettings(raw: unknown): Settings {
   if (s.celebration !== undefined && !(CELEBRATION_IDS as readonly string[]).includes(s.celebration)) s.celebration = undefined;
   if (s.goalFx !== undefined && !(GOAL_FX_IDS as readonly string[]).includes(s.goalFx)) s.goalFx = undefined;
   if (s.trail !== undefined && !(TRAIL_IDS as readonly string[]).includes(s.trail)) s.trail = undefined;
+  if (s.kit !== undefined && !(KIT_IDS as readonly string[]).includes(s.kit)) s.kit = undefined;
+  s.looks = normalizeLooks(s.looks);
+  s.decor = normalizeDecor(s.decor);
   if (!ASSIST_LEVELS.includes(s.groundAssist as AssistLevel)) s.groundAssist = CONTROL_DEFAULTS.groundAssist;
   if (!ASSIST_LEVELS.includes(s.throughAssist as AssistLevel)) s.throughAssist = CONTROL_DEFAULTS.throughAssist;
   for (const k of ['autoSwitch', 'moveAssist', 'timedFinish', 'trainer', 'quickPass', 'autoSprint'] as const) {
@@ -212,6 +221,8 @@ export interface SaveData {
   shop?: ShopState;
   /** Real-money purchases and the free-coin ads (src/platform/iap.ts, src/meta/shop.ts). Always whole once loaded. */
   iap?: IapState;
+  /** SHOWTIME (game/funLayer.ts): the best style grade and points by mode (see showtimeMode, recordShowtime). */
+  showtime?: { [mode: string]: ShowtimeBest };
   updatedAt: string;
 }
 
@@ -252,8 +263,9 @@ export function normalizeShop(raw: unknown): ShopState {
   const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<ShopState>) : {};
   // (Item ids may carry digits: the Club Pass's pass01 to pass12.)
   const KEY = /^[a-z]+:[a-z0-9]+$/;
+  // (Room for the whole catalogue: kits, looks and stadium style took it past 200.)
   const keys = (v: unknown): string[] =>
-    Array.isArray(v) ? [...new Set(v.filter((k): k is string => typeof k === 'string' && KEY.test(k)))].slice(0, 200) : [];
+    Array.isArray(v) ? [...new Set(v.filter((k): k is string => typeof k === 'string' && KEY.test(k)))].slice(0, 800) : [];
   const d = r.deal && typeof r.deal === 'object' ? (r.deal as Partial<NonNullable<ShopState['deal']>>) : null;
   return {
     owned: keys(r.owned),
@@ -355,7 +367,7 @@ export function defaultSave(): SaveData {
       sfx: true, music: true, crowd: true, quality: defaultQuality(), qualityPicked: false, difficulty: 1, halfMinutes: 2, timeOfDay: 'random', weather: 'random',
       commentary: true, camZoom: 'normal', ...CONTROL_DEFAULTS,
       keys: normalizeKeyMap(undefined), pad: normalizePadMap(undefined), stick: 'floating', colorblind: false,
-      quickSubs: true, roadIntroSeen: false, textSize: 'medium',
+      quickSubs: true, roadIntroSeen: false, textSize: 'medium', looks: {}, decor: {},
     },
     record: { played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     career: null,
@@ -838,3 +850,133 @@ export const GOAL_FX_IDS = [
 export type GoalFxId = (typeof GOAL_FX_IDS)[number];
 export const TRAIL_IDS = ['white', 'fire', 'ice', 'lime', 'pink', 'gold', 'rainbow', 'lightning', 'comet', 'toon', 'hearts', 'popcorn', 'notes', 'glitch', ...PASS_IDS] as const;
 export type TrailId = (typeof TRAIL_IDS)[number];
+
+// ------------------------------------------------------------------ cosmetics 2.0: kits, player looks, stadium style
+
+/**
+ * PREMIUM KITS (meta/shop.ts sells them, render/kitDesigns.ts paints them): your club plays in one in every match
+ * you play (career and Quick Match; never online, where both screens must show the same strips). 'club' is your
+ * club's own kit, always yours. Saved and owned: never rename or drop one; new ones go before the pass ids.
+ */
+export const KIT_IDS = [
+  'club', 'zigzag', 'checker', 'camo', 'tiger', 'fade', 'retro', 'crest', 'inferno', 'bolt', 'iceking', 'holo', 'galaxy',
+  'pinstripe', 'neonglow', 'goldfoil', ...PASS_IDS,
+] as const;
+export type KitId = (typeof KIT_IDS)[number];
+
+/**
+ * PLAYER LOOKS: one per slot, worn by your club in every match you play. Hair, headgear and the armband go on your
+ * CAPTAIN (your best outfield player) and the headgear also on the man you control; boots on the whole team,
+ * gloves on your keepers, shades on everyone in a goal celebration (render/looks.ts builds them).
+ */
+export const LOOK_SLOTS = ['hair', 'head', 'arm', 'boots', 'gloves', 'shades'] as const;
+export type LookSlot = (typeof LOOK_SLOTS)[number];
+/** Saved and owned: never rename or drop one; new ones go before the pass ids. */
+export const LOOK_IDS = [
+  'bun', 'tips', 'mohawk', 'afro', 'spikes', 'flamehair',
+  'headband', 'sweatband', 'halo', 'icecrown', 'crown',
+  'armband', 'armrainbow', 'armgold',
+  'bootneon', 'bootgold', 'bootlight',
+  'glovepro', 'glovefire', 'glovegold',
+  'shades', 'shadestar', 'shadegold',
+  ...PASS_IDS,
+] as const;
+export type LookId = (typeof LOOK_IDS)[number];
+/** The month's Club Pass look goes in this slot (January first: a bobble hat, mud stompers, a flower crown...). */
+export const PASS_LOOK_SLOT: readonly LookSlot[] = ['head', 'boots', 'head', 'shades', 'arm', 'shades', 'head', 'gloves', 'hair', 'boots', 'gloves', 'head'];
+export const LOOK_SLOT_OF: { readonly [k in LookId]: LookSlot } = {
+  bun: 'hair', tips: 'hair', mohawk: 'hair', afro: 'hair', spikes: 'hair', flamehair: 'hair',
+  headband: 'head', sweatband: 'head', halo: 'head', icecrown: 'head', crown: 'head',
+  armband: 'arm', armrainbow: 'arm', armgold: 'arm',
+  bootneon: 'boots', bootgold: 'boots', bootlight: 'boots',
+  glovepro: 'gloves', glovefire: 'gloves', glovegold: 'gloves',
+  shades: 'shades', shadestar: 'shades', shadegold: 'shades',
+  ...(Object.fromEntries(PASS_IDS.map((id, m) => [id, PASS_LOOK_SLOT[m]])) as { [k in PassId]: LookSlot }),
+};
+
+/**
+ * STADIUM STYLE: decorative layers on your ground in every HOME match (render/stadiumStyle.ts), one per slot. Never
+ * structural (the career's stadium levels own the stands) and never anything that changes play.
+ */
+export const DECOR_SLOTS = ['pitch', 'net', 'flags', 'seats', 'tifo', 'kickoff', 'lights', 'mascot'] as const;
+export type DecorSlot = (typeof DECOR_SLOTS)[number];
+/** Saved and owned: never rename or drop one. */
+export const DECOR_IDS = [
+  'mowchecks', 'mowdiag', 'mowcircle', 'mowcrest',
+  'netclub', 'nethex', 'netrainbow', 'netglow',
+  'flagclub', 'flagcheck', 'flagfire',
+  'seatname',
+  'tifoflags', 'tifobig',
+  'kickconfetti', 'kickfire', 'kickpyro',
+  'lightclub', 'lightshow',
+  'mascotbear', 'mascotrobot', 'mascotdragon',
+] as const;
+export type DecorId = (typeof DECOR_IDS)[number];
+export const DECOR_SLOT_OF: { readonly [k in DecorId]: DecorSlot } = {
+  mowchecks: 'pitch', mowdiag: 'pitch', mowcircle: 'pitch', mowcrest: 'pitch',
+  netclub: 'net', nethex: 'net', netrainbow: 'net', netglow: 'net',
+  flagclub: 'flags', flagcheck: 'flags', flagfire: 'flags',
+  seatname: 'seats',
+  tifoflags: 'tifo', tifobig: 'tifo',
+  kickconfetti: 'kickoff', kickfire: 'kickoff', kickpyro: 'kickoff',
+  lightclub: 'lights', lightshow: 'lights',
+  mascotbear: 'mascot', mascotrobot: 'mascot', mascotdragon: 'mascot',
+};
+
+/** A slot map as stored by any build made whole: only known ids, each in its own slot. */
+function normalizeSlots<S extends string>(raw: unknown, slots: readonly S[], slotOf: { readonly [id: string]: S }): { [k in S]?: string } {
+  const out: { [k in S]?: string } = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const s of slots) {
+    const v = (raw as { [k: string]: unknown })[s];
+    if (typeof v === 'string' && slotOf[v] === s) out[s] = v;
+  }
+  return out;
+}
+
+export function normalizeLooks(raw: unknown): { [k in LookSlot]?: string } {
+  return normalizeSlots(raw, LOOK_SLOTS, LOOK_SLOT_OF);
+}
+
+export function normalizeDecor(raw: unknown): { [k in DecorSlot]?: string } {
+  return normalizeSlots(raw, DECOR_SLOTS, DECOR_SLOT_OF);
+}
+
+// ------------------------------------------------------------------ SHOWTIME bests (game/funLayer.ts grades a match)
+
+export type ShowtimeGrade = 'S' | 'A' | 'B' | 'C';
+export interface ShowtimeBest {
+  grade: ShowtimeGrade;
+  score: number;
+}
+/** The modes a best is kept for: Quick Match (and PLAY NOW), Blitz, Road to Glory (and its cup ties), Club Run. */
+export type ShowtimeMode = 'quick' | 'blitz' | 'career' | 'run';
+const SHOWTIME_RANK: { readonly [g in ShowtimeGrade]: number } = { C: 0, B: 1, A: 2, S: 3 };
+
+export function showtimeMode(kind: string | undefined, blitz: boolean): ShowtimeMode {
+  if (kind === 'career' || kind === 'cup') return 'career';
+  if (kind === 'run') return 'run';
+  return blitz ? 'blitz' : 'quick';
+}
+
+/** The stored best for a mode (null: none yet, or a damaged entry). */
+export function showtimeBest(d: Pick<SaveData, 'showtime'>, mode: ShowtimeMode): ShowtimeBest | null {
+  const b = d.showtime?.[mode];
+  if (!b || typeof b !== 'object' || !(b.grade in SHOWTIME_RANK) || typeof b.score !== 'number' || !Number.isFinite(b.score)) return null;
+  return { grade: b.grade, score: Math.max(0, Math.floor(b.score)) };
+}
+
+/**
+ * A match's grade and points into the mode's best (the better grade wins; a level grade, the more points): the best
+ * before it, and whether this one beat it.
+ */
+export function recordShowtime(d: Pick<SaveData, 'showtime'>, mode: ShowtimeMode, grade: ShowtimeGrade, score: number): { before: ShowtimeBest | null; best: ShowtimeBest; newBest: boolean } {
+  const before = showtimeBest(d, mode);
+  const now: ShowtimeBest = { grade, score: Math.max(0, Math.floor(score)) };
+  const better = !before || SHOWTIME_RANK[grade] > SHOWTIME_RANK[before.grade] || (grade === before.grade && now.score > before.score);
+  if (better) {
+    const all = d.showtime && typeof d.showtime === 'object' && !Array.isArray(d.showtime) ? d.showtime : {};
+    d.showtime = { ...all, [mode]: now };
+  }
+  return { before, best: better ? now : before!, newBest: better };
+}

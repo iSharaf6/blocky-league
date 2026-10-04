@@ -16,10 +16,12 @@ import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock,
   type SaveData, momentStarsTotal, momentXp, recordMoment } from './core/save';
-import { SKILL_GOAL_COINS, adoptPortalStore } from './core/save';
+import { SKILL_GOAL_COINS, adoptPortalStore, challengeCounts, recordShowtime, showtimeMode, type ChallengeKind } from './core/save';
+import { GRADE_BONUS, type BountyKind, type DailyLive } from './game/funLayer';
 import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
 import { CAT_LABEL, DEFAULT_ID, earnTokens, equippedId, iapOf, inReach, newInShop, shopItem, shopOf, type ShopCat, type ShopItem } from './meta/shop';
+import { decorOf, styleMatch } from './meta/style';
 import { ads } from './platform/ads';
 import { adFree, coinDoubler, iap, PRODUCT_NOADS, PRODUCT_STARTER } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
@@ -34,7 +36,7 @@ import { clubRating as presetRating } from './meta/cup';
 import { openCareer } from './ui/career';
 import { careerState, closeMeta, openClub } from './ui/club';
 import { STORE_NOT_READY, openShop, shopOpen } from './ui/shop';
-import { captainCard, careerOf, roadCard, seasonCard, transfersNews } from './ui/hubInfo';
+import { captainCard, careerOf, goalOf, roadCard, seasonCard, transfersNews } from './ui/hubInfo';
 import { openMarket } from './ui/market';
 import { applyTextSize } from './ui/textSize';
 import type { Projector } from './ui/hud';
@@ -236,6 +238,38 @@ function track(t: Tally, e: MatchEvent, m: Match, hs: Side): void {
   }
 }
 
+/** The daily challenges a match moves on as it is played (the rest are settled at full time: a win, the man of the match). */
+const LIVE_KINDS: ReadonlySet<ChallengeKind> = new Set(['goals', 'goalsOne', 'headers', 'passes', 'longGoals', 'tackles', 'skills', 'powerups']);
+/** Which live goals a daily challenge's kind leans the offers towards. */
+const TILT: { readonly [k in ChallengeKind]?: readonly BountyKind[] } = {
+  goals: ['score'], goalsOne: ['score'], headers: ['score'], longGoals: ['score', 'onTarget'], passes: ['passShot', 'oneTouch'],
+  assists: ['passShot'], tackles: ['winBack'], skills: ['skill'], cleanWins: ['hold'], wins: ['hold'], hardWins: ['hold'],
+};
+
+const blitzOf = (req: MatchRequest): boolean => req.mode === 'blitz';
+
+/**
+ * Today's challenges as this match moves them (game/funLayer.ts DailyLive): what's stored, plus what the match has
+ * counted so far (the same counts full time uses: save.ts challengeCounts), for the kinds that move during play.
+ */
+function liveDaily(t: Tally, hs: Side, blitz: boolean, difficulty: number): { list: (m: Match) => DailyLive[]; tilt: BountyKind[] } {
+  const d = dailyFor(save.progress, localDay());
+  const cs = dailyChallenges(d.day);
+  const tilt = cs.filter((_, i) => !d.claimed[i]).flatMap((c) => TILT[c.kind] ?? []);
+  const list = (m: Match): DailyLive[] => {
+    const counts = challengeCounts({
+      won: false, drawn: false, goals: m.score[hs], conceded: 0, assists: 0, tacklesWon: t.tacklesWon, passes: m.stats.passes[hs],
+      skills: t.skills, headers: t.headers, longGoals: t.longGoals, powerups: t.powerups, motm: false, blitz, difficulty,
+    });
+    return cs.map((c, i) => {
+      const now = LIVE_KINDS.has(c.kind) ? counts[c.kind] : 0;
+      const have = c.kind === 'goalsOne' ? Math.max(d.progress[i], now) : d.progress[i] + now;
+      return { text: c.text, have: Math.min(c.goal, have), goal: c.goal, coins: c.coins, claimed: d.claimed[i] };
+    });
+  };
+  return { list, tilt };
+}
+
 function applySettings(): void {
   const s = save.settings;
   sfx.sfxOn = s.sfx;
@@ -366,6 +400,9 @@ function mainInfo(): MainInfo {
   const lv = levelOf(p.xp);
   info.level = { level: lv.level, title: wornTitle(save) ?? levelTitle(lv.level), into: lv.into, need: lv.need };
   info.unlock = nextUnlock(save.progress.xp, shopOf(save).owned);
+  // NEXT GOAL under the hero (meta/goal.ts): the one thing to go for now in ROAD TO GLORY.
+  const goal = goalOf(career, save.coins, info.unlock);
+  if (goal) info.goal = goal;
   try {
     // The count on the SHOP tile: affordable things not seen yet, and the free daily pack.
     info.shopNew = newInShop(save, localDay());
@@ -474,6 +511,13 @@ function mainMenu(): void {
       ladder();
     },
     career: () => openCareer(app),
+    // NEXT GOAL: straight to where it points (the ground, the market, the unlocks, the club tab or the road).
+    goal: (go) => {
+      if (go === 'stadium') openClub(app, { tab: 'stadium' });
+      else if (go === 'market') openMarket(app);
+      else if (go === 'unlocks') menus.unlocks(save, mainMenu, () => openBadges(app, mainMenu));
+      else openCareer(app, undefined, go === 'academy' || go === 'board' ? 'club' : undefined);
+    },
     club: () => openClub(app),
     // TRANSFERS: straight into the market (no club yet: MY CLUB founds one first); its BACK comes home.
     transfers: () => openMarket(app),
@@ -840,7 +884,11 @@ async function startMatch(req: MatchRequest): Promise<void> {
   if (finishedThisVisit > 0 && !basics && !req.firstMatch && played() > 0) await ads.midgame(req.scenario ? 'moment' : 'match');
   demo?.dispose();
   demo = null;
-  const { kits, humanSide } = req;
+  const { humanSide } = req;
+  // COSMETICS 2.0 (meta/style.ts): your side in its premium kit and player looks (any clash is fixed on the other
+  // side), and at home your ground in its stadium style. Looks only: nothing here changes play.
+  const kits = styleMatch(save, req.kits, [req.home, req.away], humanSide);
+  const decor = humanSide === 0 ? decorOf(save, req.kits[0], req.home.short) : null;
   // A new player's first three matches are played in daylight and clear weather (no snow on a first kick-off).
   const early = played() < 3;
   // The hidden ease (core/dda.ts): the request's own, else the save's streaks decide. Shown nowhere.
@@ -862,16 +910,20 @@ async function startMatch(req: MatchRequest): Promise<void> {
     knockout: req.knockout,
     // Career and the cup stay classic; Quick Match passes the mode the player picked.
     mode: req.mode ?? 'classic',
+    // HYPE and the SUPER SHOT (sim/hype.ts): every classic match (Blitz has its power-ups; not a moment or the basics).
+    hype: (req.mode ?? 'classic') === 'classic' && !req.scenario && !basics,
     firstMatch: !!req.firstMatch && played() === 0,
     scenario: req.scenario,
     skipIntro: req.skipIntro,
     stadiumLevel: Math.max(0, Math.min(5, Math.round(req.stadiumLevel ?? 5))),
+    ground: req.ground,
     tutorial: !save.seenTutorial && !basics,
     camZoom: camZoom(),
     ballSkin: equippedSkin(),
     celebration: equippedCelebration(),
     goalFx: equipped('goalfx'),
     trail: equipped('trail'),
+    decor,
     colorblind: !!save.settings.colorblind,
     quickSubs: save.settings.quickSubs !== false,
     assist,
@@ -908,10 +960,16 @@ async function startMatch(req: MatchRequest): Promise<void> {
   const tally = newTally();
   const hs: Side = humanSide === 1 ? 1 : 0;
   const lesson = Trainer.lesson;
+  // LIVE GOALS (game/funLayer.ts): today's challenges, with this match counted in, move on the HUD as they happen
+  // (their coins are still paid at full time, below). The bounties lean towards the ones still open.
+  const fun = session.fun;
+  const dailyLive = fun && !req.scenario && !basics ? liveDaily(tally, hs, blitzOf(req), req.difficulty) : null;
+  if (fun && dailyLive) fun.setDaily(dailyLive.list(session.match), dailyLive.tilt);
   if (session.hud) {
     session.hud.onEvent = (e, m) => {
       track(tally, e, m, hs);
       lesson?.event(e, m);
+      if (fun && dailyLive) fun.setDaily(dailyLive.list(m));
     };
   }
   const s = session;
@@ -961,6 +1019,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
         quit: () => {
           menus.close();
           endMatch();
+          menuMusic();
           (req.onQuit ?? mainMenu)();
         },
       });
@@ -1021,9 +1080,14 @@ async function startMatch(req: MatchRequest): Promise<void> {
         endMatch();
         then();
       };
+      // The verdict's music (src/audio/sfx.ts result): a win's fanfare, or the "go again" theme.
+      sfx.result(o.won ? 'win' : 'loss');
       menus.momentResult(req.scenario, o, { from: xpFrom, to: p.xp, owned: shopOf(save).owned }, {
         retry: () => leave(() => void startMatch({ ...req, skipIntro: true })),
-        next: () => leave(() => req.onDone(r, 0)),
+        next: () => leave(() => {
+          menuMusic();
+          req.onDone(r, 0);
+        }),
         nextLabel: req.nextLabel,
         menu: () => leave(() => mainMenu()),
       });
@@ -1044,7 +1108,10 @@ async function startMatch(req: MatchRequest): Promise<void> {
     const base = req.reward(r);
     // The Coin Doubler (a store purchase) doubles what the match itself pays (not challenges or ads).
     const doubler = coinDoubler(save);
-    const reward = { coins: Math.round(base.coins * mult * (doubler ? 2 : 1)), label: doubler && base.coins > 0 ? `${base.label} X2` : base.label };
+    // SHOWTIME (game/funLayer.ts): an S adds 10% to the match's coins, an A 5%.
+    const fun = r.fun;
+    const gradeK = fun ? GRADE_BONUS[fun.grade] : 0;
+    const reward = { coins: Math.round(base.coins * mult * (1 + gradeK) * (doubler ? 2 : 1)), label: doubler && base.coins > 0 ? `${base.label} X2` : base.label };
     const summary: MatchSummary = {
       won, drawn, goals: my, conceded: their,
       assists: (r.ratings ?? []).filter((x) => x.side === hs).reduce((n, x) => n + x.assists, 0),
@@ -1053,7 +1120,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
       skillGoals: tally.skillGoals,
     };
     const xpFrom = p.xp;
-    p.xp += matchXp(summary);
+    // (LIVE GOALS done in the match bank their XP too.)
+    p.xp += matchXp(summary) + (fun?.xp ?? 0);
     const stars = matchStars(summary);
     p.stars += stars;
     const daily = dailyFor(p, localDay());
@@ -1064,7 +1132,11 @@ async function startMatch(req: MatchRequest): Promise<void> {
     // SKILL GOALs pay a little on top (shown with the challenges done on the full-time screen).
     const skillCoins = tally.skillGoals * SKILL_GOAL_COINS;
     const skillLine = tally.skillGoals ? [{ text: tally.skillGoals > 1 ? `${tally.skillGoals} SKILL GOALS` : 'SKILL GOAL', coins: skillCoins }] : [];
-    let earned = reward.coins + bonus + skillCoins;
+    // LIVE GOALS: their coins, like the challenges' (never doubled).
+    const liveCoins = fun?.coins ?? 0;
+    const liveLine = fun && fun.done ? [{ text: fun.done > 1 ? `${fun.done} LIVE GOALS` : 'LIVE GOAL', coins: liveCoins }] : [];
+    const show = fun && fun.style > 0 ? recordShowtime(save, showtimeMode(req.kind, blitz), fun.grade, fun.style) : null;
+    let earned = reward.coins + bonus + skillCoins + liveCoins;
     const coinsBefore = save.coins;
     save.coins += earned;
     // The SHOP item this match's coins brought into reach, if any (one line at full time; nothing otherwise).
@@ -1098,6 +1170,9 @@ async function startMatch(req: MatchRequest): Promise<void> {
     let doubled = false;
     // A happy moment: after a win, Apple's own rating prompt (the app only, rarely: platform/review.ts).
     if (won) window.setTimeout(() => void maybeAskForReview(save), 2500);
+    // The full-time music with the screen (src/audio/sfx.ts result): a cup tie's brass is bigger, and a final's
+    // (a knockout at a full neutral ground) opens with the trophy fanfare.
+    sfx.result(outcome, req.knockout ? (req.attendance >= 1 ? 2 : 1) : 0);
     menus.fulltime(r.match, kits, humanSide, reward, ads.rewardedAvailable && reward.coins > 0, {
       nextLabel: req.nextLabel,
       double: async () => {
@@ -1114,6 +1189,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
       next: () => {
         menus.close();
         endMatch();
+        menuMusic();
         req.onDone(r, earned);
       },
       // One more: the same fixture and settings, straight to the kick-off (the coins above are already banked).
@@ -1124,9 +1200,10 @@ async function startMatch(req: MatchRequest): Promise<void> {
         void startMatch({ ...req, ...easy, firstMatch: false, skipIntro: true });
       } : undefined,
     }, r.ratings, {
-      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: [...done.map((x) => ({ text: `${x.challenge.text} +1 TOKEN`, coins: x.challenge.coins })), ...skillLine],
+      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: [...done.map((x) => ({ text: `${x.challenge.text} +1 TOKEN`, coins: x.challenge.coins })), ...skillLine, ...liveLine],
       owned: shopOf(save).owned,
-    }, { tierUps, tryEasy, clip: clipOf(s), noAds: firstEver, shopReach: reach ? { name: reach.name, kind: CAT_LABEL[reach.cat] } : undefined });
+    }, { tierUps, tryEasy, clip: clipOf(s), noAds: firstEver, shopReach: reach ? { name: reach.name, kind: CAT_LABEL[reach.cat] } : undefined,
+      showtime: fun && show ? { grade: fun.grade, score: fun.style, best: show.before?.grade ?? null, newBest: show.newBest, bonus: gradeK } : undefined });
   };
   window.addEventListener('keydown', pauseKey);
 }
@@ -1142,6 +1219,14 @@ function endMatch(): void {
   session = null;
   basicsNow = false;
   Trainer.lesson = null;
+}
+
+/**
+ * Back from a match to the menus (the career's road, the moments' list, the main menu): the menu loop comes back,
+ * crossfading out of the result screen's music (the career and its screens never start it themselves).
+ */
+function menuMusic(): void {
+  if (save.settings.music) sfx.startMusic();
 }
 
 // Tabbed away, or the portal's frame lost focus (a click outside the game): the match pauses itself.
@@ -1367,10 +1452,20 @@ if (import.meta.env.DEV) {
       syncControlsUi(session);
       world.render();
     },
+    /** HYPE: fill a side's meter now (default the human's): his next open-play shot is a SUPER SHOT (classic matches). */
+    superShot(side?: 0 | 1) {
+      return session?.fun?.devSuperShot(side) ?? false;
+    },
+    /** LIVE GOALS: put one up now ('score', 'passShot', 'skill', 'winBack', 'onTarget', 'oneTouch', 'hold', 'superGoal'). */
+    objective(kind?: BountyKind) {
+      return session?.fun?.devObjective(kind) ?? false;
+    },
     key(code: string, down: boolean) {
       window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code }));
     },
   };
+  // The sound's dev panel: window.__blaudio (src/audio/dev.ts: cues, half / full time jumps, mix measurements).
+  void import('./audio/dev').then((d) => d.installAudioDev());
 }
 
 export const ready = boot();

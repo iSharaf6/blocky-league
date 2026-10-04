@@ -1,5 +1,6 @@
 import type { SaveData } from './core/save';
 import type { MatchResult } from './game/matchSession';
+import type { StadiumParts } from './render/stadium';
 import type { TimeOfDay } from './render/world';
 import type { Kit, MatchMode, PowerUpKind, ScenarioSpec, Side, TeamDef } from './sim/types';
 import type { Menus } from './ui/menus';
@@ -46,6 +47,8 @@ export interface MatchRequest {
   timeOfDay?: TimeOfDay;
   /** Home stadium size 0 (park pitch) .. 5 (full bowl); omitted = 5. */
   stadiumLevel?: number;
+  /** ROAD TO GLORY home matches: your ground as built, part by part (meta/ground.ts); overrides the level's look. */
+  ground?: StadiumParts;
   /** Weather; omitted = the player's setting. */
   weather?: 'clear' | 'rain' | 'snow';
   /** Cup tie: level at full time goes to a penalty shootout. */

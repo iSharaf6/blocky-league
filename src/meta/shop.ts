@@ -15,8 +15,9 @@
  */
 import { Rng, hashString } from '../core/rng';
 import {
-  BALL_SKIN_IDS, BALL_SKIN_LEVEL, BALL_SKIN_NAMES, CELEBRATION_IDS, CELEBRATION_LEVEL, CELEBRATION_NAMES, GOAL_FX_IDS, PASS_IDS, TRAIL_IDS, levelOf,
-  normalizeIap, normalizeShop, type IapState, type PassId, type SaveData, type ShopState,
+  BALL_SKIN_IDS, BALL_SKIN_LEVEL, BALL_SKIN_NAMES, CELEBRATION_IDS, CELEBRATION_LEVEL, CELEBRATION_NAMES, DECOR_IDS, DECOR_SLOT_OF, GOAL_FX_IDS, KIT_IDS,
+  LOOK_IDS, LOOK_SLOT_OF, PASS_IDS, TRAIL_IDS, levelOf, normalizeIap, normalizeShop,
+  type DecorId, type DecorSlot, type IapState, type LookId, type LookSlot, type PassId, type SaveData, type ShopState,
 } from '../core/save';
 import { SEASON_THEMES } from './season';
 import { FORMATIONS } from '../sim/formations';
@@ -27,12 +28,17 @@ import { pinMeta, quickSaleValue, type MetaPlayer } from './market';
 
 // ------------------------------------------------------------------ catalogue
 
-export type ShopCat = 'celebration' | 'ball' | 'goalfx' | 'trail';
-export const SHOP_CATS: readonly ShopCat[] = ['celebration', 'ball', 'goalfx', 'trail'];
+export type ShopCat = 'celebration' | 'ball' | 'goalfx' | 'trail' | 'kit' | 'look' | 'decor';
+export const SHOP_CATS: readonly ShopCat[] = ['celebration', 'ball', 'goalfx', 'trail', 'kit', 'look', 'decor'];
+/** Categories worn one per SLOT (player looks: hair, headgear...; stadium style: pitch, nets...), not one in all. */
+export type SlotCat = 'look' | 'decor';
+export const isSlotCat = (cat: ShopCat): cat is SlotCat => cat === 'look' || cat === 'decor';
 
 export interface ShopItem {
   cat: ShopCat;
   id: string;
+  /** Player looks and stadium style: the slot it fills (one look per slot is worn at once). */
+  slot?: LookSlot | DecorSlot;
   /** Shown name (no hyphens: the pixel font draws them badly). */
   name: string;
   /** Coins; 0 = everyone has it from the start. */
@@ -125,6 +131,105 @@ const TRAILS: { readonly [k in Exclude<(typeof TRAIL_IDS)[number], PassId>]: Loo
   comet: { name: 'Comet Tail', price: 6000, blurb: 'A blazing tail of stardust and stars.' },
 };
 
+/**
+ * PREMIUM KITS: each its own design painted voxel by voxel (render/kitDesigns.ts): a pattern, its own collar, cuffs,
+ * socks and shorts, and the dearest a material too (gold foil that catches the light, trim that glows at night, a
+ * sheen that shifts colour). Your club plays in it; 'club' is the club's own kit.
+ */
+const KITS: { readonly [k in Exclude<(typeof KIT_IDS)[number], PassId>]: Look } = {
+  club: { name: 'Club Kit', price: 0, blurb: 'Your club\'s own colours and pattern.' },
+  zigzag: { name: 'Zigzag', price: 300, blurb: 'Tangerine with a navy zigzag across the chest.' },
+  checker: { name: 'Checkerboard', price: 400, blurb: 'Bold red and white checks, top to socks.' },
+  camo: { name: 'Arctic Camo', price: 600, blurb: 'Snow camo in white, ice and slate.' },
+  tiger: { name: 'Tiger', price: 700, blurb: 'Orange with black tiger stripes. Roar.' },
+  fade: { name: 'Sunset Fade', price: 850, blurb: 'Pink to orange to gold, like a summer sky.' },
+  retro: { name: 'Retro 80s', price: 1100, blurb: 'White with teal, pink and yellow shapes. Totally rad.' },
+  crest: { name: 'Big Crest', price: 1300, blurb: 'Your club colours with a giant crest across the chest.' },
+  inferno: { name: 'Inferno', price: 1600, blurb: 'Pixel flames lick up the shirt. They glow at night.' },
+  bolt: { name: 'Thunder', price: 1900, blurb: 'Electric blue, a lightning bolt and glowing trim.' },
+  iceking: { name: 'Ice King', price: 2200, blurb: 'Frost crystals with a sheen that shifts like ice.' },
+  holo: { name: 'Hologram', price: 2600, blurb: 'Pearl white that shimmers every colour as you run.' },
+  galaxy: { name: 'Galaxy', price: 4500, blurb: 'Deep space and twinkling stars. They glow at night.' },
+  pinstripe: { name: 'Gold Pinstripe', price: 5000, blurb: 'Navy pinstripes, gold foil trim that catches the light.' },
+  neonglow: { name: 'Glow In The Dark', price: 6000, blurb: 'Neon lines that light up under the floodlights.' },
+  goldfoil: { name: 'Gold Foil', price: 7500, blurb: 'Solid gold, head to toe. The champion\'s kit.' },
+};
+
+/** PLAYER LOOKS (render/looks.ts): your captain's hair and headgear, the team's boots, your keepers' gloves. */
+const LOOKS: { readonly [k in Exclude<LookId, PassId>]: Look } = {
+  bun: { name: 'Top Bun', price: 350, blurb: 'Your captain ties it all up on top.' },
+  tips: { name: 'Frosted Tips', price: 450, blurb: 'Spiky hair with icy dyed tips.' },
+  mohawk: { name: 'Mohawk', price: 600, blurb: 'A tall red mohawk. Everyone sees you coming.' },
+  afro: { name: 'Big Afro', price: 750, blurb: 'The biggest hair on the pitch.' },
+  spikes: { name: 'Super Spikes', price: 1600, blurb: 'Golden spiky hair that shines in the light.' },
+  flamehair: { name: 'Flame Hair', price: 2600, blurb: 'Hair made of fire. It glows at night.' },
+  headband: { name: 'Headband', price: 300, blurb: 'A neon headband with tails that flap as you run.' },
+  sweatband: { name: 'Sweatbands', price: 400, blurb: 'Retro striped head and wrist bands.' },
+  halo: { name: 'Halo', price: 2000, blurb: 'A glowing golden ring floats over your head.' },
+  icecrown: { name: 'Ice Crown', price: 2400, blurb: 'A crown of ice crystals that shimmers.' },
+  crown: { name: 'Crown', price: 6000, blurb: 'A gold crown set with gems. Royalty.' },
+  armband: { name: 'Captain Armband', price: 250, blurb: 'The classic C on your captain\'s arm.' },
+  armrainbow: { name: 'Rainbow Armband', price: 650, blurb: 'Every colour on your captain\'s arm.' },
+  armgold: { name: 'Gold Armband', price: 1400, blurb: 'A gold armband that catches the light.' },
+  bootneon: { name: 'Neon Boots', price: 500, blurb: 'Hot pink and cyan boots for the whole team.' },
+  bootgold: { name: 'Gold Boots', price: 2400, blurb: 'Shining gold boots for the whole team.' },
+  bootlight: { name: 'Light Up Boots', price: 4800, blurb: 'Boots that glow and flash with every step.' },
+  glovepro: { name: 'Pro Gloves', price: 300, blurb: 'Big white and black keeper gloves.' },
+  glovefire: { name: 'Fire Gloves', price: 800, blurb: 'Keeper gloves with flames on the palms.' },
+  glovegold: { name: 'Gold Gloves', price: 1800, blurb: 'Golden gloves for a golden keeper.' },
+  shades: { name: 'Shades', price: 500, blurb: 'Cool black shades go on to celebrate.' },
+  shadestar: { name: 'Star Shades', price: 900, blurb: 'Pink star glasses for the party.' },
+  shadegold: { name: 'Gold Shades', price: 1500, blurb: 'Mirrored gold shades for every goal.' },
+};
+
+/** STADIUM STYLE (render/stadiumStyle.ts): your home ground dressed up, every home match. */
+const DECOR: { readonly [k in DecorId]: Look } = {
+  mowchecks: { name: 'Mown Checks', price: 300, blurb: 'The lawn mown in a big chessboard.' },
+  mowdiag: { name: 'Diagonal Stripes', price: 450, blurb: 'Sharp diagonal mowing stripes.' },
+  mowcircle: { name: 'Mown Circles', price: 800, blurb: 'Rings mown out from the centre spot.' },
+  mowcrest: { name: 'Centre Crest', price: 1500, blurb: 'Your crest mown into the centre circle.' },
+  netclub: { name: 'Club Nets', price: 300, blurb: 'Goal nets striped in your club colours.' },
+  nethex: { name: 'Hex Nets', price: 600, blurb: 'Honeycomb nets like the big stadiums.' },
+  netrainbow: { name: 'Rainbow Nets', price: 900, blurb: 'Every goal hits a rainbow.' },
+  netglow: { name: 'Neon Nets', price: 2000, blurb: 'Nets that glow under the floodlights.' },
+  flagclub: { name: 'Club Flags', price: 250, blurb: 'Corner flags in your club colours.' },
+  flagcheck: { name: 'Chequered Flags', price: 400, blurb: 'Racing chequered corner flags.' },
+  flagfire: { name: 'Flame Flags', price: 700, blurb: 'Corner flags that flicker like fire.' },
+  seatname: { name: 'Name In The Seats', price: 1200, blurb: 'Your club\'s name spelt out in the seats.' },
+  tifoflags: { name: 'Flag Wave', price: 600, blurb: 'Your fans wave flags in your colours.' },
+  tifobig: { name: 'Giant Tifo', price: 1800, blurb: 'A giant crest banner rolls over the home end.' },
+  kickconfetti: { name: 'Confetti Walkout', price: 600, blurb: 'Confetti cannons fire as you kick off.' },
+  kickfire: { name: 'Fireworks Walkout', price: 2000, blurb: 'Fireworks over the stands at kick off.' },
+  kickpyro: { name: 'Pyro Show', price: 4500, blurb: 'Flame jets down the touchline, then fireworks.' },
+  lightclub: { name: 'Club Floodlights', price: 700, blurb: 'Your floodlights shine in club colours.' },
+  lightshow: { name: 'Light Show', price: 2500, blurb: 'Colour cycling lights and beams after your goals.' },
+  mascotbear: { name: 'Bear Mascot', price: 1500, blurb: 'A big bear on the touchline dances after goals.' },
+  mascotrobot: { name: 'Robo Mascot', price: 2500, blurb: 'A robot mascot that does the robot when you score.' },
+  mascotdragon: { name: 'Dragon Mascot', price: 5000, blurb: 'A dragon mascot that breathes confetti fire.' },
+};
+
+/** Club Pass kits and looks by month (January first), on top of the month's goal explosion and trail. */
+const PASS_KIT_BLURB = [
+  'A white knit with snowflakes and frosty trim.', 'Mud splatted all over. Proper football.', 'Pink blossom over spring white.',
+  'Raindrops on stormy blue.', 'White and gold, with a trophy on the chest.', 'Beach stripes in sunset colours.',
+  'A heat haze from red to gold.', 'A teal training bib over the shirt.', 'A cosy harvest plaid in gold and brown.',
+  'Purple with lines that glow at night.', 'Embers and sparks that glow at night.', 'A festive knit, red and white.',
+];
+const PASS_LOOK: readonly { name: string; blurb: string }[] = [
+  { name: 'Bobble Hat', blurb: 'A woolly hat with a big pom pom.' },
+  { name: 'Mud Stompers', blurb: 'Brown boots with gold studs for the whole team.' },
+  { name: 'Flower Crown', blurb: 'A ring of spring flowers.' },
+  { name: 'Rainbow Shades', blurb: 'Rainbow glasses for every goal.' },
+  { name: 'Trophy Armband', blurb: 'A gold armband with a little trophy.' },
+  { name: 'Surf Shades', blurb: 'Orange mirrored shades for the party.' },
+  { name: 'Sun Visor', blurb: 'A bright red visor for the heatwave.' },
+  { name: 'Camp Gloves', blurb: 'Teal keeper gloves from training camp.' },
+  { name: 'Harvest Curls', blurb: 'Big ginger curls for your captain.' },
+  { name: 'Floodlight Boots', blurb: 'Purple boots that glow at night.' },
+  { name: 'Sparkler Gloves', blurb: 'Keeper gloves that fizz and glow.' },
+  { name: 'Winter Hat', blurb: 'A red festive hat with a white bobble.' },
+];
+
 /** What each month's Club Pass looks do (January first): its own goal explosion and trail, not a colourway. */
 const PASS_BLURB: { readonly [k in 'goalfx' | 'trail']: readonly string[] } = {
   goalfx: [
@@ -141,16 +246,22 @@ const PASS_BLURB: { readonly [k in 'goalfx' | 'trail']: readonly string[] } = {
   ],
 };
 
-/** A Club Pass look of the season theme at index `m` (January 0): its goal explosion or its trail. */
-const passLook = (cat: 'goalfx' | 'trail', m: number): Look => ({
-  name: SEASON_THEMES[m].name,
+/** A Club Pass look of the season theme at index `m` (January 0): its goal explosion, trail, kit or player look. */
+const passLook = (cat: 'goalfx' | 'trail' | 'kit' | 'look', m: number): Look => ({
+  name: cat === 'look' ? PASS_LOOK[m].name : SEASON_THEMES[m].name,
   price: 0,
-  blurb: `Club Pass only: ${PASS_BLURB[cat][m]}`,
+  blurb: `Club Pass only: ${cat === 'kit' ? PASS_KIT_BLURB[m] : cat === 'look' ? PASS_LOOK[m].blurb : PASS_BLURB[cat][m]}`,
 });
 const isPass = (id: string): id is PassId => (PASS_IDS as readonly string[]).includes(id);
 
 /** Shop order within a category: the free one, then cheapest first, the Club Pass looks last (by month). */
 const byPrice = (list: ShopItem[]): ShopItem[] => list.sort((a, b) => (a.pass ? 1 : 0) - (b.pass ? 1 : 0) || a.price - b.price);
+
+/** Slot order for the slot categories (the shop lists a slot's looks together, cheapest first). */
+const LOOK_ORDER: readonly LookSlot[] = ['hair', 'head', 'arm', 'boots', 'gloves', 'shades'];
+const DECOR_ORDER: readonly DecorSlot[] = ['pitch', 'net', 'flags', 'seats', 'tifo', 'kickoff', 'lights', 'mascot'];
+const bySlot = <S extends string>(order: readonly S[]) => (list: ShopItem[]): ShopItem[] =>
+  list.sort((a, b) => (a.pass ? 1 : 0) - (b.pass ? 1 : 0) || order.indexOf(a.slot as S) - order.indexOf(b.slot as S) || a.price - b.price);
 
 const ITEMS: readonly ShopItem[] = [
   ...CELEBRATION_IDS.map((id): ShopItem => ({
@@ -161,12 +272,19 @@ const ITEMS: readonly ShopItem[] = [
   }))),
   ...byPrice(GOAL_FX_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'goalfx', id, ...passLook('goalfx', PASS_IDS.indexOf(id)), pass: true } : { cat: 'goalfx', id, ...GOAL_FX[id] }))),
   ...byPrice(TRAIL_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'trail', id, ...passLook('trail', PASS_IDS.indexOf(id)), pass: true } : { cat: 'trail', id, ...TRAILS[id] }))),
+  ...byPrice(KIT_IDS.map((id): ShopItem => (isPass(id) ? { cat: 'kit', id, ...passLook('kit', PASS_IDS.indexOf(id)), pass: true } : { cat: 'kit', id, ...KITS[id] }))),
+  ...bySlot(LOOK_ORDER)(LOOK_IDS.map((id): ShopItem => ({
+    cat: 'look', id, slot: LOOK_SLOT_OF[id], ...(isPass(id) ? { ...passLook('look', PASS_IDS.indexOf(id)), pass: true as const } : LOOKS[id]),
+  }))),
+  ...bySlot(DECOR_ORDER)(DECOR_IDS.map((id): ShopItem => ({ cat: 'decor', id, slot: DECOR_SLOT_OF[id], ...DECOR[id] }))),
 ].map((it) => (it.price === 0 ? { ...it, level: undefined } : it));
 
-/** The Club Pass looks of season `id` ("2026-10"): its goal explosion and its trail. */
-export function seasonPassItems(id: string): { goalfx: ShopItem; trail: ShopItem } {
+/** The Club Pass looks of season `id` ("2026-10"): its goal explosion, trail, premium kit and player look. */
+export function seasonPassItems(id: string): { goalfx: ShopItem; trail: ShopItem; kit: ShopItem; look: ShopItem } {
   const m = Math.max(0, Math.min(11, (Number(id.slice(5, 7)) || 1) - 1));
-  return { goalfx: shopItem('goalfx', PASS_IDS[m])!, trail: shopItem('trail', PASS_IDS[m])! };
+  return {
+    goalfx: shopItem('goalfx', PASS_IDS[m])!, trail: shopItem('trail', PASS_IDS[m])!, kit: shopItem('kit', PASS_IDS[m])!, look: shopItem('look', PASS_IDS[m])!,
+  };
 }
 
 // ------------------------------------------------------------------ rarity (status: shown on every tile)
@@ -196,16 +314,38 @@ export const itemKey = (cat: ShopCat, id: string): string => `${cat}:${id}`;
 
 /** What each category is, in a line ("NOW IN REACH: BACKFLIP goal celebration"). */
 export const CAT_LABEL: { readonly [k in ShopCat]: string } = {
-  celebration: 'goal celebration', ball: 'ball look', goalfx: 'goal explosion', trail: 'sprint trail',
+  celebration: 'goal celebration', ball: 'ball look', goalfx: 'goal explosion', trail: 'sprint trail', kit: 'premium kit', look: 'player look',
+  decor: 'stadium style',
 };
 
-/** The item everyone owns from the start in each category (what "nothing equipped" means). */
-export const DEFAULT_ID: { readonly [k in ShopCat]: string } = { celebration: 'classic', ball: 'classic', goalfx: 'club', trail: 'white' };
-
-/** Which Settings field each category equips into. */
-const SETTING: { readonly [k in ShopCat]: 'celebration' | 'ballSkin' | 'goalFx' | 'trail' } = {
-  celebration: 'celebration', ball: 'ballSkin', goalfx: 'goalFx', trail: 'trail',
+/** What each slot is, in a word or two (the shop's slot chips and the detail line). */
+export const SLOT_LABEL: { readonly [k in LookSlot | DecorSlot]: string } = {
+  hair: 'hair', head: 'headgear', arm: 'armband', boots: 'boots', gloves: 'keeper gloves', shades: 'shades',
+  pitch: 'pitch', net: 'nets', flags: 'corner flags', seats: 'seats', tifo: 'crowd', kickoff: 'kick off', lights: 'floodlights', mascot: 'mascot',
 };
+
+/** Who wears a player look in a match (the detail pane says so in a line). */
+export const LOOK_WHO: { readonly [k in LookSlot]: string } = {
+  hair: 'YOUR CAPTAIN', head: 'YOUR CAPTAIN AND THE MAN YOU CONTROL', arm: 'YOUR CAPTAIN', boots: 'THE WHOLE TEAM', gloves: 'YOUR KEEPERS',
+  shades: 'EVERYONE WHO CELEBRATES',
+};
+
+/**
+ * The item everyone owns from the start in each category (what "nothing equipped" means). The slot categories have
+ * none: an empty slot simply wears nothing extra.
+ */
+export const DEFAULT_ID: { readonly [k in ShopCat]: string } = { celebration: 'classic', ball: 'classic', goalfx: 'club', trail: 'white', kit: 'club', look: '', decor: '' };
+
+/** Which Settings field each one-of-a-kind category equips into (the slot categories go by slot: see equipItem). */
+const SETTING: { readonly [k in Exclude<ShopCat, SlotCat>]: 'celebration' | 'ballSkin' | 'goalFx' | 'trail' | 'kit' } = {
+  celebration: 'celebration', ball: 'ballSkin', goalfx: 'goalFx', trail: 'trail', kit: 'kit',
+};
+
+/** The slot map a slot category equips into (Settings.looks / Settings.decor), made whole first. */
+function slotMap(save: Pick<SaveData, 'settings'>, cat: SlotCat): { [slot: string]: string | undefined } {
+  if (cat === 'look') return (save.settings.looks ??= {}) as { [slot: string]: string | undefined };
+  return (save.settings.decor ??= {}) as { [slot: string]: string | undefined };
+}
 
 // ------------------------------------------------------------------ owning, buying, equipping
 
@@ -279,6 +419,129 @@ export function priceOn(save: Pick<SaveData, 'shop' | 'progress'>, it: ShopItem,
   return deal && deal.item.cat === it.cat && deal.item.id === it.id ? deal.price : it.price;
 }
 
+// ------------------------------------------------------------------ sets (bundles) and the featured shelf
+
+/**
+ * THEMED SETS: a kit, a ball, a trail, a goal explosion, a celebration or player look and a stadium touch that belong
+ * together, sold at BUNDLE_OFF % off what the parts cost on their own. Honest by construction: every part is also
+ * sold alone at its shown price, the set's price is worked out from the parts you don't own yet (so COMPLETE THE SET
+ * never charges for what you have), and there is no timer.
+ */
+export interface Bundle {
+  id: string;
+  name: string;
+  blurb: string;
+  /** Hero card colours (CSS hex): its background and its accent. */
+  bg: string;
+  accent: string;
+  parts: readonly { cat: ShopCat; id: string }[];
+}
+
+export const BUNDLE_OFF = 40;
+
+export const BUNDLES: readonly Bundle[] = [
+  {
+    id: 'retro', name: 'Retro Set', blurb: 'Rad 80s kit, leather ball, toon trail, confetti, the robot and checks.', bg: '#2bb5a8', accent: '#ff5cb0',
+    parts: [{ cat: 'kit', id: 'retro' }, { cat: 'ball', id: 'retro' }, { cat: 'trail', id: 'toon' }, { cat: 'goalfx', id: 'confetti' }, { cat: 'celebration', id: 'robot' }, { cat: 'decor', id: 'mowchecks' }],
+  },
+  {
+    id: 'inferno', name: 'Inferno Set', blurb: 'Flame kit, magma ball, afterburner, flame jets, a backflip and fire flags.', bg: '#c4261a', accent: '#ffd23a',
+    parts: [{ cat: 'kit', id: 'inferno' }, { cat: 'ball', id: 'blaze' }, { cat: 'trail', id: 'fire' }, { cat: 'goalfx', id: 'fire' }, { cat: 'celebration', id: 'backflip' }, { cat: 'decor', id: 'flagfire' }],
+  },
+  {
+    id: 'iceking', name: 'Ice King Set', blurb: 'Frost kit, ice ball, ice trail, Frostbite, an ice crown and mown circles.', bg: '#2f7be8', accent: '#d6f3ff',
+    parts: [{ cat: 'kit', id: 'iceking' }, { cat: 'ball', id: 'ice' }, { cat: 'trail', id: 'ice' }, { cat: 'goalfx', id: 'ice' }, { cat: 'look', id: 'icecrown' }, { cat: 'decor', id: 'mowcircle' }],
+  },
+  {
+    id: 'neon', name: 'Neon Nights Set', blurb: 'Glow kit, neon ball, glitch trail, the disco, light up boots and neon nets.', bg: '#3a1f7a', accent: '#3cf7ff',
+    parts: [{ cat: 'kit', id: 'neonglow' }, { cat: 'ball', id: 'neon' }, { cat: 'trail', id: 'glitch' }, { cat: 'goalfx', id: 'neon' }, { cat: 'look', id: 'bootlight' }, { cat: 'decor', id: 'netglow' }],
+  },
+  {
+    id: 'galaxy', name: 'Galaxy Set', blurb: 'Starfield kit, planet ball, comet tail, the black hole, a halo and a light show.', bg: '#24124f', accent: '#ff5cf0',
+    parts: [{ cat: 'kit', id: 'galaxy' }, { cat: 'ball', id: 'planet' }, { cat: 'trail', id: 'comet' }, { cat: 'goalfx', id: 'galaxy' }, { cat: 'look', id: 'halo' }, { cat: 'decor', id: 'lightshow' }],
+  },
+  {
+    id: 'champion', name: 'Champion Set', blurb: 'Gold foil kit, gold ball, golden boots, gold rush, the crown and fireworks.', bg: '#a8740c', accent: '#fff0b0',
+    parts: [{ cat: 'kit', id: 'goldfoil' }, { cat: 'ball', id: 'gold' }, { cat: 'trail', id: 'gold' }, { cat: 'goalfx', id: 'gold' }, { cat: 'look', id: 'crown' }, { cat: 'decor', id: 'kickfire' }],
+  },
+];
+
+export function bundleOf(id: string): Bundle | undefined {
+  return BUNDLES.find((b) => b.id === id);
+}
+
+/** A set's parts as shop items. */
+export function bundleItems(b: Bundle): ShopItem[] {
+  return b.parts.map((p) => shopItem(p.cat, p.id)).filter((x): x is ShopItem => !!x);
+}
+
+/** What the parts cost on their own (the struck-through number on the card). */
+export function bundleValue(b: Bundle, items: readonly ShopItem[] = bundleItems(b)): number {
+  return items.reduce((n, it) => n + it.price, 0);
+}
+
+/** The parts you don't own yet. */
+export function bundleMissing(save: Pick<SaveData, 'shop' | 'progress'>, b: Bundle): ShopItem[] {
+  return bundleItems(b).filter((it) => !owns(save, it.cat, it.id));
+}
+
+/** The set's price for this save: the missing parts at BUNDLE_OFF % off, down to a round 50 (0 = you own it all). */
+export function bundlePrice(save: Pick<SaveData, 'shop' | 'progress'>, b: Bundle): number {
+  const full = bundleValue(b, bundleMissing(save, b));
+  return Math.floor((full * (100 - BUNDLE_OFF)) / 100 / 50) * 50;
+}
+
+export type BundleResult = { ok: true; bundle: Bundle; items: ShopItem[]; price: number; coins: number } | { ok: false; reason: 'unknown' | 'owned' | 'no-coins'; short: number };
+
+/** Buy a set: what you don't own yet, at the set price. Owned for good; nothing is equipped (the shop does that). */
+export function buyBundle(save: Pick<SaveData, 'shop' | 'progress' | 'coins'>, id: string): BundleResult {
+  const b = bundleOf(id);
+  if (!b) return { ok: false, reason: 'unknown', short: 0 };
+  const missing = bundleMissing(save, b);
+  if (!missing.length) return { ok: false, reason: 'owned', short: 0 };
+  const price = bundlePrice(save, b);
+  const coins = wallet(save);
+  if (coins < price) return { ok: false, reason: 'no-coins', short: price - coins };
+  save.coins = coins - price;
+  for (const it of missing) grantItem(save, it.cat, it.id);
+  return { ok: true, bundle: b, items: missing, price, coins: save.coins };
+}
+
+/** Sets you have started (some parts owned, not all), the closest to done first: COMPLETE THE SET. */
+export function setsInProgress(save: Pick<SaveData, 'shop' | 'progress'>): { bundle: Bundle; owned: number; total: number; price: number }[] {
+  return BUNDLES.map((b) => {
+    const total = b.parts.length;
+    const owned = total - bundleMissing(save, b).length;
+    return { bundle: b, owned, total, price: bundlePrice(save, b) };
+  }).filter((x) => x.owned > 0 && x.owned < x.total).sort((a, b) => b.owned / b.total - a.owned / a.total || a.price - b.price);
+}
+
+/** The Monday (YYYY-MM-DD) of the week `day` is in: the featured shelf changes on Mondays. */
+export function weekOf(day: string): string {
+  const [y, m, d] = day.split('-').map(Number);
+  const t = new Date(y || 2026, (m || 1) - 1, d || 1, 12);
+  t.setDate(t.getDate() - ((t.getDay() + 6) % 7));
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * This week's FEATURED shelf (the same for everyone, new every Monday): one set as the hero and four looks, a kit, a
+ * player look, a stadium style and an effect. Honest rotation: everything on it is in its own tab all the time, at
+ * the same price, so the shelf is a showcase, never a countdown.
+ */
+export function featuredShelf(day: string): { week: string; bundle: Bundle; items: ShopItem[] } {
+  const week = weekOf(day);
+  const h = hashString(`featured|${week}`);
+  const pick = (list: readonly ShopItem[], salt: number) => list[(h >>> salt) % list.length];
+  const sold = (cat: ShopCat) => ITEMS.filter((it) => it.cat === cat && it.price > 0 && !it.pass);
+  const fx = [...sold('goalfx'), ...sold('trail')];
+  return {
+    week,
+    bundle: BUNDLES[h % BUNDLES.length],
+    items: [pick(sold('kit'), 3), pick(sold('look'), 7), pick(sold('decor'), 11), pick(fx, 15)],
+  };
+}
+
 export type BuyResult = { ok: true; item: ShopItem; coins: number } | { ok: false; reason: 'unknown' | 'owned' | 'no-coins' | 'pass'; short: number };
 
 /**
@@ -322,17 +585,58 @@ export function grantItem(save: Pick<SaveData, 'shop'>, cat: ShopCat, id: string
   return true;
 }
 
-/** Put an owned item on (into Settings, where the match reads it). False, and nothing changes, when it isn't yours. */
+/**
+ * Put an owned item on (into Settings, where the match reads it): a player look or stadium style goes into its
+ * slot, replacing what was there. False, and nothing changes, when it isn't yours.
+ */
 export function equipItem(save: Pick<SaveData, 'shop' | 'progress' | 'settings'>, cat: ShopCat, id: string): boolean {
   if (!owns(save, cat, id)) return false;
+  if (isSlotCat(cat)) {
+    const it = shopItem(cat, id)!;
+    slotMap(save, cat)[it.slot!] = id;
+    return true;
+  }
   save.settings[SETTING[cat]] = id;
   return true;
 }
 
-/** What is on in a category: the Settings choice while it is still yours, else the free default. */
+/** Take a player look or stadium style off (its slot goes empty). False when it wasn't on. */
+export function unequipItem(save: Pick<SaveData, 'settings'>, cat: ShopCat, id: string): boolean {
+  if (!isSlotCat(cat)) return false;
+  const it = shopItem(cat, id);
+  const map = slotMap(save, cat);
+  if (!it?.slot || map[it.slot] !== id) return false;
+  delete map[it.slot];
+  return true;
+}
+
+/** What is on in a category: the Settings choice while it is still yours, else the free default ('' for a slot category). */
 export function equippedId(save: Pick<SaveData, 'shop' | 'progress' | 'settings'>, cat: ShopCat): string {
+  if (isSlotCat(cat)) return '';
   const id = save.settings[SETTING[cat]];
   return id && owns(save, cat, id) ? id : DEFAULT_ID[cat];
+}
+
+/** What is worn in one slot of a slot category ('' = nothing), while it is still yours. */
+export function equippedIn(save: Pick<SaveData, 'shop' | 'progress' | 'settings'>, cat: SlotCat, slot: string): string {
+  const id = slotMap(save, cat)[slot];
+  return id && owns(save, cat, id) ? id : '';
+}
+
+/** Is this item on (equipped in its category, or worn in its slot)? */
+export function isEquipped(save: Pick<SaveData, 'shop' | 'progress' | 'settings'>, cat: ShopCat, id: string): boolean {
+  if (isSlotCat(cat)) {
+    const it = shopItem(cat, id);
+    return !!it?.slot && equippedIn(save, cat, it.slot) === id;
+  }
+  return equippedId(save, cat) === id;
+}
+
+/** Everything worn in a slot category, slot by slot (owned only): what the match reads (meta/style.ts). */
+export function equippedSlots(save: Pick<SaveData, 'shop' | 'progress' | 'settings'>, cat: SlotCat): { [slot: string]: string } {
+  const out: { [slot: string]: string } = {};
+  for (const [slot, id] of Object.entries(slotMap(save, cat))) if (id && owns(save, cat, id)) out[slot] = id;
+  return out;
 }
 
 // ------------------------------------------------------------------ nudges (sparing: see newInShop / inReach)

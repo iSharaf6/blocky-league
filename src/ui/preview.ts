@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Footballer, PSTATE, type PoseInput } from '../render/characters';
-import { STADIUM_PREVIEW_VIEW, buildStadiumPreview, stadiumPreviewLights, type Stadium } from '../render/stadium';
+import { STADIUM_PREVIEW_VIEW, buildStadiumPreview, stadiumPreviewLights, type Stadium, type StadiumParts } from '../render/stadium';
 import { BoxBuilder, voxelMaterial } from '../render/voxel';
 import type { Kit, PlayerDef } from '../sim/types';
 
@@ -139,6 +139,10 @@ export class KitPreview {
 interface StadiumStage {
   canvas: HTMLCanvasElement;
   level: number;
+  /** The level and, for a ground built part by part, its parts: the stage is rebuilt when this changes. */
+  key: string;
+  /** A building to turn towards (the picked part on the stadium screen), or none: the whole bowl. */
+  focus?: { x: number; z: number } | null;
   scene: THREE.Scene;
   stadium: Stadium;
   /** Orbit phase offset, so two previews side by side don't turn in lockstep. */
@@ -190,14 +194,18 @@ export class StadiumPreview {
     return this.renderer !== null;
   }
 
-  /** Show the ground at `level` in `canvas` (slot `i`); rebuilds only when the level changes. */
-  set(i: number, canvas: HTMLCanvasElement, level: number): void {
+  /**
+   * Show the ground at `level` in `canvas` (slot `i`), built from `parts` when given (a ground built part by part,
+   * meta/ground.ts); rebuilds only when the level or the parts change.
+   */
+  set(i: number, canvas: HTMLCanvasElement, level: number, parts?: StadiumParts, focus?: { x: number; z: number } | null): void {
     if (!this.renderer) return;
+    const key = parts ? `${level}:${JSON.stringify(parts)}` : `${level}`;
     // After an upgrade the old NEXT ground is the new NOW one: move it across instead of rebuilding.
-    const j = this.stages.findIndex((st, k) => k !== i && st?.level === level);
-    if (j >= 0 && this.stages[i]?.level !== level) [this.stages[i], this.stages[j]] = [this.stages[j], this.stages[i]];
+    const j = this.stages.findIndex((st, k) => k !== i && st?.key === key);
+    if (j >= 0 && this.stages[i]?.key !== key) [this.stages[i], this.stages[j]] = [this.stages[j], this.stages[i]];
     const old = this.stages[i];
-    if (old && old.level === level) {
+    if (old && old.key === key) {
       old.canvas = canvas;
     } else {
       if (old) old.stadium.dispose();
@@ -208,10 +216,13 @@ export class StadiumPreview {
         away: this.look.away,
         homeName: this.look.homeName,
         seed: 11 + level,
+        parts,
       });
       scene.add(stadium.group);
-      this.stages[i] = { canvas, level, scene, stadium, phase: i * 0.9 };
+      this.stages[i] = { canvas, level, key, scene, stadium, phase: i * 0.9 };
     }
+    const stage = this.stages[i];
+    if (stage) stage.focus = focus ?? null;
     this.idle = 0;
     if (!this.raf) {
       this.last = performance.now();
@@ -255,12 +266,17 @@ export class StadiumPreview {
       // Narrow canvases step back so the whole ground stays in shot as it turns.
       const back = Math.max(1, 1.6 / cam.aspect);
       const a = this.angle0 + Math.sin(time * 0.12 + s.phase) * 0.55 + time * 0.05;
+      // A building picked: look half way towards it, a little closer, so it fills the shot beside the bowl.
+      const f = s.focus;
+      const tx = f ? f.x * 0.6 : this.target.x;
+      const tz = f ? f.z * 0.6 : this.target.z;
+      const near = f ? 0.62 : 1;
       cam.position.set(
-        this.target.x + Math.cos(a) * this.radius * back,
-        this.target.y + this.height * back,
-        this.target.z + Math.sin(a) * this.radius * back,
+        tx + Math.cos(a) * this.radius * back * near,
+        this.target.y + this.height * back * near,
+        tz + Math.sin(a) * this.radius * back * near,
       );
-      cam.lookAt(this.target);
+      cam.lookAt(tx, this.target.y, tz);
       cam.updateProjectionMatrix();
       s.stadium.update(dt, time);
       r.render(s.scene, cam);

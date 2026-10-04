@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { clamp, lerp, smoothstep, wrapAngle } from '../core/math';
 import { grassLike } from '../meta/data';
 import type { Kit, Look, PlayerDef } from '../sim/types';
+import { designOf, paintArm, paintLeg, paintTorso, type KitDesign, type StyledKit } from './kitDesigns';
+import { armbandCell, bootCell, gloveCell, headgearGeometry, isHeadgear, paintHair, shadesGeometry, wristCell } from './looks';
 import { HAIR, SKIN, shade } from './palette';
 import { meshVoxels, VoxelGrid } from './voxel';
 
@@ -68,8 +70,49 @@ const charHemi = { value: new THREE.Color(0, 0, 0) };
  */
 const charWB = { value: new THREE.Color(1, 1, 1) };
 
-/** Vertex-coloured Lambert (like voxelMaterial) plus the camera-side and sky character fills. */
-function makeCharMaterial(): THREE.MeshLambertMaterial {
+/**
+ * The premium kit materials' clock (s) and night glow (0 by day .. 1 under the floodlights): shared by every player's
+ * kit material (render/kitDesigns.ts FX), so no per-player material or texture is ever made for a kit.
+ */
+const kfxTime = { value: 0 };
+const kfxGlow = { value: 0 };
+
+/**
+ * The per-voxel kit materials (render/voxel.ts `fx`, render/kitDesigns.ts FX), on top of the character shading: 1 gold
+ * foil (a bright sweep runs over it and its edges catch the light), 2 glows at night, 3 iridescent (the colour shifts
+ * with the angle), 4 always lit (light up boots, a halo), 5 twinkling stars, 6 flickering flames.
+ */
+const KFX_GLSL = `
+  int kfx = int(vKfx + 0.5);
+  if (kfx > 0) {
+    vec3 kV = normalize(vViewPosition);
+    float kNdv = abs(dot(normal, kV));
+    if (kfx == 1) {
+      float kBand = smoothstep(0.78, 1.0, 0.5 + 0.5 * sin(vKfxW.x * 2.4 + vKfxW.y * 3.6 + vKfxW.z * 2.0 - uKfxTime * 3.4));
+      float kRim = pow(1.0 - kNdv, 2.0);
+      diffuseColor.rgb *= 0.8;
+      totalEmissiveRadiance += diffuseColor.rgb * (0.32 + 1.5 * kBand + 0.7 * kRim) + vec3(1.0, 0.95, 0.82) * kBand * 0.3;
+    } else if (kfx == 2) {
+      totalEmissiveRadiance += diffuseColor.rgb * uKfxGlow * (1.5 + 0.3 * sin(uKfxTime * 4.0));
+    } else if (kfx == 3) {
+      float kH = (1.0 - kNdv) * 1.4 + uKfxTime * 0.22 + (vKfxW.y + vKfxW.x * 0.5) * 0.7;
+      vec3 kRb = 0.5 + 0.5 * cos(6.2832 * (kH + vec3(0.0, 0.33, 0.67)));
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * (0.5 + kRb * 0.95), 0.8);
+      totalEmissiveRadiance += kRb * diffuseColor.rgb * (0.2 + 0.5 * uKfxGlow);
+    } else if (kfx == 4) {
+      totalEmissiveRadiance += diffuseColor.rgb * (0.75 + 0.45 * sin(uKfxTime * 7.0 + vKfxW.x * 2.0 + vKfxW.z * 2.0)) * (1.0 + uKfxGlow);
+    } else if (kfx == 5) {
+      float kTw = sin(uKfxTime * 5.0 + dot(vKfxW, vec3(37.1, 17.3, 23.9)));
+      totalEmissiveRadiance += diffuseColor.rgb * (max(0.0, kTw) * 1.3 + uKfxGlow * 1.1);
+    } else if (kfx == 6) {
+      float kFl = 0.5 + 0.5 * sin(uKfxTime * 11.0 + vKfxW.y * 9.0 + vKfxW.x * 5.0 + vKfxW.z * 3.0);
+      totalEmissiveRadiance += diffuseColor.rgb * (0.3 + 0.65 * kFl) * (0.6 + uKfxGlow);
+    }
+  }
+`;
+
+/** Vertex-coloured Lambert (like voxelMaterial) plus the camera-side and sky character fills (`kfx`: and the kit materials). */
+function makeCharMaterial(kfx = false): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true });
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uCharFill = charFill;
@@ -90,13 +133,47 @@ function makeCharMaterial(): THREE.MeshLambertMaterial {
         vec3 charUpV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
         totalEmissiveRadiance += diffuseColor.rgb * uCharHemi * (0.75 + 0.25 * dot(normal, charUpV));`,
       );
+    if (kfx) {
+      sh.uniforms.uKfxTime = kfxTime;
+      sh.uniforms.uKfxGlow = kfxGlow;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aFx;\nvarying float vKfx;\nvarying vec3 vKfxW;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvKfx = aFx;\nvKfxW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uKfxTime;\nuniform float uKfxGlow;\nvarying float vKfx;\nvarying vec3 vKfxW;')
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${KFX_GLSL}`);
+    }
   };
-  m.customProgramCacheKey = () => 'char-fill-hemi-wb';
+  m.customProgramCacheKey = () => (kfx ? 'char-fill-hemi-wb-kfx' : 'char-fill-hemi-wb');
   return m;
 }
 
 /** The footballers' (and referee's, and ball's) shared opaque material. */
 export const charMaterial = makeCharMaterial();
+
+/**
+ * The one material every premium kit, player look and boot shares (geometry with an `aFx` attribute: see
+ * render/voxel.ts): one shader, one draw state, however many players wear premium kits.
+ */
+export const kitFxMaterial = makeCharMaterial(true);
+
+/** The right shared material for a character geometry: the kit material when it carries per-voxel fx. */
+export function charMaterialFor(geo: THREE.BufferGeometry): THREE.MeshLambertMaterial {
+  return geo.getAttribute('aFx') ? kitFxMaterial : charMaterial;
+}
+
+/** How strongly the glowing kit parts light up (0 by day, about 0.35 at sunset, 1 in a night match). */
+export function setKitGlow(k: number): void {
+  kfxGlow.value = Math.max(0, Math.min(1.5, k));
+}
+
+/**
+ * The kit materials' clock: moved on by every footballer that wears one as it is posed (no per-frame hook needed),
+ * and by the stadium style's kit-material props (render/stadiumStyle.ts).
+ */
+export function tickKitFx(): void {
+  kfxTime.value = (performance.now() % 3.6e6) / 1000;
+}
 
 /**
  * Hit flash (a tackled man, a keeper making a save): the whole figure white for a frame or two, still faintly
@@ -165,6 +242,11 @@ interface Outfit {
   shorts: number;
   socks: number;
   gloves: number | null;
+  /** A premium kit design (render/kitDesigns.ts) drawn instead of the classic pattern; never on a keeper. */
+  design: KitDesign | null;
+  /** Player looks worn by everyone on the side: boots, and (keepers) gloves (render/looks.ts). */
+  bootLook?: string;
+  gloveLook?: string;
 }
 
 function hexDist(a: number, b: number): number {
@@ -181,15 +263,23 @@ function grassSafeKeeper(kit: Kit): number {
 }
 
 function outfitFor(kit: Kit, keeper: boolean): Outfit {
+  const looks = (kit as StyledKit).looks;
+  const bootLook = looks?.boots;
   if (keeper) {
     const gk = grassSafeKeeper(kit);
-    return { shirt: gk, shirt2: shade(gk, 0.8), pattern: 'plain', shorts: shade(gk, 0.55), socks: gk, gloves: 0xf6f4ec };
+    return { shirt: gk, shirt2: shade(gk, 0.8), pattern: 'plain', shorts: shade(gk, 0.55), socks: gk, gloves: 0xf6f4ec, design: null, bootLook, gloveLook: looks?.gloves };
   }
-  return { shirt: kit.shirt, shirt2: kit.shirt2, pattern: kit.pattern, shorts: kit.shorts, socks: kit.socks, gloves: null };
+  return { shirt: kit.shirt, shirt2: kit.shirt2, pattern: kit.pattern, shorts: kit.shorts, socks: kit.socks, gloves: null, design: designOf(kit), bootLook };
 }
 
 function buildTorso(o: Outfit, number: number): THREE.BufferGeometry {
   const g = new VoxelGrid(TORSO_D, TORSO_H, TORSO_W);
+  if (o.design) {
+    // A premium kit: its own painted pattern, collar, shorts and stripe; the number in its own ink.
+    paintTorso(g, o.design, SHORTS);
+    paintNumber(g, number, o.design.ink);
+    return meshVoxels(g, { scale: VU, pivot: [TORSO_D / 2, 0, TORSO_W / 2] });
+  }
   for (let y = 0; y < TORSO_H; y++) {
     for (let z = 0; z < TORSO_W; z++) {
       for (let x = 0; x < TORSO_D; x++) {
@@ -210,17 +300,7 @@ function buildTorso(o: Outfit, number: number): THREE.BufferGeometry {
   for (let z = 0; z < TORSO_W; z++) for (let x = 0; x < TORSO_D; x++) g.set(x, SHORTS - 1, z, shade(o.shorts, 0.84));
   // Shirt number on the back (x = 0): two 3x5 digits fill the 5 shirt rows.
   const ink = o.pattern === 'plain' || o.pattern === 'sleeves' || o.pattern === 'halves' ? contrast(o.shirt) : 0xfbfbf4;
-  const txt = number < 0 ? '' : String(number % 100);
-  const startZ = txt.length === 1 ? 2 : 0;
-  for (let d = 0; d < txt.length; d++) {
-    const rows = DIGITS[txt[d]];
-    for (let r = 0; r < 5; r++) {
-      for (let cI = 0; cI < 3; cI++) {
-        if (rows[r][cI] !== '1') continue;
-        g.set(0, TORSO_H - 1 - r, startZ + d * 4 + cI + (txt.length === 2 ? 0.5 : 0) | 0, ink);
-      }
-    }
-  }
+  paintNumber(g, number, ink);
   // Front: club badge on the left chest and a sponsor block across the middle.
   const front = TORSO_D - 1;
   g.set(front, TORSO_H - 2, 2, 0xffd23a);
@@ -233,16 +313,58 @@ function buildTorso(o: Outfit, number: number): THREE.BufferGeometry {
   return meshVoxels(g, { scale: VU, pivot: [TORSO_D / 2, 0, TORSO_W / 2] });
 }
 
-function buildArm(o: Outfit, skin: number): THREE.BufferGeometry {
+/** The shirt number on the back (x = 0): two 3x5 digits fill the 5 shirt rows. */
+function paintNumber(g: VoxelGrid, number: number, ink: number): void {
+  const txt = number < 0 ? '' : String(number % 100);
+  const startZ = txt.length === 1 ? 2 : 0;
+  for (let d = 0; d < txt.length; d++) {
+    const rows = DIGITS[txt[d]];
+    for (let r = 0; r < 5; r++) {
+      for (let cI = 0; cI < 3; cI++) {
+        if (rows[r][cI] !== '1') continue;
+        g.set(0, TORSO_H - 1 - r, startZ + d * 4 + cI + (txt.length === 2 ? 0.5 : 0) | 0, ink);
+      }
+    }
+  }
+}
+
+/** A cell from a look (render/looks.ts): a colour, or a colour and its kit material. */
+function setCell(g: VoxelGrid, x: number, y: number, z: number, c: number | readonly [number, number]): void {
+  if (typeof c === 'number') g.set(x, y, z, c);
+  else g.set(x, y, z, c[0], c[1]);
+}
+
+/**
+ * An arm: the kit's sleeve and cuff, or a keeper's gloves. `band` (the captain's left arm: an armband look) and
+ * `wrist` (his sweatbands) paint over the sleeve and cuff.
+ */
+function buildArm(o: Outfit, skin: number, band?: string, wrist?: string): THREE.BufferGeometry {
   // 3 deep x 5 long x 2 wide: two-row sleeve + cuff, two-row hand.
   const g = new VoxelGrid(3, ARM_L, 2);
   const sleeve = o.pattern === 'sleeves' ? o.shirt2 : o.shirt;
-  for (let y = 0; y < ARM_L; y++) {
-    let c = y >= 2 ? sleeve : skin;
-    if (o.gloves !== null) c = y <= 1 ? o.gloves : o.shirt;
-    g.box(0, y, 0, 3, 1, 2, c);
+  if (o.design && o.gloves === null) paintArm(g, o.design, skin, 2);
+  else {
+    for (let y = 0; y < ARM_L; y++) {
+      let c = y >= 2 ? sleeve : skin;
+      if (o.gloves !== null) c = y <= 1 ? o.gloves : o.shirt;
+      g.box(0, y, 0, 3, 1, 2, c);
+    }
+    if (o.gloves === null) g.box(0, 2, 0, 3, 1, 2, shade(sleeve, 0.86)); // cuff
   }
-  if (o.gloves === null) g.box(0, 2, 0, 3, 1, 2, shade(sleeve, 0.86)); // cuff
+  for (let x = 0; x < 3; x++) {
+    for (let z = 0; z < 2; z++) {
+      if (o.gloves !== null && o.gloveLook) {
+        for (let y = 0; y < 2; y++) {
+          const c = gloveCell(o.gloveLook, x, y, z);
+          if (c !== null) setCell(g, x, y, z, c);
+        }
+      }
+      const b = armbandCell(band, x, z);
+      if (b !== null) setCell(g, x, 3, z, b);
+      const w = wristCell(wrist, x, z);
+      if (w !== null && o.gloves === null) setCell(g, x, 2, z, w);
+    }
+  }
   return meshVoxels(g, { scale: VU, pivot: [1.5, ARM_L, 1] });
 }
 
@@ -259,10 +381,20 @@ function buildLeg(o: Outfit, skin: number, boots: number): THREE.BufferGeometry 
   }
   g.box(2, 0, 0, 1, 1, 3, boots); // toe cap
   g.box(0, 2, 0, 2, 1, 3, shade(o.socks, 0.84)); // sock turn-over
+  // A premium kit's shorts, stripe and socks; the side's boots look over his own boots.
+  if (o.design) paintLeg(g, o.design, skin);
+  if (o.bootLook) {
+    for (let x = 0; x < 3; x++) {
+      for (let z = 0; z < 3; z++) {
+        const c = bootCell(o.bootLook, x, z);
+        if (c !== null) setCell(g, x, 0, z, c);
+      }
+    }
+  }
   return meshVoxels(g, { scale: VU, pivot: [1, LEG_H, 1.5] });
 }
 
-function buildHead(look: Look): THREE.BufferGeometry {
+function buildHead(look: Look, hairLook?: string): THREE.BufferGeometry {
   // Skin cube occupies [0..HEAD) in head space; the grid is offset so hair can overhang.
   const OX = 2, OZ = 2;
   const g = new VoxelGrid(HEAD + 4, HEAD + 5, HEAD + 4);
@@ -295,7 +427,9 @@ function buildHead(look: Look): THREE.BufferGeometry {
     B(0, y0, 0, depth, H - y0, 1, hair);
     B(0, y0, H - 1, depth, H - y0, 1, hair);
   };
-  switch (look.hair % 9) {
+  // The captain's premium hair (render/looks.ts) in place of his own style.
+  const premium = !!hairLook && paintHair(hairLook, (x, y, z, c, fx) => g.set(x + OX, y, z + OZ, c, fx ?? 0), hair);
+  if (!premium) switch (look.hair % 9) {
     case 0: // short
       cap(); fringe(); back(3); sides(6, 5);
       break;
@@ -457,9 +591,18 @@ export class Footballer {
   private readonly armR: THREE.Mesh;
   private readonly legL: THREE.Mesh;
   private readonly legR: THREE.Mesh;
-  /** The four limbs and all six parts, in POSE order (made once: no array per pose). */
+  /** The four limbs and all six parts, in POSE order (made once: no array per pose), then any look meshes. */
   private readonly limbs: THREE.Mesh[];
   private readonly parts: THREE.Mesh[];
+  /** Each part's own material (the shared character or kit material) for when no flash, fade or tint is on. */
+  private readonly baseMats: THREE.MeshLambertMaterial[];
+  /** Wears a premium kit material somewhere (its clock is moved on as he is posed). */
+  private readonly kitFx: boolean;
+  /** Wears the side's captain looks (meta/style.ts names him). */
+  readonly isCaptain: boolean;
+  /** His own headgear look and his celebration shades (render/looks.ts), if the side wears them. */
+  private headgear: THREE.Mesh | null = null;
+  private shades: THREE.Mesh | null = null;
   /** Hit flash: drawn white while set (see setFlash). */
   private flashing = false;
   /** Casts a dynamic shadow (see setCastShadow: the shadow budget on the lower settings). */
@@ -494,26 +637,52 @@ export class Footballer {
   constructor(readonly def: PlayerDef, kit: Kit, keeper: boolean) {
     const o = outfitFor(kit, keeper);
     const skin = SKIN[def.look.skin % SKIN.length];
-    const kitKey = `${o.shirt}-${o.shirt2}-${o.pattern}-${o.shorts}-${o.socks}-${o.gloves}`;
+    // The captain wears the side's hair, headgear and armband looks (meta/style.ts names him); everyone wears its
+    // boots, the keepers its gloves, and anyone celebrating its shades.
+    const style = kit as StyledKit;
+    const looks = style.looks;
+    this.isCaptain = !!looks && style.captain === def.id;
+    const hairLook = this.isCaptain ? looks!.hair : undefined;
+    const band = this.isCaptain && !keeper ? looks!.arm : undefined;
+    const wrist = this.isCaptain && !keeper ? looks!.head : undefined;
+    const kitKey = `${o.shirt}-${o.shirt2}-${o.pattern}-${o.shorts}-${o.socks}-${o.gloves}${o.design ? `-${o.design.id}` : ''}${o.bootLook ? `-b${o.bootLook}` : ''}${o.gloveLook ? `-g${o.gloveLook}` : ''}`;
     const torsoG = cached(`t-${kitKey}-${def.number}`, () => buildTorso(o, def.number));
-    const armG = cached(`a-${kitKey}-${skin}`, () => buildArm(o, skin));
+    const armG = cached(`a-${kitKey}-${skin}${wrist && wristCell(wrist, 0, 0) ? `-w${wrist}` : ''}`, () => buildArm(o, skin, undefined, wrist));
+    const armLG = band ? cached(`a-${kitKey}-${skin}-c${band}-w${wrist ?? ''}`, () => buildArm(o, skin, band, wrist)) : armG;
     const legG = cached(`l-${kitKey}-${skin}-${def.look.boots}`, () => buildLeg(o, skin, def.look.boots));
-    const headG = cached(`h-${JSON.stringify(def.look)}`, () => buildHead(def.look));
+    const headG = cached(`h-${JSON.stringify(def.look)}${hairLook ? `-${hairLook}` : ''}`, () => buildHead(def.look, hairLook));
 
     const mk = (g: THREE.BufferGeometry) => {
-      const m = new THREE.Mesh(g, charMaterial);
+      const m = new THREE.Mesh(g, charMaterialFor(g));
       m.castShadow = true;
       m.receiveShadow = false;
       return m;
     };
     this.torso = mk(torsoG);
     this.head = mk(headG);
-    this.armL = mk(armG);
+    this.armL = mk(armLG);
     this.armR = mk(armG);
     this.legL = mk(legG);
     this.legR = mk(legG);
     this.limbs = [this.armL, this.armR, this.legL, this.legR];
     this.parts = [this.torso, this.head, this.armL, this.armR, this.legL, this.legR];
+    // The captain's headgear and everyone's celebration shades: small meshes on the head (render/looks.ts).
+    const hg = this.isCaptain && looks?.head && isHeadgear(looks.head) ? headgearGeometry(looks.head, VU) : null;
+    if (hg) {
+      this.headgear = mk(hg);
+      this.head.add(this.headgear);
+      this.parts.push(this.headgear);
+    }
+    const sg = looks?.shades ? shadesGeometry(looks.shades, VU) : null;
+    if (sg) {
+      this.shades = mk(sg);
+      this.shades.castShadow = false;
+      this.shades.visible = false;
+      this.head.add(this.shades);
+      this.parts.push(this.shades);
+    }
+    this.baseMats = this.parts.map((m) => m.material as THREE.MeshLambertMaterial);
+    this.kitFx = this.baseMats.includes(kitFxMaterial);
 
     this.group.add(this.body);
     this.group.scale.setScalar(CHAR_SCALE);
@@ -572,7 +741,7 @@ export class Footballer {
   setCastShadow(on: boolean): void {
     if (on === this.casting) return;
     this.casting = on;
-    for (const m of this.parts) m.castShadow = on;
+    for (const m of this.parts) m.castShadow = on && m !== this.shades;
   }
 
   get castsShadow(): boolean {
@@ -581,7 +750,7 @@ export class Footballer {
 
   private applyMaterial(): void {
     const faded = this.alpha < 1;
-    let mat: THREE.MeshLambertMaterial = charMaterial;
+    let mat: THREE.MeshLambertMaterial | null = null;
     if (faded) mat = this.fadeMat!;
     else if (this.flashing) mat = charFlashMaterial();
     else if (this.tint !== null) {
@@ -591,7 +760,9 @@ export class Footballer {
       this.tintMat.emissive.setHex(this.tintGlow);
       mat = this.tintMat;
     }
-    for (const m of this.parts) m.material = mat;
+    // (Nothing over him: each part goes back to its own shared material, the kit material where it has one.)
+    const parts = this.parts;
+    for (let i = 0; i < parts.length; i++) parts[i].material = mat ?? this.baseMats[i];
   }
 
   /** Hang a prop (the referee's card) in a hand: `obj` is placed in that arm's space at the hand. */
@@ -653,6 +824,9 @@ export class Footballer {
    * plants first, and the head turns towards the ball at a human rate.
    */
   pose(p: PoseInput, time: number): void {
+    if (this.kitFx) tickKitFx();
+    // Shades on while he celebrates (the side's shades look).
+    if (this.shades) this.shades.visible = p.state === PSTATE.celebrate;
     const dtIn = p.dt ?? (Number.isFinite(this.lastTime) ? time - this.lastTime : 0);
     const dt = Math.max(0, Math.min(0.1, dtIn));
     this.lastTime = time;
@@ -1278,6 +1452,19 @@ export class Footballer {
         break;
       }
     }
+  }
+
+  /**
+   * Where headgear sits (his head: add a mesh made by render/looks.ts headgearGeometry to it). render/matchView.ts
+   * moves the side's roaming headgear on to whoever is controlled.
+   */
+  get headAnchor(): THREE.Object3D {
+    return this.head;
+  }
+
+  /** He wears his own headgear look (the captain): a roaming copy would only double it. */
+  get hasHeadgear(): boolean {
+    return this.headgear !== null;
   }
 
   dispose(): void {

@@ -15,9 +15,10 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * Wire version of the lobby and lockstep protocol: peers on different versions don't start a match. (3: the SKILL
  * button on the pad, and the AI's telegraphed challenges on a human's carrier: sim/skills.ts. 4: AUTO SPRINT on the pad,
  * the new skill moves and their shield, the human's quicker dribble; and the added-time whistle, sim/match.ts
- * addedTimeUp, which changes when every half ends.)
+ * addedTimeUp, which changes when every half ends. 5: HYPE meters and the SUPER SHOT, sim/hype.ts, on in classic online
+ * matches: netConfig's `hype`; and added time by the Laws, earned and announced on the board, sim/match.ts STOP_BASE_S.)
  */
-export const NET_VERSION = 4;
+export const NET_VERSION = 5;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides
@@ -102,6 +103,8 @@ export function netConfig(s: MatchSetup, localSide: Side, teams = netTeams(s)): 
     seed: s.seed,
     mode: s.mode,
     knockout: !!s.knockout,
+    // HYPE and the SUPER SHOT (sim/hype.ts): classic matches, the same rule on both machines (NET_VERSION 5).
+    hype: s.mode !== 'blitz',
   };
 }
 

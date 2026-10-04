@@ -54,9 +54,10 @@ describe('catalogue', () => {
       }
     }
     for (const cat of SHOP_CATS) {
-      // (Club Pass looks cost no coins but are earned on the pass, never a free default.)
+      // (Club Pass looks cost no coins but are earned on the pass, never a free default. The slot categories, player
+      // looks and stadium style, have none: an empty slot wears nothing extra.)
       const free = shopItems(cat).filter((i) => i.price === 0 && !i.pass);
-      expect(free.map((i) => i.id)).toEqual([DEFAULT_ID[cat]]);
+      expect(free.map((i) => i.id)).toEqual(DEFAULT_ID[cat] ? [DEFAULT_ID[cat]] : []);
       expect(CAT_LABEL[cat].length).toBeGreaterThan(0);
     }
   });
@@ -251,11 +252,13 @@ describe('nudges', () => {
     expect(inReach(s, 280, 470)?.price).toBe(450);
     expect(inReach(s, 500, 520)).toBeNull();
     s.coins = 5000;
-    // (Everything at 450: a celebration, a ball, a goal explosion and a trail.)
+    // (Everything at 450: a celebration, a ball, a goal explosion, a trail, a player look and a stadium style.)
     buyItem(s, 'celebration', 'shush');
     buyItem(s, 'ball', 'melon');
     buyItem(s, 'goalfx', 'confetti');
     buyItem(s, 'trail', 'popcorn');
+    buyItem(s, 'look', 'tips');
+    buyItem(s, 'decor', 'mowdiag');
     // Owned items are never "in reach".
     expect(inReach(s, 420, 460)).toBeNull();
   });

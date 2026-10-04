@@ -59,7 +59,7 @@ export function normalizeSeason(raw: unknown, now: Date = new Date()): SeasonSta
     ? [...new Set(r.passClaimed.filter((x) => Number.isInteger(x) && x >= 1 && x <= SEASON_TIERS))].sort((a, b) => a - b)
     : [];
   const carryItems = Array.isArray(r.carryItems)
-    ? [...new Set(r.carryItems.filter((k): k is string => typeof k === 'string' && /^(goalfx|trail):pass\d{2}$/.test(k)))]
+    ? [...new Set(r.carryItems.filter((k): k is string => typeof k === 'string' && /^(goalfx|trail|kit|look):pass\d{2}$/.test(k)))]
     : [];
   // Progress under an id we can't read belongs to no season we know: start this one afresh (titles and carry stay).
   if (typeof r.id !== 'string' || !/^\d{4}-\d{2}$/.test(r.id)) return { ...defaultSeason(now), titles, carry, carryItems };
@@ -150,8 +150,11 @@ export function seasonReward(t: number, id: string): { coins: number; title?: st
 
 // ------------------------------------------------------------------ the Club Pass track (meta/pass.ts sells and pays it)
 
-/** Coins on pass tiers 5, 15, 25 and 30 (10 and 20 are the month's own looks). */
-export const PASS_BIG_COINS: { readonly [t: number]: number } = { 5: 300, 15: 500, 25: 700, 30: 1500 };
+/** Coins on pass tiers 25 and 30 (5, 10, 15 and 20 are the month's own looks). */
+export const PASS_BIG_COINS: { readonly [t: number]: number } = { 25: 700, 30: 1800 };
+
+/** The pass tiers that hand over the month's own looks: its player look, sprint trail, premium kit and goal explosion. */
+export const PASS_ITEM_TIERS: { readonly [t: number]: 'look' | 'trail' | 'kit' | 'goalfx' } = { 5: 'look', 10: 'trail', 15: 'kit', 20: 'goalfx' };
 
 /** The Club Pass look id of season `id` (core/save.ts PASS_IDS: 'pass10' in October). */
 export function passItemId(id: string): string {
@@ -159,12 +162,13 @@ export function passItemId(id: string): string {
 }
 
 /**
- * What pass tier t (1..30) of season `id` pays, on top of the free track: coins, or the month's sprint trail
- * (tier 10) or goal explosion (tier 20). About 6,000 coins and both looks over a season (docs/ECONOMY.md).
+ * What pass tier t (1..30) of season `id` pays, on top of the free track: coins, or one of the month's own looks
+ * (PASS_ITEM_TIERS: its player look at 5, sprint trail at 10, premium kit at 15, goal explosion at 20). About 5,500
+ * coins and four looks money can't buy any other way over a season (docs/ECONOMY.md).
  */
-export function passReward(t: number, id: string): { coins: number; item?: { cat: 'goalfx' | 'trail'; id: string } } {
-  if (t === 10) return { coins: 0, item: { cat: 'trail', id: passItemId(id) } };
-  if (t === 20) return { coins: 0, item: { cat: 'goalfx', id: passItemId(id) } };
+export function passReward(t: number, id: string): { coins: number; item?: { cat: 'goalfx' | 'trail' | 'kit' | 'look'; id: string } } {
+  const cat = PASS_ITEM_TIERS[t];
+  if (cat) return { coins: 0, item: { cat, id: passItemId(id) } };
   const big = PASS_BIG_COINS[t];
   if (big) return { coins: big };
   return { coins: Math.round((50 + 5 * t) / 10) * 10 };

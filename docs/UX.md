@@ -58,7 +58,9 @@ Every chore gets a one-tap helper:
 - training: TRAIN BEST (the cheapest upgrade with the most impact)
 - transfers: a FOR YOU sort (biggest upgrade on your weakest position that you can afford)
 - rewards: CLAIM ALL
-- the hub: PLAY NEXT
+- the hub: PLAY NEXT, and NEXT GOAL under the hero (one line, a tap goes there: meta/goal.ts)
+- the academy: PROMOTE BEST (ROAD TO GLORY > CLUB)
+- the ground: the best part to build next starts selected (MY CLUB > STADIUM), so BUILD is one tap
 
 ## 6. Less to read
 

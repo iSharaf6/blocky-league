@@ -43,27 +43,34 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * (actions.ts shotPressure, keeper.ts HUMAN_STRIKE_UNREAD) and busier runs off his ball (ai.ts humanFlow). The AI v AI
  * rows (ai*, aiKo*) moved with the referee's added time (match.ts addedTimeUp: a half now ends at a natural stoppage),
  * not with the controls work: with its sim edits taken out, the AI rows come out exactly as recorded here.
+ * Revision 2026-10-04 (NET_VERSION 5) re-recorded every row: added time by the Laws (match.ts STOP_BASE_S: the board's
+ * minutes earned through the half and always played, the half then ended at a fair moment, players and ball winding
+ * down after the whistle) moves when every half ends, on top of that round's match pace, switching and HYPE work in the
+ * tree when recorded. No driver or comparison was relaxed.
+ * Later the same day the nine rows whose driver presses while their ball is in the air into its end (fuzz*, pen*, ko3,
+ * ko6) were re-recorded: a "just clear it" press is now answered by whichever of his men the ball comes within reach
+ * of (match.ts checkHumanClear). The AI v AI rows, the scripted bot's and ko1 came out exactly as before.
  */
 const BEFORE: Record<string, Row> = {
-  aiClassic: [3857206067, 2114493345, 19536, 2, 1, 0],
-  aiBlitz: [973803513, 3241739498, 11862, 0, 2, 0],
-  aiStyles: [2660539149, 3277525662, 11755, 0, 3, 0],
-  botSide0: [3160630083, 2272953628, 15454, 4, 0, 0],
-  botPerks: [1792871590, 1802863702, 11858, 3, 1, 0],
-  botFirstMatch: [2467454663, 3169156977, 12334, 4, 0, 0],
-  fuzzSide1: [1567449356, 1437678220, 11034, 0, 0, 0],
-  fuzzBlitz0: [2627891867, 746009896, 11831, 0, 4, 0],
-  fuzzBlitzPerks1: [791116711, 823139453, 11520, 2, 0, 0],
-  penTaker0: [3286159086, 3708378327, 7333, 0, 0, 0],
-  penTaker1Low: [2461084787, 3305714708, 8226, 1, 3, 0],
-  penTimeout1: [192063246, 4035757176, 7623, 1, 0, 0],
-  penKeeper1: [2242256683, 2332648774, 8062, 3, 0, 0],
-  ko1: [535862607, 534958651, 3422, 1, 0, 0],
-  ko3: [4087653139, 1883247289, 5212, 0, 0, 1],
-  ko6: [626281894, 358611498, 5670, 0, 0, 1],
-  aiKo1: [304532972, 837311316, 4876, 0, 0, 1],
-  aiKo4: [1910068503, 1128895319, 4024, 0, 1, 0],
-  aiKo7: [1282669707, 2382932321, 5085, 0, 0, 1],
+  aiClassic: [2017188631, 352340912, 19086, 0, 1, 0],
+  aiBlitz: [1582265165, 1309870222, 12218, 1, 2, 0],
+  aiStyles: [2169161809, 3859010485, 12310, 0, 3, 0],
+  botSide0: [1581416009, 1076470562, 17663, 6, 1, 0],
+  botPerks: [551454636, 1315519321, 12566, 5, 1, 0],
+  botFirstMatch: [1468565586, 2277923504, 12153, 2, 0, 0],
+  fuzzSide1: [1848367879, 2239220835, 12307, 2, 1, 0],
+  fuzzBlitz0: [1788810890, 3829490918, 11567, 0, 1, 0],
+  fuzzBlitzPerks1: [790297077, 2124414345, 11797, 2, 0, 0],
+  penTaker0: [1916068335, 1959104267, 7349, 0, 0, 0],
+  penTaker1Low: [685801524, 3476524401, 8149, 1, 2, 0],
+  penTimeout1: [2900041037, 3684050025, 7553, 0, 0, 0],
+  penKeeper1: [2291005179, 1637367520, 8222, 3, 0, 0],
+  ko1: [3562532861, 2592221092, 4957, 0, 0, 1],
+  ko3: [2964397297, 3379525808, 5333, 0, 0, 1],
+  ko6: [1688102224, 1340312657, 3666, 1, 0, 0],
+  aiKo1: [2469038319, 23655505, 4876, 0, 0, 1],
+  aiKo4: [975643068, 4091315228, 3821, 0, 1, 0],
+  aiKo7: [843597184, 3710384732, 4881, 0, 0, 1],
 };
 
 describe('single-player stays bit-identical', () => {

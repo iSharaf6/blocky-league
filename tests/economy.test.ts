@@ -29,16 +29,26 @@ describe('rarity and the Legendary looks', () => {
     expect(all.filter((i) => i.price === 0).every((i) => itemTier(i) === 'common')).toBe(true);
     const legendary = all.filter((i) => itemTier(i) === 'legendary');
     expect(legendary.map((i) => `${i.cat}:${i.id}`).sort()).toEqual([
-      'ball:diamond', 'ball:planet', 'goalfx:diamond', 'goalfx:galaxy', 'goalfx:meteor', 'goalfx:supernova', 'trail:comet', 'trail:lightning',
+      'ball:diamond', 'ball:planet', 'decor:kickpyro', 'decor:mascotdragon', 'goalfx:diamond', 'goalfx:galaxy', 'goalfx:meteor', 'goalfx:supernova',
+      'kit:galaxy', 'kit:goldfoil', 'kit:neonglow', 'kit:pinstripe', 'look:bootlight', 'look:crown', 'trail:comet', 'trail:lightning',
     ]);
     // A keen free player banks roughly 2,500 to 3,500 coins a day: each is one to three days of saving, the set weeks.
     for (const i of legendary) expect(i.price).toBeGreaterThanOrEqual(4500);
     expect(legendary.reduce((n, i) => n + i.price, 0)).toBeGreaterThanOrEqual(25_000);
-    // The fairness line: a free player can own the whole catalogue eventually (about a month of keen play).
+    // The fairness line: a free player can own the whole catalogue eventually: the effects and balls in about a month
+    // of keen play, everything (kits, player looks and stadium style too) in about two.
     const total = all.reduce((n, i) => n + i.price, 0);
-    expect(total).toBeLessThanOrEqual(100_000);
+    const v1 = all.filter((i) => i.cat !== 'kit' && i.cat !== 'look' && i.cat !== 'decor').reduce((n, i) => n + i.price, 0);
+    expect(v1).toBeLessThanOrEqual(100_000);
+    expect(total).toBeLessThanOrEqual(200_000);
+    // Every new category has looks for a first session, and something to aim at for weeks.
+    for (const cat of ['kit', 'look', 'decor'] as const) {
+      const list = all.filter((i) => i.cat === cat && i.price > 0);
+      expect(list.filter((i) => i.price <= 450).length, cat).toBeGreaterThanOrEqual(2);
+      expect(list.filter((i) => itemTier(i) === 'legendary').length, cat).toBeGreaterThanOrEqual(1);
+    }
     // The rarer, the bigger the show: in every category the dearest look is a Legendary one.
-    for (const cat of ['ball', 'goalfx', 'trail'] as const) {
+    for (const cat of ['ball', 'goalfx', 'trail', 'kit', 'look', 'decor'] as const) {
       const top = all.filter((i) => i.cat === cat).sort((a, b) => b.price - a.price)[0];
       expect(itemTier(top)).toBe('legendary');
     }
@@ -89,10 +99,11 @@ describe("today's deal", () => {
 });
 
 describe('the Club Pass', () => {
-  it('bought mid-month, it hands over every tier already reached; ~6,000 coins and both looks in all', () => {
+  it('bought mid-month, it hands over every tier already reached; ~5,500 coins and four looks in all', () => {
     const totals = passTotals('2026-10');
     expect(totals.coins).toBeGreaterThanOrEqual(5500);
-    expect(totals.items.map((i) => i.id)).toEqual(['pass10', 'pass10']);
+    // The month's player look (tier 5), sprint trail (10), premium kit (15) and goal explosion (20).
+    expect(totals.items.map((i) => `${i.cat}:${i.id}`)).toEqual(['look:pass10', 'trail:pass10', 'kit:pass10', 'goalfx:pass10']);
     const s = rich(0);
     const season = seasonOf(s, OCT);
     season.xp = tierXp(12);
@@ -119,10 +130,12 @@ describe('the Club Pass', () => {
     rollSeason(season, NOV);
     expect(season.pass).toBe(false);
     expect(season.passClaimed).toEqual([]);
-    expect(season.carryItems.sort()).toEqual(['goalfx:pass10', 'trail:pass10']);
+    expect(season.carryItems.sort()).toEqual(['goalfx:pass10', 'kit:pass10', 'look:pass10', 'trail:pass10']);
     expect(season.carry!.coins).toBeGreaterThan(0);
-    expect(claimCarryItems(s).sort()).toEqual(['goalfx:pass10', 'trail:pass10']);
+    expect(claimCarryItems(s).sort()).toEqual(['goalfx:pass10', 'kit:pass10', 'look:pass10', 'trail:pass10']);
     expect(owns(s, 'goalfx', 'pass10')).toBe(true);
+    expect(owns(s, 'kit', 'pass10')).toBe(true);
+    expect(owns(s, 'look', 'pass10')).toBe(true);
     expect(shopOf(s).owned).toContain('trail:pass10');
   });
 

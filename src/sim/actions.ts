@@ -352,6 +352,17 @@ const HUMAN_MARK_R = 2;
 const HUMAN_RISKY = 0.6;
 const HUMAN_CONES = [1.1, 1.45];
 /**
+ * The stick is his choice (2026-10-04, the owner: "hard to control players"). Over whole casual matches a pass with
+ * the stick within 10 degrees of the team-mate he meant went to somebody else 36% of the time, and 86% of those went
+ * to a man LESS far forward, often 45 to 80 degrees off the stick: the lane penalty outweighed the aim. Now every
+ * radian off the stick beyond HUMAN_AIM_FREE costs HUMAN_AIM_W (inside it the old weighing stands, so a thumb's wobble
+ * between two men either side of the line doesn't flick the preview), and a covered man in the cone is passed over only
+ * for an open one within the pass's own cone (pickReceiver's `cone`, 49 degrees; the wider HUMAN_CONES are kept for
+ * when nobody is that way).
+ */
+const HUMAN_AIM_W = 2;
+const HUMAN_AIM_FREE = 0.3;
+/**
  * ... and with NOBODY in the cone at all, the man out to the side, never behind: at most HUMAN_LAST_CONE (95 degrees)
  * off the aim. (It was 117 degrees, and opened whenever the man in the cone was covered. Round 12, the critic: the
  * stick straight ahead with the winger 48 degrees off and marked, it found an "open" man at -119 degrees behind the
@@ -394,10 +405,10 @@ export function pickReceiver(m: Match, p: Player, dx: number, dz: number, mode: 
   const first = scanReceivers(m, p, dx, dz, mode, mode === 'lob' ? cone : ASSIST_CONE[level], true, prefer);
   if (first.idx >= 0 && first.risk <= HUMAN_RISKY) return first.idx;
   if (semi && first.idx < 0) return -1;
-  // A covered man in the cone: an open one is looked for a little wider (HUMAN_CONES), never behind. Nobody in
-  // the cone at all: out to HUMAN_LAST_CONE (a covered man in roughly the right direction beats rolling it into
-  // space).
-  const cones = mode === 'pass' && !semi && first.idx < 0 ? [...HUMAN_CONES, HUMAN_LAST_CONE] : HUMAN_CONES;
+  // A covered man in the cone: an open one is looked for near the stick (`cone`), never wider (HUMAN_AIM_W). Nobody
+  // in the cone at all: a little wider (HUMAN_CONES), never behind, and out to HUMAN_LAST_CONE (a covered man in
+  // roughly the right direction beats rolling it into space).
+  const cones = first.idx >= 0 ? [cone] : mode === 'pass' && !semi ? [...HUMAN_CONES, HUMAN_LAST_CONE] : HUMAN_CONES;
   let fallback = first.idx;
   for (const c of cones) {
     const wide = scanReceivers(m, p, dx, dz, mode, Math.max(cone, c), true, prefer);
@@ -608,6 +619,7 @@ function scanReceivers(
     let score = cos * 2.2 - d * 0.012;
     let risk = 0;
     if (human) {
+      score -= Math.max(0, ang - HUMAN_AIM_FREE) * HUMAN_AIM_W;
       risk = passRisk(m, p, t, mode);
       if (mode === 'pass' || mode === 'through') score -= risk * HUMAN_LANE_W;
       if (nearestOppDist(m, t) < HUMAN_MARK_R) score -= mode === 'lob' ? HUMAN_MARKED * 0.6 : HUMAN_MARKED;

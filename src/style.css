@@ -1129,6 +1129,31 @@ kbd {
   margin-left: 4px;
 }
 
+/* The fourth official's board (added time, Law 7.3): a voxel LED board hung off the score bug's right edge, beside the
+   clock, from 45:00 / 90:00 until the whistle. It pops up, then stays. */
+.sb-board {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  margin-left: 6px;
+  display: none;
+  padding: 6px 9px 5px;
+  background: #15151b radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1.6px) 0 0 / 4px 4px;
+  border: 3px solid #34343e;
+  color: #7dff8e;
+  text-shadow: 0 0 6px rgba(110, 255, 130, 0.85);
+  font: 700 clamp(16px, 1.8vw, 22px) / 1 var(--px);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  transform-origin: left center;
+}
+.sb-board.on { display: block; }
+.sb-board.pop { animation: board-pop 0.55s cubic-bezier(0.2, 1.6, 0.4, 1); }
+@keyframes board-pop {
+  0% { transform: translateY(-14px) scale(0.3); opacity: 0; }
+  70% { opacity: 1; }
+}
+
 /* Bookings: a chip under each side of the score bug. Inline-size containment: the plate never widens the
    score bug's columns (it wraps inside its team's column instead). */
 .sb-cards {
@@ -1700,8 +1725,21 @@ kbd {
   transition: opacity 0.2s;
 }
 
-.hud-replay.on {
+.hud-replay.on,
+.hud-replay.skip-only {
   opacity: 1;
+}
+
+/* A goal celebration a tap skips: only the skip line shows, low and centred (clear of the banner and the HUD up top). */
+.hud-replay.skip-only {
+  top: auto;
+  bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.hud-replay.skip-only b {
+  display: none;
 }
 
 .hud-replay b {

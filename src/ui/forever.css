@@ -1,0 +1,522 @@
+/*
+ * The forever game inside ROAD TO GLORY (ui/forever.ts): THIS SEASON under the next match, the CLUB tab, the
+ * Continental and World Club Cup sections, the season STORY and the moment cards. Chunky blocks like the rest of the
+ * hub (career.css); every piece fits the app shell's panes (docs/UX.md).
+ */
+
+/* ----- THIS SEASON: one strip of three objectives ----- */
+
+.fv-strip {
+  flex: none;
+  appearance: none;
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 4px;
+  min-height: 40px;
+  margin: 0;
+  padding: 3px;
+  border: 3px solid var(--ink);
+  background: var(--ink);
+  color: var(--cream);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 4px 0 rgba(38, 38, 46, 0.35);
+}
+
+.fv-strip:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(38, 38, 46, 0.35); }
+
+.fv-strip-h {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 2px;
+  padding: 0 5px 0 4px;
+}
+
+.fv-strip-h b { font: 400 11px/1 var(--round); letter-spacing: 1px; color: var(--yellow); white-space: nowrap; }
+.fv-strip-h em { font: 400 13px/1 var(--round); font-style: normal; }
+
+.fv-obj {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 5px;
+  align-items: center;
+  min-width: 0;
+  padding: 3px 5px 2px 4px;
+  background: #3a3a46;
+}
+
+.fv-obj b,
+.fv-obj small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fv-obj b { font: 400 12px/1.05 var(--round); letter-spacing: 0.3px; }
+.fv-obj small { grid-column: 2; font: 400 10px/1.1 var(--round); letter-spacing: 0.3px; color: #cfcab8; }
+
+.fv-tick {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #cfcab8;
+  font: 400 12px/1 var(--round);
+  font-style: normal;
+  color: var(--ink);
+}
+
+.fv-obj.done { background: var(--go); color: #fff; }
+.fv-obj.done small { color: #eaffef; }
+.fv-obj.done .fv-tick { border-color: #fff; background: #fff; color: var(--go); animation: fv-stamp 0.5s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+.fv-obj.failed { opacity: 0.55; }
+.fv-obj.failed .fv-tick { border-color: #9a968c; color: #cfcab8; }
+
+@keyframes fv-stamp {
+  0% { transform: scale(2.2) rotate(-14deg); opacity: 0; }
+  100% { transform: none; opacity: 1; }
+}
+
+/* The OVR lift (morale, chemistry, the fan zone) on your side of the next-match card. */
+.cr-lift {
+  margin-left: 4px;
+  padding: 1px 4px 0;
+  font-style: normal;
+  color: #fff;
+  background: var(--go);
+}
+
+/* A story chip (DERBY DAY, TITLE DECIDER, SURVIVAL BATTLE) in the next-match card's top row. */
+.cr-next .mc-chip.story { color: #fff; background: var(--red); animation: hub-throb 1.4s ease-in-out infinite; }
+.cr-next .mc-chip.story.gold { color: var(--ink); background: var(--yellow); }
+.cr-next .mc-chip.story.danger { background: var(--ink); color: var(--yellow); }
+.cr-next .mc-pay.story { color: var(--red-d, #b8322a); }
+
+/* The STADIUM quick button while something is going up. */
+.cr-quick .fv-building {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 5px 2px;
+  font: 400 10px/1 var(--round);
+  letter-spacing: 0.5px;
+  color: var(--ink);
+  background: var(--yellow);
+  white-space: nowrap;
+  box-shadow: 0 2px 0 var(--ink);
+}
+
+/* ----- the CLUB tab ----- */
+
+.fv-club { display: grid; gap: 8px; padding-bottom: 6px; }
+
+.fv-sec { display: grid; gap: 4px; }
+
+.panel.mc .fv-h,
+.fv-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  margin: 0;
+  font: 400 12px/1 var(--round);
+  letter-spacing: 1px;
+  color: var(--blue-d, #1c4fa3);
+}
+
+.fv-h > span { flex: 1 1 auto; min-width: 0; }
+
+.fv-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 3px 7px;
+  border: 2px solid var(--ink);
+  background: #fff;
+  font: 400 13px/1.15 var(--round);
+  color: var(--ink);
+}
+
+.fv-row .fv-t {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fv-row .fv-t small {
+  font: 400 10px/1.15 var(--round);
+  letter-spacing: 0.3px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fv-row > small { flex: none; font: 400 11px var(--round); color: var(--ink-2); }
+.fv-row > b { flex: none; font: 400 13px var(--round); }
+.fv-ok { color: var(--go-d, #238a3b); }
+.fv-no { color: #9a968c; }
+.fv-pay { color: var(--ink-2); }
+.fv-objrow.done { background: #e8f9ec; }
+.fv-objrow.failed { background: var(--cream-2); color: #7a776f; }
+.fv-objrow .fv-tick { border-color: var(--ink); width: 18px; height: 18px; }
+.fv-objrow.done .fv-tick { background: var(--go); border-color: var(--go); color: #fff; }
+
+.fv-empty { margin: 0; padding: 8px; font: 400 12px/1.2 var(--round); color: var(--ink-2); background: var(--cream-2); }
+
+.fv-bar { display: block; flex: 1 1 auto; height: 8px; min-width: 40px; background: rgba(38, 38, 46, 0.18); }
+.fv-bar u { display: block; height: 100%; background: var(--go); text-decoration: none; transition: width 0.4s; }
+
+.fv-conf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  font: 400 11px var(--round);
+  letter-spacing: 0.5px;
+}
+
+.fv-conf > span { flex: none; }
+.fv-conf > b { flex: none; font-size: 13px; }
+.fv-conf > em { flex: none; font-style: normal; padding: 2px 5px 1px; color: #fff; background: var(--ink); }
+
+.fv-confchip { flex: none; font-style: normal; padding: 2px 5px 1px; color: #fff; background: var(--ink); letter-spacing: 0.5px; }
+
+.panel .fv-mini {
+  flex: none;
+  min-height: 30px;
+  padding: 5px 8px 4px;
+  font: 400 11px/1 var(--round);
+  letter-spacing: 0.5px;
+  box-shadow: inset 0 0 0 2px var(--ink), 0 2px 0 var(--ink-2);
+}
+
+.fv-stars { flex: none; font: 400 11px var(--round); color: #e8a400; letter-spacing: -1px; }
+
+.fv-mood { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+
+.fv-m {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 5px 3px 4px;
+  border: 2px solid var(--ink);
+  background: #fff;
+  min-width: 0;
+}
+
+.fv-m span { font: 400 10px var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
+.fv-m b { max-width: 100%; font: 400 12px var(--round); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-m.m2 { background: #e8f9ec; color: var(--go-d, #238a3b); }
+.fv-m.m0 { background: var(--cream-2); color: #7a776f; }
+.fv-m.cap { color: var(--blue-d, #1c4fa3); }
+
+.fv-form { display: flex; align-items: center; gap: 3px; font: 400 11px var(--round); letter-spacing: 0.5px; }
+.fv-form > span { margin-right: 4px; }
+.fv-form .mc-wdl { width: 22px; height: 20px; font-size: 12px; line-height: 20px; }
+.fv-form small { color: var(--ink-2); }
+
+.fv-lv { display: flex; align-items: center; gap: 8px; }
+
+.fv-lvn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  padding: 4px 6px 3px;
+  font: 400 20px/1 var(--round);
+  color: #fff;
+  background: #8a5cf6;
+  box-shadow: inset 0 -3px 0 #5b36b8;
+}
+
+.fv-lvn small { font-size: 9px; letter-spacing: 1px; }
+.fv-lvbar { flex: 1 1 auto; display: grid; gap: 3px; min-width: 0; }
+.fv-lvbar .fv-bar u { background: #8a5cf6; }
+.fv-lvbar small { font: 400 10px var(--round); letter-spacing: 0.3px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fv-next { margin: 0; font: 400 11px var(--round); letter-spacing: 0.3px; color: #5b36b8; }
+.fv-perks { display: flex; flex-wrap: wrap; gap: 4px; }
+.fv-perk { padding: 3px 6px 2px; font: 400 10px var(--round); letter-spacing: 0.3px; color: #fff; background: #8a5cf6; }
+.fv-treble { background: var(--ink); color: var(--cream); }
+.fv-treble .fv-t small { color: #cfcab8; }
+.fv-log > b { color: #5b36b8; }
+.fv-rec > span { flex: none; min-width: 92px; font: 400 10px var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
+.fv-rival { background: #fff1f0; }
+.fv-legend .picon { flex: none; }
+
+.fv-anew { display: grid; gap: 6px; padding: 8px; border: 3px dashed var(--ink); background: #fff8d6; }
+.fv-anew p { margin: 0; font: 400 12px/1.25 var(--round); }
+.panel .fv-anew .btn { min-height: 40px; font-size: 13px; }
+
+/* ----- the CUPS tab: Continental and World Club Cups ----- */
+
+.cr-scroll .fv-comphead { margin: 10px 0 5px; }
+.fv-comphead.world { background: #1c4fa3; }
+.fv-comphead.locked { background: #8f8c85; }
+.fv-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.cr-scroll .fv-group { border-spacing: 0 2px; font-size: 12px; }
+.cr-scroll .fv-group td { padding: 3px 3px 2px; }
+.cr-scroll .fv-group td.club { font-size: 12px; white-space: nowrap; }
+.cr-scroll .fv-group tr.up td.pos { color: var(--go-d, #238a3b); }
+.fv-fxs { display: grid; gap: 3px; margin-top: 5px; }
+.fv-fx { min-height: 30px; gap: 5px; font-size: 12px; }
+.fv-fx.you { box-shadow: inset 4px 0 0 var(--yellow); }
+.fv-fx .mc-ysmd { flex: none; min-width: 36px; font-size: 11px; }
+.fv-cs { flex: 1 1 0; display: flex; align-items: center; min-width: 0; gap: 3px; white-space: nowrap; overflow: hidden; }
+.fv-cs.me { font-weight: 400; color: var(--blue-d, #1c4fa3); }
+.fv-cs.win::after { content: ''; width: 6px; height: 6px; margin-left: 3px; background: var(--go); }
+.fv-cs.tbd { color: #9a968c; }
+.fv-fx .sc { flex: none; min-width: 42px; padding: 3px 4px 2px; font-size: 12px; }
+.fv-cal { margin: 4px 0 0; font: 400 10px/1.3 var(--round); letter-spacing: 0.3px; color: var(--ink-2); }
+.fv-rec .fv-t { display: block; }
+
+/* ----- the season STORY ----- */
+
+.fv-treblebig {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px;
+  color: var(--yellow);
+  background: var(--ink);
+  font: 400 22px var(--round);
+  letter-spacing: 2px;
+}
+
+/* A promotion or a title: the result card throws a party. */
+.mc-result.up,
+.mc-result.champ { position: relative; overflow: hidden; }
+.cr-party .mc-result b { animation: fv-pop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+@keyframes fv-pop { 0% { transform: scale(0.4); } 100% { transform: none; } }
+
+/* ----- the moment cards ----- */
+
+.fv-moment-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(20, 20, 28, 0.62);
+  animation: fv-fade 0.18s ease-out both;
+}
+
+@keyframes fv-fade { from { opacity: 0; } }
+
+.fv-moment {
+  --mc: var(--go);
+  width: min(380px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 16px 18px 14px;
+  border: 4px solid var(--ink);
+  background: var(--cream);
+  text-align: center;
+  box-shadow: 0 8px 0 var(--ink);
+  animation: fv-card 0.42s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+@keyframes fv-card { 0% { transform: scale(0.6) rotate(-4deg); opacity: 0; } 100% { transform: none; opacity: 1; } }
+
+.fv-mic {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-top: -50px;
+  border: 4px solid var(--ink);
+  background: var(--mc);
+  box-shadow: 0 4px 0 var(--ink);
+  animation: fv-stamp 0.55s 0.1s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+.fv-mt { font: 400 26px/1 var(--round); letter-spacing: 1px; color: var(--ink); }
+.fv-mx { margin: 0; font: 400 15px/1.25 var(--round); color: var(--ink-2); }
+
+.fv-mcoins {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 4px;
+  font: 400 18px var(--round);
+  color: var(--ink);
+  background: var(--yellow);
+  box-shadow: inset 0 -3px 0 var(--yellow-d, #d9a400);
+}
+
+.fv-mcoins i { width: 14px; height: 14px; background: #ffb400; box-shadow: inset 0 0 0 3px #f59e00; }
+.panel .fv-mgo, .fv-mgo { min-width: 160px; min-height: 46px; }
+
+@media (max-height: 380px) {
+  .fv-strip { min-height: 36px; }
+  .fv-obj small { font-size: 9px; }
+  .fv-mt { font-size: 22px; }
+  .fv-mic { width: 60px; height: 60px; margin-top: -42px; }
+}
+
+@media (min-height: 561px) {
+  .fv-strip { min-height: 52px; }
+  .fv-obj b { font-size: 14px; }
+  .fv-obj small { font-size: 12px; }
+  .fv-row { min-height: 40px; font-size: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fv-moment, .fv-mic, .fv-obj.done .fv-tick, .cr-next .mc-chip.story, .cr-party .mc-result b { animation: none; }
+}
+
+/* ----- MY CLUB > STADIUM: the ground, part by part (ui/club.ts) ----- */
+
+.sd-parts .sd-list { display: grid; align-content: start; gap: 4px; padding-right: 3px; }
+
+.sd-part {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  margin: 0;
+  padding: 4px 8px;
+  border: 2px solid var(--ink);
+  background: #fff;
+  color: var(--ink);
+  font: 400 13px/1.1 var(--round);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sd-part .picon { flex: none; }
+.sd-part .sd-pn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-part .sd-pn small { margin-left: 5px; font-size: 11px; color: var(--ink-2); }
+.sd-part.sel { box-shadow: inset 0 0 0 3px var(--blue); background: #eef5ff; }
+.sd-part.built { background: #e8f9ec; }
+.sd-part.locked { color: #8f8c85; }
+.sd-part.building { background: #fff8d6; }
+.sd-ps { flex: none; font: 400 12px var(--round); font-style: normal; display: inline-flex; align-items: center; gap: 4px; }
+.sd-ps .sd-cost { margin-left: 0; }
+.sd-ps.ok { color: var(--go-d, #238a3b); }
+.sd-ps.go { color: #a46b00; }
+.sd-ps.no { color: #8f8c85; }
+.sd-new { margin-left: 6px; padding: 2px 4px 1px; font: 400 10px var(--round); color: #fff; background: var(--red); }
+.sd-seats { font: 400 12px var(--round); color: var(--ink); }
+.sd-parts .sd-info { min-height: 0; }
+.sd-parts .sd-one { flex: 1 1 auto; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.shell .sd-parts .sd-one .mc-stad3d,
+.shell .sd-parts .sd-one .mc-stadiso { width: 100%; height: 100%; min-height: 0; max-height: none; object-fit: contain; }
+.shell .sd-parts .mc-kv { padding: 3px 0; font-size: 12px; }
+.shell .sd-parts .mc-stadlvl { font-size: 11px; }
+
+/* ----- the hub (ui/menus.ts main()): THIS SEASON on the hero, NEXT GOAL under it ----- */
+
+.hh-obj {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.hh-pip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 34%;
+  padding: 3px 6px 2px 3px;
+  font: 400 calc(10px * var(--ts, 1)) / 1 var(--round);
+  font-style: normal;
+  letter-spacing: 0.4px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hh-pip u {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  text-decoration: none;
+  font-size: 9px;
+}
+
+.hh-pip.done { background: var(--go); }
+.hh-pip.done u { border-color: #fff; background: #fff; color: var(--go); }
+.hh-pip.failed { opacity: 0.5; }
+
+.hub-goal {
+  appearance: none;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: calc(38px * var(--ts, 1));
+  margin: 0;
+  padding: 0 12px 0 10px;
+  border: 3px solid var(--ink);
+  font: inherit;
+  text-align: left;
+  color: var(--cream);
+  background: var(--ink);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: transform 0.06s, box-shadow 0.06s;
+}
+
+.hub-goal:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3); }
+.hub-goal .picon { flex: none; width: calc(18px * var(--ts, 1)); height: auto; }
+.hub-goal b { flex: none; font: 400 calc(11px * var(--ts, 1)) / 1 var(--round); letter-spacing: 1px; color: var(--yellow); }
+.hub-goal span { flex: 1 1 auto; min-width: 0; font: 400 calc(13px * var(--ts, 1)) / 1.1 var(--round); letter-spacing: 0.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-goal .hh-tri { flex: none; color: var(--yellow); font-size: calc(13px * var(--ts, 1)); }
+
+/* The Continental / World Club Cup on the hero: night blue. */
+.hub-hero.road.cup.comp { background: linear-gradient(160deg, #3b3fd6 0%, #2a2db0 35%, #161a6e 100%); }
+.hub-hero.road.cup.comp .hh-meta { color: var(--ink); background: #7fe0ff; }
+
+@media (min-height: 700px) and (min-width: 1000px) {
+  .hh-pip { font-size: calc(13px * var(--ts, 1)); padding: 5px 8px 4px 5px; }
+  .hub-goal { min-height: calc(50px * var(--ts, 1)); }
+  .hub-goal span { font-size: calc(16px * var(--ts, 1)); }
+}
+.sd-facts { flex: none; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.sd-fact { display: grid; gap: 1px; min-width: 0; }
+.sd-fact small { font: 400 10px var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
+.sd-fact b { font: 400 13px var(--round); white-space: nowrap; }
+.sd-fact b em { font-style: normal; color: var(--go-d, #238a3b); }
+.shell .sd-parts .sd-info { gap: 5px; padding: 6px 8px 8px; }
+.shell .sd-parts .sd-up.btn { min-height: 44px; padding: 9px 10px 7px; }
+
+/* Narrow phones: the line itself says it; the NEXT GOAL tag steps aside for it. */
+@media (max-width: 760px) {
+  .hub-goal b { display: none; }
+  .hub-goal { gap: 6px; padding: 0 8px; }
+}
+
+/* Narrow left panes (667 wide phones): the strip keeps its count and gives the three goals the room. */
+@container (max-width: 380px) {
+  .fv-strip-h b { display: none; }
+  .fv-strip-h { padding: 0 3px; }
+  .fv-obj { padding: 3px 3px 2px; column-gap: 3px; }
+  .fv-obj b { font-size: 11px; }
+  .fv-tick { width: 14px; height: 14px; }
+}
+
+.cr-scroll .fv-group th { white-space: nowrap; }

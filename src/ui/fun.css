@@ -1,0 +1,359 @@
+/* The in-match fun layer (src/ui/funHud.ts): HYPE bars, the SHOWTIME grade and the coins banked under the score bug,
+   the live goal card and its pill, the final-minutes edge pulse, the coins in flight and the goal's callouts. */
+
+.sb-hype[hidden],
+.sb-grade[hidden],
+.sb-grade .bank[hidden],
+.sb-grade .g[hidden],
+.bty-have[hidden] {
+  display: none !important;
+}
+
+/* Row 3, under the score: each side's meter under its name (home fills towards the score, away likewise). */
+.sb-hype {
+  grid-row: 3;
+  grid-column: 1 / 4;
+  align-self: center;
+  display: flex;
+  gap: 4px;
+  padding-top: 5px;
+  min-width: 0;
+}
+
+.hy {
+  position: relative;
+  flex: 1;
+  height: 11px;
+  background: var(--ink);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.hy > i {
+  position: absolute;
+  inset: 2px;
+  display: block;
+  background: var(--c);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.35);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 0.25s ease-out;
+}
+
+.hy.a > i { transform-origin: right center; }
+/* A dark kit on the dark bar: a cream rim so it still reads. */
+.hy.dark > i { box-shadow: inset 0 0 0 1px var(--cream), inset 0 2px 0 rgba(255, 255, 255, 0.35); }
+
+/* The bolt at the bar's end reads it as a power meter: dim on the track, lit (ink on gold) once it's full. */
+.hy .hy-bolt {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  fill: rgba(251, 251, 244, 0.45);
+  transform: translate(-50%, -50%);
+  transition: transform 0.2s cubic-bezier(0.2, 1.8, 0.4, 1);
+}
+.hy.h .hy-bolt { left: calc(100% - 9px); }
+.hy.a .hy-bolt { left: 9px; }
+
+/* Full: the next shot is a SUPER SHOT. The bar burns gold and shines, the bolt shows. */
+.hy.full {
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3), 0 0 10px 2px rgba(255, 210, 58, 0.9);
+}
+.hy.full > i {
+  background: linear-gradient(90deg, var(--yellow) 0%, #fff6c4 45%, var(--yellow) 60%, #ff9a3a 100%);
+  background-size: 220% 100%;
+  animation: hy-shine 0.9s linear infinite;
+}
+.hy.full .hy-bolt { fill: var(--ink); transform: translate(-50%, -50%) scale(1.25); }
+.hy.pop { animation: hy-pop 0.55s cubic-bezier(0.2, 1.8, 0.4, 1); }
+
+@keyframes hy-shine {
+  from { background-position: 100% 0; }
+  to { background-position: -120% 0; }
+}
+
+@keyframes hy-pop {
+  40% { transform: scaleY(1.9); }
+}
+
+/* Row 3, under the clock: the SHOWTIME grade, and the coins the live goals banked. */
+.sb-grade {
+  grid-row: 3;
+  grid-column: 4;
+  margin-left: 6px;
+  padding-top: 5px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sb-grade .g {
+  flex: none;
+  width: 22px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  padding-top: 1px;
+  font: 700 14px / 1 var(--px);
+  color: var(--cream);
+  background: #8d8d9c;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+}
+.sb-grade .g[data-g='B'] { background: var(--blue); }
+.sb-grade .g[data-g='A'] { background: var(--go); }
+.sb-grade .g[data-g='S'] { background: var(--yellow); color: var(--ink); box-shadow: 0 3px 0 var(--yellow-d), 0 0 8px rgba(255, 210, 58, 0.8); }
+.sb-grade .g.up { animation: grade-up 0.6s cubic-bezier(0.2, 1.8, 0.4, 1); }
+
+@keyframes grade-up {
+  35% { transform: scale(1.6) rotate(-8deg); }
+}
+
+.sb-grade .bank {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 6px 3px 4px;
+  font: 700 13px / 1 var(--px);
+  color: var(--yellow);
+  background: var(--ink);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+}
+.sb-grade .bank.pop { animation: grade-up 0.35s cubic-bezier(0.2, 1.8, 0.4, 1); }
+
+.sb-grade .bank i,
+.bty-rw i,
+.fun-pill em i {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  background: var(--yellow);
+  box-shadow: inset -2px -2px 0 var(--yellow-d), inset 2px 2px 0 #fff3b0;
+}
+
+.sty-pop {
+  position: absolute;
+  left: 2px;
+  top: -2px;
+  font: 700 12px / 1 var(--px);
+  color: var(--yellow);
+  text-shadow: 0 2px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink);
+  pointer-events: none;
+  animation: sty-pop 0.9s ease-out forwards;
+}
+
+@keyframes sty-pop {
+  from { transform: translateY(6px) scale(0.6); opacity: 0; }
+  25% { transform: translateY(-4px) scale(1.1); opacity: 1; }
+  to { transform: translateY(-16px); opacity: 0; }
+}
+
+/* Row 4: the live goal and the pill. Inline-size containment: it never widens the score bug's columns. */
+.sb-fun {
+  grid-row: 4;
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding-top: 7px;
+  contain: inline-size;
+  min-width: 0;
+}
+.sb-fun:not(:has(.on)) { display: none; }
+
+.bty {
+  display: none;
+  position: relative;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 5px 7px 4px;
+  font: 700 13px / 1 var(--px);
+  color: var(--ink);
+  background: var(--cream);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.bty.on { display: flex; animation: bty-in 0.38s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.bty-ico {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: var(--yellow);
+}
+.bty-ico .picon { width: 16px; height: 16px; }
+.bty-t { min-width: 0; padding-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bty-have { flex: none; padding-top: 1px; font-style: normal; color: var(--blue-d); }
+.bty-rw {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+  padding: 4px 6px 3px 4px;
+  color: var(--yellow);
+  background: var(--ink);
+}
+.bty-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(38, 38, 46, 0.18); }
+.bty-bar i { display: block; height: 100%; background: var(--go); transform-origin: left center; }
+.bty.late .bty-bar i { background: var(--red); }
+.bty.late .bty-ico { animation: bty-late 0.45s ease-in-out infinite alternate; }
+.bty.tick { animation: bty-tick 0.32s cubic-bezier(0.2, 1.8, 0.4, 1); }
+.bty.done { color: var(--cream); background: var(--go); animation: bty-tick 0.4s cubic-bezier(0.2, 1.8, 0.4, 1); }
+.bty.done .bty-ico { background: var(--cream); }
+.bty.done .bty-bar { display: none; }
+.bty.fail { opacity: 0.55; filter: grayscale(1); transform: translateY(-3px); transition: opacity 0.4s, transform 0.4s; }
+
+@keyframes bty-in {
+  from { transform: translateX(-30px) scale(0.7); opacity: 0; }
+}
+
+@keyframes bty-tick {
+  40% { transform: scale(1.12); }
+}
+
+@keyframes bty-late {
+  to { background: var(--red); }
+}
+
+.fun-pill {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 7px 3px 3px;
+  font: 400 15px / 1.1 var(--round);
+  color: var(--cream);
+  background: var(--ink);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+}
+.fun-pill.on { display: flex; animation: bty-in 0.32s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.fun-pill b {
+  flex: none;
+  padding: 4px 5px 3px;
+  font: 700 11px / 1 var(--px);
+  letter-spacing: 0.5px;
+  color: var(--cream);
+  background: var(--blue);
+}
+.fun-pill span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fun-pill em {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font: 700 12px / 1 var(--px);
+  font-style: normal;
+  color: var(--yellow);
+}
+.fun-pill.done b { background: var(--go); }
+.fun-pill.final { padding: 3px 8px 3px 3px; animation: bty-in 0.32s cubic-bezier(0.2, 1.6, 0.4, 1), final-glow 0.8s ease-in-out 0.3s 3 alternate; }
+.fun-pill.final b { padding: 5px 6px 4px; font-size: 13px; background: var(--red); }
+.fun-pill.final .say { font: 700 12px / 1 var(--px); letter-spacing: 0.5px; color: var(--yellow); }
+
+@keyframes final-glow {
+  to { box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3), 0 0 14px 3px rgba(236, 74, 62, 0.8); }
+}
+
+/* The final minutes: a red pulse round the edge of the screen with the heartbeat (opacity set per frame). */
+.hud > .hud-tension {
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: inset 0 0 70px 14px rgba(236, 74, 62, 0.5);
+}
+.hud.replaying > .hud-tension,
+.hud.cinematic > .hud-tension { display: none; }
+
+/* Coins flying from a live goal to the bank. */
+.hud > .coin-fly {
+  position: fixed;
+  z-index: 6;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  background: var(--yellow);
+  box-shadow: inset -3px -3px 0 var(--yellow-d), inset 3px 3px 0 #fff3b0, 0 2px 0 rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+}
+
+/* What made the goal: chunky plates under the GOAL! banner, popping in one by one (the headline one gold). */
+.bn-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 92vw;
+}
+.bn-tags .gt {
+  display: block;
+  padding: 6px 10px 5px;
+  font: 700 clamp(14px, 1.8vw, 22px) / 1 var(--px);
+  font-style: normal;
+  letter-spacing: 1px;
+  color: var(--ink);
+  background: var(--cream);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  animation: gt-in 0.45s cubic-bezier(0.2, 1.8, 0.4, 1) both;
+}
+.bn-tags .gt.big {
+  padding: 7px 12px 6px;
+  font-size: clamp(18px, 2.4vw, 30px);
+  background: var(--yellow);
+  box-shadow: 0 5px 0 var(--yellow-d), 0 9px 0 rgba(0, 0, 0, 0.25);
+}
+.bn-tags.against .gt { color: var(--cream); background: var(--ink); }
+.bn-tags.against .gt.big { color: var(--cream); background: var(--red); box-shadow: 0 5px 0 var(--red-d), 0 9px 0 rgba(0, 0, 0, 0.25); }
+
+@keyframes gt-in {
+  from { transform: translateY(-24px) scale(0.3) rotate(-8deg); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hy.full > i,
+  .hy.pop,
+  .bty.late .bty-ico,
+  .fun-pill.final { animation: none; }
+}
+
+/* Full time: the SHOWTIME line (ui/menus.ts showtimeRow). */
+.ft-show {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 6px;
+  padding: 5px 10px 5px 5px;
+  font: 700 14px / 1 var(--px);
+  letter-spacing: 0.5px;
+  color: var(--cream);
+  background: var(--ink);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25);
+}
+.ft-show .ft-grade {
+  flex: none;
+  width: 30px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding-top: 2px;
+  font: 700 20px / 1 var(--px);
+  color: var(--cream);
+  background: #8d8d9c;
+  animation: grade-up 0.7s cubic-bezier(0.2, 1.8, 0.4, 1) 0.9s both;
+}
+.ft-show[data-g='B'] .ft-grade { background: var(--blue); }
+.ft-show[data-g='A'] .ft-grade { background: var(--go); }
+.ft-show[data-g='S'] .ft-grade { color: var(--ink); background: var(--yellow); box-shadow: 0 0 10px rgba(255, 210, 58, 0.8); }
+.ft-show em { font-style: normal; color: var(--yellow); }
+.ft-show strong { font-weight: 700; color: var(--go); }
+.ft-show small { margin-left: auto; font: 700 12px / 1 var(--px); color: var(--cream-2); }
+.ft-show small.nb { padding: 4px 6px 3px; color: var(--ink); background: var(--yellow); animation: grade-up 0.6s cubic-bezier(0.2, 1.8, 0.4, 1) 1.3s both; }

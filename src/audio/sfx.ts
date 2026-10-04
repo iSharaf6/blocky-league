@@ -1,18 +1,35 @@
 import { rainSamples } from './ambience';
+import { MENU, SONGS, STINGS, WIN_FINAL, midiHz, type Song, type StingId, type Track, type TrackId } from './music';
 
 /**
  * Every sound is synthesised with WebAudio — no asset downloads, no licences, no voices.
- * Crowd bed + reactions, whistle, kicks, woodwork, net, UI blips and a chiptune menu loop.
+ * Crowd bed + reactions, whistle, kicks, woodwork, net, UI blips, the menu loop and the match's music.
  *
  * Impacts are layered (the owner's brief): a shot is the boot's transient, a low body, a short room tail and,
  * on target, a crowd "oooh"; a header is a dry, higher "thock"; a won tackle or a foul a low thump and a short
  * grunt (the referee's whistle comes from the sim); the woodwork a metallic clang; a goal the net, then the
  * crowd swelling, then the horn; a save a glove slap and a gasp. The crowd is two panned beds, one behind each
  * goal, that swell and get restless as the ball nears that end (setEnds), over a wash that follows the match's
- * excitement; the ground's size and crowd set how loud it all is and how often they sing (setStadium).
+ * excitement; the ground's size and crowd set how loud it all is (setStadium).
  *
- * CPU: the beds, the reverb and the buses are made once; per-frame calls only move AudioParams (and only when
- * the value really changes); nodes are only made when a sound plays.
+ * THE CROWD SINGS AT EVERY GROUND (the owner: "crowd chants non existent"; a level-0 ground used to never sing).
+ * A small ground is a few fans, loud and passionate: a drum, a trumpet, claps and shouts; a big one is many voices.
+ * Every 15 to 30 s (tick): the clap rhythm, a sung "oh oh oh" line, the club's name chanted in its own syllables,
+ * a drum march, a trumpet's charge; the away fans' section (panned to one side, quieter) answers sometimes. On
+ * top, reactions: a rising roar as an attack gets to the box (setEnds), olés on a passing move, whistles at the
+ * other side keeping the ball and at fouls, groans at a sitter missed, applause, the home crowd singing after a
+ * home goal, nerves late on, the final whistle (the sim and src/audio/director.ts say when).
+ *
+ * MUSIC (src/audio/music.ts): the menu loop, the half-time loop, the full-time themes (a fanfare and a loop for a
+ * win, a warm theme for a draw, a "go again" for a defeat), stings for the kick-off and a goal, and the trophy and
+ * promotion fanfares; one sequencer, a song's gain fading in and out as it changes, ducked under goal roars.
+ *
+ * Mix (phone speakers): everything sits in the mids; the master runs through a low cut, a gentle shelf and a
+ * presence lift, a glue compressor and a limiter, so the game is loud without clipping (levels: tests/crowdMusic).
+ *
+ * CPU: the beds, the choirs, the reverb and the buses are made once; per-frame calls only move AudioParams (and
+ * only when the value really changes); nodes are only made when a sound plays, and the crowd's one-shots share a
+ * voice budget (VOICE_CAP).
  */
 /** Room tail: a short, dark impulse (s) and how much of it each kind of hit sends. */
 const REVERB_S = 0.55;
@@ -20,6 +37,78 @@ const REVERB_S = 0.55;
 const END_PAN = 0.72;
 const END_CALM = 0.012;
 const END_ROAR = 0.15;
+/** The away fans' section: where it sits on the broadcast shot and how loud it is next to the home crowd. */
+const AWAY_PAN = 0.55;
+const AWAY_K = 0.55;
+/** The master: its gain into the chain, the music bus (the menu loop was 0.32 into a quieter chain). */
+const MASTER_GAIN = 1;
+const MUSIC_BUS = 0.75;
+/** How loud the crowd's own voices are (chants, shouts, reactions) next to the beds. */
+const VOICE_LEVEL = 1;
+/** Tuned on offline renders (src/audio/dev.ts measureMix): a chant sits about 6 dB under a goal roar, the final
+ * minutes' heartbeat well under play. */
+const CHANT_LEVEL = 0.32;
+const ROAR_LEVEL = 1.4;
+const HEART_LEVEL = 0.55;
+/** Seconds between chants in open play (random in the range), and the first one after the ground is set. */
+const CHANT_MIN = 15;
+const CHANT_MAX = 30;
+const CHANT_FIRST = [4, 9] as const;
+/** How often the away section answers a home chant. */
+const AWAY_ANSWER = 0.3;
+/** A ground this empty (fill) never sings, shouts or surges: nobody there. */
+const EMPTY_FILL = 0.05;
+/** The rising roar: an end's heat past SURGE_AT (an attack in the final third), re-armed under SURGE_REARM. */
+const SURGE_AT = 0.45;
+const SURGE_REARM = 0.15;
+const SURGE_GAP = 7;
+/** The crowd's one-shot voices at once at most (a source or an oscillator each); past it, a new sound is dropped. */
+const VOICE_CAP = 64;
+/** The nervous murmur: always a little chatter, and this much more at full nerves. */
+const MURMUR_BASE = 0.006;
+const MURMUR_NERVES = 0.07;
+
+/** Who is singing: 0 the home crowd (all round the ground), 1 the away fans' section. */
+export type Stand = 0 | 1;
+export type ChantKind = 'claps' | 'ohs' | 'name' | 'drum' | 'horn';
+export type Outcome = 'win' | 'draw' | 'loss';
+
+/** Crowd vowels: the first two formants (Hz) of a few thousand men singing them. */
+const VOWELS: Record<string, readonly [number, number]> = {
+  a: [730, 1090], e: [530, 1840], i: [400, 1950], o: [570, 840], u: [640, 1190], w: [330, 870],
+};
+/** One sung note: [start (s, from the chant's start), length (s), MIDI note, vowel]. */
+type SungNote = readonly [number, number, number, string];
+
+/**
+ * The vowels of a club's name for its chant: the first word, one per syllable (a vowel group, a silent final e
+ * or "ue" dropped), at most four: "Mossvale Rovers" -> o a ("MOSS-VALE"), "Pebbleport" -> e e o. No name: BLOCKY LEAGUE.
+ */
+export function chantSyllables(name: string): string[] {
+  const words = name.trim().toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z]/g, '')).filter(Boolean);
+  const src = words.length ? [words[0]] : ['blocky', 'league'];
+  const out: string[] = [];
+  for (const w of src) {
+    let groups: string[] = w.match(/[aeiouy]+/g) ?? [];
+    if (groups.length > 1 && /(?:[^aeiouy]e|ue)$/.test(w)) groups = groups.slice(0, -1);
+    for (const g of groups) out.push(g[0] === 'y' || g.startsWith('ea') || g.startsWith('ee') ? 'i' : g[0]);
+  }
+  return out.length ? out.slice(0, 4) : ['o'];
+}
+
+/** A formant bank the crowd sings through (one per stand, made once; one chant at a time moves its filters). */
+interface Choir {
+  input: GainNode;
+  f1: BiquadFilterNode;
+  f2: BiquadFilterNode;
+  /** Audio time until which a chant owns it. */
+  busy: number;
+}
+
+/** Set an AudioParam that a stand-in (tests) or an older WebKit may lack. */
+function setP(p: AudioParam | undefined, v: number): void {
+  if (p) p.value = v;
+}
 
 export class Sfx {
   private ctx: AudioContext | null = null;
@@ -27,15 +116,25 @@ export class Sfx {
   private sfxBus!: GainNode;
   private crowdBus!: GainNode;
   private musicBus!: GainNode;
+  /** Between the songs and the music bus: ducked under goal roars and fanfares. */
+  private musicDuck!: GainNode;
+  /** The away fans' section: their voices, quieter and panned to one side, into the crowd bus. */
+  private awayBus!: GainNode;
   private noise!: AudioBuffer;
   private crowdGain!: GainNode;
   private crowdFilter!: BiquadFilterNode;
-  /** Master output (after the compressor): what a clip's audio tap listens to. */
+  /** Master output (after the limiter): what a clip's audio tap listens to. */
   private out!: DynamicsCompressorNode;
   /** The room tail's input (anything connected here gets the short reverb). */
   private reverbIn!: GainNode;
   /** Crowd beds behind the two goals (index 0: the -x end, 1: the +x end). */
-  private ends: { gain: GainNode; filter: BiquadFilterNode; lfo: OscillatorNode; lfoGain: GainNode; heat: number }[] = [];
+  private ends: { gain: GainNode; filter: BiquadFilterNode; lfo: OscillatorNode; lfoGain: GainNode; heat: number; armed: boolean; surgeAt: number }[] = [];
+  /** The two stands' choirs (0 home, 1 away). */
+  private choirs: Choir[] = [];
+  /** The murmur bed (chatter, nerves) and the level it was last set to. */
+  private murmurGain: GainNode | null = null;
+  private murmurLfo: GainNode | null = null;
+  private murmurLevel = -1;
   /** How big and full the ground is: 0 (a muddy park) .. 1 (a sold-out Mega Dome). */
   private stadiumK = 1;
   private stadiumLevel = 5;
@@ -44,19 +143,56 @@ export class Sfx {
   private chantT = 8;
   private roarUntil = 0;
   private lastOoh = -9;
+  /** The chant the crowd sings next whatever the gap (after a goal: theirs, louder), and the stand singing it. */
+  private forced: { kind: ChantKind; stand: Stand; anthem: boolean } | null = null;
+  /** Seconds to the away section's answer (Infinity: none due), to the next lone shout. */
+  private answerT = Infinity;
+  private shoutT = 5;
+  private lastChant: ChantKind | null = null;
+  /** Regular chants allowed (the director closes it at half time and full time). */
+  private chantGate = true;
+  /** The vowels of each side's name (chantSyllables). */
+  private syllables: string[][] = [['o', 'i', 'i'], ['o', 'i', 'i']];
+  /** The voice budget: the audio time each of VOICE_CAP slots is busy until. */
+  private voiceEnd = new Float64Array(VOICE_CAP);
+  /** Nerves (director: late and close) and tension (the fun layer's final minutes), 0..1. */
+  private nerves = 0;
+  private tension = 0;
+  /** The final minutes' heartbeat: on, and the audio time of the next beat. */
+  private finalOn = false;
+  private beatNext = 0;
+  private beatN = 0;
+  /** Rate limits (audio time) for the hooks other code may call twice. */
+  private superAt = -9;
+  private oleAt = -9;
+  private applauseAt = -9;
+  private whistlesAt = -9;
+  private lastGroan = -9;
   /** A clip's audio tap (MediaStreamAudioDestinationNode), made on first use. */
   private tap: MediaStreamAudioDestinationNode | null = null;
   private tapping = false;
   private excitement = 0.2;
+  private washLevel = -1;
   private musicTimer: number | null = null;
   private musicStep = 0;
   private nextNoteTime = 0;
+  /** The song playing (null: none), which part of it (its intro, then its loop), its gain and its size. */
+  private song: Song | null = null;
+  private part: Track | null = null;
+  private trackId: TrackId | null = null;
+  private trackGain: GainNode | null = null;
+  private big = 0;
+  /** Stings fired (for the dev panel and tests). */
+  private lastSting: StingId | null = null;
+  private stings = 0;
   private effectsEnabled = true;
   private crowdEnabled = true;
   private ambienceActive = false;
   private rainActive = false;
   musicOn = true;
   private muted = false;
+  /** Measuring the mix (src/audio/dev.ts): built on an OfflineAudioContext, always ready, no wake hooks. */
+  private offline = false;
   /** The page is hidden (the app in the background, another tab): the context sleeps until it's back (wake). */
   private hidden = false;
   private wakeOn = false;
@@ -70,7 +206,7 @@ export class Sfx {
   set crowdOn(on: boolean) { this.crowdEnabled = on; this.mixAmbience(); }
 
   get ready(): boolean {
-    return this.ctx !== null && this.ctx.state === 'running';
+    return this.ctx !== null && (this.offline || this.ctx.state === 'running');
   }
 
   /** Must be called from a user gesture. */
@@ -80,38 +216,7 @@ export class Sfx {
       if (!AC) return;
       this.ctx = new AC();
       const c = this.ctx;
-      this.master = c.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.9;
-      const comp = c.createDynamicsCompressor();
-      comp.threshold.value = -14;
-      comp.ratio.value = 4;
-      this.master.connect(comp).connect(c.destination);
-      this.out = comp;
-      this.sfxBus = c.createGain();
-      this.crowdBus = c.createGain();
-      this.musicBus = c.createGain();
-      this.musicBus.gain.value = 0.32;
-      this.sfxBus.connect(this.master);
-      this.crowdBus.connect(this.master);
-      this.musicBus.connect(this.master);
-      const len = c.sampleRate * 3;
-      this.noise = c.createBuffer(1, len, c.sampleRate);
-      const d = this.noise.getChannelData(0);
-      // Slightly pinked noise sounds more like a crowd than white noise.
-      let b0 = 0, b1 = 0, b2 = 0;
-      for (let i = 0; i < len; i++) {
-        const w = Math.random() * 2 - 1;
-        b0 = 0.997 * b0 + w * 0.029;
-        b1 = 0.985 * b1 + w * 0.032;
-        b2 = 0.95 * b2 + w * 0.048;
-        d[i] = (b0 + b1 + b2 + w * 0.12) * 0.9;
-      }
-      this.startCrowd();
-      this.startReverb();
-      this.startEnds();
-      this.applyStadium();
-      this.setRain(this.rainActive);
-      this.mixAmbience();
+      this.build();
       this.installWake();
       // A call, Siri or a full-screen ad taking the audio session while we're on screen: try to come straight back
       // (the next tap does it if the system wants a gesture first).
@@ -122,6 +227,92 @@ export class Sfx {
     }
     // (WebKit also has 'interrupted': a call, Siri, the app sent to the background.)
     if ((this.ctx.state as string) !== 'running') void this.ctx.resume().catch(() => {});
+  }
+
+  /**
+   * Measuring the mix only (src/audio/dev.ts): the whole graph on `ctx` (an OfflineAudioContext), so a render can
+   * be scored for peak and loudness. Never used for play.
+   */
+  attachOffline(ctx: BaseAudioContext): void {
+    this.offline = true;
+    this.ctx = ctx as AudioContext;
+    this.build();
+  }
+
+  /**
+   * The graph, made once per context: the master chain (low cut, shelf, presence, glue compressor, limiter), the
+   * buses, the shared noise, the crowd's beds and choirs, the room tail and the rain.
+   */
+  private build(): void {
+    const c = this.ctx!;
+    // The limiter is made first (the clip tap and the tests find it as the first compressor): a fast, hard knee.
+    const lim = c.createDynamicsCompressor();
+    setP(lim.threshold, -6);
+    setP(lim.ratio, 20);
+    setP(lim.knee, 0);
+    setP(lim.attack, 0.001);
+    setP(lim.release, 0.1);
+    // Glue: a gentle squeeze that brings the quiet crowd and music up (WebAudio adds its own make-up gain).
+    const glue = c.createDynamicsCompressor();
+    setP(glue.threshold, -16);
+    setP(glue.ratio, 2);
+    setP(glue.knee, 10);
+    setP(glue.attack, 0.008);
+    setP(glue.release, 0.22);
+    // Phone speakers: nothing under ~150 Hz comes out, so the sub only eats headroom; a little presence instead.
+    const lowCut = c.createBiquadFilter();
+    lowCut.type = 'highpass';
+    lowCut.frequency.value = 70;
+    lowCut.Q.value = 0.6;
+    const shelf = c.createBiquadFilter();
+    shelf.type = 'lowshelf';
+    shelf.frequency.value = 150;
+    setP(shelf.gain, -3);
+    const presence = c.createBiquadFilter();
+    presence.type = 'peaking';
+    presence.frequency.value = 2400;
+    presence.Q.value = 0.8;
+    setP(presence.gain, 2);
+    this.master = c.createGain();
+    this.master.gain.value = this.muted ? 0 : MASTER_GAIN;
+    this.master.connect(lowCut).connect(shelf).connect(presence).connect(glue).connect(lim).connect(c.destination);
+    this.out = lim;
+    this.sfxBus = c.createGain();
+    this.crowdBus = c.createGain();
+    this.musicBus = c.createGain();
+    this.musicBus.gain.value = MUSIC_BUS;
+    this.musicDuck = c.createGain();
+    this.musicDuck.connect(this.musicBus);
+    this.sfxBus.connect(this.master);
+    this.crowdBus.connect(this.master);
+    this.musicBus.connect(this.master);
+    this.awayBus = c.createGain();
+    this.awayBus.gain.value = AWAY_K;
+    const awayPan = c.createStereoPanner();
+    awayPan.pan.value = AWAY_PAN;
+    this.awayBus.connect(awayPan).connect(this.crowdBus);
+    const len = c.sampleRate * 3;
+    this.noise = c.createBuffer(1, len, c.sampleRate);
+    const d = this.noise.getChannelData(0);
+    // Slightly pinked noise sounds more like a crowd than white noise.
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < len; i++) {
+      const w = Math.random() * 2 - 1;
+      b0 = 0.997 * b0 + w * 0.029;
+      b1 = 0.985 * b1 + w * 0.032;
+      b2 = 0.95 * b2 + w * 0.048;
+      d[i] = (b0 + b1 + b2 + w * 0.12) * 0.9;
+    }
+    this.washLevel = -1;
+    this.murmurLevel = -1;
+    this.startCrowd();
+    this.startReverb();
+    this.startEnds();
+    this.choirs = [this.makeChoir(this.crowdBus), this.makeChoir(this.awayBus)];
+    this.startMurmur();
+    this.applyStadium();
+    this.setRain(this.rainActive);
+    this.mixAmbience();
   }
 
   /**
@@ -199,22 +390,31 @@ export class Sfx {
   private rebuild(): void {
     const old = this.ctx;
     this.stale = false;
-    const music = this.musicTimer !== null;
-    this.stopMusic();
+    // Whatever song was up comes back on the new context (once: the old one is closed first, its timer cleared).
+    const song = this.musicTimer !== null ? this.trackId : null;
+    const big = this.big;
+    this.stopMusic(0);
     this.endCapture();
     this.ctx = null;
     this.ends = [];
+    this.choirs = [];
+    this.murmurGain = null;
+    this.murmurLfo = null;
     this.rainGain = null;
+    this.trackGain = null;
     this.tap = null;
     this.tapping = false;
     // (Times on the old context's clock: the new one starts again from zero.)
     this.roarUntil = 0;
     this.lastOoh = -9;
+    this.superAt = this.oleAt = this.applauseAt = this.whistlesAt = this.lastGroan = -9;
+    this.beatNext = 0;
+    this.voiceEnd.fill(0);
     if (old) void old.close().catch(() => {});
     this.unlock();
     if (!this.ctx) return;
     this.setExcitement(this.excitement);
-    if (music) this.startMusic();
+    if (song) this.playTrack(song, big);
   }
 
   private startCrowd(): void {
@@ -312,13 +512,73 @@ export class Sfx {
       lfo.start();
       src.connect(filter).connect(gain).connect(pan).connect(this.crowdBus);
       src.start(0, Math.random() * 2 + k);
-      this.ends.push({ gain, filter, lfo, lfoGain, heat: -1 });
+      this.ends.push({ gain, filter, lfo, lfoGain, heat: -1, armed: true, surgeAt: -99 });
     }
   }
 
   /**
+   * A stand's choir: the crowd's voices go in at `input`, through two vowel formants (moved per sung note) and a
+   * little presence (a phone speaker's share of the words), out to `dest`.
+   */
+  private makeChoir(dest: AudioNode): Choir {
+    const c = this.ctx!;
+    const input = c.createGain();
+    const out = c.createGain();
+    const f1 = c.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.frequency.value = 570;
+    f1.Q.value = 3;
+    const f2 = c.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.frequency.value = 840;
+    f2.Q.value = 4;
+    const g2 = c.createGain();
+    g2.gain.value = 0.7;
+    const f3 = c.createBiquadFilter();
+    f3.type = 'bandpass';
+    f3.frequency.value = 2500;
+    f3.Q.value = 2;
+    const g3 = c.createGain();
+    g3.gain.value = 0.22;
+    input.connect(f1).connect(out);
+    input.connect(f2).connect(g2).connect(out);
+    input.connect(f3).connect(g3).connect(out);
+    out.connect(dest);
+    return { input, f1, f2, busy: 0 };
+  }
+
+  /**
+   * The murmur: low chatter all round the ground (a babbling LFO on a band of the noise), up with the nerves late
+   * in a close game and through the break (setNerves, setTension).
+   */
+  private startMurmur(): void {
+    const c = this.ctx!;
+    const src = c.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    src.playbackRate.value = 0.88;
+    const f = c.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 520;
+    f.Q.value = 1.1;
+    const g = c.createGain();
+    g.gain.value = 0;
+    const lfo = c.createOscillator();
+    lfo.frequency.value = 3.7;
+    const lg = c.createGain();
+    lg.gain.value = 0;
+    lfo.connect(lg).connect(g.gain);
+    lfo.start();
+    src.connect(f).connect(g).connect(this.crowdBus);
+    src.start(0, Math.random() * 2);
+    this.murmurGain = g;
+    this.murmurLfo = lg;
+  }
+
+  /**
    * How hot each end is (0 a murmur .. 1 a roar): `left` the goal at -x, `right` the one at +x. Cheap to call
-   * every frame: the params only move when a value changes by a step.
+   * every frame: the params only move when a value changes by a step. An attack getting into the final third
+   * lifts that end with a rising roar (surge), once per attack.
    */
   setEnds(left: number, right: number): void {
     if (!this.ctx || this.ends.length < 2) return;
@@ -326,7 +586,16 @@ export class Sfx {
     const on = this.ambienceActive && this.crowdOn;
     for (let k = 0; k < 2; k++) {
       const e = this.ends[k];
-      const h = on ? Math.max(0, Math.min(1, k ? right : left)) : -0.5;
+      const raw = Math.max(0, Math.min(1, k ? right : left));
+      if (on && this.fill >= EMPTY_FILL) {
+        if (raw >= SURGE_AT && e.armed && t - e.surgeAt > SURGE_GAP && t >= this.roarUntil) {
+          e.armed = false;
+          e.surgeAt = t;
+          this.surge(k, raw);
+        } else if (raw < SURGE_REARM) e.armed = true;
+      }
+      // (-2: silenced, the same mark mixAmbience leaves, so the two never undo each other every frame.)
+      const h = on ? raw : -2;
       if (Math.abs(h - e.heat) < 0.02) continue;
       e.heat = h;
       const heat = Math.max(0, h);
@@ -347,85 +616,115 @@ export class Sfx {
     this.stadiumLevel = Math.max(0, Math.min(5, level));
     this.fill = Math.max(0, Math.min(1, fill));
     this.stadiumK = (0.4 + 0.12 * this.stadiumLevel) * (0.55 + 0.45 * this.fill);
-    this.chantT = this.chantGap() * (0.3 + Math.random() * 0.4);
+    this.chantT = CHANT_FIRST[0] + Math.random() * (CHANT_FIRST[1] - CHANT_FIRST[0]);
+    this.shoutT = 2 + Math.random() * 3;
+    this.answerT = Infinity;
+    this.forced = null;
+    this.lastChant = null;
     this.applyStadium();
+  }
+
+  /** 0 at a muddy park .. 1 at the Mega Dome. */
+  private get size(): number {
+    return this.stadiumLevel / 5;
   }
 
   private applyStadium(): void {
     if (!this.ctx || !this.crowdBus) return;
-    this.crowdBus.gain.setTargetAtTime(Math.min(1.05, 0.5 + this.stadiumK * 0.55), this.ctx.currentTime, 0.3);
+    // A small ground is a small crowd, but a loud one: the bus barely drops (its beds are quieter: stadiumK).
+    this.crowdBus.gain.setTargetAtTime(Math.min(1.1, 0.8 + this.stadiumK * 0.3), this.ctx.currentTime, 0.3);
     for (const e of this.ends) e.heat = -1;
+    this.murmurLevel = -1;
+    this.mixMurmur();
   }
 
-  /** Seconds between chants for this ground (Infinity: a park with hardly anyone there never sings). */
+  /**
+   * Seconds to the next chant for this ground: every CHANT_MIN to CHANT_MAX at every ground (a muddy park's few
+   * fans sing too); Infinity only when nobody is there.
+   */
   private chantGap(): number {
-    const people = this.fill * (0.25 + this.stadiumLevel * 0.15);
-    if (people < 0.12) return Infinity;
-    return (40 - this.stadiumLevel * 5.5) / (0.6 + this.fill * 0.6);
+    if (this.fill < EMPTY_FILL) return Infinity;
+    return CHANT_MIN + Math.random() * (CHANT_MAX - CHANT_MIN);
   }
 
-  /** Once a frame in a match: the crowd's chants (made only when one starts; never over a goal roar). */
+  /** Regular chants on or off (src/audio/director.ts: off through half time and after the final whistle). */
+  setChantGate(open: boolean): void {
+    this.chantGate = open;
+  }
+
+  /** The two sides' names, for the name chant (each side's fans sing their own). */
+  setClubNames(home: string, away: string): void {
+    this.syllables = [chantSyllables(home), chantSyllables(away)];
+  }
+
+  /**
+   * Once a frame in a match: the crowd's chants (made only when one starts; never over a goal roar), the away
+   * section's answer, the lone shouts at a small ground and the final minutes' heartbeat.
+   */
   tick(dt: number): void {
-    if (!this.ready || !this.crowdOn || !this.ambienceActive) return;
-    this.chantT -= dt;
-    if (this.chantT > 0) return;
+    if (!this.ready || !this.ambienceActive) return;
+    const now = this.ctx!.currentTime;
+    if (this.finalOn && this.sfxOn) this.heartbeat(now);
+    if (!this.crowdOn || dt <= 0) return;
+    // A small ground: the odd fan shouting in the gaps (lost in the noise of a big one).
+    if ((this.shoutT -= dt) <= 0) {
+      const small = 1 - this.size;
+      this.shoutT = small > 0.5 ? 3 + Math.random() * 4 : 7 + Math.random() * 7;
+      if (small > 0.35 && this.fill >= EMPTY_FILL && this.chantGate && now >= this.roarUntil) {
+        this.shout(now + 0.05, VOICE_LEVEL * (0.65 + this.excitement * 0.5), Math.random() < 0.8 ? 0 : 1);
+      }
+    }
+    if ((this.answerT -= dt) <= 0) {
+      this.answerT = Infinity;
+      if (this.chantGate && now >= this.roarUntil) this.chant(Math.random() < 0.5 ? 'name' : 'claps', 1);
+    }
+    if ((this.chantT -= dt) > 0) return;
     const gap = this.chantGap();
-    this.chantT = Number.isFinite(gap) ? gap * (0.7 + Math.random() * 0.6) : 30;
-    if (!Number.isFinite(gap) || this.ctx!.currentTime < this.roarUntil) return;
+    this.chantT = Number.isFinite(gap) ? gap : 30;
+    const f = this.forced;
+    if (f) {
+      if (now < this.roarUntil - 0.1) {
+        this.chantT = this.roarUntil - now;
+        return;
+      }
+      this.forced = null;
+      this.chant(f.kind, f.stand, f.anthem);
+      return;
+    }
+    if (!Number.isFinite(gap) || !this.chantGate || now < this.roarUntil) return;
     this.chant();
   }
 
   /**
-   * A chant: the classic clap rhythm (clap clap, clap-clap-clap) twice, and from a mid-sized ground up a sung
-   * "oh-oh" line on top (more voices, a drum, the bigger the ground).
+   * A chant from `stand` (one at a time per stand; a home one is sometimes answered by the away section):
+   * - claps: the clap rhythm (clap clap, clap-clap-clap) three times and a "HEY!";
+   * - ohs: a sung "oh oh oh" line (an anthem after a goal: louder, longer, more voices);
+   * - name: the club's name in its own syllables, clap clap clap after each;
+   * - drum: a drum march, BOOM BOOM BOOM, with a "HEY!";
+   * - horn: a trumpet in the stand plays the charge, the fans shout back and clap.
+   * At a small ground a lone drummer bangs along to most of them. `kind` omitted: picked for the ground, never the
+   * same twice running.
    */
-  chant(): void {
+  chant(kind?: ChantKind, stand: Stand = 0, anthem = false): void {
     if (!this.ready || !this.crowdOn) return;
     const c = this.ctx!;
     const t = c.currentTime + 0.05;
-    const lv = this.stadiumLevel;
-    const k = 0.6 + 0.4 * this.fill;
-    const beat = 0.34;
-    const claps = [0, 1, 2.5, 3, 3.5];
-    for (let r = 0; r < 2; r++) {
-      for (const b of claps) {
-        const ct = t + (r * 5 + b) * beat;
-        this.noiseBurst(ct, 0.06, 'bandpass', 1500 + Math.random() * 300, 1.1, 0.11 * k, this.crowdBus, 0.004);
-        if (lv >= 4) this.tone(ct, 'sine', 95, 55, 0.12, 0.12 * k, this.crowdBus);
-      }
-    }
-    if (lv < 2) return;
-    // Sung: two notes, a crowd of detuned voices through vowel formants ("oh"), louder the bigger the ground.
-    const voices = lv >= 5 ? 5 : lv >= 3 ? 4 : 3;
-    const notes: [number, number][] = [[0, 220], [2, 262], [5, 220], [7, 196]];
-    const vf = c.createBiquadFilter();
-    vf.type = 'bandpass';
-    vf.frequency.value = 620;
-    vf.Q.value = 1.4;
-    const vf2 = c.createBiquadFilter();
-    vf2.type = 'bandpass';
-    vf2.frequency.value = 1050;
-    vf2.Q.value = 2;
-    const vg = c.createGain();
-    vg.gain.value = 0.05 * k * (0.6 + lv * 0.1);
-    vf.connect(vg);
-    vf2.connect(vg);
-    vg.connect(this.crowdBus);
-    for (const [b, f] of notes) {
-      const st = t + b * beat;
-      for (let v = 0; v < voices; v++) {
-        const o = c.createOscillator();
-        o.type = 'sawtooth';
-        o.frequency.value = f * (1 + (Math.random() - 0.5) * 0.03) * (v % 2 ? 0.5 : 1);
-        const g = c.createGain();
-        this.env(g, st, 0.08, 0.5 / voices, beat * 1.7);
-        o.connect(g);
-        g.connect(vf);
-        g.connect(vf2);
-        o.start(st);
-        o.stop(st + beat * 2);
-      }
-    }
+    const choir = this.choirs[stand];
+    if (choir && t < choir.busy) return;
+    const k = kind ?? this.pickChant();
+    const voices = Math.round(3 + this.size * 4 + this.fill) + (anthem ? 2 : 0);
+    if (!this.claim(voices + 6, t + 6)) return;
+    const level = VOICE_LEVEL * CHANT_LEVEL * (anthem ? 1.25 : 1);
+    let end = t;
+    if (k === 'claps') end = this.chantClaps(t, level, stand, voices);
+    else if (k === 'ohs') end = this.chantOhs(t, level, stand, voices, anthem);
+    else if (k === 'name') end = this.chantName(t, level, stand, voices);
+    else if (k === 'drum') end = this.chantDrum(t, level, stand, voices);
+    else end = this.chantHorn(t, level, stand, voices);
+    if (choir) choir.busy = end;
+    // (The home crowd's own run of chants: an away answer in between never makes them repeat themselves.)
+    if (stand === 0) this.lastChant = k;
+    if (stand === 0 && !anthem && this.chantGate && Math.random() < AWAY_ANSWER) this.answerT = end - t + 1 + Math.random() * 1.5;
   }
 
   /**
@@ -490,7 +789,7 @@ export class Sfx {
   setMuted(m: boolean): void {
     this.muted = m;
     if (!this.ctx) return;
-    this.master.gain.setTargetAtTime(m ? 0 : 0.9, this.ctx.currentTime, 0.05);
+    this.master.gain.setTargetAtTime(m ? 0 : MASTER_GAIN, this.ctx.currentTime, 0.05);
     // (A full-screen ad can take the audio session; the game's sound comes back when it closes.)
     if (!m) this.wake(false);
   }
@@ -504,25 +803,59 @@ export class Sfx {
   private mixAmbience(): void {
     if (!this.ctx || !this.crowdGain) return;
     const t = this.ctx.currentTime;
-    // About 10 dB less continuous crowd wash; cheers still provide the big moments.
+    // About 10 dB less continuous crowd wash; cheers still provide the big moments. (Only moved on a real change:
+    // setExcitement comes every frame.)
     const target = this.ambienceActive && this.crowdOn ? 0.03 + this.excitement * 0.08 : 0;
-    this.crowdGain.gain.setTargetAtTime(target, t, target ? 0.6 : 0.12);
-    const rain = this.ambienceActive && this.rainActive && this.sfxOn ? 0.16 : 0;
-    this.rainGain?.gain.setTargetAtTime(rain, t, rain ? 0.8 : 0.12);
+    if (Math.abs(target - this.washLevel) > 0.002 || (target === 0) !== (this.washLevel === 0)) {
+      this.washLevel = target;
+      this.crowdGain.gain.setTargetAtTime(target, t, target ? 0.6 : 0.12);
+      const rain = this.ambienceActive && this.rainActive && this.sfxOn ? 0.16 : 0;
+      this.rainGain?.gain.setTargetAtTime(rain, t, rain ? 0.8 : 0.12);
+    }
+    this.mixMurmur();
     if (!(this.ambienceActive && this.crowdOn)) {
       // The end beds go quiet with the rest of the ambience (setEnds brings them back).
       for (const e of this.ends) {
-        e.heat = -1;
+        if (e.heat === -2) continue;
+        e.heat = -2;
         e.gain.gain.setTargetAtTime(0, t, 0.12);
         e.lfoGain.gain.setTargetAtTime(0, t, 0.12);
       }
     }
   }
 
+  /** The murmur's level: a little chatter, more with the nerves (or the final minutes' tension). */
+  private mixMurmur(): void {
+    if (!this.ctx || !this.murmurGain) return;
+    const on = this.ambienceActive && this.crowdOn;
+    const x = Math.max(this.nerves, this.tension * 0.7);
+    const target = on && this.fill >= EMPTY_FILL ? (MURMUR_BASE + x * MURMUR_NERVES) * (0.7 + 0.3 * this.stadiumK) : 0;
+    if (Math.abs(target - this.murmurLevel) < 0.001) return;
+    this.murmurLevel = target;
+    const t = this.ctx.currentTime;
+    this.murmurGain.gain.setTargetAtTime(target, t, target ? 0.9 : 0.15);
+    this.murmurLfo?.gain.setTargetAtTime(target * 0.45, t, 0.9);
+  }
+
+  /**
+   * Nerves, 0..1 (src/audio/director.ts: late on with it level or one behind, the shootout; a little through the
+   * break): the murmur rises. Cheap every frame (moves only on a change).
+   */
+  setNerves(x: number): void {
+    this.nerves = Math.max(0, Math.min(1, x));
+    this.mixMurmur();
+  }
+
   /** 0 calm .. 1 edge-of-seat. */
   setExcitement(x: number): void {
     if (!this.ctx) return;
-    this.excitement = Math.max(0, Math.min(1, x));
+    const v = Math.max(0, Math.min(1, x));
+    // (Every frame from the match: the params move only on a real change, or the first time on a new context.)
+    if (Math.abs(v - this.excitement) < 0.01 && this.washLevel >= 0) {
+      this.mixAmbience();
+      return;
+    }
+    this.excitement = v;
     const t = this.ctx.currentTime;
     this.mixAmbience();
     this.crowdFilter.frequency.setTargetAtTime(950 + this.excitement * 450, t, 0.8);
@@ -534,7 +867,7 @@ export class Sfx {
     g.gain.exponentialRampToValueAtTime(0.0001, t + a + d);
   }
 
-  private noiseBurst(t: number, dur: number, type: BiquadFilterType, freq: number, q: number, peak: number, bus = this.sfxBus, attack = 0.005): { f: BiquadFilterNode; g: GainNode } {
+  private noiseBurst(t: number, dur: number, type: BiquadFilterType, freq: number, q: number, peak: number, bus: AudioNode = this.sfxBus, attack = 0.005): { f: BiquadFilterNode; g: GainNode } {
     const c = this.ctx!;
     const src = c.createBufferSource();
     src.buffer = this.noise;
@@ -549,7 +882,7 @@ export class Sfx {
     return { f, g };
   }
 
-  private tone(t: number, type: OscillatorType, f0: number, f1: number, dur: number, peak: number, bus = this.sfxBus, attack = 0.004): OscillatorNode {
+  private tone(t: number, type: OscillatorType, f0: number, f1: number, dur: number, peak: number, bus: AudioNode = this.sfxBus, attack = 0.004): OscillatorNode {
     const c = this.ctx!;
     const o = c.createOscillator();
     o.type = type;
@@ -565,7 +898,7 @@ export class Sfx {
 
   /** A pass, a clearance, a throw's first touch: the boot on the ball (a header gets its own thock). */
   /** tone(), returning its gain node (to send it on to the room tail). */
-  private toneG(t: number, type: OscillatorType, f0: number, f1: number, dur: number, peak: number, bus = this.sfxBus, attack = 0.004): GainNode {
+  private toneG(t: number, type: OscillatorType, f0: number, f1: number, dur: number, peak: number, bus: AudioNode = this.sfxBus, attack = 0.004): GainNode {
     const c = this.ctx!;
     const o = c.createOscillator();
     o.type = type;
@@ -673,29 +1006,7 @@ export class Sfx {
   whistle(kind: 'short' | 'long' | 'end'): void {
     if (!this.ready || !this.sfxOn) return;
     const c = this.ctx!;
-    const blow = (t: number, dur: number) => {
-      for (const f of [2950, 3020]) {
-        const o = c.createOscillator();
-        o.type = 'sine';
-        o.frequency.value = f;
-        const lfo = c.createOscillator();
-        lfo.frequency.value = 26;
-        const lg = c.createGain();
-        lg.gain.value = 120;
-        lfo.connect(lg).connect(o.frequency);
-        const g = c.createGain();
-        g.gain.setValueAtTime(0.0001, t);
-        g.gain.exponentialRampToValueAtTime(0.14, t + 0.02);
-        g.gain.setValueAtTime(0.14, t + dur - 0.05);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-        o.connect(g).connect(this.sfxBus);
-        o.start(t);
-        lfo.start(t);
-        o.stop(t + dur + 0.02);
-        lfo.stop(t + dur + 0.02);
-      }
-      this.noiseBurst(t, dur, 'bandpass', 3000, 3, 0.04);
-    };
+    const blow = (t: number, dur: number) => this.whistleBlow(t, dur);
     const t = c.currentTime;
     if (kind === 'short') blow(t, 0.28);
     else if (kind === 'long') {
@@ -706,6 +1017,52 @@ export class Sfx {
       blow(t + 0.42, 0.3);
       blow(t + 0.84, 1.2);
     }
+  }
+
+  /** The referee's half-time whistle: two short blasts and a long one (matchSession, the 'whistle' event 'long'). */
+  whistleHalf(): void {
+    this.whistleBlows([0.24, 0.24, 1.0]);
+  }
+
+  /** The full-time whistle: three blasts, the last the longest (matchSession, the 'whistle' event 'end'). */
+  whistleFull(): void {
+    this.whistleBlows([0.5, 0.5, 1.3]);
+  }
+
+  /** Blasts of the given lengths (s), a short breath apart. */
+  private whistleBlows(lengths: readonly number[]): void {
+    if (!this.ready || !this.sfxOn) return;
+    let t = this.ctx!.currentTime;
+    for (const d of lengths) {
+      this.whistleBlow(t, d);
+      t += d + 0.14;
+    }
+  }
+
+  /** One blast of the pea whistle at `t`, `dur` s long. */
+  private whistleBlow(t: number, dur: number): void {
+    const c = this.ctx!;
+    for (const f of [2950, 3020]) {
+      const o = c.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = f;
+      const lfo = c.createOscillator();
+      lfo.frequency.value = 26;
+      const lg = c.createGain();
+      lg.gain.value = 120;
+      lfo.connect(lg).connect(o.frequency);
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.14, t + 0.02);
+      g.gain.setValueAtTime(0.14, t + dur - 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(this.sfxBus);
+      o.start(t);
+      lfo.start(t);
+      o.stop(t + dur + 0.02);
+      lfo.stop(t + dur + 0.02);
+    }
+    this.noiseBurst(t, dur, 'bandpass', 3000, 3, 0.04);
   }
 
   /**
@@ -767,13 +1124,17 @@ export class Sfx {
 
   /**
    * A goal, in three beats: the ball hitting the net (a fat thud in the rigging), the crowd swelling up out of
-   * it, then the stadium horn over the roar (and the claps after).
+   * it, then the stadium horn over the roar (and the claps after). `side` (a match): the home side's goal is the
+   * whole ground going up and then singing; the away side's is their section going wild (panned, smaller) while
+   * the home crowd groans. Omitted (a menu's celebration): the home roar, no song. The music ducks under it.
    */
-  goal(): void {
+  goal(side?: 0 | 1): void {
     if (!this.ready) return;
     const c = this.ctx!;
     const t = c.currentTime;
+    const away = side === 1;
     this.roarUntil = t + 6;
+    this.duck(0.3, 4.5);
     if (this.sfxOn) {
       // 1. The net: a low thud and the rigging's rustle.
       const thud = this.toneG(t, 'sine', 95, 42, 0.26, 0.55, this.sfxBus, 0.004);
@@ -782,19 +1143,30 @@ export class Sfx {
       rig.f.frequency.exponentialRampToValueAtTime(800, t + 0.42);
     }
     if (this.crowdOn) {
-      // 2. The crowd swelling up (from a beat after the net).
+      // 2. The crowd swelling up (from a beat after the net). (The away section's own gain makes theirs smaller.)
       const s0 = t + 0.1;
-      const a = this.noiseBurst(s0, 4.2, 'bandpass', 480, 0.6, 0.85, this.crowdBus, 0.45);
+      const bus = away ? this.awayBus : this.crowdBus;
+      const k = (away ? 1.3 : 1) * ROAR_LEVEL;
+      const a = this.noiseBurst(s0, 4.2, 'bandpass', 480, 0.6, 0.85 * k, bus, 0.45);
       a.f.frequency.exponentialRampToValueAtTime(1300, s0 + 0.9);
       a.f.frequency.exponentialRampToValueAtTime(800, s0 + 4);
-      this.noiseBurst(s0, 3.4, 'lowpass', 900, 0.5, 0.5, this.crowdBus, 0.4);
+      this.noiseBurst(s0, 3.4, 'lowpass', 900, 0.5, 0.5 * k, bus, 0.4);
       // Rhythmic claps a few seconds later.
       for (let i = 0; i < 9; i++) {
         const ct = t + 2.4 + i * 0.36 + (i % 3 === 2 ? 0.12 : 0);
-        this.noiseBurst(ct, 0.07, 'bandpass', 1700, 1.2, 0.22, this.crowdBus);
+        this.noiseBurst(ct, 0.07, 'bandpass', 1700, 1.2, 0.22 * k, bus);
+      }
+      if (away) this.groanAt(t + 0.35, 0.8, 0);
+      // Then the scorers' fans sing (once the roar has had its moment).
+      if (side !== undefined) {
+        this.forced = { kind: away ? 'name' : 'ohs', stand: side, anthem: !away };
+        this.chantT = 6;
+        // (Whatever they were singing is drowned by the roar: the song after it never waits on it.)
+        const ch = this.choirs[side];
+        if (ch) ch.busy = 0;
       }
     }
-    if (this.sfxOn) {
+    if (this.sfxOn && !away) {
       // 3. The stadium air horn, once the roar is up.
       const h0 = t + 0.55;
       for (const [f, pk] of [[233, 0.12], [466, 0.06], [349, 0.07]] as const) {
@@ -933,16 +1305,17 @@ export class Sfx {
   }
 
   /** The crowd's "o-LÉ!": two vowel-ish swells off the stands, the second higher and longer. */
-  ole(at?: number): void {
+  ole(at?: number, k = 1, stand: Stand = 0): void {
     if (!this.ready || !this.crowdOn) return;
     const t = at ?? this.ctx!.currentTime;
-    const o = this.noiseBurst(t, 0.22, 'bandpass', 480, 4, 0.32, this.crowdBus, 0.05);
+    const bus = this.standBus(stand);
+    const o = this.noiseBurst(t, 0.22, 'bandpass', 480, 4, 0.32 * k, bus, 0.05);
     o.f.frequency.exponentialRampToValueAtTime(620, t + 0.2);
-    this.noiseBurst(t, 0.2, 'bandpass', 1050, 5, 0.12, this.crowdBus, 0.05);
-    const le = this.noiseBurst(t + 0.26, 0.6, 'bandpass', 760, 4, 0.42, this.crowdBus, 0.06);
+    this.noiseBurst(t, 0.2, 'bandpass', 1050, 5, 0.12 * k, bus, 0.05);
+    const le = this.noiseBurst(t + 0.26, 0.6, 'bandpass', 760, 4, 0.42 * k, bus, 0.06);
     le.f.frequency.exponentialRampToValueAtTime(1050, t + 0.5);
     le.f.frequency.exponentialRampToValueAtTime(820, t + 0.9);
-    this.noiseBurst(t + 0.26, 0.55, 'bandpass', 1900, 6, 0.14, this.crowdBus, 0.06);
+    this.noiseBurst(t + 0.26, 0.55, 'bandpass', 1900, 6, 0.14 * k, bus, 0.06);
   }
 
   /** Missed him: a soft scuff of boot on grass. */
@@ -1031,61 +1404,860 @@ export class Sfx {
     this.noiseBurst(t, 0.04, 'bandpass', 2000, 1.5, 0.12);
   }
 
-  // ------------------------------------------------------------------ chiptune menu loop
+  // ------------------------------------------------------------------ the crowd: chants and reactions
 
-  startMusic(): void {
-    if (!this.ctx || this.musicTimer !== null || !this.musicOn) return;
-    this.musicStep = 0;
-    this.nextNoteTime = this.ctx.currentTime + 0.1;
-    this.musicTimer = window.setInterval(() => this.schedule(), 30);
+  private static readonly CHANT_KINDS: readonly ChantKind[] = ['claps', 'ohs', 'name', 'drum', 'horn'];
+  /** The clap rhythm, in beats: clap clap, clap-clap-clap. */
+  private static readonly CLAP_RHYTHM = [0, 1, 2.5, 3, 3.5] as const;
+  /** "Oh oh oh": [beat, beats long, MIDI] (G3 A3 G3 E3 G3 C3, then the answer down to C, an anthem's third line up). */
+  private static readonly OH_LINES: readonly (readonly (readonly [number, number, number])[])[] = [
+    [[0, 1.5, 55], [1.5, 0.5, 57], [2, 1, 55], [3, 1, 52], [4, 1, 55], [5, 2.6, 48]],
+    [[8, 1.5, 55], [9.5, 0.5, 57], [10, 1, 55], [11, 1, 52], [12, 1, 50], [13, 2.6, 48]],
+    [[16, 1.5, 55], [17.5, 0.5, 57], [18, 1, 59], [19, 1, 60], [20, 1, 59], [21, 2.6, 60]],
+  ];
+  /** The name chant's syllables by how many there are: [beat, beats long] each. */
+  private static readonly NAME_RHYTHM: readonly (readonly (readonly [number, number])[])[] = [
+    [[0, 0.9], [1, 0.9]],
+    [[0, 0.9], [1, 1]],
+    [[0, 0.45], [0.5, 0.45], [1, 1]],
+    [[0, 0.45], [0.5, 0.45], [1, 0.45], [1.5, 0.9]],
+  ];
+  /** The trumpet's charge: [sixteenth, sixteenths long, MIDI] (G C E G, E G). */
+  private static readonly CHARGE: readonly (readonly [number, number, number])[] = [[0, 1, 67], [1, 1, 72], [2, 1, 76], [3, 2, 79], [5, 1, 76], [6, 4, 79]];
+  private chantWeights = new Float32Array(5);
+
+  /** Where a stand's voices go (the away section: quieter, panned to one side). */
+  private standBus(stand: Stand): AudioNode {
+    return stand === 1 && this.awayBus ? this.awayBus : this.crowdBus;
   }
 
-  stopMusic(): void {
+  /** Room in the crowd's voice budget for `n` more voices until audio time `until` (booked if so). */
+  private claim(n: number, until: number): boolean {
+    const now = this.ctx!.currentTime;
+    let busy = 0;
+    for (let i = 0; i < VOICE_CAP; i++) if (this.voiceEnd[i] > now) busy++;
+    if (busy + n > VOICE_CAP) return false;
+    for (let i = 0; i < VOICE_CAP && n > 0; i++) {
+      if (this.voiceEnd[i] <= now) {
+        this.voiceEnd[i] = until;
+        n--;
+      }
+    }
+    return true;
+  }
+
+  /** The next chant for this ground: a small one drums and blows its trumpet more, a big one sings more. */
+  private pickChant(): ChantKind {
+    const small = 1 - this.size;
+    const w = this.chantWeights;
+    w[0] = 1;
+    w[1] = 1 + this.size * 0.5;
+    w[2] = 1.2;
+    w[3] = 0.6 + small * 0.8;
+    w[4] = 0.15 + small;
+    const kinds = Sfx.CHANT_KINDS;
+    let sum = 0;
+    for (let i = 0; i < kinds.length; i++) if (kinds[i] !== this.lastChant) sum += w[i];
+    let r = Math.random() * sum;
+    for (let i = 0; i < kinds.length; i++) {
+      if (kinds[i] === this.lastChant) continue;
+      r -= w[i];
+      if (r <= 0) return kinds[i];
+    }
+    return 'claps';
+  }
+
+  /**
+   * A crowd singing `notes` on `stand`'s choir: `voices` detuned saws (a third of them an octave up) and a breath
+   * of noise, one envelope for the lot, through the choir's vowel formants (moved per note). Notes in time order;
+   * a chant calls this in time order too (each call takes the formants from its first note on). Returns the end.
+   */
+  private sing(t0: number, notes: readonly SungNote[], voices: number, level: number, stand: Stand, spread = 0.03): number {
+    const ch = this.choirs[stand];
+    if (!ch || !notes.length) return t0;
+    const c = this.ctx!;
+    const last = notes[notes.length - 1];
+    const start = t0 + notes[0][0];
+    const end = t0 + last[0] + last[1];
+    ch.f1.frequency.cancelScheduledValues(start);
+    ch.f2.frequency.cancelScheduledValues(start);
+    const env = c.createGain();
+    env.gain.value = 0;
+    env.gain.setValueAtTime(0, start);
+    const lv = level / Math.sqrt(voices);
+    for (const [at, dur, , v] of notes) {
+      const [F1, F2] = VOWELS[v] ?? VOWELS.o;
+      const s = t0 + at;
+      ch.f1.frequency.setValueAtTime(F1, s);
+      ch.f2.frequency.setValueAtTime(F2, s);
+      const a = Math.min(0.06, dur * 0.3);
+      env.gain.setValueAtTime(0.0001, s);
+      env.gain.linearRampToValueAtTime(lv, s + a);
+      env.gain.setValueAtTime(lv * 0.8, s + Math.max(a + 0.01, dur - 0.08));
+      env.gain.linearRampToValueAtTime(0.0001, s + dur);
+    }
+    for (let v = 0; v < voices; v++) {
+      const o = c.createOscillator();
+      o.type = 'sawtooth';
+      const det = 1 + (Math.random() * 2 - 1) * spread;
+      const oct = v % 3 === 2 ? 2 : 1;
+      for (const [at, , midi] of notes) {
+        // Each voice scoops up into the note a touch late (a crowd is never quite together).
+        const f = midiHz(midi) * det * oct;
+        const s = t0 + at + Math.random() * 0.02;
+        o.frequency.setValueAtTime(f * 0.97, s);
+        o.frequency.linearRampToValueAtTime(f, s + 0.07);
+      }
+      o.connect(env);
+      o.start(start);
+      o.stop(end + 0.05);
+    }
+    const n = c.createBufferSource();
+    n.buffer = this.noise;
+    const ng = c.createGain();
+    ng.gain.value = 1.4;
+    n.connect(ng).connect(env);
+    n.start(start, Math.random() * 2, end - start + 0.05);
+    env.connect(ch.input);
+    return end;
+  }
+
+  /** A clap from a crowd: a few distinct pairs of hands at a small ground, one smeared crack from a big one. */
+  private clap(t: number, k: number, bus: AudioNode): void {
+    const hands = this.size < 0.3 ? 3 : this.size < 0.7 ? 2 : 1;
+    if (hands === 1) {
+      this.noiseBurst(t, 0.09, 'bandpass', 1500, 0.6, 0.2 * k, bus, 0.012);
+      return;
+    }
+    for (let i = 0; i < hands; i++) {
+      this.noiseBurst(t + Math.random() * 0.03, 0.045, 'bandpass', 1200 + Math.random() * 1000, 1.3, (0.2 / Math.sqrt(hands)) * k, bus, 0.002);
+    }
+  }
+
+  /** The crowd's bass drum (a phone speaker hears the skin's knock more than the boom). */
+  private drum(t: number, k: number, bus: AudioNode): void {
+    this.tone(t, 'sine', 140, 62, 0.2, 0.42 * k, bus, 0.002);
+    this.tone(t, 'triangle', 280, 120, 0.07, 0.16 * k, bus, 0.001);
+    this.noiseBurst(t, 0.03, 'bandpass', 1100, 0.9, 0.12 * k, bus, 0.001);
+  }
+
+  /** The whole stand shouting "HEY!". */
+  private hey(t: number, k: number, stand: Stand, voices: number): void {
+    this.sing(t, [[0, 0.3, 57, 'e']], voices, 0.55 * k, stand, 0.04);
+  }
+
+  /** Clap clap, clap-clap-clap, three times (a small ground's drummer banging along) and a HEY. */
+  private chantClaps(t: number, k: number, stand: Stand, voices: number): number {
+    const bus = this.standBus(stand);
+    const b = 0.36;
+    const small = this.size < 0.5;
+    let last = t;
+    for (let r = 0; r < 3; r++) {
+      for (const x of Sfx.CLAP_RHYTHM) {
+        const ct = t + (r * 5 + x) * b;
+        this.clap(ct, k, bus);
+        if (small ? x !== 3.5 : x === 0) this.drum(ct, (small ? 0.8 : 0.6) * k, bus);
+        last = ct;
+      }
+    }
+    this.hey(last + b * 0.9, k, stand, voices);
+    return last + b * 0.9 + 0.35;
+  }
+
+  /** "Oh oh oh": a sung line and its answer (an anthem after a goal: a third line climbing, louder, faster). */
+  private chantOhs(t: number, k: number, stand: Stand, voices: number, anthem: boolean): number {
+    const b = anthem ? 0.4 : 0.42;
+    const lines = anthem ? 3 : 2;
+    const notes: SungNote[] = [];
+    for (let i = 0; i < lines; i++) for (const [at, len, m] of Sfx.OH_LINES[i]) notes.push([at * b, len * b * 0.95, m, 'o']);
+    const bus = this.standBus(stand);
+    const small = this.size < 0.5;
+    for (let i = 0; i < lines; i++) {
+      const l0 = t + i * 8 * b;
+      if (small) for (const x of [0, 2, 4]) this.drum(l0 + x * b, 0.75 * k, bus);
+      for (const x of [6, 6.5, 7]) this.clap(l0 + x * b, k, bus);
+    }
+    return this.sing(t, notes, voices, 0.9 * k, stand);
+  }
+
+  /** The club's name, syllable by syllable on two notes, clap clap clap after it, four times. */
+  private chantName(t: number, k: number, stand: Stand, voices: number): number {
+    const syl = this.syllables[stand];
+    const rhythm = Sfx.NAME_RHYTHM[Math.min(4, syl.length) - 1];
+    const b = 0.42;
+    const bus = this.standBus(stand);
+    const notes: SungNote[] = [];
+    for (let r = 0; r < 4; r++) {
+      const r0 = r * 4;
+      for (let i = 0; i < rhythm.length; i++) {
+        const [at, len] = rhythm[i];
+        notes.push([(r0 + at) * b, len * b, i === rhythm.length - 1 ? 52 : 55, syl[i % syl.length]]);
+        // (The consonant: a hard edge on each syllable, the crowd spitting the name out.)
+        this.noiseBurst(t + (r0 + at) * b, 0.025, 'highpass', 2200, 0.8, 0.07 * k, bus, 0.002);
+      }
+      for (const x of [2, 2.5, 3]) this.clap(t + (r0 + x) * b, k, bus);
+      if (this.size < 0.5) this.drum(t + r0 * b, 0.8 * k, bus);
+    }
+    return Math.max(this.sing(t, notes, voices, k, stand, 0.025), t + 16 * b);
+  }
+
+  /** A drum march: BOOM BOOM BOOM (clap) four bars, a snare roll into the last, HEY on the second and fourth. */
+  private chantDrum(t: number, k: number, stand: Stand, voices: number): number {
+    const bus = this.standBus(stand);
+    const b = 0.4;
+    for (let bar = 0; bar < 4; bar++) {
+      const b0 = t + bar * 4 * b;
+      for (let x = 0; x < 3; x++) this.drum(b0 + x * b, (x === 0 ? 1 : 0.8) * k, bus);
+      if (bar === 3) {
+        for (let i = 0; i < 4; i++) this.noiseBurst(b0 + (2.5 + i * 0.25) * b, 0.05, 'bandpass', 1900, 0.9, (0.08 + i * 0.02) * k, bus, 0.002);
+      } else this.clap(b0 + 3 * b, k, bus);
+    }
+    this.hey(t + 7 * b, k, stand, voices);
+    this.hey(t + 15 * b, k, stand, voices);
+    return t + 16 * b + 0.3;
+  }
+
+  /** A trumpet in the stand plays the charge, the fans roar it back and clap; twice. */
+  private chantHorn(t: number, k: number, stand: Stand, voices: number): number {
+    const bus = this.standBus(stand);
+    const e = 0.15;
+    let at = t;
+    for (let r = 0; r < 2; r++) {
+      for (const [x, len, m] of Sfx.CHARGE) this.brassNote(at + x * e, m + r * 2, len * e * 0.9, 0.06 * k, bus, false);
+      const shout = at + 10 * e + 0.1;
+      this.drum(shout, k, bus);
+      this.sing(shout, [[0, 0.45, 57 + r * 2, 'a']], voices, 0.65 * k, stand, 0.04);
+      for (let i = 0; i < 3; i++) this.clap(shout + 0.6 + i * 0.3, k, bus);
+      at = shout + 1.6;
+    }
+    return at;
+  }
+
+  /** One fan shouting in a gap ("COME ON!", "GO ON!"): one voice through its own vowels, a little room on it. */
+  private shout(t: number, k: number, stand: Stand): void {
+    if (!this.claim(2, t + 0.8)) return;
+    const c = this.ctx!;
+    const syl = Math.random() < 0.5 ? 1 : 2;
+    const f0 = 150 + Math.random() * 120;
+    const o = c.createOscillator();
+    o.type = 'sawtooth';
+    const f1 = c.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.Q.value = 5;
+    const f2 = c.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.Q.value = 6;
+    const g = c.createGain();
+    g.gain.value = 0;
+    let s = t;
+    for (let i = 0; i < syl; i++) {
+      const d = syl === 1 ? 0.42 : i === 0 ? 0.16 : 0.34;
+      const [F1, F2] = VOWELS[i === syl - 1 ? 'o' : 'u'];
+      f1.frequency.setValueAtTime(F1, s);
+      f2.frequency.setValueAtTime(F2, s);
+      o.frequency.setValueAtTime(f0 * (i ? 1.2 : 1), s);
+      o.frequency.linearRampToValueAtTime(f0 * (i ? 1.4 : 1.1), s + d * 0.35);
+      o.frequency.linearRampToValueAtTime(f0 * 0.85, s + d);
+      g.gain.setValueAtTime(0.0001, s);
+      g.gain.linearRampToValueAtTime(0.3 * k, s + 0.03);
+      g.gain.setValueAtTime(0.26 * k, s + d - 0.05);
+      g.gain.linearRampToValueAtTime(0.0001, s + d);
+      s += d + 0.03;
+    }
+    o.connect(f1).connect(g);
+    o.connect(f2).connect(g);
+    g.connect(this.standBus(stand));
+    this.wet(g, 0.4);
+    o.start(t);
+    o.stop(s + 0.05);
+  }
+
+  /** The rising roar from end `end` as an attack gets into the final third ("ooooOOH"). */
+  private surge(end: number, heat: number): void {
+    const c = this.ctx!;
+    const t = c.currentTime;
+    if (!this.claim(2, t + 2.6)) return;
+    const k = VOICE_LEVEL * (0.6 + 0.4 * this.stadiumK) * (0.7 + heat * 0.4);
+    const pan = c.createStereoPanner();
+    pan.pan.value = (end ? END_PAN : -END_PAN) * 0.8;
+    pan.connect(this.crowdBus);
+    const a = this.noiseBurst(t, 2.2, 'bandpass', 520, 0.8, 0.3 * k, pan, 0.8);
+    a.f.frequency.exponentialRampToValueAtTime(1350, t + 1.4);
+    const v = this.noiseBurst(t + 0.2, 1.8, 'bandpass', 700, 3, 0.16 * k, pan, 0.7);
+    v.f.frequency.exponentialRampToValueAtTime(1150, t + 1.6);
+  }
+
+  /** The crowd's "awww" (a sitter missed, a penalty missed, a goal against at home): falling, deflated. */
+  groan(k = 1, stand: Stand = 0): void {
+    if (!this.ready || !this.crowdOn) return;
+    this.groanAt(this.ctx!.currentTime + 0.05, k, stand);
+  }
+
+  private groanAt(t: number, k: number, stand: Stand): void {
+    if (!this.crowdOn || t - this.lastGroan < 1.2 || !this.claim(5, t + 1.8)) return;
+    this.lastGroan = t;
+    const c = this.ctx!;
+    const bus = this.standBus(stand);
+    const kk = k * VOICE_LEVEL;
+    const a = this.noiseBurst(t, 1.5, 'bandpass', 760, 4, 0.42 * kk, bus, 0.12);
+    a.f.frequency.exponentialRampToValueAtTime(480, t + 1.5);
+    const b = this.noiseBurst(t, 1.4, 'bandpass', 1250, 5, 0.2 * kk, bus, 0.12);
+    b.f.frequency.exponentialRampToValueAtTime(880, t + 1.4);
+    const f = c.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 700;
+    f.Q.value = 1.5;
+    const g = c.createGain();
+    this.env(g, t, 0.15, 0.09 * kk, 1.3);
+    f.connect(g).connect(bus);
+    for (let v = 0; v < 3; v++) {
+      const o = c.createOscillator();
+      o.type = 'sawtooth';
+      const f0 = (180 + v * 23) * (0.97 + Math.random() * 0.06);
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(f0 * 0.68, t + 1.4);
+      o.connect(f);
+      o.start(t);
+      o.stop(t + 1.5);
+    }
+  }
+
+  /** Applause from `stand` (a good tackle, a skill, the final whistle): a hiss of hands and the claps you pick out. */
+  applause(k = 0.6, stand: Stand = 0): void {
+    if (!this.ready || !this.crowdOn) return;
+    const t = this.ctx!.currentTime + 0.03;
+    if (t - this.applauseAt < 1.5) return;
+    const hands = 6 + Math.round((1 - this.size) * 8);
+    if (!this.claim(1 + Math.min(hands, 8), t + 2.6)) return;
+    this.applauseAt = t;
+    const bus = this.standBus(stand);
+    const kk = k * VOICE_LEVEL;
+    this.noiseBurst(t, 2.4, 'bandpass', 2100, 0.6, (0.08 + 0.14 * this.size) * kk, bus, 0.18);
+    for (let i = 0; i < hands; i++) {
+      const at = t + (i / hands) * 1.8 + Math.random() * 0.25;
+      this.noiseBurst(at, 0.04, 'bandpass', 1300 + Math.random() * 1100, 1.3, (0.09 + Math.random() * 0.06) * kk, bus, 0.002);
+    }
+  }
+
+  /**
+   * `stand` whistling (and, `boo`, booing): at the other side keeping the ball, at a foul on their man, and for the
+   * final whistle when they're ahead. More whistlers the bigger the ground.
+   */
+  crowdWhistles(k = 0.7, stand: Stand = 0, boo = false): void {
+    if (!this.ready || !this.crowdOn) return;
+    const c = this.ctx!;
+    const t = c.currentTime + 0.03;
+    if (t - this.whistlesAt < 1) return;
+    const n = 3 + Math.round(this.size * 4);
+    if (!this.claim(n + (boo ? 4 : 0), t + 2)) return;
+    this.whistlesAt = t;
+    const bus = this.standBus(stand);
+    const kk = k * VOICE_LEVEL;
+    for (let i = 0; i < n; i++) {
+      const s = t + Math.random() * 0.7;
+      const dur = 0.45 + Math.random() * 0.7;
+      const f = 2300 + Math.random() * 1100;
+      const o = c.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(f * 0.9, s);
+      o.frequency.exponentialRampToValueAtTime(f, s + 0.08);
+      o.frequency.setValueAtTime(f, s + dur - 0.12);
+      o.frequency.exponentialRampToValueAtTime(f * 0.82, s + dur);
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001, s);
+      g.gain.exponentialRampToValueAtTime(0.05 * kk, s + 0.04);
+      g.gain.setValueAtTime(0.05 * kk, s + dur - 0.1);
+      g.gain.exponentialRampToValueAtTime(0.0001, s + dur);
+      o.connect(g).connect(bus);
+      o.start(s);
+      o.stop(s + dur + 0.02);
+    }
+    if (!boo) return;
+    const f = c.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 330;
+    f.Q.value = 1.2;
+    const g = c.createGain();
+    this.env(g, t + 0.1, 0.25, 0.14 * kk, 1.3);
+    f.connect(g).connect(bus);
+    for (let v = 0; v < 3; v++) {
+      const o = c.createOscillator();
+      o.type = 'sawtooth';
+      const f0 = (108 + v * 9) * (0.98 + Math.random() * 0.04);
+      o.frequency.setValueAtTime(f0, t + 0.1);
+      o.frequency.linearRampToValueAtTime(f0 * 0.93, t + 1.6);
+      o.connect(f);
+      o.start(t + 0.1);
+      o.stop(t + 1.7);
+    }
+    this.noiseBurst(t + 0.1, 1.3, 'bandpass', 340, 3, 0.25 * kk, bus, 0.25);
+  }
+
+  /** A passing move: the olé on each pass from the fourth, louder the longer it goes (`n`: passes so far). */
+  oleChain(n: number, stand: Stand = 0): void {
+    if (!this.ready || !this.crowdOn) return;
+    const t = this.ctx!.currentTime + 0.05;
+    if (t - this.oleAt < 0.8 || t < this.roarUntil || !this.claim(4, t + 1)) return;
+    this.oleAt = t;
+    this.ole(t, Math.min(1.25, 0.55 + (n - 4) * 0.12) * VOICE_LEVEL, stand);
+  }
+
+  /**
+   * The final whistle (src/audio/director.ts): the winners' fans roar (the home crowd a huge one) and then sing,
+   * the losers' groan; a draw gets applause from both ends. Regular chants stop.
+   */
+  fullTimeCrowd(winner: -1 | 0 | 1): void {
+    this.chantGate = false;
+    if (!this.ready || !this.crowdOn) return;
+    const t = this.ctx!.currentTime + 0.05;
+    if (winner < 0) {
+      this.applause(0.8, 0);
+      this.applauseAt = -9;
+      this.applause(0.7, 1);
+      return;
+    }
+    const w = winner as Stand;
+    const l: Stand = w === 0 ? 1 : 0;
+    const bus = this.standBus(w);
+    const k = (w === 1 ? 1.3 : 1) * ROAR_LEVEL * 0.85;
+    this.roarUntil = t + 4.5;
+    const a = this.noiseBurst(t, 3.6, 'bandpass', 520, 0.6, 0.75 * k, bus, 0.3);
+    a.f.frequency.exponentialRampToValueAtTime(1300, t + 0.7);
+    a.f.frequency.exponentialRampToValueAtTime(850, t + 3.4);
+    this.noiseBurst(t, 3, 'lowpass', 900, 0.5, 0.4 * k, bus, 0.3);
+    this.applauseAt = -9;
+    this.applause(1, w);
+    this.groanAt(t + 0.2, 0.7, l);
+    this.forced = { kind: w === 0 ? 'ohs' : 'name', stand: w, anthem: true };
+    this.chantT = 4.6;
+    const ch = this.choirs[w];
+    if (ch) ch.busy = 0;
+  }
+
+  // ------------------------------------------------------------------ hooks for the HYPE layer (game/funPresent.ts)
+
+  /**
+   * The final minutes' tension, 0..1 (game/funPresent.ts, every frame; 0 outside them): the crowd's murmur rises
+   * and the heartbeat (finalMinute) quickens. Cheap every frame: params move only on a change.
+   */
+  setTension(k: number): void {
+    const v = Math.max(0, Math.min(1, k));
+    if (Math.abs(v - this.tension) < 0.02 && !(v === 0 && this.tension !== 0)) return;
+    this.tension = v;
+    this.mixMurmur();
+  }
+
+  /**
+   * FINAL MINUTE (on: the banner; off: the final whistle, the shootout, leaving the match): a heartbeat under the
+   * match, quickening with setTension, the crowd's drum joining it once it's tight, and both ends rising as it
+   * starts. Calling it twice with the same value changes nothing.
+   */
+  finalMinute(on: boolean): void {
+    if (on === this.finalOn) return;
+    this.finalOn = on;
+    if (!on || !this.ready) return;
+    const t = this.ctx!.currentTime;
+    this.beatNext = t + 0.25;
+    this.beatN = 0;
+    if (this.crowdOn && this.ambienceActive && this.fill >= EMPTY_FILL) {
+      this.surge(0, 0.8);
+      this.surge(1, 0.8);
+    }
+  }
+
+  /** The final minutes' heartbeat: lub-dub, 70 to 118 a minute with the tension; the crowd's drum on it when tight. */
+  private heartbeat(now: number): void {
+    // (After a pause or a hitch: on from now, never a burst of the beats missed.)
+    if (this.beatNext < now - 0.1) this.beatNext = now + 0.05;
+    while (this.beatNext < now + 0.15) {
+      const t = this.beatNext;
+      const k = (0.7 + this.tension * 0.3) * HEART_LEVEL;
+      this.tone(t, 'sine', 92, 50, 0.13, 0.5 * k, this.sfxBus, 0.006);
+      this.tone(t, 'triangle', 180, 95, 0.06, 0.12 * k, this.sfxBus, 0.004);
+      this.tone(t + 0.17, 'sine', 80, 46, 0.11, 0.34 * k, this.sfxBus, 0.006);
+      this.tone(t + 0.17, 'triangle', 160, 85, 0.05, 0.08 * k, this.sfxBus, 0.004);
+      if (this.crowdOn && this.tension > 0.7 && this.beatN % 2 === 0 && this.fill >= EMPTY_FILL) this.drum(t, 0.7 * this.tension, this.crowdBus);
+      this.beatN++;
+      this.beatNext += 60 / (70 + this.tension * 48);
+    }
+  }
+
+  /**
+   * The SUPER SHOT struck (game/funPresent.ts): a thunderclap and a boom at the boot, then the riser, the ball
+   * screaming towards goal, and a crackle of lightning off it. A second call within a second is ignored.
+   */
+  superShot(): void {
+    if (!this.ready || !this.sfxOn) return;
+    const t = this.ctx!.currentTime;
+    if (t - this.superAt < 1) return;
+    this.superAt = t;
+    this.duck(0.5, 1.5);
+    const crack = this.noiseBurst(t, 0.06, 'highpass', 2400, 0.7, 0.5, this.sfxBus, 0.001);
+    this.wet(crack.g, 0.6);
+    this.wet(this.toneG(t, 'sine', 120, 38, 0.55, 0.7, this.sfxBus, 0.003), 0.5);
+    this.tone(t, 'triangle', 240, 70, 0.3, 0.22, this.sfxBus, 0.002);
+    const r = this.noiseBurst(t + 0.04, 0.9, 'bandpass', 500, 1.6, 0.22, this.sfxBus, 0.5);
+    r.f.frequency.exponentialRampToValueAtTime(3600, t + 0.85);
+    this.tone(t + 0.02, 'sawtooth', 220, 1760, 0.75, 0.05, this.sfxBus, 0.25);
+    this.tone(t + 0.02, 'square', 330, 2640, 0.75, 0.025, this.sfxBus, 0.25);
+    for (let i = 0; i < 7; i++) this.noiseBurst(t + 0.05 + Math.random() * 0.6, 0.015, 'highpass', 4000, 0.8, 0.14, this.sfxBus, 0.001);
+  }
+
+  /** A live objective done (game/funPresent.ts): a bright chime up the C chord with a sparkle, a lift from the stands. */
+  objectiveDone(): void {
+    if (!this.ready) return;
+    const t = this.ctx!.currentTime;
+    if (this.sfxOn) {
+      const notes = [1047, 1319, 1568, 2093];
+      for (let i = 0; i < notes.length; i++) this.wet(this.toneG(t + i * 0.07, 'triangle', notes[i], notes[i], 0.32, 0.1, this.sfxBus, 0.003), 0.3);
+      this.tone(t, 'square', 523, 523, 0.12, 0.04);
+      this.noiseBurst(t + 0.2, 0.35, 'highpass', 6000, 0.7, 0.05, this.sfxBus, 0.01);
+    }
+    if (this.crowdOn && this.ambienceActive) this.cheer(0.4);
+  }
+
+  /**
+   * Coins flying to the bank (game/funPresent.ts, a live objective's payout): a cascade of coin blips climbing in
+   * pitch, 3 to 14 of them for `n` coins, over about a second.
+   */
+  coinsBurst(n: number): void {
+    if (!this.ready || !this.sfxOn) return;
+    const c = this.ctx!;
+    const t0 = c.currentTime + 0.02;
+    const count = Math.max(3, Math.min(14, Math.round(Math.sqrt(Math.max(0, n)) * 1.4)));
+    for (let i = 0; i < count; i++) {
+      const t = t0 + i * 0.065 + Math.random() * 0.02;
+      const up = Math.pow(2, (i / count) * 0.6);
+      const o = c.createOscillator();
+      o.type = 'square';
+      o.frequency.setValueAtTime(988 * up, t);
+      o.frequency.setValueAtTime(1319 * up, t + 0.05);
+      const g = c.createGain();
+      this.env(g, t, 0.003, 0.05, 0.14);
+      o.connect(g).connect(this.sfxBus);
+      o.start(t);
+      o.stop(t + 0.2);
+    }
+  }
+
+  // ------------------------------------------------------------------ music: the menu loop, the match's songs, stings
+
+  /** The song up now ('off': none; a sting may still be ringing). */
+  get musicState(): TrackId | 'off' {
+    return this.musicTimer !== null && this.trackId ? this.trackId : 'off';
+  }
+
+  /** The menu loop (the owner's favourite): another song playing crossfades into it; the menu already up, nothing. */
+  startMusic(): void {
+    this.playTrack('menu');
+  }
+
+  /**
+   * Song `id` (music.ts SONGS): its intro once, then its loop, until another song or stopMusic. The song before
+   * fades out under it; asking for the one already playing does nothing (it never doubles). `big`: a cup tie (1)
+   * or a final (2): fatter brass, and a final won opens with the trophy fanfare.
+   */
+  playTrack(id: TrackId, big = 0): void {
+    if (!this.ctx || !this.musicOn) return;
+    if (this.trackId === id && this.musicTimer !== null) return;
+    const c = this.ctx;
+    const t = c.currentTime;
+    this.fadeTrack(0.12);
+    const song = id === 'win' && big >= 2 ? WIN_FINAL : SONGS[id];
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(song.level, t + (id === 'menu' ? 0.5 : 0.12));
+    g.connect(this.musicDuck);
+    this.trackGain = g;
+    this.song = song;
+    this.part = song.intro ?? song.loop;
+    this.trackId = id;
+    this.big = big;
+    this.musicStep = 0;
+    this.nextNoteTime = t + 0.1;
+    // (Measuring offline, src/audio/dev.ts drives schedule() itself.)
+    if (this.musicTimer === null) this.musicTimer = this.offline ? -1 : window.setInterval(() => this.schedule(), 30);
+  }
+
+  /**
+   * The full-time music (main.ts, with the result screen): a win's fanfare and victory loop, a draw's warm theme,
+   * a defeat's "go again"; `big` 1 a cup tie, 2 a final.
+   */
+  result(outcome: Outcome, big = 0): void {
+    this.playTrack(outcome, big);
+  }
+
+  /** Stop the song, fading over `fadeS` s (0: at once, as a rebuild does). Stings already ringing finish. */
+  stopMusic(fadeS = 0.15): void {
     if (this.musicTimer !== null) {
-      clearInterval(this.musicTimer);
+      if (this.musicTimer >= 0) clearInterval(this.musicTimer);
       this.musicTimer = null;
     }
+    this.fadeTrack(fadeS / 3);
+    this.trackId = null;
+    this.song = null;
+    this.part = null;
+  }
+
+  /** The playing song's gain out (time constant `tau`), and let go of it. */
+  private fadeTrack(tau: number): void {
+    const g = this.trackGain;
+    this.trackGain = null;
+    if (!g || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    g.gain.cancelScheduledValues(t);
+    g.gain.setValueAtTime(g.gain.value, t);
+    g.gain.setTargetAtTime(0, t, Math.max(0.01, tau));
+  }
+
+  /**
+   * A one-shot cue (music.ts STINGS): the kick-off, a goal of ours (under the roar), the trophy and promotion
+   * fanfares. Scheduled whole when it fires; the song playing ducks under it (not under a goal's: the roar does).
+   */
+  sting(id: StingId, big = 0): void {
+    if (!this.ready || !this.musicOn) return;
+    const c = this.ctx!;
+    const tr = STINGS[id];
+    const spb = 60 / tr.bpm / 2;
+    const t0 = c.currentTime + 0.05;
+    const g = c.createGain();
+    g.gain.value = id === 'goal' ? 0.75 : 1;
+    g.connect(this.musicBus);
+    for (let s = 0; s < tr.steps; s++) this.playStep(tr, s, t0 + s * spb, g, big);
+    if (id !== 'goal') this.duck(0.25, tr.steps * spb + 0.3);
+    this.lastSting = id;
+    this.stings++;
+  }
+
+  /** The career's big moments (ui/career.ts, ui/cup.ts): a trophy lifted, or promotion. */
+  fanfare(kind: 'trophy' | 'promotion'): void {
+    this.sting(kind, kind === 'trophy' ? 2 : 1);
+  }
+
+  /** Duck the songs to `depth` (0..1) for `holdS` s, then bring them back smoothly (goal roars, fanfares). */
+  duck(depth: number, holdS: number): void {
+    if (!this.ctx || !this.musicDuck) return;
+    const g = this.musicDuck.gain;
+    const t = this.ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.setTargetAtTime(depth, t, 0.08);
+    g.setTargetAtTime(1, t + holdS, 0.6);
   }
 
   private schedule(): void {
     const c = this.ctx!;
-    const spb = 60 / 132 / 2; // eighth notes
-    // I–vi–IV–V in C, bouncy.
-    const roots = [48, 45, 41, 43];
-    const arp = [0, 7, 12, 16, 12, 7, 4, 7];
-    const lead = [
-      76, -1, 79, 76, 74, -1, 72, -1,
-      72, -1, 76, 72, 69, -1, 67, -1,
-      69, -1, 72, 69, 65, -1, 69, 72,
-      71, -1, 74, 71, 67, 71, 74, 79,
-    ];
-    const hz = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
+    let tr = this.part ?? MENU.loop;
     // A throttled timer (a background tab runs intervals about once a second, or less) leaves the loop behind
     // the audio clock. Skip the missed notes, keeping the bar, instead of starting them all at once in a burst.
     if (this.nextNoteTime < c.currentTime) {
+      const spb = 60 / tr.bpm / 2;
       const missed = Math.ceil((c.currentTime - this.nextNoteTime) / spb);
       this.musicStep += missed;
       this.nextNoteTime += missed * spb;
+      tr = this.nextPart(tr);
     }
+    const bus = this.trackGain ?? this.musicBus;
     while (this.nextNoteTime < c.currentTime + 0.12) {
-      const s = this.musicStep % 32;
-      const bar = Math.floor(s / 8);
-      const t = this.nextNoteTime;
-      const root = roots[bar];
-      if (s % 2 === 0) this.tone(t, 'triangle', hz(root), hz(root), spb * 1.6, 0.28, this.musicBus);
-      this.tone(t, 'square', hz(root + 12 + arp[s % 8]), hz(root + 12 + arp[s % 8]), spb * 0.5, 0.05, this.musicBus);
-      const ln = lead[s];
-      if (ln > 0 && this.musicStep >= 32) this.tone(t, 'square', hz(ln), hz(ln), spb * 0.9, 0.06, this.musicBus);
-      if (s % 2 === 1) this.noiseBurst(t, 0.03, 'highpass', 7000, 0.7, 0.05, this.musicBus);
-      if (s % 8 === 4) this.noiseBurst(t, 0.08, 'bandpass', 1800, 0.8, 0.12, this.musicBus);
-      this.nextNoteTime += spb;
+      this.playStep(tr, this.musicStep, this.nextNoteTime, bus, this.big);
+      this.nextNoteTime += 60 / tr.bpm / 2;
       this.musicStep++;
+      tr = this.nextPart(tr);
+    }
+  }
+
+  /** The intro has played through: on to the loop (the steps counting on from its start). */
+  private nextPart(tr: Track): Track {
+    const song = this.song;
+    if (song?.intro && tr === song.intro && this.musicStep >= tr.steps) {
+      this.musicStep -= tr.steps;
+      this.part = song.loop;
+      return song.loop;
+    }
+    return tr;
+  }
+
+  /** One eighth-note step of `tr` (music.ts) at audio time `t` into `bus`. */
+  private playStep(tr: Track, step: number, t: number, bus: AudioNode, big: number): void {
+    const s = step % tr.steps;
+    const spb = 60 / tr.bpm / 2;
+    const bar = Math.floor(s / 8) % tr.roots.length;
+    const root = tr.roots[bar];
+    const minor = tr.minor ? tr.minor[bar] : false;
+    const b = tr.bass[s % tr.bass.length];
+    if (b >= 0 && tr.bassLevel > 0) {
+      const f = midiHz(root + b);
+      this.tone(t, 'triangle', f, f, spb * tr.bassLen, tr.bassLevel, bus);
+    }
+    let a = tr.arp[s % tr.arp.length];
+    if (a >= 0 && tr.arpLevel > 0) {
+      if (minor && a % 12 === 4) a -= 1;
+      const f = midiHz(root + 12 + a);
+      this.tone(t, 'square', f, f, spb * 0.5, tr.arpLevel, bus);
+    }
+    const ln = tr.lead[s % tr.lead.length];
+    if (ln > 0 && step >= (tr.leadFrom ?? 0)) {
+      let len = 1;
+      while (len < 16 && tr.lead[(s + len) % tr.lead.length] === -2) len++;
+      const dur = spb * (len - 0.1);
+      if (tr.leadType === 'brass') this.brassNote(t, ln, dur, tr.leadLevel * (1 + big * 0.2), bus, big > 0);
+      else {
+        const f = midiHz(ln);
+        this.tone(t, tr.leadType, f, f, dur, tr.leadLevel, bus);
+      }
+    }
+    const dl = tr.drumLevel ?? 1;
+    switch (tr.drums[s % tr.drums.length]) {
+      case 'h':
+        this.hat(t, dl, bus);
+        break;
+      case 's':
+        this.snare(t, dl, bus);
+        break;
+      case 'x':
+        this.snare(t, dl, bus);
+        this.hat(t, dl, bus);
+        break;
+      case 'k':
+        this.kickDrum(t, dl, bus);
+        break;
+      case 'r':
+        this.snare(t, 0.55 * dl, bus);
+        this.snare(t + spb / 2, 0.7 * dl, bus);
+        break;
+      case 'c':
+        this.crash(t, dl, bus);
+        this.kickDrum(t, dl, bus);
+        break;
+      default:
+        break;
+    }
+    if (tr.brass) {
+      for (const [at, len] of tr.brass) {
+        if (at === s) this.brassChord(t, root, minor, len * spb * 0.95, (tr.brassLevel ?? 0.05) * (1 + big * 0.25), bus, big);
+      }
+    }
+  }
+
+  private hat(t: number, k: number, bus: AudioNode): void {
+    this.noiseBurst(t, 0.03, 'highpass', 7000, 0.7, 0.05 * k, bus);
+  }
+
+  private snare(t: number, k: number, bus: AudioNode): void {
+    this.noiseBurst(t, 0.08, 'bandpass', 1800, 0.8, 0.12 * k, bus);
+  }
+
+  /** The music's kick: a short sine thump with a click a phone speaker can play. */
+  private kickDrum(t: number, k: number, bus: AudioNode): void {
+    this.tone(t, 'sine', 150, 52, 0.13, 0.3 * k, bus, 0.002);
+    this.tone(t, 'triangle', 320, 110, 0.03, 0.1 * k, bus, 0.001);
+  }
+
+  private crash(t: number, k: number, bus: AudioNode): void {
+    this.noiseBurst(t, 1.1, 'highpass', 4500, 0.6, 0.08 * k, bus, 0.002);
+    this.noiseBurst(t, 0.45, 'bandpass', 3000, 0.8, 0.05 * k, bus, 0.002);
+  }
+
+  /** A brass note: two saws a few cents apart (and an octave up, `wide`) through a low-pass that opens like a lip. */
+  private brassNote(t: number, midi: number, dur: number, level: number, bus: AudioNode, wide: boolean): void {
+    const c = this.ctx!;
+    const f = midiHz(midi);
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 1.2;
+    lp.frequency.setValueAtTime(500, t);
+    lp.frequency.exponentialRampToValueAtTime(2800, t + 0.05);
+    lp.frequency.exponentialRampToValueAtTime(1500, t + Math.max(0.06, Math.min(0.3, dur)));
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(level, t + 0.025);
+    g.gain.setValueAtTime(level * 0.85, t + Math.max(0.03, dur - 0.08));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.06);
+    lp.connect(g).connect(bus);
+    const n = wide ? 3 : 2;
+    for (let i = 0; i < n; i++) {
+      const o = c.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = f * (i === 2 ? 2 : i ? 1.004 : 0.996);
+      o.connect(lp);
+      o.start(t);
+      o.stop(t + dur + 0.1);
+    }
+  }
+
+  /** A brass chord on `root` (root, third, fifth; the octave too for a cup tie or a final), around middle C. */
+  private brassChord(t: number, root: number, minor: boolean, dur: number, level: number, bus: AudioNode, big: number): void {
+    const c = this.ctx!;
+    let base = root + 12;
+    while (base < 55) base += 12;
+    while (base > 66) base -= 12;
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 1;
+    lp.frequency.setValueAtTime(600, t);
+    lp.frequency.exponentialRampToValueAtTime(3000, t + 0.06);
+    lp.frequency.exponentialRampToValueAtTime(1700, t + Math.max(0.07, Math.min(0.35, dur)));
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(level, t + 0.03);
+    g.gain.setValueAtTime(level * 0.85, t + Math.max(0.035, dur - 0.08));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.08);
+    lp.connect(g).connect(bus);
+    const tones = big > 0 ? 4 : 3;
+    for (let i = 0; i < tones; i++) {
+      const m = base + (i === 0 ? 0 : i === 1 ? (minor ? 3 : 4) : i === 2 ? 7 : 12);
+      for (const d of [0.997, 1.003]) {
+        const o = c.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.value = midiHz(m) * d;
+        o.connect(lp);
+        o.start(t);
+        o.stop(t + dur + 0.12);
+      }
     }
   }
 
   setMusic(on: boolean): void {
     this.musicOn = on;
     if (!on) this.stopMusic();
+  }
+
+  /** The dev panel (src/audio/dev.ts): what the sound is doing now. */
+  debugState(): Record<string, unknown> {
+    const c = this.ctx;
+    const now = c?.currentTime ?? 0;
+    let voices = 0;
+    for (let i = 0; i < VOICE_CAP; i++) if (this.voiceEnd[i] > now) voices++;
+    const v = (g: GainNode | null | undefined): number | null => (g ? +g.gain.value.toFixed(4) : null);
+    return {
+      ctx: c ? (this.offline ? 'offline' : c.state) : 'none',
+      time: +now.toFixed(2),
+      music: this.musicState,
+      part: this.part && this.song ? (this.part === this.song.intro ? 'intro' : 'loop') : '-',
+      step: this.musicStep,
+      big: this.big,
+      duck: v(this.musicDuck),
+      trackGain: v(this.trackGain),
+      lastSting: this.lastSting,
+      stings: this.stings,
+      musicOn: this.musicOn,
+      sfxOn: this.sfxOn,
+      crowdOn: this.crowdOn,
+      ambience: this.ambienceActive,
+      stadium: { level: this.stadiumLevel, fill: +this.fill.toFixed(2), k: +this.stadiumK.toFixed(2) },
+      crowdBus: v(this.crowdBus),
+      chantIn: +this.chantT.toFixed(1),
+      lastChant: this.lastChant,
+      chantGate: this.chantGate,
+      forced: this.forced?.kind ?? null,
+      syllables: this.syllables,
+      voices,
+      nerves: this.nerves,
+      tension: this.tension,
+      finalOn: this.finalOn,
+      murmur: +this.murmurLevel.toFixed(4),
+      ends: this.ends.map((e) => +e.heat.toFixed(2)),
+    };
   }
 }
 

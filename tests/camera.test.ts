@@ -836,7 +836,9 @@ describe('action readability: tackles, slides, dives, pace (render / session)', 
     expect(P.goalWideS).toBeLessThan(1);
     const replayWall = (P.replayLeadS - P.slowFromS) / P.buildRate + (P.slowFromS + P.replayTailS) / P.slowRate;
     expect(replayWall).toBeLessThanOrEqual(6);
-    expect(P.halftimeHoldS).toBeLessThanOrEqual(1.2);
+    // (2026-10-04: the whistle's broadcast beat, players easing to a stop before the half-time menu fades in; the
+    // owner asked for half time called like a real referee, not a hard cut. Still well under 2 s of dead time.)
+    expect(P.halftimeHoldS).toBeLessThanOrEqual(1.5);
     expect(P.hitStopTackle).toBe(2);
     expect(P.hitStopGoal).toBe(3);
   });

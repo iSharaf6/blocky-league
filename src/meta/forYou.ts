@@ -6,7 +6,7 @@
 import { FORMATIONS } from '../sim/formations';
 import { overall, type PlayerDef, type Role } from '../sim/types';
 import { SQUAD_MAX, type CareerState, type ClubState } from './career';
-import { committed, wageBudget, type Listing } from './market';
+import { clubWageBudget, committed, type Listing } from './market';
 
 /** What you can spend right now: coins, weekly wage room under the budget, and whether the squad has a free place. */
 export interface TransferBudget {
@@ -25,7 +25,7 @@ export interface Upgrade {
 /** Your budget for a signing: coins in hand, wage room once live offers are counted, and squad room. */
 export function transferBudget(state: CareerState, coins: number): TransferBudget {
   const c = committed(state);
-  const budget = wageBudget(state.season?.division ?? 6, state.stadium);
+  const budget = clubWageBudget(state);
   return { coins: Math.max(0, coins), wageRoom: budget - c.wages, squadRoom: c.players < SQUAD_MAX };
 }
 

@@ -11,6 +11,7 @@ import {
 } from './palette';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { BoxBuilder, voxelMaterial } from './voxel';
+import type { DecorAnchors } from './stadiumStyle';
 
 export interface StadiumOptions {
   home: number;
@@ -24,7 +25,18 @@ export interface StadiumOptions {
   seed?: number;
   /** Small preview render (upgrade screen): no far-off world (roads, river, traffic, clouds, forest). */
   preview?: boolean;
+  /**
+   * The ground built part by part (ROAD TO GLORY home matches, meta/ground.ts): which stands, lights, screen and
+   * buildings stand. Omitted = the classic look of `level`. See the STRUCTURAL PARTS section.
+   */
+  parts?: StadiumParts;
 }
+
+/** Built level per part of a ground (meta/ground.ts PartId): 0 or missing = not built. */
+export type StadiumParts = Partial<Record<
+  'main' | 'near' | 'lights' | 'north' | 'south' | 'roof' | 'screen' | 'store' | 'fanzone' | 'training' | 'academy',
+  number
+>>;
 
 /** One stand: rows in the lower / upper tier, half-length along the pitch (m), and whether it has a roof. */
 interface StandSpec { t1: number; t2: number; span: number; roof: boolean }
@@ -51,6 +63,44 @@ const LAYOUTS: Layout[] = [
   { far: MAIN_BIG, near: NEAR_LOW, left: END_OPEN, right: END_OPEN },
   { far: MAIN_BIG, near: NEAR_LOW, left: END_BOWL, right: END_BOWL },
 ];
+
+/**
+ * STRUCTURAL PARTS: the stands a ground built part by part has (meta/ground.ts). The main stand (far side) small or
+ * two-tier, the family stand (near) short or full length, the north and south ends (left, right) open, or roofed
+ * into the bowl once THE DOME is on.
+ */
+function partsLayout(p: StadiumParts): Layout {
+  const L: Layout = {};
+  const main = p.main ?? 0;
+  const near = p.near ?? 0;
+  const roof = (p.roof ?? 0) > 0;
+  if (main >= 2) L.far = MAIN_BIG;
+  else if (main >= 1) L.far = MAIN_SMALL;
+  if (near >= 2) L.near = NEAR_LOW;
+  else if (near >= 1) L.near = NEAR_SMALL;
+  if ((p.north ?? 0) > 0) L.left = roof ? END_BOWL : END_OPEN;
+  if ((p.south ?? 0) > 0) L.right = roof ? END_BOWL : END_OPEN;
+  return L;
+}
+
+/** Where the club's buildings stand (centre and half sizes, m), so the trees keep clear: see buildGroundParts. */
+interface PartZone { x: number; z: number; hx: number; hz: number }
+const PART_SPOTS: Partial<Record<keyof StadiumParts, PartZone>> = {
+  store: { x: -72, z: 45, hx: 10.5, hz: 6.5 },
+  fanzone: { x: 74, z: 45, hx: 10.5, hz: 6.5 },
+  training: { x: -76, z: -54, hx: 14.5, hz: 8.5 },
+  academy: { x: 76, z: -54, hx: 8.5, hz: 6.5 },
+};
+
+/** Where a building part stands (the upgrade preview turns towards it), or null for the stands. */
+export function partSpot(id: keyof StadiumParts): { x: number; z: number } | null {
+  const z = PART_SPOTS[id];
+  return z ? { x: z.x, z: z.z } : null;
+}
+
+function partZones(p: StadiumParts): PartZone[] {
+  return (Object.keys(PART_SPOTS) as (keyof StadiumParts)[]).filter((k) => (p[k] ?? 0) > 0).map((k) => PART_SPOTS[k]!);
+}
 
 /** Upgrade-screen facts per stadium level (capacity is the number shown to the player). */
 export const STADIUM_LEVELS: readonly { name: string; capacity: number }[] = [
@@ -244,11 +294,18 @@ export class Stadium {
   /** Full-screen night vignette (a clip-space quad drawn last). */
   private vignette: THREE.Mesh | null = null;
 
+  /** Floodlight masts at the corners (level 3 up, or the FLOODLIGHTS part); otherwise portable lamps at night. */
+  private readonly masts: boolean;
+  /** Ground the club's buildings stand on (STRUCTURAL PARTS): no tree grows there. */
+  private readonly zones: readonly PartZone[];
+
   constructor(readonly opt: StadiumOptions) {
     this.rng = new Rng(opt.seed ?? 42);
     this.level = clampLevel(opt.level);
-    this.layout = LAYOUTS[this.level];
-    this.lightTowers = this.level >= 3 ? FLOODLIGHT_TOWERS : PORTABLE_LIGHTS;
+    this.layout = opt.parts ? partsLayout(opt.parts) : LAYOUTS[this.level];
+    this.masts = opt.parts ? (opt.parts.lights ?? 0) > 0 : this.level >= 3;
+    this.zones = opt.parts ? partZones(opt.parts) : [];
+    this.lightTowers = this.masts ? FLOODLIGHT_TOWERS : PORTABLE_LIGHTS;
     this.bannerX = this.layout.far ? BANNER_X.filter((x) => Math.abs(x) < this.layout.far!.span - 5) : [];
     this.pitch.position.y = PITCH_Y;
     this.group.add(this.pitch);
@@ -259,7 +316,7 @@ export class Stadium {
     this.buildStands();
     this.buildStandingSpots();
     this.buildCrowd();
-    if (this.level >= 3) this.buildFloodlights();
+    if (this.masts) this.buildFloodlights();
     this.buildSurroundings();
     this.buildFlags();
     if (this.level >= 1) this.buildDugouts();
@@ -272,7 +329,9 @@ export class Stadium {
     this.scoreCanvas.height = 160;
     this.scoreTex = new THREE.CanvasTexture(this.scoreCanvas);
     this.scoreTex.colorSpace = THREE.SRGBColorSpace;
-    if (this.layout.right) this.buildScoreboard();
+    // (Built part by part, the screen is a part of its own: on the south end, or on legs where there is none.)
+    if (this.layout.right && (!opt.parts || (opt.parts.screen ?? 0) > 0)) this.buildScoreboard();
+    if (opt.parts) this.buildGroundParts(opt.parts);
     this.setScore(0, 0, "0'");
   }
 
@@ -1242,7 +1301,7 @@ export class Stadium {
   /** Night: glowing floodlight halos and a starry sky. */
   setTimeOfDay(t: 'day' | 'sunset' | 'night'): void {
     const night = t === 'night';
-    if (night && this.level < 3 && this.portable.length === 0) this.buildPortableLights();
+    if (night && !this.masts && this.portable.length === 0) this.buildPortableLights();
     for (const o of this.portable) o.visible = night;
     if (night && !this.vignette && !this.opt.preview) this.buildVignette();
     if (this.vignette) this.vignette.visible = night;
@@ -1351,6 +1410,7 @@ export class Stadium {
     // Trees: trunk + stacked cubes.
     const t = new BoxBuilder();
     const tree = (x: number, z: number) => {
+      if (this.zones.some((q) => Math.abs(x - q.x) < q.hx + 2 && Math.abs(z - q.z) < q.hz + 2)) return;
       const h = 0.9 + rng.next() * 1.2;
       const w = 1.8 + rng.next() * 1.4;
       t.box(x, h / 2, z, 0.55, h, 0.55, TRUNK);
@@ -1383,7 +1443,7 @@ export class Stadium {
     // Smaller grounds sit among the trees: a staggered belt of them wherever a side has no stand (and beside
     // a short one), a few metres behind the fans at the fence.
     if (this.level < 5) {
-      const lamps = this.level < 3 ? PORTABLE_LIGHTS : [];
+      const lamps = !this.masts ? PORTABLE_LIGHTS : [];
       const clearOfLamps = (x: number, z: number) => lamps.every((l) => Math.hypot(x - l.x, z - l.z) > 3.2);
       const belt = (along: 'x' | 'z', from: number, to: number, at: number, dir: number) => {
         for (let row = 0; row < 3; row++) {
@@ -1692,6 +1752,98 @@ export class Stadium {
     this.group.add(screen);
   }
 
+  // ------------------------------------------------------------------ STRUCTURAL PARTS (meta/ground.ts)
+  // The buildings a club adds to its ground, outside the bowl at the four corners so they never cover the play:
+  // the MEGASTORE (near left), the FAN ZONE (near right), the TRAINING GROUND (far left), the YOUTH ACADEMY (far
+  // right), and the BIG SCREEN on legs behind the right goal while there is no south end to carry it.
+  // (Decorative stadium cosmetics live in their own section; nothing here reads them.)
+
+  private buildGroundParts(p: StadiumParts): void {
+    const b = new BoxBuilder();
+    const home = this.opt.home;
+    const trim = mix(home, 0xffffff, 0.55);
+    const on = (id: keyof StadiumParts) => (p[id] ?? 0) > 0;
+    // Each building is drawn around its anchor (x0, z0) a size up (K): small next to a pitch, they still read
+    // from the gantry and in the upgrade preview.
+    const K = 1.5;
+    let x0 = 0;
+    let z0 = 0;
+    const at = (x: number, z: number) => {
+      x0 = x;
+      z0 = z;
+    };
+    const box = (dx: number, y: number, dz: number, w: number, h: number, d: number, c: number, top?: number) =>
+      b.box(x0 + dx * K, y * K, z0 + dz * K, w * K, h * K, d * K, c, top === undefined ? undefined : { top });
+    if (on('store')) {
+      // A shop in the club's colours with a glass front facing the pitch and a giant shirt on the roof.
+      at(PART_SPOTS.store!.x, PART_SPOTS.store!.z);
+      box(0, 2.6, 0, 13, 5.2, 8, mix(home, 0xffffff, 0.75), 0xdcd8cc);
+      box(0, 4.6, 4.05, 13.2, 1.2, 0.2, home);
+      box(0, 1.7, 4.05, 10, 2.6, 0.12, 0x6f9fd0);
+      box(-4.2, 1.3, 4.1, 2, 2.6, 0.2, 0x3a3f48);
+      box(0, 7.4, 0, 3.4, 3.6, 0.8, home, shade(home, 1.1));
+      box(-2.3, 8.5, 0, 1.4, 1.4, 0.8, home);
+      box(2.3, 8.5, 0, 1.4, 1.4, 0.8, home);
+      box(0, 9.25, 0, 1.2, 0.3, 0.84, trim);
+    }
+    if (on('fanzone')) {
+      // Striped tents, a little stage and flag poles.
+      at(PART_SPOTS.fanzone!.x, PART_SPOTS.fanzone!.z);
+      for (const [dx, dz] of [[-4.5, 1], [0, -1], [4.5, 1]] as const) {
+        box(dx, 1.1, dz, 3.6, 2.2, 3.6, 0xfbfbf4);
+        box(dx, 2.5, dz, 4, 0.6, 4, home);
+        box(dx, 3.1, dz, 2.6, 0.6, 2.6, trim);
+        box(dx, 3.6, dz, 1.2, 0.4, 1.2, home);
+      }
+      for (const dx of [-6.5, -2.2, 2.2, 6.5]) {
+        box(dx, 3, -3.6, 0.2, 6, 0.2, STEEL);
+        box(dx + 0.8, 5.4, -3.6, 1.4, 0.9, 0.08, Math.round(dx) % 2 ? home : trim);
+      }
+    }
+    if (on('training')) {
+      // A small practice pitch with mini goals and cones (flat: kept at its true size, just bigger).
+      at(PART_SPOTS.training!.x, PART_SPOTS.training!.z);
+      box(0, 0.04, 0, 18, 0.08, 11, GRASS_A, GRASS_A);
+      for (let i = -8; i <= 8; i += 4) box(i, 0.085, 0, 2, 0.02, 11, GRASS_B);
+      for (const [dz, w, d] of [[-5.4, 18, 0.18], [5.4, 18, 0.18]] as const) box(0, 0.095, dz, w, 0.02, d, LINE);
+      for (const dx of [-8.9, 0, 8.9]) box(dx, 0.095, 0, 0.18, 0.02, 11, LINE);
+      for (const sx of [-1, 1]) {
+        box(sx * 8.6, 0.8, 0, 0.2, 1.6, 3, 0xfbfbf4);
+        box(sx * 9.2, 1.5, 0, 1.2, 0.2, 3, 0xfbfbf4);
+      }
+      for (let i = 0; i < 6; i++) box(-5 + i * 2, 0.3, 2.5 - (i % 2) * 5, 0.4, 0.5, 0.4, 0xff8a2b);
+    }
+    if (on('academy')) {
+      // A two storey school with the academy's star over the door.
+      at(PART_SPOTS.academy!.x, PART_SPOTS.academy!.z);
+      box(0, 3, 0, 11, 6, 8, 0xe9e4d6, 0xcfc9b8);
+      box(0, 6.2, 0, 11.4, 0.5, 8.4, home);
+      for (const dx of [-3.5, 0, 3.5]) for (const y of [1.9, 4.3]) box(dx, y, 4.05, 1.8, 1.2, 0.1, 0x6f9fd0);
+      box(0, 1.2, 4.08, 1.6, 2.4, 0.12, 0x3a3f48);
+      const star = ['..X..', 'XXXXX', '.XXX.', '.X.X.'];
+      star.forEach((row, ry) => [...row].forEach((c, rx) => {
+        if (c === 'X') box(-1.2 + rx * 0.6, 8.6 - ry * 0.6, 4.1, 0.6, 0.6, 0.3, 0xffd23a);
+      }));
+      box(0, 7.4, 4.05, 0.3, 1.6, 0.2, STEEL);
+    }
+    if (on('screen') && !this.layout.right) {
+      // No south end yet: the screen stands on two legs behind the right goal.
+      const x = BOARD_X + 7;
+      const y = 7.4;
+      b.box(x, y, 0, 1, 5.6, 14.6, 0x2a2a30);
+      for (const z of [-5, 5]) b.box(x, (y - 2.8) / 2, z, 0.7, y - 2.8, 0.7, STEEL);
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(13.6, 4.7), new THREE.MeshBasicMaterial({ map: this.scoreTex }));
+      screen.position.set(x - 0.52, y, 0);
+      screen.rotation.y = -Math.PI / 2;
+      this.group.add(screen);
+    }
+    if (b.empty) return;
+    const m = new THREE.Mesh(b.build(), this.outerMat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    this.group.add(m);
+  }
+
   setScore(h: number, a: number, clock: string): void {
     const c = this.scoreCanvas;
     const g = c.getContext('2d')!;
@@ -1874,6 +2026,38 @@ export class Stadium {
     u.uHypeAway.value += (away - u.uHypeAway.value) * Math.min(1, dt * 2.5);
     this.hypeLevel = Math.max(u.uHypeHome.value, u.uHypeAway.value);
   }
+
+  // ------------------------------------------------------------------ SHOP STADIUM STYLE (decorative layers only)
+  // render/stadiumStyle.ts dresses a home ground (mowing, nets, corner flags, the seats, tifo, lights, a mascot) on top
+  // of whatever this ground has built. It only adds to these groups or restyles the nets and corner flags: it never
+  // changes the structure. Keep this section an accessor.
+
+  /** What the shop's stadium style may dress (render/stadiumStyle.ts StadiumDecor). */
+  decorAnchors(): DecorAnchors {
+    const far = this.layout.far;
+    const left = this.layout.left;
+    const crowd = this.group.children.find((o) => (o as THREE.InstancedMesh).isInstancedMesh && !!(o as THREE.InstancedMesh).geometry.getAttribute('aSkin'));
+    return {
+      group: this.group,
+      pitch: this.pitch,
+      level: this.level,
+      far: far ? { t1: far.t1, t2: far.t2, span: far.span } : null,
+      left: left ? { t1: left.t1, t2: left.t2, span: left.span } : null,
+      standZ: STAND_Z,
+      standX: STAND_X,
+      stepD: STEP_D,
+      stepH: STEP_H,
+      boardZ: BOARD_Z,
+      lawn: this.grassMat,
+      // (Only the four corner poles: the list also flutters the dugout pennant, whose parent is this whole group.)
+      cornerFlags: this.flags.map((f) => f.parent).filter((p): p is THREE.Object3D =>
+        !!p && p !== this.group && p.parent === this.pitch && Math.abs(Math.abs(p.position.x) - HALF_L) < 0.5 && Math.abs(Math.abs(p.position.z) - HALF_W) < 0.5),
+      nets: this.nets.map((n) => n.mesh),
+      lamps: this.lampHeads.map((v) => ({ x: v.x, z: v.z, h: v.y })),
+      crowd: (crowd as THREE.InstancedMesh | undefined) ?? null,
+      bannerX: this.bannerX,
+    };
+  }
 }
 
 /**
@@ -1884,7 +2068,7 @@ export class Stadium {
  */
 export function buildStadiumPreview(
   level: number,
-  opts: Partial<Pick<StadiumOptions, 'home' | 'away' | 'homeName' | 'awayName' | 'attendance' | 'seed'>> = {},
+  opts: Partial<Pick<StadiumOptions, 'home' | 'away' | 'homeName' | 'awayName' | 'attendance' | 'seed' | 'parts'>> = {},
 ): Stadium {
   const st = new Stadium({
     home: opts.home ?? 0x2f6fe0,
@@ -1895,6 +2079,7 @@ export function buildStadiumPreview(
     level,
     seed: opts.seed ?? 7,
     preview: true,
+    parts: opts.parts,
   });
   st.setTimeOfDay('day');
   st.setScore(0, 0, "0'");

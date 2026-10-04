@@ -48,7 +48,9 @@ function checkBands(halfLength: number, n: number): void {
   within(s.tacklesWon, 7.5 * k, 20);
   // Set pieces and discipline: deflections, tips and glanced clearances put it behind, defenders
   // slide in on escaping carriers (~30% of slides are mistimed into fouls), a card or two a match.
-  within(s.corners, 3, 6);
+  // (2026-10-04: added time by the Laws plays about 2.7 more match minutes a game, so the per-match counts rise a few
+  // percent: 6.09 corners at 2x150 s. The ceiling moves with it.)
+  within(s.corners, 3, 6.5);
   // Throw-ins: pokes and blocks out on the flank and clearances under pressure by the touchline go
   // into touch (it used to be ~3.5 a match at 2x120 s against ~14 shots).
   // (Round 8: lofted balls capped at 26 m/s are overhit into touch less often: 4.65 a match at 2x120 s on these

@@ -135,6 +135,8 @@ export interface MainInfo {
   locked?: readonly LockedFeature[];
   /** SHOP news (meta/shop.ts newInShop: affordable items not yet seen, the free daily pack): a count on the coins. */
   shopNew?: number;
+  /** NEXT GOAL under the hero (meta/goal.ts): the one thing to go for now; a tap goes there (`h.goal`). */
+  goal?: { text: string; go: string; icon: string };
 }
 
 /** What the full-time screen shows for progression (stars, XP, streak, challenges done this match). */
@@ -411,6 +413,11 @@ export interface FtExtras {
   noAds?: boolean;
   /** Something in the SHOP this match's coins brought into reach (meta/shop.ts inReach): its name and kind. */
   shopReach?: { name: string; kind: string };
+  /**
+   * SHOWTIME (game/funLayer.ts): this match's style grade and points, the mode's best before it (null: none yet),
+   * whether this one is the new best, and the coins bonus the grade added (0.1 = +10%).
+   */
+  showtime?: { grade: string; score: number; best: string | null; newBest: boolean; bonus: number };
 }
 
 export class Menus {
@@ -510,6 +517,8 @@ export class Menus {
       /** REMOVE ADS in the top bar (drawn with `info.noAds`). */
       removeAds?: () => void;
       locked?: (f: LockedFeature) => void;
+      /** NEXT GOAL tapped: where it points (meta/goal.ts GoalTarget). */
+      goal?: (go: string) => void;
     },
     info?: MainInfo,
   ): void {
@@ -539,10 +548,17 @@ export class Menus {
       // (A BLOCKY CUP tie inside the season says so: "BLOCKY CUP QUARTER FINAL".)
       const what = road.label ?? `MATCHDAY ${road.md} OF ${road.of}`;
       const venue = road.neutral ? 'NEUTRAL GROUND' : road.home ? 'HOME' : 'AWAY';
-      hero = `<button class="hub-hero road ${road.cup ? 'cup' : ''}" data-a="career" aria-label="Road to Glory. ${escHtml(road.club.name)} against ${escHtml(road.rival.name)}, ${escHtml(what.toLowerCase())}. Play">
-          ${head(road.cup ? 'BLOCKY CUP' : road.division)}
+      // THIS SEASON: the board's three objectives, ticked off as they are met (meta/board.ts).
+      const pips = road.board?.length
+        ? `<span class="hh-obj" aria-label="This season">${road.board
+          .map((b) => `<i class="hh-pip ${b.state}"><u aria-hidden="true">${b.state === 'done' ? '✓' : ''}</u>${escHtml(b.short)}</i>`)
+          .join('')}</span>`
+        : '';
+      hero = `<button class="hub-hero road ${road.cup ? 'cup' : ''} ${road.comp ? 'comp' : ''}" data-a="career" aria-label="Road to Glory. ${escHtml(road.club.name)} against ${escHtml(road.rival.name)}, ${escHtml(what.toLowerCase())}. Play">
+          ${head(road.cup ? road.comp ?? 'BLOCKY CUP' : road.division)}
           <span class="hh-fix">${road.home || road.neutral ? me : them}<span class="hh-vs">${road.cup ? pixelIcon('trophy', '#ffd23a', 2) : ''}VS</span>${road.home || road.neutral ? them : me}</span>
           <span class="hh-sub">SEASON ${road.season}${sep()}${escHtml(what)}${sep()}${venue}</span>
+          ${pips}
           ${play('PLAY')}
         </button>`;
     } else if (road.kind === 'create') {
@@ -639,6 +655,12 @@ export class Menus {
         </div>
       </header>`;
 
+    // NEXT GOAL under the hero: always one clear thing to go for (a tap goes there).
+    const g = !campaign && h.goal ? info?.goal : undefined;
+    const goal = g
+      ? `<button class="hub-goal" data-a="goal" aria-label="Next goal: ${escHtml(g.text.toLowerCase())}">${pixelIcon(g.icon, '#ffd23a', 2)}<b>NEXT GOAL</b><span>${escHtml(g.text)}</span><i class="hh-tri" aria-hidden="true"></i></button>`
+      : '';
+
     // Left: your captain in your club's kit.
     const cap = info?.captain;
     const captain = cap
@@ -658,7 +680,7 @@ export class Menus {
         ${top}
         ${captain}
         <div class="hub-body">
-          <div class="hub-main">${hero}</div>
+          <div class="hub-main">${hero}${goal}</div>
           ${tier2}
         </div>
         ${foot}
@@ -687,6 +709,7 @@ export class Menus {
     on('unlocks', h.unlocks);
     on('howto', h.howto);
     on('settings', h.settings);
+    if (g) on('goal', () => h.goal?.(g.go));
     const dBtn = d.querySelector<HTMLButtonElement>('[data-a=daily]');
     const dList = d.querySelector<HTMLElement>('.hub-dl');
     if (dBtn && dList) {
@@ -1373,6 +1396,7 @@ export class Menus {
         </div>`
       : '';
     const extras = [
+      extra.showtime ? this.showtimeRow(extra.showtime) : '',
       prog && prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">${pixelIcon('fire', '#ff9a3a', 2, 'inl')}${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : '',
       extra.tryEasy ? '<p class="ft-easy">Tough run? <button class="btn btn-white ft-easy-btn" data-a="easy">TRY EASY</button></p>' : '',
       prog?.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : '',
@@ -1446,6 +1470,16 @@ export class Menus {
       easy.textContent = 'EASY IS SET';
     });
     this.wireClip(d, extra.clip);
+  }
+
+  /** Full time's SHOWTIME line: the grade letter, the points, the coins it added, NEW BEST or the best to beat. */
+  private showtimeRow(st: NonNullable<FtExtras['showtime']>): string {
+    const g = /^[SABC]$/.test(st.grade) ? st.grade : 'C';
+    const best = st.newBest ? '<small class="nb">NEW BEST</small>' : st.best ? `<small>BEST ${escHtml(st.best)}</small>` : '';
+    return `<div class="ft-show" data-g="${g}" aria-label="Showtime grade ${g}, ${st.score} points">
+        <b class="ft-grade">${g}</b><span>SHOWTIME <em>${Math.round(st.score).toLocaleString()}</em></span>
+        ${st.bonus > 0 ? `<strong>+${Math.round(st.bonus * 100)}% COINS</strong>` : ''}${best}
+      </div>`;
   }
 
   /**

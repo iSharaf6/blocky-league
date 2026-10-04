@@ -418,7 +418,7 @@ describe('sound: layered, synthesised, cheap per frame', async () => {
     expect(pans.some((p) => p > 0.5)).toBe(true);
   });
 
-  it('a big, full ground sings now and then (nodes made only when a chant starts); a muddy park with nobody there never does', () => {
+  it('a big, full ground sings now and then (nodes made only when a chant starts); so does a muddy park (the owner: "crowd chants non existent"); an empty ground never does', () => {
     const { s, m } = unlocked();
     s.setStadium(5, 1);
     const frames = new Set<number>();
@@ -430,14 +430,23 @@ describe('sound: layered, synthesised, cheap per frame', async () => {
     }
     expect(frames.size).toBeGreaterThanOrEqual(2);
     expect(frames.size).toBeLessThanOrEqual(12);
+    // ROAD TO GLORY's first ground: level 0, a Sunday League gate (0.35 x 0.55 full).
     const park = unlocked();
-    park.s.setStadium(0, 0.1);
-    const n0 = park.m.nodes.length;
+    park.s.setStadium(0, 0.19);
+    const p0 = park.m.nodes.length;
     for (let i = 0; i < 60 * 90; i++) {
       park.m.ctx.currentTime = i / 60;
       park.s.tick(1 / 60);
     }
-    expect(park.m.nodes.length).toBe(n0);
+    expect(park.m.nodes.length).toBeGreaterThan(p0);
+    const empty = unlocked();
+    empty.s.setStadium(0, 0);
+    const n0 = empty.m.nodes.length;
+    for (let i = 0; i < 60 * 90; i++) {
+      empty.m.ctx.currentTime = i / 60;
+      empty.s.tick(1 / 60);
+    }
+    expect(empty.m.nodes.length).toBe(n0);
   });
 
   it('a shot gets a room tail and an "oooh" on target; a header is a dry thock', () => {

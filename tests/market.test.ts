@@ -472,7 +472,8 @@ describe('your own news', () => {
       expect(listPlayer(st, st.club!.squad[13].id)).toEqual({ ok: true });
       play(st, wallet);
       const own = st.tm.news.filter((n) => n.own);
-      const gossip = st.tm.news.filter((n) => !n.own);
+      // (The club's story lines, like the rival's jibes, are not transfer gossip: meta/story.ts.)
+      const gossip = st.tm.news.filter((n) => !n.own && !n.story);
       expect(own.length).toBeGreaterThan(0);
       expect(own.some((n) => /accept your|joins you|reject your|want .* for|offer .* for/.test(n.text))).toBe(true);
       for (const n of gossip) expect(n.text).toMatch(/ sign | has left the market|looking for a club/);

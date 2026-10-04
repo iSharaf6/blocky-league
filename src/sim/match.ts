@@ -14,8 +14,9 @@ import {
   HUMAN_SLIDE_REACH, HUMAN_SLIDE_T, humanSlideFoul,
 } from './dribble';
 import { humanSkill, SkillState, skillGoal, skillTells } from './skills';
+import { hypeStep, superLaunch, superLive, SUPER_REACH } from './hype';
 import {
-  AIR_DRAG, BALL_R, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
+  AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
   PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SHOT_TEMPO, SIX_DEPTH, SIX_W, SPRINT_SPEED, TEMPO, DDA_TACKLE, KEEPER_BOOST,
 } from './constants';
 import { FORMATIONS, kickoffSlot, type Slot } from './formations';
@@ -73,6 +74,11 @@ export interface MatchConfig {
   knockout?: boolean;
   /** The offside law is enforced (default true). See Match.offside. */
   offside?: boolean;
+  /**
+   * HYPE meters and the SUPER SHOT they earn (sim/hype.ts): on for the human's classic matches and online ones.
+   * Off (the default) the sim never reaches hype.ts, so AI v AI and the lockstep baselines are unchanged.
+   */
+  hype?: boolean;
 }
 
 /** Held button state from the input layer, move vector already in world space. */
@@ -458,10 +464,19 @@ const STICK_LATCH_TURN = Math.PI / 4;
  * gets to the ball in under AUTO_SWITCH_RATIO of the current man's time (AUTO_SWITCH_RATIO_LOOSE for a loose
  * ball: whoever gets to where it drops first) and at least AUTO_SWITCH_MARGIN s sooner.
  */
-const AUTO_SWITCH_GAP = 0.6;
-const AUTO_SWITCH_RATIO = 0.7;
+const AUTO_SWITCH_GAP = 0.45;
+const AUTO_SWITCH_RATIO = 0.75;
 const AUTO_SWITCH_RATIO_LOOSE = 0.8;
-const AUTO_SWITCH_MARGIN = 0.5;
+const AUTO_SWITCH_MARGIN = 0.35;
+/**
+ * A man the stick is steering onto the ball keeps it only while he is still in the race: at most AUTO_SWITCH_KEEP s
+ * behind the best placed (2026-10-04, the owner: "hard to control players". That guard held on to a chaser 2 to 4 s
+ * behind a team-mate the ball was running to: a quarter of his defending was done with the wrong man).
+ */
+const AUTO_SWITCH_KEEP = 0.7;
+/** Back to the man the last auto switch left, within AUTO_SWITCH_BACK_T s of it: only AUTO_SWITCH_BACK s sooner or more. */
+const AUTO_SWITCH_BACK_T = 1.5;
+const AUTO_SWITCH_BACK = 0.8;
 
 /** The kick-off taker's partner stands this far (m) to his side, clear of him. */
 const KICKOFF_PARTNER_Z = 1.6;
@@ -489,23 +504,57 @@ const PEN_AUTO_POWER = 0.65;
 const KEEPER_HOLD_MIN = 0.7;
 const KEEPER_HOLD_SPAN = 0.8;
 /**
- * Added time (the owner: "if theres an attack perhaps let it happen and stop the game, if theres time wasting then
- * stop the game"). Once the clock runs out the referee blows at the first natural stoppage: the ball dead, a goal,
- * a foul, the keeper holding it, or the attack breaking down (the other side wins it, or it goes back over
- * ADDED_BACK_M into the attackers' own half). The ball in its own side's half (no attack on: time wasting) and he
- * blows at once. ADDED_FRAC of the half (ADDED_MIN_S..ADDED_MAX_S s, about four of its 45 minutes) is the most
- * open play he lets run on; then he blows once no shot is live, the ball is down and no advantage is pending, and
- * ADDED_LAST_S past that whatever is happening. A penalty is always taken (ADDED_PEN_S is the safety net), and a
- * corner or a free kick in range given by halfway through the allowance too. A ball just gone out gets
- * ADDED_SETTLE_S to come down before the whistle freezes the picture.
+ * Added time, by the Laws of the Game (Law 7.3) and the way a good referee ends a half (2026-10-04, the owner: "look
+ * at the rules of the game and perfect when to call half time or full time"). The same rules for both sides.
+ *
+ * EARNED. Through the half the referee notes the time lost, in the match's own seconds (the half is 45 minutes of
+ * them): STOP_BASE_S of routine stoppages, STOP_GOAL_S for a goal and its celebration, STOP_SUB_S a substitution,
+ * STOP_CARD_S a caution or a sending-off, STOP_PEN_S a penalty given, and STOP_SLOW_K of every restart that took
+ * longer than RESTART_NORMAL_S real seconds (slow restarts, time-wasting). At 45:00 / 90:00 the fourth official's
+ * board shows it in whole minutes (BOARD_MIN..BOARD_MAX: the 'addedTime' event, Match.addedBoard). That is a
+ * minimum: it is always played, and time lost inside it (a goal, a sub, a penalty, a slow restart) goes back on top.
+ *
+ * ENDED at the right moment once it is up (addedTimeUp):
+ * - never while a shot is in flight (SHOT_LIVE_S from the strike), the ball is in the air in or around a box, or the
+ *   referee is waiting on an advantage;
+ * - a penalty is always taken (Law 14), and its shot lands (ADDED_PEN_S is only a safety net);
+ * - a corner or a free kick in shooting range given before the time was up is taken (ADDED_SP_S to take it), and
+ *   its phase is played out;
+ * - a chance on when the time is up is let finish, for as long as it stays a chance (addedChance): the attackers on
+ *   the ball, or a pass of theirs on its way, in shooting range (SHOT_RANGE_M of goal) or the wide area by the
+ *   byline (CROSS_X), or one of them running at goal in the other half at BREAK_SPEED or more. Once it isn't (the
+ *   other side has it, their keeper too, it has gone back or wide, the move has stalled, the ball is dead) he blows.
+ *   ADDED_CEIL_S after it was let run he blows at the next calm moment, and ADDED_GRACE_S after that whatever
+ *   (only a shot already in flight still lands);
+ * - anything else (the ball dead, in a neutral area, a side keeping it in its own half) and he blows at once; a ball
+ *   just gone out gets ADDED_SETTLE_S to come down first.
+ * After the whistle everyone eases to a stop and the ball rolls dead (WIND_DOWN_S): never a frozen picture.
  */
-const ADDED_FRAC = 4 / 45;
-const ADDED_MIN_S = 5;
-const ADDED_MAX_S = 12;
-const ADDED_LAST_S = 5;
+const STOP_BASE_S = 30;
+const STOP_GOAL_S = 45;
+const STOP_SUB_S = 25;
+const STOP_CARD_S = 20;
+const STOP_PEN_S = 30;
+const STOP_SLOW_K = 0.5;
+const RESTART_NORMAL_S = 2.5;
+const BOARD_MIN = 1;
+const BOARD_MAX = 6;
+const SHOT_LIVE_S = 1.5;
+const BREAK_SPEED = 4.5;
+const SHOT_RANGE_M = 26;
+const CROSS_X = HALF_L - 14;
+/** A pass of the attackers' still counts as their chance if it is this fast (m/s) and lands in range this soon (s). */
+const CHANCE_PASS_SPEED = 5;
+const CHANCE_PASS_T = 0.8;
+const ADDED_CEIL_S = 5;
+const ADDED_GRACE_S = 2;
 const ADDED_PEN_S = 20;
-const ADDED_BACK_M = 2;
+const ADDED_SP_S = 10;
 const ADDED_SETTLE_S = 0.4;
+const WIND_DOWN_S = 1.6;
+const WIND_BALL_DRAG = 2.5;
+/** How a half ended once its added time was up (Match.addedEnd): see STOP_BASE_S. */
+export type AddedEnd = 'dead' | 'neutral' | 'attackOver' | 'penalty' | 'ceiling' | 'goal';
 
 /** A human pass being charged (PASS / THROUGH held), or let go and waiting on his body turn / wind-up. */
 interface PassCharge {
@@ -599,6 +648,8 @@ export class HumanCtl {
   lastSprintTap = -9;
   humanTime = 0;
   switchT = 0;
+  /** The man the last auto switch took him off (going straight back to him needs a clear case: AUTO_SWITCH_BACK_T). */
+  switchedFrom = -1;
   /** Landing point shown for his throw-in, locked when the button is pressed. */
   throwPreview: { x: number; z: number } | null = null;
   /**
@@ -968,9 +1019,28 @@ export class Match {
   private pendingRestart: Restart | null = null;
   /** Match.clock when the last restart was given (added time: was it given in time to be taken?). */
   private restartGivenAt = 0;
-  /** Added time: the side whose attack the referee is letting finish, or null (not looked yet / not in open play). */
+  /**
+   * Added time (see STOP_BASE_S). The time lost this half before the board (the match's seconds), real seconds the
+   * ball has been dead in this stoppage, and the substitutions already counted (both sides).
+   */
+  private stopLost = 0;
+  private deadRun = 0;
+  private subsSeen = 0;
+  /** The fourth official's board this half (whole minutes), null until the time is up. */
+  addedBoard: number | null = null;
+  /** Real seconds of added time to play: the board, and time lost inside it put back. */
+  private addedDue = 0;
+  /** How the last half ended once its time was up (null: before its board), and whose attack was on (-1: none). */
+  addedEnd: AddedEnd | null = null;
+  addedEndSide: Side | -1 = -1;
+  /**
+   * Added time up: the side whose attack is being let finish (null: not looked yet), how far up the pitch it started
+   * (along its attack), when it was let run (-1: at the next look in open play), whether the referee waited on a
+   * live ball, and whether a penalty is being taken or its shot is still live.
+   */
   private addedAttack: Side | null = null;
-  /** Added time: a penalty is being taken, or its shot is still live (it has until ADDED_PEN_S). */
+  private addedFrom = -1;
+  private addedWaited = false;
   private addedPen = false;
   private pathT = 0;
   /** Increments on every strike of the ball; lets players react once per kick. */
@@ -1602,6 +1672,11 @@ export class Match {
     if (this.phase !== 'halftime') return;
     this.half = 2;
     this.clock = 0;
+    // A fresh half's added time (half-time changes are made in the break: not stoppages of this half).
+    this.stopLost = this.deadRun = 0;
+    this.subsSeen = this.subsUsed[0] + this.subsUsed[1];
+    this.addedBoard = null;
+    this.addedDue = 0;
     this.setupKickoff(this.firstKickoff === 0 ? 1 : 0);
   }
 
@@ -1620,6 +1695,10 @@ export class Match {
   step(dt: number, pad: Pad | readonly [Pad, Pad]): void {
     const pads = this.padsFor(pad);
     this.phaseT += dt;
+    // (HYPE reads the events this step pushes: hype.ts.)
+    const ev0 = this.events.length;
+    // (Added time counts the stoppages this step's events tell of: countStoppages.)
+    const evStop = this.events.length;
     // Telegraphed challenges on a human's carrier count down (skills.ts); out of open play the moves stop.
     skillTells(this, dt);
     // (Set again in applyHuman while a human lines up a penalty.)
@@ -1630,9 +1709,14 @@ export class Match {
       this.shootoutParty(dt);
       return;
     }
-    if (this.phase === 'halftime' || this.phase === 'fulltime') return;
-    // A goal in added time: the teams have lined up for the kick-off, and the referee blows instead.
-    if (this.phase === 'kickoff' && this.clock >= this.cfg.halfLength) {
+    if (this.phase === 'halftime' || this.phase === 'fulltime') {
+      this.windDown(dt);
+      return;
+    }
+    // A goal after the added time was up: the teams have lined up for the kick-off, and the referee blows instead.
+    if (this.phase === 'kickoff' && this.addedBoard !== null && this.clock >= this.cfg.halfLength + this.addedDue) {
+      this.addedEnd = 'goal';
+      this.addedEndSide = -1;
       this.endHalf();
       return;
     }
@@ -1731,14 +1815,16 @@ export class Match {
     if (this.phase === 'play' || this.phase === 'out' || this.phase === 'restart') {
       this.clock += dt;
       if (this.possessionSide !== -1) this.stats.possession[this.possessionSide as Side] += dt;
+      this.countStoppages(dt, evStop);
       if (this.clock >= this.cfg.halfLength && this.addedTimeUp()) this.endHalf();
-    }
+    } else if (this.phase === 'goal' || this.phase === 'kickoff') this.countStoppages(dt, evStop);
     this.passT += dt;
     if (this.passT > 3.2) this.passTarget = -1;
     this.shotClock += dt;
     this.sinceKick += dt;
     this.sincePossession += dt;
     if (this.ball.owner >= 0) this.players[this.ball.owner].ballT += dt;
+    if (this.cfg.hype) hypeStep(this, dt, ev0);
   }
 
   /** Step input by side: a pair as given, or the one pad for the view's human (the other side's is empty). */
@@ -1760,54 +1846,141 @@ export class Match {
     for (const side of SIDES) if (this.human[side] || side === this.viewSide) this.ctl[side].prev = { ...pads[side] };
   }
 
-  /** Added time (see ADDED_FRAC): the most open play (s) the referee lets run on past the half's length. */
-  addedCap(): number {
-    return clamp(this.cfg.halfLength * ADDED_FRAC, ADDED_MIN_S, ADDED_MAX_S);
+  /** Time lost (the match's seconds): onto the allowance before the board, back on top inside the added time. */
+  private loseTime(gameS: number): void {
+    if (gameS <= 0) return;
+    if (this.addedBoard === null) this.stopLost += gameS;
+    else if (this.clock < this.cfg.halfLength + this.addedDue) this.addedDue += (gameS * this.cfg.halfLength) / 2700;
   }
 
-  /** Added time: a restart the referee still lets be taken (see ADDED_FRAC). */
-  private addedRestartTaken(r: Restart): boolean {
-    if (r.kind === 'penalty') return true;
-    if (!isCrossingRestart(this, r) && !isDirectFreeKick(this, r)) return false;
-    return this.restartGivenAt - this.cfg.halfLength <= this.addedCap() / 2;
+  /** The stoppages this step (see STOP_BASE_S): goals and cards from its events, substitutions, slow restarts. */
+  private countStoppages(dt: number, from: number): void {
+    let lost = 0;
+    for (let i = from; i < this.events.length; i++) {
+      const t = this.events[i].type;
+      if (t === 'goal') lost += STOP_GOAL_S;
+      else if (t === 'card') lost += STOP_CARD_S;
+    }
+    const subs = this.subsUsed[0] + this.subsUsed[1];
+    if (subs > this.subsSeen) {
+      lost += (subs - this.subsSeen) * STOP_SUB_S;
+      this.subsSeen = subs;
+    }
+    if (this.phase === 'out' || this.phase === 'restart') this.deadRun += dt;
+    else {
+      if (this.phase === 'play' && this.deadRun > RESTART_NORMAL_S) {
+        lost += ((this.deadRun - RESTART_NORMAL_S) * STOP_SLOW_K * 2700) / this.cfg.halfLength;
+      }
+      this.deadRun = 0;
+    }
+    this.loseTime(lost);
   }
 
-  /** The clock has run out (Match.clock past the half): does the referee blow now? (See ADDED_FRAC.) */
+  /** The half ends now (`end`) or not; how it ended is kept (Match.addedEnd). */
+  private addedOver(end: boolean, why: AddedEnd): boolean {
+    if (end) {
+      this.addedEnd = why;
+      this.addedEndSide = this.addedAttack ?? -1;
+    }
+    return end;
+  }
+
+  /**
+   * `side` has a chance on (see SHOT_RANGE_M): the ball at an attacker's feet, or a pass of theirs on its way, in
+   * shooting range or the wide area by the byline; or one of them running at goal in the other half.
+   */
+  private addedChance(side: Side): boolean {
+    const b = this.ball;
+    const owner = b.owner >= 0 ? this.players[b.owner] : null;
+    if (owner ? owner.side !== side : b.lastTouchSide !== side) return false;
+    const ad = this.attackDir(side);
+    const range = (x: number, z: number) => x >= CROSS_X || Math.hypot(HALF_L - x, z) < SHOT_RANGE_M;
+    const x = b.pos.x * ad;
+    if (range(x, b.pos.z)) return true;
+    if (!owner && Math.hypot(b.vel.x, b.vel.z) >= CHANCE_PASS_SPEED && range(x + b.vel.x * ad * CHANCE_PASS_T, b.pos.z + b.vel.z * CHANCE_PASS_T)) return true;
+    return x > 0 && (owner ? owner.vel.x : b.vel.x) * ad >= BREAK_SPEED;
+  }
+
+  /**
+   * The clock is past the half (Match.clock >= halfLength): does the referee blow now? The board goes up first, and
+   * its time is always played. (See STOP_BASE_S.)
+   */
   private addedTimeUp(): boolean {
-    const over = this.clock - this.cfg.halfLength;
-    const cap = this.addedCap();
+    if (this.addedBoard === null) {
+      const n = clamp(Math.round((STOP_BASE_S + this.stopLost) / 60), BOARD_MIN, BOARD_MAX);
+      this.addedBoard = n;
+      this.addedDue = (n * 60 * this.cfg.halfLength) / 2700;
+      this.addedEnd = null;
+      this.addedAttack = null;
+      this.addedFrom = -1;
+      this.addedWaited = this.addedPen = false;
+      this.events.push({ type: 'addedTime', minutes: n });
+    }
+    const due = this.cfg.halfLength + this.addedDue;
+    if (this.clock < due) return false;
     const b = this.ball;
     if (this.phase !== 'play') {
-      // The ball is dead. A penalty, a corner or a free kick in range is taken; anything else ends the half.
+      // The ball is dead. A penalty is taken, and a corner or a free kick in range given in time; else that's it.
       this.addedAttack = null;
+      this.addedFrom = -1;
       const r = this.phase === 'out' ? this.pendingRestart : this.restart;
       this.addedPen = r?.kind === 'penalty';
-      if (r && this.addedRestartTaken(r)) return over > cap + (this.addedPen ? ADDED_PEN_S : ADDED_LAST_S);
-      return this.phase !== 'out' || this.phaseT >= ADDED_SETTLE_S || b.pos.y < 1.2;
+      if (this.addedPen) return this.addedOver(this.clock > due + ADDED_PEN_S, 'penalty');
+      if (r && this.restartGivenAt < due && (isCrossingRestart(this, r) || isDirectFreeKick(this, r))) {
+        return this.addedOver(this.clock > due + ADDED_SP_S, 'ceiling');
+      }
+      return this.addedOver(this.phase !== 'out' || this.phaseT >= ADDED_SETTLE_S || b.pos.y < 1.2, 'dead');
     }
-    // Never while a shot is live, the ball is in the air or an advantage is being played: up to ADDED_LAST_S past
-    // the allowance (a penalty's shot, ADDED_PEN_S).
-    const live = !!this.adv || this.shotClock < 1.5 || (!b.held && b.pos.y > 1.2);
+    if (this.addedFrom < 0) this.addedFrom = this.clock;
+    // Never while a shot is in flight, the ball is in the air in or around a box, or an advantage is being waited on.
+    const nearBox = Math.abs(b.pos.x) > HALF_L - BOX_DEPTH - 3 && Math.abs(b.pos.z) < BOX_W / 2 + 3;
+    const live = !!this.adv || this.shotClock < SHOT_LIVE_S || (!b.held && b.pos.y > 1 && nearBox);
     if (!live) this.addedPen = false;
-    if (over > cap + (this.addedPen ? ADDED_PEN_S : ADDED_LAST_S)) return true;
-    if (live) return false;
-    if (over > cap) return true;
-    const owner = b.owner >= 0 ? this.players[b.owner] : null;
-    const side = owner ? owner.side : b.lastTouchSide;
+    const ceil = this.addedFrom + (this.addedPen ? ADDED_PEN_S : ADDED_CEIL_S);
+    if (live) {
+      this.addedWaited = true;
+      // A shot in flight always lands (ADDED_PEN_S past the time is only a safety net); a ball up in the box or an
+      // advantage has until a shot's flight past the last word.
+      if (this.shotClock < SHOT_LIVE_S) return this.addedOver(this.clock > due + ADDED_PEN_S, 'ceiling');
+      return this.addedOver(this.clock > ceil + ADDED_GRACE_S + SHOT_LIVE_S, 'ceiling');
+    }
     if (this.addedAttack === null) {
-      // The time is up: an attack on (the ball in the other half) is let finish; anything else is blown now.
-      if (side === -1 || b.pos.x * this.attackDir(side) <= 0) return true;
+      // The time is up: a chance on is let finish; the ball dead, neutral or in a side's own half, and he blows.
+      const owner = b.owner >= 0 ? this.players[b.owner] : null;
+      const side = owner ? owner.side : b.lastTouchSide;
+      if (side === -1 || !this.addedChance(side)) return this.addedOver(true, this.addedWaited ? 'attackOver' : 'neutral');
       this.addedAttack = side;
       return false;
     }
-    // The attack has broken down: the other side has the ball (their keeper too), or it's back in the attackers' half.
-    const att = this.addedAttack;
-    return (!!owner && owner.side !== att) || b.pos.x * this.attackDir(att) < -ADDED_BACK_M;
+    // The chance has come and gone (the other side has it, it went back or wide, the move stalled): that's it.
+    if (!this.addedChance(this.addedAttack)) return this.addedOver(true, 'attackOver');
+    return this.addedOver(this.clock > ceil + ADDED_GRACE_S, 'ceiling');
+  }
+
+  /** After the whistle: everyone eases to a stop where he is and the ball rolls dead (never a frozen picture). */
+  private windDown(dt: number): void {
+    if (this.phaseT > WIND_DOWN_S) return;
+    for (const p of this.players) {
+      if (p.sentOff) continue;
+      p.order = null;
+      p.wantX = p.wantZ = 0;
+      p.sprint = false;
+      p.step(dt, false);
+    }
+    const b = this.ball;
+    if (b.owner >= 0 || b.held) return;
+    this.hits.length = 0;
+    b.step(dt, this.hits);
+    this.hits.length = 0;
+    const k = Math.exp(-WIND_BALL_DRAG * dt);
+    b.vel.x *= k;
+    b.vel.z *= k;
   }
 
   private endHalf(): void {
     this.addedAttack = null;
     this.addedPen = false;
+    this.addedFrom = -1;
     if (this.cfg.mode === 'blitz') blitzClear(this);
     this.ball.owner = -1;
     this.offWatch = null;
@@ -2156,6 +2329,7 @@ export class Match {
     if (r0?.kind === 'penalty' && r0.taker === p.idx) this.ctl[p.side].penAim = null;
     const pen = so?.pen ?? inMatchPen;
     const L = pen ? penaltyLaunch(this, p, pen) : resolveKick(this, p, o);
+    if (this.cfg.hype && !so && !pen) superLaunch(this, p, L);
     // (A ground pass isn't laser-straight: a touch of curl, pace and skim: actions.naturalPass.)
     if (!so) naturalPass(this, p, L, this.kickId + 1);
     b.owner = -1;
@@ -3448,9 +3622,11 @@ export class Match {
     let best = -1;
     let bestS = Infinity;
     const aim = Math.hypot(dirX, dirZ) > 0.3;
+    // (Where the ball is going: their pass is judged at its receiver, see winReach.)
+    const reach = this.winReach(hs as Side);
     for (const p of this.bySide[hs as Side]) {
       if (p.isKeeper || p.idx === this.h.active || p.sentOff) continue;
-      let s = intercept(this, p).t * 6 + dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z) * 0.4;
+      let s = reach(p).t * 6 + dist2(p.pos.x, p.pos.z, b.pos.x, b.pos.z) * 0.4;
       // Prefer players goal-side of the ball.
       const ad = this.attackDir(hs as Side);
       if ((p.pos.x - b.pos.x) * ad > 0) s += 4;
@@ -3471,6 +3647,23 @@ export class Match {
     }
   }
 
+  /**
+   * How soon a man of `hs` wins the ball (ai.intercept), for picking who he controls. Their pass on its way is taken by
+   * its receiver where he meets it, so a man who could only get to the ball's line beyond him is racing for a ball that
+   * won't be there (the predicted flight runs on past him): he's judged by how soon he gets to the receiver's spot.
+   * (Without this the man under the thumb went to that one during their pass and straight back once it was controlled.)
+   */
+  private winReach(hs: Side): (p: Player) => { x: number; z: number; t: number } {
+    const b = this.ball;
+    const rcv = b.owner < 0 && this.passTarget >= 0 && this.players[this.passTarget].side !== hs ? this.players[this.passTarget] : null;
+    const ri = rcv && rcv.state === 'move' ? intercept(this, rcv) : null;
+    return (p) => {
+      const i = intercept(this, p);
+      if (!ri || i.t <= ri.t) return i;
+      return { x: ri.x, z: ri.z, t: Math.max(ri.t, Math.max(0, dist2(p.pos.x, p.pos.z, ri.x, ri.z) - 0.55) / (p.top * 0.92)) };
+    };
+  }
+
   private autoSwitchUpdate(dt: number, hs: Side): void {
     if (!this.h.autoSwitch) return;
     this.h.switchT += dt;
@@ -3486,13 +3679,14 @@ export class Match {
     if (cur.order?.looseStrike === this.kickId && b.owner < 0) return;
     // A man on the floor (or just gone to ground) is out of it for a moment.
     const down = cur.state !== 'move' && cur.state !== 'kick' && cur.stateT > 0.3;
-    const ci = intercept(this, cur);
+    const reach = this.winReach(hs);
+    const ci = reach(cur);
     const curT = ci.t + (down ? 1 : 0);
     let best = -1;
     let bestT = Infinity;
     for (const p of this.bySide[hs as Side]) {
       if (p.isKeeper || p === cur || p.sentOff || p.state !== 'move') continue;
-      const t = intercept(this, p).t;
+      const t = reach(p).t;
       if (t < bestT) {
         bestT = t;
         best = p.idx;
@@ -3500,10 +3694,12 @@ export class Match {
     }
     const ratio = b.owner < 0 ? AUTO_SWITCH_RATIO_LOOSE : AUTO_SWITCH_RATIO;
     if (best < 0 || bestT > curT * ratio || curT - bestT < AUTO_SWITCH_MARGIN) return;
-    // Never away from a man the stick is steering onto the ball while he's closing in on it.
+    // Straight back to the man the last switch took him off: only on a clear case (no ping-pong between two men).
+    if (best === this.h.switchedFrom && this.h.switchT < AUTO_SWITCH_BACK_T && curT - bestT < AUTO_SWITCH_BACK) return;
+    // Never away from a man the stick is steering onto the ball while he's closing in on it (and still in the race).
     const pad = this.h.prev;
     const sl = Math.hypot(pad.mx, pad.mz);
-    if (!down && sl > 0.3) {
+    if (!down && sl > 0.3 && curT - bestT < AUTO_SWITCH_KEEP) {
       const toward = (x: number, z: number): boolean => {
         const tx = x - cur.pos.x;
         const tz = z - cur.pos.z;
@@ -3512,6 +3708,7 @@ export class Match {
       };
       if (toward(ci.x, ci.z) || toward(b.pos.x, b.pos.z)) return;
     }
+    this.h.switchedFrom = cur.idx;
     this.h.active = best;
     this.h.switchT = 0;
   }
@@ -3693,8 +3890,10 @@ export class Match {
     this.restart = this.pendingRestart;
     this.restartGivenAt = this.clock;
     for (const p of this.players) p.order = null;
-    // Time is up and this one won't be taken: no short whistle, no set piece; the long one follows (addedTimeUp).
-    if (this.clock >= this.cfg.halfLength && !this.addedRestartTaken(this.pendingRestart)) return;
+    if (kind === 'penalty') this.loseTime(STOP_PEN_S);
+    // The added time is up and this one won't be taken (only a penalty is, now): no short whistle, no set piece; the
+    // long one follows (addedTimeUp).
+    if (this.addedBoard !== null && this.clock >= this.cfg.halfLength + this.addedDue && kind !== 'penalty') return;
     this.events.push({ type: 'whistle', kind: 'short' }, { type: 'restart', kind, side });
     if (kind === 'corner') this.stats.corners[side]++;
     // A stoppage: the AI benches can make their late changes (not while a penalty is given).
@@ -4818,15 +5017,36 @@ export class Match {
     for (const side of SIDES) {
       if (!this.human[side] || !this.clearThreat(side)) continue;
       const hc = this.ctl[side];
-      const p = hc.active >= 0 ? this.players[hc.active] : null;
-      if (!p || p.isKeeper || p.sentOff || p.state !== 'move' || p.kickCooldown > 0 || p.blockKick === this.kickId) continue;
-      if (p.order && !p.order.firstTime) continue;
-      const { d, t } = pointSegDist(p.pos.x, p.pos.z, a.x, a.z, b.pos.x, b.pos.z);
-      const y = a.y + (b.pos.y - a.y) * t;
       const pressed = hc.clearT > 0;
-      if (y < 0.3 || y > (pressed ? CLEAR_TOP : ZONAL_HEAD_Y) + p.y) continue;
-      if (d > (pressed ? CLEAR_REACH : ZONAL_HEAD_R)) continue;
+      const can = (q: Player | null): q is Player =>
+        !!q && !q.isKeeper && !q.sentOff && q.state === 'move' && q.kickCooldown <= 0 && q.blockKick !== this.kickId && !(q.order && !q.order.firstTime);
+      const meets = (q: Player): { d: number; t: number; y: number } | null => {
+        const { d, t } = pointSegDist(q.pos.x, q.pos.z, a.x, a.z, b.pos.x, b.pos.z);
+        const y = a.y + (b.pos.y - a.y) * t;
+        if (y < 0.3 || y > (pressed ? CLEAR_TOP : ZONAL_HEAD_Y) + q.y) return null;
+        return d > (pressed ? CLEAR_REACH : ZONAL_HEAD_R) ? null : { d, t, y };
+      };
+      let p = hc.active >= 0 ? this.players[hc.active] : null;
+      let hit = can(p) ? meets(p) : null;
+      // The press is "clear it", not "him in particular": if his own man can't reach it this step, whichever of ours
+      // it comes closest to within reach heads it away, and becomes his man.
+      if (!hit && pressed) {
+        for (const q of this.bySide[side]) {
+          if (q === p || !can(q)) continue;
+          const h = meets(q);
+          if (h && (!hit || h.d < hit.d)) {
+            hit = h;
+            p = q;
+          }
+        }
+      }
+      if (!hit || !can(p)) continue;
+      const { t, y } = hit;
       if (!pressed && !inOwnBox(this, side, p.pos.x, p.pos.z)) continue;
+      if (p.idx !== hc.active) {
+        hc.active = p.idx;
+        hc.switchT = 0;
+      }
       const ad = this.attackDir(side);
       const cx = a.x + (b.pos.x - a.x) * t;
       const cz = a.z + (b.pos.z - a.z) * t;
@@ -4883,6 +5103,9 @@ export class Match {
         // A bending free kick is hard to judge: the keeper's reach is a little shorter against it.
         if (this.fkShotKick === this.shotKick) reachH *= 1 - CURL_REACH * this.shotCurl;
       }
+      // A SUPER SHOT (hype.ts): less of him gets to it, and he can only parry it.
+      const superShot = !!this.cfg.hype && shotLive && superLive(this, s);
+      if (superShot) reachH *= SUPER_REACH;
       // A diving keeper is stretched out along his line: full reach sideways, much less in front of
       // or behind his body (a ball whipped across the face of goal from an angle goes past him).
       const dh = diving
@@ -4903,7 +5126,7 @@ export class Match {
         const seen = shotLive ? clamp((this.shotDist - LONG_CATCH_FROM) / 8, 0, 1) : 0;
         const stretch = diving ? clamp(dh / Math.max(0.1, reachH), 0, 1) : 0;
         // (A floated long shot straight at him is his to hold: ~95% for a good keeper.)
-        const pCatch = speed < catchLimit + seen * 7
+        const pCatch = speed < catchLimit + seen * 7 && !superShot
           ? diving
             ? (0.3 + keeping * 0.24) * (0.42 + seen * (0.6 - stretch * 0.35))
             : Math.min(0.95, 0.3 + keeping * 0.24 + seen * 0.42)

@@ -202,7 +202,15 @@ export type MatchEvent =
    * The referee plays advantage after a foul on `side` (the fouled team kept or won the ball back
    * in their attacking half): no free kick; any card for the foul is shown straight away.
    */
-  | { type: 'advantage'; side: Side };
+  | { type: 'advantage'; side: Side }
+  /**
+   * HYPE (sim/hype.ts, MatchConfig.hype): `side`'s meter is full, so its next open-play shot is a SUPER SHOT; and the
+   * super shot struck (before its 'kick' event, in the same step).
+   */
+  | { type: 'hypeFull'; side: Side }
+  | { type: 'superShot'; side: Side; player: number }
+  /** The clock has reached 45:00 / 90:00: the fourth official's board, `minutes` of added time (sim/match.ts STOP_BASE_S). */
+  | { type: 'addedTime'; minutes: number };
 
 export type KickKind = 'pass' | 'through' | 'lob' | 'shot' | 'clear' | 'header' | 'throw' | 'keeper';
 /** The SKILL button's moves (sim/skills.ts: the stick against his run picks one). */

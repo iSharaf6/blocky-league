@@ -503,3 +503,22 @@ export function emitTrail(K: FxKit, st: TrailState, id: string | undefined, pal:
   st.t += dt;
   return true;
 }
+
+/**
+ * LIGHT UP BOOTS (a player look, render/looks.ts): every footstep of a player wearing them leaves a glowing print on
+ * the grass, alternating cyan and pink, with a flash of light at the boot. The boots themselves are a voxel or two at
+ * broadcast distance; the prints are what reads from the gantry. Pooled props, nothing allocated: one call a step.
+ * (x, z): the runner; (ux, uz): his heading; `side` the foot (+1 / -1); `k` the draw scale (players are drawn bigger
+ * on phones).
+ */
+export const BOOT_STEP_M = 0.85;
+export function bootStep(K: FxKit, x: number, z: number, ux: number, uz: number, side: number, k = 1): void {
+  K.setFrame(x, 0, z, ux, uz, k);
+  const col = side > 0 ? 0x3cf7ff : 0xff3cf0;
+  const p = K.add(SH.print, -0.08, 0, side * 0.18, 0, 0, 0, 0.85, 1.6, col);
+  p.f |= F.FLAT | F.KEEP | F.POP;
+  p.ry = K.yawU + Math.PI;
+  p.y = 0.03;
+  const g = K.add(SH.glow, -0.05, 0.12, side * 0.18, 0, 0, 0, 1.8, 0.2, col);
+  g.f |= F.FACE;
+}

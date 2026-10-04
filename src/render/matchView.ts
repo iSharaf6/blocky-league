@@ -5,7 +5,12 @@ import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
 import type { Kit, PlayerDef, TeamDef } from '../sim/types';
 import { CelebrationRig } from './celebration';
-import { CHAR_H, Footballer, PSTATE, ballSkinOf, buildBallGeometry, charMaterial, screenCharK, setCharacterFill, setCharacterHemiFill, type PoseInput } from './characters';
+import {
+  CHAR_H, Footballer, PSTATE, VU, ballSkinOf, buildBallGeometry, charMaterial, charMaterialFor, screenCharK, setCharacterFill, setCharacterHemiFill, setKitGlow,
+  type PoseInput,
+} from './characters';
+import type { StyledKit } from './kitDesigns';
+import { headgearGeometry, isHeadgear } from './looks';
 import { BALL_FLASH_S, ballFlashScale } from './juice';
 import { FLOODLIGHT_TOWERS } from './stadium';
 import { BoxBuilder } from './voxel';
@@ -279,9 +284,21 @@ export class MatchView {
   private refState_ = { x: 0, z: 0, faceX: 0, faceZ: 0, booking: false };
   /** Interpolated frame the renderer last drew (read by camera, HUD). */
   readonly frame: Float32Array;
+  private readonly humanSide_: number;
+  /** The human side's headgear look on the man he controls, and who wears it now (-1: nobody). */
+  private roamHead: THREE.Mesh | null = null;
+  private roamFor = -1;
 
   constructor(teams: [TeamDef, TeamDef], kits: [Kit, Kit], humanSide: number, colorblind = false) {
     this.colorblind = colorblind;
+    this.humanSide_ = humanSide;
+    // The human side's headgear look (SHOP: render/looks.ts) follows the man he controls; the captain has his own.
+    const head = humanSide === 0 || humanSide === 1 ? (kits[humanSide] as StyledKit).looks?.head : undefined;
+    const hg = head && isHeadgear(head) ? headgearGeometry(head, VU) : null;
+    if (hg) {
+      this.roamHead = new THREE.Mesh(hg, charMaterialFor(hg));
+      this.roamHead.castShadow = true;
+    }
     for (let s = 0; s < 2; s++) {
       teams[s].players.forEach((def, i) => {
         const f = new Footballer(def, kits[s], i === 0);
@@ -671,6 +688,7 @@ export class MatchView {
       this.nameTag.position.y = top + 1.3 + f[o + 2];
       if (active !== this.nameFor) this.drawName(active);
     }
+    if (this.roamHead) this.wearRoamHead(active);
     if (this.rivalRing) {
       const ri = this.rivalIdx;
       const on = ri >= 0 && this.marker.visible && this.markerMode !== 'off';
@@ -699,6 +717,17 @@ export class MatchView {
     } else {
       this.targetRing.visible = false;
     }
+  }
+
+  /** The roaming headgear on the controlled man of the human side (never doubled on the captain, who wears his own). */
+  private wearRoamHead(active: number): void {
+    const hs = this.humanSide_;
+    const want = active >= 0 && (active < 11 ? 0 : 1) === hs && !this.players[active].hasHeadgear ? active : -1;
+    if (want === this.roamFor) return;
+    this.roamFor = want;
+    const m = this.roamHead!;
+    if (want >= 0) this.players[want].headAnchor.add(m);
+    else m.removeFromParent();
   }
 
   /** Is player `i` held on a mark for a close-up (see pinPlayer)? */
@@ -1040,6 +1069,10 @@ export class MatchView {
     const old = this.players[i];
     if (!old || old.def === def) return;
     const f = new Footballer(def, kit, i === 0 || i === 11);
+    if (this.roamFor === i) {
+      this.roamHead?.removeFromParent();
+      this.roamFor = -1;
+    }
     f.group.position.copy(old.group.position);
     f.group.rotation.copy(old.group.rotation);
     old.dispose();
@@ -1250,6 +1283,8 @@ export class MatchView {
     this.towers = towers;
     setCharacterFill(night ? NIGHT_CHAR_FILL : 0);
     setCharacterHemiFill(t === 'sunset' ? SUNSET_CHAR_HEMI : 0);
+    // Premium kits' glowing trim lights up under the floodlights (render/kitDesigns.ts FX.glow).
+    setKitGlow(night ? 1 : t === 'sunset' ? 0.35 : 0);
     if (night && !this.floodShadows) {
       const c = document.createElement('canvas');
       c.width = c.height = 64;

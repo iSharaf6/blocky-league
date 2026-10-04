@@ -57,6 +57,8 @@ export class Hud {
   readonly root: HTMLDivElement;
   private score: HTMLDivElement;
   private clock: HTMLDivElement;
+  /** The fourth official's board (added time), hung beside the clock. */
+  private board: HTMLDivElement;
   private banner: HTMLDivElement;
   private bannerTimer = 0;
   private hint: HTMLDivElement;
@@ -175,6 +177,7 @@ export class Hud {
         <div class="sb-score">${scoreHtml(0, 0)}</div>
         <div class="sb-team"><b>${a.short}</b>${a.kit ? crestSvg(a.name, a.short, a.kit, 2) : `<i class="crest" style="--a:${cssHex(a.color)};--b:${cssHex(a.color2)}"></i>`}</div>
         <div class="sb-clock">00:00</div>
+        <div class="sb-board" role="status" aria-label="Added time"></div>
         <div class="sb-cards h"></div>
         <div class="sb-cards a"></div>
       </div>
@@ -195,6 +198,7 @@ export class Hud {
       <canvas class="hud-radar" width="240" height="150" aria-hidden="true"></canvas>`;
     this.score = this.root.querySelector('.sb-score')!;
     this.clock = this.root.querySelector('.sb-clock')!;
+    this.board = this.root.querySelector('.sb-board')!;
     this.banner = this.root.querySelector('.hud-banner')!;
     this.hint = this.root.querySelector('.hud-hint')!;
     this.tip = this.root.querySelector('.hud-tip')!;
@@ -258,11 +262,37 @@ export class Hud {
   }
 
   /** Game clock in seconds, plus added-time minutes (0 = none). Ignored while a countdown is showing (setCountdown). */
-  setClock(seconds: number, extra: number): void {
+  setClock(seconds: number, added: number | null): void {
     if (this.countdown !== null) return;
     const mm = Math.floor(seconds / 60);
     const ss = seconds % 60;
-    this.clock.innerHTML = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}${extra ? `<em>+${extra}</em>` : ''}`;
+    // Added time counts on beside the held clock, as on a broadcast: 45:00 +0:37.
+    const plus = added !== null && added >= 0 ? `<em>+${Math.floor(added / 60)}:${String(added % 60).padStart(2, '0')}</em>` : '';
+    this.clock.innerHTML = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}${plus}`;
+  }
+
+  /**
+   * The fourth official's board at 45:00 / 90:00 (Law 7.3): `minutes` of added time, the least that will be played, on
+   * a voxel LED board that pops up beside the clock and stays for the added time. null takes it down (the whistle).
+   */
+  showAddedBoard(minutes: number | null): void {
+    const el = this.board;
+    if (minutes === null) {
+      el.classList.remove('on', 'pop');
+      return;
+    }
+    el.textContent = `+${minutes}`;
+    el.classList.remove('pop');
+    void el.offsetWidth;
+    el.classList.add('on', 'pop');
+  }
+
+  /** The score bug with the added-time board when it is up (it hangs off the bug's right edge). */
+  private bugRect(): Rect | null {
+    const sb = this.rectOf('.scorebug', false);
+    const bd = this.board.classList.contains('on') ? this.rectOf('.sb-board', false) : null;
+    if (!sb || !bd) return sb;
+    return { l: Math.min(sb.l, bd.l), t: Math.min(sb.t, bd.t), r: Math.max(sb.r, bd.r), b: Math.max(sb.b, bd.b) };
   }
 
   /**
@@ -436,7 +466,7 @@ export class Hud {
     const W = window.innerWidth;
     const H = window.innerHeight;
     const g = W < 480 ? 8 : 12;
-    const sb = this.rectOf('.scorebug', false);
+    const sb = this.bugRect();
     if (!sb) return;
     const pause = this.topRight();
     type Cand = { l: number; w: number; t: number };
@@ -568,7 +598,7 @@ export class Hud {
     opts.push(box(W / 2, topY));
     const goals = this.goalRects();
     const solid = [
-      '#ui > .touch:not(.hidden) .touch-btns', '#ui > .touch:not(.hidden) .touch-base', '.scorebug', '.hud-pause', '.hud-cam', '.hud-toast.on',
+      '#ui > .touch:not(.hidden) .touch-btns', '#ui > .touch:not(.hidden) .touch-base', '.scorebug', '.sb-board.on', '.hud-pause', '.hud-cam', '.hud-toast.on',
       '.hud-tip.on', '.hud-hint.on', '.hud-cm.on:not(.blocked)', '.hud-radar',
     ]
       .map((sel) => this.rectOf(sel, false))
@@ -833,7 +863,7 @@ export class Hud {
     const W = window.innerWidth;
     const H = window.innerHeight;
     const g = W < 480 ? 8 : 12;
-    const sb = this.rectOf('.scorebug', false);
+    const sb = this.bugRect();
     const pause = this.topRight();
     if (!sb) return;
     const h = this.cm.offsetHeight || 34;
@@ -991,7 +1021,7 @@ export class Hud {
     const take = (q: Rect | null) => {
       if (q && q.t < H * 0.4 && q.r > l && q.l < r) y = Math.max(y, q.b);
     };
-    for (const sel of ['.scorebug', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause', '.hud-cam', '.hud-qsub.on']) take(this.rectOf(sel, false));
+    for (const sel of ['.scorebug', '.sb-board.on', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause', '.hud-cam', '.hud-qsub.on']) take(this.rectOf(sel, false));
     // The minimap only while it shows (it is off for set pieces).
     if (!this.radarHidden && !this.root.classList.contains('dead')) take(this.rectOf('.hud-radar'));
     // Landscape: a little lower than the top row, which belongs to the ticker and the event flag.
@@ -1254,7 +1284,13 @@ export class Hud {
     this.tip.classList.toggle('on', !!cue);
   }
 
+  /** A goal celebration that a tap skips: the replay's skip line on its own (no REPLAY badge). */
+  setSkippable(on: boolean): void {
+    if (this.replay.classList.contains('skip-only') !== on) this.replay.classList.toggle('skip-only', on);
+  }
+
   setReplay(on: boolean): void {
+    this.replay.classList.remove('skip-only');
     this.replay.classList.toggle('on', on);
     this.root.classList.toggle('replaying', on);
     // Replays are silent on the ticker: nothing queued comes back afterwards either.

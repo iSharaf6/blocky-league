@@ -342,6 +342,15 @@ function passOfferHtml(app: AppContext): string {
  * The track: a sticky label column (TIER, FREE, PASS), then a column per tier: its number, the free prize and
  * (where the pass exists) the pass prize, so the two rows always line up.
  */
+
+/** How each Club Pass look reads on the pass track (its tile word, its spoken name, its icon). */
+const PASS_KIND: { readonly [k in 'goalfx' | 'trail' | 'kit' | 'look']: { short: string; long: string; icon: 'bolt' | 'star' | 'shirt' | 'crown' } } = {
+  trail: { short: 'TRAIL', long: 'sprint trail', icon: 'bolt' },
+  goalfx: { short: 'GOAL FX', long: 'goal explosion', icon: 'star' },
+  kit: { short: 'KIT', long: 'premium kit', icon: 'shirt' },
+  look: { short: 'LOOK', long: 'player look', icon: 'crown' },
+};
+
 function trackHtml(app: AppContext, withPass: boolean): string {
   const s = season(app);
   const th = seasonTheme(s.id);
@@ -364,13 +373,14 @@ function trackHtml(app: AppContext, withPass: boolean): string {
     const pr = passReward(t, s.id);
     const pGot = s.passClaimed.includes(t);
     const pReady = s.pass && !pGot && t <= reached;
-    const what = pr.item ? `the ${th.name} ${pr.item.cat === 'trail' ? 'sprint trail' : 'goal explosion'}` : `${pr.coins} coins`;
+    const kind = pr.item ? PASS_KIND[pr.item.cat] : null;
+    const what = pr.item && kind ? `the ${th.name} ${kind.long}` : `${pr.coins} coins`;
     const pLabel = `Club Pass tier ${t}: ${what}${pGot ? ', claimed' : pReady ? ', ready to claim' : s.pass ? '' : ', with the pass'}`;
     const prize = pr.item
-      ? `<span class="bd-coins bd-item">${pr.item.cat === 'trail' ? 'TRAIL' : 'GOAL FX'}</span>`
+      ? `<span class="bd-coins bd-item">${kind!.short}</span>`
       : `<span class="bd-coins">${pGot ? maskIcon('tick', '#238a3b', 1.6) : `<i class="bd-coin"></i>${pr.coins}`}</span>`;
     cells.push(`<button class="bd-tile ptile ${pGot ? 'got' : pReady ? 'ready' : 'lock'} ${pr.item || PASS_BIG_COINS[t] ? 'big' : ''}" data-a="ptier" data-t="${t}" aria-label="${esc(pLabel)}">
-        ${pr.item ? `<span class="bd-star">${pixelIcon(pr.item.cat === 'trail' ? 'bolt' : 'star', pGot ? '#26262e' : '#ffd23a', 1.4)}</span>` : ''}
+        ${pr.item ? `<span class="bd-star">${pixelIcon(kind!.icon, pGot ? '#26262e' : '#ffd23a', 1.4)}</span>` : ''}
         ${prize}
         ${pReady ? '<em>CLAIM</em>' : ''}
       </button>`);

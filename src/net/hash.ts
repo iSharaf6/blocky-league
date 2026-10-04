@@ -1,3 +1,4 @@
+import { hypeMeters } from '../sim/hype';
 import type { Match } from '../sim/match';
 
 /**
@@ -87,5 +88,10 @@ export function stateHash(m: Match): number {
   h.word(m.powerups.length);
   for (const pu of m.powerups) h.word(pu.id).str(pu.kind).num(pu.x).num(pu.z).num(pu.t);
   h.str(m.heldPower[0]).str(m.heldPower[1]);
+  // HYPE (sim/hype.ts): both meters, only in a match that has them (older baselines keep their hashes).
+  if (m.cfg.hype) {
+    const hm = hypeMeters(m);
+    h.word(0x48595045).num(hm[0]).num(hm[1]);
+  }
   return h.value();
 }

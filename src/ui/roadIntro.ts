@@ -39,9 +39,9 @@ export function roadIntro(app: AppContext, o: RoadIntroOptions): void {
   const scr = mountMeta(app, 'mc-road-screen shell');
   // Three short lines: a label and a few words each (docs/UX.md: less to read).
   const points: [string, string, string][] = [
-    ['shirt', 'START AT THE BOTTOM', `${title(DIVISION_NAMES[BOTTOM_DIVISION])}, a scrappy squad.`],
-    ['gear', 'BUILD IT UP', 'Win coins. Sign, train, upgrade.'],
-    ['trophy', 'CLIMB TO THE TOP', 'Top two go up. A cup every season.'],
+    ['shirt', 'START AT THE BOTTOM', `${title(DIVISION_NAMES[BOTTOM_DIVISION])}. The board sets three goals a season.`],
+    ['gear', 'BUILD IT UP', 'Sign, train, grow your academy, build your ground.'],
+    ['trophy', 'CLIMB, THEN KEEP GOING', 'Top two go up. Then the continent, then the world.'],
   ];
   scr.render(
     `${topBar(o.first ? 'MENU' : 'BACK', 'ROAD TO GLORY', `${BOTTOM_DIVISION - TOP_DIVISION + 1} DIVISIONS TO THE TOP`, app.save.coins)}

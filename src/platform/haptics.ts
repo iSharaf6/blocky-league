@@ -29,7 +29,9 @@ export const HAPTIC_LEVELS: readonly HapticLevel[] = ['off', 'light', 'full'];
 
 export type HapticKind =
   | 'tap' | 'camera' | 'pass' | 'shot' | 'finish' | 'whistle' | 'skill' | 'perfect' | 'tackle' | 'save' | 'post' | 'reveal'
-  | 'concede' | 'goal' | 'win' | 'success';
+  | 'concede' | 'goal' | 'win' | 'success'
+  /** HYPE (sim/hype.ts): his side's SUPER SHOT struck (a heavy double); a live goal done (game/funLayer.ts). */
+  | 'super' | 'bounty';
 
 type Style = 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' | 'selection';
 
@@ -66,6 +68,8 @@ export const HAPTIC_FEEL: Readonly<Record<HapticKind, HapticFeel>> = {
   goal: { style: 'heavy', intensity: 1, notify: 'success', count: 2, apart: 110, gap: 1500, rank: 3, big: true },
   win: { style: 'heavy', intensity: 0.8, notify: 'success', gap: 1500, rank: 3, big: true },
   success: { style: 'medium', intensity: 0.7, notify: 'success', gap: 400, rank: 3, big: true },
+  super: { style: 'heavy', intensity: 1, count: 2, apart: 90, gap: 800, rank: 3, big: true },
+  bounty: { style: 'medium', intensity: 0.75, notify: 'success', gap: 600, rank: 2, big: false },
 };
 
 /** Any two taps at least GAP_MS apart (unless the second ranks higher), heavy ones HEAVY_GAP_MS, and MAX_PER_S a second. */

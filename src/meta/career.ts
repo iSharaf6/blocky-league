@@ -19,6 +19,24 @@ import {
   CUP_JOIN_BY, CUP_SIZE, ROUND_NAMES, ROUND_SHORT, cupFinish, cupRoundDue, drawCup, readCupTie, recordCupTie, settleCup, syncCup, userTie,
   type CupClub, type CupStatus, type RateClub, type SeasonCup, type TieOutcome,
 } from './cup';
+// The forever game (all runtime cycles: their bindings are only used inside functions here, and they do the same).
+import {
+  COMP_NAMES, STAGE_NAMES, advanceComp, compClub, compDue, compFinish, drawContinental, drawWorld, readComp, recordComp, settleComp,
+  type CompKind, type CompOutcome, type Competition,
+} from './comps';
+import { checkBoard, confidenceBudget, defaultBoard, readBoard, setObjectives, type BoardState } from './board';
+import {
+  SCREEN_BONUS, TRAINING_DISCOUNT, defaultGround, groundFromLevel, groundLevel, has, megastoreCoins, partDef, readGround, startBuild, tickBuild,
+  type BuildResult, type GroundState, type PartId,
+} from './ground';
+import {
+  academyIntake, applyRetirements, captainOf, decideRetirements, defaultAcademy, matchLift, readAcademy, readFarewells, recordMatch, syncRecordSigning,
+  type AcademyState, type Farewell, type LifePlayer, type MatchFacts,
+} from './life';
+import { LEGACY_POINTS, START_BONUS, addLegacy, archiveClub, defaultLegacy, hasPerk, readLegacy, type LegacyState } from './legacy';
+import {
+  addForm, addMoment, beforeMatchBeats, cupHeadline, defaultStory, derbyResult, placeRival, readStory, seasonStartBeats, storyNews, type StoryState,
+} from './story';
 import { sep } from '../ui/text';
 
 export const CAREER_VERSION = 1 as const;
@@ -117,6 +135,16 @@ export interface SeasonState {
    * was already too far along when the cup joined the career (a save from before it): the next season has one.
    */
   cup: SeasonCup | null;
+  /** The CONTINENTAL CUP (Elite League seasons only; meta/comps.ts). */
+  continental?: Competition | null;
+  /** The WORLD CLUB CUP (the season after a league title in the Elite League or a Continental Cup). */
+  world?: Competition | null;
+  /** League id of your recurring rival this season (meta/story.ts): the derby. */
+  derby?: string;
+  /** This season's goals per squad id (the recap's top scorer). */
+  scorers?: Record<string, { name: string; goals: number }>;
+  /** Legacy points when the season began (the recap shows what it earned). */
+  legacyAtStart?: number;
 }
 
 export type Outcome = 'promoted' | 'relegated' | 'stayed';
@@ -137,6 +165,15 @@ export interface SeasonSummary {
   prize: number;
   /** How far the BLOCKY CUP run went (cup.ts FINISH_NAMES: 0 QF .. 3 winners); absent in a season without the cup. */
   cup?: number;
+  /** How far the CONTINENTAL CUP / WORLD CLUB CUP runs went (comps.ts COMP_FINISH: 3 winners); absent when not in them. */
+  continental?: number;
+  world?: number;
+  /** Players retiring this summer (they leave when the next season starts: the recap says farewell). */
+  retiring?: Farewell[];
+  /** Legacy points the season earned. */
+  legacy?: number;
+  /** League, Blocky Cup and Continental Cup in one season. */
+  treble?: boolean;
 }
 
 export interface HistoryEntry {
@@ -146,6 +183,9 @@ export interface HistoryEntry {
   outcome: Outcome;
   /** The BLOCKY CUP run that season (0 out in the QF .. 3 winners: a trophy); absent before the cup joined the career. */
   cup?: number;
+  /** CONTINENTAL CUP / WORLD CLUB CUP runs (3 winners); absent when the club wasn't in them. */
+  continental?: number;
+  world?: number;
 }
 
 export interface CareerState {
@@ -161,10 +201,21 @@ export interface CareerState {
   marketKey: string;
   /** The transfer market (meta/market.ts): listings, offers, sales, shortlist, news. */
   tm: MarketState;
+  /** The ground's level 0..5 (derived from `ground` by ground.ts groundLevel: what gates, crowds and wages read). */
   stadium: number;
   history: HistoryEntry[];
   /** One-shot message shown on the career hub (e.g. forfeit after quitting). */
   notice: string | null;
+  /** The board's objectives this season and its confidence (meta/board.ts). */
+  board: BoardState;
+  /** The ground, part by part (meta/ground.ts). */
+  ground: GroundState;
+  /** The youth academy's prospects (meta/life.ts). */
+  academy: AcademyState;
+  /** Club legacy, the Hall of Fame and the record book (meta/legacy.ts): it survives starting a new club. */
+  legacy: LegacyState;
+  /** The rival, the form and the moments waiting for the hub (meta/story.ts). */
+  story: StoryState;
 }
 
 export interface Wallet {
@@ -200,8 +251,10 @@ export interface NextMatch {
   away: TeamDef;
   /** Worn kits: the home side keeps its kit, the away side changes on a clash. */
   kits: [Kit, Kit];
-  /** A league matchday or a BLOCKY CUP tie. */
-  competition: 'league' | 'cup';
+  /** A league matchday, a BLOCKY CUP tie, or a CONTINENTAL / WORLD CLUB CUP fixture (meta/comps.ts). */
+  competition: 'league' | 'cup' | CompKind;
+  /** Comps: the fixture's stage (a group game can end level; the semi and final go to penalties). */
+  stage?: 'group' | 'sf' | 'final';
   /** What the match is, for cards and the menu tile: "MATCHDAY 3" or "BLOCKY CUP QUARTER FINAL". */
   label: string;
   /** The same, short, for tight spaces: "MD 3" or "CUP QF". */
@@ -439,15 +492,27 @@ export function clubRating(club: ClubState): number {
 
 // ------------------------------------------------------------------ training
 
-export function trainingCost(p: PlayerDef): number {
-  return 40 + overall(p) * 3;
+/** A +2 session; `discount` (0..1) comes from the TRAINING GROUND and the legacy coach perk (trainingDiscount). */
+export function trainingCost(p: PlayerDef, discount = 0): number {
+  const base = 40 + overall(p) * 3;
+  return discount > 0 ? round10(base * (1 - Math.min(0.5, discount))) : base;
 }
 
-export function trainPlayer(club: ClubState, wallet: Wallet, playerId: string, stat: keyof PlayerStats): TxResult {
+/** What training is off at your club: 25% with the TRAINING GROUND, 10% more with the legacy coach perk. */
+export function trainingDiscount(state: CareerState): number {
+  return (has(state.ground, 'training') ? TRAINING_DISCOUNT : 0) + (hasPerk(state.legacy, 'coach') ? 0.1 : 0);
+}
+
+/** The squad level a new club starts at: a legend's new club (legacy perk) starts stronger. */
+export function newClubLevel(state: CareerState): number {
+  return START_LEVEL + (hasPerk(state.legacy, 'legend') ? START_BONUS : 0);
+}
+
+export function trainPlayer(club: ClubState, wallet: Wallet, playerId: string, stat: keyof PlayerStats, discount = 0): TxResult {
   const p = club.squad.find((x) => x.id === playerId);
   if (!p) return fail('not-found');
   if (p.stats[stat] >= STAT_CAP) return fail('maxed');
-  const cost = trainingCost(p);
+  const cost = trainingCost(p, discount);
   if (wallet.coins < cost) return fail('no-coins');
   wallet.coins -= cost;
   p.stats[stat] = Math.min(STAT_CAP, p.stats[stat] + TRAIN_STEP);
@@ -469,6 +534,11 @@ export function defaultCareer(seed: number): CareerState {
     stadium: 0,
     history: [],
     notice: null,
+    board: defaultBoard(),
+    ground: defaultGround(),
+    academy: defaultAcademy(),
+    legacy: defaultLegacy(),
+    story: defaultStory(),
   };
 }
 
@@ -521,14 +591,28 @@ export function newSeason(state: CareerState, division: number, number: number):
     });
   }
   const fixtures = buildFixtures([YOU, ...rivals.map((r) => r.id)], rng);
+  // Your recurring rival takes a slot in this league (story.ts): it follows you up and down the divisions.
+  const derby = state.club ? placeRival(state, rivals) : undefined;
+  const rv = derby ? rivals.find((r) => r.id === derby) : undefined;
+  if (rv) rv.rating = teamRating(makeTeam({ name: rv.name, short: rv.short, kit: rv.kit, formation: rv.formation, level: rv.level }));
   // The cup draw has its own seeded stream (cup.ts), so the league above comes out as it always did.
   const cup = drawCup(seed, div, rivals, state.club);
   const season: SeasonState = { number, division: div, seed, rivals, fixtures, matchday: 0, cup };
+  if (derby) season.derby = derby;
+  if (state.legacy) season.legacyAtStart = state.legacy.points;
+  // The Elite League brings the CONTINENTAL CUP (comps.ts): every season up there.
+  if (div === TOP_DIVISION && state.club) season.continental = drawContinental(seed, state.club, rivals);
   state.season = season;
   state.summary = null;
   // A fresh market for the season (any offer still live is refunded through tm.owed).
   clearMarket(state);
   refreshMarket(state);
+  if (state.club) {
+    // The academy opens from the club's second season (the first is for finding your feet).
+    if (number > 1) academyIntake(state);
+    setObjectives(state);
+    seasonStartBeats(state);
+  }
   return season;
 }
 
@@ -589,8 +673,8 @@ export function simulateMatchday(state: CareerState, md: number): void {
 export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, hg: number, ag: number, forfeit = false): boolean {
   const season = state.season;
   if (!season || !state.club || state.summary || season.matchday !== md || md >= MATCHDAYS) return false;
-  // A cup tie that is due comes first (nextMatch offers it before the matchday).
-  if (cupRoundDue(season.cup, season.matchday) >= 0) return false;
+  // A cup tie (or a Continental / World Club Cup fixture) that is due comes first (nextMatch offers it first).
+  if (cupRoundDue(season.cup, season.matchday) >= 0 || compsDue(state)) return false;
   const f = userFixture(season, md);
   if (!f || f.hg !== null) return false;
   f.hg = Math.max(0, Math.round(hg));
@@ -601,11 +685,104 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
   season.matchday++;
   // Out of the cup: its later rounds are still played, as the calendar reaches them.
   if (season.cup) syncCup(season.cup, season.matchday, clubRater(state));
+  for (const comp of [season.world, season.continental]) if (comp) advanceComp(comp, season.matchday, clubRater(state));
   // The wage bill: over budget, 1.5× the overspend leaves the wallet after every matchday (market.ts).
   applyWageDrain(state, wallet);
+  // The story: the form, the derby, the ground going up, the board's objectives.
+  const home = f.home === YOU;
+  const [my, their] = home ? [f.hg, f.ag] : [f.ag, f.hg];
+  addForm(state, my, their);
+  if (season.derby && (f.home === season.derby || f.away === season.derby)) derbyResult(state, my, their);
+  buildWeek(state);
   if (season.matchday >= MATCHDAYS) finishSeason(state, wallet);
-  else refreshMarket(state, wallet);
+  else {
+    checkBoard(state);
+    refreshMarket(state, wallet);
+    beforeMatchBeats(state, nextMatch(state));
+  }
   return true;
+}
+
+/** A league matchday passed: the build moves on; a part that opens is a moment and lifts the ground's level. */
+function buildWeek(state: CareerState, all = false): void {
+  const opened = tickBuild(state.ground, all);
+  if (!opened) return;
+  state.stadium = Math.max(0, Math.min(STADIUM_MAX, groundLevel(state.ground)));
+  const name = partDef(opened).steps[(state.ground.built[opened] ?? 1) - 1]?.name ?? partDef(opened).name;
+  addMoment(state, { kind: 'build', icon: partDef(opened).icon, title: 'NOW OPEN', text: `THE ${name} IS READY FOR MATCHDAY` });
+  storyNews(state, `${state.club?.name ?? 'The club'} open the ${name.toLowerCase()}`, 'good');
+}
+
+/** The Continental or World Club Cup fixture of yours due now, if any (World first: it opens the season). */
+export function compsDue(state: CareerState): { comp: Competition; idx: number } | null {
+  const s = state.season;
+  if (!s || state.summary || !state.club) return null;
+  for (const comp of [s.world, s.continental]) {
+    const idx = compDue(comp, s.matchday);
+    if (comp && idx >= 0) return { comp, idx };
+  }
+  return null;
+}
+
+/**
+ * Record your CONTINENTAL / WORLD CLUB CUP fixture due now (as resolveCupTie): goals after 90, `won` settles a level
+ * knockout, `pens` its shootout. The prize comes back in the outcome (compTieReward pays it with the match). Null when
+ * nothing is due (a stale request can't play a fixture twice).
+ */
+export function resolveCompTie(state: CareerState, my: number, their: number, won: boolean, pens: [number, number] | null = null): CompOutcome | null {
+  const season = state.season;
+  const due = compsDue(state);
+  if (!season || !due || cupRoundDue(season.cup, season.matchday) >= 0) return null;
+  const out = recordComp(due.comp, season.matchday, clubRater(state), my, their, won, pens);
+  if (!out) return null;
+  addForm(state, my, their, my === their && out.stage !== 'group' ? out.won : undefined);
+  if (out.stage !== 'group' || out.trophy) cupHeadline(state, COMP_NAMES[out.kind].toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()), STAGE_NAMES[out.stage], out.won, out.trophy);
+  if (out.trophy) {
+    due.comp.celebrated = true;
+    addMoment(state, {
+      kind: 'trophy', icon: 'trophy', coins: out.coins, title: out.kind === 'world' ? 'WORLD CHAMPIONS!' : 'CHAMPIONS OF THE CONTINENT!',
+      text: `${state.club!.name.toUpperCase()} WIN THE ${COMP_NAMES[out.kind]}`,
+    });
+  }
+  checkBoard(state);
+  return out;
+}
+
+/** What a Continental / World Club Cup fixture pays at full time: the match fee plus the stage's prize. */
+export function compTieReward(division: number, stadium: number, my: number, their: number, out: CompOutcome | null): { coins: number; label: string } {
+  const fee = matchCoins(division, stadium, my, their);
+  if (!out) return { coins: fee, label: 'CUP FIXTURE' };
+  const name = out.kind === 'world' ? 'WORLD' : 'CONTINENTAL';
+  const label = out.trophy ? `${name} WINNERS!` : out.won ? `${out.stage === 'group' ? 'GROUP' : out.stage === 'sf' ? 'SF' : 'FINAL'} WIN BONUS` : out.stage === 'group' ? 'GROUP MATCH' : 'KNOCKED OUT';
+  return { coins: fee + out.coins, label };
+}
+
+/**
+ * The ground and legacy on top of a match's pay (your stadium's own level is already in it): the BIG SCREEN's
+ * sponsors and the legacy gate perk (+5% each), and the MEGASTORE's shirt sales at a home match.
+ */
+export function groundBonus(state: CareerState, r: { coins: number; label: string }, home: boolean, division: number): { coins: number; label: string } {
+  let mult = 0;
+  if (has(state.ground, 'screen')) mult += SCREEN_BONUS;
+  if (hasPerk(state.legacy, 'gate')) mult += 0.05;
+  let coins = Math.round(r.coins * (1 + mult));
+  let label = r.label;
+  if (home && has(state.ground, 'store')) {
+    coins += megastoreCoins(division);
+    label = `${label}${sep()}MEGASTORE`;
+  }
+  return { coins, label };
+}
+
+/**
+ * After any match of yours (league, cup or comp): appearances, goals, records and milestones (life.ts), the record
+ * signing, and the board checked once more. The UI calls it at full time with what the match left behind.
+ */
+export function afterMatch(state: CareerState, facts: MatchFacts): void {
+  if (!state.club || !state.season) return;
+  recordMatch(state, facts);
+  syncRecordSigning(state);
+  if (!state.summary) checkBoard(state);
 }
 
 /** Forfeit scoreline (home, away) when the player walks off: a 3-0 defeat. */
@@ -649,7 +826,13 @@ export function resolveCupTie(state: CareerState, my: number, their: number, won
   if (!season?.cup || !state.club || cupDue(state) < 0) return null;
   // (No market week passes and no wages drain: those go by league matchdays. Nor do cup starts lift a signing's
   // resale cap: that counts league starts, market.ts RESALE_STARTS.)
-  return recordCupTie(season.cup, season.division, season.matchday, clubRater(state), my, their, won, pens);
+  const out = recordCupTie(season.cup, season.division, season.matchday, clubRater(state), my, their, won, pens);
+  if (out) {
+    addForm(state, my, their, my === their ? out.won : undefined);
+    cupHeadline(state, 'Blocky Cup', ROUND_NAMES[out.round], out.won, out.trophy);
+    checkBoard(state);
+  }
+  return out;
 }
 
 export function computeTable(clubs: { id: string; name: string }[], fixtures: Fixture[]): TableRow[] {
@@ -737,18 +920,80 @@ export function finishSeason(state: CareerState, wallet: Wallet): SeasonSummary 
   };
   const entry: HistoryEntry = { season: season.number, division: season.division, position, outcome };
   if (finish >= 0) summary.cup = entry.cup = finish;
+  // The Continental and World Club Cups are over too (a leftover fixture of yours is a walk-over).
+  for (const comp of [season.world, season.continental]) {
+    if (!comp) continue;
+    settleComp(comp, clubRater(state));
+    const f = compFinish(comp);
+    if (comp.kind === 'world') summary.world = entry.world = f;
+    else summary.continental = entry.continental = f;
+  }
   state.summary = summary;
   state.history = [...state.history, entry].slice(-30);
   clearMarket(state, wallet);
+  // The board's verdict (the finish judged, anything still open failed), the legacy the season earned, and who retires.
+  checkBoard(state, true);
+  seasonLegacy(state, summary);
+  summary.legacy = Math.max(0, state.legacy.points - (season.legacyAtStart ?? state.legacy.points));
+  const retiring = decideRetirements(state);
+  if (retiring.length) summary.retiring = retiring;
   return summary;
+}
+
+/** Legacy for the season's big things: the title, promotion, the cups, and the treble (the dynasty goal). */
+function seasonLegacy(state: CareerState, s: SeasonSummary): void {
+  const name = DIVISION_NAMES[s.division] ?? 'LEAGUE';
+  if (s.champion) addLegacy(state, LEGACY_POINTS.title(s.division), `${name} CHAMPIONS`);
+  if (s.outcome === 'promoted') addLegacy(state, LEGACY_POINTS.promotion, `PROMOTED TO THE ${DIVISION_NAMES[s.nextDivision] ?? 'NEXT LEAGUE'}`);
+  if (s.cup === 3) addLegacy(state, LEGACY_POINTS.cup, 'BLOCKY CUP WINNERS');
+  else if (s.cup === 2) addLegacy(state, LEGACY_POINTS.cupFinal, 'BLOCKY CUP FINALISTS');
+  if (s.continental === 3) addLegacy(state, LEGACY_POINTS.continental, 'CONTINENTAL CUP WINNERS');
+  if (s.world === 3) addLegacy(state, LEGACY_POINTS.world, 'WORLD CLUB CHAMPIONS');
+  if (s.division === TOP_DIVISION && s.champion && s.cup === 3 && s.continental === 3) {
+    s.treble = true;
+    state.legacy.trebles++;
+    addLegacy(state, LEGACY_POINTS.treble, 'THE TREBLE');
+    addMoment(state, { kind: 'trophy', icon: 'crown', title: 'THE TREBLE', text: 'LEAGUE, BLOCKY CUP AND CONTINENTAL CUP IN ONE SEASON' });
+  }
 }
 
 export function startNextSeason(state: CareerState): SeasonState | null {
   const s = state.summary;
   if (!s) return null;
-  // A year passes: the young grow into their potential, the old fade, contracts tick down.
-  if (state.club) ageSquad(state.club);
-  return newSeason(state, s.nextDivision, s.season + 1);
+  const club = state.club;
+  if (club) {
+    // A year passes: the young grow into their potential, the old fade, contracts tick down; the retired say goodbye.
+    ageSquad(club);
+    applyRetirements(state, s.retiring ?? []);
+    // A new captain is news (the most games for you).
+    const cap = captainOf(club) as LifePlayer | undefined;
+    if (cap && (cap.apps ?? 0) >= 10 && !state.legacy.milestones.includes(`${state.legacy.gen}:captain:${cap.id}`)) {
+      state.legacy.milestones = [...state.legacy.milestones, `${state.legacy.gen}:captain:${cap.id}`].slice(-300);
+      storyNews(state, `${cap.name} is the new club captain`, 'good');
+    }
+  }
+  // Over the summer the builders finish whatever is going up.
+  buildWeek(state, true);
+  const season = newSeason(state, s.nextDivision, s.season + 1);
+  // Champions of the Elite League or of the continent are invited to the WORLD CLUB CUP (it opens the season).
+  if (club && s.division === TOP_DIVISION && (s.champion || s.continental === 3)) {
+    season.world = drawWorld(season.seed, club);
+    storyNews(state, `${club.name} are invited to the World Club Cup!`, 'good');
+  }
+  return season;
+}
+
+/**
+ * START A NEW CLUB AS A LEGEND (after an Elite League title or a treble): this club goes into the Hall of Fame and the
+ * road starts again with a club you found. Legacy, legends, perks, coins and cosmetics stay; the squad, the ground,
+ * the league and the market start over. Returns false when it isn't open yet.
+ */
+export function startAsLegend(state: CareerState): boolean {
+  if (!archiveClub(state)) return false;
+  const keep = { seed: state.seed, legacy: state.legacy, story: state.story };
+  const fresh = defaultCareer((hashString(`${keep.seed}|legend|${keep.legacy.gen}`) >>> 0) || 1);
+  Object.assign(state, fresh, { legacy: keep.legacy, story: { ...defaultStory(), moments: keep.story.moments } });
+  return true;
 }
 
 /**
@@ -760,6 +1005,8 @@ export function nextMatch(state: CareerState): NextMatch | null {
   if (!club || !season || state.summary || season.matchday >= MATCHDAYS) return null;
   const due = cupDue(state);
   if (due >= 0 && season.cup) return nextCupTie(state, club, season, season.cup, due);
+  const comp = compsDue(state);
+  if (comp) return nextCompTie(state, club, season, comp.comp, comp.idx);
   const fixture = userFixture(season, season.matchday);
   if (!fixture) return null;
   const userHome = fixture.home === YOU;
@@ -791,6 +1038,26 @@ function nextCupTie(state: CareerState, club: ClubState, season: SeasonState, cu
   };
 }
 
+/** A CONTINENTAL / WORLD CLUB CUP fixture: group games at home or away, the semi and the final as knockouts, the final on neutral ground. */
+function nextCompTie(state: CareerState, club: ClubState, season: SeasonState, comp: Competition, idx: number): NextMatch | null {
+  const f = comp.fixtures[idx];
+  const rivalId = f.home === YOU ? f.away : f.home;
+  const rival = compClub(comp, rivalId);
+  if (!rival) return null;
+  const neutral = f.stage === 'final';
+  const userHome = neutral || f.home === YOU;
+  const [home, away] = matchSides(state, club, rival, userHome);
+  const md = season.matchday;
+  const fixture: Fixture = { md, home: userHome ? YOU : rivalId, away: userHome ? rivalId : YOU, hg: null, ag: null };
+  const name = COMP_NAMES[comp.kind];
+  const round = f.stage === 'group' ? `GROUP GAME ${comp.fixtures.filter((x, i) => i <= idx && x.stage === 'group' && (x.home === YOU || x.away === YOU)).length}` : STAGE_NAMES[f.stage];
+  return {
+    md, fixture, userHome, rival, home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)],
+    competition: comp.kind, stage: f.stage, label: `${name} ${round}`, tag: `${comp.kind === 'world' ? 'WORLD' : 'CONT'} ${f.stage === 'group' ? 'GROUP' : f.stage === 'sf' ? 'SF' : 'FINAL'}`,
+    cupRound: f.stage === 'group' ? 0 : f.stage === 'sf' ? 1 : 2, rivalDivision: 0, neutral,
+  };
+}
+
 /** [home, away] teams for a match of yours against `rival`: your XI as it plays now, and the rival's. */
 function matchSides(state: CareerState, club: ClubState, rival: LeagueClub, userHome: boolean): [TeamDef, TeamDef] {
   const you = clubTeam(club);
@@ -798,11 +1065,13 @@ function matchSides(state: CareerState, club: ClubState, rival: LeagueClub, user
   // a squad whose wages are over budget plays a point down across the board.
   const listed = new Set(state.tm.sales.map((s) => s.playerId));
   const unpaid = wageDrain(state) > 0 ? WAGE_DIP : 0;
-  if (listed.size || unpaid) {
+  // HIGH morale, STRONG chemistry and the FAN ZONE at home lift the whole side a little (life.ts, at most +2).
+  const lift = matchLift(state, userHome);
+  if (listed.size || unpaid || lift) {
     for (const p of [...you.players, ...(you.bench ?? [])]) {
-      const dip = unpaid + (listed.has(p.id) ? MORALE_DIP : 0);
-      if (!dip) continue;
-      for (const k of STAT_KEYS) p.stats[k] = Math.max(1, p.stats[k] - dip);
+      const d = lift - unpaid - (listed.has(p.id) ? MORALE_DIP : 0);
+      if (!d) continue;
+      for (const k of STAT_KEYS) p.stats[k] = clamp(p.stats[k] + d, 1, STAT_CAP);
     }
   }
   const them = rivalTeam(rival);
@@ -988,13 +1257,29 @@ export function stadiumUpgradeCost(level: number): number {
   return round10(800 * (Math.max(0, level) + 1) ** 1.6);
 }
 
+/**
+ * The old one-step upgrade (whole levels, built at once). The game now builds part by part (ground.ts startBuild,
+ * MY CLUB > STADIUM); this stays for old callers: it puts up the stands of the next level and keeps any facility.
+ */
 export function upgradeStadium(state: CareerState, wallet: Wallet): TxResult {
   if (state.stadium >= STADIUM_MAX) return fail('maxed');
   const cost = stadiumUpgradeCost(state.stadium);
   if (wallet.coins < cost) return fail('no-coins');
   wallet.coins -= cost;
   state.stadium++;
+  const g = groundFromLevel(state.stadium);
+  for (const [id, lv] of Object.entries(g.built)) state.ground.built[id as PartId] = Math.max(state.ground.built[id as PartId] ?? 0, lv ?? 0);
   return { ok: true, delta: -cost };
+}
+
+/** Build the next step of a part of the ground (ground.ts): coins now, open after a matchday or two. */
+export function buildPart(state: CareerState, wallet: Wallet, id: PartId): BuildResult {
+  return startBuild(state.ground, wallet, id);
+}
+
+/** The weekly wage budget with the board's confidence and the legacy budget perk in it. */
+export function wageBudgetFor(state: CareerState, base: number): number {
+  return Math.round((base * confidenceBudget(state.board) * (hasPerk(state.legacy, 'budget') ? 1.1 : 1)) / 10) * 10;
 }
 
 // ------------------------------------------------------------------ save migration
@@ -1051,6 +1336,12 @@ function readPlayer(v: unknown): PlayerDef | null {
   if (isNum(v.paid)) p.paid = int(v.paid, 0, 1e9, 0);
   if (isNum(v.boughtSeason)) p.boughtSeason = int(v.boughtSeason, 0, 1e6, 0);
   if (isNum(v.starts)) p.starts = int(v.starts, 0, 1e6, 0);
+  // His life at the club (life.ts): games, goals, the season he joined, an academy graduate.
+  const lp = p as LifePlayer;
+  if (isNum(v.apps)) lp.apps = int(v.apps, 0, 1e6, 0);
+  if (isNum(v.goals)) lp.goals = int(v.goals, 0, 1e6, 0);
+  if (isNum(v.joined)) lp.joined = int(v.joined, 0, 1e6, 0);
+  if (v.academy === true) lp.academy = true;
   return p;
 }
 
@@ -1179,6 +1470,18 @@ function readSeason(v: unknown, club: ClubState | null): SeasonState | null {
   if (v.cup !== null) {
     season.cup = readCup(v.cup, rivals) ?? (season.matchday <= CUP_JOIN_BY ? drawCup(season.seed, season.division, rivals, club) : null);
   }
+  // The forever extras (absent on older saves: a season simply plays on without them).
+  const continental = v.continental === undefined ? undefined : readComp(v.continental, readLeagueClub);
+  if (continental !== undefined) season.continental = continental;
+  const world = v.world === undefined ? undefined : readComp(v.world, readLeagueClub);
+  if (world !== undefined) season.world = world;
+  if (isStr(v.derby) && rivals.some((r) => r.id === v.derby)) season.derby = v.derby;
+  if (isNum(v.legacyAtStart)) season.legacyAtStart = int(v.legacyAtStart, 0, 1e9, 0);
+  if (isObj(v.scorers)) {
+    const sc: Record<string, { name: string; goals: number }> = {};
+    for (const [id, x] of Object.entries(v.scorers).slice(0, 40)) if (isObj(x) && isStr(x.name)) sc[id] = { name: x.name.slice(0, 40), goals: int(x.goals, 0, 999, 0) };
+    season.scorers = sc;
+  }
   return season;
 }
 
@@ -1200,6 +1503,11 @@ function readSummary(v: unknown): SeasonSummary | null {
     prize: int(v.prize, 0, 1e9, 0),
   };
   if (isNum(v.cup)) s.cup = int(v.cup, 0, 3, 0);
+  if (isNum(v.continental)) s.continental = int(v.continental, 0, 3, 0);
+  if (isNum(v.world)) s.world = int(v.world, 0, 3, 0);
+  if (Array.isArray(v.retiring)) s.retiring = readFarewells(v.retiring);
+  if (isNum(v.legacy)) s.legacy = int(v.legacy, 0, 1e7, 0);
+  if (v.treble === true) s.treble = true;
   return s;
 }
 
@@ -1216,16 +1524,20 @@ function readHistory(v: unknown): HistoryEntry[] {
       };
       // The cup run that season (a 3 is a trophy); seasons from before the cup have none.
       if (isNum(h.cup)) e.cup = int(h.cup, 0, 3, 0);
+      if (isNum(h.continental)) e.continental = int(h.continental, 0, 3, 0);
+      if (isNum(h.world)) e.world = int(h.world, 0, 3, 0);
       return e;
     })
     .slice(-30);
 }
 
-/** Trophies won: league titles (finished first) and BLOCKY CUPs, over the club's history. */
-export function trophyCount(state: CareerState): { titles: number; cups: number } {
+/** Trophies won: league titles (finished first) and BLOCKY CUPs, over the club's history (and the big two abroad). */
+export function trophyCount(state: CareerState): { titles: number; cups: number; continental: number; world: number } {
   return {
     titles: state.history.filter((h) => h.position === 1).length,
     cups: state.history.filter((h) => h.cup === 3).length,
+    continental: state.history.filter((h) => h.continental === 3).length,
+    world: state.history.filter((h) => h.world === 3).length,
   };
 }
 
@@ -1274,6 +1586,8 @@ function readMarket(v: unknown, live: boolean): MarketState {
           // Saves from before the flags: nothing is "yours" (so nothing unread) and nothing is unseen.
           own: n.own === true,
           seen: n.seen === true,
+          // The club's story lines (story.ts), kept apart from transfer gossip.
+          ...(n.story === true ? { story: true } : {}),
         }))
     : [];
   if (!live) return tm;
@@ -1343,6 +1657,7 @@ export function migrateCareer(raw: unknown, freshSeed: number): CareerState {
   const tm = readMarket(raw.tm, live);
   // Own players a sale record points at must exist.
   if (club) tm.sales = tm.sales.filter((s) => club.squad.some((p) => p.id === s.playerId));
+  const stadium = int(raw.stadium, 0, STADIUM_MAX, 0);
   const st: CareerState = {
     version: CAREER_VERSION,
     seed: isNum(raw.seed) ? raw.seed >>> 0 : base.seed,
@@ -1352,10 +1667,18 @@ export function migrateCareer(raw: unknown, freshSeed: number): CareerState {
     market: [],
     marketKey: '',
     tm,
-    stadium: int(raw.stadium, 0, STADIUM_MAX, 0),
+    stadium,
     history: readHistory(raw.history),
     notice: isStr(raw.notice) ? raw.notice.slice(0, 200) : null,
+    // The forever game's state (older saves: sensible defaults; an old stadium level becomes the parts that made it).
+    board: readBoard(raw.board),
+    ground: readGround(raw.ground, stadium),
+    academy: readAcademy(raw.academy, readPlayer),
+    legacy: readLegacy(raw.legacy, readKit),
+    story: readStory(raw.story, readKit, readFormation),
   };
   if (live) syncLegacyMarket(st);
+  // A save from before the board, mid-season: the board sets this season's objectives now (judged from here on).
+  if (club && season && !summary && st.board.season !== season.number && raw.board === undefined) setObjectives(st);
   return st;
 }

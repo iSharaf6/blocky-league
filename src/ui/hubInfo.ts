@@ -9,6 +9,9 @@ import type { SaveData } from '../core/save';
 import { BOTTOM_DIVISION, DIVISION_NAMES, MATCHDAYS, clubRating, migrateCareer, nextMatch, type CareerState, type ClubState } from '../meta/career';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam } from '../meta/data';
+import { boardView } from '../meta/board';
+import { COMP_NAMES } from '../meta/comps';
+import { nextGoal, type NextGoal, type UnlockHint } from '../meta/goal';
 import { marketUnread } from '../meta/market';
 import { badgePending, nextBadgeGoal } from '../meta/mastery';
 import { passActive } from '../meta/pass';
@@ -46,9 +49,20 @@ export type RoadCard =
     label?: string; cup?: boolean;
     /** Neither side at home (the cup final). */
     neutral?: boolean;
+    /** The competition's name when it isn't the league ("BLOCKY CUP", "CONTINENTAL CUP"). */
+    comp?: string;
+    /** THIS SEASON: the board's objectives as chips (meta/board.ts). */
+    board?: BoardPip[];
   }
   /** The season is over (the summary waits in ROAD TO GLORY). */
   | { kind: 'over'; club: ClubBadge; division: string; season: number };
+
+/** One board objective on the hero card: the short goal, its live progress, and whether it's met. */
+export interface BoardPip {
+  short: string;
+  progress: string;
+  state: 'open' | 'done' | 'failed';
+}
 
 /** The SEASON tile. */
 export interface SeasonCard {
@@ -121,14 +135,32 @@ export function roadCard(career: CareerState | null): RoadCard {
   }
   if (!nm) return { kind: 'over', club: me, division, season: season.number };
   const r = nm.rival;
+  let board: BoardPip[] = [];
+  try {
+    board = boardView(career).map((v) => ({ short: v.short, progress: v.progress, state: v.obj.state }));
+  } catch {
+    board = [];
+  }
   // A BLOCKY CUP tie inside the season names itself ("BLOCKY CUP QUARTER FINAL"), a league match its matchday.
-  return {
+  const card: RoadCard = {
     kind: 'next', club: me, division, season: season.number, md: nm.md + 1, of: MATCHDAYS, home: nm.userHome,
     rival: { name: r.name.toUpperCase(), short: r.short.toUpperCase(), kit: r.kit, ovr: r.rating },
     label: nm.label ? nm.label.toUpperCase() : undefined,
-    cup: nm.competition === 'cup',
+    cup: nm.competition !== 'league',
     neutral: !!nm.neutral,
   };
+  if (nm.competition === 'continental' || nm.competition === 'world') card.comp = COMP_NAMES[nm.competition];
+  if (board.length) card.board = board;
+  return card;
+}
+
+/** NEXT GOAL on the hub (meta/goal.ts): the one thing to go for now; null without a club (or on a damaged save). */
+export function goalOf(career: CareerState | null, coins: number, unlock?: UnlockHint | null): NextGoal | null {
+  try {
+    return nextGoal(career, coins, unlock);
+  } catch {
+    return null;
+  }
 }
 
 /** Unread news about your own transfers (offers answered, players sold): the TRANSFERS tile's count. */

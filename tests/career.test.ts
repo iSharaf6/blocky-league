@@ -10,6 +10,11 @@ import {
 } from '../src/meta/career';
 import { dedupeSurnames, KIT_COLORS, makePlayer, makeTeam, PRESET_CLUBS, randomClubSeed, surnameOf, uniqueName } from '../src/meta/data';
 import { defaultMarket, playerValue, quickSaleValue } from '../src/meta/market';
+import { defaultBoard } from '../src/meta/board';
+import { defaultGround } from '../src/meta/ground';
+import { defaultAcademy } from '../src/meta/life';
+import { defaultLegacy } from '../src/meta/legacy';
+import { defaultStory } from '../src/meta/story';
 import { Rng } from '../src/core/rng';
 import { FORMATIONS } from '../src/sim/formations';
 import { overall, type Kit } from '../src/sim/types';
@@ -463,6 +468,8 @@ describe('save migration', () => {
     const st = migrateCareer(null, 1234);
     expect(st).toEqual({
       version: CAREER_VERSION, seed: 1234, club: null, season: null, summary: null, market: [], marketKey: '', tm: defaultMarket(), stadium: 0, history: [], notice: null,
+      // The forever game (board, ground, academy, legacy, story): empty to start.
+      board: defaultBoard(), ground: defaultGround(), academy: defaultAcademy(), legacy: defaultLegacy(), story: defaultStory(),
     });
   });
 

@@ -168,6 +168,9 @@ const AX_K = 0.18;
 const AX_W = 2.5;
 /** Ball speed / height dolly-out and the follow rate it drives: eased at this rate (rad/s). */
 const ZOOM_W = 2.5;
+/** The final minutes (CameraRig.tension): the broadcast lens comes in by up to this share of its distance, at this ease rate. */
+const TENSION_IN = 0.06;
+const TENSION_W = 1.2;
 /** The controlled player's feet kept clear of the bottom HUD too: that extra pull eases at this rate (rad/s). */
 const FEET_W = 2;
 /**
@@ -270,6 +273,12 @@ export class CameraRig {
    */
   chance = 0;
   chanceGoal = 1;
+  /**
+   * The final minutes' tension (0..1, set every frame by game/funPresent.ts): the broadcast lens tightens by up to
+   * TENSION_IN of its distance, eased in and out. At 0 the framing is exactly what it always was.
+   */
+  tension = 0;
+  private tensionE = new Ease();
   private chanceE = new Ease();
   private chanceW = 0;
   /** The broadcast shot and its follow rate (reused every frame). */
@@ -375,6 +384,7 @@ export class CameraRig {
     this.azE.reset();
     this.leanE.reset();
     this.zoomE.reset();
+    this.tensionE.reset();
     this.feetE.reset();
     this.cineE.reset();
     this.spPrimed = false;
@@ -682,6 +692,7 @@ export class CameraRig {
       // dolly-out) and zooms the lens itself (below: at most PUSH_IN of the width, eased, never overshooting).
       let zoom = this.zoomE.to(1 + clamp(f.by * 0.015 + this.spE * 0.003, 0, 0.1), ZOOM_W, dt);
       if (c > 0) zoom += (1 - zoom) * c;
+      if (this.tension > 0 || this.tensionE.x > 0) zoom *= 1 - TENSION_IN * this.tensionE.to(this.tension, TENSION_W, dt);
       let d = (W / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2)) * cam.aspect)) * zoom;
       const hf = THREE.MathUtils.degToRad(FOV / 2);
       // Play by the near touchline: the lens rises (a steeper look down, target and distance kept) until the

@@ -908,7 +908,8 @@ function updateRun(m: Match, p: Player, weHave: boolean, c: Player | null, dt: n
   // running, and runs come far more often (humanFlow).
   const hum = humanFlow(m, p.side, c) && nX(m, p.side, c.pos.x) > -0.33;
   const st = styleOf(m, p.side);
-  const breaking = st.counter > 0 && m.sincePossession < st.counter && !hum;
+  const bf = breakFor(m, p.side, st);
+  const breaking = bf > 0 && m.sincePossession < bf && !hum;
   const chance = (p.role === 'FW' ? 0.6 : isWide(m, p) ? 0.38 : 0.2) * (1 + ment * 0.45) * (hum ? HUMAN_RUN_BOOST : 1 + AI_INTENT_RUNS * intentVsHuman(m, p.side)) *
     st.runs * (breaking ? COUNTER_RUNS : 1);
   let runners = 0;
@@ -1589,6 +1590,16 @@ export function intentVsHuman(m: Match, side: Side): number {
   if (!m.human[other(side)]) return 0;
   return clamp((m.aiSkill(side) - AI_INTENT_FROM) / (AI_INTENT_FULL - AI_INTENT_FROM), 0, 1);
 }
+/**
+ * Against the human every AI side breaks after a regain, as the counter styles do (StyleParams.counter): for
+ * AI_INTENT_BREAK s (times intentVsHuman) it holds the ball less, rates the ball forward higher and runs in behind at
+ * once. (2026-10-04, the owner: "boring", "sloggy". Against the casual phone bot the AI's spells lasted 6 s, two in
+ * three never reached his third and it had 2 shots a match to his 11: no end-to-end, nothing for his keeper to do.)
+ */
+const AI_INTENT_BREAK = 3.5;
+function breakFor(m: Match, side: Side, st: StyleParams): number {
+  return Math.max(st.counter, AI_INTENT_BREAK * intentVsHuman(m, side));
+}
 
 /**
  * Time (s) `p` loses getting up to full speed towards (x, z), compared with already being flat out
@@ -1624,7 +1635,8 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   p.aiT = (firstTouch ? 0.32 + m.rng.next() * 0.3 - skill * 0.03 : 0.24 + m.rng.next() * 0.2 - skill * 0.015) / TEMPO;
   // The style: how patient (hold), how safe, how direct; on the break (just won it, a counter side) it goes forward.
   const st = styleOf(m, side);
-  const breaking = st.counter > 0 && m.sincePossession < st.counter;
+  const bf = breakFor(m, side, st);
+  const breaking = bf > 0 && m.sincePossession < bf;
   if (firstTouch) p.holdT = ((1.1 + m.rng.next() * 1.5) / TEMPO) * st.hold * (breaking ? COUNTER_HOLD : 1);
   const fwdK = st.forward + (breaking ? COUNTER_FORWARD : 0);
 
