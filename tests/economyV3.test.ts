@@ -261,7 +261,7 @@ describe('invariant: gems are never required to progress', () => {
     expect(gems(s)).toBe(sumGems(SEASON_GEMS));
   });
 
-  it('a pass bought with gems pays its gems once per tier claimed, and a month end loses nothing', () => {
+  it('a permanent pass pays gems once per claimed tier and does not force claims at month end', () => {
     const s = defaultSave();
     const season = seasonOf(s, OCT);
     season.xp = tierXp(13);
@@ -271,11 +271,15 @@ describe('invariant: gems are never required to progress', () => {
     // Pass tiers 3, 8 and 13 pay gems.
     expect(syncSeasonGems(s)).toBe(PASS_GEMS[3] + PASS_GEMS[8] + PASS_GEMS[13]);
     expect(syncSeasonGems(s)).toBe(0);
-    // Reached but not claimed at the month's end: the gems are carried and paid.
+    // A later month neither expires the pass nor auto-pays unclaimed tiers.
     season.xp = tierXp(20);
     const before = gems(s);
     rollSeason(season, NOV);
-    expect(season.carryGems).toBe(PASS_GEMS[18] + (SEASON_GEMS[10] ?? 0) + (SEASON_GEMS[20] ?? 0));
+    expect(season.carryGems ?? 0).toBe(0);
+    expect(syncSeasonGems(s)).toBe(0);
+    expect(season.pass).toBe(true);
+    claimAllSeason(season);
+    claimAllPass(s);
     expect(syncSeasonGems(s)).toBe(PASS_GEMS[18] + 15);
     expect(season.carryGems ?? 0).toBe(0);
     expect(gems(s)).toBe(before + PASS_GEMS[18] + 15);

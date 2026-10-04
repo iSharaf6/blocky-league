@@ -55,8 +55,8 @@ One ticket opens a Scout Pack; three open an Elite Pack. Existing tickets are re
 | Legacy level | 20 | Every level, forever |
 | Promotion, league title | 15, 30 | Each season it happens |
 | Blocky Cup, Continental Cup, World Club Cup | 25, 60, 100 | Each time it is won |
-| Season track (free) | 5, 10, 15 on tiers 10, 20, 30 | 30 a month |
-| Club Pass track | 20 to 30 on six tiers | 150 a month |
+| Club Journey (free) | 5, 10, 15 on tiers 10, 20, 30 | 30 once per Journey; 12 shipped |
+| Permanent Club Pass track | 20 to 30 on six tiers | 150 once per Journey |
 
 **A keen free player earns about 100 gems a week from the loops alone** (25 + 21 + 30 + 21 = 97:
 `weeklyLoopGems()`), and about 120 with the career, levels and the season track. That is roughly a dollar a week of
@@ -75,8 +75,8 @@ confirm sheet (ui/gemUi.ts `confirmGems`) that shows the price, the wallet and t
 | Replay a lost decider | 50 | $0.50 | A rewarded ad replays one a day; the season carries on either way |
 | A new deal today, with the exact next item and discounted coin price shown before charging | 15 | $0.15 | A rewarded ad once a day; the deal changes by itself daily |
 | Scouting Network 1, 2, 3 | 200, 500, 1,000 | $2, $5, $10 | Gems earned by playing; the academy brings prospects every season without it |
-| Club Pass (this month) | 600 | $3.99 in the store is cheaper | Gems earned by playing; the free track pays every tier anyway |
-| Permanent signature collection (past theme) | 600 for six pieces; 100 for each missing piece | Guaranteed identity, never a pack | Earned gems buy exactly the same collection |
+| Club Pass (selected Journey) | 600 | $3.99 in the store is cheaper | Gems earned by playing; the free track pays every tier anyway |
+| Permanent signature collection (any shipped theme) | 600 for six pieces; 100 for each missing piece | Guaranteed identity, never a pack | Earned gems buy exactly the same collection |
 | Coins | 50 for 700, 150 for 2,400, 400 for 7,500, 1,000 for 22,000 | 14 to 22 coins a gem | Play |
 | Cover a coin shortfall | 1 gem per 14 coins short | | Play |
 
@@ -100,7 +100,7 @@ itself can't be replayed. A match that isn't a decider is never offered.
 
 | Pattern | Who does it | In Blocky League |
 |---|---|---|
-| A season pass with a free and a paid track, priced for casual players | Dream League Soccer ($3.99), Brawl Pass, Pass Royale, Subway Surfers | **Club Pass**, $3.99 a month (meta/pass.ts) |
+| A season pass with a free and a paid track, priced for casual players | Dream League Soccer ($3.99), Brawl Pass, Pass Royale, Subway Surfers | **Club Pass**, $3.99 per permanent Journey (meta/pass.ts) |
 | Mid-season buyers get every tier already reached | Dream League Soccer | Buying late unlocks all reached tiers at once |
 | A one-time starter pack worth far more than its price, offered after a first win | Subway Surfers, Soccer Stars | **Welcome offer** after the first win (once, no timer) |
 | A permanent coin doubler | Subway Surfers ($4.99), Crossy Road's Piggy Bank ($2.99) | **Coin Doubler**, $4.99: match coins ×2 for good |
@@ -134,7 +134,7 @@ facts are below.
    and leaderboards in Game Center.
 4. **Come back:** the 7-day calendar (it counts up whatever the gaps: gems on days 3 and 7), three daily challenges
    (each also a Scout Ticket, and 3 gems for all three), three weekly objectives (coins and 10 gems each), today's
-   deal, the free daily gems, the monthly season and its pass, and the build that opens after your next match.
+   deal, the free daily gems, the twelve permanent Journeys and their optional passes, and the build that opens after your next match.
 
 ## Pacing: what a player has, and is offered, on day 1, day 7 and day 30
 
@@ -148,7 +148,7 @@ challenges, the calendar and the optional ads; CASUAL is 2 or 3 matches, four da
 | Gems earned so far, casual | about 60 | about 100 | about 250 |
 | What coins have bought (keen) | 3 or 4 COMMON looks, or the Retro set's first parts | A RARE or EPIC look a day; an EPIC set; the main and family stands | The effects and balls catalogue, or most of the ground and two LEGENDARY looks |
 | What gems can do (keen) | One replay, or two finished builds | The first Scouting Network (200), or a few replays and builds | One signature identity (600), the Club Pass (600), or saving toward the first two Scouting Networks (700) |
-| What the game offers | The welcome gift; after the first win, the Starter Pack once ($1.99: 2,000 coins, 150 gems, the Gold ball), no timer | FIRST BUY X2 on every gem pack; the Club Pass ($3.99 or 600 gems) with its value on the card; the PRO bundle ($9.99) | The next Scouting Network; LEGENDARY sets a few gems short; next month's pass |
+| What the game offers | The welcome gift; after the first win, the Starter Pack once ($1.99: 2,000 coins, 150 gems, the Gold ball), no timer | FIRST BUY X2 on every gem pack; the Club Pass ($3.99 or 600 gems) with its value on the card; the PRO bundle ($9.99) | The next Scouting Network; LEGENDARY sets a few gems short; another permanent Journey |
 | Why come back tomorrow | Calendar day 2, three new challenges, the free pack, today's deal | Day 7 of the calendar (20 gems), the week's objectives, the stand that opens after the next match | A new season and its pass, the board's objectives, legacy levels that never run out |
 
 A payer's first dollar: $0.99 is 200 gems the first time (100 after), which is four replays, or the first Scouting
@@ -165,7 +165,7 @@ two Scouting Networks.
 | Weekly objectives (NEW) | 300 to 400 each, three a week | With 10 gems each |
 | FREE COINS | 75 an ad, 5 a day | Optional |
 | Atmosphere (NEW) | Up to +12% of a home match, and a mascot's 20 to 60 a home match | Capped: see below |
-| Season track | About 3,900 a month free, 5,560 more with the pass | |
+| Season track | About 3,900 once per Journey free, 5,560 more with its permanent pass | |
 | Career | Prizes, the board's objectives, the megastore, the big screen | See below |
 | Gems | 14 to 22 coins a gem | Currency packs convert to coins here; the one-time Starter Pack also includes 2,000 coins |
 
@@ -183,7 +183,7 @@ Losses always pay, play is never limited by energy, and already earned currency 
 | RARE | 500 to 900 | A day |
 | EPIC | 1,000 to 2,800 | A few days |
 | LEGENDARY | 4,500 to 7,500 (Supernova, Diamond Rain, Meteor Strike, Black Hole, Lightning and Comet Tail trails, Diamond and Planet balls; the Galaxy, Gold Pinstripe, Glow In The Dark and Gold Foil kits; the Crown and Light Up Boots; the Pyro Show and Dragon Mascot) | One to three days each, **88,800 for them all**: weeks |
-| SIGNATURE | Not for coins | Current month's Club Pass; past themes always available for gems, including earned gems |
+| SIGNATURE | Not for coins | Twelve permanent Journeys or guaranteed immediate collections, including with earned gems |
 
 The effects, balls and celebrations cost about 86,000 coins, about a month of keen free play; Cosmetics 2.0 adds
 about 100,900 more (kits 36,550, player looks 33,250, stadium style 31,100), so the whole catalogue is about 187,000:
@@ -365,7 +365,7 @@ dollar). Nothing costs more than $19.99 (`MAX_PRICE_USD`, a test enforces it): n
 | 2,000 gems (+50%), BEST VALUE | `bl.gems.2000` | Consumable | $19.99 | 3,000; 6,000 on the first buy |
 | Starter Pack | `bl.starter` | Non-consumable | $1.99 once | 2,000 coins, 150 gems and the Gold ball. Offered once after the first win, no timer |
 | NO ADS | `bl.noads` | Non-consumable | $3.99 once | No interstitials. Rewarded ads stay, by choice |
-| **Club Pass** | `bl.pass` | Consumable | $3.99 a month, or 600 gems | 5,560 coins and 150 gems plus a six-piece identity: welcome ceremony, player look, trail, kit, goal explosion and diamond nets |
+| **Club Pass** | `bl.pass` | Consumable | $3.99 per permanent Journey, or 600 gems | 5,560 coins and 150 gems plus a six-piece identity: welcome ceremony, player look, trail, kit, goal explosion and diamond nets |
 | **Coin Doubler** | `bl.doubler` | Non-consumable | $4.99 once | Every match pays double coins, for good |
 | **PRO bundle** | `bl.pro` | Non-consumable | $9.99 once | NO ADS, the Coin Doubler and 600 gems: $13.97 one by one, so 28% off. Shown only while neither part is owned |
 
@@ -377,8 +377,8 @@ tab still swaps gems earned by playing.
 
 ## The Club Pass (meta/season.ts, meta/pass.ts)
 
-- It is the same 30 tiers as the free season, about 30 matches a month, so it's finishable at about 4 days of play a
-  week. Supercell found 85% of players never finished a pass that was too long.
+- Twelve shipped Club Journeys each have 30 tiers (4,200 XP). Players select one track to progress and can switch
+  freely. XP, claims and its optional paid pass stay with that track indefinitely. Nothing resets on a date.
 - The pass retains 5,560 coins and 150 gems, and now earns six identity pieces. Its **Star Ceremony is granted
   immediately on activation**, including zero-XP purchases. Tier 1 retains its 60 coins. The remaining pieces are
   earned through tiers: player look at 5, trail at 10, kit at 15, goal explosion at 20 and **Signature Nets at 25**
@@ -390,14 +390,22 @@ tab still swaps gems earned by playing.
   harvest plaid kit and harvest curls in September; searchlights, a purple kit with glowing lines and floodlight boots
   in October; Catherine wheels, an ember kit and sparkler gloves in November; presents, a festive knit and a winter
   hat in December.
-- If bought late, every reached tier is claimable at once. At month end, unclaimed pass coins carry into the next
-  month and unclaimed looks stay claimable. Nothing reached is lost.
-- It is a consumable store product, so it can be bought again each month. The store refuses a second buy in the same
-  month.
-- **Its value is on the card** (the STORE tab and the SEASON screen): +5,560 coins, +150 gems, 6 pieces, the days
-  left. Six pass tiers pay gems (3, 8, 13, 18, 23 and 28: `PASS_GEMS`), a quarter of what the pass costs in gems.
+- If bought after progressing, every reached tier is claimable at once. Every unclaimed reward waits indefinitely.
+- The existing consumable store product unlocks one selected Journey permanently. It can be bought for other
+  Journeys; an already owned Journey refuses a second upgrade. It is not a subscription.
+- **Its value is on the card** (the STORE tab and the JOURNEYS screen): +5,560 coins, +150 gems, 6 pieces and no expiry. Already owned pieces are counted so they are not advertised as new looks. Six pass tiers pay gems (3, 8, 13, 18, 23 and 28: `PASS_GEMS`), a quarter of what the pass costs in gems.
 - **It can be bought with gems** (600, `GEM_PRICES.clubPass`), in every build. Gems are earned by playing, so a keen
   free player can earn the pass and its looks in about six weeks; the store's $3.99 is the cheaper way for a payer.
+
+The permanent selected-track pattern has a shipped precedent: [Halo Support's official FAQ](https://support.halowaypoint.com/hc/en-us/articles/4408373413268-Halo-Infinite-Battle-Pass-Free-to-Play-FAQ)
+explains that its passes remain available and XP advances the selected pass. This supports a design choice, not a revenue guarantee.
+Blocky's free tracks also remain available indefinitely. No monthly content update is needed to keep any shipped Journey usable.
+
+**Save compatibility:** the active legacy YYYY-MM ID remains its exact gem receipt namespace. Inactive tracks are saved
+by their stable pass01..pass12 identity, with independent XP, free claims, permanent paid entitlement and paid claims.
+Switching archives the old track before restoring the new one. Old wallets, IAP transactions, owned cosmetics, titles
+and carry balances remain intact. Pending store payments keep the originally selected target across restarts; gem
+upgrades are blocked while that payment is pending. No live product ID or price changed.
 
 ## Signature collections: lasting club identity
 
@@ -408,16 +416,17 @@ remain yours. Nets use a luminous diamond weave in the collection palette on bot
 suspended constellation star by star and sheds jewels over the stand at walkout, scoring and a victory. It stays
 clear of the playing surface and uses the existing pooled FX/disposal lifecycle.
 
-Past monthly themes are **always available**, at 600 gems for all six pieces, reduced by 100 gems for each piece
+All twelve shipped identities are **always available**, at 600 gems for all six pieces, reduced by 100 gems for each piece
 already owned. The confirmation lists the exact missing items and charge. All bought pieces are granted and equipped
-immediately and permanently; duplicate purchases charge nothing. The current theme is earned through the monthly
-Club Pass instead. Owned pieces survive the month ending, and there is no countdown or random draw for past collections.
+immediately and permanently; duplicate purchases charge nothing. Each identity also has a selectable permanent
+Club Journey, whose optional Club Pass unlocks its tier rewards. Buying a collection does not buy or reset its Journey.
+Owned pieces never expire, and neither option has a countdown or random draw.
 Earned and purchased gems buy identical collections. Signature pieces add no player stats or economic bonuses.
 
 Existing passes receive missing welcome ceremonies from their ownership receipts. An already claimed tier 25 receives
-the new nets, including during rollover; durable past tier-28 gem receipts also restore both new pieces. Coins and
+the new nets; durable past tier-28 gem receipts also restore both new pieces. Coins and
 gems are never paid again by this migration. New decor IDs, ownership and equipped slots survive export/import, and
-unclaimed identity pieces carry forward like the existing pass rewards.
+legacy carried coins, gems and identity pieces remain claimable exactly once.
 
 ## Ethics: kids play this
 
@@ -434,7 +443,7 @@ unclaimed identity pieces carry forward like the existing pass rewards.
 - **Honest sets and shelves.** A set's price is its missing parts at a fixed 40% off, shown against what they cost
   alone; every part is on sale on its own; the FEATURED shelf changes on Mondays and shows no countdown.
 - **No fake scarcity.** The deal rotates daily and every look comes round again. The welcome offer has no timer and
-  says it stays in the shop. Past signature themes stay available for gems and their monthly Club Pass returns annually.
+  says it stays in the shop. All twelve signature themes and their permanent Journeys are available indefinitely.
 - **Absence is never punished.** The login calendar counts the days you claim it, not days in a row, so a missed day
   costs nothing. A week's objectives last the whole week; a missed week owes nothing. PEGI now rates "punishing
   absence".
@@ -460,7 +469,7 @@ unclaimed identity pieces carry forward like the existing pass rewards.
 - **A banner on the menus: no.** A child-directed, non-personalised banner earns very little (a few cents per
   thousand views), sits on the screens the owner likes most, invites accidental taps from small fingers (which Apple
   reviews harshly in a 4+ game) and makes every menu look cheaper, which costs more in purchases than it earns.
-  Interstitials at half time and rewarded ads already cover the ad income, and NO ADS has a clear thing to remove.
+  Ads before later kick-offs and optional rewarded videos remain available, and NO ADS removes those ad breaks.
   Revisit only with real numbers: if rewarded-ad fill is poor after launch, test a single banner on the full-time
   screen for non-payers before anywhere else.
 - **Offerwalls: no.** They send children to third-party apps and surveys, and no kid-safe network offers one.
@@ -473,7 +482,7 @@ unclaimed identity pieces carry forward like the existing pass rewards.
   per active player; kid-safe ads earn less than tracked ones.
 - What moves the number is players and retention, not squeezing harder: get downloads (TikTok, Shorts, featuring) and
   keep them playing.
-- Measure before changing prices. Watch conversion on the welcome offer, pass buy rate by day of month, and how many
+- Measure before changing prices. Watch conversion on the welcome offer, pass buy rate by Journey progress, and how many
   free players reach Legendary.
 
 ## Tuning knobs
@@ -503,3 +512,25 @@ unclaimed identity pieces carry forward like the existing pass rewards.
 | First-buy multiplier | src/platform/iap.ts `FIRST_BUY_MULT` |
 | Interstitial cap | src/platform/ads.ts `APP_AD_EVERY`, `APP_AD_GAP_MS` |
 | Review prompt rules | src/platform/review.ts |
+
+## Shipped long-game progression
+
+Road to Glory now has eight divisions: Park, District, Sunday, County, National, League One, Championship and Elite.
+The new two divisions sit below the original six; imported clubs keep their exact division, squad and current fixtures.
+The established division 1..6 strength, match income, season prizes and away-ground scale remain unchanged. New clubs
+start at a level suited to Park League. Seven promotions lead to Elite, followed by the existing continental/world
+competitions, repeated seasons, living academy and Hall of Fame. No clock gates play.
+
+The five mastery tracks now have eight tiers. The original first five thresholds, coin rewards and titles remain intact.
+Tier V and VIII grant existing visible cosmetic looks without charging the wallet; grants are idempotent and retroactive
+for old mastery progress. Higher tiers display coloured earned prestige, and a title can equip its associated look from
+TITLES. Career promotion, titles, cup/continental/world wins and trebles unlock additional honours, archived permanently
+when earned so restarting a club cannot erase them. Match results create stable varied football headlines; previews,
+reloads and stale results cannot replay the same news beat.
+
+Automatic ads do not run at halftime. A later kickoff may offer the existing automatic ad only after the paid result
+screen has been visible for at least eight seconds. No ads interrupt a live attack, a replay, or a half-time team talk.
+
+The existing Game Center `bl.lb.season` / Best Season board retains its live monthly definition for compatibility.
+Permanent Journey IDs do not submit to that legacy board; goals, wins and win streak leaderboards continue to work.
+No Game Center ID was repurposed or newly configured.

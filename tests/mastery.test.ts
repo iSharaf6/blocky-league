@@ -13,7 +13,7 @@ const NONE: MasteryMatch = { goals: 0, assists: 0, passes: 0, tackles: 0, cleanS
 const TYPICAL: MasteryMatch = { goals: 1, assists: 1, passes: 40, tackles: 3, cleanSheet: false, skills: 4, saves: 2 };
 
 describe('mastery thresholds', () => {
-  it('five rising tiers per track', () => {
+  it('eight rising tiers per track', () => {
     for (const k of MASTERY_TRACKS) {
       const th = MASTERY_THRESHOLDS[k];
       expect(th).toHaveLength(MASTERY_TIERS);
@@ -71,9 +71,9 @@ describe('mastery tier-ups and claims', () => {
       { track: 'finisher', tier: 2, coins: MASTERY_COINS[1], title: MASTERY_TITLES.finisher[1] },
     ]);
     expect(advanceMastery(st, { ...NONE, goals: 1 })).toEqual([]);
-    // Past tier V nothing more.
+    // Past tier VIII nothing more.
     advanceMastery(st, { ...NONE, goals: 500 });
-    expect(trackProgress(st, 'finisher')).toMatchObject({ tier: 5, next: null, frac: 1 });
+    expect(trackProgress(st, 'finisher')).toMatchObject({ tier: MASTERY_TIERS, next: null, frac: 1 });
     expect(advanceMastery(st, { ...NONE, goals: 5 })).toEqual([]);
   });
 

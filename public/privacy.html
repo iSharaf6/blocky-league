@@ -21,15 +21,16 @@
   <body>
     <main>
       <h1>Privacy Policy</h1>
-      <p class="meta">Blocky League, by Calynx<br>Last updated: 3 October 2026</p>
+      <p class="meta">Blocky League, by Calynx<br>Last updated: 5 October 2026</p>
 
       <p>Blocky League is a football game for the web, iPhone and iPad. This page explains what information the game handles.
       The short version: <strong>you never need an account to play single-player. Optional sign-in, online friendlies,
       sharing clips and game-portal services handle the information described below.</strong></p>
 
       <h2>The iPhone and iPad app</h2>
-      <p>Your progress (coins, match record, clubs, badges and settings) is saved only on your iPhone or iPad, inside the
-      app's own storage. We cannot see it. Your device's backup includes it, and deleting the app deletes it.</p>
+      <p>Your progress (coins, match record, clubs, badges and settings) is saved on your iPhone or iPad, inside the
+      app's own storage. If you choose to sign in, it is also backed up to your private cloud account as described below.
+      Your device's backup includes the local copy, and deleting the app deletes that local copy.</p>
       <p><strong>Ads.</strong> The app shows ads from Google AdMob: a short video you can choose to watch for coins, and
       now and then a full-screen ad between matches (never during play). Every ad request is marked as directed to
       children, so Google serves only family-rated ads, never personalised ones, and the app never asks to track you
@@ -41,14 +42,14 @@
       receive only confirmation of what was bought, never your payment details.</p>
       <p><strong>Game Center.</strong> If you are signed in to Game Center, the app reports your achievements to Apple,
       under Apple's own privacy policy.</p>
-      <p>The app has no account of ours, no analytics of our own, no online play and no goal clips. It asks for no
-      permissions (camera, microphone, photos, contacts or location). The sections below about sign-in, online
-      friendlies, clips and portals apply to the web versions only.</p>
+      <p>Sign-in and cloud saves are optional. The app has no analytics of our own, no online matches and no goal clips.
+      It asks for no camera, microphone, photos, contacts or location permissions. INVITE FRIENDS opens your device's
+      share sheet; you choose the recipient and whether to send the game link and optional friend code.</p>
 
       <h2>What the game stores</h2>
       <p>Your progress (coins, match record, chosen clubs, badges and settings such as sound, difficulty, graphics quality and
       your key bindings) is saved in your browser's <code>localStorage</code> under the key <code>blocky-league-save-v1</code>.
-      It stays on your device. We cannot see it, and it is not linked to your identity.</p>
+      The local copy stays on your device; if you sign in, a copy is also linked to your private cloud account.</p>
       <p>When you play the standalone web version, your browser may also keep a cache of the game's files
       (a "service worker" cache) so it loads faster next time. That cache only contains game code, fonts and images.</p>
       <p>You can erase all of this at any time by clearing this site's data in your browser settings.
@@ -61,14 +62,17 @@
       (your device's own share sheet, to the app you pick). It is gone when you leave the match.</p>
 
       <h2>Optional sign-in and cloud saves</h2>
-      <p>Some builds offer an ACCOUNT button. Signing in is optional and only does one thing: it keeps a copy of your save
-      in the cloud so you can carry it between devices. While you are signed in we store:</p>
+      <p>The standalone web game and iPhone/iPad app offer an ACCOUNT button. Signing in is optional: it keeps a copy of your save
+      in Supabase so you can carry it between devices, and gives you a friend code. While you are signed in we store:</p>
       <ul>
         <li>your save, as-is (coins, match record, settings, career and cup progress, level and challenges): one row per account, readable and writable only by you;</li>
-        <li>what the sign-in itself needs: for email, Google or GitHub sign-in, your email address, the provider's user id and the display name it sends, plus timestamps. Guest sign-ins keep none of that.</li>
+        <li>what sign-in needs: for email, Google, Apple or GitHub, the email address, provider user id and display name the provider sends, plus timestamps. Apple may provide a private relay email instead of your address;</li>
+        <li>for Game Center sign-in, a developer-scoped player id; for a device account, a hash of a random device credential, without your name or real email;</li>
+        <li>your account id, club name, friend code and referral rewards. Rate limiting stores a salted hash of the connection's IP address for about two days.</li>
       </ul>
       <p>Cloud saves are private to your account and are not shared with opponents. Signing out keeps your local save; deleting your cloud
-      save (in the account panel) or your account removes the stored copy.</p>
+      save (in the account panel) removes the stored copy. DELETE ACCOUNT removes your account, cloud data and local progress.
+      Your purchases remain with your Apple account and can be restored. The game never sends invitations automatically or reads your contacts.</p>
 
       <h2>Optional online friendlies</h2>
       <p>The standalone web and itch.io builds offer optional peer-to-peer matches through your browser's WebRTC data channels.

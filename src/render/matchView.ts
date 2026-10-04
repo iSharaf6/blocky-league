@@ -460,12 +460,12 @@ export class MatchView {
     this.marker.add(this.arrow);
     // Surname tag floating over the controlled player, broadcast style.
     this.nameCanvas = document.createElement('canvas');
-    this.nameCanvas.width = 256;
-    this.nameCanvas.height = 48;
+    this.nameCanvas.width = 384;
+    this.nameCanvas.height = 72;
     this.nameTex = new THREE.CanvasTexture(this.nameCanvas);
     this.nameTex.colorSpace = THREE.SRGBColorSpace;
     this.nameTag = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.nameTex, depthTest: false, transparent: true }));
-    this.nameTag.scale.set(2.4, 0.45, 1);
+    this.nameTag.scale.set(2.76, 0.52, 1);
     this.nameTag.renderOrder = 10;
     this.marker.add(this.nameTag);
     for (let s = 0; s < 2; s++) for (const p of teams[s].players) this.names.push(p.name.split('. ').pop()!.toUpperCase());
@@ -1355,17 +1355,17 @@ export class MatchView {
     const g = c.getContext('2d')!;
     g.clearRect(0, 0, c.width, c.height);
     const name = this.names[idx] ?? '';
-    g.font = '400 30px "Lilita One", "Arial Rounded MT Bold", sans-serif';
-    const w = Math.min(c.width - 8, g.measureText(name).width + 22);
+    g.font = '400 45px "Lilita One", "Arial Rounded MT Bold", sans-serif';
+    const w = Math.min(c.width - 12, g.measureText(name).width + 33);
     const x = (c.width - w) / 2;
     g.fillStyle = 'rgba(38,38,46,0.82)';
-    g.fillRect(x, 6, w, 36);
+    g.fillRect(x, 9, w, 54);
     g.fillStyle = '#ffd23a';
-    g.fillRect(x, 38, w, 4);
+    g.fillRect(x, 57, w, 6);
     g.fillStyle = '#fbfbf4';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.fillText(name, c.width / 2, 25);
+    g.fillText(name, c.width / 2, 37.5, c.width - 24);
     this.nameTex.needsUpdate = true;
   }
 

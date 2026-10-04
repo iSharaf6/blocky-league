@@ -165,7 +165,7 @@ export const GEM_PRICES = {
   replayMatch: 50,
   /** The Scouting Network tiers, in order (each bought once, permanent): SCOUT_NETWORKS says what each guarantees. */
   scoutNetwork: [200, 500, 1000],
-  /** This month's Club Pass, instead of buying it in the store. */
+  /** The selected Journey's permanent Club Pass, instead of buying it in the store. */
   clubPass: 600,
   /** A permanent six-piece signature identity; owned pieces reduce its price proportionally. */
   signatureCollection: 600,
@@ -179,7 +179,7 @@ export const GEM_SINKS: { readonly [k in keyof typeof GEM_PRICES]: { what: strin
   healPlayer: { what: 'Heal a player now', free: 'He is back by himself after his matchdays out' },
   replayMatch: { what: 'Replay a lost decider', free: 'A rewarded ad replays one a day; the season carries on either way' },
   scoutNetwork: { what: 'A Scouting Network tier', free: 'Gems earned by playing buy it; the academy brings prospects every season without it' },
-  clubPass: { what: 'The Club Pass', free: 'Gems earned by playing buy it; the free season track pays every tier anyway' },
+  clubPass: { what: 'The Club Pass', free: 'Gems earned by playing buy it; every Journey has a free track that pays each tier anyway' },
   signatureCollection: { what: 'A complete signature identity', free: 'Gems earned by playing buy the identical permanent six-piece collection' },
   dealRefresh: { what: 'A new deal today', free: 'A rewarded ad once a day; the deal changes by itself every day' },
 };

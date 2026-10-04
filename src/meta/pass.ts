@@ -1,22 +1,18 @@
-/**
- * The Club Pass (docs/ECONOMY.md): a second track on the monthly season (meta/season.ts), sold in the app's store
- * ('bl.pass', platform/iap.ts) for the month it is bought in, or bought with gems (buyPassWithGems). About 5,500
- * coins and 150 gems over the 30 tiers plus that month's six-piece identity: player look, sprint trail, premium kit,
- * goal explosion, diamond nets and a welcome star ceremony. None are sold for coins; past themes are permanent gem
- * collections. Buying it late hands over every tier already reached; nothing reached
- * is ever lost (a month's unclaimed pass coins, gems and looks carry into the next). It is looks, coins and gems
- * only: nothing on the pitch, nothing random.
- */
+/** A permanent paid track for one of the twelve selectable Club Journeys. The existing `bl.pass` product and
+ * gem price grant the selected identity's welcome ceremony now, with five more pieces, coins and gems on its
+ * 30 tiers. All progress waits indefinitely. Legacy monthly receipt IDs and carry rewards remain intact. */
 import type { SaveData } from '../core/save';
 import { GEM_PRICES, PASS_GEMS, SEASON_GEMS, addGems, gems, grantGemsOnce, spendGems, sumGems, type GemBuyResult } from './gems';
-import { SEASON_TIERS, passReward, rollSeason, seasonOf, seasonTier, unclaimedPassTiers } from './season';
+import { SEASON_TIERS, journeyOf, passReward, rollSeason, seasonOf, seasonTier, unclaimedPassTiers } from './season';
 import { equipItem, grantItem, itemKey, owns, seasonPassItems, shopItem, shopOf, type ShopItem } from './shop';
 import { SEASON_THEMES, passItemId } from './season';
 
-/** Turn the pass on for the season running at `now` (a purchase). False if it was already on. */
-export function activatePass(save: Pick<SaveData, 'season'> & Partial<Pick<SaveData, 'shop'>>, now: Date = new Date()): boolean {
-  const s = seasonOf(save, now);
-  rollSeason(s, now);
+/** Unlock the selected or captured Journey permanently (a purchase). False if it was already on. */
+export function activatePass(save: Pick<SaveData, 'season'> & Partial<Pick<SaveData, 'shop'>>, now: Date = new Date(), target?: string): boolean {
+  if (target && !/^(?:pass(?:0[1-9]|1[0-2])|journey-(?:0[1-9]|1[0-2])|\d{4}-(?:0[1-9]|1[0-2]))$/.test(target)) return false;
+  const active = seasonOf(save, now);
+  const s = target ? journeyOf(active, target.startsWith('pass') ? target : passItemId(target)) : active;
+  if (!s) return false;
   if (s.pass) return false;
   s.pass = true;
   // The ceremony is a permanent welcome reward, available straight away rather than after a dozen matches.
@@ -24,7 +20,7 @@ export function activatePass(save: Pick<SaveData, 'season'> & Partial<Pick<SaveD
   return true;
 }
 
-/** The pass is on for the season running at `now`. */
+/** The selected Journey has its permanent Club Pass unlocked. */
 export function passActive(save: Pick<SaveData, 'season'>, now: Date = new Date()): boolean {
   const s = seasonOf(save, now);
   rollSeason(s, now);
@@ -32,10 +28,11 @@ export function passActive(save: Pick<SaveData, 'season'>, now: Date = new Date(
 }
 
 /**
- * The Club Pass for gems instead of money (GEM_PRICES.clubPass): the same pass, for the season running at `now`.
+ * The Club Pass for gems instead of money (GEM_PRICES.clubPass): the same permanent pass, for the selected Journey.
  * Gems are earned by playing, so a keen free player can earn the pass and its looks too.
  */
-export function buyPassWithGems(save: Pick<SaveData, 'season' | 'gems'> & Partial<Pick<SaveData, 'shop'>>, now: Date = new Date()): GemBuyResult {
+export function buyPassWithGems(save: Pick<SaveData, 'season' | 'gems'> & Partial<Pick<SaveData, 'shop' | 'iap'>>, now: Date = new Date()): GemBuyResult | { ok: false; reason: 'pending'; short: number } {
+  if (save.iap?.pendingPass) return { ok: false, reason: 'pending', short: 0 };
   if (passActive(save, now)) return { ok: false, reason: 'maxed', short: 0 };
   const price = GEM_PRICES.clubPass;
   if (!spendGems(save, price, 'clubPass')) return { ok: false, reason: 'no-gems', short: price - gems(save) };
@@ -51,13 +48,15 @@ export function buyPassWithGems(save: Pick<SaveData, 'season' | 'gems'> & Partia
 export function syncSeasonGems(save: Pick<SaveData, 'season' | 'gems'> & Partial<Pick<SaveData, 'shop'>>): number {
   const s = seasonOf(save);
   let paid = 0;
-  for (const t of s.claimed) {
-    const n = SEASON_GEMS[t];
-    if (n && grantGemsOnce(save, `season:${s.id}:f${t}`, n, 'season')) paid += n;
-  }
-  for (const t of s.passClaimed) {
-    const n = PASS_GEMS[t];
-    if (n && grantGemsOnce(save, `season:${s.id}:p${t}`, n, 'pass')) paid += n;
+  for (const track of [s, ...Object.values(s.journeys ?? {})]) {
+    for (const t of track.claimed) {
+      const n = SEASON_GEMS[t];
+      if (n && grantGemsOnce(save, `season:${track.id}:f${t}`, n, 'season')) paid += n;
+    }
+    for (const t of track.passClaimed) {
+      const n = PASS_GEMS[t];
+      if (n && grantGemsOnce(save, `season:${track.id}:p${t}`, n, 'pass')) paid += n;
+    }
   }
   const carry = Math.max(0, Math.floor(s.carryGems ?? 0));
   if (carry > 0) {
@@ -69,7 +68,7 @@ export function syncSeasonGems(save: Pick<SaveData, 'season' | 'gems'> & Partial
   return paid;
 }
 
-/** Gems the pass track pays over a month, and the free track's (the offer card's numbers). */
+/** Gems the pass track pays once per Journey, and the free track's (the offer card's numbers). */
 export const PASS_TRACK_GEMS = sumGems(PASS_GEMS);
 export const FREE_TRACK_GEMS = sumGems(SEASON_GEMS);
 
@@ -132,9 +131,10 @@ export function syncSignatureEntitlements(save: Pick<SaveData, 'season' | 'shop'
   const out: string[] = [];
   const grant = (id: string) => { if (grantItem(save, 'decor', id)) out.push(`decor:${id}`); };
   const s = seasonOf(save);
-  if (s.pass) {
-    grant(`kick${passItemId(s.id)}`);
-    if (s.passClaimed.includes(25)) grant(`net${passItemId(s.id)}`);
+  for (const track of [s, ...Object.values(s.journeys ?? {})]) {
+    if (!track.pass) continue;
+    grant(`kick${passItemId(track.id)}`);
+    if (track.passClaimed.includes(25)) grant(`net${passItemId(track.id)}`);
   }
   for (const key of [...shopOf(save).owned]) {
     const m = /^(?:kit|look|trail|goalfx):(pass\d{2})$/.exec(key);
@@ -162,10 +162,10 @@ export function signatureMissing(save: Pick<SaveData, 'shop' | 'progress'>, set:
 export function signaturePrice(save: Pick<SaveData, 'shop' | 'progress'>, set: SignatureSet): number {
   return Math.ceil(SIGNATURE_SET_GEMS * signatureMissing(save, set).length / set.items.length);
 }
-/** The current month belongs to its Club Pass; other themed identities are permanent, with no rotating countdown. */
-export function buySignatureSet(save: Pick<SaveData, 'season' | 'shop' | 'progress' | 'gems'>, id: string, now: Date = new Date()): GemBuyResult & { items?: ShopItem[] } {
+/** Every shipped identity is immediately available as a guaranteed collection, independently of its Journey. */
+export function buySignatureSet(save: Pick<SaveData, 'season' | 'shop' | 'progress' | 'gems'>, id: string, _now: Date = new Date()): GemBuyResult & { items?: ShopItem[] } {
   const set = signatureSet(id);
-  if (!set || id === passItemId(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)) return { ok: false, reason: 'unknown', short: 0 };
+  if (!set) return { ok: false, reason: 'unknown', short: 0 };
   const items = signatureMissing(save, set);
   if (!items.length) return { ok: false, reason: 'maxed', short: 0 };
   const price = signaturePrice(save, set);

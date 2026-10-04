@@ -1,46 +1,36 @@
-# Accounts, cloud saves and the online rule
+# Optional accounts and cloud saves
 
-The owner: "the game has to be played online, and if players aren't connected they can only play exhibition", and
-"Use built-in logins like Apple Game Center".
+The standalone web game and iPhone/iPad app offer ACCOUNT and INVITE FRIENDS. Signing in backs up the club to a
+private cloud account; the device keeps its copy. Gameplay remains available without an account and offline.
+Google and Apple provider configuration is recorded in [AUTH_SETUP.md](AUTH_SETUP.md).
 
-So, in the **iPhone / iPad app** and the **plain web game**:
+CrazyGames, Poki and itch builds carry no account backend. Invitations are only exposed in own-site/native builds.
 
-- The game signs the player in by itself. No password, no email, nothing to type.
-- Progress (the career, coins, gems, unlocks) lives in the account's cloud save. The device keeps a copy and writes
-  through.
-- Not connected or not signed in: only **exhibition** plays (QUICK MATCH with the preset clubs, the first match, the
-  basics). ROAD TO GLORY, MY CLUB, TRANSFERS, EVENTS, the SHOP and SEASON show **CONNECT TO PLAY** with RETRY.
+## Verified status — 5 October 2026
 
-The **CrazyGames, Poki and itch** builds carry no backend at all (portals forbid accounts of our own): they stay
-fully local, exactly as before.
+The existing Supabase project `kkumittamjteollyxszd` is `ACTIVE_HEALTHY`. All six public tables (`saves`, `profiles`,
+`gc_links`, `device_links`, `referrals`, `rate_limits`) have RLS enabled. All four functions (`gc-login`,
+`device-login`, `delete-account`, `referral`) are ACTIVE. The public production backend values are enabled;
+`VITE_ONLINE_ACCOUNTS` is off, and iOS wraps `dist-ios`.
 
-## Status (honest)
+Google and Apple providers are **disabled**. Their code is wired, but real credentials and provider settings must
+be configured before their sign-in can complete. Email is enabled; built-in delivery is limited and full email
+sign-in has not been verified. Native Game Center/device sign-in uses the existing deployed edge functions;
+a real Apple identity and cross-device sign-in still need device testing.
 
-**SWITCHED OFF (paused 4 October 2026).** Everything below is built, and the backend is live, but no build carries
-it: the three values in `.env.production` are commented out, so every build is fully local and plays exactly as it
-did before (no account, no sign-in, nothing gated, no ACCOUNT button). The switch for the silent sign-in and the
-online rule is `VITE_ONLINE_ACCOUNTS=on` (`accountsRequired()` in cloud.ts); a backend without it is only the
-optional ACCOUNT panel it always was. "Switching it on" in supabase/README.md is
-the checklist for resuming.
-
-| Piece | State |
-|---|---|
-| Database: `saves`, `profiles`, `gc_links`, `device_links`, `referrals`, `rate_limits`, RLS on all | **Applied** to project `kkumittamjteollyxszd`. Security advisor: no findings. Performance advisor: two "unused index" notes on brand-new foreign-key indexes (expected). |
-| Edge functions `gc-login`, `device-login`, `delete-account`, `referral` | **Deployed.** `device-login`, `delete-account`, `referral` and every refusal path of `gc-login` were exercised against the live project. |
-| `gc-login` accepting a real Game Center player | **Not yet run end to end**: it needs the app on a device signed in to Game Center. The signature check itself is unit-tested (`tests/gcVerify.test.ts`) and reads Apple's real certificate. |
-| Device sign-in, first backup, the friend code, the gate (grace, CONNECT TO PLAY, RETRY, carrying on when back online), DELETE ACCOUNT | **Run in a browser** against the live project (dev server, one tab, 852x393). Not yet run: WHICH SAVE? with two real devices, and the web sign-in buttons. |
-| The `ios` release build, and a portal build checked for leftover backend code | **Not yet built** (`npm run build:ios`, `npm run build:crazygames`). |
-| The Swift `identity` method | Type-checked against the iOS SDK; **not yet run on a device**. |
-| Google / GitHub / email sign-in on the web | Code unchanged and kept; **needs the providers set up** in the dashboard (supabase/README.md). Without them the buttons fail with a toast; the device account works regardless. |
+Focused tests verify PKCE callback validation/cold launch, Apple nonce/name/cancellation handling, save protection,
+optional explicit device sign-in, cloud revision rules and invitations. Swift native bridge compilation/signing is
+handled by the release build. This does not replace a real Google/Apple sign-in after provider configuration.
 
 ## Who signs in, and how (`src/platform/signin.ts`)
 
 | Where | What happens |
 |---|---|
-| The app, Game Center signed in | `GameCenterPlugin.identity` (Swift) returns Apple's signed identity. The `gc-login` function checks the signature and answers with a session for that player's account. Same player on a new device: same account, same save. |
-| The app, no Game Center (declined, or off) | A **device account**: a random secret kept on the device goes to `device-login`, which answers with a session. Nobody is locked out. |
-| Game Center signs in later | The device account **becomes** the Game Center account (nothing to merge). If that player already has an account from another device, the app switches to it and the two saves are compared (below). |
-| The web game | A device account for the browser, silently. The ACCOUNT panel still offers Google, GitHub and email to open the account elsewhere. |
+| ACCOUNT > USE GAME CENTER / THIS DEVICE, Game Center signed in | `GameCenterPlugin.identity` (Swift) returns Apple's signed identity. The `gc-login` function checks the signature and answers with a session for that player's account. Same player on a new device: same account, same save. |
+| The same explicit choice, no Game Center | A **device account**: a random secret kept on the device goes to `device-login`, which answers with a session. Nobody is locked out. |
+| A later explicit Game Center connection | The device account **becomes** the Game Center account (nothing to merge). If that player already has an account from another device, the app switches to it and the two saves are compared (below). |
+| ACCOUNT in the web game | Google, Apple or email; CONTINUE AS GUEST creates a device account on request. |
+| ACCOUNT in the app | Native Apple identity-token sign-in, Google browser PKCE, or explicit Game Center/device account. |
 | Portals, itch | Nothing: no backend in the build. |
 
 The functions never see or store a name, an email or a password. Accounts made this way use an address at
@@ -78,7 +68,10 @@ replayed inside the hour by someone who already intercepted TLS.
   present, must be between 0 and 1,000,000,000. The save is otherwise the player's own data: this is a single-player
   game, so the server stores it and refuses only the absurd. Anything competitive must validate server-side.
 
-## The online rule (`src/platform/online.ts`, `src/ui/connect.ts`)
+## Dormant required-account policy (`src/platform/online.ts`, `src/ui/connect.ts`)
+
+The following policy is available behind `VITE_ONLINE_ACCOUNTS=on`. It is **off** for the current optional-account
+release; none of these gates apply. Changing that flag would change the product policy and needs its own review.
 
 - The gate is open when the device is online **and** an account is signed in.
 - **Grace:** a connection that drops mid-session keeps everything open for 3 minutes. A match in progress is never
@@ -95,12 +88,14 @@ replayed inside the hour by someone who already intercepted TLS.
 ACCOUNT, DELETE ACCOUNT, YES, DELETE. The `delete-account` function (signed-in callers only, for themselves) deletes
 the rows in `saves`, `profiles`, `gc_links`, `device_links` and `referrals`, then the auth user. The app then drops
 its session, its device secret and its local progress (a fresh save), and stays signed out for the rest of the
-session. Asking to connect again, or the next launch, makes a new, empty account (the game needs one to save to).
+session. Asking to connect again makes a new, empty account. An optional-account launch does not recreate it automatically.
 Store purchases belong to the Apple ID and come back through RESTORE PURCHASES.
 
 ## Friend codes (`referral` function)
 
-Every account has a 7-character code (ACCOUNT, FRIEND CODE, SHARE MY CODE). A new player enters a friend's code
+Every account has a 7-character code (ACCOUNT, INVITE FRIENDS, SHARE GAME + MY CODE). The hub also offers INVITE
+FRIENDS without an account: it shares only the public game link. Native invitations use the iOS share sheet;
+web uses a share sheet or clipboard. The game does not send messages or read contacts. A new player enters a friend's code
 after their first win; both get 100 coins, once. Limits: one code per account ever; the account must be at most 30
 days old and have a win in its cloud save; not your own code, not a player you invited; a code pays its owner for
 at most 20 friends; 10 tries a day per account and 30 per network address. The server records who is owed; the
@@ -111,7 +106,7 @@ game adds the coins when `collect` answers, and each side is paid exactly once.
 Stored on the server, per account: the save JSON; the account's random id; for a Game Center account the
 `teamPlayerID` (an id scoped to this developer, not a name); for a device account a SHA-256 of the device's secret;
 the profile (a display name that is always "Player" today, the club's name, the friend code); referral rows. For
-web players who add Google, GitHub or email: what that provider sends (email, provider id, display name). Rate
+players who add Google, Apple, GitHub or email: what that provider sends (email, provider id, display name). Rate
 limiting keeps a salted hash of the caller's address for about two days. No analytics, no tracking, no sharing
 between players. `public/privacy.html` says the same in plain words.
 
@@ -123,9 +118,9 @@ backend code is inert (supabase-js is not even fetched). Portal and itch builds 
 ## For developers
 
 - Env: `.env.production` holds the project URL and the publishable key (public values; commented out while the
-  feature is off). `npm run build:web` and `npm run build:ios` (the `ios` variant in `scripts/release.mjs`) carry
+  online-required policy is off). `npm run build:web` and `npm run build:ios` (the `ios` variant in `scripts/release.mjs`) carry
   them; `crazygames`, `poki` and `itch` always get blanks. GitHub Actions secrets with the same names override the
-  file when set. While it is off, `npm run ios` still wraps the itch build, as before.
+  file when set. `npm run ios` wraps `dist-ios`. `VITE_ONLINE_ACCOUNTS` stays off.
 - `npm run dev` does not read `.env.production`, so the dev server is fully local. To switch the backend on in one
   tab: `sessionStorage.setItem('bl-dev-cloud', JSON.stringify({ url, key }))`, then reload. Or use `.env.local`.
 - Public API: `cloudAvailable()`, `cloudUser()`, `cloudBoot(ctx)`, `openAccount(ctx, onClose)`, `syncSoon()`,

@@ -2,10 +2,11 @@
 
 Accounts, cloud saves, account deletion and friend codes. How the game uses them is docs/CLOUD.md.
 
-**State (4 October 2026): the backend is live, the game is not using it yet.** The database and the four edge
-functions are applied to the owner's project (`kkumittamjteollyxszd`, Singapore, Free plan). In the repo the
-feature is **switched off**: `.env.production` has its three values commented out, so every build is fully local.
-Nothing here costs money on the Free plan.
+**State (5 October 2026): optional cloud saves are enabled in production web and iPhone/iPad builds.** The existing
+project `kkumittamjteollyxszd` was verified `ACTIVE_HEALTHY`; all six public tables have RLS and all four edge
+functions are ACTIVE. The two public values in `.env.production` are enabled. `VITE_ONLINE_ACCOUNTS` stays off:
+players choose whether to sign in and can play offline. Google and Apple providers are currently disabled and
+require the real console configuration in [docs/AUTH_SETUP.md](../docs/AUTH_SETUP.md). No credentials were invented.
 
 Never put a `service_role` or secret key in the repo or the client. The edge functions read theirs from their own
 environment.
@@ -43,22 +44,18 @@ Run `migrations/0001_saves.sql` then `migrations/0002_accounts.sql` in the SQL e
 or `npx supabase link --project-ref <ref>` and `npx supabase db push`. Deploy the functions with
 `npx supabase functions deploy gc-login device-login delete-account referral` (`config.toml` sets the JWT checks).
 
-## Switching it on (the checklist for resuming)
+## Production build configuration
 
-Code:
+The two public backend values are enabled in `.env.production`; `npm run ios` uses `build:ios` and Capacitor wraps
+`dist-ios`. Keep `VITE_ONLINE_ACCOUNTS` off for optional accounts and unrestricted offline gameplay. An explicit
+ACCOUNT choice can create a Game Center/device account without turning on the old online policy. The Google/Apple
+buttons and native return handler are implemented; provider configuration remains required.
 
-1. `.env.production`: uncomment `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and `VITE_ONLINE_ACCOUNTS=on`. (The
-   third is the switch for the silent sign-in and the online rule. If the repository's GitHub Actions secrets set
-   the first two, the web build has a backend but, without the third, only the optional ACCOUNT panel as before.)
-2. `package.json`: `"ios": "npm run build:ios && npx cap sync ios"`. `capacitor.config.ts`: `webDir: 'dist-ios'`.
-3. `git apply supabase/pending/docs-when-switched-on.patch`: the privacy page and the App Store answers, store
-   copy and reviewer notes for accounts and the online rule. (It was written against 4 October's files: if it no
-   longer applies, make the same edits by hand.) Then delete the `pending` folder.
-4. Build and check: `npm run build:ios` and `npm run build:web` report the backend host; `npm run build:crazygames`
-   and `npm run build:poki` must not (the release script fails them if they do).
-5. On an iPhone signed in to Game Center: first launch signs in silently, a second device with the same Game
-   Center player loads the same club, airplane mode shows CONNECT TO PLAY after three minutes, ACCOUNT > DELETE
-   ACCOUNT works. This is the one path that could not be run without a device (docs/CLOUD.md, Status).
+The tracked `.env.production.example` backs up the public configuration; copy it to the ignored `.env.production`
+after restoring this repository. Configure those same two public build values in GitHub Actions for Pages.
+
+`supabase/pending/docs-when-switched-on.patch` describes the older required-account policy. Do not apply that
+patch to this optional-account release. Current privacy copy has been updated directly.
 
 Dashboard (the owner):
 
@@ -67,18 +64,20 @@ Dashboard (the owner):
 2. **Authentication > Rate Limits > Token verifications:** every sign-in from the login functions counts against
    this, from the functions' own addresses. Raise it (to a few thousand an hour) before a launch so a busy day does
    not turn players away. Sessions last, so a player signs in about once per install.
-3. **Keep the project awake:** a Free project with no requests for 7 days is paused, and while it is paused nobody
-   new can sign in (so nobody new can play ROAD TO GLORY). Any player activity prevents it; restore is one click.
+3. **Keep the project awake:** a Free project with no requests for 7 days can be paused. While paused cloud sign-in
+   is unavailable; local gameplay remains available. Restore the project in Supabase when needed.
 4. The legacy `anon` / `service_role` keys stop working at the end of 2026. The game ships the publishable key and
    the functions prefer the project's secret key, so nothing needs changing.
-5. App Store Connect: nothing new. The Game Center capability is already in the app; the privacy answers are in
-   docs/APP_STORE.md once step 3 above is applied.
+5. App Store Connect: use the optional-cloud privacy answers in docs/APP_STORE.md. Native Sign in with Apple also
+   needs the bundle App ID capability and signing profile; its entitlement and bridge are included in the app.
 
-Optional, for the web game only (the ACCOUNT panel's GOOGLE / GITHUB / EMAIL LINK buttons, which let a player open
-the account on another device): enable **Manual linking**, and set up the providers as below. Without them those
-buttons show a toast and everything else works.
+Google and Apple sign-in work on the native app and web after provider configuration. Native Apple uses an ID
+token and needs no expiring OAuth secret; web Apple has separate Services ID/secret requirements. Google uses
+PKCE through the native browser. Enable **Manual linking** for guest/device/Game Center identity linking. See
+[AUTH_SETUP.md](../docs/AUTH_SETUP.md) for the exact native redirect and console checklist. Email is enabled, but
+email delivery and a complete sign-in still need a live test; the built-in sender is limited.
 
-## Google and GitHub sign-in (web, optional)
+## Google and legacy GitHub provider configuration
 
 Both need an OAuth app that you own; Supabase shows the callback URL to paste into each. It is always
 `https://<ref>.supabase.co/auth/v1/callback`.
@@ -98,7 +97,7 @@ Both need an OAuth app that you own; Supabase shows the callback URL to paste in
    GitHub**.
 
 **Redirect URLs** (Authentication > URL Configuration): Site URL `https://isharaf6.github.io/blocky-league/`;
-Redirect URLs: that, `http://localhost:5173/` and `http://localhost:5173/**`.
+Redirect URLs: that, `com.calynx.blockyleague://auth/callback`, and `http://localhost:5173/` for development.
 
 **Email links:** the built-in sender is limited to a few messages an hour; add your own SMTP under
 **Authentication > Emails > SMTP settings** before relying on it.

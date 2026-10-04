@@ -54,7 +54,7 @@ import { saveClip, shareClip } from './ui/clips';
 import { openRun } from './ui/run';
 import { openBadges } from './ui/badges';
 import { BASICS } from './meta/moments';
-import { recordMatchMeta, wornTitle, type MasteryMatch } from './meta/mastery';
+import { recordMatchMeta, wornTitle, wornTitleDetails, type MasteryMatch } from './meta/mastery';
 import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
 import { accountsRequired, cloudAvailable, cloudBoot, cloudUser, openAccount, syncSoon } from './platform/cloud';
@@ -111,11 +111,12 @@ function checkpointMatch(force = false): void {
   } catch { /* Recovery storage is optional; a quota or unavailable store must never freeze a match. */ }
 }
 
-function persist(): void {
-  writeSave(save);
+function persist(): boolean {
+  const stored = writeSave(save);
   if (ongoing && (save.record.played !== ongoing.recordPlayed || save.progress.xp !== ongoing.progressXp)) clearMatchRecovery();
   // (Game Center, in the app: anything a save moved goes up once the burst settles. A no-op elsewhere.)
   queueGameCenterSync(save);
+  return stored;
 }
 
 // Store purchases (platform/iap.ts) pay out into the one save and store it before the store is told it arrived.
@@ -569,6 +570,7 @@ function mainMenu(): void {
   menus.main(save, {
     playNow: () => playNow(),
     account: cloudAvailable() ? () => openAccount({ save, persist, reload }, mainMenu) : undefined,
+    invite: !PORTAL ? () => openAccount({ save, persist, reload }, mainMenu, 'friend') : undefined,
     gift: () => {
       const g = giftToday();
       if (!g) return mainMenu();
@@ -937,6 +939,8 @@ function recordResult(r: MatchResult): void {
 
 /** Matches and moments finished this visit (an ad break is only ever between two of them). */
 let finishedThisVisit = 0;
+/** Results follow the whole scene chain. A fast rematch never cuts that moment short with an automatic ad. */
+let resultShownAt = Infinity;
 
 /** Roman numerals for badge tiers (the FT line: "FINISHER II"). */
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
@@ -984,7 +988,9 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
   const basics = req.kind === 'basics';
   // Portal interstitial only at a natural break before a new kick-off: never the first thing this visit, never
   // in or right after the basics, never before the first real match.
-  if (!recovered && finishedThisVisit > 0 && !basics && !req.firstMatch && played() > 0) await ads.midgame(req.scenario ? 'moment' : 'match');
+  if (!recovered && finishedThisVisit > 0 && performance.now() - resultShownAt >= 8000 && !basics && !req.firstMatch && played() > 0) {
+    await ads.midgame(req.scenario ? 'moment' : 'match');
+  }
   if (!recovered) clearMatchRecovery();
   demo?.dispose();
   demo = null;
@@ -1040,6 +1046,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     celebration: equippedCelebration(),
     goalFx: equipped('goalfx'),
     trail: equipped('trail'),
+    clubTitle: wornTitleDetails(save) ?? undefined,
     decor,
     colorblind: !!save.settings.colorblind,
     quickSubs: save.settings.quickSubs !== false,
@@ -1178,10 +1185,9 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
         menus.toast(`HALF TIME SHOW: +${atmo.show} COINS AT FULL TIME`);
       }
     };
-    // The app's half-time ad (platform/ads.ts APP_AD_GAP_MS), then the half-time screen. Never in the basics, a
-    // moment, the tutorial or a new player's first match.
-    if (!recovered && !basics && !req.scenario && !req.firstMatch && save.seenTutorial && played() > 0) void ads.midgame('halftime').then(show, show);
-    else show();
+    // Let the dressing-room scene land and keep tactics/SECOND HALF immediately usable. Automatic breaks
+    // happen before a later kick-off, after the player has had time with the complete post-match sequence.
+    show();
   };
   /** The half time show was announced (the half-time screen is redrawn from its sub-screens). */
   let showSaid = false;
@@ -1253,6 +1259,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
       return;
     }
     finishedThisVisit++;
+    resultShownAt = performance.now();
     if (r.scenarioOutcome && req.scenario) {
       // A Football Moment: not a match (no record, coins, streak or challenges); XP for the try and the stars,
       // the best stars kept by moment id. RETRY runs the same request again, NEXT MOMENT hands back to the list.

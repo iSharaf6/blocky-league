@@ -36,7 +36,7 @@ import {
 } from './life';
 import { LEGACY_POINTS, START_BONUS, addLegacy, archiveClub, defaultLegacy, hasPerk, readLegacy, type LegacyState } from './legacy';
 import {
-  addForm, addMoment, beforeMatchBeats, cupHeadline, defaultStory, derbyResult, isDerby, placeRival, readStory, seasonStartBeats, storyNews, storyTag,
+  addForm, addMoment, beforeMatchBeats, cupHeadline, defaultStory, derbyResult, matchHeadline, isDerby, placeRival, readStory, seasonStartBeats, storyNews, storyTag,
   type StoryState,
 } from './story';
 // The long game (runtime cycles again: only ever used inside functions): player development, the staff, the event
@@ -46,10 +46,13 @@ import { defaultStaff, readStaff, type StaffState } from './staff';
 import { addTimeline, afterAnyMatch, defaultEvents, readEvents, rollEvents, rollPress, type EventsState } from './events';
 import { INJURED_DIP, matchXp, openAll, seasonStart, seasonTurn, weekTick } from './week';
 import { sep } from '../ui/text';
+import { archiveCareerHonours, type MasteryState } from './mastery';
 
 export const CAREER_VERSION = 1 as const;
 export const TOP_DIVISION = 1;
-export const BOTTOM_DIVISION = 6;
+export const BOTTOM_DIVISION = 8;
+/** Preserve the established economic/venue scale for existing clubs in divisions 1..6. */
+const ORIGINAL_BOTTOM = 6;
 export const CLUBS_PER_DIVISION = 8;
 /** One round robin: the first half of the season (the second half is the return fixtures). */
 export const HALF_SEASON = CLUBS_PER_DIVISION - 1;
@@ -62,7 +65,7 @@ export const MARKET_SIZE = 4;
 export const STADIUM_MAX = 5;
 export const STAT_CAP = 99;
 export const TRAIN_STEP = 2;
-export const START_LEVEL = 45;
+export const START_LEVEL = 35;
 /** League id of the player's own club. */
 export const YOU = 'you';
 
@@ -83,8 +86,8 @@ export const KEY_STATS: Record<Role, (keyof PlayerStats)[]> = {
   FW: ['shooting', 'pace', 'dribbling'],
 };
 
-const DIVISION_LEVEL = [0, 88, 79, 70, 60, 51, 42];
-export const DIVISION_NAMES = ['', 'ELITE LEAGUE', 'CHAMPIONSHIP', 'LEAGUE ONE', 'NATIONAL LEAGUE', 'COUNTY LEAGUE', 'SUNDAY LEAGUE'];
+const DIVISION_LEVEL = [0, 88, 79, 70, 60, 51, 42, 38, 34];
+export const DIVISION_NAMES = ['', 'ELITE LEAGUE', 'CHAMPIONSHIP', 'LEAGUE ONE', 'NATIONAL LEAGUE', 'COUNTY LEAGUE', 'SUNDAY LEAGUE', 'DISTRICT LEAGUE', 'PARK LEAGUE'];
 export const STADIUM_NAMES = ['MUDDY FIELD', 'LOCAL GROUND', 'TOWN STADIUM', 'CITY ARENA', 'GRAND BOWL', 'MEGA DOME'];
 
 const START_SQUAD: [Role, number][] = [['GK', 1], ['DF', 5], ['MF', 6], ['FW', 4]];
@@ -724,6 +727,7 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
   const home = f.home === YOU;
   const [my, their] = home ? [f.hg, f.ag] : [f.ag, f.hg];
   addForm(state, my, their);
+  matchHeadline(state, md, my, their, home, forfeit);
   const derby = !!season.derby && (f.home === season.derby || f.away === season.derby);
   if (derby) derbyResult(state, my, their);
   buildWeek(state);
@@ -938,7 +942,7 @@ export function userPosition(state: CareerState): number {
   return leagueTable(state).findIndex((r) => r.id === YOU) + 1;
 }
 
-/** Top 2 go up (never above division 1), bottom 2 go down (never below division 6). */
+/** Top 2 go up (never above division 1), bottom 2 go down (never below division 8). */
 export function seasonOutcome(position: number, division: number): { outcome: Outcome; nextDivision: number } {
   const div = clampDivision(division);
   if (position <= 2 && div > TOP_DIVISION) return { outcome: 'promoted', nextDivision: div - 1 };
@@ -949,9 +953,9 @@ export function seasonOutcome(position: number, division: number): { outcome: Ou
 export function seasonPrizeLines(position: number, division: number): PrizeLine[] {
   const div = clampDivision(division);
   const lines: PrizeLine[] = [];
-  const finish = (CLUBS_PER_DIVISION - position) * (20 + 10 * (BOTTOM_DIVISION - div));
+  const finish = (CLUBS_PER_DIVISION - position) * (20 + 10 * (Math.max(0, ORIGINAL_BOTTOM - div)));
   if (finish > 0) lines.push({ label: 'LEAGUE POSITION', coins: finish });
-  if (position <= 2) lines.push({ label: div > TOP_DIVISION ? 'PROMOTION PRIZE' : 'TOP TWO PRIZE', coins: 600 + 250 * (BOTTOM_DIVISION - div) });
+  if (position <= 2) lines.push({ label: div > TOP_DIVISION ? 'PROMOTION PRIZE' : 'TOP TWO PRIZE', coins: 600 + 250 * (Math.max(0, ORIGINAL_BOTTOM - div)) });
   if (position === 1) lines.push({ label: 'CHAMPIONS BONUS', coins: 300 });
   return lines;
 }
@@ -1053,8 +1057,9 @@ export function startNextSeason(state: CareerState): SeasonState | null {
  * road starts again with a club you found. Legacy, legends, perks, coins and cosmetics stay; the squad, the ground,
  * the league and the market start over. Returns false when it isn't open yet.
  */
-export function startAsLegend(state: CareerState): boolean {
+export function startAsLegend(state: CareerState, mastery?: MasteryState): boolean {
   if (!archiveClub(state)) return false;
+  if (mastery) archiveCareerHonours(mastery, state);
   const keep = { seed: state.seed, legacy: state.legacy, story: state.story, events: state.events, network: state.staff.network };
   const fresh = defaultCareer((hashString(`${keep.seed}|legend|${keep.legacy.gen}`) >>> 0) || 1);
   Object.assign(state, fresh, { legacy: keep.legacy, story: { ...defaultStory(), moments: keep.story.moments } });
@@ -1215,7 +1220,7 @@ export function matchDifficulty(division: number): number {
  */
 export function rivalStadiumLevel(division: number, rival: Pick<LeagueClub, 'level'>): number {
   const d = clampDivision(division);
-  const base = BOTTOM_DIVISION - d;
+  const base = Math.max(0, ORIGINAL_BOTTOM - d);
   const strong = rival.level > DIVISION_LEVEL[d] + 3 ? 1 : 0;
   return clamp(base + strong, 0, STADIUM_MAX);
 }
@@ -1225,7 +1230,7 @@ export function matchAttendance(stadium: number): number {
 }
 
 export function payTable(division: number, stadium: number): { win: number; draw: number; loss: number; goal: number; mult: number } {
-  const win = 120 + 40 * (BOTTOM_DIVISION - clampDivision(division));
+  const win = 120 + 40 * (Math.max(0, ORIGINAL_BOTTOM - clampDivision(division)));
   const mult = 1 + 0.1 * clamp(stadium, 0, STADIUM_MAX);
   return {
     win: Math.round(win * mult),
@@ -1237,7 +1242,7 @@ export function payTable(division: number, stadium: number): { win: number; draw
 }
 
 export function matchCoins(division: number, stadium: number, my: number, their: number): number {
-  const win = 120 + 40 * (BOTTOM_DIVISION - clampDivision(division));
+  const win = 120 + 40 * (Math.max(0, ORIGINAL_BOTTOM - clampDivision(division)));
   const base = my > their ? win : my === their ? Math.round(win * 0.45) : Math.round(win * 0.2);
   return Math.round((base + 15 * Math.max(0, my)) * (1 + 0.1 * clamp(stadium, 0, STADIUM_MAX)));
 }

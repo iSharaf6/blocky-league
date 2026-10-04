@@ -1,4 +1,5 @@
 import Capacitor
+import AuthenticationServices
 import CoreHaptics
 import GameKit
 import StoreKit
@@ -11,6 +12,126 @@ class GameViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(GameCenterPlugin())
         bridge?.registerPluginInstance(AppReviewPlugin())
         bridge?.registerPluginInstance(HapticsPlugin())
+        bridge?.registerPluginInstance(PurchaseEventsPlugin())
+        bridge?.registerPluginInstance(NativeAuthPlugin())
+    }
+}
+
+/// StoreKit 1 failures survive a deferred order and a process restart. Cordova remains the receipt owner and
+/// finishes transactions; this observer only records rejected payments until the web save acknowledges them.
+@objc(PurchaseEventsPlugin)
+public class PurchaseEventsPlugin: CAPPlugin, CAPBridgedPlugin, SKPaymentTransactionObserver {
+    public let identifier = "PurchaseEventsPlugin"
+    public let jsName = "PurchaseEvents"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "acknowledge", returnType: CAPPluginReturnPromise),
+    ]
+    private let storageKey = "blocky-purchase-rejections-v1"
+    private var transactionEvents: [ObjectIdentifier: String] = [:]
+    // Keep the identity alive until StoreKit removes it, so a later payment cannot reuse its object address.
+    private var rejectedTransactions: [ObjectIdentifier: SKPaymentTransaction] = [:]
+    private var pending: [[String: String]] {
+        get { UserDefaults.standard.array(forKey: storageKey) as? [[String: String]] ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: storageKey) }
+    }
+
+    public override func load() { SKPaymentQueue.default().add(self) }
+    deinit { SKPaymentQueue.default().remove(self) }
+
+    public func paymentQueue(_ queue: SKPaymentQueue, updatedTransactions transactions: [SKPaymentTransaction]) {
+        for transaction in transactions where transaction.transactionState == .failed {
+            let product = transaction.payment.productIdentifier
+            guard product.hasPrefix("bl.") else { continue }
+            let object = ObjectIdentifier(transaction)
+            let id = transactionEvents[object] ?? UUID().uuidString
+            transactionEvents[object] = id
+            rejectedTransactions[object] = transaction
+            let error = transaction.error as NSError?
+            let cancelled = error?.domain == SKErrorDomain && error?.code == SKError.paymentCancelled.rawValue
+            let event = ["id": id, "productId": product, "result": cancelled ? "cancelled" : "failed"]
+            var events = pending
+            if !events.contains(where: { $0["id"] == id }) { events.append(event); pending = events }
+            notifyListeners("rejected", data: event, retainUntilConsumed: true)
+        }
+    }
+
+    public func paymentQueue(_ queue: SKPaymentQueue, removedTransactions transactions: [SKPaymentTransaction]) {
+        for transaction in transactions {
+            let object = ObjectIdentifier(transaction)
+            transactionEvents.removeValue(forKey: object)
+            rejectedTransactions.removeValue(forKey: object)
+        }
+    }
+
+    @objc public func start(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            for event in self.pending { self.notifyListeners("rejected", data: event, retainUntilConsumed: true) }
+            call.resolve()
+        }
+    }
+
+    @objc public func acknowledge(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { call.reject("Missing event ID"); return }
+        DispatchQueue.main.async {
+            self.pending = self.pending.filter { $0["id"] != id }
+            call.resolve()
+        }
+    }
+}
+
+/// Native Sign in with Apple avoids a renewable web OAuth client secret on iPhone and iPad.
+@objc(NativeAuthPlugin)
+public class NativeAuthPlugin: CAPPlugin, CAPBridgedPlugin, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    public let identifier = "NativeAuthPlugin"
+    public let jsName = "NativeAuth"
+    public let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "signInWithApple", returnType: CAPPluginReturnPromise)]
+    private var pendingCall: CAPPluginCall?
+    private var authorization: ASAuthorizationController?
+
+    @objc public func signInWithApple(_ call: CAPPluginCall) {
+        guard let nonce = call.getString("nonce"), nonce.count == 64,
+              nonce.allSatisfy({ $0.isHexDigit }) else { call.reject("Invalid nonce"); return }
+        DispatchQueue.main.async {
+            guard self.pendingCall == nil else { call.reject("Sign-in already in progress"); return }
+            guard self.bridge?.viewController?.view.window != nil else { call.reject("Sign-in window unavailable"); return }
+            self.pendingCall = call
+            let request = ASAuthorizationAppleIDProvider().createRequest()
+            request.requestedScopes = [.fullName, .email]
+            request.nonce = nonce
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            self.authorization = controller
+            controller.delegate = self
+            controller.presentationContextProvider = self
+            controller.performRequests()
+        }
+    }
+
+    public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        return bridge?.viewController?.view.window ?? UIWindow()
+    }
+
+    public func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization result: ASAuthorization) {
+        guard let credential = result.credential as? ASAuthorizationAppleIDCredential,
+              let token = credential.identityToken, let idToken = String(data: token, encoding: .utf8) else {
+            pendingCall?.reject("Apple did not return an identity token")
+            pendingCall = nil; authorization = nil
+            return
+        }
+        var data: [String: Any] = ["idToken": idToken]
+        if let name = credential.fullName {
+            let fullName = PersonNameComponentsFormatter().string(from: name)
+            if !fullName.isEmpty { data["fullName"] = fullName }
+        }
+        pendingCall?.resolve(data)
+        pendingCall = nil; authorization = nil
+    }
+
+    public func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        let cancelled = (error as NSError).domain == ASAuthorizationError.errorDomain
+            && (error as NSError).code == ASAuthorizationError.canceled.rawValue
+        pendingCall?.reject(cancelled ? "Sign-in cancelled" : "Apple sign-in failed", cancelled ? "CANCELED" : "APPLE_AUTH_FAILED")
+        pendingCall = nil; authorization = nil
     }
 }
 

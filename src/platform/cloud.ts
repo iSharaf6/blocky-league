@@ -22,6 +22,7 @@
  */
 import type { Session } from '@supabase/supabase-js';
 import { defaultSave, levelOf, normalizeIap, normalizeProgress, normalizeSettings, normalizeShop, type SaveData } from '../core/save';
+import { inNativeApp } from './native';
 
 export interface CloudContext {
   save: SaveData;
@@ -41,7 +42,7 @@ export interface CloudUser {
   auto?: boolean;
 }
 
-export type OAuthProvider = 'google' | 'github';
+export type OAuthProvider = 'google' | 'apple' | 'github';
 
 export const SAVE_KEY = 'blocky-league-save-v1';
 /** Side channel: JSON { user, synced } — the cloud client_updated_at (ms) this device last pushed or pulled. */
@@ -126,11 +127,13 @@ export interface CloudClient {
   auth: {
     getSession(): PromiseLike<{ data: { session: Session | null }; error: Err }>;
     onAuthStateChange(cb: (event: string, session: Session | null) => void): { data: { subscription: { unsubscribe(): void } } };
-    signInWithOAuth(c: { provider: OAuthProvider; options?: { redirectTo?: string } }): PromiseLike<{ error: Err }>;
+    signInWithOAuth(c: { provider: OAuthProvider; options?: { redirectTo?: string; skipBrowserRedirect?: boolean } }): PromiseLike<{ data?: { url?: string | null }; error: Err }>;
+    exchangeCodeForSession?(code: string): PromiseLike<{ data: { session: Session | null }; error: Err }>;
+    signInWithIdToken?(c: { provider: 'apple'; token: string; nonce: string }): PromiseLike<{ data: { session: Session | null }; error: Err }>;
     signInWithOtp(c: { email: string; options?: { emailRedirectTo?: string } }): PromiseLike<{ error: Err }>;
     signInAnonymously(): PromiseLike<{ data: { session: Session | null }; error: Err }>;
-    linkIdentity(c: { provider: OAuthProvider; options?: { redirectTo?: string } }): PromiseLike<{ error: Err }>;
-    updateUser(a: { email: string }, o?: { emailRedirectTo?: string }): PromiseLike<{ error: Err }>;
+    linkIdentity(c: { provider: OAuthProvider; options?: { redirectTo?: string; skipBrowserRedirect?: boolean } }): PromiseLike<{ data?: { url?: string | null }; error: Err }>;
+    updateUser(a: { email?: string; data?: Record<string, string> }, o?: { emailRedirectTo?: string }): PromiseLike<{ error: Err }>;
     signOut(o?: { scope: 'local' | 'global' | 'others' }): PromiseLike<{ error: Err }>;
     /** A session an edge function handed back (Game Center / device sign-in: src/platform/signin.ts). */
     setSession?(t: { access_token: string; refresh_token: string }): PromiseLike<{ data: { session: Session | null }; error: Err }>;
@@ -211,7 +214,11 @@ async function loadClient(): Promise<CloudClient | null> {
 function hookAuth(c: CloudClient): void {
   try {
     c.auth.onAuthStateChange((event, s) => {
-      if (s?.user.id !== session?.user.id) cloudRev = undefined;
+      if (s?.user.id !== session?.user.id) {
+        cloudRev = undefined;
+        // A newly chosen account must compare its cloud save before any watcher can push this device's copy.
+        unsettled = !!s && !!ctxRef;
+      }
       session = s;
       if (event === 'SIGNED_OUT') dirty = false;
       notify();
@@ -227,12 +234,14 @@ export function cloudUser(): CloudUser | null {
   if (!u) return null;
   const md = (u.user_metadata ?? {}) as Record<string, unknown>;
   const am = (u.app_metadata ?? {}) as Record<string, unknown>;
+  const providers = [...(u.identities?.map((x) => x.provider) ?? []), ...(Array.isArray(am.providers) ? am.providers : [])];
+  const linked = ['apple', 'google', 'github'].find((p) => providers.includes(p));
   // Accounts the game made by itself (the gc-login / device-login edge functions): no name, no email to show.
-  if (am.bl_kind === 'gamecenter') return { name: 'Game Center', provider: 'gamecenter', guest: false, auto: true };
-  if (am.bl_kind === 'device') return { name: 'This device', provider: 'device', guest: false, auto: true };
+  if (!linked && am.bl_kind === 'gamecenter') return { name: 'Game Center', provider: 'gamecenter', guest: false, auto: true };
+  if (!linked && am.bl_kind === 'device') return { name: 'This device', provider: 'device', guest: false, auto: true };
   const guest = u.is_anonymous === true;
   const pick = (k: string): string => (typeof md[k] === 'string' ? (md[k] as string).trim() : '');
-  const provider = guest ? 'guest' : String(am.provider ?? 'email');
+  const provider = guest ? 'guest' : linked ?? String(am.provider ?? 'email');
   const name = guest ? 'Guest' : pick('full_name') || pick('name') || pick('user_name') || pick('preferred_username') || u.email || 'Player';
   return { name, provider, email: u.email ?? undefined, guest };
 }
@@ -835,6 +844,10 @@ export async function cloudBoot(ctx: CloudContext): Promise<void> {
     session = data.session;
     notify();
     const returned = cleanCallbackUrl();
+    if (inNativeApp()) {
+      const { bootNativeAuth } = await import('./nativeAuth');
+      await bootNativeAuth(completeNativeAuthUrl);
+    }
     if (!session) return;
     await syncAfterSignIn(ctx, returned);
   } catch (err) {
@@ -1069,7 +1082,66 @@ function pageUrl(): string {
   return typeof location === 'undefined' ? '' : `${location.origin}${location.pathname}`;
 }
 
-export const PROVIDER_LABEL: { readonly [k in OAuthProvider]: string } = { google: 'Google', github: 'GitHub' };
+export const PROVIDER_LABEL: { readonly [k in OAuthProvider]: string } = { google: 'Google', apple: 'Apple', github: 'GitHub' };
+
+const nativeCodes = new Set<string>();
+
+/** Complete both a warm-app and a cold-launch PKCE return without trusting tokens in a deep link. */
+export async function completeNativeAuthUrl(url: string): Promise<boolean> {
+  const { authCallback, closeNativeOAuth } = await import('./nativeAuth');
+  const callback = authCallback(url);
+  if (!callback) return false;
+  if (callback.error) {
+    await closeNativeOAuth();
+    toast('Sign-in was not completed. Your progress is still on this device', 'info');
+    return false;
+  }
+  const code = callback.code;
+  if (!code || nativeCodes.has(code)) return false;
+  const c = await getClient();
+  if (!c?.auth.exchangeCodeForSession) return false;
+  if (nativeCodes.has(code)) return false;
+  nativeCodes.add(code);
+  if (nativeCodes.size > 20) nativeCodes.delete(nativeCodes.values().next().value!);
+  try {
+    const { data, error } = await c.auth.exchangeCodeForSession(code);
+    if (error || !data.session) throw new Error(error?.message ?? 'no session');
+    session = data.session;
+    signedOutByPlayer = false;
+    cloudRev = undefined;
+    notify();
+    if (ctxRef) await syncAfterSignIn(ctxRef, true);
+    return true;
+  } catch (err) {
+    fail('Sign-in could not finish. Your progress is still on this device', err);
+    return false;
+  } finally {
+    await closeNativeOAuth();
+  }
+}
+
+async function signInWithNativeApple(c: CloudClient): Promise<boolean> {
+  if (!c.auth.signInWithIdToken) return false;
+  try {
+    const { nativeAppleCredential } = await import('./nativeAuth');
+    const credential = await nativeAppleCredential();
+    const { data, error } = await c.auth.signInWithIdToken({ provider: 'apple', token: credential.token, nonce: credential.nonce });
+    if (error || !data.session) throw new Error(error?.message ?? 'no session');
+    session = data.session;
+    signedOutByPlayer = false;
+    cloudRev = undefined;
+    if (credential.fullName) {
+      try { await c.auth.updateUser({ data: { full_name: credential.fullName } }); }
+      catch { /* The first-sign-in name is optional; it must never hold up the club backup. */ }
+    }
+    notify();
+    if (ctxRef) await syncAfterSignIn(ctxRef, true);
+    return true;
+  } catch (err) {
+    if (!(err && typeof err === 'object' && 'code' in err && err.code === 'CANCELED')) fail('Apple sign-in could not finish. Your progress is still on this device', err);
+    return false;
+  }
+}
 
 /** Send the browser to Google / GitHub; the session arrives on the way back (cloudBoot handles it). */
 export async function signInWith(provider: OAuthProvider): Promise<boolean> {
@@ -1078,10 +1150,20 @@ export async function signInWith(provider: OAuthProvider): Promise<boolean> {
     toast(NOT_SET_UP, 'bad');
     return false;
   }
-  const { error } = await c.auth.signInWithOAuth({ provider, options: { redirectTo: pageUrl() } });
+  const native = inNativeApp();
+  if (native && provider === 'apple') return signInWithNativeApple(c);
+  const bridge = native ? await import('./nativeAuth') : null;
+  const { data, error } = await c.auth.signInWithOAuth({ provider, options: {
+    redirectTo: bridge?.NATIVE_AUTH_REDIRECT ?? pageUrl(), ...(native ? { skipBrowserRedirect: true } : {}),
+  } });
   if (error) {
     fail(`${PROVIDER_LABEL[provider]} sign-in failed`, error);
     return false;
+  }
+  if (bridge) {
+    if (!data?.url) { toast('Sign-in did not return a link. Try again', 'bad'); return false; }
+    try { await bridge.openNativeOAuth(data.url, completeNativeAuthUrl); }
+    catch (err) { fail('Could not open sign-in', err); return false; }
   }
   return true;
 }
@@ -1127,10 +1209,21 @@ export async function signInAsGuest(): Promise<boolean> {
 export async function upgradeGuest(provider: OAuthProvider): Promise<boolean> {
   const c = await getClient();
   if (!c || !session) return false;
-  const { error } = await c.auth.linkIdentity({ provider, options: { redirectTo: pageUrl() } });
+  const native = inNativeApp();
+  // Native Apple signs into its durable Apple account; the same save comparison protects either existing club.
+  if (native && provider === 'apple') return signInWithNativeApple(c);
+  const bridge = native ? await import('./nativeAuth') : null;
+  const { data, error } = await c.auth.linkIdentity({ provider, options: {
+    redirectTo: bridge?.NATIVE_AUTH_REDIRECT ?? pageUrl(), ...(native ? { skipBrowserRedirect: true } : {}),
+  } });
   if (error) {
     fail(`Could not add ${PROVIDER_LABEL[provider]}`, error);
     return false;
+  }
+  if (bridge) {
+    if (!data?.url) { toast('Sign-in did not return a link. Try again', 'bad'); return false; }
+    try { await bridge.openNativeOAuth(data.url, completeNativeAuthUrl); }
+    catch (err) { fail('Could not open sign-in', err); return false; }
   }
   return true;
 }
@@ -1269,7 +1362,7 @@ export async function deleteCloudSave(): Promise<boolean> {
 }
 
 /** Open the account / cloud-sync panel (sign in, sync status, sign out). */
-export function openAccount(ctx: CloudContext, onClose: () => void): void {
+export function openAccount(ctx: CloudContext, onClose: () => void, initial: 'main' | 'friend' = 'main'): void {
   ctxRef = ctx;
   if (typeof document === 'undefined') {
     onClose();
@@ -1277,7 +1370,7 @@ export function openAccount(ctx: CloudContext, onClose: () => void): void {
   }
   void panelModule()
     .then((m) => {
-      if (m) m.openAccountPanel(ctx, onClose);
+      if (m) m.openAccountPanel(ctx, onClose, initial);
       else onClose();
     })
     .catch((err) => {
@@ -1345,6 +1438,7 @@ export function _resetForTests(): void {
   lastError = null;
   listenersOn = false;
   subs.clear();
+  nativeCodes.clear();
 }
 
 export function _debugState(): { dirty: boolean; timer: boolean; holding: boolean; paused: boolean; signedIn: boolean; unsettled: boolean } {

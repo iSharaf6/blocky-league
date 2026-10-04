@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clamp, lerp, smoothstep, wrapAngle } from '../core/math';
+import { SCENE_STYLE } from '../game/scenePoses';
 import { grassLike } from '../meta/data';
 import type { Kit, Look, PlayerDef } from '../sim/types';
 import { designOf, paintArm, paintLeg, paintTorso, type KitDesign, type StyledKit } from './kitDesigns';
@@ -523,7 +524,8 @@ const SKILL_MOVE = {
  * moves (render/celebration.ts writes them), which read the move's clock in stateT and its 0..1 progress (the
  * slide, the flip's turn, the drop, the leap) or bank (the aeroplane, right positive) in kickT.
  */
-export const CELEB = { armsUp: 4, knee: 5, shush: 6, plane: 7, robot: 8, flip: 9, crouch: 10, flat: 11, dive: 12, clap: 13 } as const;
+export const CELEB = { armsUp: 4, knee: 5, shush: 6, plane: 7, robot: 8, flip: 9, crouch: 10, flat: 11, dive: 12, clap: 13,
+  ...SCENE_STYLE } as const;
 
 /**
  * The robot, a pose a beat (all right angles, read from the front): arm L (x, z), arm R (x, z), body yaw,
@@ -579,10 +581,10 @@ function blendTime(from: number, to: number): number {
 
 /** An action (see BLEND_KICK_S): blended in with an ease-out, never the slow-starting smoothstep. */
 function isAction(key: number): boolean {
-  const state = key >> 4;
+  const state = key >> 5;
   // (A header while running is the move state's sub-pose 1; a skill move reads from its first frame too.)
   return state === PSTATE.kick || state === PSTATE.slide || state === PSTATE.dive || state === PSTATE.skill ||
-    ((state === PSTATE.move || state === PSTATE.stand) && (key & 15) === 1);
+    ((state === PSTATE.move || state === PSTATE.stand) && (key & 31) === 1);
 }
 
 export class Footballer {
@@ -815,10 +817,10 @@ export class Footballer {
     else if (p.state === PSTATE.celebrate) {
       const st = Math.round(p.celebrate);
       // The iconic styles (CELEB.knee and up) own their locomotion: one key whatever the speed.
-      sub = st >= CELEB.knee ? Math.min(15, 1 + st) : p.speed < 1.2 ? 1 + Math.max(0, st) : 0;
+      sub = st >= CELEB.knee ? Math.min(31, 1 + st) : p.speed < 1.2 ? 1 + Math.max(0, st) : 0;
     }
     if (p.signal) sub = 8 + (p.signalKind ?? 0);
-    return p.state * 16 + sub;
+    return p.state * 32 + sub;
   }
 
   /**
@@ -839,7 +841,7 @@ export class Footballer {
         this.fromPose.set(this.lastPose);
         this.blendT = 0;
         this.blendAction = isAction(key);
-        const poke = p.state === PSTATE.kick && (key & 15) === 1;
+        const poke = p.state === PSTATE.kick && (key & 31) === 1;
         this.blendS = poke ? BLEND_POKE_S : this.blendAction && p.state !== PSTATE.slide && p.state !== PSTATE.dive ? BLEND_KICK_S : blendTime(this.poseState, p.state);
       } else this.blendS = 0;
       if (p.state === PSTATE.kick && this.poseState !== PSTATE.kick) this.kickEntry = p.speed;
@@ -1494,6 +1496,60 @@ export class Footballer {
         lR.rotation.z = -0.1 * d;
         head.rotation.z = 0.4 * d;
         torso.rotation.z = 0.1 * d;
+        break;
+      }
+      case CELEB.walkTalk: {
+        // Still walking: lively conversation, a wave to the stand, or the captain's palms-down calming gesture.
+        this.locomotion(p, time, dt, ph, run, swing);
+        const beat = Math.sin(t * 4.2 + p.runPhase * 4);
+        const calm = x < 0;
+        aL.rotation.set(calm ? -0.3 : -0.6, calm ? -0.2 : -0.35, calm ? 0.85 : 1.0 + beat * 0.23);
+        aR.rotation.set(calm ? 0.3 : 0.25, calm ? 0.2 : 0.15, calm ? 0.85 : 0.55 + Math.max(0, beat) * (0.5 + x * 0.5));
+        torso.rotation.y = Math.sin(t * 2.1) * 0.13;
+        head.rotation.x = Math.sin(t * 2.8) * 0.11;
+        head.rotation.z = -0.08 + beat * 0.06;
+        break;
+      }
+      case CELEB.argue: {
+        // Open hands, alternating points at the pitch and a disbelieving head shake. No contact or fighting.
+        this.locomotion(p, time, dt, ph, run, swing);
+        const beat = Math.sin(t * 5.3 + p.runPhase * 2);
+        const anger = clamp(x, 0, 1);
+        aL.rotation.set(-0.7 * anger, -0.35, 0.75 + Math.max(0, beat) * 0.7 * anger);
+        aR.rotation.set(0.65 * anger, 0.35, 0.7 + Math.max(0, -beat) * 0.85 * anger);
+        torso.rotation.z = -0.12 * anger;
+        torso.rotation.y = beat * 0.13 * anger;
+        head.rotation.x = Math.sin(t * 6.4) * 0.13 * anger;
+        head.rotation.z = -0.15 * anger;
+        break;
+      }
+      case CELEB.award:
+      case CELEB.modestAward: {
+        this.locomotion(p, time, dt, ph, run, swing);
+        const modest = st === CELEB.modestAward;
+        const receive = smoothstep(0.15, 0.4, x);
+        const lift = smoothstep(0.45, 0.72, x) * (modest ? 0.25 : 1);
+        aL.rotation.set(-0.12, -0.26, 0.7 + receive * 0.7 + lift * 0.95);
+        aR.rotation.set(0.12, 0.26, 0.7 + receive * 0.7 + lift * 0.95);
+        torso.rotation.z = -lift * 0.06;
+        head.rotation.z = modest ? -0.14 : 0.08 * lift;
+        body.position.y += Math.sin(t * 3.5) * 0.012;
+        break;
+      }
+      case CELEB.ouch: {
+        // A theatrical shin clutch and roll, followed by a quick recovery once the referee has shown yellow.
+        const roll = 1 - smoothstep(0.58, 0.92, x);
+        const wobble = Math.sin(t * 9) * 0.12 * roll;
+        body.position.y = HIP_Y - (HIP_Y - 0.21) * roll;
+        body.rotation.z = 1.05 * roll;
+        body.rotation.x = wobble;
+        torso.rotation.z = -0.35 * roll;
+        lL.rotation.set(0.16 * roll, 0, 1.05 * roll);
+        lR.rotation.set(-0.1 * roll, 0, 0.55 * roll);
+        aL.rotation.set(-0.25, -0.2, 1.0 + roll * 0.5);
+        aR.rotation.set(0.25, 0.2, 0.9 + roll * 0.55);
+        head.rotation.z = -0.23 * roll;
+        head.rotation.x = wobble * 0.5;
         break;
       }
       case CELEB.clap:

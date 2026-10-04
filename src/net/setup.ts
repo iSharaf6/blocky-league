@@ -23,9 +23,11 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * the aerial lock, the standing tackle's new odds and PRESS's helper, AUTO SPRINT's lower threshold and flat-out push.
  * 7: stationary carriers are read after a short grace and their automatic shield can be overcome; a won deliberate
  * standing tackle takes possession consistently. Both peers must use these challenge and possession rules.
- * 8: agreed weather and deterministic wet-patch skids on hard sprint cuts; clear-weather physics are unchanged.)
+ * 8: agreed weather and deterministic wet-patch skids on hard sprint cuts; clear-weather physics are unchanged.
+ * 9: automatic tackles require movement or PRESS and respect recovery; defenders circle an unattended carrier's
+ * shield and can take his exposed stationary ball after the grace. Active dribbling and skills retain their rules.)
  */
-export const NET_VERSION = 8;
+export const NET_VERSION = 9;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides

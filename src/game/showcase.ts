@@ -8,8 +8,8 @@
  * - A SUBSTITUTION, when play next stops (subBeatS each, a tap skips the lot): the lens on the near touchline by the
  *   dugouts, the man coming off jogs to the line and high-fives the man coming on, the fourth official's board up
  *   beside them (render/subScene.ts draws the two men, the official and the board).
- * - MAN OF THE MATCH, at full time (MOTM_S, a tap skips it): a close-up of him, arms up if his side didn't lose,
- *   applauding the fans if it did, the lens pushing in.
+ * - MAN OF THE MATCH, at full time (MOTM_S, a tap skips it): a presenter hands him the award, his teammates applaud,
+ *   and he lifts the trophy (a modest lift after a loss), the lens pushing in.
  *
  * This file is the choreography (where everyone stands and what the lens sees at a given moment), with no drawing
  * in it, so the tests can check it. Positions are written into the DRAWN frame (MatchView.frameHook), never the sim.
@@ -18,6 +18,7 @@ import type { SceneShot } from '../render/cameraRig';
 import { HALF_L, HALF_W } from '../sim/constants';
 import type { Side } from '../sim/types';
 import { PF, STATE_CODE } from './replay';
+import { SCENE_STYLE } from './scenePoses';
 
 /** Pose styles (render/characters.ts CELEB): the arms-up hop, and applause. */
 const STYLE_ARMS_UP = 4;
@@ -236,7 +237,7 @@ export function subCaption(off: { number: number; name: string }, on: { number: 
 // ------------------------------------------------------------------ the man of the match
 
 /** Seconds on the man of the match before the result screen (a tap skips it). */
-export const MOTM_S = 2.6;
+export const MOTM_S = 4.2;
 
 /**
  * Where the man of the match stands for his close-up: where he is, pulled in from the near touchline and the goal
@@ -266,7 +267,7 @@ export function motmShot(k: number, x: number, z: number, tall: number, out: Sce
 }
 
 /** Pose him in the drawn frame: square to the lens, arms up (or applauding the fans after a defeat). */
-export function applyMotm(f: Float32Array, idx: number, x: number, z: number, lost: boolean, time: number): void {
+export function applyMotm(f: Float32Array, idx: number, x: number, z: number, lost: boolean, time: number, progress = 1): void {
   const o = idx * PF;
   f[o] = x;
   f[o + 1] = z;
@@ -277,9 +278,19 @@ export function applyMotm(f: Float32Array, idx: number, x: number, z: number, lo
   f[o + 5] = time;
   f[o + 6] = (time * 0.5) % 1;
   f[o + 7] = 0;
-  f[o + 8] = 0;
+  f[o + 8] = clamp01(progress);
   f[o + 10] = 0;
   f[o + 12] = 0;
-  f[o + 13] = lost ? STYLE_CLAP : STYLE_ARMS_UP;
+  f[o + 13] = lost ? SCENE_STYLE.modestAward : SCENE_STYLE.award;
   f[o + 14] = 0;
+}
+
+/** His teammates stand behind the presentation, applauding the actual recipient rather than another caption. */
+export function applyMotmMates(f: Float32Array, mates: readonly number[], x: number, z: number, time: number): void {
+  mates.forEach((idx, row) => {
+    const mx = x + (row % 2 ? 1 : -1) * (1.65 + Math.floor(row / 2) * 1.25);
+    applyMotm(f, idx, mx, z - 1.3, false, time + row * 0.17);
+    f[idx * PF + 13] = STYLE_CLAP;
+    f[idx * PF + 8] = 0;
+  });
 }

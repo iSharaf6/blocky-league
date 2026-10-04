@@ -1,7 +1,9 @@
 # App Store release: Blocky League 1.0 (iPhone and iPad)
 
-Everything App Store Connect asks for, ready to paste, and the order to do it in. The app is the itch web build in a
-Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape only, no account, no online play.
+Everything App Store Connect asks for, ready to paste, and the order to do it in. The app uses the dedicated iOS web
+build in a Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape play, optional accounts/cloud saves,
+and no peer-to-peer online matches. Google/Apple provider activation and console achievements require the setup
+in docs/AUTH_SETUP.md and the Game Center section below; adding code does not configure those consoles.
 
 - **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (gem packs,
   Starter Pack, NO ADS, Club Pass, Coin Doubler, PRO bundle). The design is docs/ECONOMY.md (economy v3).
@@ -21,7 +23,7 @@ Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape only, no accou
 | MY CLUB, STADIUM | **One matchday off a build** with a rewarded ad | Once a day |
 | Before a kick-off | A full-screen ad (interstitial) | At most every 2 breaks and 4 minutes apart; never mid-match; never in the first match or the basics |
 | Shop, STORE tab | **Gem packs** US$0.99 to $19.99 (the first buy of each doubled), Starter Pack $1.99, **NO ADS $3.99**, **PRO bundle $9.99** (NO ADS, the Coin Doubler and 600 gems) | NO ADS removes the full-screen ads; rewarded ads stay (they're the player's choice). Gems never buy anything random |
-| Shop, STORE tab and BADGES, SEASON | **Club Pass** $3.99 a month (or 600 gems): about 5,560 coins, 150 gems and that month's own player look, trail, kit and goal explosion | Buying late unlocks reached tiers; nothing reached is lost |
+| Shop, STORE tab and BADGES, JOURNEYS | **Club Pass** $3.99 per permanent selected Journey (or 600 gems): 5,560 coins, 150 gems and six identity pieces on its 30 tiers | Buying late unlocks reached tiers; nothing reached is lost |
 | Shop, STORE tab | **Coin Doubler** $4.99 once: every match pays double coins | Looks, coins and gems only, never an edge in a match |
 | After the first win | A one-time welcome offer for the Starter Pack | No timer; it stays in the shop |
 
@@ -78,8 +80,8 @@ COPPA). The switch is `ADMOB_KID_SAFE` in `src/platform/adConfig.ts`.
      | `bl.gems.1000` | Consumable | 9.99 | 1,300 Gems | 1,000 gems and 300 bonus gems. |
      | `bl.gems.2000` | Consumable | 19.99 | 3,000 Gems | 2,000 gems and 1,000 bonus gems. |
      | `bl.starter` | Non-Consumable | 1.99 | Starter Pack | 2,000 coins, 150 gems and the Gold ball. One time only. |
-     | `bl.noads` | Non-Consumable | 3.99 | No Ads | No ad breaks between matches or at half time. |
-     | `bl.pass` | Consumable | 3.99 | Club Pass | This month's Club Pass: more coins, gems and four looks on the season track. |
+     | `bl.noads` | Non-Consumable | 3.99 | No Ads | No ad breaks between matches. |
+     | `bl.pass` | Consumable | 3.99 | Club Pass | Permanent Club Pass for the selected Journey: coins, gems and six identity pieces on its 30 tiers. |
      | `bl.doubler` | Non-Consumable | 4.99 | Coin Doubler | Every match pays double coins, for good. |
      | `bl.pro` | Non-Consumable | 9.99 | Pro Bundle | No Ads, the Coin Doubler and 600 gems in one. |
 
@@ -164,7 +166,23 @@ The app icon comes from the build (`ios-app-icon-1024.png`); App Store Connect t
 
 ## App Privacy (the questionnaire)
 
-Data is collected, all of it by Google's ad SDK. These answers are from its own privacy manifest
+The native app now offers optional accounts and cloud progress saving. Players can continue locally without an
+account. Update the live App Store Connect questionnaire before submitting this build: the source change alone
+does not update Apple's console. The account backend receives a linked user ID, game progress and, when supplied
+by the chosen sign-in provider, email/display name. It is used for account access and restoring progress, not tracking.
+
+| Account data type | Linked to the user | Used for tracking | Purpose |
+|---|---|---|---|
+| User ID | Yes | No | App Functionality |
+| Gameplay Content (saved career, achievements and progress) | Yes | No | App Functionality |
+| Email Address (when supplied for sign-in) | Yes | No | App Functionality |
+| Name (optional provider display name) | Yes | No | App Functionality |
+| Purchase History (owned items and transaction IDs in the synced save; no payment-card data) | Yes | No | App Functionality |
+
+Apple's [App Privacy Details](https://developer.apple.com/app-store/app-privacy-details/) define Gameplay Content
+for saved games and require disclosing optional collection as well as guest-mode behavior.
+
+The ad SDK also collects data. The following entries come from its privacy manifest
 (GoogleMobileAds.framework/PrivacyInfo.xcprivacy). Xcode's privacy report (Organizer, right-click the archive,
 Generate Privacy Report) shows the same.
 
@@ -183,7 +201,9 @@ which only exists when a player allows tracking. This app never asks (no App Tra
 sends every request as child-directed, so nothing is tracked.
 
 Declaring tracking without asking for permission is a common reason for rejection, so keep it No unless a later
-version adds the prompt. Purchases and Game Center are handled by Apple and aren't "collected" by the app.
+version adds the prompt. Apple handles purchases and Game Center. When a player explicitly uses Game Center to
+connect a cloud account, the backend additionally receives its verified user identity for that account; include the
+linked User ID entry above. Never infer "no data collected" from guest/offline play when the optional service exists.
 
 ## Export compliance
 
@@ -231,7 +251,8 @@ All four use score format Integer, submission type Best Score, sort High to Low 
 | `bl.lb.season` | Best Season | Classic | Most XP earned in one monthly season. | XP / XP |
 
 Apple has no calendar-month recurring leaderboard (its longest repeat is 30 days, which drifts off the months), so
-Best Season is a Classic board of each player's best month.
+Best Season is a Classic board of each player's best month. This is now a legacy compatibility board: permanent
+Club Journey IDs submit no score to it. Keep its existing live ID and definition; goals, wins and streaks remain active.
 
 ## Notes for the reviewer (App Review Information)
 
@@ -241,9 +262,9 @@ Best Season is a Classic board of each player's best month.
 >
 > ROAD TO GLORY, MOMENTS, CLUB RUN and BLITZ unlock after you score your first goal in any match.
 >
-> Ads (Google AdMob, family-rated, child-directed, no tracking): optional rewarded videos (SHOP, STORE: FREE COINS and FREE GEMS; "double" offers at full time and on the daily gift; a replay of a lost cup tie; a new daily deal), each capped per day, and an occasional full-screen ad before a kick-off or at half time, never during play.
+> Ads (Google AdMob, family-rated, child-directed, no tracking): optional rewarded videos (SHOP, STORE: FREE COINS and FREE GEMS; "double" offers at full time and on the daily gift; a replay of a lost cup tie; a new daily deal), each capped per day, and an occasional full-screen ad before a later kick-off. Ad breaks wait until all full-time scenes finish and at least eight seconds have passed on the results screen; an immediate rematch skips the ad. No ad interrupts play or half time.
 >
-> In-app purchases are in SHOP, STORE: five gem packs (the first buy of each pays double), a Starter Pack, NO ADS (removes the full-screen ads), the Club Pass (this month's extra season track, also shown in BADGES, SEASON), the Coin Doubler and the PRO bundle, with RESTORE PURCHASES. Gems are also earned by playing. Gems buy only stated outcomes at a shown price, each confirmed with one tap: coins at a fixed rate, finishing a stadium build, a replay of a lost cup tie, a Scouting Network tier (a guaranteed prospect quality, never a chance), the Club Pass. Player scout packs in SHOP, SCOUT cost Scout Tokens, which are earned by playing and can't be bought with money, gems or coins; their odds are shown.
+> In-app purchases are in SHOP, STORE: five gem packs (the first buy of each pays double), a Starter Pack, NO ADS (removes the full-screen ads), the Club Pass (a permanent paid track for the selected Club Journey, also shown in BADGES, JOURNEYS), the Coin Doubler and the PRO bundle, with RESTORE PURCHASES. Gems are also earned by playing. Gems buy only stated outcomes at a shown price, each confirmed with one tap: coins at a fixed rate, finishing a stadium build, a replay of a lost cup tie, a Scouting Network tier (a guaranteed prospect quality, never a chance), the Club Pass. Player scout packs in SHOP, SCOUT cost Scout Tickets, which are earned by playing and can't be bought with money, gems or coins; their odds are shown.
 >
 > Game Center achievements and leaderboards are reported as you play; BADGES has GAME CENTER ACHIEVEMENTS and LEADERBOARDS buttons. After some wins the app may show Apple's own rating prompt.
 
@@ -251,8 +272,8 @@ Also fill in your name, phone and email as the review contact.
 
 ## What the app leaves out (on purpose)
 
-The app hides three web features. `src/platform/native.ts` (`inNativeApp()`) checks for `window.Capacitor`, so
-the same itch build still has them on the web:
+The app hides three web features. `src/platform/native.ts` (`inNativeApp()`) checks for `window.Capacitor`, while
+the web and itch builds still expose their browser-specific features:
 
 - **ONLINE:** codes are swapped by hand, with no relay server. They mostly fail on mobile data, and the "this browser"
   room means nothing in an app.

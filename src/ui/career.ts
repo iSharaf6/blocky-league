@@ -21,6 +21,7 @@ import { payoutText, syncCareerGems } from '../meta/gemSources';
 import { partDef, stadiumParts } from '../meta/ground';
 import { bestProspectIndex, matchLift, promoteProspect, releaseProspect } from '../meta/life';
 import { marketUnread } from '../meta/market';
+import { masteryOf } from '../meta/mastery';
 import { storyTag } from '../meta/story';
 // The long game (ui/glory.ts draws it): event cards, SIM THIS MATCH, the staff, what is coming up.
 import { fanAttendance, pendingEvent } from '../meta/events';
@@ -500,7 +501,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
             draw();
             return;
           }
-          if (!startAsLegend(st)) return;
+          if (!startAsLegend(st, masteryOf(app.save))) return;
           app.persist();
           sfx.coin();
           buzz('win');

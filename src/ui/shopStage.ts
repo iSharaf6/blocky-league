@@ -14,6 +14,7 @@ import { crestFor, type CrestDesign } from '../core/crest';
 import { BoxBuilder, voxelMaterial } from '../render/voxel';
 import type { Kit, PlayerDef } from '../sim/types';
 import { signatureMonth } from '../render/signatureStyle';
+import { GoalNet } from '../render/goalNet';
 
 /**
  * The SHOP's showcase (ui/shop.ts): the selected item, live, on a grass block, drawn by the match's own code.
@@ -196,7 +197,8 @@ interface Props {
   tifo: THREE.Mesh | null;
   /** The giant flag surfing over the stand: the cloth and how far each way it goes. */
   surfer: { mesh: THREE.Mesh; reach: number } | null;
-  net: THREE.Mesh | null;
+  net: GoalNet | null;
+  netHitN: number;
 }
 
 const WHITE = 0xfbfbf4;
@@ -287,15 +289,8 @@ export class ShopStage {
     g.box(-1.1, 1.6, 0, 0.12, 0.12, 2.62, 0xfbfbf4);
     this.goalFrame = new THREE.Mesh(g.build(), voxelMaterial);
     this.goalFrame.castShadow = true;
-    const n = new BoxBuilder();
-    n.box(-1.5, 1.4, 0, 0.04, 0.04, 2.5, 0xe7e3d6);
-    n.box(-1.5, 0.7, -1.25, 0.8, 1.4, 0.03, 0xe7e3d6);
-    n.box(-1.5, 0.7, 1.25, 0.8, 1.4, 0.03, 0xe7e3d6);
-    n.box(-1.88, 0.7, 0, 0.03, 1.4, 2.5, 0xe7e3d6);
-    const plainNet = new THREE.Mesh(n.build(), voxelMaterial);
-    plainNet.name = 'plainNet';
     this.goal = new THREE.Group();
-    this.goal.add(this.goalFrame, plainNet);
+    this.goal.add(this.goalFrame);
     s.add(this.goal);
     this.ball = new THREE.Mesh(buildBallGeometry(0.42), charMaterial);
     this.ball.castShadow = true;
@@ -505,8 +500,6 @@ export class ShopStage {
     const decor = kind === 'decor' ? w.decor : lineup && cat !== 'kit' ? w.decor : {};
     this.buildTop(bigBlock ? BIG : SMALL, decor.pitch ?? '');
     this.buildProps(decor, kind === 'decor' ? slot ?? '' : 'lineup', bigBlock);
-    const plain = this.goal.getObjectByName('plainNet');
-    if (plain) plain.visible = !this.props?.net;
     this.lightFor(show);
     this.frameLens(show, kind, slot);
   }
@@ -594,43 +587,34 @@ export class ShopStage {
     const key = `${focus}|${big}|${JSON.stringify(decor)}`;
     if (this.props?.key === key) return;
     this.freeProps();
-    const P: Props = { key, group: new THREE.Group(), free: [], flags: [], beams: [], leds: [], mascot: null, danceN: -1, tifo: null, surfer: null, net: null };
+    const P: Props = { key, group: new THREE.Group(), free: [], flags: [], beams: [], leds: [], mascot: null, danceN: -1, tifo: null, surfer: null, net: null, netHitN: -1 };
     this.props = P;
     this.scene.add(P.group);
     const { shirt } = this.club.kit;
     const shirt2 = this.club.kit.shirt2 === shirt ? (shirt === WHITE ? 0x26262e : WHITE) : this.club.kit.shirt2;
     const edge = big ? BIG : SMALL;
     // Nets: the goal's net panels in the style (the match's own colours and strand tile).
-    if (decor.net) {
-      const alpha = netAlpha(decor.net === 'nethex', decor.net.startsWith('netpass'));
-      alpha.repeat.set(5, 5);
+    {
+      const netId = decor.net ?? '';
+      const alpha = netAlpha(netId === 'nethex', netId.startsWith('netpass'));
       P.free.push(alpha);
-      const geo = new THREE.BufferGeometry();
-      const pos: number[] = [], uv: number[] = [], col: number[] = [];
+      const net = new GoalNet(-1, alpha, 0.045, { goalX: -1.12, width: 2.5, height: 1.55, depth: 0.76 });
+      const geo = net.mesh.geometry;
+      const pos = geo.getAttribute('position');
+      const col: number[] = [];
       const c = new THREE.Color();
-      const quad = (a: number[], b: number[], cc: number[], d: number[]) => {
-        for (const p of [a, b, cc, a, cc, d]) {
-          pos.push(p[0], p[1], p[2]);
-          uv.push((p[2] + 1.25) / 2.5, (p[1] + (p[0] + 1.1) * -1) / 1.6);
-          c.setHex(netColor(decor.net, shirt, shirt2, p[0], p[1] / 1.6 * 2.44, p[2] * (7.32 / 2.5)));
-          col.push(c.r, c.g, c.b);
-        }
-      };
-      const bx = -1.88, fx = -1.12, H = 1.55, W = 1.25;
-      quad([bx, 0, -W], [bx, H, -W], [bx, H, W], [bx, 0, W]);
-      quad([fx, H, -W], [bx, H, -W], [bx, H, W], [fx, H, W]);
-      quad([fx, 0, -W], [bx, 0, -W], [bx, H, -W], [fx, H, -W]);
-      quad([fx, 0, W], [bx, 0, W], [bx, H, W], [fx, H, W]);
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      for (let i = 0; i < pos.count; i++) {
+        c.setHex(netColor(netId, shirt, shirt2, pos.getX(i), pos.getY(i) / 1.55 * 2.44, pos.getZ(i) * (7.32 / 2.5)));
+        col.push(c.r, c.g, c.b);
+      }
       geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-      const mat = new THREE.MeshBasicMaterial({
-        vertexColors: true, alphaMap: alpha, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-        blending: decor.net === 'netglow' || signatureMonth(decor.net) >= 0 ? THREE.AdditiveBlending : THREE.NormalBlending,
-      });
+      const mat = net.mesh.material as THREE.MeshBasicMaterial;
+      mat.color.setHex(0xffffff);
+      mat.vertexColors = true;
+      mat.blending = netId === 'netglow' || signatureMonth(netId) >= 0 ? THREE.AdditiveBlending : THREE.NormalBlending;
       P.free.push(geo, mat);
-      P.net = new THREE.Mesh(geo, mat);
-      this.goal.add(P.net);
+      P.net = net;
+      this.goal.add(net.mesh);
     }
     // A corner flag at the block's far corner, its arc painted on the grass.
     if (decor.flags) {
@@ -788,7 +772,7 @@ export class ShopStage {
   private freeProps(): void {
     const P = this.props;
     if (!P) return;
-    P.net?.removeFromParent();
+    P.net?.mesh.removeFromParent();
     P.mascot?.dispose();
     P.group.removeFromParent();
     for (const f of P.free) f.dispose();
@@ -879,22 +863,29 @@ export class ShopStage {
     const cycle = def ? Math.max(2.6, def.dur + 0.9) : 2.6;
     const u = t % cycle;
     const n = Math.floor(t / cycle);
-    const k = clamp01(u / 0.45);
+    const contact = 0.58;
+    const k = clamp01(u / contact);
     const gx = this.goal.position.x;
     const gs = this.goal.scale.x;
     if (!lineup) {
-      this.ball.visible = u < 0.5;
-      this.ball.position.set(1.4 - 2.7 * k, 0.3 + Math.sin(Math.PI * k) * 0.6 + k * 0.5, 0.5 - k * 0.6);
+      this.ball.visible = u < 1.65;
+      const after = Math.max(0, u - contact);
+      this.ball.position.set(1.4 - 3.12 * k + Math.sin(Math.min(after, 0.4) * 8) * 0.1,
+        Math.max(0.16, 0.3 + Math.sin(Math.PI * k) * 0.6 + k * 0.5 - after * 0.9), 0.5 - k * 0.6);
       this.ball.rotation.set(t * 8, 0, t * 5);
     }
-    // The net takes the ball: a bulge when it hits.
-    const net = this.props?.net;
-    if (net) {
-      const hitK = u >= 0.45 && u < 0.95 ? Math.sin(((u - 0.45) / 0.5) * Math.PI) * Math.exp(-(u - 0.45) * 4) : 0;
-      net.scale.set(1 + hitK * 0.25, 1, 1);
-      net.position.x = -1.5 * hitK * 0.25;
+    // Use the match's anchored cloth, at this goal's dimensions. Posts and panel seams never move.
+    const P = this.props;
+    if (P?.net) {
+      if (dt === 0) {
+        P.net.reset();
+        if (u >= contact) { P.net.punch(-1.88, 0.8, -0.1, 1.2); P.net.update(u - contact); }
+      } else if (n !== P.netHitN && u >= contact) {
+        P.netHitN = n;
+        P.net.punch(-1.88, 0.8, -0.1, 1.2);
+      }
     }
-    if (dt > 0 && n !== R.burstAt && u >= (lineup ? 0.2 : 0.45) && fxId) {
+    if (dt > 0 && n !== R.burstAt && u >= (lineup ? 0.2 : contact) && fxId) {
       R.burstAt = n;
       const cols = goalFxColors(fxId, [this.club.kit.shirt, this.club.kit.shirt2, 0xffd23a, 0xfbfbf4]);
       const ox = gx + -1.1 * gs;
@@ -992,6 +983,7 @@ export class ShopStage {
   private updateProps(t: number, dt: number): void {
     const P = this.props;
     if (!P) return;
+    if (dt > 0) P.net?.update(dt);
     for (let i = 0; i < P.flags.length; i++) P.flags[i].rotation.y = (P.flags[i].userData.y0 ?? (P.flags[i].userData.y0 = P.flags[i].rotation.y)) + Math.sin(t * 3 + i * 1.3) * 0.4;
     if (P.tifo) {
       const pos = P.tifo.geometry.getAttribute('position') as THREE.BufferAttribute;

@@ -134,16 +134,19 @@ describe('connect, delete account, friend codes (stubbed backend)', () => {
     expect(fn.calls).toHaveLength(1);
   });
 
-  it('switched off (a backend, but accounts not required): the game makes no account by itself', async () => {
+  it('optional accounts: never signs in automatically, but an explicit request backs up the club', async () => {
     _setEnvForTests({ url: ENV.url, key: ENV.key });
     const { be, ctx } = await boot(rich());
     const fn = stubFunctions({ 'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }) });
     expect(await connect()).toBe(false);
-    expect(await connect(true)).toBe(false);
     watchConnection(ctx);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(fn.calls).toHaveLength(0);
     expect(cloudSession()).toBeNull();
+    expect(gateNow()).toBe('open');
+    expect(await connect(true)).toBe(true);
+    expect(fn.calls).toHaveLength(1);
+    expect(be.rows.get('dev-1')?.data.coins).toBe(ctx.save.coins);
     expect(gateNow()).toBe('open');
   });
 

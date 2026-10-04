@@ -53,6 +53,28 @@ function runUp(m: Match, x0 = -12, frames = 50, sprint = false): Player {
 }
 
 describe('dribble assist: close control', () => {
+  it('allows a moving approach to an exposed ball past the carrier, while neutral input, retreat and recovery cannot bump-tackle', () => {
+    const challenge = (mode: 'approach' | 'retreat' | 'neutral' | 'cooldown' | 'stumble' | 'press') => {
+      const m = scenario(27);
+      const p = m.players[9], c = m.players[20];
+      place(p, 0, 0); p.facing = 0;
+      // The opponent is already behind the runner's shoulder, but his exposed ball is still ahead of the runner.
+      place(c, -0.3, 0.5); c.facing = 0;
+      m.ball.reset(0.65, 0); m.ball.owner = c.idx; m.ball.lastTouch = c.idx; m.ball.lastTouchSide = c.side;
+      m.active = p.idx;
+      p.vel.x = mode === 'retreat' ? -2 : mode === 'press' ? 0 : 2;
+      m.ctl[0].prev = mode === 'neutral' || mode === 'press' ? EMPTY_PAD : pad(mode === 'retreat' ? -1 : 1, 0);
+      m.ctl[0].pressing = mode === 'press';
+      if (mode === 'cooldown') p.kickCooldown = 0.2;
+      if (mode === 'stumble') p.stumbleT = 0.2;
+      (m as unknown as { autoTackle(): void }).autoTackle();
+      return m.drainEvents().some((e) => e.type === 'tackle' && e.by === p.idx);
+    };
+    expect(challenge('approach')).toBe(true);
+    expect(challenge('press')).toBe(true);
+    for (const mode of ['retreat', 'neutral', 'cooldown', 'stumble'] as const) expect(challenge(mode), mode).toBe(false);
+  });
+
   it('jogging with it, the ball sits tighter on his foot than at a sprint, and he turns 90 degrees quicker', () => {
     const gap = (sprint: boolean) => {
       const m = scenario(3);

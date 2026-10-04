@@ -19,7 +19,7 @@ import {
   LOOK_IDS, LOOK_SLOT_OF, PASS_IDS, TRAIL_IDS, levelOf, normalizeIap, normalizeShop,
   type DecorId, type DecorSlot, type IapState, type LookId, type LookSlot, type PassId, type PassDecorId, type SaveData, type ShopState,
 } from '../core/save';
-import { SEASON_THEMES } from './season';
+import { SEASON_THEMES, passItemId } from './season';
 import { FORMATIONS } from '../sim/formations';
 import { overall, type PlayerDef, type Role } from '../sim/types';
 import { SQUAD_MAX, SQUAD_MIN, clonePlayer, clubRating, freeNumber, sellPlayer, swapPlayers, tuneToOverall, type CareerState, type ClubState, type Wallet } from './career';
@@ -47,7 +47,7 @@ export interface ShopItem {
   level?: number;
   /** One line for the showcase. */
   blurb: string;
-  /** A signature item: earned through its Club Pass or bought in a past-theme gem collection; never sold for coins. */
+  /** A signature item: earned through its Club Pass or bought in a permanent gem collection; never sold for coins. */
   pass?: true;
 }
 
@@ -208,7 +208,7 @@ const DECOR: { readonly [k in Exclude<DecorId, PassDecorId>]: Look } = {
   mascotdragon: { name: 'Dragon Mascot', price: 5000, blurb: 'A dragon by your dugout that breathes fire into the air.' },
 };
 
-/** Club Pass kits and looks by month (January first), on top of the month's goal explosion and trail. */
+/** Club Journey kits and looks by stable theme index, on top of the month's goal explosion and trail. */
 const PASS_KIT_BLURB = [
   'A white knit with snowflakes and frosty trim.', 'Mud splatted all over. Proper football.', 'Pink blossom over spring white.',
   'Raindrops on stormy blue.', 'White and gold, with a trophy on the chest.', 'Beach stripes in sunset colours.',
@@ -289,12 +289,12 @@ const ITEMS: readonly ShopItem[] = [
   })),
 ].map((it) => (it.price === 0 ? { ...it, level: undefined } : it));
 
-/** The Club Pass looks of season `id` ("2026-10"): its goal explosion, trail, premium kit and player look. */
+/** The Club Journey looks of receipt `id` (legacy "2026-10" or "journey-10"): its goal explosion, trail, premium kit and player look. */
 export function seasonPassItems(id: string): { goalfx: ShopItem; trail: ShopItem; kit: ShopItem; look: ShopItem; nets: ShopItem; entrance: ShopItem } {
-  const m = Math.max(0, Math.min(11, (Number(id.slice(5, 7)) || 1) - 1));
+  const theme = passItemId(id);
   return {
-    goalfx: shopItem('goalfx', PASS_IDS[m])!, trail: shopItem('trail', PASS_IDS[m])!, kit: shopItem('kit', PASS_IDS[m])!, look: shopItem('look', PASS_IDS[m])!,
-    nets: shopItem('decor', `net${PASS_IDS[m]}`)!, entrance: shopItem('decor', `kick${PASS_IDS[m]}`)!,
+    goalfx: shopItem('goalfx', theme)!, trail: shopItem('trail', theme)!, kit: shopItem('kit', theme)!, look: shopItem('look', theme)!,
+    nets: shopItem('decor', `net${theme}`)!, entrance: shopItem('decor', `kick${theme}`)!,
   };
 }
 

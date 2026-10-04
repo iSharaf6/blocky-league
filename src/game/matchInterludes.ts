@@ -1,11 +1,12 @@
 import type { SceneShot } from '../render/cameraRig';
 import { HALF_W } from '../sim/constants';
 import { PF, STATE_CODE } from './replay';
+import { SCENE_STYLE } from './scenePoses';
 
 /** Short, local match stories. These place only the drawn frame; the football simulation waits untouched. */
-export type MatchInterludeKind = 'halftime' | 'return' | 'sportsmanship';
+export type MatchInterludeKind = 'halftime' | 'return' | 'victory' | 'debrief' | 'sportsmanship';
 export const INTERLUDE_SECONDS: Readonly<Record<MatchInterludeKind, number>> = {
-  halftime: 3.2, return: 2.6, sportsmanship: 3,
+  halftime: 4, return: 3, victory: 4.2, debrief: 4.6, sportsmanship: 3,
 };
 export const INTERLUDE_SKIP_GRACE = 0.3;
 /** The covered passage between the dugouts. Its mouth is in front of the stadium's advertising boards. */
@@ -26,15 +27,18 @@ export class MatchInterlude {
   done = false;
   private met = false;
   readonly cast: readonly [readonly number[], readonly number[]];
+  readonly actors: readonly number[];
 
-  constructor(readonly kind: MatchInterludeKind, home: readonly number[], away: readonly number[]) {
+  constructor(readonly kind: MatchInterludeKind, home: readonly number[], away: readonly number[],
+    readonly context: { humanSide?: 0 | 1; leadSide?: 0 | 1 | null } = {}) {
     // A lineup snapshot belongs to this scene. A later substitution cannot change the actors halfway through it.
     this.cast = [[...home], [...away]];
+    this.actors = kind === 'victory' || kind === 'debrief' ? this.cast[this.focusSide].slice(0, 5) : [...this.cast[0], ...this.cast[1]];
   }
 
   get fraction(): number { return unit(this.age / INTERLUDE_SECONDS[this.kind]); }
-  get tunnel(): boolean { return this.kind !== 'sportsmanship'; }
-  get actors(): number[] { return [...this.cast[0], ...this.cast[1]]; }
+  get tunnel(): boolean { return this.kind === 'halftime' || this.kind === 'return'; }
+  get focusSide(): 0 | 1 { return this.kind === 'debrief' ? this.context.humanSide ?? 0 : this.context.leadSide ?? 0; }
 
   /** `press` is a new edge, never a held gameplay action. The menu's opening tap cannot skip the return scene. */
   tick(dt: number, press: boolean): boolean {
@@ -58,7 +62,7 @@ export function interludeOrder(idxs: readonly number[], captain: number): number
 }
 
 /** Clear ball actions before giving an actor a presentation pose. Position and all action state stay local. */
-function actor(f: Float32Array, idx: number, x: number, z: number, facing: number, speed: number, time: number, style = 0): void {
+function actor(f: Float32Array, idx: number, x: number, z: number, facing: number, speed: number, time: number, style = 0, progress = 0): void {
   const o = idx * PF;
   f[o] = x;
   f[o + 1] = z;
@@ -67,8 +71,8 @@ function actor(f: Float32Array, idx: number, x: number, z: number, facing: numbe
   f[o + 4] = style ? STATE_CODE.celebrate : STATE_CODE.move;
   f[o + 5] = time;
   f[o + 6] = (time * speed / 2.4 + idx * 0.37) % 1;
-  f[o + 7] = style ? 0 : speed;
-  f[o + 8] = 0;
+  f[o + 7] = style && style !== SCENE_STYLE.walkTalk ? 0 : speed;
+  f[o + 8] = progress;
   f[o + 10] = 0;
   f[o + 12] = 0;
   f[o + 13] = style;
@@ -89,10 +93,44 @@ export function applyInterlude(f: Float32Array, scene: MatchInterlude, time: num
       scene.cast[side].forEach((idx, row) => {
         const z = lead + (leaving ? -1 : 1) * row * ROW_GAP;
         // Once inside the roof, he is in the dressing-room passage, never rendered through its back wall / stands.
-        actor(f, idx, side === 0 ? -LANE_X : LANE_X, z > TUNNEL_HIDE_Z ? HALF_W + 80 : z,
-          leaving ? Math.PI / 2 : -Math.PI / 2, speed, time);
+        const buoyant = scene.context.leadSide === null || scene.context.leadSide === undefined || scene.context.leadSide === side;
+        const chat = leaving && buoyant && row < 5 && k < 0.84;
+        actor(f, idx, (side === 0 ? -LANE_X : LANE_X) + (row % 2 ? 0.28 : -0.28), z > TUNNEL_HIDE_Z ? HALF_W + 80 : z,
+          leaving ? Math.PI / 2 : -Math.PI / 2, speed, scene.age + row * 0.3,
+          chat ? SCENE_STYLE.walkTalk : 0, chat ? row % 2 ? 0.3 : 0.8 : 0);
       });
     }
+    return;
+  }
+
+  if (scene.kind === 'victory') {
+    scene.actors.forEach((idx, row) => {
+      const arrive = ease(k / 0.3);
+      const x = row === 0 ? 0 : (row % 2 ? -1 : 1) * (1.4 + Math.floor((row - 1) / 2) * 1.3);
+      const z = HALF_W - 11 - (row ? 0.7 : 0) - (1 - arrive) * (row ? 2.4 : 0.4);
+      actor(f, idx, x, z, Math.PI / 2 + (row ? Math.sign(x) * 0.18 : 0), k < 0.3 ? 2.2 : 0,
+        scene.age + row * 0.2, k < 0.3 ? SCENE_STYLE.walkTalk : row === 0 && k < 0.82 ? FIVE : CLAP, 0.75);
+    });
+    return;
+  }
+
+  if (scene.kind === 'debrief') {
+    const settle = ease((k - 0.52) / 0.25);
+    scene.actors.forEach((idx, row) => {
+      if (row === 1 || row === 2) {
+        const sign = row === 1 ? -1 : 1;
+        actor(f, idx, sign * (1.25 + settle * 0.8), HALF_W - 11, row === 1 ? 0 : Math.PI,
+          0, scene.age + (row === 1 ? 0 : 0.7), settle < 0.9 ? SCENE_STYLE.argue : SCENE_STYLE.walkTalk, 1 - settle);
+      } else if (row === 0) {
+        // The captain steps between the gesturing pair, palms down: the exchange ends with the team together.
+        const in_ = ease((k - 0.28) / 0.42);
+        actor(f, idx, 0, HALF_W - 13.7 + in_ * 2.5, Math.PI / 2, in_ > 0 && in_ < 1 ? 1.7 : 0,
+          scene.age, SCENE_STYLE.walkTalk, -in_);
+      } else {
+        actor(f, idx, row === 3 ? -3.1 : 3.1, HALF_W - 12.6, Math.PI / 2, 0, scene.age + row * 0.2);
+        f[idx * PF + 4] = STATE_CODE.dejected;
+      }
+    });
     return;
   }
 
@@ -124,6 +162,14 @@ export function interludeShot(scene: MatchInterlude, out: SceneShot, tall = TALL
     out.tx = 0;
     out.ty = tall * 0.67;
     out.tz = WALK_START_Z + follow * 2.9;
+    out.fov = 38;
+  } else if (scene.kind === 'victory' || scene.kind === 'debrief') {
+    out.px = -1.4 + k * 0.8;
+    out.py = tall * 0.7;
+    out.pz = HALF_W - 4.2 - k * 0.35;
+    out.tx = 0;
+    out.ty = tall * 0.56;
+    out.tz = HALF_W - 11.3;
     out.fov = 38;
   } else {
     out.px = -3.2 + k * 0.65;

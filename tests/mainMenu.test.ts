@@ -48,8 +48,14 @@ describe('main menu: a hub with your club first', () => {
     expect(order(src, 'class="hub-t2"', '</div>`')).toEqual(['club', 'transfers', 'shoptile']);
     expect(src.indexOf("data-a=\"season\"")).toBeGreaterThan(0);
     // The third tier: QUICK MATCH and EVENTS, smaller; SETTINGS is a gear in the top bar.
-    const foot = src.slice(src.indexOf('class="hub-foot"'));
-    expect(foot.indexOf('data-a="quick"')).toBeLessThan(foot.indexOf('data-a="events"'));
+    const footStart = src.indexOf('class="hub-foot');
+    expect(footStart).toBeGreaterThan(0);
+    const foot = src.slice(footStart);
+    const quick = foot.indexOf('data-a="quick"');
+    const events = foot.indexOf('data-a="events"');
+    expect(quick).toBeGreaterThan(0);
+    expect(events).toBeGreaterThan(quick);
+    expect(foot).toContain('data-a="invite"');
     expect(src).toMatch(/hub-ico" data-a="settings"[^`]*gear/);
   });
 

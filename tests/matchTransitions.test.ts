@@ -3,7 +3,7 @@ import { Input, setBindings } from '../src/core/input';
 import { FoulPresentation } from '../src/game/foulPresentation';
 import { MatchSession, PRESENTATION } from '../src/game/matchSession';
 import { MatchTally } from '../src/game/ratings';
-import { FRAME_LEN, ReplayBuffer, writeFrame } from '../src/game/replay';
+import { BALL_OFS, FRAME_LEN, ReplayBuffer, writeFrame } from '../src/game/replay';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { DT, HALF_L } from '../src/sim/constants';
 import { Match, type Pad } from '../src/sim/match';
@@ -66,7 +66,7 @@ function rig() {
     replay: null, replayDone: false, replayWanted: false, recorded: 0, goalFrame: 0,
     goalWideS: PRESENTATION.goalWideS, celebDue: -1, megaShotT: -100, goldenGoalArmed: false,
     ownerBefore: -1, activeBefore: match.activeOf(0), hitStopT: 0, tally: new MatchTally(), lastPasser: [-1, -1],
-    buffer: new ReplayBuffer(300), world: {}, clipName: '', clipLive: false,
+    buffer: new ReplayBuffer(600), world: {}, clipName: '', clipLive: false,
     clips: { recording: false, stop: vi.fn() }, flash: { play: vi.fn() }, ghost: null,
     effects: { burst: vi.fn(), confetti: vi.fn(), clear: vi.fn() }, fxKit: { clear: vi.fn() },
     updateFrameFx: vi.fn(),
@@ -76,7 +76,7 @@ function rig() {
   }) as MatchSession;
   const internals = session as unknown as {
     paused: boolean; anyPress: boolean; eatButtons: boolean; halftimeFired: boolean; recorded: number;
-    replay: Float32Array[] | null; replayDone: boolean; replayWanted: boolean; replayT: number;
+    replay: Float32Array[] | null; replayDone: boolean; replayWanted: boolean; replayT: number; replayGoalIdx: number;
     latch: { pass: boolean; shoot: boolean; through: boolean; power: boolean; skill: boolean };
     buffer: ReplayBuffer;
     flow(dt: number): void; stepReplay(dt: number): void; handleEvents(events: MatchEvent[]): void; buildPad(): Pad;
@@ -86,26 +86,29 @@ function rig() {
     // MatchSession.update consumes anyPress once per rendered frame, after flow.
     internals.anyPress = false;
   };
-  const record = (count: number) => {
+  const record = (count: number, before?: (i: number) => void) => {
     for (let i = 0; i < count; i++) {
+      before?.(i);
       internals.buffer.push(match, internals.recorded * DT);
       internals.recorded++;
     }
   };
-  const goal = (worthReplay: boolean) => {
+  const goal = (longRange: boolean, side: Side = 0) => {
     match.phase = 'play';
     match.restart = null;
-    match.ball.lastTouch = 9;
-    Object.assign(match.ball.pos, { x: HALF_L + 0.1, y: 0.5, z: 0 });
-    match.shotDist = worthReplay ? 24 : 6;
+    match.ball.lastTouch = side === 0 ? 9 : 20;
+    match.ball.owner = -1;
+    match.shotDist = longRange ? 24 : 6;
     match.shotStyle = null;
     match.kickKind = 'shot';
-    record(150);
-    (match as unknown as { goal(side: Side): void }).goal(0);
+    const dir = match.attackDir(side);
+    record(150, i => Object.assign(match.ball.pos, { x: dir * (HALF_L - 12 + 12 * i / 150), y: 0.5, z: 0 }));
+    Object.assign(match.ball.pos, { x: dir * (HALF_L + 0.1), y: 0.5, z: 0 });
+    (match as unknown as { goal(side: Side): void }).goal(side);
     internals.handleEvents(match.drainEvents());
     record(60);
   };
-  return { match, input, session, internals, cam, hud, view, replayClasses, renderFrame, goal };
+  return { match, input, session, internals, cam, hud, view, replayClasses, renderFrame, goal, record };
 }
 
 describe('second half after a native interruption', () => {
@@ -176,6 +179,65 @@ describe('second half after a native interruption', () => {
 });
 
 describe('repeated goal skip and replay transitions', () => {
+  it.each([0, 1] as const)('automatically replays a normal close-range goal for side %i with the recorded build-up and actual scoring frame', (side) => {
+    const h = rig();
+    h.goal(false, side);
+    expect(h.match.shotDist).toBeLessThan(16);
+    expect(h.match.shotStyle).toBeNull();
+    expect(h.match.goals.at(-1)?.own).toBe(false);
+    expect(h.internals.replayWanted).toBe(true);
+    h.match.phaseT = PRESENTATION.replayAtS + 0.1;
+    h.renderFrame();
+    const frames = h.internals.replay!;
+    expect(frames.length).toBe(198);
+    expect(h.internals.replayGoalIdx).toBe(144);
+    const dir = h.match.attackDir(side);
+    expect(frames[0][BALL_OFS] * dir).toBeLessThan(HALF_L - 10);
+    expect(frames[h.internals.replayGoalIdx][BALL_OFS] * dir).toBeCloseTo(HALF_L + 0.1, 4);
+    expect(h.cam.mode).toBe('replay');
+    expect(h.replayClasses.contains('on')).toBe(true);
+  });
+
+  it('retains the finish through an explosion and the longest celebration after the live ring buffer wraps', () => {
+    const h = rig();
+    h.record(600);
+    h.goal(false);
+    Object.assign(h.session, { goalWideS: 1.8 });
+    h.view.celeb.holdS = 3.7;
+    h.record(228); // 4.8 seconds of goal frames including the 60 captured by goal().
+    h.match.phaseT = 3.7 + 1.8 - PRESENTATION.goalWideS - 0.01;
+    h.renderFrame();
+    expect(h.internals.replay).toBeNull();
+    h.match.phaseT += 0.02;
+    h.renderFrame();
+    const frames = h.internals.replay!;
+    expect(frames.length).toBe(198);
+    expect(h.internals.replayGoalIdx).toBe(144);
+    expect(frames[0][BALL_OFS]).toBeLessThan(HALF_L - 10);
+    expect(frames[h.internals.replayGoalIdx][BALL_OFS]).toBeCloseTo(HALF_L + 0.1, 4);
+  });
+
+  it.each(['demo', 'driver', 'moment'] as const)('keeps %s goals out of automatic replay sequencing', (mode) => {
+    const h = rig();
+    Object.assign(h.session, { [mode]: mode === 'demo' ? true : {} });
+    h.goal(false);
+    expect(h.internals.replayWanted).toBe(false);
+    expect(h.internals.replay).toBeNull();
+  });
+
+  it('advances to kickoff safely if goal footage is unavailable, without entering an empty replay', () => {
+    const h = rig();
+    h.goal(false);
+    h.internals.buffer.clear();
+    h.match.phaseT = PRESENTATION.replayAtS + 0.1;
+    expect(() => h.renderFrame()).not.toThrow();
+    expect(h.internals.replay).toBeNull();
+    expect(h.replayClasses.contains('on')).toBe(false);
+    h.renderFrame();
+    expect(h.match.phase).toBe('kickoff');
+    expect(h.replayClasses.contains('skip-only')).toBe(false);
+  });
+
   it('shows one skip state per celebration, consumes its tap and clears it on every kickoff through goals three and four', () => {
     const h = rig();
     for (let goal = 1; goal <= 4; goal++) {
@@ -203,7 +265,7 @@ describe('repeated goal skip and replay transitions', () => {
   it('runs real replays on the third and fourth goals and clears their HUD state whether skipped or naturally finished', () => {
     const h = rig();
     for (let goal = 1; goal <= 4; goal++) {
-      h.goal(true);
+      h.goal(false);
       expect(h.internals.replayWanted).toBe(true);
       h.match.phaseT = PRESENTATION.replayAtS + 0.1;
       h.renderFrame();
@@ -238,5 +300,18 @@ describe('repeated goal skip and replay transitions', () => {
       h.renderFrame();
       expect(h.replayClasses.contains('skip-only')).toBe(false);
     }
+  });
+
+  it('lets a fresh keeper/skill control edge skip a replay and consumes it before kickoff', () => {
+    const h = rig();
+    h.goal(false);
+    h.match.phaseT = PRESENTATION.replayAtS + 0.1;
+    h.renderFrame();
+    h.internals.stepReplay(DT); // No held button: arm fresh controller edges.
+    h.input.touch.skill = true;
+    h.internals.stepReplay(DT);
+    expect(h.internals.replay).toBeNull();
+    expect(h.match.phase).toBe('kickoff');
+    expect(h.internals.buildPad().skill).toBe(false);
   });
 });

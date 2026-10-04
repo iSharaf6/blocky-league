@@ -18,31 +18,31 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 - Keepers dive, claim crosses, rush out and distribute. You can move your keeper with the ball in his hands or at his feet, and hold KEEPER to bring him out while defending.
 - Fouls, penalties and yellow cards from an on-pitch referee. Direct free kicks use a goal reticle; corners and wide free kicks use a landing ring for the delivery.
 - Half-time tactics: mentality (defensive / balanced / attacking) and up to five substitutions with fresh legs and a short scene for each change. Controls, settings and quit or forfeit are available at half time.
-- Short, skippable match scenes: both teams head into the dressing-room tunnel at half time, return for the second half, and greet and applaud one another at the final whistle.
+- Short, skippable match scenes: teammates chat and wave on their halftime tunnel walk, return for the second half, celebrate wins or argue before the captain settles them, then shake hands. Man of the Match receives an award with teammates applauding; booked foul victims add a comic injury reaction.
 - Goal celebrations, TV-style instant replays, Man of the Match and player ratings, and a text commentary ticker (no spoken commentary).
 - Goal clips: where the browser can record the canvas, SAVE CLIP and SHARE on the full-time screen and the pause menu.
 - Day, sunset and floodlit night matches with clear skies, overcast, drizzle, rain, snow or blizzard. Snow settles from kickoff; marked rain puddles can cause a short skid on a sharp sprint turn. Net ripples follow the struck panel with seams fixed to the goal frame.
-- Seventeen crowd chant patterns with visible chant captions and rotating post-goal songs. In the iOS app, FULL vibration acknowledges every gameplay action button as it is pressed, alongside stronger contact feedback.
+- Nineteen crowd chant patterns with rounded choir voices, major-key refrains, visible chant captions and rotating post-goal songs. In the iOS app, FULL vibration acknowledges every gameplay action button as it is pressed, alongside stronger contact feedback.
 
 **Modes**
-- **Road to Glory**: six divisions of eight clubs, 14-matchday home-and-away seasons, promotion and relegation, transfers, training focuses, player growth, mentors, morale, staff, scouting and story decisions. Design your crest and kit, build your ground and earn a lasting club legacy.
+- **Road to Glory**: eight divisions of eight clubs, 14-matchday home-and-away seasons, promotion and relegation, transfers, training focuses, player growth, mentors, morale, staff, scouting and story decisions. Design your crest and kit, build your ground and earn a lasting club legacy.
 - **Blocky Cup**: an 8-team knockout with a bracket, prize money, a trophy, and penalty shootouts (aim your kicks, dive with your keeper).
 - **Football Moments**: eight challenges lasting 15 to 90 seconds of play, with retries, three-star best scores and an unlock ladder. Attempts earn XP without changing coins or the full-match record.
 - **Club Run**: seven short matches against a ladder of stronger clubs, one life, a perk after every win.
-- **Badges and season**: mastery badges on five skill tracks and a free monthly season track (from the level badge's unlock ladder).
+- **Badges and Journeys**: five skill tracks with eight mastery tiers, earned cosmetic looks and titles worn in the match broadcast. Twelve permanent 30-tier Club Journeys save independent progress and optional Club Pass ownership; select one to advance, with no expiry or monthly reset.
 - **Unlocks**: view the level requirements for ball skins, celebrations and Legend difficulty from the main menu's level badge.
 - **Daily gift** with a seven-day calendar that keeps your place when you miss a day.
-- **Club identity:** coins buy ordinary cosmetics, gems buy guaranteed six-piece signature collections, and earned Scout Tickets open player scouting packs. The Club Pass adds a permanent themed stadium ceremony immediately, then a player look, trail, kit, goal effect and diamond nets through its tiers. Past themes remain available for gems, with a discount for pieces already owned; these identities change appearance only.
+- **Club identity:** coins buy ordinary cosmetics, gems buy guaranteed six-piece signature collections, and earned Scout Tickets open player scouting packs. The Club Pass adds a permanent themed stadium ceremony immediately, then a player look, trail, kit, goal effect and diamond nets through its tiers. All twelve themes remain available for gems, with a discount for pieces already owned; these identities change appearance only.
 - **Transfer window:** league matchdays refresh listings. Transfer news uses dated cards with unread notices that clear when the News tab is opened.
 
 **Tech**
 - Every sound is synthesised live with WebAudio, so there are no audio files.
 - Quiet stereo rain patter and a subdued crowd bed; snow has no weather hiss. Ambience fades out on pause and in menus. Sound FX controls rain, and Crowd controls stadium ambience.
 - Keyboard, gamepad and touch controls; landscape and portrait framing. Every key and gamepad button can be rebound (Settings › Keys, with swaps on a conflict and RESET), the touch stick can float or stay fixed, and a colour-blind option adds shape cues. Every key hint on screen follows the bindings.
-- Adaptive rendering quality (dynamic resolution, crowd density and shadow size follow the device).
-- Portal builds zip to about 480 KB; the web build with PWA and sharing assets is about 640 KB.
+- Adaptive rendering quality (dynamic resolution, crowd density and shadow size follow the device). Framebuffer pixel and GPU dimension budgets cover phone, tablet and large desktop screens; HTML UI keeps its native text resolution.
+- Portal builds zip to about 776 KB; the web build with PWA, accounts and sharing assets is about 1.14 MB.
 
-**Monetisation** comes from an optional portal adapter for **CrazyGames** and **Poki**: midgame ads plus an opt-in rewarded ad that doubles your coins. See [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
+**Monetisation** comes from an optional portal adapter for **CrazyGames** and **Poki**: ads before later kick-offs (after at least eight seconds with the results), plus an opt-in rewarded ad that doubles your coins. See [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
 
 ## Run it
 

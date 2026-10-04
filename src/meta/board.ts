@@ -114,7 +114,7 @@ export function setObjectives(state: CareerState): void {
   const mine = clubRating(club);
   const avg = season.rivals.reduce((s, r) => s + r.rating, 0) / Math.max(1, season.rivals.length);
   const edge = mine - avg;
-  const step = BOTTOM_DIVISION - div;
+  const step = Math.max(0, 6 - div);
   const objectives: Objective[] = [];
   // The league.
   const finish = edge >= 4 ? 1 : edge >= 0 ? 2 : edge >= -4 ? 4 : 6;

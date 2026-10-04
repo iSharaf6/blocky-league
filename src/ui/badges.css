@@ -2,6 +2,16 @@
    share one row; SEASON is a purple strip over a sideways track; BADGES and TITLES are grids scrolling in their pane. */
 
 .bd-screen .panel.mc { width: min(1040px, 100%); }
+.bd-journeys { display: flex; gap: 6px; min-width: 0; overflow-x: auto; padding: 2px 2px 5px; touch-action: pan-x; }
+.bd-journeys button { flex: 0 0 auto; display: grid; gap: 3px; min-height: 42px; padding: 6px 10px; color: var(--ink); background: var(--cream); border: 2px solid var(--ink); border-top: 4px solid var(--journey); cursor: pointer; font: 400 12px var(--round); }
+.bd-journeys button.on { color: #fff; background: #3a1f78; }
+.bd-journeys small { font-size: 10px; }
+.bd-screen .bd-passoffer { overflow-y: auto; justify-content: flex-start; }
+.bd-screen .bd-passoffer > * { flex-shrink: 0; }
+.bd-screen .bd-head { flex-wrap: wrap; }
+.bd-screen .bd-earned-look { color: var(--ink-2); font: 400 10px/1.3 var(--round); }
+.bd-title.prestige { border-color: var(--prestige); box-shadow: 0 3px 0 var(--prestige); }
+.bd-title.prestige b::before { content: '★ '; color: var(--prestige); }
 
 /* ---- the tab row: three tabs, and CLAIM ALL pinned on the right whenever something is waiting */
 

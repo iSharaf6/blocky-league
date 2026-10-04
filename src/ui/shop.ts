@@ -41,11 +41,12 @@ import {
 } from '../meta/gems';
 import { AD_CAPS, adsLeft, claimDailyGems, useAd } from '../meta/loops';
 import { syncNetwork } from '../meta/premium';
+import { syncMasteryRewards } from '../meta/mastery';
 import { buyPassWithGems, buySignatureSet, equipSignatureSet, passActive, passTotals, signatureMissing, signaturePrice, signatureSet, signatureSets, syncSignatureEntitlements } from '../meta/pass';
 import { openBadges } from './badges';
 import type { GroundState } from '../meta/ground';
 import { confirmGems, gemArt, gemPrice } from './gemUi';
-import { seasonDaysLeft, seasonOf, seasonTheme } from '../meta/season';
+import { passItemId, seasonOf, seasonTheme, selectJourney } from '../meta/season';
 import { quickSaleValue, squadWages, wageBudget, wageOf } from '../meta/market';
 import { GOAL_FX_COLORS, TRAIL_COLORS } from '../render/cosmetics';
 import { KIT_DESIGNS } from '../render/kitDesigns';
@@ -291,8 +292,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   const scr = mountMeta(app, 'sh-screen shell');
   const save = app.save;
   shopOf(save);
-  if (syncSignatureEntitlements(save).length) app.persist();
-  let signaturePick = `pass${seasonOf(save).id.slice(5, 7)}`;
+  if ([...syncSignatureEntitlements(save), ...syncMasteryRewards(save)].length) app.persist();
+  let signaturePick = passItemId(seasonOf(save).id);
   let signaturePiece = -1;
   let tab: ShopTab = tab0 === 'coins' && !coinsTab() ? 'featured' : tab0;
   if (isGoals(tab)) lastGoals = tab as ShopCat;
@@ -365,6 +366,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     if (!g.restored) say(grantText(g), 'good');
   });
   onMetaClose(offGrant);
+  onMetaClose(iap.onStateChange(() => { if (!busy) draw(); }));
 
   const storeHtml = (): string => {
     // (Every product, the store's own where it has them; until it answers, stand-ins at the catalogue price.)
@@ -408,24 +410,26 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const season = seasonOf(save);
     const theme = seasonTheme(season.id).name.toUpperCase();
     const totals = passTotals(season.id);
-    const days = seasonDaysLeft();
+    const newLooks = totals.items.filter(it => !owns(save, it.cat, it.id)).length;
     const passOn = passActive(save);
+    const passPending = !!save.iap?.pendingPass;
     // The Club Pass is the big card: the month, everything it pays in real numbers, and its two prices (the store's,
     // where there is one, or gems). Tiers already reached unlock at once.
     const passCard = `<section class="sh-passcard ${passOn ? 'on' : ''}">
           <span class="sh-pc-ic" aria-hidden="true">${pixelIcon('crown', '#ffd23a', 4)}</span>
           <b class="sh-pc-name">CLUB PASS</b>
-          <small class="sh-pc-theme">${esc(theme)}${sep()}${days} ${days === 1 ? 'DAY' : 'DAYS'} LEFT</small>
+          <small class="sh-pc-theme">${esc(theme)}${sep()}PERMANENT JOURNEY</small>
           <ul class="sh-pc-facts">
             <li><b>+${fmt(totals.coins)}</b>COINS</li>
             <li><b>+${fmt(totals.gems)}</b>GEMS</li>
-            <li><b>${totals.items.length}</b>PASS LOOKS</li>
+            <li><b>${newLooks}</b>NEW PASS LOOKS</li>
           </ul>
-          <small class="sh-pc-note">A COMPLETE IDENTITY: KIT, LOOK, TRAIL, GOAL FX, NETS AND STAR CEREMONY. THE CEREMONY UNLOCKS NOW</small>
-          <button class="btn btn-white" data-a="signaturepick" data-id="pass${season.id.slice(5, 7)}">PREVIEW ALL SIX</button>
-          ${passOn ? '<em class="sh-tag own sh-pc-on">ON THIS MONTH</em>' : `
-            ${pass ? `<button class="btn btn-yellow btn-lg sh-pc-buy" data-a="iap" data-id="${esc(pass.id)}" ${off} aria-label="Get the Club Pass, ${esc(pass.price)}"><small>GET IT</small><b>${label(pass)}</b></button>` : ''}
-            <button class="btn btn-white sh-pc-gems" data-a="passgems" ${off} aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${pass ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>`}
+          <small class="sh-pc-note">PERMANENT FOR THIS JOURNEY. CEREMONY NOW; THE REST ON ITS TIERS. OWNED LOOKS ARE ALREADY YOURS</small>
+          <button class="btn btn-white" data-a="signaturepick" data-id="${passItemId(season.id)}">PREVIEW ALL SIX</button>
+          ${passOn ? '<em class="sh-tag own sh-pc-on">OWNED FOR GOOD</em>' : `
+            ${pass ? `<button class="btn btn-yellow btn-lg sh-pc-buy" data-a="iap" data-id="${esc(pass.id)}" ${off} ${passPending ? 'disabled' : ''} aria-label="Get the Club Pass, ${esc(pass.price)}"><small>GET IT</small><b>${label(pass)}</b></button>` : ''}
+            <button class="btn btn-white sh-pc-gems" data-a="passgems" ${off} ${passPending ? 'disabled' : ''} aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${pass ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>`}
+          ${passPending ? '<small class="sh-pc-note">STORE PAYMENT PENDING. NO NEED TO BUY AGAIN</small>' : ''}
         </section>`;
     const chips = `<div class="chips sh-slots sh-secs" role="group" aria-label="Store sections">${STORE_SECS.map((x) =>
       `<button class="${x.sec === sec ? 'on' : ''}" data-a="sec" data-v="${x.sec}" aria-pressed="${x.sec === sec}">${x.label}</button>`).join('')}</div>`;
@@ -634,10 +638,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     }
     if (s === 'owned') return `<div class="sh-btns"><button class="btn btn-go btn-lg sh-act" data-a="equip">${isSlotCat(it.cat) ? 'WEAR IT' : 'EQUIP'}</button></div>`;
     if (s === 'pass') {
-      const collectionId = /pass\d{2}$/.exec(it.id)?.[0] ?? `pass${seasonOf(save).id.slice(5, 7)}`;
-      const current = collectionId === `pass${seasonOf(save).id.slice(5, 7)}`;
+      const collectionId = /pass\d{2}$/.exec(it.id)?.[0] ?? passItemId(seasonOf(save).id);
+      const current = collectionId === passItemId(seasonOf(save).id);
       return `<div class="sh-btns"><button class="btn btn-blue btn-lg sh-act" data-a="signaturepick" data-id="${esc(collectionId)}">PREVIEW COLLECTION</button></div>
-        ${line(current ? 'EARNED THROUGH THIS MONTH\'S CLUB PASS' : 'PERMANENT GEM COLLECTION. EARNED GEMS WORK TOO', 'pass')}`;
+        ${line(current ? 'EARNED ON THIS JOURNEY OR BOUGHT AS A COLLECTION' : 'PERMANENT GEM COLLECTION. EARNED GEMS WORK TOO', 'pass')}`;
     }
     const price = priceOf(it);
     const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s> ` : '';
@@ -875,16 +879,16 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const set = signatureSet(signaturePick) ?? signatureSets()[0];
     const missing = signatureMissing(save, set);
     const price = signaturePrice(save, set);
-    const current = set.id === `pass${seasonOf(save).id.slice(5, 7)}`;
+    const current = set.id === passItemId(seasonOf(save).id);
     const tiles = signatureSets().map((s) => `<button class="sh-signature-tile ${s.id === set.id ? 'sel' : ''}" style="--signature:${s.colour}" data-a="signaturepick" data-id="${s.id}" aria-pressed="${s.id === set.id}"><b>${esc(s.name.toUpperCase())}</b><small>${6 - signatureMissing(save, s).length} OF 6 OWNED</small></button>`).join('');
     const action = !missing.length ? '<button class="btn btn-go btn-lg" data-a="signaturewear">EQUIP ALL SIX</button>'
-      : current ? `<button class="btn btn-blue btn-lg" data-a="${passActive(save) ? 'signatureseason' : 'passgems'}">${passActive(save) ? 'CLAIM THE REST IN SEASON' : `CLUB PASS ${gemPrice(GEM_PRICES.clubPass)}`}</button>`
       : `<button class="btn btn-blue btn-lg" data-a="signaturebuy">${missing.length < 6 ? 'COMPLETE' : 'BUY AND EQUIP'} ${gemPrice(price)}</button>`;
+    const journeyAction = `<button class="btn btn-white" data-a="signatureseason">${current ? 'OPEN THIS JOURNEY' : 'SELECT THIS JOURNEY'}</button>`;
     return `<div class="sh-content split sh-cat sh-signature"><section class="pane sh-list"><div class="pane-h"><b>SIGNATURE COLLECTIONS</b></div><div class="sh-signature-grid pane-scroll" data-scroll-key="sh-signatures">${tiles}</div></section>
       <section class="sh-detail"><div class="sh-stage ${stage.ok ? '' : 'flat'}" style="--sb:${set.colour}">${stage.ok ? '<canvas class="sh-3d" aria-hidden="true"></canvas>' : pixelIcon('crown', '#ffd23a', 5)}</div>
       <div class="sh-info"><div class="sh-id"><small class="sh-kind">GEM IDENTITY COLLECTION${sep()}PERMANENT</small><h3 class="sh-name">${esc(set.name.toUpperCase())}</h3><p class="sh-blurb">Your own match spectacle, from the captain's look to the walkout and both goals. Choose a piece to see it move. Cosmetic only.</p></div>
       <div class="sh-signature-pieces"><button class="${signaturePiece < 0 ? 'on' : ''}" data-a="signaturepart" data-i="-1">FULL CLUB</button>${set.items.map((it, i) => `<button class="${signaturePiece === i ? 'on' : ''}" data-a="signaturepart" data-i="${i}" aria-pressed="${signaturePiece === i}">${esc(it.name)}${owns(save, it.cat, it.id) ? ' OWNED' : ''}</button>`).join('')}</div>
-      <small>${current ? 'THIS MONTH\'S CLUB PASS. CEREMONY NOW; THE REST ON ITS TIERS.' : `${missing.length < 6 ? `${6 - missing.length} ALREADY OWNED. YOU ONLY PAY FOR ${missing.length} MISSING PIECES.` : 'ALL SIX GUARANTEED. NO RANDOM REWARD. ALWAYS AVAILABLE.'}`} EARNED GEMS WORK TOO.</small><div class="sh-actrow">${action}</div></div></section></div>`;
+      <small>${missing.length < 6 ? `${6 - missing.length} ALREADY OWNED. YOU ONLY PAY FOR ${missing.length} MISSING PIECES.` : 'ALL SIX GUARANTEED. NO RANDOM REWARD. ALWAYS AVAILABLE.'} EARNED GEMS WORK TOO. OR PROGRESS ITS PERMANENT CLUB JOURNEY.</small><div class="sh-actrow">${action}${journeyAction}</div></div></section></div>`;
   };
 
   // ---- players (scout packs + the market)
@@ -1286,7 +1290,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       signaturePiece = Number(el.dataset.i ?? -1);
       stageFor(); draw();
     },
-    signatureseason: () => openBadges(app, () => openShop(app, { tab: 'signature', onBack: back, backLabel }), 'season'),
+    signatureseason: () => {
+      if (selectJourney(seasonOf(save), signaturePick)) app.persist();
+      openBadges(app, () => openShop(app, { tab: 'signature', onBack: back, backLabel }), 'season');
+    },
     signaturewear: () => {
       if (!equipSignatureSet(save, signaturePick)) return;
       app.persist(); rewear(); stageFor(); draw(); buzz('success'); say('ALL SIX EQUIPPED', 'good');
@@ -1510,15 +1517,16 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       });
     },
     passgems: () => {
+      if (save.iap?.pendingPass) { say('STORE PAYMENT PENDING. YOUR JOURNEY WILL UNLOCK WHEN IT CONFIRMS', 'info'); return; }
       confirmGems(scr.root, {
-        title: 'GET THE CLUB PASS?', text: 'THIS MONTH. TIERS YOU HAVE REACHED UNLOCK AT ONCE', price: GEM_PRICES.clubPass, have: gems(save), yes: 'GET IT', getGems: getGems(),
+        title: 'GET THE CLUB PASS?', text: 'PERMANENT FOR THIS JOURNEY. REACHED TIERS UNLOCK AT ONCE', price: GEM_PRICES.clubPass, have: gems(save), yes: 'GET IT', getGems: getGems(),
         onYes: () => {
           if (!buyPassWithGems(save).ok) return;
           app.persist();
           sfx.coin();
           window.setTimeout(() => sfx.powerup(), 120);
           draw();
-          say('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN SEASON', 'good');
+          say('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN JOURNEYS', 'good');
         },
       });
     },
@@ -1735,7 +1743,7 @@ function grantText(g: IapGrant): string {
     if (it) things.push(`THE ${it.name.toUpperCase()} ${CAT_LABEL[it.cat].toUpperCase()}`);
   }
   if (g.noAds) things.push('NO ADS IS ON');
-  if (g.pass) things.push('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN SEASON');
+  if (g.pass) things.push('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN JOURNEYS');
   if (g.doubler) things.push('EVERY MATCH NOW PAYS DOUBLE');
   if (g.firstBonus) things.push('FIRST BUY DOUBLED');
   return things.length ? things.join(', ') : 'THANK YOU';

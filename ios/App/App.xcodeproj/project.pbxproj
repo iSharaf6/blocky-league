@@ -119,6 +119,10 @@
 						DevelopmentTeam = U9Z36KR28N;
 						LastSwiftMigration = 1100;
 						ProvisioningStyle = Automatic;
+						SystemCapabilities = {
+							com.apple.GameCenter = { enabled = 1; };
+							com.apple.SignInWithApple = { enabled = 1; };
+						};
 					};
 				};
 			};

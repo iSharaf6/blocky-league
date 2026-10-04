@@ -191,6 +191,24 @@ describe('football object graph recovery', () => {
 });
 
 describe('actual MatchSession checkpoint and restore', () => {
+  it('clears a prior card victim pose and pin on restore while retaining the actual booking', () => {
+    const source = rig();
+    source.m.booked.add(7);
+    const graph = snapshot(source);
+    const resumed = rig();
+    const pinPlayer = vi.fn();
+    Object.assign(resumed.view, { pinPlayer, frameHook: vi.fn() });
+    Object.assign(resumed.session, { cardT: 1.2, cardRestart: resumed.m.restart, cardPlayer: 7, cardVictim: 9,
+      cardIdentity: resumed.m.players[7].def.id, cardAct: { idx: 9, age: 0.4 } });
+    resumed.session.restoreCheckpoint(graph);
+    const state = resumed.session as unknown as { cardT: number; cardAct: unknown; cardPlayer: number; cardVictim: number };
+    expect(state).toMatchObject({ cardT: 0, cardAct: null, cardPlayer: -1, cardVictim: -1 });
+    expect(resumed.view.frameHook).toBeNull();
+    expect(pinPlayer).toHaveBeenLastCalledWith(null);
+    expect(resumed.m.booked.has(7)).toBe(true);
+    expect(snapshot(resumed)).toEqual(graph);
+  });
+
   it('resumes the same airborne pass and future simulation while keeping live tracker and HUD match identities', () => {
     const source = rig();
     airborne(source);

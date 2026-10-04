@@ -3,6 +3,7 @@ import { clamp } from '../core/math';
 import { GOAL_DEPTH, GOAL_H, GOAL_W, HALF_L } from '../sim/constants';
 
 type Panel = 'back' | 'roof' | 'left' | 'right';
+export interface NetShape { goalX: number; width: number; height: number; depth: number }
 /** A small, anchored fabric mesh. Impacts deform their actual panel, never detach strands from the goal frame. */
 export class GoalNet {
   readonly mesh: THREE.Mesh;
@@ -13,9 +14,12 @@ export class GoalNet {
   private readonly pos: THREE.BufferAttribute;
   private impacts: { x: number; y: number; z: number; panel: Panel; amp: number; t: number }[] = [];
 
-  constructor(readonly sign: number, texture: THREE.Texture | null = null, cell = 0.135) {
+  constructor(readonly sign: number, texture: THREE.Texture | null = null, cell = 0.135,
+    private readonly shape: NetShape = { goalX: sign * HALF_L, width: GOAL_W, height: GOAL_H, depth: GOAL_DEPTH }) {
     const verts: number[] = [], norms: number[] = [], uvs: number[] = [], idx: number[] = [], anchors: number[] = [];
-    const gx = sign * HALF_L, bx = gx + sign * GOAL_DEPTH;
+    const { goalX: gx, width: W, height: H, depth: D } = shape;
+    const bx = gx + sign * D;
+    const sizeK = H / GOAL_H;
     const panel = (kind: Panel, w: number, h: number, nu: number, nv: number,
       at: (u: number, v: number) => [number, number, number], n: [number, number, number]) => {
       const start = verts.length / 3;
@@ -32,12 +36,12 @@ export class GoalNet {
         idx.push(a, a + 1, a + nu + 2, a, a + nu + 2, a + nu + 1);
       }
     };
-    const belly = (u: number, v: number) => 0.09 * Math.sin(Math.PI * u) * Math.sin(Math.PI * Math.min(1, v * 1.15));
-    const sag = (u: number, v: number) => 0.14 * Math.sin(Math.PI * u) * Math.sin(Math.PI * v);
-    panel('back', GOAL_W, GOAL_H, 16, 8, (u, v) => [bx + sign * belly(u, v), v * GOAL_H, -GOAL_W / 2 + u * GOAL_W], [sign, 0, 0]);
-    panel('roof', GOAL_DEPTH, GOAL_W, 6, 16, (u, v) => [gx + sign * u * GOAL_DEPTH, GOAL_H - sag(u, v), -GOAL_W / 2 + v * GOAL_W], [0, 1, 0]);
-    for (const zs of [-1, 1]) panel(zs < 0 ? 'left' : 'right', GOAL_DEPTH, GOAL_H, 6, 8,
-      (u, v) => [gx + sign * u * GOAL_DEPTH, v * GOAL_H, zs * GOAL_W / 2], [0, 0, zs]);
+    const belly = (u: number, v: number) => 0.09 * sizeK * Math.sin(Math.PI * u) * Math.sin(Math.PI * Math.min(1, v * 1.15));
+    const sag = (u: number, v: number) => 0.14 * sizeK * Math.sin(Math.PI * u) * Math.sin(Math.PI * v);
+    panel('back', W, H, 16, 8, (u, v) => [bx + sign * belly(u, v), v * H, -W / 2 + u * W], [sign, 0, 0]);
+    panel('roof', D, W, 6, 16, (u, v) => [gx + sign * u * D, H - sag(u, v), -W / 2 + v * W], [0, 1, 0]);
+    for (const zs of [-1, 1]) panel(zs < 0 ? 'left' : 'right', D, H, 6, 8,
+      (u, v) => [gx + sign * u * D, v * H, zs * W / 2], [0, 0, zs]);
     this.base = Float32Array.from(verts);
     this.normal = Float32Array.from(norms);
     this.anchors = Float32Array.from(anchors);
@@ -56,9 +60,10 @@ export class GoalNet {
 
   punch(x: number, y: number, z: number, amp: number): void {
     if (![x, y, z, amp].every(Number.isFinite) || amp <= 0) return;
-    const back = Math.abs(Math.abs(x) - HALF_L - GOAL_DEPTH), roof = Math.abs(y - GOAL_H), side = Math.abs(Math.abs(z) - GOAL_W / 2);
+    const { goalX, depth, width, height } = this.shape;
+    const back = Math.abs(x - goalX - this.sign * depth), roof = Math.abs(y - height), side = Math.abs(Math.abs(z) - width / 2);
     const panel: Panel = back <= roof && back <= side ? 'back' : roof <= side ? 'roof' : z < 0 ? 'left' : 'right';
-    this.impacts.push({ x, y: clamp(y, 0, GOAL_H), z: clamp(z, -GOAL_W / 2, GOAL_W / 2), panel, amp: clamp(amp, 0, 1.4), t: 0 });
+    this.impacts.push({ x, y: clamp(y, 0, height), z: clamp(z, -width / 2, width / 2), panel, amp: clamp(amp, 0, 1.4), t: 0 });
     if (this.impacts.length > 3) this.impacts.shift();
   }
 
@@ -68,19 +73,27 @@ export class GoalNet {
     for (const im of this.impacts) im.t += step;
     this.impacts = this.impacts.filter((im) => im.t < 1.6);
     const p = this.pos.array as Float32Array;
+    const sizeK = this.shape.height / GOAL_H;
     for (let i = 0; i < this.base.length; i += 3) {
       let off = 0;
       for (const im of this.impacts) {
         if (this.panels[i / 3] !== im.panel) continue;
         const dx = this.base[i] - im.x, dy = this.base[i + 1] - im.y, dz = this.base[i + 2] - im.z;
-        const fall = Math.exp(-(dx * dx + dy * dy + dz * dz) / 1.7);
-        off += im.amp * 0.4 * fall * Math.exp(-im.t * 3.2) * Math.cos(im.t * 14);
+        const fall = Math.exp(-(dx * dx + dy * dy + dz * dz) / (1.7 * sizeK * sizeK));
+        off += im.amp * 0.4 * sizeK * fall * Math.exp(-im.t * 3.2) * Math.cos(im.t * 14);
       }
-      off = clamp(off, -0.18, 0.55) * this.anchors[i / 3];
+      off = clamp(off, -0.18 * sizeK, 0.55 * sizeK) * this.anchors[i / 3];
       p[i] = this.base[i] + this.normal[i] * off;
       p[i + 1] = this.base[i + 1] + this.normal[i + 1] * off;
       p[i + 2] = this.base[i + 2] + this.normal[i + 2] * off;
     }
+    this.pos.needsUpdate = true;
+  }
+
+  /** The shop can sample a new still without borrowing the live preview's previous impacts. */
+  reset(): void {
+    this.impacts.length = 0;
+    (this.pos.array as Float32Array).set(this.base);
     this.pos.needsUpdate = true;
   }
 }

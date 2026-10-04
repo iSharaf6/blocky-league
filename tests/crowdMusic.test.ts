@@ -31,7 +31,7 @@ function fakeAudio() {
     node() {
       ctx.nodes++;
       return {
-        connect: (d: unknown) => d, disconnect() {}, start() {}, stop() {},
+        connect: (d: unknown) => d, disconnect() {}, start() {}, stop() {}, setPeriodicWave(_wave: unknown) {},
         gain: param(), frequency: param(), Q: param(), pan: param(), playbackRate: param(), threshold: param(), ratio: param(),
         knee: param(), attack: param(), release: param(), type: '', buffer: null as unknown, loop: false, normalize: true,
       };
@@ -40,6 +40,7 @@ function fakeAudio() {
     createDynamicsCompressor() { return this.node(); }
     createBiquadFilter() { return this.node(); }
     createOscillator() { return this.node(); }
+    createPeriodicWave(_real: Float32Array, _imag: Float32Array) { return {}; }
     createBufferSource() { return this.node(); }
     createConvolver() { return this.node(); }
     createStereoPanner() { return this.node(); }

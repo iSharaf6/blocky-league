@@ -55,14 +55,14 @@ Written against build b459cd5, from the round 7 to 12 critic data and the owner'
   - Wall: tackles won and clean sheets
   - Magician: skill cuts and nutmegs
   - Keeper: saves in Moments
-- Each track has 5 tiers earned by doing the thing in any mode. Every tier unlocks something you can see: a boot colour, a ball trail colour, a crowd chant, a celebration variant.
+- Each track has eight tiers earned by doing the thing in any mode. Every tier pays coins and a wearable title; tiers V and VIII also grant existing cosmetic looks. The original first five thresholds and rewards are preserved. Higher tiers carry visible earned prestige.
 - The level badge on the main menu shows the next badge tier, so there is always a near goal.
 
 ### Season track (a reason to come back each day)
 
-- A free 30-tier track, fed by XP and daily challenges, that resets monthly with a theme.
+- Twelve shipped, player-selected 30-tier Club Journeys. XP advances the selected track; free progress and optional paid upgrades never expire or reset. Switching retains each Journey's own XP and claims. No monthly updates are needed.
 - Every tier gives coins or a cosmetic.
-- Nothing can be bought, and nothing affects the pitch.
+- Each Journey has a free track and an optional permanent Club Pass for one identity. Purchases have stated outcomes; paid identity pieces do not affect match strength.
 
 ## Deliberately not in v1
 

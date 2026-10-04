@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FOUL_BEAT_S, FoulPresentation, type BookingShot } from '../src/game/foulPresentation';
 import { MatchSession } from '../src/game/matchSession';
-import { FRAME_LEN, writeFrame } from '../src/game/replay';
+import { FRAME_LEN, PF, writeFrame } from '../src/game/replay';
 import { newSubStage } from '../src/game/showcase';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { DT, HALF_W } from '../src/sim/constants';
@@ -82,6 +82,7 @@ function sessionFor(m: Match) {
   };
   const refState = { x: -15, z: 3, faceX: -13.3, faceZ: 3 };
   const view = {
+    frameHook: null as ((f: Float32Array, dt: number) => void) | null,
     frame, headTop: 1.9, refState, ballGlide: { x: 0, y: 0, z: 0 },
     apply: vi.fn((_prev: Float32Array, cur: Float32Array) => frame.set(cur)),
     tickFlashes: vi.fn(), flashPlayer: vi.fn(), refSignal: vi.fn(), clearFades: vi.fn(), pinPlayer: vi.fn(),
@@ -123,6 +124,44 @@ function sessionFor(m: Match) {
 }
 
 describe('the tackle has time to read before the referee decision', () => {
+  it('gives a yellow-card victim a comic rendered reaction that never changes the foul, injury or restart', () => {
+    const { m, on, events } = realFoul(false);
+    const h = sessionFor(m);
+    h.events(events);
+    for (let i = 0; i < 6; i++) h.session.update(0.1);
+    expect(h.cam.mode).toBe('card');
+    expect(h.view.frameHook).not.toBeNull();
+    const original = JSON.stringify(m);
+    const drawn = h.view.frame.slice();
+    h.view.frameHook!(drawn, 0.1);
+    expect(drawn[on.idx * PF + 13]).toBe(17);
+    expect(drawn[on.idx * PF + 14]).toBe(0);
+    for (let i = 0; i < 17; i++) h.view.frameHook!(drawn, 0.1);
+    expect(drawn[on.idx * PF + 8]).toBeCloseTo(1);
+    expect(JSON.stringify(m)).toBe(original);
+    m.restart = { ...m.restart!, x: m.restart!.x + 1 };
+    h.session.update(0.001);
+    expect(h.view.frameHook).toBeNull();
+    expect(h.cam.mode).toBe('broadcast');
+  });
+
+  it('keeps red-card scenes serious and removes a yellow reaction if the victim is replaced', () => {
+    const red = realFoul(true);
+    const serious = sessionFor(red.m);
+    serious.events(red.events);
+    for (let i = 0; i < 6; i++) serious.session.update(0.1);
+    expect(serious.cam.mode).toBe('card');
+    expect(serious.view.frameHook).toBeNull();
+    const yellow = realFoul(false);
+    const comic = sessionFor(yellow.m);
+    comic.events(yellow.events);
+    for (let i = 0; i < 6; i++) comic.session.update(0.1);
+    expect(comic.view.frameHook).not.toBeNull();
+    expect(comic.session.substitute(yellow.on.side, yellow.on.slot, yellow.m.bench[yellow.on.side].findIndex((p) => p.role !== 'GK'))).toBe(true);
+    comic.session.update(0.001);
+    expect(comic.view.frameHook).toBeNull();
+    expect(comic.cam.mode).toBe('broadcast');
+  });
   it.each([false, true])('defers the real card/restart sequence, second booking %s, exactly once', (second) => {
     const { m, on, by, events } = realFoul(second);
     expect(events.filter((e) => ['foul', 'card', 'whistle', 'restart'].includes(e.type)).map((e) => e.type))

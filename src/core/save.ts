@@ -315,6 +315,8 @@ export interface IapState {
   firsts: string[];
   /** The one-time welcome offer (the Starter Pack, after the first win) has been shown. */
   welcome: boolean;
+  /** Journey selected when an unfinished Club Pass order was placed; survives delayed store approval. */
+  pendingPass?: string;
 }
 
 /** How many paid-out transaction ids a save keeps (a store re-delivers within days, never hundreds of purchases later). */
@@ -333,6 +335,8 @@ export function normalizeIap(raw: unknown): IapState {
     freeAds: { day, count: day ? Math.min(99, num(f.count)) : 0 },
     firsts: strings(r.firsts, /^[A-Za-z0-9._-]{1,64}$/, 50),
     welcome: r.welcome === true,
+    ...(typeof r.pendingPass === 'string' && /^(?:\d{4}-(?:0[1-9]|1[0-2])|journey-(?:0[1-9]|1[0-2]))$/.test(r.pendingPass)
+      ? { pendingPass: r.pendingPass } : {}),
   };
 }
 
@@ -546,11 +550,13 @@ export function importSave(raw: unknown): SaveData | null {
   }
 }
 
-export function writeSave(d: SaveData): void {
+export function writeSave(d: SaveData): boolean {
   d.updatedAt = new Date().toISOString();
   const json = JSON.stringify(d);
+  let localSaved = false;
   try {
     localStorage.setItem(KEY, json);
+    localSaved = true;
   } catch {
     // Private mode / storage full: the game still runs, progress just isn't kept.
   }
@@ -559,6 +565,7 @@ export function writeSave(d: SaveData): void {
   } catch {
     // The portal's store refused it: the browser's copy still holds it.
   }
+  return localSaved;
 }
 
 /** A portal's save store (CrazyGames' Data Module, platform/ads.ts portalStore), mirrored on every write once adopted. */

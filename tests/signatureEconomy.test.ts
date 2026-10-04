@@ -70,13 +70,13 @@ describe('permanent gem identities', () => {
     expect(exportSave(s)).toBe(after);
   });
 
-  it('refuses insufficient gems, unknown themes and the current pass without mutating the wallet or inventory', () => {
+  it('refuses insufficient gems and unknown themes without mutating the wallet or inventory', () => {
     const s = wallet(SIGNATURE_SET_GEMS - 1);
     seasonOf(s, OCT);
     shopOf(s);
     const before = exportSave(s);
     expect(buySignatureSet(s, 'pass03', OCT)).toMatchObject({ ok: false, reason: 'no-gems', short: 1 });
-    expect(buySignatureSet(s, 'pass10', OCT)).toMatchObject({ ok: false, reason: 'unknown' });
+    expect(buySignatureSet(s, 'pass10', OCT)).toMatchObject({ ok: false, reason: 'no-gems', short: 1 });
     expect(buySignatureSet(s, 'pass99', OCT)).toMatchObject({ ok: false, reason: 'unknown' });
     expect(exportSave(s)).toBe(before);
   });
@@ -174,26 +174,30 @@ describe('Club Pass signature receipts and legacy saves', () => {
     expect(syncSignatureEntitlements(s)).toEqual([]);
   });
 
-  it('keeps new items and old claimed-tier entitlements on rollover and save normalization', () => {
+  it('keeps paid entitlements across later dates and save normalization', () => {
     const s = wallet();
     s.season = { ...defaultSeason(OCT), pass: true, xp: tierXp(25), passClaimed: Array.from({ length: 25 }, (_, i) => i + 1) };
     rollSeason(s.season, NOV);
-    expect(s.season.carryItems).toEqual(['decor:kickpass10', 'decor:netpass10']);
+    expect(s.season.carryItems).toEqual([]);
+    expect(s.season.pass).toBe(true);
     s.season = normalizeSeason(s.season, NOV);
-    expect(claimCarryItems(s)).toEqual(['decor:kickpass10', 'decor:netpass10']);
+    expect(syncSignatureEntitlements(s)).toEqual(['decor:kickpass10', 'decor:netpass10']);
     expect(claimCarryItems(s)).toEqual([]);
     expect(s.coins).toBe(500);
     const raw = { ...defaultSeason(OCT), pass: true, xp: tierXp(25), passClaimed: [1, 25] };
     const rolled = normalizeSeason(raw, NOV);
-    expect(rolled.carryItems).toContain('decor:netpass10');
-    expect(rolled.carryItems).toContain('decor:kickpass10');
+    s.season = rolled;
+    expect(syncSignatureEntitlements(s)).toEqual([]);
+    expect(rolled.pass).toBe(true);
+    expect(rolled.passClaimed).toEqual([1, 25]);
   });
 
-  it('preserves the immediate welcome reward when a zero-XP pass rolls to the next month', () => {
+  it('preserves the permanent welcome reward and zero-XP paid entitlement across calendar months', () => {
     const s = wallet();
     activatePass(s, OCT);
     rollSeason(s.season!, NOV);
-    expect(s.season!.carryItems).toEqual(['decor:kickpass10']);
+    expect(s.season!.carryItems).toEqual([]);
+    expect(s.season!.pass).toBe(true);
     expect(claimCarryItems(s)).toEqual([]); // Already owned, never paid again.
     expect(owns(s, 'decor', 'kickpass10')).toBe(true);
   });

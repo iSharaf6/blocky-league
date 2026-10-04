@@ -24,6 +24,7 @@ import { MatchView } from '../render/matchView';
 import { cssHex } from '../render/palette';
 import { SubScene } from '../render/subScene';
 import { MatchTunnel } from '../render/matchTunnel';
+import { MatchAward } from '../render/matchAward';
 import { SKILL_SLOW_RATE, SKILL_SLOW_S } from '../render/juice';
 import { actionKey } from '../core/input';
 import { deliveryShape, FK_AUTO_POWER } from '../sim/setPiece';
@@ -67,10 +68,11 @@ import { GHOST_MAX_PTS, flyGhost, freeKickGhost, ghostBlocked, lobLaunch, penalt
 import { contrastAwayKit } from './kitContrast';
 import { QuickSubs, quickSubsAllowed } from './quickSub';
 import {
-  LINEUP_INTRO_FROM, LINEUP_S, MOTM_S, SUB_MAX_SHOWN, SUB_S, applyLineup, applyMotm, lineupOrder, lineupShot, motmShot, motmSpot, newSubStage, subBeatS,
+  LINEUP_INTRO_FROM, LINEUP_S, MOTM_S, SUB_MAX_SHOWN, SUB_S, applyLineup, applyMotm, applyMotmMates, lineupOrder, lineupShot, motmShot, motmSpot, newSubStage, subBeatS,
   subStage,
 } from './showcase';
 import { INTERLUDE_SECONDS, MatchInterlude, applyInterlude, interludeOrder, interludeShot, type MatchInterludeKind } from './matchInterludes';
+import { applyBookingAct } from './bookingAct';
 import { MatchTally, type PlayerRating } from './ratings';
 import { encodeState, decodeState, type StateGraph } from './stateCodec';
 import { recoveredMatch, savedHype, restoreHype, savedBlitz, restoreBlitz, savedScenario, restoreScenario } from './matchRecovery';
@@ -100,6 +102,8 @@ export interface SessionOptions extends MatchConfig {
   ballSkin?: string;
   /** The human side's goal celebration (progression; CelebrationId); undefined = classic. */
   celebration?: string;
+  /** An earned title worn by the human club: presentation only, with no match advantage. */
+  clubTitle?: { title: string; from: string; color?: string };
   /** SHOP cosmetics for the human side (render/cosmetics.ts): its goals' explosion colours, its sprint speed lines. */
   goalFx?: string;
   trail?: string;
@@ -174,7 +178,7 @@ function fxCue(c: FxCue): void {
 }
 /** The replay rolls once the celebration has had its moment (the scorer has been mobbed). */
 const REPLAY_AT = 2.6;
-/** A goal that gets no replay (an ordinary tap-in by either side): the celebration runs this long, then the kick-off. */
+/** A goal without replay footage: the celebration runs this long, then the kick-off. */
 const NO_REPLAY_AT = 3.4;
 /**
  * A goal against the human (no replay): the cut to the kick-off comes this soon (s), however long the scorers' move
@@ -326,6 +330,7 @@ export const PRESENTATION = {
   // The staged shots (game/showcase.ts), each skipped by a tap: the line-up, one substitution, the man of the match.
   lineupS: LINEUP_S, subS: SUB_S, motmS: MOTM_S,
   tunnelS: INTERLUDE_SECONDS.halftime, returnS: INTERLUDE_SECONDS.return, sportsmanshipS: INTERLUDE_SECONDS.sportsmanship,
+  victoryS: INTERLUDE_SECONDS.victory, debriefS: INTERLUDE_SECONDS.debrief,
 } as const;
 
 /** A staged shot can be skipped from this long in (s): the tap that started the match never skips it. */
@@ -410,7 +415,7 @@ export class MatchSession {
   private replayT = 0;
   private replayGoalIdx = 0;
   private replayDone = false;
-  /** Whether the goal just scored gets the automatic replay (see the 'goal' case: only ones worth watching again). */
+  /** Every ordinary local goal gets a replay; scenarios, demos, online play and recovered goals do not. */
   private replayWanted = true;
   private goldenGoalArmed = false;
   private megaShotT = -9;
@@ -457,6 +462,7 @@ export class MatchSession {
   private cardPlayer = -1;
   /** The man who was brought down (held off to one side of the card close-up), and the last foul's victim. */
   private cardVictim = -1;
+  private cardAct: { idx: number; identity: string; x: number; z: number; facing: number; age: number } | null = null;
   private foulOn = -1;
   /** Seconds the minimap stays hidden after a set piece (see RADAR_SETPIECE_HOLD). */
   private radarHoldT = 0;
@@ -604,10 +610,12 @@ export class MatchSession {
   private lineupLeft = 0;
   private lineupAge = 0;
   private lineupRow: number[] = [];
-  private motm: { idx: number; x: number; z: number; t: number; lost: boolean } | null = null;
+  private motm: { idx: number; x: number; z: number; t: number; lost: boolean; mates: number[] } | null = null;
   private motmDone = false;
   private interlude: MatchInterlude | null = null;
   private matchTunnel: MatchTunnel | null = null;
+  private matchAward: MatchAward | null = null;
+  private postMatchStoryDone = false;
   private sportsmanshipDone = false;
   private sceneShot: SceneShot = { px: 0, py: 20, pz: 40, tx: 0, ty: 0, tz: 0, fov: 30 };
   private sceneKeep: number[] = [];
@@ -665,6 +673,9 @@ export class MatchSession {
       this.matchTunnel = new MatchTunnel(opt.kits[0].shirt, opt.kits[1].shirt);
       this.matchTunnel.group.position.y = PITCH_Y;
       world.scene.add(this.matchTunnel.group);
+      this.matchAward = new MatchAward();
+      this.matchAward.group.position.y = PITCH_Y;
+      world.scene.add(this.matchAward.group);
     }
     this.wearing = this.match.players.map((p) => p.def);
     this.warmFx();
@@ -810,7 +821,10 @@ export class MatchSession {
   /** The pre-match title card, up for the fly-in. */
   private fixtureCard(seconds: number): void {
     const teams = this.match.teams;
-    this.hud?.show(`${teams[0].short} v ${teams[1].short}`, `${teams[0].name} v ${teams[1].name}`, 'small intro', Math.max(0.6, seconds - 0.2));
+    const side = this.match.cfg.humanSide;
+    const title = side >= 0 ? this.opt.clubTitle : undefined;
+    const subtitle = title ? `${teams[side as Side].short} ${SEP_MARK} ${title.title}` : `${teams[0].name} v ${teams[1].name}`;
+    this.hud?.show(`${teams[0].short} v ${teams[1].short}`, subtitle, 'small intro', Math.max(0.6, seconds - 0.2));
   }
 
   // ------------------------------------------------------------------ staged shots (game/showcase.ts)
@@ -838,7 +852,10 @@ export class MatchSession {
     const t = this.match.teams[side];
     const kit = this.opt.kits[side];
     const cap = this.match.players[this.captainIdx(side)];
-    this.present?.showPlate('LINE UP', t.name.toUpperCase(), cap ? `CAPTAIN ${surname(cap.def.name).toUpperCase()}` : '', crestSvg(t.name, t.short, kit, 3), cssHex(kit.shirt));
+    const title = side === this.match.cfg.humanSide ? this.opt.clubTitle : undefined;
+    const captain = cap ? `CAPTAIN ${surname(cap.def.name).toUpperCase()}` : '';
+    const line = [captain, title?.title].filter(Boolean).join(' / ');
+    this.present?.showPlate('LINE UP', t.name.toUpperCase(), line, crestSvg(t.name, t.short, kit, 3), title?.color ?? cssHex(kit.shirt));
     this.hud?.setSkippable(true);
   }
 
@@ -974,14 +991,21 @@ export class MatchSession {
   /** Dressing-room departures / return, then the post-match greeting. Local presentation, with no sim changes. */
   private startMatchInterlude(kind: MatchInterludeKind): boolean {
     const m = this.match;
-    if (this.driver || this.demo || this.moment || !this.hud || m.cfg.humanSide < 0 || this.interlude || this.subCut) return false;
+    if (this.driver || this.opt.humanSides || this.demo || this.moment || !this.hud || m.cfg.humanSide < 0 || this.interlude || this.subCut) return false;
     if ((kind === 'halftime' && m.phase !== 'halftime') || (kind === 'return' && m.phase !== 'kickoff') ||
-      (kind === 'sportsmanship' && (m.phase !== 'fulltime' || !!m.shootout))) return false;
+      (!['halftime', 'return'].includes(kind) && (m.phase !== 'fulltime' || !!m.shootout))) return false;
     const cast = (side: Side) => interludeOrder(m.teamPlayers(side).filter((p) => !isSentOff(p)).map((p) => p.idx), this.captainIdx(side));
-    const scene = new MatchInterlude(kind, cast(0), cast(1));
+    const leadSide = m.score[0] === m.score[1] ? null : m.score[0] > m.score[1] ? 0 : 1;
+    const scene = new MatchInterlude(kind, cast(0), cast(1), { humanSide: m.cfg.humanSide as Side, leadSide });
     if (!scene.actors.length) return false;
+    this.cardT = 0;
+    this.cardRestart = null;
+    this.cardIdentity = null;
+    this.cardPlayer = this.cardVictim = -1;
+    this.cardAct = null;
+    this.view.pinPlayer?.(null);
     this.interlude = scene;
-    this.sceneKeep = scene.actors;
+    this.sceneKeep = [...scene.actors];
     this.sceneClear = 11;
     this.view.celeb.end();
     this.view.frameHook = (f) => applyInterlude(f, scene, this.time);
@@ -995,8 +1019,8 @@ export class MatchSession {
     const kit = this.opt.kits[m.cfg.humanSide as Side];
     const human = m.teams[m.cfg.humanSide as Side];
     const tag = kind === 'halftime' ? 'HALF TIME' : kind === 'return' ? 'SECOND HALF' : 'FULL TIME';
-    const title = kind === 'halftime' ? 'INTO THE TUNNEL' : kind === 'return' ? 'BACK FOR THE SECOND HALF' : 'RESPECT AT THE WHISTLE';
-    const line = `${home.short} ${m.score[0]} : ${m.score[1]} ${away.short}${kind === 'halftime' ? '   TIME FOR THE TEAM TALK' : kind === 'return' ? '   A FRESH HALF' : '   FOOTBALL FIRST'}`;
+    const title = kind === 'halftime' ? 'INTO THE TUNNEL' : kind === 'return' ? 'BACK FOR THE SECOND HALF' : kind === 'victory' ? 'A WIN TO ENJOY' : kind === 'debrief' ? 'WE GO AGAIN' : 'RESPECT AT THE WHISTLE';
+    const line = `${home.short} ${m.score[0]} : ${m.score[1]} ${away.short}${kind === 'halftime' ? '   TIME FOR THE TEAM TALK' : kind === 'return' ? '   A FRESH HALF' : kind === 'debrief' ? '   THE CAPTAIN BRINGS THEM TOGETHER' : kind === 'victory' ? '   APPLAUD THE FANS' : '   FOOTBALL FIRST'}`;
     this.present?.showPlate(tag, title, line, crestSvg(human.name, human.short, kit, 3), cssHex(kit.shirt));
     this.hud.hideIntro();
     this.hud.setSkippable(true);
@@ -1026,6 +1050,9 @@ export class MatchSession {
     if (!scene) return;
     this.interlude = null;
     this.matchTunnel?.show(false);
+    this.matchAward?.end();
+    this.motm = null;
+    this.cardAct = null;
     this.view.frameHook = null;
     this.sceneKeep = [];
     this.sceneClear = 0;
@@ -1039,13 +1066,17 @@ export class MatchSession {
     this.acc = 0;
     this.view.apply(this.prev, this.cur, 1, this.time, 0);
     if (scene.kind === 'halftime') {
+      this.anyPress = false;
       this.halftimeFired = true;
       this.onHalftime?.();
     } else if (scene.kind === 'return') {
       this.resetView();
       this.view.setMarkerVisible(this.match.cfg.humanSide >= 0);
       this.hud?.show('SECOND HALF', '', 'small', 1.2);
-    } else this.flow(0); // The man of the match follows the greeting; its callback stays exactly once.
+    } else {
+      this.anyPress = false;
+      this.flow(0); // The next story/award follows; one skip never consumes both scenes or repeats a result.
+    }
   }
 
   /**
@@ -1057,7 +1088,7 @@ export class MatchSession {
     if (this.motmDone) return false;
     const m = this.match;
     if (!this.motm) {
-      const best = !this.driver && !this.moment && !m.shootout && this.hud ? this.ratings()[0] : undefined;
+      const best = !this.driver && !this.opt.humanSides && !this.moment && !m.shootout && this.hud ? this.ratings()[0] : undefined;
       const p = best ? m.players[best.idx] : undefined;
       if (!best || !p || isSentOff(p)) {
         this.motmDone = true;
@@ -1065,17 +1096,23 @@ export class MatchSession {
       }
       const spot = motmSpot(p.pos.x, p.pos.z);
       const o = p.side === 0 ? 1 : 0;
-      this.motm = { idx: p.idx, x: spot.x, z: spot.z, t: 0, lost: m.score[p.side] < m.score[o] };
-      this.sceneKeep = [p.idx];
+      const mates = m.teamPlayers(p.side).filter((a) => a.idx !== p.idx && !isSentOff(a)).slice(0, 3).map((a) => a.idx);
+      this.motm = { idx: p.idx, x: spot.x, z: spot.z, t: 0, lost: m.score[p.side] < m.score[o], mates };
+      this.sceneKeep = [p.idx, ...mates];
       this.sceneClear = MOTM_CLEAR;
       this.view.frameHook = (f) => {
         const mo = this.motm;
-        if (mo) applyMotm(f, mo.idx, mo.x, mo.z, mo.lost, this.time);
+        if (mo) {
+          applyMotm(f, mo.idx, mo.x, mo.z, mo.lost, mo.t, mo.t / MOTM_S);
+          applyMotmMates(f, mo.mates, mo.x, mo.z, mo.t);
+        }
       };
       motmShot(0, spot.x, spot.z, this.view.headTop, this.sceneShot);
       this.view.celeb.end();
       this.cam.setMode('scene');
       this.cam.cut();
+      this.matchAward?.begin();
+      this.matchAward?.update(0, spot.x, spot.z, this.view.headTop, 0, 0, this.motm.lost);
       const kit = this.opt.kits[p.side];
       const t = m.teams[p.side];
       const bits = [best.goals ? `${best.goals} ${best.goals > 1 ? 'GOALS' : 'GOAL'}` : '', best.assists ? `${best.assists} ${best.assists > 1 ? 'ASSISTS' : 'ASSIST'}` : ''].filter(Boolean);
@@ -1085,15 +1122,25 @@ export class MatchSession {
       );
       this.hud?.setSkippable(true);
       this.view.setMarkerVisible(false);
+      this.prevButtons = false;
+      this.clearLatch();
+      sfx.applause(0.65);
       return true;
     }
     const mo = this.motm;
-    mo.t += dt;
-    if (mo.t < MOTM_S && !(mo.t > SCENE_SKIP_GRACE && this.anyPress)) return true;
+    mo.t += Math.max(0, Math.min(0.1, dt));
+    const c = this.input.read();
+    const btn = c.pass || c.shoot || c.through || c.skill || c.power || c.sprint;
+    const press = (btn && !this.prevButtons) || this.anyPress;
+    this.prevButtons = btn;
+    if (mo.t < MOTM_S && !(mo.t > SCENE_SKIP_GRACE && press)) return true;
     // (He stays in the frame behind the result screen: only the caption and the skip line go.)
     this.motmDone = true;
     this.present?.hidePlate();
     this.hud?.setSkippable(false);
+    this.eatButtons = this.eatButtons || btn;
+    this.anyPress = false;
+    this.clearLatch();
     return false;
   }
 
@@ -1104,7 +1151,10 @@ export class MatchSession {
       return;
     }
     const mo = this.motm;
-    if (mo) motmShot(clamp(mo.t / MOTM_S, 0, 1), mo.x, mo.z, this.view.headTop, this.sceneShot);
+    if (mo) {
+      motmShot(clamp(mo.t / MOTM_S, 0, 1), mo.x, mo.z, this.view.headTop, this.sceneShot);
+      this.matchAward?.update(mo.t / MOTM_S, mo.x, mo.z, this.view.headTop, mo.t, 0, mo.lost);
+    }
   }
 
   /**
@@ -1306,12 +1356,21 @@ export class MatchSession {
     this.interlude = null;
     this.matchTunnel?.show(false);
     this.replay = null;
+    this.matchAward?.end();
+    this.motm = null;
+    this.cardAct = null;
+    this.cardT = 0;
+    this.cardRestart = null;
+    this.cardIdentity = null;
+    this.cardPlayer = this.cardVictim = -1;
+    this.view.pinPlayer?.(null);
     this.replayWanted = false; // A past replay buffer is presentation; it cannot replay a saved goal again.
     this.replayDone = this.match.phase === 'goal';
     this.celebDue = -1;
     this.halftimeFired = this.match.phase === 'halftime';
     this.finishFired = false;
     this.sportsmanshipDone = this.match.phase === 'fulltime';
+    this.postMatchStoryDone = this.match.phase === 'fulltime';
     this.motmDone = this.match.phase === 'fulltime';
     this.hud?.hideIntro();
     this.hud?.setReplay(false);
@@ -1486,7 +1545,7 @@ export class MatchSession {
 
     // (A press only carries over to the next live step: nothing latched while the sim isn't stepping.)
     const briefing = this.moment !== null && this.moment.briefT > 0;
-    if (this.paused || this.introLeft > 0 || this.replay || briefing || this.subCut || this.interlude) this.clearLatch();
+    if (this.paused || this.introLeft > 0 || this.replay || briefing || this.subCut || this.interlude || (this.motm && !this.motmDone)) this.clearLatch();
     let held = false;
     if (this.paused) {
       // Frozen: live play, a replay or the pre-match fly-in all wait for the pause menu.
@@ -1530,6 +1589,11 @@ export class MatchSession {
       this.firstMatchHold(dt);
     } else if (this.interlude) {
       this.stepMatchInterlude(dt);
+    } else if (this.motm && !this.motmDone) {
+      this.acc = 0;
+      const busy = this.motmBeat(dt);
+      this.view.apply(this.prev, this.cur, 1, this.time, dt);
+      if (!busy) this.flow(0);
     } else if (this.subCut) {
       this.stepSubCut(dt);
     } else if (this.replay) {
@@ -1600,7 +1664,8 @@ export class MatchSession {
         // The shot belongs to this stoppage and this footballer, even if a kick and another whistle
         // arrive in the same rendered frame or the manager substitutes him while paused.
         if (this.cardT <= 0 || (m.phase !== 'out' && m.phase !== 'restart') || m.restart !== this.cardRestart ||
-          m.players[this.cardPlayer]?.def.id !== this.cardIdentity) {
+          m.players[this.cardPlayer]?.def.id !== this.cardIdentity ||
+          (this.cardAct && m.players[this.cardAct.idx]?.def.id !== this.cardAct.identity)) {
           this.cardT = 0;
           this.cardRestart = null;
           this.cardIdentity = null;
@@ -1608,6 +1673,8 @@ export class MatchSession {
           this.view.setBallHidden(false);
           this.cardPlayer = -1;
           this.cardVictim = -1;
+          if (this.cardAct) this.view.frameHook = null;
+          this.cardAct = null;
           if (this.cam.mode === 'card') this.cam.setMode('broadcast');
         }
       }
@@ -1838,8 +1905,8 @@ export class MatchSession {
         this.celebDue = -1;
         this.startCelebration(sd);
       }
-      // The replay rolls for a goal worth seeing again; a plain one goes straight from the celebration to the
-      // kick-off (round 9's critic: every goal replayed cost 8.5 s, ~7% of a two-minute half).
+      // Every ordinary local goal replays, including tap-ins and concessions. The explicit skip remains
+      // available after the wide shot, so a player decides which finishes to watch again.
       // (An iconic celebration holds the replay / kick-off until its moment has landed: celeb.holdS.)
       const theirs = m.cfg.humanSide >= 0 && m.goalSide !== m.cfg.humanSide && !this.replayWanted;
       const at = theirs ? THEIR_GOAL_AT + late : Math.max(this.replayWanted ? REPLAY_AT : NO_REPLAY_AT, this.view.celeb.holdS) + late;
@@ -1888,6 +1955,12 @@ export class MatchSession {
       if (this.demo) {
         this.finishFired = true;
         return;
+      }
+      if (!this.postMatchStoryDone) {
+        this.postMatchStoryDone = true;
+        const human = m.cfg.humanSide;
+        if (human >= 0 && m.score[0] !== m.score[1] &&
+          this.startMatchInterlude(m.score[human as Side] > m.score[(1 - human) as Side] ? 'victory' : 'debrief')) return;
       }
       if (!this.sportsmanshipDone) {
         this.sportsmanshipDone = true;
@@ -2361,6 +2434,13 @@ export class MatchSession {
   }
 
   private startReplay(): void {
+    // A restored goal deliberately has no historical footage. Also tolerate a session whose renderer has
+    // not recorded two frames yet, instead of dereferencing an empty buffer and trapping the goal phase.
+    if (this.buffer.count < 2) {
+      this.replayDone = true;
+      this.hud?.setSkippable(false);
+      return;
+    }
     this.view.celeb.end();
     // A flash cut into the replay (the wash clears in ~0.2 s) and, for the human's goal, the clip rolls.
     this.flash.play(0xfbfbf4, 0.85, 0.22);
@@ -2413,7 +2493,7 @@ export class MatchSession {
     this.replayT += dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE);
     const i = Math.floor(idx);
     const c = this.input.read();
-    const btn = c.pass || c.shoot || c.through || c.sprint || !!(c as { power?: boolean }).power;
+    const btn = c.pass || c.shoot || c.through || c.sprint || c.skill || !!(c as { power?: boolean }).power;
     // Any input skips it: a button, any key, a tap on the picture or a touch button.
     const skip = (btn && !this.prevButtons) || this.anyPress;
     this.prevButtons = btn;
@@ -2519,12 +2599,10 @@ export class MatchSession {
           }
           this.lastPasser = [-1, -1];
           this.replayDone = false;
-          // Worth a replay: the human's side (or nobody's, in an AI match) scoring from range, with the head, a
-          // chip or a curler, a golden or mega goal, or any own goal. A tap-in gets the celebration only.
+          // The former hidden highlight filter dropped tap-ins and almost every opposition goal. Replay
+          // every finish in an ordinary local match; other modes keep their own uninterrupted flow.
           const human = m.cfg.humanSide;
-          const special = e.own || m.shotDist >= 16 || m.kickKind === 'header' || m.shotStyle === 'chip' || m.shotStyle === 'finesse' ||
-            this.goldenGoalArmed || this.time - this.megaShotT < 3;
-          this.replayWanted = (human < 0 || e.side === human || e.own) && special;
+          this.replayWanted = !this.demo && !this.driver && !this.moment;
           const golden = this.goldenGoalArmed;
           this.goldenGoalArmed = false;
           sfx.goal(e.side);
@@ -3206,7 +3284,7 @@ export class MatchSession {
     this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', shot.second ? `${shot.name}, second yellow` : shot.name,
       red ? 'small card red' : 'small card', red ? 2.2 : 1.8);
     this.view.showCard(shot.color, shot.x, shot.z, close ? CARD_CAM_S : red ? 2.2 : 1.8, close);
-    if (close) this.startCardShot(shot.player, shot.x, shot.z);
+    if (close) this.startCardShot(shot.player, shot.x, shot.z, shot.color === 'yellow');
   }
 
   /**
@@ -3215,7 +3293,9 @@ export class MatchSession {
    * beyond him, further from the lens and off to the side: small in the background, never standing in front
    * of him (all render only; the camera cuts away before anyone is let go).
    */
-  private startCardShot(booked: number, x: number, z: number): void {
+  private startCardShot(booked: number, x: number, z: number, exaggerate = false): void {
+    if (this.cardAct) this.view.frameHook = null;
+    this.cardAct = null;
     this.cardT = CARD_CAM_S;
     this.cardRestart = this.match.restart;
     this.cardIdentity = this.match.players[booked].def.id;
@@ -3244,6 +3324,16 @@ export class MatchSession {
     const vx = clamp(mx + ux * (h + CARD_VICTIM_GAP) - wx * CARD_VICTIM_BACK, -(HALF_L + 2), HALF_L + 2);
     const vz = clamp(mz + uz * (h + CARD_VICTIM_GAP) - wz * CARD_VICTIM_BACK, -(HALF_W + 1.5), HALF_W + 1.5);
     this.view.pinPlayer(victim, vx, vz);
+    if (exaggerate) {
+      this.cardAct = { idx: victim, identity: this.match.players[victim].def.id, x: vx, z: vz,
+        facing: Math.atan2(ref.z - vz, ref.x - vx), age: 0 };
+      this.view.frameHook = (f, dt) => {
+        const act = this.cardAct;
+        if (!act || this.cardT <= 0 || this.match.players[act.idx].def.id !== act.identity) return;
+        act.age += Math.max(0, Math.min(0.1, dt));
+        applyBookingAct(f, act.idx, act.x, act.z, act.facing, act.age);
+      };
+    }
   }
 
   /**
@@ -3293,7 +3383,7 @@ export class MatchSession {
     const f = this.view.frame;
     // The ball waiting on the free-kick spot is only clutter by the booked player's boots (or right in front
     // of the lens): the close-up leaves it out.
-    this.view.setBallHidden(cam.mode === 'card' || !!this.interlude);
+    this.view.setBallHidden(cam.mode === 'card' || !!this.interlude || !!this.motm);
     if (!low) {
       this.view.clearFades();
       return;
@@ -3933,6 +4023,9 @@ export class MatchSession {
     this.subScene.dispose();
     this.matchTunnel?.dispose();
     this.matchTunnel = null;
+    this.matchAward?.dispose();
+    this.matchAward = null;
+    this.cardAct = null;
     this.interlude = null;
     this.present?.dispose();
     this.present = null;

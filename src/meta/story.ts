@@ -154,6 +154,35 @@ export function seasonStartBeats(state: CareerState): void {
 /** Before the next match: derby build-up. */
 export function beforeMatchBeats(state: CareerState, nm: NextMatch | null): void {
   if (nm && nm.competition === 'league' && isDerby(state, nm.rival.id)) say(state, TAUNT_BEFORE, `derby-before-${nm.md}`, 'info');
+  else if (nm?.competition === 'league' && state.club && once(state, `preview-${nm.md}`)) {
+    const tag = storyTag(state, nm);
+    const line = tag ? `${state.club.name}: ${tag.tag.toLowerCase()} against ${townOf(nm.rival.name)}. ${tag.line.toLowerCase()}`
+      : pick([
+        `${state.club.name} prepare for ${townOf(nm.rival.name)}: another chapter in the climb`,
+        `${townOf(nm.rival.name)} next for ${state.club.name}. The fans are comparing the two lineups`,
+        `${state.club.name} turn their attention to ${townOf(nm.rival.name)}. The week's work starts here`,
+        `Matchday ${nm.md + 1}: ${state.club.name} and ${townOf(nm.rival.name)} get ready to meet`,
+      ], `${state.seed}|${state.season?.number}|preview-${nm.md}`);
+    storyNews(state, line);
+  }
+}
+
+/** A match creates its own stable football headline, drawn from its actual result, venue and recent form. */
+export function matchHeadline(state: CareerState, md: number, my: number, their: number, home: boolean, forfeit = false): void {
+  if (!state.club || !state.season || !once(state, `result-${md}`)) return;
+  const name = state.club.name, score = `${my}:${their}`, venue = home ? 'at home' : 'on the road';
+  const streak = state.story.form.slice(-3).join('');
+  let lines: string[];
+  if (forfeit) lines = [`${name} walk off. The supporters hope for a full match next time`, `${name} concede the match. A chance to regroup before the next fixture`];
+  else if (my > their && streak === 'WWW') lines = [`Three straight wins! ${name} keep the momentum with ${score} ${venue}`, `${name} make it three in a row. The ${score} win has the home end dreaming`];
+  else if (my - their >= 3) lines = [`Statement win: ${name} hit ${my} in a ${score} performance ${venue}`, `${name} run riot, ${score}. Fans will be talking about this one all week`, `${name} turn on the style. A ${score} scoreline to put in the club scrapbook`];
+  else if (my > their && their === 0) lines = [`A clean sheet and a ${score} win for ${name}: both ends did their job`, `${name} shut the door, then take the points. ${score} ${venue}`, `${name} build a ${score} victory on a stubborn defensive display`];
+  else if (my > their) lines = [`${name} edge it ${score} ${venue}. The final whistle brings a huge cheer`, `${name} come through ${score}. Another result earned, another step on the ladder`, `${score} to ${name}. A hard-fought win for the travelling scrapbook`, `${name} take the points, ${score}. The squad celebrate together`];
+  else if (my === their) lines = my === 0 ? [`No way through: ${name} share a goalless draw`, `${name} leave with a point and a clean sheet. Fine margins ${venue}`]
+    : [`Honours even: ${name} draw ${score} in a match with goals at both ends`, `${name} share the points, ${score}. Next time the winner could go either way`, `${score} ${venue}: ${name} have a point to build on`];
+  else if (their - my === 1) lines = [`Just one goal in it: ${name} fall ${score}. The next match offers a response`, `${name} come up short by one, ${score}. The dressing room looks ahead`, `Fine margins for ${name}, ${score} ${venue}. Fans keep singing after the whistle`];
+  else lines = [`A difficult day for ${name}, ${score}. Time to regroup and work on the next match`, `${name} lose ${score} ${venue}. The season's story is still being written`, `${name} take a ${score} setback. A fresh lineup could write the next chapter`];
+  storyNews(state, pick(lines, `${state.seed}|${state.season.number}|result-${md}|${my}:${their}|${home}`), my > their ? 'good' : my < their ? 'bad' : 'info');
 }
 
 /** A derby was just played (league): the head to head and the news. */

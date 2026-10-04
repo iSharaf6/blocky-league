@@ -19,7 +19,7 @@
  */
 import { defaultSave } from '../core/save';
 import {
-  accountsRequired, adoptSession, callFunction, cloudNotice, cloudSession, cloudStatus, cloudUser, flushNow, forgetAccount, onCloudChange, syncSoon,
+  accountsRequired, adoptSession, callFunction, cloudAvailable, cloudNotice, cloudSession, cloudStatus, cloudUser, flushNow, forgetAccount, onCloudChange, syncSoon,
   type CloudContext,
 } from './cloud';
 import { gameCenterIdentity, gameCenterPlayerId, gameCenterSignInOnce } from './gameCenter';
@@ -152,7 +152,7 @@ export function connect(explicit = false): Promise<boolean> {
 
 async function attempt(explicit: boolean): Promise<boolean> {
   // (Switched off, or no backend: the game makes no account by itself.)
-  if (!accountsRequired()) return false;
+  if (!accountsRequired() && !(explicit && cloudAvailable())) return false;
   setConnecting(true);
   try {
     const gc = inNativeApp() ? await timeout(gameCenterSignInOnce(), GAME_CENTER_WAIT_MS, false) : false;

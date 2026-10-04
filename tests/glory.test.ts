@@ -400,6 +400,10 @@ describe('event cards', () => {
     const before = moraleOf(sadB);
     for (let i = 0; i < 4; i++) {
       b.events.queue = [];
+      // Keep this as a deliberately broken promise: automatic injury cover must not start our bench player.
+      for (const p of b.club!.squad) g(p).inj = 0;
+      const slot = b.club!.squad.indexOf(sadB);
+      if (slot < 11) [b.club!.squad[slot], b.club!.squad[12]] = [b.club!.squad[12], b.club!.squad[slot]];
       playNext(b, wallet, 1, 1);
     }
     expect(b.events.promises).toHaveLength(0);
@@ -463,6 +467,8 @@ describe('event cards', () => {
     const st = career(44);
     const wallet = { coins: 0 };
     playNext(st, wallet, 1, 0);
+    // A newly generated schedule may put derby press first; the same pending week still offers its sponsor.
+    if (!st.events.queue.some(c => c.kind === 'sponsor')) rollEvents(st, { my: 1, their: 0 }, nextMatch(st));
     const card = st.events.queue.find((c) => c.kind === 'sponsor')!;
     expect(card).toBeDefined();
     expect(card.choices).toHaveLength(3);

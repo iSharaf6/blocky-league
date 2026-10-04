@@ -1,7 +1,7 @@
 /**
  * The SEASON and BADGES screen (the hub's SEASON tile), an app shell screen (docs/UX.md: one screen, only a list
  * scrolls, inside its own pane) with three tabs and CLAIM ALL pinned beside them whenever anything is waiting:
- * - SEASON: one strip with this month's theme, the tier, the XP bar, the days left and the pass state; then the
+ * - SEASON: one strip with selected Journey, its tier, XP bar and permanent pass state; then the
  *   30-tier track as one sideways list (opened on the current tier), the FREE row over the PASS row, column by
  *   column; and, where the app sells it and it isn't on yet, a compact CLUB PASS card beside the track.
  * - BADGES: the five mastery tracks (meta/mastery.ts) as cards, the claimable and the nearest to a tier first.
@@ -13,19 +13,20 @@ import { sfx } from '../audio/sfx';
 import { levelOf, levelTitle } from '../core/save';
 import {
   MASTERY_TIERS, MASTERY_TRACKS, TIER_NAMES, TRACK_INFO, badgePending, claimAll, claimMastery, masteryOf,
-  earnedTitles, tierReward, trackProgress, wearTitle, wornTitle, type MasteryState, type MasteryTrack,
+  earnedTitles, masteryLook, syncMasteryRewards, wornTitleDetails, tierReward, trackProgress, wearTitle, wornTitle, type MasteryState, type MasteryTrack,
 } from '../meta/mastery';
 import {
-  PASS_BIG_COINS, SEASON_TIERS, claimCarry, claimSeasonTier, passReward, rollSeason, seasonOf, seasonDaysLeft, seasonName,
+  PASS_BIG_COINS, SEASON_TIERS, claimCarry, claimSeasonTier, passReward, rollSeason, seasonOf, journeyList, selectJourney, seasonName,
   seasonProgress, seasonReward, seasonTheme, seasonTier, type SeasonState,
 } from '../meta/season';
 import { buyPassWithGems, claimAllPass, claimCarryItems, claimPassTier, passTotals, syncSeasonGems, syncSignatureEntitlements } from '../meta/pass';
+import { equipItem, owns } from '../meta/shop';
 import { GEM_PRICES, PASS_GEMS, SEASON_GEMS, gems } from '../meta/gems';
 import { confirmGems, gemArt, gemPrice } from './gemUi';
 import { gameCenterReady, showGameCenterAchievements, showGameCenterLeaderboards } from '../platform/gameCenter';
 import { buzz } from '../platform/haptics';
 import { PRODUCT_PASS, iap } from '../platform/iap';
-import { closeMeta, esc, fmt, mountMeta, topBar, type MetaScreen } from './club';
+import { closeMeta, esc, fmt, mountMeta, onMetaClose, topBar, type MetaScreen } from './club';
 import { pixelIcon } from './menus';
 import { maskIcon } from './run';
 import { STORE_NOT_READY, openShop } from './shop';
@@ -92,14 +93,22 @@ export function openBadges(app: AppContext, onBack: () => void, tab: BadgesTab =
     onBack();
   };
   // (Esc: mountMeta sends it to BACK.)
-  // A month that ended while the game was open rolls over here (its unclaimed coins carry into `carry`).
+  // The legacy API is kept for callers; permanent Journeys never expire.
   if (rollSeason(season(app))) app.persist();
   render(app, scr, back, tab, true);
+  const refreshStore = (): void => {
+    if (!scr.root.isConnected) return;
+    const currentTab = scr.panel.querySelector<HTMLButtonElement>('.bd-tabs button.on')?.dataset.v as BadgesTab | undefined;
+    render(app, scr, back, currentTab ?? tab);
+  };
+  // Store approval or rejection can arrive after checkout timed out, while another Journey/tab is selected.
+  onMetaClose(iap.onStateChange(refreshStore));
+  onMetaClose(iap.onGrant(refreshStore));
 }
 
 function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesTab, fresh = false): void {
   // The season's gems (free tiers 10, 20 and 30; six pass tiers): paid once per tier claimed, here after any claim.
-  const newSignature = syncSignatureEntitlements(app.save);
+  const newSignature = [...syncSignatureEntitlements(app.save), ...syncMasteryRewards(app.save)];
   const gemsPaid = syncSeasonGems(app.save);
   if (gemsPaid > 0 || newSignature.length) app.persist();
   const pending = badgePending(app.save);
@@ -108,8 +117,8 @@ function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesT
   const tiers = MASTERY_TRACKS.reduce((n, k) => n + trackProgress(m, k).tier, 0);
   const sub = tab === 'season' ? seasonName(s.id) : tab === 'badges' ? `${tiers}/${MASTERY_TRACKS.length * MASTERY_TIERS} TIERS` : `${earnedTitles(app.save).length} EARNED`;
   // SEASON first: the hub's SEASON tile opens here.
-  const tabs: [BadgesTab, string][] = [['season', 'SEASON'], ['badges', 'BADGES'], ['titles', 'TITLES']];
-  const title = tab === 'season' ? 'SEASON' : tab === 'titles' ? 'TITLES' : 'BADGES';
+  const tabs: [BadgesTab, string][] = [['season', 'JOURNEYS'], ['badges', 'BADGES'], ['titles', 'TITLES']];
+  const title = tab === 'season' ? 'JOURNEYS' : tab === 'titles' ? 'TITLES' : 'BADGES';
   const badgeClaims = MASTERY_TRACKS.reduce((x, t) => x + trackProgress(m, t).claimable, 0);
   const dot = (k: BadgesTab): string => {
     const n = k === 'badges' ? badgeClaims : k === 'season' ? pending - badgeClaims : 0;
@@ -127,6 +136,9 @@ function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesT
     ${body}`,
     {
       back,
+      journey: (el) => {
+        if (selectJourney(s, el.dataset.id ?? '')) { app.persist(); render(app, scr, back, 'season', true); }
+      },
       passPreview: () => openShop(app, { tab: 'signature', onBack: () => openBadges(app, back, 'season'), backLabel: 'SEASON' }),
       gc: () => void showGameCenterAchievements(),
       gcBoards: () => void showGameCenterLeaderboards(),
@@ -189,8 +201,9 @@ function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesT
       },
       // The Club Pass for gems (earned by playing, or bought): asked once, with the price.
       passGems: () => {
+        if (app.save.iap?.pendingPass) { scr.toast('STORE PAYMENT PENDING. YOUR JOURNEY WILL UNLOCK WHEN IT CONFIRMS', 'info'); return; }
         confirmGems(scr.root, {
-          title: 'GET THE CLUB PASS?', text: 'THIS MONTH. TIERS YOU HAVE REACHED UNLOCK AT ONCE', price: GEM_PRICES.clubPass, have: gems(app.save), yes: 'GET IT',
+          title: 'GET THE CLUB PASS?', text: 'PERMANENT FOR THIS JOURNEY. REACHED TIERS UNLOCK AT ONCE', price: GEM_PRICES.clubPass, have: gems(app.save), yes: 'GET IT',
           getGems: iap.storefront ? () => openShop(app, { tab: 'coins', section: 'gems', backLabel: 'SEASON', onBack: () => openBadges(app, back, 'season') }) : undefined,
           free: 'THE FREE TRACK PAYS EVERY TIER WITHOUT IT',
           onYes: () => {
@@ -230,6 +243,10 @@ function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesT
           scr.toast(`+${fmt(coins)} COINS${pass.items.length ? ' AND NEW LOOKS: EQUIP THEM IN THE SHOP' : ''}`, 'good');
         }
         redraw();
+      },
+      titleLook: () => {
+        const reward = wornTitleDetails(app.save)?.reward;
+        if (reward && equipItem(app.save, reward.cat, reward.id)) { app.persist(); scr.toast(`WEARING: ${reward.name.toUpperCase()}`, 'good'); }
       },
       wear: (el) => {
         if (wearTitle(app.save, el.dataset.v ?? '')) {
@@ -284,13 +301,15 @@ function badgesHtml(app: AppContext): string {
     const claim = p.claimable
       ? `<button class="btn btn-yellow bd-claim pulse" data-a="claimTrack" data-k="${k}"><i class="bd-coin"></i>${fmt(claimCoins(k, m))}</button>`
       : '';
+    const earnedLook = p.tier >= 8 ? masteryLook(k, 8) : p.tier >= 5 ? masteryLook(k, 5) : undefined;
+    const look = earnedLook ? `<small class="bd-earned-look">EARNED LOOK: ${esc(earnedLook.name.toUpperCase())}</small>` : '<small class="bd-earned-look">MASTERED LOOKS AT V AND VIII</small>';
     const count = p.next !== null ? `${fmt(p.count)} / ${fmt(p.next)} ${info.unit}` : `${fmt(p.count)} ${info.unit}`;
     return `<div class="bd-track ${p.claimable ? 'ready' : ''}" style="--c:${info.color}" title="${esc(info.how)}">
       <span class="bd-ic">${maskIcon(TRACK_ICON[k], '#fff', 3)}</span>
       <div class="bd-body">
         <div class="bd-head"><b>${info.name}</b><span class="bd-pips" aria-label="Tier ${p.tier} of ${MASTERY_TIERS}">${pips}</span></div>
         <div class="bd-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p.frac * 100)}"><i style="width:${(p.frac * 100).toFixed(1)}%"></i><span>${count}</span></div>
-        <div class="bd-foot">${next}${claim}</div>
+        <div class="bd-foot">${next}${claim}</div>${look}
       </div>
     </div>`;
   }).join('');
@@ -299,7 +318,7 @@ function badgesHtml(app: AppContext): string {
     : '';
   return `<div class="mc-body bd-bbody">
       <section class="pane">
-        <div class="pane-h"><span>EVERY TIER PAYS COINS AND A TITLE</span><span class="grow"></span>${gc}</div>
+        <div class="pane-h"><span>EIGHT TIERS. COINS, TITLES AND MASTERED LOOKS</span><span class="grow"></span>${gc}</div>
         <div class="pane-scroll bd-list" data-scroll-key="bd-badges">${cards}</div>
       </section>
     </div>`;
@@ -315,7 +334,7 @@ function claimCoins(k: MasteryTrack, m: MasteryState): number {
 // ------------------------------------------------------------------ season
 
 /**
- * The SEASON tab: one purple strip (the month's theme, TIER n/30, the XP bar, days left, the pass state), then the
+ * The SEASON tab: one purple strip (the selected Journey, TIER n/30, its XP bar and permanent pass state), then the
  * track as one sideways list beside the compact CLUB PASS card (where the app sells it and it isn't on). Last
  * season's leftovers are chips over the track; CLAIM ALL (beside the tabs) takes them too.
  */
@@ -323,27 +342,27 @@ function seasonHtml(app: AppContext): string {
   const s = season(app);
   const th = seasonTheme(s.id);
   const p = seasonProgress(s);
-  const days = seasonDaysLeft();
   const pct = p.need ? (p.into / p.need) * 100 : 100;
-  const bar = `<div class="bd-bar big" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}" aria-label="Season XP"><i style="width:${pct.toFixed(1)}%"></i><span>${p.need ? `${fmt(p.into)} / ${fmt(p.need)} XP` : 'ALL TIERS REACHED'}</span></div>`;
+  const bar = `<div class="bd-bar big" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}" aria-label="Selected Journey XP"><i style="width:${pct.toFixed(1)}%"></i><span>${p.need ? `${fmt(p.into)} / ${fmt(p.need)} XP` : 'COMPLETE. SELECT ANOTHER JOURNEY'}</span></div>`;
   const chips = [
     s.carry ? `<button class="bd-chip" data-a="carry">LAST SEASON<b><i class="bd-coin"></i>${fmt(s.carry.coins)}</b><em>CLAIM</em></button>` : '',
     s.carryItems.length ? `<button class="bd-chip" data-a="pcarry">LAST PASS<b>${s.carryItems.length} ${s.carryItems.length === 1 ? 'LOOK' : 'LOOKS'}</b><em>CLAIM</em></button>` : '',
   ].join('');
   // (The pass is for sale everywhere now: for gems, and for money where a store sells it.)
   const offer = !s.pass ? passOfferHtml(app) : '';
-  return `<div class="bd-season" style="--c:${th.color}">
+  const journeys = journeyList(s).map(j => `<button class="${j.active ? 'on' : ''}" data-a="journey" data-id="${j.key}" aria-pressed="${j.active}" style="--journey:${j.color}"><b>${esc(j.name.toUpperCase())}</b><small>${j.tier}/30${j.pass ? `${sep()}PASS OWNED` : ''}</small></button>`).join('');
+  return `<nav class="bd-journeys x" aria-label="Choose a permanent Club Journey" data-scroll-key="bd-journeys">${journeys}</nav><div class="bd-season" style="--c:${th.color}">
       <i class="bd-swatch" aria-hidden="true"></i>
       <b class="bd-theme">${esc(th.name.toUpperCase())}</b>
       <div class="bd-stier" aria-label="Tier ${p.tier} of ${SEASON_TIERS}"><small>TIER</small><b>${p.tier}</b><small>/${SEASON_TIERS}</small></div>
       ${bar}
-      <small class="bd-days">${days === 1 ? 'LAST DAY' : `${days} DAYS`}</small>
+      <small class="bd-days">NO EXPIRY</small>
       ${s.pass ? '<small class="bd-passon">PASS ON</small>' : ''}
     </div>
     <div class="mc-body bd-sbody ${offer ? 'with-offer' : ''}">
       ${offer}
       <section class="pane bd-trackpane">
-        <div class="pane-h"><span class="bd-legend">${pixelIcon('star', '#c7970f', 1.4)}EVERY 5TH TIER${sep()}A TITLE</span><span class="grow"></span>${chips}</div>
+        <div class="pane-h"><span class="bd-legend">${pixelIcon('star', '#c7970f', 1.4)}XP GOES TO YOUR SELECTED JOURNEY${sep()}SWITCH ANY TIME</span><span class="grow"></span>${chips}</div>
         <div class="pane-scroll x bd-rail" data-scroll-key="bd-season">${trackHtml(app, true)}</div>
       </section>
     </div>`;
@@ -353,16 +372,19 @@ function seasonHtml(app: AppContext): string {
 function passOfferHtml(app: AppContext): string {
   const s = season(app);
   const totals = passTotals(s.id);
+  const newLooks = totals.items.filter(it => !owns(app.save, it.cat, it.id)).length;
+  const pending = !!app.save.iap?.pendingPass;
   const price = iap.shelf().find((x) => x.id === PRODUCT_PASS)?.price ?? '';
   // Everything it pays, in real numbers, and both prices: the store's (where there is one) and gems.
   return `<aside class="bd-passoffer">
       <span class="bd-po-ic" aria-hidden="true">${pixelIcon('crown', '#ffd23a', 3)}</span>
       <b class="bd-po-name">CLUB PASS</b>
-      <ul class="bd-po-facts"><li><b>+${fmt(totals.coins)}</b>COINS</li><li><b class="bd-po-gems">+${fmt(totals.gems)}</b>GEMS</li><li><b>${totals.items.length}</b>LOOKS</li></ul>
-      <small class="bd-po-note">STAR CEREMONY NOW. SIX PIECES FOR YOUR WHOLE CLUB. REACHED TIERS UNLOCK AT ONCE</small>
+      <ul class="bd-po-facts"><li><b>+${fmt(totals.coins)}</b>COINS</li><li><b class="bd-po-gems">+${fmt(totals.gems)}</b>GEMS</li><li><b>${newLooks}</b>NEW LOOKS</li></ul>
+      <small class="bd-po-note">THIS JOURNEY IS YOURS FOR GOOD. CEREMONY NOW. SIX PIECES, COINS AND GEMS ON ITS TIERS</small>
       <button class="btn btn-white" data-a="passPreview">PREVIEW COLLECTION</button>
-      ${price ? `<button class="btn btn-yellow bd-po-buy" data-a="passBuy" aria-label="Get the Club Pass, ${esc(price)}"><small>GET IT</small><b>${esc(price)}</b></button>` : ''}
-      <button class="btn btn-white bd-po-gembuy" data-a="passGems" aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${price ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>
+      ${price ? `<button class="btn btn-yellow bd-po-buy" data-a="passBuy" ${pending ? 'disabled' : ''} aria-label="Get the Club Pass, ${esc(price)}"><small>GET IT</small><b>${esc(price)}</b></button>` : ''}
+      <button class="btn btn-white bd-po-gembuy" data-a="passGems" ${pending ? 'disabled' : ''} aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${price ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>
+      ${pending ? '<small class="bd-po-note">STORE PAYMENT PENDING. NO NEED TO BUY AGAIN</small>' : ''}
     </aside>`;
 }
 
@@ -434,8 +456,8 @@ function titlesHtml(app: AppContext): string {
   // (Newest and highest first: earnedTitles lists each track's tiers upwards.)
   const earned = list.filter((e) => (seen.has(e.title) ? false : (seen.add(e.title), true))).reverse();
   earned.sort((a, b) => Number(b.title === worn) - Number(a.title === worn));
-  const items = earned.map((e) => `<button class="bd-title ${e.title === worn ? 'on' : ''}" data-a="wear" data-v="${esc(e.title)}" aria-pressed="${e.title === worn}">
-      <b>${esc(e.title)}</b><small>${esc(e.from)}</small>
+  const items = earned.map((e) => `<button class="bd-title ${(e.tier ?? 0) >= 6 ? 'prestige' : ''} ${e.title === worn ? 'on' : ''}" style="--prestige:${e.color ?? '#c7970f'}" data-a="wear" data-v="${esc(e.title)}" aria-pressed="${e.title === worn}">
+      <b>${esc(e.title)}</b><small>${esc(e.from)}${e.reward ? `${sep()}${esc(e.reward.name.toUpperCase())} EARNED` : ''}</small>
     </button>`);
   const level = `<button class="bd-title lvl ${worn ? '' : 'on'}" data-a="wear" data-v="" aria-pressed="${!worn}"><b>${esc(lvl)}</b><small>LEVEL TITLE</small></button>`;
   if (worn) items.splice(1, 0, level);
@@ -450,9 +472,10 @@ function titlesHtml(app: AppContext): string {
         <b>${esc(t)}</b><small>${TRACK_INFO[k].name} ${TIER_NAMES[p.tier]}</small><i class="bd-mini" style="--c:${TRACK_INFO[k].color}"><i style="width:${(p.frac * 100).toFixed(0)}%"></i></i>
       </button>`;
     });
+  const wornLook = wornTitleDetails(app.save)?.reward;
   return `<div class="mc-body bd-tbody">
       <section class="pane">
-        <div class="pane-h"><span>TAP ONE TO WEAR IT</span></div>
+        <div class="pane-h"><span>WEAR YOUR PROOF OF PLAY</span><span class="grow"></span>${wornLook ? `<button class="btn btn-white" data-a="titleLook">EQUIP ${esc(wornLook.name.toUpperCase())}</button>` : ''}</div>
         <div class="pane-scroll bd-titles" data-scroll-key="bd-titles">${items.join('')}${next.join('')}</div>
       </section>
     </div>`;

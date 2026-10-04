@@ -32,7 +32,7 @@ export const TROPHY_PRIZE = 1000;
  * the season, not a second economy: a whole winning run pays 680 in the Sunday League (a league title there pays
  * 1,040) and 1,530 in the Elite League (2,640). Each tie also pays the usual match fee (career.ts cupTieReward).
  */
-export const CUP_DIV_SCALE = [0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4] as const;
+export const CUP_DIV_SCALE = [0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.35, 0.3] as const;
 /**
  * League matchdays played before each round is due, spread over the home and away season (14 matchdays): the QF after
  * matchday 4, the SF after 8, the final after 12 (the last two settle the league).
@@ -167,7 +167,7 @@ export function drawCup(seasonSeed: number, division: number, rivals: readonly L
 /** Prize for a result in `round` in a cup played from `division` (winning the final also brings the trophy bonus). */
 export function cupPrize(round: number, won: boolean, division: number): number {
   if (!won) return 0;
-  const mult = CUP_DIV_SCALE[clampInt(division, 1, 6)];
+  const mult = CUP_DIV_SCALE[clampInt(division, TOP_DIVISION, BOTTOM_DIVISION)];
   const r = clampInt(round, 0, 2);
   return Math.round(ROUND_PRIZE[r] * mult) + (r === 2 ? Math.round(TROPHY_PRIZE * mult) : 0);
 }

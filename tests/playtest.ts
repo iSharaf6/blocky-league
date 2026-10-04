@@ -462,8 +462,8 @@ export function playtestMatch(o: PlaytestOptions): PlaytestMatch {
         closeTheirs();
         own = -1;
         replayDone = false;
-        const special = e.own || m.shotDist >= 16 || m.kickKind === 'header' || m.shotStyle === 'chip' || m.shotStyle === 'finesse';
-        replayWanted = (e.side === HS || e.own) && special;
+        // MatchSession now replays every ordinary local goal; a deliberate celebration tap skips it.
+        replayWanted = true;
         celebLate = e.side === HS && o.explosion ? 1.8 - P.goalWideS : 0;
         endStop();
         stop = { kind: 'goal', t: 0 };

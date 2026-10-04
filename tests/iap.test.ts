@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAP_APPLIED_MAX, defaultSave, importSave, loadSave, normalizeIap, type SaveData } from '../src/core/save';
 import { localDay } from '../src/core/day';
+import { selectJourney } from '../src/meta/season';
+import { buyPassWithGems } from '../src/meta/pass';
 import { WELCOME_GEMS, gems } from '../src/meta/gems';
 import { owns, FREE_AD_COINS, FREE_AD_DAILY_CAP, claimFreeAd, freeAdsLeft } from '../src/meta/shop';
+import type { PurchaseRejection } from '../src/platform/purchaseEvents';
 import { Ads } from '../src/platform/ads';
 import { isSmall, normalizeCloud } from '../src/platform/cloud';
 import {
@@ -27,11 +30,11 @@ function stubStorage(stored?: unknown): Map<string, string> {
 }
 
 /** The dev store, bound to a fresh save. */
-async function devStore(search = '?iap=dev'): Promise<{ iap: Iap; save: SaveData; persist: ReturnType<typeof vi.fn> }> {
+async function devStore(search = '?iap=dev'): Promise<{ iap: Iap; save: SaveData; persist: ReturnType<typeof vi.fn<() => void>> }> {
   vi.stubEnv('DEV', true);
   vi.stubGlobal('location', { search });
   const save = defaultSave();
-  const persist = vi.fn();
+  const persist = vi.fn<() => void>();
   const iap = new Iap();
   iap.bind({ save, persist });
   await iap.init();
@@ -60,7 +63,7 @@ describe('catalogue and economy', () => {
     expect(CATALOGUE.filter(isGemPack).map(gemsOf)).toEqual([100, 330, 600, 1300, 3000]);
     // No pack sells coins: coins come from playing, or from swapping gems at a shown rate (meta/gems.ts COIN_OFFERS).
     expect(CATALOGUE.filter(isGemPack).every((e) => e.coins === 0)).toBe(true);
-    // The Club Pass is bought again each month (consumable) and is no gem pack; the Coin Doubler is for good.
+    // The Club Pass is bought per permanent Journey (consumable) and is no gem pack; the Coin Doubler is for good.
     expect(entryOf(PRODUCT_PASS)!.pass).toBe(true);
     expect(isGemPack(entryOf(PRODUCT_PASS)!)).toBe(false);
     expect(entryOf(PRODUCT_DOUBLER)!.doubler).toBe(true);
@@ -394,7 +397,7 @@ async function nativeStore(cdv: ReturnType<typeof fakeCdv>) {
   vi.stubGlobal('location', { search: '' });
   vi.stubGlobal('window', { CdvPurchase: cdv.global });
   const save = defaultSave();
-  const persist = vi.fn();
+  const persist = vi.fn<() => boolean>(() => true);
   const iap = new Iap();
   iap.bind({ save, persist });
   await iap.init();
@@ -630,5 +633,296 @@ describe('the shelf in the app', () => {
     expect(noAds.sellable).toBe(true);
     expect(noAds.price).toBe('EUR 3.99');
     expect(iap.shelf()).toHaveLength(CATALOGUE.length);
+  });
+});
+
+describe('permanent Journey payment targeting', () => {
+  it('pays a delayed approval into the Journey selected at checkout, even after switching and restarting', async () => {
+    const { iap, save, persist } = await devStore('?iap=dev&iapresult=pending');
+    save.season = { id: '2026-10', xp: 900, claimed: [1, 2], titles: [], carry: null, pass: false, passClaimed: [], carryItems: [] };
+    expect(await iap.buy(PRODUCT_PASS)).toBe('pending');
+    expect(save.iap!.pendingPass).toBe('2026-10');
+    expect(persist).toHaveBeenCalled();
+    expect(selectJourney(save.season, 'pass11')).toBe(true);
+    expect(await iap.buy(PRODUCT_PASS)).toBe('pending');
+    expect(buyPassWithGems(save)).toEqual({ ok: false, reason: 'pending', short: 0 });
+    const imported = importSave(JSON.stringify(save))!;
+    expect(imported.iap!.pendingPass).toBe('2026-10');
+    const restarted = new Iap(); restarted.bind({ save: imported, persist: () => persist() });
+    expect(restarted.deliver(PRODUCT_PASS, 'approved-later', false)).toBe('applied');
+    expect(imported.season!.id).toBe('journey-11');
+    expect(imported.season!.pass).toBe(false);
+    expect(imported.season!.journeys!.pass10.pass).toBe(true);
+    expect(imported.season!.journeys!.pass10.id).toBe('2026-10');
+    expect(imported.season!.journeys!.pass10.xp).toBe(900);
+    expect(imported.iap!.pendingPass).toBeUndefined();
+    expect(imported.shop!.owned).toContain('decor:kickpass10');
+    expect(imported.shop!.owned).not.toContain('decor:kickpass11');
+    expect(restarted.deliver(PRODUCT_PASS, 'approved-later', false)).toBe('duplicate');
+  });
+
+  it.each(['cancelled', 'failed'] as const)('clears a confirmed %s order so a later upgrade remains possible', async (result) => {
+    const { iap, save } = await devStore(`?iap=dev&iapresult=${result}`);
+    expect(await iap.buy(PRODUCT_PASS)).toBe(result);
+    expect(save.iap!.pendingPass).toBeUndefined();
+    expect(save.season!.pass).toBe(false);
+  });
+
+  it('retains an unknown provider outcome and validates persisted target IDs', async () => {
+    const save = defaultSave();
+    const iap = new Iap(); iap.bind({ save, persist: vi.fn() });
+    (iap as unknown as { impl: unknown }).impl = { buy: async () => { throw new Error('connection lost'); } };
+    expect(await iap.buy(PRODUCT_PASS)).toBe('pending');
+    expect(save.iap!.pendingPass).toBe(save.season!.id);
+    for (const id of ['pass99', 'journey-13', '<script>', '', '2026-00']) expect(normalizeIap({ pendingPass: id }).pendingPass).toBeUndefined();
+    expect(normalizeIap({ pendingPass: 'journey-01' }).pendingPass).toBe('journey-01');
+  });
+});
+
+describe('late native pass declines', () => {
+  it.each([6777006, 6777003])('clears a definitively declined pending order after timeout and restart (code %s)', async (code) => {
+    vi.useFakeTimers();
+    const cdv = fakeCdv();
+    cdv.store.get = (id: string) => ({ id, pricing: { price: '$3.99' },
+      getOffer: () => ({ id: 'o', order: async () => undefined }) }) as ReturnType<typeof cdv.store.get>;
+    const { iap, save } = await nativeStore(cdv);
+    const result = iap.buy(PRODUCT_PASS);
+    await vi.advanceTimersByTimeAsync(61_000); expect(await result).toBe('pending');
+    const reloaded = importSave(JSON.stringify(save))!;
+    const restarted = new Iap(); restarted.bind({ save: reloaded, persist: vi.fn(() => true) }); await restarted.init();
+    const update = vi.fn(); const off = restarted.onStateChange(update);
+    const error = cdv.store.error.mock.calls.at(-1)![0] as (e: { code: number; productId: string }) => void;
+    error({ code, productId: PRODUCT_PASS });
+    expect(reloaded.iap!.pendingPass).toBeUndefined(); expect(reloaded.season!.pass).toBe(false);
+    expect(update).toHaveBeenCalledTimes(1);
+    off(); error({ code, productId: PRODUCT_PASS }); expect(update).toHaveBeenCalledTimes(1);
+    const retry = restarted.buy(PRODUCT_PASS);
+    await vi.advanceTimersByTimeAsync(61_000); expect(await retry).toBe('pending');
+  });
+
+  it('preserves the checkout target on an unrelated error or transient connection failure', async () => {
+    vi.useFakeTimers();
+    const cdv = fakeCdv();
+    cdv.store.get = (id: string) => ({ id, pricing: { price: '$3.99' },
+      getOffer: () => ({ id: 'o', order: async () => undefined }) }) as ReturnType<typeof cdv.store.get>;
+    const { iap, save } = await nativeStore(cdv);
+    const result = iap.buy(PRODUCT_PASS);
+    await vi.advanceTimersByTimeAsync(61_000); expect(await result).toBe('pending');
+    const target = save.iap!.pendingPass;
+    const error = cdv.store.error.mock.calls[0][0] as (e: { code: number; productId: string }) => void;
+    error({ code: 6777006, productId: 'bl.gems.100' });
+    error({ code: 6777014, productId: PRODUCT_PASS });
+    expect(save.iap!.pendingPass).toBe(target);
+    expect(iap.deliver(PRODUCT_PASS, 'connection-recovered', false)).toBe('applied');
+    expect(save.season!.pass).toBe(true); expect(save.iap!.pendingPass).toBeUndefined();
+  });
+});
+
+describe('durable StoreKit rejection delivery', () => {
+  it('handles a deferred Apple cancellation without store.error, then prevents old rejection replay from cancelling a retry', async () => {
+    vi.useFakeTimers();
+    const cdv = fakeCdv();
+    cdv.store.get = (id: string) => ({ id, pricing: { price: '$3.99' },
+      getOffer: () => ({ id: 'o', order: async () => undefined }) }) as ReturnType<typeof cdv.store.get>;
+    vi.stubGlobal('window', { CdvPurchase: cdv.global });
+    let receiver: ((event: PurchaseRejection) => boolean) | undefined;
+    const watch = vi.fn(async (accept: (event: PurchaseRejection) => boolean) => { receiver = accept; });
+    cdv.store.initialize = vi.fn(async () => { expect(receiver).toBeTypeOf('function'); return []; });
+    const save = defaultSave(); const persist = vi.fn<() => boolean>(() => true);
+    const iap = new Iap(watch); iap.bind({ save, persist }); await iap.init();
+    const buy = iap.buy(PRODUCT_PASS);
+    await vi.advanceTimersByTimeAsync(61_000); expect(await buy).toBe('pending');
+    const update = vi.fn(); iap.onStateChange(update);
+    const rejected: PurchaseRejection = { id: 'A8A96679-2678-4EAE-B87E-C174B9B1E702', productId: PRODUCT_PASS, result: 'cancelled' };
+    expect(receiver!(rejected)).toBe(true);
+    expect(save.iap!.pendingPass).toBeUndefined(); expect(save.season!.pass).toBe(false);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(save.iap!.applied).toContain(`native-rejection:${rejected.id}|${PRODUCT_PASS}`);
+    // Persisted receipt survives death between save and native ACK. Replayed A must not clear the new order B.
+    const imported = importSave(JSON.stringify(save))!;
+    const restarted = new Iap(watch); restarted.bind({ save: imported, persist }); await restarted.init();
+    const retry = restarted.buy(PRODUCT_PASS);
+    await vi.advanceTimersByTimeAsync(61_000); expect(await retry).toBe('pending');
+    const target = imported.iap!.pendingPass;
+    expect(receiver!(rejected)).toBe(true); expect(imported.iap!.pendingPass).toBe(target);
+    expect(restarted.deliver(PRODUCT_PASS, 'retry-approved', false)).toBe('applied');
+    expect(imported.season!.pass).toBe(true);
+  });
+
+  it('settles a live deferred checkout, saves before ACK, and keeps unrelated or malformed events isolated', async () => {
+    const cdv = fakeCdv();
+    cdv.store.get = (id: string) => ({ id, pricing: { price: '$3.99' },
+      getOffer: () => ({ id: 'o', order: async () => undefined }) }) as ReturnType<typeof cdv.store.get>;
+    vi.stubGlobal('window', { CdvPurchase: cdv.global });
+    let receiver: ((event: PurchaseRejection) => boolean) | undefined;
+    const save = defaultSave(); const persist = vi.fn<() => boolean>(() => true); const ack = vi.fn();
+    const iap = new Iap(async accept => { receiver = accept; }); iap.bind({ save, persist }); await iap.init();
+    const buy = iap.buy(PRODUCT_PASS); await Promise.resolve();
+    const target = save.iap!.pendingPass;
+    expect(receiver!({ id: 'other', productId: 'bl.gems.100', result: 'cancelled' })).toBe(true);
+    expect(save.iap!.pendingPass).toBe(target);
+    expect(receiver!({ id: 'bad', productId: PRODUCT_PASS, result: 'network' as 'failed' })).toBe(false);
+    expect(save.iap!.pendingPass).toBe(target);
+    const accepted = receiver!({ id: 'live-failure', productId: PRODUCT_PASS, result: 'failed' });
+    const savedAt = persist.mock.invocationCallOrder.at(-1)!;
+    if (accepted) ack();
+    expect(await buy).toBe('failed'); expect(save.iap!.pendingPass).toBeUndefined();
+    expect(savedAt).toBeLessThan(ack.mock.invocationCallOrder[0]);
+    expect(save.season!.pass).toBe(false);
+  });
+
+  it('consumes a rejection retained before initialization without inventing an approval or payout', async () => {
+    const cdv = fakeCdv(); vi.stubGlobal('window', { CdvPurchase: cdv.global });
+    const save = defaultSave(); save.iap!.pendingPass = save.season!.id;
+    const coins = save.coins, beforeGems = gems(save); const persist = vi.fn<() => boolean>(() => true);
+    const iap = new Iap(async accept => {
+      expect(accept({ id: 'retained-on-disk', productId: PRODUCT_PASS, result: 'cancelled' })).toBe(true);
+    });
+    iap.bind({ save, persist }); await iap.init();
+    expect(save.iap!.pendingPass).toBeUndefined(); expect(save.season!.pass).toBe(false);
+    expect(save.coins).toBe(coins); expect(gems(save)).toBe(beforeGems); expect(persist).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the native event and pending target until a failed local write can be retried', async () => {
+    const cdv = fakeCdv(); vi.stubGlobal('window', { CdvPurchase: cdv.global });
+    let receiver: ((event: PurchaseRejection) => boolean) | undefined;
+    const save = defaultSave(); const target = save.season!.id; save.iap!.pendingPass = target;
+    const stored = vi.fn<() => boolean>(() => false);
+    const iap = new Iap(async accept => { receiver = accept; }); iap.bind({ save, persist: stored }); await iap.init();
+    const event: PurchaseRejection = { id: 'disk-failure', productId: PRODUCT_PASS, result: 'cancelled' };
+    expect(receiver!(event)).toBe(false); expect(save.iap!.pendingPass).toBe(target);
+    expect(save.iap!.applied).not.toContain(`native-rejection:${event.id}|${PRODUCT_PASS}`);
+    stored.mockImplementationOnce(() => { throw new Error('Storage full'); });
+    expect(receiver!(event)).toBe(false); expect(save.iap!.pendingPass).toBe(target);
+    stored.mockReturnValue(true);
+    expect(receiver!(event)).toBe(true); expect(save.iap!.pendingPass).toBeUndefined();
+    expect(save.iap!.applied).toContain(`native-rejection:${event.id}|${PRODUCT_PASS}`);
+  });
+
+  it('never starts a paid pass order if its target could not be saved', async () => {
+    const cdv = fakeCdv(); vi.stubGlobal('window', { CdvPurchase: cdv.global });
+    const order = vi.fn(async () => undefined);
+    cdv.store.get = (id: string) => ({ id, pricing: { price: '$3.99' }, getOffer: () => ({ id: 'o', pricingPhases: [], order }) }) as ReturnType<typeof cdv.store.get>;
+    const save = defaultSave(); const iap = new Iap(); iap.bind({ save, persist: () => false }); await iap.init();
+    expect(await iap.buy(PRODUCT_PASS)).toBe('failed'); expect(order).not.toHaveBeenCalled();
+    expect(save.iap!.pendingPass).toBeUndefined();
+  });
+});
+
+describe('paid native save failures', () => {
+  it.each(['false', 'throw', 'unconfirmed'] as const)('never finishes an unsaved payout (%s), then pays the same receipt once after storage recovers', async (failure) => {
+    const cdv = fakeCdv();
+    const { iap, save } = await nativeStore(cdv);
+    const before = structuredClone(save);
+    const sameSave = save;
+    let canSave = false;
+    const persist = vi.fn<() => boolean | void>(() => {
+      save.updatedAt = '2026-10-06T00:00:00.000Z';
+      if (canSave) return true;
+      if (failure === 'throw') throw new Error('Storage unavailable');
+      if (failure === 'false') return false;
+    });
+    iap.bind({ save, persist });
+    const grant = vi.fn(); iap.onGrant(grant);
+    for (const product of ['bl.gems.100', PRODUCT_STARTER]) {
+      cdv.redeliver(product, `disk-${product}`);
+      await Promise.resolve();
+      expect(cdv.finishes.at(-1)).not.toHaveBeenCalled();
+      expect(save).toBe(sameSave);
+      expect(save).toEqual(before);
+      expect(iap.deliver(product, `disk-${product}`, false)).toBe('unsaved');
+      expect(save).toEqual(before);
+      expect(grant).not.toHaveBeenCalled();
+    }
+    canSave = true;
+    for (const product of ['bl.gems.100', PRODUCT_STARTER]) {
+      cdv.redeliver(product, `disk-${product}`);
+      await Promise.resolve();
+      expect(cdv.finishes.at(-1)).toHaveBeenCalledTimes(1);
+    }
+    expect(save.coins).toBe(before.coins + 2000);
+    expect(gems(save)).toBe(gems(before) + 200 + 150);
+    expect(owns(save, 'ball', 'gold')).toBe(true);
+    expect(save.iap!.firsts).toEqual(['bl.gems.100']);
+    expect(grant).toHaveBeenCalledTimes(2);
+    const paid = structuredClone(save);
+    cdv.redeliver('bl.gems.100', 'disk-bl.gems.100'); await Promise.resolve();
+    expect(cdv.finishes.at(-1)).toHaveBeenCalledTimes(1);
+    expect(save).toEqual(paid);
+    expect(grant).toHaveBeenCalledTimes(2);
+  });
+
+  it('rolls back a paid inactive legacy Journey and its entitlements, retaining its original target for redelivery', async () => {
+    const cdv = fakeCdv(); const { iap, save, persist } = await nativeStore(cdv);
+    save.season = { id: '2026-10', xp: 900, claimed: [1, 2], titles: [], carry: null, pass: false, passClaimed: [], carryItems: [] };
+    save.iap!.pendingPass = '2026-10';
+    selectJourney(save.season, 'pass11');
+    const before = structuredClone(save);
+    persist.mockReturnValue(false);
+    cdv.redeliver(PRODUCT_PASS, 'paid-legacy-pass'); await Promise.resolve();
+    expect(cdv.finishes.at(-1)).not.toHaveBeenCalled();
+    expect(save).toEqual(before);
+    expect(save.iap!.pendingPass).toBe('2026-10');
+    persist.mockReturnValue(true);
+    cdv.redeliver(PRODUCT_PASS, 'paid-legacy-pass'); await Promise.resolve();
+    expect(cdv.finishes.at(-1)).toHaveBeenCalledTimes(1);
+    expect(save.season!.id).toBe('journey-11'); expect(save.season!.pass).toBe(false);
+    expect(save.season!.journeys!.pass10).toMatchObject({ id: '2026-10', xp: 900, pass: true });
+    expect(save.shop!.owned).toContain('decor:kickpass10');
+    expect(save.shop!.owned).not.toContain('decor:kickpass11');
+    expect(save.iap!.pendingPass).toBeUndefined();
+    expect(iap.deliver(PRODUCT_PASS, 'paid-legacy-pass', false)).toBe('duplicate');
+  });
+
+  it.each(['false', 'throw'] as const)('preserves a legacy shell pending target when its definitive cancellation cannot save (%s)', async (failure) => {
+    const cdv = fakeCdv(); const { iap, save, persist } = await nativeStore(cdv);
+    const order = vi.fn(async () => undefined);
+    cdv.store.get = (id: string) => ({ id, pricing: { price: '$3.99' }, getOffer: () => ({ id: 'o', pricingPhases: [], order }) }) as ReturnType<typeof cdv.store.get>;
+    const buy = iap.buy(PRODUCT_PASS); await Promise.resolve();
+    const before = structuredClone(save);
+    if (failure === 'false') persist.mockReturnValue(false);
+    else persist.mockImplementation(() => { throw new Error('Storage full'); });
+    const error = cdv.store.error.mock.calls.at(-1)![0] as (e: { code: number; productId: string }) => void;
+    error({ code: 6777006, productId: PRODUCT_PASS });
+    expect(await buy).toBe('pending');
+    expect(save).toEqual(before);
+    expect(await iap.buy(PRODUCT_PASS)).toBe('pending'); expect(order).toHaveBeenCalledTimes(1);
+    persist.mockImplementation(() => true);
+    error({ code: 6777006, productId: PRODUCT_PASS });
+    expect(save.iap!.pendingPass).toBeUndefined();
+  });
+
+  it.each(['error-first', 'observer-first'] as const)('requires the native durable rejection in either callback order (%s), and replay cannot clear a retry', async (first) => {
+    vi.useFakeTimers();
+    const cdv = fakeCdv();
+    vi.stubGlobal('window', { CdvPurchase: cdv.global, Capacitor: { isNativePlatform: () => true, isPluginAvailable: (name: string) => name === 'PurchaseEvents' } });
+    const order = vi.fn(async () => undefined);
+    cdv.store.get = (id: string) => ({ id, pricing: { price: '$3.99' }, getOffer: () => ({ id: 'o', pricingPhases: [], order }) }) as ReturnType<typeof cdv.store.get>;
+    let receive: ((event: PurchaseRejection) => boolean) | undefined;
+    const save = defaultSave(); let canSave = true;
+    const persist = vi.fn(() => canSave);
+    const iap = new Iap(async accept => { receive = accept; }); iap.bind({ save, persist }); await iap.init();
+    const changed = vi.fn(); iap.onStateChange(changed);
+    const buy = iap.buy(PRODUCT_PASS); await Promise.resolve();
+    const before = structuredClone(save); canSave = false;
+    const error = cdv.store.error.mock.calls.at(-1)![0] as (e: { code: number; productId: string }) => void;
+    const event: PurchaseRejection = { id: 'authoritative-A', productId: PRODUCT_PASS, result: 'cancelled' };
+    if (first === 'error-first') { error({ code: 6777006, productId: PRODUCT_PASS }); expect(receive!(event)).toBe(false); }
+    else { expect(receive!(event)).toBe(false); error({ code: 6777006, productId: PRODUCT_PASS }); }
+    expect(await buy).toBe('pending'); expect(save).toEqual(before);
+    expect(await iap.buy(PRODUCT_PASS)).toBe('pending'); expect(order).toHaveBeenCalledTimes(1);
+    expect(changed).not.toHaveBeenCalled();
+    canSave = true;
+    // Even if ordinary error arrives after storage recovers, the retained event still owns the receipt.
+    error({ code: 6777006, productId: PRODUCT_PASS });
+    expect(save.iap!.pendingPass).toBe(before.iap!.pendingPass);
+    expect(receive!(event)).toBe(true); expect(save.iap!.pendingPass).toBeUndefined();
+    expect(changed).toHaveBeenCalledTimes(1);
+    selectJourney(save.season!, 'pass12');
+    const retry = iap.buy(PRODUCT_PASS); await Promise.resolve(); const targetB = save.iap!.pendingPass;
+    expect(targetB).toBe('journey-12'); expect(order).toHaveBeenCalledTimes(2);
+    expect(receive!(event)).toBe(true); expect(save.iap!.pendingPass).toBe(targetB);
+    error({ code: 6777006, productId: PRODUCT_PASS }); expect(await retry).toBe('pending');
+    expect(save.iap!.pendingPass).toBe(targetB);
   });
 });

@@ -1330,6 +1330,30 @@ kbd {
   .hud-banner .bn-sub { font-size: 16px; padding: 6px 12px 5px; }
 }
 
+/* The scorer's announcement belongs to the score bug; the celebration owns the centre of the lens. */
+.hud-banner.goal.score-flash {
+  inset: auto;
+  display: grid;
+  justify-items: start;
+  justify-content: start;
+  gap: 5px;
+  max-width: min(240px, calc(100vw - 24px));
+  pointer-events: none;
+}
+.hud-banner.goal.score-flash:not(.small) .bn-title { font-size: clamp(26px, 4vw, 34px); }
+.hud-banner.goal.score-flash .bn-title { justify-content: start; }
+.hud-banner.goal.score-flash .bn-title i {
+  animation: letter 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  text-shadow: 0 3px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink);
+}
+.hud-banner.goal.score-flash .bn-sub {
+  font-size: clamp(14px, 1.7vw, 17px);
+  padding: 4px 8px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+
 @keyframes letter {
   from { transform: translateY(-120px) scale(0.4); opacity: 0; }
 }
@@ -6537,6 +6561,7 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 
 /* ---- third tier: QUICK MATCH, EVENTS, today's challenges */
 .hub-foot { grid-area: foot; position: relative; display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: var(--gap); align-items: stretch; min-width: 0; }
+.hub-foot.with-invite { grid-template-columns: auto auto auto minmax(0, 1fr); }
 .hub-mini {
   appearance: none; border: 3px solid var(--ink); margin: 0; font: inherit; cursor: pointer;
   display: inline-flex; align-items: center; gap: 8px; min-height: calc(44px * var(--ts)); padding: 0 14px 0 10px; white-space: nowrap;
@@ -6661,7 +6686,7 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
   .hub-hero { min-height: 240px; }
   .hub-t2 { grid-template-rows: auto; }
   .hub-tile { min-height: 104px; }
-  .hub-foot { grid-template-columns: 1fr 1fr; }
+  .hub-foot, .hub-foot.with-invite { grid-template-columns: 1fr 1fr; }
   .hub-daily-wrap { grid-column: 1 / -1; }
   .hub-daily { min-height: 48px; }
   .hub-dl { left: 0; width: auto; }

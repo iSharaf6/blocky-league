@@ -14,7 +14,7 @@ import { MENU, SONGS, STINGS, WIN_FINAL, midiHz, type Song, type StingId, type T
  *
  * THE CROWD SINGS AT EVERY GROUND (the owner: "crowd chants non existent"; a level-0 ground used to never sing).
  * A small ground is a few fans, loud and passionate: a drum, a trumpet, claps and shouts; a big one is many voices.
- * Every 15 to 30 s (tick) one of CHANT_KINDS: seventeen chants (see chant()), each a football rhythm with claps and a
+ * Every 15 to 30 s (tick) one of CHANT_KINDS: nineteen chants (see chant()), each a football rhythm with claps and a
  * drum. The owner again: "have more chants but make it obvious that it is chants because it kind of isnt". So the
  * voices are WORDS now, not a pad: every syllable has its own vowel through the choir's formants, the vowel MOVES
  * inside the syllable where the word does ("o-LE", "hEY", "OH"), consonants are closures and bursts in front of it,
@@ -82,7 +82,7 @@ export type Stand = 0 | 1;
 /** The chants (Sfx.chant says what each is). The first five are the originals; ids are used by the dev panel and tests. */
 export const CHANT_KINDS = [
   'claps', 'ohs', 'name', 'drum', 'horn', 'ole', 'comeon', 'hey', 'callname', 'stomp', 'lala', 'letsgo', 'whoa',
-  'allez', 'herewego', 'standup', 'weare',
+  'allez', 'herewego', 'standup', 'weare', 'homeagain', 'bounce',
 ] as const;
 export type ChantKind = (typeof CHANT_KINDS)[number];
 export type Outcome = 'win' | 'draw' | 'loss';
@@ -174,6 +174,8 @@ export function chantCaption(kind: ChantKind, words: readonly string[]): string 
     case 'herewego': return 'HERE WE GO! HERE WE GO! (CLAP CLAP)';
     case 'standup': return `STAND UP FOR ${first}! (CLAP CLAP)`;
     case 'weare': return `WE ARE ${name}! OH OH!`;
+    case 'homeagain': return 'THIS IS OUR HOME! LA LA LA! (CLAP CLAP)';
+    case 'bounce': return 'NA NA NA, NA NA NA, HEY! (CLAP CLAP)';
     default: return 'OOOOOH, HEY!';
   }
 }
@@ -217,6 +219,7 @@ export class Sfx {
   private ends: { gain: GainNode; filter: BiquadFilterNode; lfo: OscillatorNode; lfoGain: GainNode; heat: number; armed: boolean; surgeAt: number }[] = [];
   /** The choirs: 0 home (all round the ground), 1 away, 2 and 3 the home crowd's two ends (a call and its answer). */
   private choirs: Choir[] = [];
+  private choirWave: PeriodicWave | null = null;
   /**
    * A chant has started: its kind, who is singing, the words for the screen and how long it runs (s). The match
    * session shows the caption (game/matchSession.ts); null in the menus.
@@ -502,6 +505,7 @@ export class Sfx {
     this.ctx = null;
     this.ends = [];
     this.choirs = [];
+    this.choirWave = null;
     this.murmurGain = null;
     this.murmurLfo = null;
     this.rainGain = null;
@@ -623,22 +627,21 @@ export class Sfx {
   /**
    * A stand's choir: the crowd's voices go in at `input`, through two vowel formants (moved per sung syllable, and
    * within it where the vowel moves), a fixed third (the "singer's" ring a phone speaker carries the words on) and a
-   * little of the chest under them, out to `dest`. The formants are narrow (Q 6 and 9): wide ones only colour the
-   * noise, narrow ones say a vowel.
+   * little of the chest under them, out to `dest`. The two formants keep vowels audible without a piercing, hollow ring.
    */
   private makeChoir(dest: AudioNode): Choir {
     const c = this.ctx!;
     const input = c.createGain();
     const out = c.createGain();
-    out.gain.value = 1.7;
+    out.gain.value = 1.45;
     const f1 = c.createBiquadFilter();
     f1.type = 'bandpass';
     f1.frequency.value = 570;
-    f1.Q.value = 6;
+    f1.Q.value = 4;
     const f2 = c.createBiquadFilter();
     f2.type = 'bandpass';
     f2.frequency.value = 840;
-    f2.Q.value = 9;
+    f2.Q.value = 5;
     const g2 = c.createGain();
     g2.gain.value = 0.85;
     const f3 = c.createBiquadFilter();
@@ -646,13 +649,13 @@ export class Sfx {
     f3.frequency.value = 2600;
     f3.Q.value = 4;
     const g3 = c.createGain();
-    g3.gain.value = 0.3;
+    g3.gain.value = 0.18;
     const chest = c.createBiquadFilter();
     chest.type = 'lowpass';
     chest.frequency.value = 340;
     chest.Q.value = 0.7;
     const gc = c.createGain();
-    gc.gain.value = 0.14;
+    gc.gain.value = 0.1;
     input.connect(f1).connect(out);
     input.connect(f2).connect(g2).connect(out);
     input.connect(f3).connect(g3).connect(out);
@@ -821,7 +824,7 @@ export class Sfx {
   }
 
   /**
-   * A chant from `stand` (one at a time per stand; a home one is sometimes answered by the away section). Seventeen
+   * A chant from `stand` (one at a time per stand; a home one is sometimes answered by the away section). Nineteen
    * of them, each a football rhythm with words the screen can caption (chantCaption):
    * - claps: clap clap, clap-clap-clap, clap-clap-clap-clap, and the club's name shouted; twice;
    * - ohs: a sung "oh oh oh" line and its answer (an anthem after a goal: louder, longer, more voices);
@@ -840,6 +843,8 @@ export class Sfx {
    * - herewego: a quick "HERE WE GO", three times, climbing into the last shout;
    * - standup: one end calls "STAND UP FOR", the other answers the club name;
    * - weare: "WE ARE" the club, then a long answering "OH OH" over the drum.
+   * - homeagain: a bright "THIS IS OUR HOME" refrain, then a sung la-la answer;
+   * - bounce: a pentatonic na-na melody with two claps and a final hey.
    * At a small ground a lone drummer bangs along to most of them. `kind` omitted: picked for the ground, never the
    * same twice running. The beds duck under it, and onChant gets its words.
    */
@@ -871,6 +876,8 @@ export class Sfx {
       case 'herewego': end = this.chantHereWeGo(t, level, stand, voices); break;
       case 'standup': end = this.chantStandUp(t, level, stand, voices); break;
       case 'weare': end = this.chantWeAre(t, level, stand, voices); break;
+      case 'homeagain': end = this.chantHomeAgain(t, level, stand, voices); break;
+      case 'bounce': end = this.chantBounce(t, level, stand, voices); break;
       default: end = this.chantWhoa(t, level, stand, voices); break;
     }
     if (choir) choir.busy = end;
@@ -1573,7 +1580,7 @@ export class Sfx {
 
   /** What the away section answers a home chant with. */
   private static readonly AWAY_ANSWERS: readonly ChantKind[] = ['name', 'claps', 'ole', 'comeon', 'allez', 'weare'];
-  private static readonly HOME_GOAL_SONGS: readonly ChantKind[] = ['ohs', 'allez', 'weare', 'herewego'];
+  private static readonly HOME_GOAL_SONGS: readonly ChantKind[] = ['ohs', 'homeagain', 'allez', 'bounce', 'weare', 'herewego'];
   private static readonly AWAY_GOAL_SONGS: readonly ChantKind[] = ['name', 'comeon', 'letsgo', 'weare'];
   /** "Oh oh oh": [beat, beats long, MIDI] (G3 A3 G3 E3 G3 C3, then the answer down to C, an anthem's third line up). */
   private static readonly OH_LINES: readonly (readonly (readonly [number, number, number])[])[] = [
@@ -1641,6 +1648,8 @@ export class Sfx {
     w[14] = 1;
     w[15] = 0.7 + size * 0.5;
     w[16] = 0.8 + size * 0.3;
+    w[17] = 1.2 + size * 0.3;
+    w[18] = 1.1;
     const kinds = CHANT_KINDS;
     let sum = 0;
     for (let i = 0; i < kinds.length; i++) if (kinds[i] !== this.lastChant) sum += w[i];
@@ -1662,10 +1671,13 @@ export class Sfx {
    * Notes in time order; a chant calls this in time order too (each call takes the formants from its first note on).
    * Returns the end.
    */
-  private sing(t0: number, notes: readonly SungNote[], voices: number, level: number, who: number, spread = 0.022): number {
+  private sing(t0: number, notes: readonly SungNote[], voices: number, level: number, who: number, spread = 0.006): number {
     const ch = this.choirs[who] ?? this.choirs[0];
     if (!ch || !notes.length) return t0;
     const c = this.ctx!;
+    // A rounded voiced source. Remove octave-down growls and keep the choir close to the melody.
+    this.choirWave ??= c.createPeriodicWave(new Float32Array(8),
+      Float32Array.from([0, 1, 0.45, 0.22, 0.12, 0.07, 0.04, 0.025]));
     const last = notes[notes.length - 1];
     const start = t0 + notes[0][0];
     const end = t0 + last[0] + last[1];
@@ -1731,20 +1743,23 @@ export class Sfx {
     }
     for (let v = 0; v < voices; v++) {
       const o = c.createOscillator();
-      const oct = v % 4 === 1 ? 0.5 : v % 6 === 5 ? 2 : 1;
-      o.type = oct === 2 ? 'triangle' : 'sawtooth';
-      const det = (1 + (Math.random() * 2 - 1) * spread) * oct;
+      const oct = v % 6 === 5 ? 2 : 1;
+      o.setPeriodicWave(this.choirWave);
+      const det = (1 + (Math.random() * 2 - 1) * Math.min(spread, 0.008)) * oct;
       // (A crowd is never quite together: each voice a touch late in its own way.)
       const late = Math.random() * 0.03;
       for (const [at, dur, midi] of notes) {
         const f = midiHz(midi) * det;
         const s = t0 + at + late;
-        o.frequency.setValueAtTime(f * 0.95, s);
+        o.frequency.setValueAtTime(f * 0.993, s);
         o.frequency.linearRampToValueAtTime(f, s + 0.06);
         o.frequency.setValueAtTime(f, s + Math.max(0.07, dur * 0.72));
-        o.frequency.linearRampToValueAtTime(f * 0.975, s + Math.max(0.08, dur * 0.96));
+        o.frequency.linearRampToValueAtTime(f * 0.998, s + Math.max(0.08, dur * 0.96));
       }
-      o.connect(envs[v % groups]);
+      const voiceGain = c.createGain();
+      voiceGain.gain.value = oct === 2 ? 0.35 : 1;
+      o.connect(voiceGain).connect(envs[v % groups]);
+      o.onended = () => { o.disconnect(); voiceGain.disconnect(); };
       o.start(start);
       o.stop(end + 0.1);
     }
@@ -1752,7 +1767,7 @@ export class Sfx {
     n.buffer = this.noise;
     n.loop = true;
     const ng = c.createGain();
-    ng.gain.value = 0.7;
+    ng.gain.value = 0.2;
     n.connect(ng).connect(envs[0]);
     n.start(start, Math.random() * 2);
     n.stop(end + 0.1);
@@ -2066,6 +2081,44 @@ export class Sfx {
     return t + 8;
   }
 
+  /** A major-key home refrain; no club-name phonemes needed for the melody to read. */
+  private chantHomeAgain(t: number, k: number, stand: Stand, voices: number): number {
+    const bus = this.standBus(stand);
+    const b = 0.5;
+    for (let r = 0; r < 2; r++) {
+      const at = t + r * 8 * b;
+      const notes: SungNote[] = [
+        [0, b * 0.8, 60, 'i', 'th'], [b, b * 0.8, 62, 'i'],
+        [2 * b, b * 0.8, 64, 'a'], [3 * b, b * 1.7, 67, 'ow', 'h'],
+        [5 * b, b * 0.7, 64, 'a', 'l'], [6 * b, b * 0.7, 62, 'a', 'l'],
+        [7 * b, b * 0.8, 60, 'a', 'l'],
+      ];
+      this.sing(at, notes, voices, k, stand);
+      this.drum(at, k * 0.7, bus);
+      this.drum(at + 2 * b, k * 0.65, bus);
+      this.clap(at + 4.5 * b, k, bus);
+      this.clap(at + 5 * b, k, bus);
+    }
+    return t + 16 * b;
+  }
+
+  /** A bright pentatonic terrace tune, with a clear rest for the clap response. */
+  private chantBounce(t: number, k: number, stand: Stand, voices: number): number {
+    const bus = this.standBus(stand);
+    const b = 0.46;
+    for (let r = 0; r < 2; r++) {
+      const at = t + r * 8 * b;
+      this.sing(at, [
+        [0, b * 0.8, 60, 'a', 'n'], [b, b * 0.8, 64, 'a', 'n'], [2 * b, b * 1.6, 67, 'a', 'n'],
+        [4 * b, b * 0.8, 69, 'a', 'n'], [5 * b, b * 0.8, 67, 'a', 'n'], [6 * b, b * 1.5, 64, 'a', 'n'],
+      ], voices, k, stand);
+      this.drum(at, k * 0.7, bus);
+      for (const x of [3, 3.5]) this.clap(at + x * b, k, bus);
+    }
+    this.hey(t + 16 * b, k, stand, voices, 60);
+    return t + 16 * b + 0.5;
+  }
+
   /** A long rising "oooooh" over a quickening drum, breaking into "HEY!" and three claps. */
   private chantWhoa(t: number, k: number, stand: Stand, voices: number): number {
     const ch = this.choirs[stand];
@@ -2091,9 +2144,9 @@ export class Sfx {
       env.connect(ch.input);
       for (let v = 0; v < voices; v++) {
         const o = c.createOscillator();
-        o.type = 'sawtooth';
-        const det = (1 + (Math.random() * 2 - 1) * 0.03) * (v % 4 === 1 ? 0.5 : 1);
-        o.frequency.setValueAtTime(midiHz(50) * det, t);
+        o.type = 'triangle';
+        const det = 1 + (Math.random() * 2 - 1) * 0.008;
+        o.frequency.setValueAtTime(midiHz(55) * det, t);
         o.frequency.exponentialRampToValueAtTime(midiHz(61) * det, t + dur);
         o.connect(env);
         o.start(t);
@@ -2103,7 +2156,7 @@ export class Sfx {
       n.buffer = this.noise;
       n.loop = true;
       const ng = c.createGain();
-      ng.gain.value = 0.7;
+      ng.gain.value = 0.2;
       n.connect(ng).connect(env);
       n.start(t, Math.random() * 2);
       n.stop(t + dur + 0.15);

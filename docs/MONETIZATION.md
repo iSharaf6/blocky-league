@@ -38,7 +38,7 @@ Prices are set in the store consoles. The shop shows the store's own price strin
 | `bl.gems.2000` | Consumable | 2,000 + 50% bonus = **3,000** gems | US$19.99 | BEST VALUE |
 | `bl.starter` | Non-consumable | 2,000 coins, 150 gems and the Gold ball. Buyable once; the shop hides it once owned | US$1.99 | none |
 | `bl.noads` | Non-consumable | No interstitial ads between matches. Rewarded ads you choose to watch stay | US$3.99 | none |
-| `bl.pass` | Consumable | The current month's Club Pass: 5,560 coins, 150 gems and a six-piece identity. Star Ceremony unlocks immediately; look, trail, kit, goal explosion and diamond nets are earned through tiers 5/10/15/20/25. The store refuses a second buy in the month. Also available for 600 earned or purchased gems | US$3.99 | none |
+| `bl.pass` | Consumable | Premium access to the selected permanent Club Journey: 5,560 coins, 150 gems and a six-piece identity. Star Ceremony unlocks immediately; look, trail, kit, goal explosion and diamond nets are earned through tiers 5/10/15/20/25. Each of the 12 Journeys can be bought once and never expires. Also available for 600 earned or purchased gems | US$3.99 | none |
 | `bl.doubler` | Non-consumable | Coin Doubler: every match pays double coins, for good | US$4.99 | none |
 | `bl.pro` | Non-consumable | PRO bundle: NO ADS, the Coin Doubler and 600 gems (US$13.97 bought one by one). Buyable once; the shop shows it only while neither NO ADS nor the Coin Doubler is owned | US$9.99 | none |
 
@@ -71,7 +71,7 @@ itch and the plain website have no `CdvPurchase`, so they are `none` too.
 
 **What coins buy.** Ordinary looks cost 250 to 7,500 (the coin catalogue is about 187,000), the ground about 35,600, plus players and training. Scout packs cost earned-only Scout Tickets: neither coins, gems nor money buy a random card. Some looks are also free at a level.
 
-**What gems add.** SIGNATURES offers guaranteed, permanent six-piece club identities with actual live previews and a single EQUIP ALL SIX action. Past themes cost 600 gems, minus 100 per already owned piece; the confirmation shows the exact missing items and price. Kits, captain looks, trails, goal shows, luminous diamond nets and animated constellation ceremonies are cosmetic, with no player stat or economic bonuses. Earned gems buy identical collections. The current theme is earned through its Club Pass; past themes stay available without a countdown. Existing purchases and pass rewards are preserved, and legacy receipts backfill new ceremony/net entitlements without replaying coin or gem payouts (`tests/signatureEconomy.test.ts`).
+**What gems add.** SIGNATURES offers guaranteed, permanent six-piece club identities with actual live previews and a single EQUIP ALL SIX action. All 12 themes cost 600 gems, minus 100 per already owned piece; the confirmation shows the exact missing items and price. Kits, captain looks, trails, goal shows, luminous diamond nets and animated constellation ceremonies are cosmetic, with no player stat or economic bonuses. Earned gems buy identical collections. Each identity can also be earned through its permanent premium Club Journey. There are no availability countdowns. Existing purchases and pass rewards are preserved, and legacy receipts backfill new ceremony/net entitlements without replaying coin or gem payouts (`tests/signatureEconomy.test.ts`).
 
 **The packs against that:**
 
@@ -146,7 +146,7 @@ The Scouting Network sells a stated minimum prospect potential per intake, earne
 
 The iOS shell is in the repo (Capacitor 8, Swift Package Manager, no CocoaPods):
 
-- `capacitor.config.ts`: appId `com.calynx.blockyleague`, web dir `dist-itch` (the no PWA, no cloud-login web build).
+- `capacitor.config.ts`: appId `com.calynx.blockyleague`, web dir `dist-ios` (no PWA; optional cloud accounts).
 - `ios/`: landscape only on iPhone and iPad, no status bar, the grey launch screen, the 1024 app icon.
 - `npm run ios` rebuilds that web build and copies it in. Then open `ios/App/App.xcodeproj` in Xcode, set your
   team under Signing and Capabilities, and run or archive.
@@ -207,4 +207,6 @@ CrazyGames, Poki and itch get **no real-money offers**: their rules and payment 
 - **A restore never pays coins.** A one-time product handed back on a new device (RESTORE PURCHASES, or the store's owned list at start-up) brings back its items and ownership (the Gold ball, NO ADS) but not the Starter Pack's 2,000 coins: those were paid on the device that bought it, so a reinstall is no coin tap (`applyPurchase`'s `restored`). The plugin cannot tell a restore from an interrupted first purchase; the rare player whose app died mid-purchase on a brand-new install keeps the ball but not the coins (support can top them up). A receipt-validation server (4.5) with a ledger would close that gap.
 - The record of paid transactions keeps the newest 200 per save.
 - AdMob uses test ads until production ids are supplied; real-device ad and purchase checks remain release requirements.
-- A `native` entry in `scripts/release.mjs` (a dedicated web build for the app shell) would be tidier than reusing the itch build; not done.
+- The dedicated `ios` release variant now carries optional cloud saves; `npm run ios` builds it and syncs the shell.
+- Apple/Google sign-in providers must be enabled in the existing backend. The native Apple path avoids a renewable
+  web OAuth secret; see docs/AUTH_SETUP.md for console prerequisites and optional web Apple rotation.

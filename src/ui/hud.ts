@@ -8,7 +8,7 @@ import { Commentator, POWER_INFO, pitchNames, surname, type CommentaryLine } fro
 import { actionKey, currentDevice, remapKeys } from '../core/input';
 import { coachParts, cueKey, cueOfText, fillCoach, type CoachCue, type CoachParts } from './coach';
 import { pixelIcon } from './pixelIcons';
-import { scoreHtml, seps, sepsOfText } from './text';
+import { escHtml, scoreHtml, sepsOfText } from './text';
 
 /** How long (s) each power-up runs once used, for the slot's countdown ring when the sim doesn't say. */
 export const POWER_SECONDS: Record<PowerUpKind, number> = { turbo: 6, mega: 8, freeze: 5, magnet: 6, shield: 6, golden: 20 };
@@ -141,6 +141,7 @@ export class Hud {
   private bannerCard = false;
   /** The banner up now is a power-up call ("TURBO!"): the same plate, kept off the goal mouth. */
   private bannerPower = false;
+  private bannerGoal = false;
   private bannerPlaceT = 0;
   /** Blitz: the power-up slot under the score bug. */
   private power: HTMLDivElement;
@@ -335,12 +336,14 @@ export class Hud {
     sub = remapKeys(sub, currentDevice());
     this.bannerCard = /(^|\s)card(\s|$)/.test(kind);
     this.bannerPower = /(^|\s)power(\s|$)/.test(kind);
-    this.banner.className = `hud-banner on ${kind}${this.bannerCard || this.bannerPower ? ' plate' : ''}`;
+    // Scenario verdicts also use the goal colour. Only a scored goal gets the corner score flash.
+    this.bannerGoal = /^GOAL!/.test(title) && /(^|\s)goal(\s|$)/.test(kind);
+    this.banner.className = `hud-banner on ${kind}${this.bannerGoal ? ' score-flash' : ''}${this.bannerCard || this.bannerPower || this.bannerGoal ? ' plate' : ''}`;
     // Letters fly in one by one, grouped by word so a long title can wrap between words; past 12 characters the
     // letters also shrink (--bn-k), so "MOMENT COMPLETE" fits where "GOAL!" was measured (see .bn-title i).
     let n = 0;
-    const words = title.split(' ').map((w) => `<span class="bn-w">${[...w].map((ch) => `<i style="animation-delay:${n++ * 45}ms">${ch}</i>`).join('')}</span>`);
-    this.banner.innerHTML = `<div class="bn-title">${words.join('')}</div>${sub ? `<div class="bn-sub">${seps(sub)}</div>` : ''}`;
+    const words = title.split(' ').map((w) => `<span class="bn-w">${[...w].map((ch) => `<i style="animation-delay:${n++ * 45}ms">${escHtml(ch)}</i>`).join('')}</span>`);
+    this.banner.innerHTML = `<div class="bn-title">${words.join('')}</div>${sub ? `<div class="bn-sub">${sepsOfText(sub)}</div>` : ''}`;
     this.banner.style.setProperty('--bn-k', String(Math.min(1, 12 / Math.max(1, title.replace(/\s+/g, '').length + (words.length - 1) * 0.5))));
     this.bannerTimer = seconds;
     const st = this.banner.style;
@@ -351,7 +354,7 @@ export class Hud {
       this.toastTimer = 0;
       this.suppressHints(seconds);
     }
-    if (this.bannerCard || this.bannerPower) {
+    if (this.bannerCard || this.bannerPower || this.bannerGoal) {
       this.bannerPlaceT = 0.25;
       this.placeBanner();
       if (this.cmLine) this.placeTicker();
@@ -460,7 +463,7 @@ export class Hud {
    * keeps off the goal mouth in shot (a corner, a shot on the way).
    */
   private placeBanner(): void {
-    if (!this.bannerCard && !this.bannerPower) return;
+    if (!this.bannerCard && !this.bannerPower && !this.bannerGoal) return;
     const b = this.banner;
     const st = b.style;
     const W = window.innerWidth;
@@ -469,6 +472,15 @@ export class Hud {
     const sb = this.bugRect();
     if (!sb) return;
     const pause = this.topRight();
+    if (this.bannerGoal) {
+      // A narrow plate attached to the score bug leaves the celebration's centre and skip control clear.
+      // The bug already includes the device's safe-area insets, even on a notched landscape phone.
+      st.left = `${Math.round(sb.l)}px`;
+      const cornerWidth = W > H ? Math.min(240, W * 0.32) : 240;
+      st.width = `${Math.round(Math.min(cornerWidth, W - sb.l - Math.max(g, W - (pause?.r ?? W))))}px`;
+      st.top = `${Math.round(sb.b + 8)}px`;
+      return;
+    }
     type Cand = { l: number; w: number; t: number };
     const apply = (c: Cand) => {
       st.left = `${Math.round(c.l)}px`;
@@ -510,7 +522,7 @@ export class Hud {
 
   /** The booking / power-up plate's box while it is up (the ticker keeps clear of it). */
   private cardBannerRect(): Rect | null {
-    return (this.bannerCard || this.bannerPower) && this.bannerTimer > 0 ? this.rectOf('.hud-banner.plate', false) : null;
+    return (this.bannerCard || this.bannerPower || this.bannerGoal) && this.bannerTimer > 0 ? this.rectOf('.hud-banner.plate', false) : null;
   }
 
   /**
@@ -1361,14 +1373,14 @@ export class Hud {
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.banner.classList.remove('on');
-      else if (this.bannerPower && this.project) {
+      else if (this.bannerGoal || (this.bannerPower && this.project)) {
         // The camera pans: keep the power-up plate off the goal mouth (checked a few times a second).
         this.bannerPlaceT -= dt;
         if (this.bannerPlaceT <= 0) {
           this.bannerPlaceT = 0.25;
           const r = this.banner.getBoundingClientRect();
           const box = { l: r.left, t: r.top, r: r.right, b: r.bottom };
-          if (this.goalRects().some((gr) => overlapArea(box, gr, 6) > 0)) this.placeBanner();
+          if (this.bannerGoal || this.goalRects().some((gr) => overlapArea(box, gr, 6) > 0)) this.placeBanner();
         }
       }
     }

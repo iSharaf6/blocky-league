@@ -1,27 +1,20 @@
-/**
- * Season track: a free 30-tier ladder fed by XP, resetting monthly with a theme (docs/DESIGN_REVIEW.md).
- *
- * Rules (pure; the BADGES screen in ui/badges.ts renders them, tests/season.test.ts pins them):
- * - Every XP point a match earns also counts for the season (main.ts's full time calls `seasonAdvance` with the
- *   match XP; the Club Run's own bonus XP goes through `addXp`). Tier t costs `tierCost(t)` XP: 100 each for
- *   tiers 1 to 10, 140 for 11 to 20, 180 for 21 to 30 (4,200 XP in all, about 30 matches).
- * - Every tier pays coins, claimed with a CLAIM button (each tier pays once). Every 5th tier pays a bigger coin
- *   prize and a season title ("Harvest Cup Star"); titles are kept for good.
- * - A new calendar month starts a new season (its own theme). Nothing reached is lost: at the roll-over the coins
- *   of reached, unclaimed tiers move to `carry` (one CLAIM on the next season's screen) and the reached
- *   5th-tier titles are archived in `titles`.
- * - The Club Pass (meta/pass.ts) adds a second track to the same tiers for the month it is bought in: more coins
- *   and that month's six-piece identity. The star ceremony unlocks immediately; buying late unlocks reached tiers.
- * - Economy v3: free tiers 10, 20 and 30 also pay a few gems, and six pass tiers pay more (meta/gems.ts SEASON_GEMS,
- *   PASS_GEMS); they are paid once per tier claimed (meta/pass.ts syncSeasonGems).
- * Nothing on the pitch can be bought: the pass is looks, coins and gems.
- */
-import { PASS_GEMS, SEASON_GEMS } from './gems';
+/** Twelve permanent Club Journeys. XP advances the selected track; switching never expires progress or a pass.
+ * The active fields retain legacy monthly receipt IDs, so old gem claims and paid rewards remain paid once.
+ * Inactive tracks live in `journeys`; shared legacy carry balances remain claimable exactly once. */
 
 export const SEASON_TIERS = 30;
 
+export interface JourneyProgress {
+  /** Stable new `journey-XX` ID, or the original YYYY-MM gem receipt namespace of an imported track. */
+  id: string;
+  xp: number;
+  claimed: number[];
+  pass: boolean;
+  passClaimed: number[];
+}
+
 export interface SeasonState {
-  /** The season this progress belongs to ("2026-09"). */
+  /** The selected Journey's receipt namespace. Legacy monthly IDs are intentionally preserved. */
   id: string;
   xp: number;
   claimed: number[];
@@ -29,7 +22,7 @@ export interface SeasonState {
   titles: string[];
   /** Coins from a past season's reached tiers that were never claimed (claimable once), or null. */
   carry: { id: string; coins: number } | null;
-  /** The Club Pass is on for THIS season (bought with the store's 'bl.pass': platform/iap.ts, meta/pass.ts). */
+  /** Permanent Club Pass for the selected Journey (store product `bl.pass` or earned gems). */
   pass: boolean;
   /** Pass-track tiers already claimed this season. */
   passClaimed: number[];
@@ -40,6 +33,8 @@ export interface SeasonState {
    * PASS_GEMS), paid into the wallet by meta/pass.ts syncSeasonGems. Optional: older saves lack it (0).
    */
   carryGems?: number;
+  /** Inactive Journeys, keyed by pass01..pass12. The active track remains in the fields above for save compatibility. */
+  journeys?: Record<string, JourneyProgress>;
 }
 
 export function seasonId(now: Date = new Date()): string {
@@ -47,12 +42,17 @@ export function seasonId(now: Date = new Date()): string {
 }
 
 export function defaultSeason(now: Date = new Date()): SeasonState {
-  return { id: seasonId(now), xp: 0, claimed: [], titles: [], carry: null, pass: false, passClaimed: [], carryItems: [] };
+  return { id: `journey-${String(now.getMonth() + 1).padStart(2, '0')}`, xp: 0, claimed: [], titles: [], carry: null, pass: false, passClaimed: [], carryItems: [] };
 }
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
 
-/** A save's season, rolled over to a fresh one when the month has changed (keeping titles and unclaimed coins). */
+const validId = (v: unknown): v is string => typeof v === 'string' && /^(?:\d{4}-(?:0[1-9]|1[0-2])|journey-(?:0[1-9]|1[0-2]))$/.test(v);
+const validJourney = (v: string): boolean => /^pass(?:0[1-9]|1[0-2])$/.test(v);
+const tiers = (v: unknown): number[] => Array.isArray(v)
+  ? [...new Set(v.filter((t): t is number => Number.isInteger(t) && t >= 1 && t <= SEASON_TIERS))].sort((a, b) => a - b) : [];
+
+/** A save's Journey, with legacy paid progress and its original gem receipt namespace retained on load. */
 export function normalizeSeason(raw: unknown, now: Date = new Date()): SeasonState {
   if (!raw || typeof raw !== 'object') return defaultSeason(now);
   const r = raw as Partial<SeasonState>;
@@ -74,10 +74,46 @@ export function normalizeSeason(raw: unknown, now: Date = new Date()): SeasonSta
   // (Kept only when there is something to carry: a season with none reads as it always did.)
   const owed = Math.min(9999, num(r.carryGems));
   const carryGems = owed > 0 ? { carryGems: owed } : {};
-  if (typeof r.id !== 'string' || !/^\d{4}-\d{2}$/.test(r.id)) return { ...defaultSeason(now), titles, carry, carryItems, ...carryGems };
+  if (!validId(r.id)) return { ...defaultSeason(now), titles, carry, carryItems, ...carryGems };
   const s: SeasonState = { id: r.id, xp: num(r.xp), claimed, titles, carry, pass: r.pass === true, passClaimed, carryItems, ...carryGems };
-  rollSeason(s, now);
+  if (r.journeys && typeof r.journeys === 'object' && !Array.isArray(r.journeys)) {
+    const saved: Record<string, JourneyProgress> = {};
+    for (const [key, value] of Object.entries(r.journeys)) {
+      if (!validJourney(key) || key === passItemId(s.id) || !value || typeof value !== 'object' || !validId(value.id) || passItemId(value.id) !== key) continue;
+      saved[key] = { id: value.id, xp: num(value.xp), claimed: tiers(value.claimed), pass: value.pass === true, passClaimed: tiers(value.passClaimed) };
+    }
+    if (Object.keys(saved).length) s.journeys = saved;
+  }
   return s;
+}
+
+/** Read or create a permanent track. Used to apply an asynchronous purchase to the originally selected Journey. */
+export function journeyOf(s: SeasonState, key: string): JourneyProgress | null {
+  if (!validJourney(key)) return null;
+  if (key === passItemId(s.id)) return s;
+  const saved = s.journeys ?? (s.journeys = {});
+  return saved[key] ?? (saved[key] = { id: `journey-${key.slice(4)}`, xp: 0, claimed: [], pass: false, passClaimed: [] });
+}
+
+/** Switch only by player choice. XP and claims stay with their track; shared carry and archived titles stay put. */
+export function selectJourney(s: SeasonState, key: string): boolean {
+  if (!validJourney(key) || key === passItemId(s.id)) return false;
+  const next = journeyOf(s, key)!;
+  const old = { id: s.id, xp: s.xp, claimed: [...s.claimed], pass: s.pass, passClaimed: [...s.passClaimed] };
+  s.journeys![passItemId(s.id)] = old;
+  delete s.journeys![key];
+  Object.assign(s, { id: next.id, xp: next.xp, claimed: [...next.claimed], pass: next.pass, passClaimed: [...next.passClaimed] });
+  return true;
+}
+
+/** All shipped tracks, including untouched ones, without creating save entries while rendering the menu. */
+export function journeyList(s: SeasonState): { key: string; name: string; color: string; tier: number; pass: boolean; active: boolean }[] {
+  return SEASON_THEMES.map((th, i) => {
+    const key = `pass${String(i + 1).padStart(2, '0')}`;
+    const active = key === passItemId(s.id);
+    const track = active ? s : s.journeys?.[key];
+    return { key, ...th, tier: seasonTier(track?.xp ?? 0), pass: track?.pass === true, active };
+  });
 }
 
 // ------------------------------------------------------------------ tiers
@@ -114,7 +150,7 @@ export function seasonProgress(s: Pick<SeasonState, 'xp'>): { tier: number; into
 
 // ------------------------------------------------------------------ theme and rewards
 
-/** A theme per calendar month (January first). */
+/** Twelve shipped themes; indices retain the original monthly item IDs for save compatibility. */
 export const SEASON_THEMES: readonly { name: string; color: string }[] = [
   { name: 'Frost Cup', color: '#5cc8f5' },
   { name: 'Mud and Glory', color: '#8a5a36' },
@@ -130,10 +166,8 @@ export const SEASON_THEMES: readonly { name: string; color: string }[] = [
   { name: 'Winter Classic', color: '#223a78' },
 ];
 
-const MONTHS = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
-
 function monthOf(id: string): number {
-  const m = Number(id.slice(5, 7));
+  const m = Number(id.startsWith('journey-') ? id.slice(8) : id.slice(5, 7));
   return Number.isInteger(m) && m >= 1 && m <= 12 ? m - 1 : 0;
 }
 
@@ -143,7 +177,7 @@ export function seasonTheme(id: string): { name: string; color: string } {
 
 /** "SEPTEMBER 2026". */
 export function seasonName(id: string): string {
-  return `${MONTHS[monthOf(id)]} ${id.slice(0, 4)}`;
+  return `${seasonTheme(id).name.toUpperCase()} JOURNEY`;
 }
 
 /** Title ranks for tiers 5, 10, 15, 20, 25 and 30. */
@@ -162,7 +196,7 @@ export function seasonReward(t: number, id: string): { coins: number; title?: st
 
 // ------------------------------------------------------------------ the Club Pass track (meta/pass.ts sells and pays it)
 
-/** Coins on pass tiers 25 and 30 (5, 10, 15 and 20 are the month's own looks). */
+/** Coins on pass tiers 25 and 30 (5, 10, 15 and 20 are the Journey's own looks). */
 export const PASS_BIG_COINS: { readonly [t: number]: number } = { 25: 700, 30: 1800 };
 
 /** Six identity pieces: welcome ceremony, player look, trail, kit, goal explosion and tier-25 diamond nets. */
@@ -195,58 +229,19 @@ export function unclaimedPassTiers(s: SeasonState): number[] {
   return out;
 }
 
-/** Days left in the season, today included (1 on the last day). */
-export function seasonDaysLeft(now: Date = new Date()): number {
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  return Math.max(1, Math.ceil((end.getTime() - now.getTime()) / 86_400_000));
+/** Legacy API: zero means the track is permanent and has no expiry. */
+export function seasonDaysLeft(_now: Date = new Date()): number {
+  return 0; // Compatibility for callers: permanent Journeys have no countdown.
 }
 
 // ------------------------------------------------------------------ progress and claims
 
-/**
- * Roll `s` over to the season of `now` if the month has changed (in place): the old season's reached, unclaimed
- * tiers' coins go to `carry`, its reached titles to `titles`. Returns true if it rolled.
- */
-export function rollSeason(s: SeasonState, now: Date = new Date()): boolean {
-  const id = seasonId(now);
-  if (s.id === id) return false;
-  const reached = seasonTier(s.xp);
-  let coins = 0;
-  let gems = 0;
-  for (let t = 1; t <= reached; t++) {
-    const rw = seasonReward(t, s.id);
-    if (!s.claimed.includes(t)) {
-      coins += rw.coins;
-      gems += SEASON_GEMS[t] ?? 0;
-    }
-    if (rw.title && !s.titles.includes(rw.title)) s.titles.push(rw.title);
-  }
-  // The pass's reached, unclaimed tiers are kept too: coins into the carry, its looks into carryItems.
-  for (const t of unclaimedPassTiers(s)) {
-    const rw = passReward(t, s.id);
-    coins += rw.coins;
-    gems += PASS_GEMS[t] ?? 0;
-    const key = rw.item ? `${rw.item.cat}:${rw.item.id}` : '';
-    if (key && !s.carryItems.includes(key)) s.carryItems.push(key);
-  }
-  // New signature pieces also belong to old passes whose tier receipts predate those pieces. Preserve the
-  // welcome reward even at zero XP, and the tier-25 nets even if that tier was already claimed in an older build.
-  if (s.pass) {
-    const ids = [`decor:kick${passItemId(s.id)}`, ...(reached >= 25 ? [`decor:net${passItemId(s.id)}`] : [])];
-    for (const key of ids) if (!s.carryItems.includes(key)) s.carryItems.push(key);
-  }
-  if (coins > 0) s.carry = { id: s.id, coins: (s.carry?.coins ?? 0) + coins };
-  // (Their gems too: nothing reached is lost. meta/pass.ts syncSeasonGems pays them.)
-  if (gems > 0) s.carryGems = (s.carryGems ?? 0) + gems;
-  s.id = id;
-  s.xp = 0;
-  s.claimed = [];
-  s.pass = false;
-  s.passClaimed = [];
-  return true;
+/** Compatibility entry point: a calendar change never expires a Journey or its paid entitlement. */
+export function rollSeason(_s: SeasonState, _now: Date = new Date()): boolean {
+  return false;
 }
 
-/** Add XP; returns the tiers newly reached (rolling the season over first if the month has changed). */
+/** Add XP to the selected Journey; returns the tiers newly reached. Dates never reset progress. */
 export function seasonAdvance(state: SeasonState, xp: number, now: Date = new Date()): number[] {
   rollSeason(state, now);
   const before = seasonTier(state.xp);
@@ -290,9 +285,11 @@ export function claimCarry(s: SeasonState): number {
 /** Every season title earned: past seasons' and this season's claimed 5th tiers. */
 export function seasonTitles(s: SeasonState): string[] {
   const out = [...s.titles];
-  for (const t of s.claimed) {
-    const title = seasonReward(t, s.id).title;
-    if (title && !out.includes(title)) out.push(title);
+  for (const track of [s, ...Object.values(s.journeys ?? {})]) {
+    for (const t of track.claimed) {
+      const title = seasonReward(t, track.id).title;
+      if (title && !out.includes(title)) out.push(title);
+    }
   }
   return out;
 }

@@ -187,7 +187,7 @@ export function archiveClub(state: CareerState): boolean {
       cups: h.filter((x) => x.cup === 3).length,
       continental: h.filter((x) => x.continental === 3).length,
       world: h.filter((x) => x.world === 3).length,
-      best: h.reduce((b, x) => Math.min(b, x.division), 6),
+      best: h.reduce((b, x) => Math.min(b, x.division), 8),
     },
     ...lg.past,
   ].slice(0, PAST_MAX);
@@ -243,7 +243,7 @@ export function readLegacy(v: unknown, readKit: (x: unknown) => Kit | null): Leg
       if (!kit) continue;
       lg.past.push({
         name: str(p.name, 40), short: str(p.short, 3), kit, seasons: int(p.seasons, 0, 1e6, 0), titles: int(p.titles, 0, 1e6, 0),
-        cups: int(p.cups, 0, 1e6, 0), continental: int(p.continental, 0, 1e6, 0), world: int(p.world, 0, 1e6, 0), best: int(p.best, 1, 6, 6),
+        cups: int(p.cups, 0, 1e6, 0), continental: int(p.continental, 0, 1e6, 0), world: int(p.world, 0, 1e6, 0), best: int(p.best, 1, 8, 6),
       });
     }
   }

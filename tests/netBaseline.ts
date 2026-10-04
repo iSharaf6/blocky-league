@@ -21,6 +21,9 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
  * their exact previous hashes, ticks, scores and shootout flags; see the revision note beside tests/net.test.ts's table.
  * The protocol-7 stationary-possession revision (2026-10-04c) re-recorded only ten changed human rows. All six AI-only
  * rows and all three human knockout rows are bit-identical; the drivers and exact assertions are unchanged.
+ * The protocol-9 idle-possession revision (2026-10-05b), including moving challenges on a ball exposed beyond its
+ * carrier's body, re-recorded nine changed human rows. All six AI-only rows and
+ * four human rows are still bit-identical; tests/net.test.ts identifies them. Drivers and exact assertions are unchanged.
  */
 export type Row = [number, number, number, number, number, number];
 

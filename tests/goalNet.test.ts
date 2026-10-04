@@ -44,4 +44,21 @@ describe('goal-net contacts', () => {
     expect(net.mesh.geometry.boundingSphere).toBeInstanceOf(THREE.Sphere);
     net.update(2); expect([...positions(net)]).toEqual([...base]);
   });
+
+  it('the shop goal uses the same anchored cloth at its own dimensions, without moving the posts', () => {
+    const net = new GoalNet(-1, null, 0.045, { goalX: -1.12, width: 2.5, height: 1.55, depth: 0.76 });
+    const base = positions(net).slice();
+    net.punch(-1.88, 0.8, -0.1, 1.2); net.update(0.01);
+    const p = positions(net);
+    let moved = 0;
+    for (let i = 0; i < p.length; i += 3) {
+      const seam = Math.abs(base[i + 1]) < 0.001 || Math.abs(base[i + 1] - 1.55) < 0.001 || Math.abs(Math.abs(base[i + 2]) - 1.25) < 0.001;
+      if (seam) expect([...p.slice(i, i + 3)]).toEqual([...base.slice(i, i + 3)]);
+      if (p[i] !== base[i]) { moved++; expect(p[i]).toBeLessThan(base[i]); }
+    }
+    expect(moved).toBeGreaterThan(10);
+    expect(net.mesh.position.length()).toBe(0);
+    expect(net.mesh.scale.toArray()).toEqual([1, 1, 1]);
+    net.reset(); expect([...positions(net)]).toEqual([...base]);
+  });
 });

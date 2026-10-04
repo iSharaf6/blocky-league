@@ -24,8 +24,10 @@
 import { IAP_APPLIED_MAX, type SaveData } from '../core/save';
 import { addGems } from '../meta/gems';
 import { activatePass, passActive } from '../meta/pass';
+import { seasonOf } from '../meta/season';
 import { creditCoins, grantItem, iapOf, itemKey, type ShopCat } from '../meta/shop';
 import { inNativeApp } from './native';
+import { watchPurchaseRejections, type PurchaseRejection } from './purchaseEvents';
 
 // ------------------------------------------------------------------ the catalogue
 
@@ -48,7 +50,7 @@ export interface IapEntry {
   items: readonly { cat: ShopCat; id: string }[];
   /** NO ADS: no interstitial ads (rewarded ads stay: they are the player's choice). The PRO bundle has it too. */
   noAds?: true;
-  /** The Club Pass: the pass track of the season it is bought in (meta/pass.ts). Consumable: a new one each month. */
+  /** The Club Pass: permanently upgrades the Journey selected at checkout (meta/pass.ts). One purchase per track. */
   pass?: true;
   /** The Coin Doubler: every match pays double coins, for good (main.ts full time). The PRO bundle has it too. */
   doubler?: true;
@@ -169,7 +171,19 @@ export interface IapRestoreResult {
   restored: string[];
 }
 
-export type DeliverResult = 'applied' | 'duplicate' | 'unknown' | 'unbound';
+export type DeliverResult = 'applied' | 'duplicate' | 'unknown' | 'unbound' | 'unsaved';
+
+/** Purchases can touch every wallet/entitlement track. Keep the save object held by the app on rollback. */
+function restorePurchaseSave(save: SaveData, before: SaveData): void {
+  for (const key of Object.keys(save)) delete (save as unknown as Record<string, unknown>)[key];
+  Object.assign(save, before);
+}
+
+function nativeFailureReceiptsAvailable(): boolean {
+  if (!inNativeApp()) return false;
+  const host = window as unknown as { Capacitor?: { isPluginAvailable?: (name: string) => boolean } };
+  return host.Capacitor?.isPluginAvailable?.('PurchaseEvents') === true;
+}
 
 // ------------------------------------------------------------------ the rules (pure, no store)
 
@@ -216,7 +230,7 @@ export function ownsProduct(save: Pick<SaveData, 'iap'>, id: string): boolean {
  * they were paid, and a reinstall must not be a currency tap. The caller saves, then finishes the transaction with
  * the store. Everything paid out is fixed and stated: nothing here is random.
  */
-export function applyPurchase(save: SaveData, entry: IapEntry, txId: string, restored = false): IapGrant | null {
+export function applyPurchase(save: SaveData, entry: IapEntry, txId: string, restored = false, passTarget?: string): IapGrant | null {
   const st = iapOf(save);
   const key = `${txId}|${entry.id}`;
   if (st.applied.includes(key)) return null;
@@ -234,7 +248,7 @@ export function applyPurchase(save: SaveData, entry: IapEntry, txId: string, res
   if (coins > 0) creditCoins(save, coins);
   if (gems > 0) addGems(save, gems, `iap:${entry.id}`);
   const items = entry.items.filter((it) => grantItem(save, it.cat, it.id)).map((it) => itemKey(it.cat, it.id));
-  const pass = !!entry.pass && activatePass(save);
+  const pass = !!entry.pass && activatePass(save, new Date(), passTarget);
   if (entry.kind === 'non-consumable') st.owned.push(entry.id);
   st.applied.push(key);
   if (st.applied.length > IAP_APPLIED_MAX) st.applied.splice(0, st.applied.length - IAP_APPLIED_MAX);
@@ -332,7 +346,7 @@ class NativeStore implements Provider {
   private platform = '';
   private waiters = new Map<string, (r: IapBuyResult) => void>();
 
-  constructor(private cdv: CdvPurchaseGlobal, private deliver: Deliver) {}
+  constructor(private cdv: CdvPurchaseGlobal, private deliver: Deliver, private rejectOrder: (id: string) => boolean) {}
 
   async init(): Promise<void> {
     const { store, ProductType, Platform } = this.cdv;
@@ -358,20 +372,36 @@ class NativeStore implements Provider {
     for (const p of t.products) {
       const r = this.deliver(p.id, txId, false);
       // An id we don't sell, or no save to pay into yet: leave it unfinished, the store brings it back next launch.
-      if (r === 'unknown' || r === 'unbound') finish = false;
+      if (r !== 'applied' && r !== 'duplicate') finish = false;
       else this.waiters.get(p.id)?.('ok');
     }
     if (finish) await t.finish().catch(() => {});
   }
 
   private failed(e: CdvError): void {
-    const r: IapBuyResult = this.cancelled(e) ? 'cancelled' : 'failed';
-    if (e.productId && this.waiters.has(e.productId)) this.waiters.get(e.productId)!(r);
-    else for (const w of [...this.waiters.values()]) w(r);
+    const cancelled = this.cancelled(e);
+    // Payment rejection codes from the plugin's ErrorCode enum. Metadata/receipt/network errors do not
+    // establish whether an unfinished order was charged, so a pending Journey must retain its target.
+    const definitive = cancelled || [6777003, 6777005, 6777007, 6777008].includes(e.code);
+    const result = (id: string, cleared: boolean): IapBuyResult => id === PRODUCT_PASS && (!definitive || !cleared) ? 'pending' : cancelled ? 'cancelled' : 'failed';
+    if (e.productId) {
+      const cleared = !definitive || this.rejectOrder(e.productId);
+      this.waiters.get(e.productId)?.(result(e.productId, cleared));
+    } else {
+      for (const [id, waiter] of [...this.waiters.entries()]) {
+        const cleared = !definitive || this.rejectOrder(id);
+        waiter(result(id, cleared));
+      }
+    }
   }
 
   private cancelled(e: CdvError): boolean {
     return e.code === (this.cdv.ErrorCode?.PAYMENT_CANCELLED ?? CANCELLED) || /cancel/i.test(e.message ?? '');
+  }
+
+  /** A definitive failure from the app's StoreKit observer has already been durably recorded. */
+  rejected(id: string, result: 'cancelled' | 'failed'): void {
+    this.waiters.get(id)?.(result);
   }
 
   prices(): { id: string; price: string }[] {
@@ -397,8 +427,8 @@ class NativeStore implements Provider {
       // order() resolves once the store took the order, long before the player has paid: the result is the
       // approved event (granted: 'ok') or the plugin's error callback (cancelled / failed).
       offer.order().then((err) => {
-        if (err) done(this.cancelled(err) ? 'cancelled' : 'failed');
-      }, () => done('failed'));
+        if (err) this.failed({ ...err, productId: id });
+      }, () => done(id === PRODUCT_PASS ? 'pending' : 'failed'));
     });
   }
 
@@ -456,7 +486,7 @@ class DevStore implements Provider {
     // A real store refuses a one-time product you already own: that is what RESTORE is for.
     if (e.kind === 'non-consumable' && this.owned.has(id)) return 'failed';
     const r = this.deliver(id, `dev-${Date.now()}-${++this.seq}`, false);
-    if (r === 'unbound' || r === 'unknown') return 'failed';
+    if (r === 'unbound' || r === 'unknown' || r === 'unsaved') return 'failed';
     if (e.kind === 'non-consumable') {
       this.owned.add(id);
       this.keep();
@@ -500,15 +530,20 @@ function devForce(): IapBuyResult {
 
 export class Iap {
   provider: IapProvider = 'none';
-  private ctx: { save: SaveData; persist: () => void } | null = null;
+  private ctx: { save: SaveData; persist: () => boolean | void } | null = null;
   private impl: Provider | null = null;
   private initPromise: Promise<void> | null = null;
   private listeners = new Set<(g: IapGrant) => void>();
+  private stateListeners = new Set<() => void>();
   private restoreLog: string[] | null = null;
   private buying = false;
+  /** Also true during initialization, before native approvals can arrive and provider is assigned. */
+  private durableNativeReceipts = false;
+
+  constructor(private readonly watchRejections = watchPurchaseRejections) {}
 
   /** Point the store at the running save (main.ts holds the one save object; a reload swaps its contents in place). */
-  bind(ctx: { save: SaveData; persist: () => void }): void {
+  bind(ctx: { save: SaveData; persist: () => boolean | void }): void {
     this.ctx = ctx;
   }
 
@@ -526,7 +561,17 @@ export class Iap {
       const deliver: Deliver = (id, tx, restored) => this.deliver(id, tx, restored);
       const cdv = await nativeStore();
       if (cdv) {
-        const store = new NativeStore(cdv, deliver);
+        this.durableNativeReceipts = true;
+        const store = new NativeStore(cdv, deliver, (id) => {
+          if (id !== PRODUCT_PASS || !this.ctx?.save.iap?.pendingPass) return true;
+          // The durable native event supplies its replay receipt. A Cordova error must not clear the target
+          // first and allow a retry while an older native failure is still retained on disk.
+          if (nativeFailureReceiptsAvailable()) return false;
+          return this.clearPendingPass();
+        });
+        // Attach before Cordova initializes and drains StoreKit's queue. Its Apple adapter suppresses late
+        // cancellations after deferral, so the app's durable observer supplies those definitive outcomes.
+        await this.watchRejections((event) => this.nativeRejected(event, () => store.rejected(event.productId, event.result)));
         await store.init();
         this.impl = store;
         this.provider = 'native';
@@ -538,6 +583,48 @@ export class Iap {
       this.impl = null;
       this.provider = 'none';
     }
+  }
+
+  private nativeRejected(event: PurchaseRejection, settled: () => void): boolean {
+    if (!this.ctx || !event || !/^[a-zA-Z0-9-]{1,64}$/.test(event.id)
+      || !entryOf(event.productId) || (event.result !== 'cancelled' && event.result !== 'failed')) return false;
+    const state = iapOf(this.ctx.save);
+    const receipt = `native-rejection:${event.id}|${event.productId}`;
+    if (state.applied.includes(receipt)) return true;
+    const previous = { applied: [...state.applied], pending: state.pendingPass, updatedAt: this.ctx.save.updatedAt };
+    const changed = event.productId === PRODUCT_PASS && !!state.pendingPass;
+    if (changed) delete state.pendingPass;
+    state.applied.push(receipt);
+    if (state.applied.length > IAP_APPLIED_MAX) state.applied.splice(0, state.applied.length - IAP_APPLIED_MAX);
+    let stored = false;
+    try { stored = this.ctx.persist() === true; } catch { /* Native keeps the event until a retry can save. */ }
+    if (!stored) {
+      state.applied = previous.applied;
+      if (previous.pending) state.pendingPass = previous.pending;
+      else delete state.pendingPass;
+      this.ctx.save.updatedAt = previous.updatedAt;
+      return false;
+    }
+    settled();
+    if (changed) for (const fn of [...this.stateListeners]) { try { fn(); } catch { /* presentation is optional */ } }
+    return true;
+  }
+
+  /** Legacy shell/provider cancellation: save the cleared target, or restore it until storage recovers. */
+  private clearPendingPass(): boolean {
+    if (!this.ctx || !this.ctx.save.iap?.pendingPass) return true;
+    let before: SaveData;
+    try { before = structuredClone(this.ctx.save); } catch { return false; }
+    delete this.ctx.save.iap.pendingPass;
+    let stored = false;
+    try { stored = this.durableNativeReceipts ? this.ctx.persist() === true : this.ctx.persist() !== false; }
+    catch { /* Preserve the exact Journey on an unsuccessful write. */ }
+    if (!stored) {
+      restorePurchaseSave(this.ctx.save, before);
+      return false;
+    }
+    for (const fn of [...this.stateListeners]) { try { fn(); } catch { /* presentation is optional */ } }
+    return true;
   }
 
   /** The shop can sell for real money (or pretend to, in dev) right now. */
@@ -614,16 +701,37 @@ export class Iap {
     const e = entryOf(id);
     if (!this.impl || !e || !this.ctx) return 'failed';
     // A one-time product is buyable once (the Starter Pack, NO ADS, the Coin Doubler, the PRO bundle: its parts
-    // count as owned through it); the Club Pass once a month.
+    // count as owned through it); the Club Pass once per permanent Journey.
     if (e.kind === 'non-consumable' && this.owns(id)) return 'failed';
     if ((id === PRODUCT_NOADS && adFree(this.ctx.save)) || (id === PRODUCT_DOUBLER && coinDoubler(this.ctx.save))) return 'failed';
     if (e.pass && passActive(this.ctx.save)) return 'failed';
+    if (e.pass && iapOf(this.ctx.save).pendingPass) return 'pending';
     if (this.buying) return 'pending';
     this.buying = true;
+    const state = iapOf(this.ctx.save);
+    if (e.pass) {
+      state.pendingPass = seasonOf(this.ctx.save).id;
+      let stored = false;
+      try {
+        const result = this.ctx.persist();
+        stored = this.durableNativeReceipts ? result === true : result !== false;
+      } catch { /* No order without its stored target. */ }
+      if (!stored) {
+        delete state.pendingPass;
+        this.buying = false;
+        return 'failed'; // Do not place an order whose original Journey cannot be stored.
+      }
+    }
     try {
-      return await this.impl.buy(id);
+      const result = await this.impl.buy(id);
+      if (e.pass && (result === 'cancelled' || result === 'failed')) {
+        if (!this.clearPendingPass()) return 'pending';
+      }
+      return result;
     } catch {
-      return 'failed';
+      // An unexpected provider exception is an unknown outcome, not proof the payment was cancelled.
+      // Keep its original Journey until a late approval arrives instead of allowing a second charge.
+      return e.pass ? 'pending' : 'failed';
     } finally {
       this.buying = false;
     }
@@ -649,10 +757,16 @@ export class Iap {
     return () => void this.listeners.delete(fn);
   }
 
+  /** An unfinished order was definitively declined; open shop controls can reflect that without a fake grant. */
+  onStateChange(fn: () => void): () => void {
+    this.stateListeners.add(fn);
+    return () => void this.stateListeners.delete(fn);
+  }
+
   /**
    * A provider calls this for every transaction the store delivers. Idempotent: 'duplicate' = already paid out
    * (nothing changed; the provider may finish the transaction), 'applied' = paid out and saved. 'unknown'
-   * (not our product) and 'unbound' (no save yet) must NOT be finished: the store brings them back.
+   * (not our product), 'unbound' (no save yet) and 'unsaved' (write failed) must NOT be finished: the store brings them back.
    */
   deliver(productId: string, txId: string, restored: boolean): DeliverResult {
     const ctx = this.ctx;
@@ -661,10 +775,21 @@ export class Iap {
     if (!entry) return 'unknown';
     // Inside a restore (the store's restored transactions arrive as ordinary approvals) a one-time product is "restored".
     const inRestore = this.restoreLog !== null && entry.kind === 'non-consumable';
-    const grant = applyPurchase(ctx.save, entry, txId, restored || inRestore);
-    if (!grant) return 'duplicate';
-    grant.restored = restored || inRestore;
-    ctx.persist();
+    let before: SaveData;
+    try { before = structuredClone(ctx.save); } catch { return 'unsaved'; }
+    let grant: IapGrant | null;
+    try {
+      const state = iapOf(ctx.save);
+      grant = applyPurchase(ctx.save, entry, txId, restored || inRestore, entry.pass ? state.pendingPass : undefined);
+      if (!grant) return 'duplicate';
+      if (entry.pass) delete state.pendingPass;
+      grant.restored = restored || inRestore;
+      const stored = ctx.persist();
+      if (this.durableNativeReceipts ? stored !== true : stored === false) throw new Error('Purchase save was not stored');
+    } catch {
+      restorePurchaseSave(ctx.save, before);
+      return 'unsaved';
+    }
     if (grant.restored && entry.kind === 'non-consumable') this.restoreLog?.push(productId);
     for (const fn of [...this.listeners]) {
       try {

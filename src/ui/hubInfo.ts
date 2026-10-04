@@ -74,11 +74,11 @@ export interface SeasonCard {
   frac: number;
   /** Badge tiers, season tiers and pass tiers waiting to be claimed. */
   pending: number;
-  /** The Club Pass is on this month. */
+  /** The selected Journey has its permanent Club Pass. */
   pass: boolean;
   /** Offer the Club Pass on the tile (a build that sells it, and it isn't on). */
   offer: boolean;
-  /** This month's theme ("Lava Season") and its colour, and the days left. */
+  /** The selected Journey and its colour. `days` is a legacy zero sentinel; never show a countdown. */
   name: string;
   color: string;
   days: number;
@@ -193,9 +193,8 @@ export function transfersTiming(career: CareerState | null): { window: string; u
 }
 
 /**
- * The SEASON tile: this month's tier of 30 and the way into the next, what is waiting to be claimed, and the Club
- * Pass (`sells`: this build sells it, i.e. the app's storefront). Reading the season may roll a finished month
- * over in place (meta/season.ts), exactly as opening the BADGES screen does.
+ * The JOURNEYS tile: progress through the selected permanent 30-tier track and claimable rewards.
+ * Reading never changes its identity or resets progress.
  */
 export function seasonCard(save: Pick<SaveData, 'season' | 'mastery'>, sells: boolean, now: Date = new Date()): SeasonCard {
   const pass = passActive(save, now);

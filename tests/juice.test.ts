@@ -353,6 +353,7 @@ function mockAudio(): { ctx: { currentTime: number }; nodes: MockNode[]; targets
       disconnect() { n.outs.length = 0; },
       start(t = 0) { n.starts.push(t); },
       stop() {},
+      setPeriodicWave(_wave: unknown) {},
       gain: param(), frequency: param(), Q: param(), pan: param(), playbackRate: param(),
       ...extra,
     };
@@ -369,6 +370,7 @@ function mockAudio(): { ctx: { currentTime: number }; nodes: MockNode[]; targets
     createDynamicsCompressor() { return node('compressor', { threshold: param(), ratio: param() }); }
     createBiquadFilter() { return node('filter'); }
     createOscillator() { return node('osc'); }
+    createPeriodicWave(_real: Float32Array, _imag: Float32Array) { return {}; }
     createBufferSource() { return node('source'); }
     createConvolver() { return node('convolver'); }
     createStereoPanner() { return node('panner'); }

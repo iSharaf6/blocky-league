@@ -332,7 +332,7 @@ describe('matchday flow', () => {
     expect(st.season!.matchday).toBe(MATCHDAYS);
     expect(leagueTable(st).every((r) => r.P === MATCHDAYS)).toBe(true);
     const sum = st.summary!;
-    expect(sum).toMatchObject({ position: 1, outcome: 'promoted', champion: true, nextDivision: 5 });
+    expect(sum).toMatchObject({ position: 1, outcome: 'promoted', champion: true, nextDivision: BOTTOM_DIVISION - 1 });
     expect(sum.prize).toBe(7 * 20 + 600 + 300);
     expect(wallet.coins).toBe(sum.prize);
     expect(finishSeason(st, wallet)).toBe(sum);
@@ -342,17 +342,17 @@ describe('matchday flow', () => {
     const oldRivals = st.season!.rivals.map((r) => r.name).join();
     startNextSeason(st);
     expect(st.summary).toBeNull();
-    expect(st.season).toMatchObject({ number: 2, division: 5, matchday: 0 });
+    expect(st.season).toMatchObject({ number: 2, division: BOTTOM_DIVISION - 1, matchday: 0 });
     expect(st.season!.rivals.map((r) => r.name).join()).not.toBe(oldRivals);
     // (Every cup tie won 9-0 as well: the BLOCKY CUP went in the cabinet too.)
-    expect(st.history).toEqual([{ season: 1, division: 6, position: 1, outcome: 'promoted', cup: 3 }]);
+    expect(st.history).toEqual([{ season: 1, division: BOTTOM_DIVISION, position: 1, outcome: 'promoted', cup: 3 }]);
   });
 
-  it('losing every game at the bottom division keeps you in division 6', () => {
+  it('losing every game at the bottom division keeps you in division 8', () => {
     const st = freshCareer(17);
     const wallet = { coins: 0 };
     for (let i = 0; i < MATCHDAYS; i++) playMine(st, wallet, 0, 9);
-    expect(st.summary).toMatchObject({ position: 8, outcome: 'stayed', nextDivision: 6, prize: 0 });
+    expect(st.summary).toMatchObject({ position: 8, outcome: 'stayed', nextDivision: BOTTOM_DIVISION, prize: 0 });
   });
 });
 
@@ -365,7 +365,7 @@ describe('promotion and relegation', () => {
     expect(seasonOutcome(7, 3)).toEqual({ outcome: 'relegated', nextDivision: 4 });
     expect(seasonOutcome(8, 1)).toEqual({ outcome: 'relegated', nextDivision: 2 });
     expect(seasonOutcome(1, 1)).toEqual({ outcome: 'stayed', nextDivision: 1 });
-    expect(seasonOutcome(8, 6)).toEqual({ outcome: 'stayed', nextDivision: 6 });
+    expect(seasonOutcome(8, BOTTOM_DIVISION)).toEqual({ outcome: 'stayed', nextDivision: BOTTOM_DIVISION });
   });
 
   it('pays promotion, top-two and champion prizes by division', () => {

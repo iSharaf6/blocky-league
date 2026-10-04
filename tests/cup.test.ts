@@ -46,7 +46,7 @@ function playOut(st: CareerState, wallet: { coins: number }, winCup: boolean): v
 
 describe('the draw', () => {
   it('every season has a cup: you, two league rivals and five guests from the divisions round yours', () => {
-    for (const div of [1, 3, 6]) {
+    for (const div of [1, 3, 6, 7, BOTTOM_DIVISION]) {
       const st = career(21, div);
       const cup = st.season!.cup!;
       expect(cup.slots).toHaveLength(CUP_SIZE);
@@ -59,7 +59,7 @@ describe('the draw', () => {
         expect(cup.slots).toContain(g.id);
         expect(Math.abs(g.division - div)).toBeLessThanOrEqual(2);
         expect(g.division).toBeGreaterThanOrEqual(1);
-        expect(g.division).toBeLessThanOrEqual(6);
+        expect(g.division).toBeLessThanOrEqual(BOTTOM_DIVISION);
         expect(g.rating).toBeGreaterThan(20);
       }
       // Names stay unique across the league, the guests and your club.
@@ -85,7 +85,7 @@ describe('the draw', () => {
 
   it('keeps the favourite out of your half: you can only meet the strongest club in the final', () => {
     for (let seed = 1; seed <= 40; seed++) {
-      const st = career(seed, 1 + (seed % 6));
+      const st = career(seed, 1 + (seed % BOTTOM_DIVISION));
       const cup = st.season!.cup!;
       const clubs = cupClubs(st);
       const rating = (slot: number) => clubs.get(cup.slots[slot])!.rating;

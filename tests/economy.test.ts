@@ -56,7 +56,7 @@ describe('rarity and the Legendary looks', () => {
 });
 
 describe('Club Pass looks', () => {
-  it('one goal explosion and one trail per month, never sold for coins, owned once the pass hands them over', () => {
+  it('one goal explosion and one trail per Journey, never sold for coins, owned once the pass hands them over', () => {
     expect(PASS_IDS).toHaveLength(12);
     const oct = seasonPassItems('2026-10');
     expect(oct.goalfx.id).toBe('pass10');
@@ -99,7 +99,7 @@ describe("today's deal", () => {
 });
 
 describe('the Club Pass', () => {
-  it('bought mid-month, it hands over every tier already reached; ~5,500 coins and six signature pieces in all', () => {
+  it('bought after earning XP, it hands over every tier already reached; ~5,500 coins and six signature pieces in all', () => {
     const totals = passTotals('2026-10');
     expect(totals.coins).toBeGreaterThanOrEqual(5500);
     // Welcome ceremony, player look, trail, kit, goal explosion, and tier-25 nets. Old coin payouts stay intact.
@@ -114,7 +114,7 @@ describe('the Club Pass', () => {
     expect(activatePass(s, OCT)).toBe(false);
     expect(passActive(s, OCT)).toBe(true);
     expect(unclaimedPassTiers(season)).toHaveLength(12);
-    // Tier 10 is the month's trail; tier 13 isn't reached yet.
+    // Tier 10 is the Journey's trail; tier 13 isn't reached yet.
     expect(claimPassTier(s, 10)).toEqual({ coins: 0, items: ['trail:pass10'] });
     expect(owns(s, 'trail', 'pass10')).toBe(true);
     expect(claimPassTier(s, 10)).toEqual({ coins: 0, items: [] });
@@ -124,24 +124,30 @@ describe('the Club Pass', () => {
     expect(unclaimedPassTiers(season)).toEqual([]);
   });
 
-  it('a new month ends it, and keeps what it reached: unclaimed coins carried, unclaimed looks claimable', () => {
+  it('a new month preserves its permanent upgrade, progress and independent unclaimed rewards', () => {
     const s = rich(0);
     const season = seasonOf(s, OCT);
     season.xp = tierXp(21);
     activatePass(s, OCT);
+    expect(claimPassTier(s, 10)).toEqual({ coins: 0, items: ['trail:pass10'] });
+    const before = JSON.stringify(season);
     rollSeason(season, NOV);
-    expect(season.pass).toBe(false);
-    expect(season.passClaimed).toEqual([]);
-    expect(season.carryItems.sort()).toEqual(['decor:kickpass10', 'goalfx:pass10', 'kit:pass10', 'look:pass10', 'trail:pass10']);
-    expect(season.carry!.coins).toBeGreaterThan(0);
-    expect(claimCarryItems(s).sort()).toEqual(['goalfx:pass10', 'kit:pass10', 'look:pass10', 'trail:pass10']);
+    expect(JSON.stringify(season)).toBe(before);
+    expect(passActive(s, NOV)).toBe(true);
+    expect(season.passClaimed).toEqual([10]);
+    expect(claimCarryItems(s)).toEqual([]);
+    const paid = claimAllPass(s);
+    expect(paid.coins).toBe(Array.from({ length: 21 }, (_, i) => i + 1).filter(t => t !== 10).reduce((n, t) => n + passReward(t, season.id).coins, 0));
+    expect(paid.items.sort()).toEqual(['goalfx:pass10', 'kit:pass10', 'look:pass10']);
     expect(owns(s, 'goalfx', 'pass10')).toBe(true);
     expect(owns(s, 'kit', 'pass10')).toBe(true);
     expect(owns(s, 'look', 'pass10')).toBe(true);
     expect(shopOf(s).owned).toContain('trail:pass10');
+    expect(claimAllPass(s)).toEqual({ coins: 0, items: [] });
+    expect(s.coins).toBe(0); // Claim helpers return the exact amount for the app to bank once.
   });
 
-  it('is a store purchase: each month a new one, switched on by the payout', () => {
+  it('is a store purchase: the selected Journey is permanently switched on by the payout', () => {
     const s = rich(0);
     const e = entryOf(PRODUCT_PASS)!;
     const g = applyPurchase(s, e, 'tx-pass-1');

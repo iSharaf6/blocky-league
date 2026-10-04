@@ -262,6 +262,7 @@ export class TouchControls {
       input.lastDevice = 'touch';
       buzz('button');
       t.pass = true;
+      this.onPress?.('pass');
       window.clearTimeout(this.skipTimer);
       this.skipTimer = window.setTimeout(() => {
         if (!this.btns.some((b) => b.dataset.k === 'pass' && b.classList.contains('down'))) t.pass = false;

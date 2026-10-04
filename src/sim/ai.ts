@@ -1,4 +1,4 @@
-import { clamp, dist2, pointSegDist } from '../core/math';
+import { angleDiff, clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
 import { headerAtGoal, throughLead } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, DDA_PRESS, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
@@ -1226,8 +1226,15 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   // STALL_S seconds remain his to look up, pass or turn; thereafter these are real challenges, with the same
   // SKILL counter and protection window. Briefly stopping after a run does not reset the defender's read.
   const stalled = humanCarrier && c.speed() < LINE_PACE && brain.stallBy === c.idx && m.clock - brain.stallSince >= STALL_S;
-  const read = humanCarrier ? Math.max(straightRead(m, c), stalled ? vsHuman(skill).line : 0) : 0;
+  const pad = m.ctl[c.side].prev;
+  const unattended = stalled && Math.hypot(pad.mx, pad.mz) < 0.25 && !pad.skill && !pad.shoot && !pad.pass && !pad.through;
+  const read = humanCarrier ? Math.max(straightRead(m, c), stalled ? (unattended ? 1 : vsHuman(skill).line) : 0) : 0;
   const guarded = humanCarrier && c.protectT > 0;
+  // A stationary carrier leaves the ball on one side of his body. Walk around to that side before challenging;
+  // repeatedly charging goal-side through his back only produces missed tackles and free kicks.
+  const ballAngle = stalled ? Math.atan2(b.z - c.pos.z, b.x - c.pos.x) : 0;
+  const pressAngle = stalled ? Math.atan2(p.pos.z - c.pos.z, p.pos.x - c.pos.x) : 0;
+  const around = stalled && !guarded && Math.cos(ballAngle - pressAngle) < 0.35;
   // Jockey goal-side, then commit to a tackle now and then: more often when the ball is
   // exposed, when the carrier has their back to goal, and when a teammate is covering.
   let commit = p.commitT > 0;
@@ -1235,7 +1242,7 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   if (commit) p.commitT -= dt;
   // (Winding up a telegraphed challenge, Player.tellT: skills.ts sends him in when it's up.)
   // (At the human's man from in front or beside him, a told challenge can start further out, TELL_REACH: the duel.)
-  else if (hasBall && p.tackleCooldown <= 0 && !guarded && p.tellT <= 0 && (d < 2.7 || (humanCarrier && d < TELL_REACH + LINE_REACH * read && telegraphs(m, p, c)))) {
+  else if (hasBall && p.tackleCooldown <= 0 && !guarded && !around && p.tellT <= 0 && (d < 2.7 || (humanCarrier && d < TELL_REACH + LINE_REACH * read && telegraphs(m, p, c)))) {
     const exposed = dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.8 ? 2.2 : 1;
     const backToGoal = Math.cos(c.facing) * ad > 0.3 ? 1.5 : 1;
     const covered = brain.cover >= 0 ? 1.3 : 0.8;
@@ -1277,8 +1284,19 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   const tight = st.pressHigh > 1 && nX(m, p.side, c.pos.x) > 0 ? HIGH_PRESS_TIGHT : 0;
   const gap = commit ? 0.1 : clamp(1.95 + (c.speed() > 5 ? 0.45 : 0) - skill * 0.06 - tight, 1.3, 2.5) +
     (humanCarrier ? HUMAN_JOCKEY_ROOM + DDA_ROOM * m.assistEase(p.side) : 0);
-  const jx = b.x + c.vel.x * 0.28 + (ux / ul) * gap;
-  const jz = b.z + c.vel.z * 0.28 + (uz / ul) * gap;
+  let jx = b.x + c.vel.x * 0.28 + (ux / ul) * gap;
+  let jz = b.z + c.vel.z * 0.28 + (uz / ul) * gap;
+  if (stalled && !guarded) {
+    if (around) {
+      const turn = angleDiff(pressAngle, ballAngle);
+      const next = pressAngle + Math.sign(turn || (p.idx % 2 ? 1 : -1)) * Math.min(Math.abs(turn), Math.PI / 3);
+      jx = c.pos.x + Math.cos(next) * 1.8;
+      jz = c.pos.z + Math.sin(next) * 1.8;
+    } else {
+      jx = b.x + Math.cos(ballAngle) * gap;
+      jz = b.z + Math.sin(ballAngle) * gap;
+    }
+  }
   moveTo(p, jx, jz, 1, b);
   if (d < 3.2) p.faceTarget = Math.atan2(b.z - p.pos.z, b.x - p.pos.x);
   // (Winding up a telegraphed challenge, skills.ts, he keeps up with the man on his toes.)

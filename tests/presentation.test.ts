@@ -217,8 +217,9 @@ describe('showcase shots: the line-up and the man of the match', () => {
     expect(Math.abs(lineupShot(0, 11, shot, 2.1).tx - lineupSpot(0, 11).x)).toBeLessThan(3);
   });
 
-  it('the man of the match gets 2.6 s: square to the lens, arms up (applauding after a defeat), the lens over grass', () => {
-    expect(MOTM_S).toBeLessThanOrEqual(3);
+  it('the man of the match has time to receive and lift an award, modest after defeat, with the lens over grass', () => {
+    expect(MOTM_S).toBeGreaterThanOrEqual(4);
+    expect(MOTM_S).toBeLessThanOrEqual(4.5);
     expect(PRESENTATION.motmS).toBe(MOTM_S);
     const f = new Float32Array(22 * PF + 11);
     applyMotm(f, 9, 10, -5, false, 3);
@@ -269,7 +270,7 @@ function fakeAudio() {
     node() {
       ctx.nodes++;
       return {
-        connect: (d: unknown) => d, disconnect() {}, start() {}, stop() {},
+        connect: (d: unknown) => d, disconnect() {}, start() {}, stop() {}, setPeriodicWave(_wave: unknown) {},
         gain: param(), frequency: param(), Q: param(), pan: param(), playbackRate: param(), threshold: param(), ratio: param(),
         knee: param(), attack: param(), release: param(), type: '', buffer: null as unknown, loop: false, normalize: true,
       };
@@ -278,6 +279,7 @@ function fakeAudio() {
     createDynamicsCompressor() { return this.node(); }
     createBiquadFilter() { return this.node(); }
     createOscillator() { ctx.oscillators++; return this.node(); }
+    createPeriodicWave(_real: Float32Array, _imag: Float32Array) { return {}; }
     createBufferSource() { return this.node(); }
     createConvolver() { return this.node(); }
     createStereoPanner() { return this.node(); }

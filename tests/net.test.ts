@@ -61,23 +61,28 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * rows and the three human knockout rows retain their exact prior hashes, steps, scores and shootout flags.
  * Revision 2026-10-05 (NET_VERSION 8) agrees match weather and adds deterministic wet-patch sprint skids. All these
  * dry-weather baseline rows retain their exact hashes, steps, scores and shootout flags; wet peers are tested separately.
+ * Revision 2026-10-05b (NET_VERSION 9) re-recorded nine changed human rows for the idle-possession fix: a neutral player
+ * cannot automatically tackle a defender's won ball straight back, and pressers reach an unattended carrier's exposed
+ * side instead of repeatedly fouling through his shield. A moving bump challenge reads the exposed ball rather
+ * than the carrier's centre, preserving challenges when runners draw level. All six AI-only rows and four human rows (fuzzBlitz0,
+ * penKeeper1, ko1, ko6) are bit-identical. Drivers and exact six-value comparisons are unchanged.
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2017188631,352340912,19086,0,1,0],
   aiBlitz: [1582265165,1309870222,12218,1,2,0],
   aiStyles: [2169161809,3859010485,12310,0,3,0],
-  botSide0: [1161437,1792154742,17414,7,0,0],
-  botPerks: [1577361376,498864479,11857,3,1,0],
-  botFirstMatch: [1240918158,3269216505,12413,4,0,0],
-  fuzzSide1: [1130638555,3591809035,11246,0,0,0],
+  botSide0: [396163194,1939309539,16736,5,0,0],
+  botPerks: [1540494039,2780377642,12593,5,1,0],
+  botFirstMatch: [2824604605,427279160,12802,5,0,0],
+  fuzzSide1: [1077611165,1365644181,12252,2,1,0],
   fuzzBlitz0: [1354131528,666997644,11344,0,0,0],
-  fuzzBlitzPerks1: [1702305564,1114339962,12008,2,0,0],
-  penTaker0: [994106238,1222347176,7292,0,0,0],
-  penTaker1Low: [3734662866,605254171,7669,0,1,0],
-  penTimeout1: [3569757527,3741561864,7641,0,1,0],
+  fuzzBlitzPerks1: [247379322,4072330194,11857,2,0,0],
+  penTaker0: [1766903750,3594253186,7308,0,0,0],
+  penTaker1Low: [676864762,2423449845,7740,0,1,0],
+  penTimeout1: [2796430232,1863252530,8227,2,1,0],
   penKeeper1: [1335318122,3507486628,8018,1,0,0],
   ko1: [1048390301,643499515,3383,1,0,0],
-  ko3: [3958102706,3078522871,5220,0,0,1],
+  ko3: [342278461,303670358,4850,0,0,1],
   ko6: [1316568905,3483256939,5082,0,0,1],
   aiKo1: [2469038319,23655505,4876,0,0,1],
   aiKo4: [975643068,4091315228,3821,0,1,0],

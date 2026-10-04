@@ -80,8 +80,20 @@ const CEIL_MAX = 240;
 const DEFER_MAX = 4;
 /** A slow frame whose own main-thread work took at least this share of the slow mark is CPU bound. */
 const CPU_BOUND = 0.6;
-/** No setting renders under 1x (HIGH's own floor is higher: see World.setQuality). */
+/** Ordinary screens never render under 1x; oversized canvases also respect the GPU's pixel/texture budget. */
 export const MIN_RATIO = 1;
+
+/** Bound the actual framebuffer, rather than assuming the same DPR costs the same on a phone and a 4K screen. */
+export function resolutionLimits(q: Quality, dpr: number, width: number, height: number, maxDimension = 4096): { max: number; floor: number } {
+  const w = Number.isFinite(width) ? Math.max(1, width) : 1;
+  const h = Number.isFinite(height) ? Math.max(1, height) : 1;
+  const density = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const dimension = Number.isFinite(maxDimension) && maxDimension > 0 ? maxDimension : 4096;
+  const pixels = q === 'high' ? 4_194_304 : q === 'medium' ? 3_145_728 : 2_097_152;
+  const desired = Math.min(density, q === 'high' ? 2 : q === 'medium' ? 1.5 : 1);
+  const max = Math.min(desired, Math.sqrt(pixels / (w * h)), dimension / Math.max(w, h));
+  return { max, floor: Math.min(max, q === 'high' && density >= 2 ? 1.5 : MIN_RATIO) };
+}
 
 export class ResolutionGovernor {
   /** The pixel ratio in use. */
@@ -229,10 +241,10 @@ export class World {
   private skyCanvas: HTMLCanvasElement;
   private skyTex: THREE.CanvasTexture;
   time: TimeOfDay = 'day';
-  private maxRatio = 2;
   private ratio = 2;
   /** The quality and devicePixelRatio last set up (setQuality is a no-op until one changes). */
   private qualityKey = '';
+  private resolutionKey = '';
   /** Dynamic resolution (see ResolutionGovernor). */
   readonly governor = new ResolutionGovernor(2);
 
@@ -317,17 +329,14 @@ export class World {
     this.quality = q;
     // HIGH: 2x (a 3x phone too: with MSAA that is sharp at arm's length, for 2.25x fewer pixels than native), and
     // the governor never takes it under 1.5x on a 2x / 3x screen. MEDIUM: up to 1.5x. LOW: 1x. Nothing under 1x.
-    this.maxRatio = q === 'high' ? Math.min(dpr, 2) : q === 'medium' ? Math.min(dpr, 1.5) : Math.min(dpr, 1);
-    const floor = q === 'high' && dpr >= 2 ? 1.5 : MIN_RATIO;
-    this.ratio = this.maxRatio;
-    this.governor.reset(this.maxRatio, Math.min(this.maxRatio, floor));
+    this.resolutionKey = '';
     // (The drawing buffer follows in resize, below: one reallocation.)
     // Crisp toy shadows need texels: 4096 on desktop-class GPUs. A phone gets 2048 on HIGH too: three's PCF map
     // is a colour target plus a depth texture, 128 MB at 4096 (32 MB at 2048), and an iOS web view that runs out
     // of memory reloads the page. 2048 over the 72 m frustum is ~1 texel per pixel at 2x there (side by side at
     // 2x the two sizes look the same).
     const coarse = matchMedia('(pointer: coarse)').matches;
-    const size = q === 'high' ? (coarse ? 2048 : 4096) : q === 'medium' ? 2048 : 1024;
+    const size = Math.min(this.renderer.capabilities.maxTextureSize, q === 'high' ? (coarse ? 2048 : 4096) : q === 'medium' ? 2048 : 1024);
     if (this.sun.shadow.mapSize.x !== size) {
       this.sun.shadow.mapSize.set(size, size);
       this.sun.shadow.map?.dispose();
@@ -396,8 +405,17 @@ export class World {
    * events that change nothing.
    */
   resize(): void {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const w = Math.max(1, window.innerWidth);
+    const h = Math.max(1, window.innerHeight);
+    const dpr = window.devicePixelRatio || 1;
+    const maxDimension = Math.min(4096, this.renderer.capabilities.maxTextureSize);
+    const key = `${this.quality} ${dpr} ${w} ${h} ${maxDimension}`;
+    if (key !== this.resolutionKey) {
+      this.resolutionKey = key;
+      const limits = resolutionLimits(this.quality, dpr, w, h, maxDimension);
+      this.ratio = limits.max;
+      this.governor.reset(limits.max, limits.floor);
+    }
     const c = this.renderer.domElement;
     const r = this.ratio;
     if (c.width !== Math.floor(w * r) || c.height !== Math.floor(h * r) || this.renderer.getPixelRatio() !== r) {

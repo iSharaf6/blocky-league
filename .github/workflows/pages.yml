@@ -41,6 +41,11 @@ jobs:
           tests/matchTransitions.test.ts tests/matchInterludes.test.ts tests/stallPress.test.ts
           tests/matchRecovery.test.ts tests/weather.test.ts tests/goalNet.test.ts
           tests/signatureEconomy.test.ts tests/marketPresentation.test.ts
+          tests/evergreen.test.ts tests/season.test.ts tests/mastery.test.ts tests/iap.test.ts
+          tests/idlePossession.test.ts tests/sceneActors.test.ts tests/chantMusic.test.ts
+          tests/deviceBudget.test.ts tests/goalBanner.test.ts
+          tests/cloudAuth.test.ts tests/cloud.test.ts tests/signin.test.ts
+          tests/mainMenu.test.ts tests/achievements.test.ts
       - name: Type-check and package the web game
         run: npm run build:web
         env:

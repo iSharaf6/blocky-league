@@ -155,6 +155,22 @@ describe('menu keyboard lifecycle', () => {
 });
 
 describe('touch lifecycle', () => {
+  it('notifies the session immediately when TAP TO SKIP is tapped, even while controls are hidden', () => {
+    const input = new Input();
+    const touch = new TouchControls(input);
+    touch.setEnabled(true);
+    touch.setVisible(false);
+    const onPress = vi.fn();
+    touch.onPress = onPress;
+    pointer((touch.root as unknown as Element).querySelector('.touch-skip'), 'pointerdown');
+    expect(onPress).toHaveBeenCalledExactlyOnceWith('pass');
+    expect(input.read().pass).toBe(true);
+    vi.advanceTimersByTime(121);
+    expect(input.read().pass).toBe(false);
+    expect(onPress).toHaveBeenCalledOnce();
+    touch.dispose();
+  });
+
   it('acknowledges every attack, defence, keeper and power button once per press, even before an action succeeds', () => {
     const input = new Input();
     const touch = new TouchControls(input);

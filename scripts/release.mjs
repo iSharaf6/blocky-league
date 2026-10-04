@@ -61,6 +61,8 @@ const WEB_ONLY_FILES = ['sw.js', 'manifest.webmanifest', 'icons', 'apple-touch-i
 const WEB_ONLY_BLOCK = /[ \t]*<!-- web-only:start[\s\S]*?<!-- web-only:end -->\n?/;
 const TEXT_EXT = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.txt', '.svg']);
 const PORTAL_HOSTS = { crazygames: ['sdk.crazygames.com'], poki: ['game-cdn.poki.com'], itch: [] };
+// itch keeps the player-triggered invitation link. Portal SDK builds omit sharing entirely.
+const SHARE_HOSTS = { crazygames: [], poki: [], itch: ['isharaf6.github.io'] };
 const NOT_REQUESTS = new Set(['www.w3.org', 'jcgt.org']);
 
 // three.js (MIT) and the two fonts (SIL OFL 1.1) require their notices to travel with every copy.
@@ -121,7 +123,7 @@ function checkOutput(outDir, variant) {
   }
   if (!VARIANTS[variant].webOnly && !VARIANTS[variant].cloud) {
     const allowed = PORTAL_HOSTS[variant];
-    for (const host of hosts.keys()) if (!NOT_REQUESTS.has(host) && !allowed.includes(host)) problems.push(`unexpected external host in ${variant}: ${host}`);
+    for (const host of hosts.keys()) if (!NOT_REQUESTS.has(host) && !allowed.includes(host) && !SHARE_HOSTS[variant].includes(host)) problems.push(`unexpected external host in ${variant}: ${host}`);
     for (const host of allowed) if (!hosts.has(host)) problems.push(`${variant} SDK host missing: ${host}`);
     // Accounts never ship in a portal or itch zip.
     if (CLOUD_HOST && hosts.has(CLOUD_HOST)) problems.push(`the backend host is in ${variant}: ${CLOUD_HOST}`);

@@ -17,12 +17,15 @@
     "build:ios": "tsc --noEmit && node scripts/release.mjs ios",
     "build:all": "tsc --noEmit && node scripts/release.mjs web crazygames poki itch",
     "submission": "node scripts/submission.mjs",
-    "ios": "npm run build:itch && npx cap sync ios"
+    "ios": "npm run build:ios && npx cap sync ios"
   },
   "dependencies": {
     "@capacitor-community/admob": "^8.1.0",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/browser": "^8.0.5",
     "@capacitor/core": "^8.5.2",
     "@capacitor/ios": "^8.5.2",
+    "@capacitor/share": "^8.0.3",
     "@fontsource/lilita-one": "^5.3.0",
     "@fontsource/silkscreen": "^5.3.0",
     "@supabase/supabase-js": "^2.117.2",

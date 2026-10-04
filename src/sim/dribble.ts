@@ -255,12 +255,15 @@ export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt
   // ---- Shielding.
   const o = nearestOpponent(m, p);
   if (o && o.d < SHIELD_R) {
+    const brain = m.brains[o.p.side];
+    const idleRead = stickLen < 0.25 && brain.stallBy === p.idx && m.clock - brain.stallSince >= STALL_S;
     const ax = (p.pos.x - o.p.pos.x) / Math.max(0.05, o.d);
     const az = (p.pos.z - o.p.pos.z) / Math.max(0.05, o.d);
     const away = stickLen > 0.25 ? (pad.mx * ax + pad.mz * az) / stickLen : 1;
-    if (stickLen < 0.25 || away > 0.3) {
+    if (!idleRead && (stickLen < 0.25 || away > 0.3)) {
       p.shieldT = 0.15;
-      // Stick neutral: turn his back on him (the ball, on his foot, goes to the far side of the body).
+      // A brief neutral pause turns his back to protect the ball. After the defender has read an idle carrier,
+      // he must turn or pull away himself; automatic facing cannot hide the ball forever as the presser circles.
       if (stickLen < 0.25) p.faceTarget = Math.atan2(az, ax);
     }
   }

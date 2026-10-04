@@ -531,7 +531,7 @@ export class Menus {
     h: {
       quick: () => void; career: () => void; club: () => void; settings: () => void; howto: () => void;
       transfers?: () => void; shop?: () => void; season?: () => void; events?: () => void;
-      gift?: () => void; playNow?: () => void; account?: () => void; unlocks?: () => void;
+      gift?: () => void; playNow?: () => void; account?: () => void; invite?: () => void; unlocks?: () => void;
       /** The coins in the top bar: the shop's COINS tab where coins can be topped up (absent: the shop). */
       coins?: () => void;
       /** The gems in the top bar: the shop's STORE tab. */
@@ -589,7 +589,7 @@ export class Menus {
           ${head()}
           <span class="hh-art">${pixelIcon('shirt', '#ffd23a', 6)}</span>
           <span class="hh-big">BUILD YOUR OWN CLUB</span>
-          <span class="hh-sub">YOUR NAME, YOUR KIT, SIX DIVISIONS TO CLIMB</span>
+          <span class="hh-sub">YOUR NAME, YOUR KIT, EIGHT DIVISIONS TO CLIMB</span>
           ${play('CREATE YOUR CLUB')}
         </button>`;
     } else {
@@ -608,12 +608,12 @@ export class Menus {
       `<button class="hub-tile ${cls}" data-a="${a}"><i class="ht-ic">${icon}</i><b class="ht-t">${title}</b><small class="ht-s">${sub}</small>${extra}</button>`;
     const sc = info?.season;
     const seasonTile = sc
-      ? `<button class="hub-tile t-season ${sc.pending ? 'ready' : ''} ${sc.offer ? 'offer' : ''}" data-a="season" aria-label="Season ${escHtml(sc.name)}: tier ${sc.tier} of ${sc.tiers}${sc.pending ? `, ${sc.pending} rewards to claim` : ''}${sc.offer ? '. Club Pass' : ''}">
+      ? `<button class="hub-tile t-season ${sc.pending ? 'ready' : ''} ${sc.offer ? 'offer' : ''}" data-a="season" aria-label="Club Journey ${escHtml(sc.name)}: tier ${sc.tier} of ${sc.tiers}${sc.pending ? `, ${sc.pending} rewards to claim` : ''}${sc.offer ? '. Club Pass' : ''}">
           <i class="ht-ic">${pixelIcon('crown', '#ffd23a', 4)}</i>
-          <b class="ht-t">SEASON</b>
+          <b class="ht-t">JOURNEYS</b>
           <span class="hs-tier">TIER <em>${sc.tier}</em>/${sc.tiers}</span>
           <span class="hs-bar"><u style="width:${Math.round(sc.frac * 100)}%"></u></span>
-          ${sc.offer ? '<em class="hs-pass">CLUB PASS</em>' : `<small class="ht-s">${sc.pending ? 'REWARDS TO CLAIM' : sc.pass ? 'CLUB PASS ON' : `${sc.days} ${sc.days === 1 ? 'DAY' : 'DAYS'} LEFT`}</small>`}
+          ${sc.offer ? '<em class="hs-pass">CLUB PASS</em>' : `<small class="ht-s">${sc.pending ? 'REWARDS TO CLAIM' : sc.pass ? 'CLUB PASS ON' : 'NO EXPIRY'}</small>`}
           ${count(sc.pending, 'rewards to claim')}
         </button>`
       : '';
@@ -656,9 +656,10 @@ export class Menus {
           <ul class="hub-dl" id="hub-dl" hidden>${rows}${wkRows}</ul>
         </div>`;
     }
-    const foot = `<div class="hub-foot">
+    const foot = `<div class="hub-foot${h.invite ? ' with-invite' : ''}">
         <button class="hub-mini t-quick" data-a="quick">${pixelIcon('ball', '#26262e', 3)}<b>QUICK MATCH</b></button>
         ${h.events ? `<button class="hub-mini t-events" data-a="events">${pixelIcon('bolt', '#ffd23a', 3)}<b>EVENTS</b></button>` : ''}
+        ${h.invite ? `<button class="hub-mini t-invite" data-a="invite" aria-label="Invite friends"><b>INVITE FRIENDS</b></button>` : ''}
         ${daily}
       </div>`;
 
@@ -749,6 +750,7 @@ export class Menus {
     on('events', h.events);
     on('gift', h.gift);
     on('account', h.account);
+    on('invite', h.invite);
     on('noads', h.removeAds);
     on('coins', h.coins ?? h.shop);
     on('gems', h.gems);
@@ -1670,7 +1672,7 @@ export class Menus {
           <h2 class="verdict win">UNLOCKED!</h2>
           <p class="fine big">Your first goal. The whole game is open:</p>
           <ul class="ul-new">
-            <li>${pixelIcon('trophy', '#ffd23a', 3)}<b>ROAD TO GLORY</b><span>build a club, climb six divisions</span></li>
+            <li>${pixelIcon('trophy', '#ffd23a', 3)}<b>ROAD TO GLORY</b><span>build a club, climb eight divisions</span></li>
             <li>${pixelIcon('star', '#ffd23a', 3)}<b>MOMENTS</b><span>short challenges for stars</span></li>
             <li>${pixelIcon('trophy', '#ff8a2a', 3)}<b>CLUB RUN</b><span>seven matches, one life, a perk a win</span></li>
             <li><i class="ul-bolt" aria-hidden="true">${pixelIcon('bolt', '#8a5cf6', 2.2)}</i><b>BLITZ</b><span>football with power-ups</span></li>
@@ -1766,7 +1768,7 @@ export class Menus {
               </div>
             </section>
           </div>
-          ${onBadges ? '<div class="mc-actions"><button class="btn btn-blue" data-a="badges">SEASON AND BADGES</button></div>' : ''}
+          ${onBadges ? '<div class="mc-actions"><button class="btn btn-blue" data-a="badges">JOURNEYS AND BADGES</button></div>' : ''}
         </div>
       </div>`, 'unlocks');
     $(d, '[data-a=back]').addEventListener('click', onBack);

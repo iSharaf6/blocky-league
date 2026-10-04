@@ -2,7 +2,13 @@
 
 .ac-panel {
   gap: 14px;
+  max-height: calc(100dvh - 36px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
 }
+
+.ac-play-link { overflow-wrap: anywhere; }
+
+.ac-providers .btn { white-space: normal; line-height: 1.2; min-height: 44px; }
 
 .ac-lead {
   text-align: center;

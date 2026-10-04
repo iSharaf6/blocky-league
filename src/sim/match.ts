@@ -14,7 +14,7 @@ import { Ball, groundPassSpeed, type BallHit } from './ball';
 import { blitzClear, blitzGoal, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, megaHands } from './blitz';
 import {
   AssistState, autoRun, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAIN, PRESS_GAP, PRESS_LEAD, pressSteal,
-  standingFoulChance, standingTackleChance, STAND_REACH, tackleClosing, vsHuman, HUMAN_SLIDE_BOOST, HUMAN_SLIDE_MIN,
+  standingFoulChance, standingTackleChance, STAND_REACH, STALL_S, tackleClosing, vsHuman, HUMAN_SLIDE_BOOST, HUMAN_SLIDE_MIN,
   HUMAN_SLIDE_REACH, HUMAN_SLIDE_T, humanSlideFoul, MISS_COOLDOWN, MISS_PACE, missCue,
 } from './dribble';
 import { fakeShot, humanSkill, SkillState, skillGoal, skillTells } from './skills';
@@ -6069,16 +6069,27 @@ export class Match {
     const behind = clamp(-(Math.cos(c.facing) * tx + Math.sin(c.facing) * tz) / tl, 0, 1);
     const skill = this.isHumanControlled(p) ? 2.6 : this.aiSkill(p.side);
     let chance: number;
+    let idleBall = false;
     if (assisted) chance = standingTackleChance(this, p, c, behind, shielded, bl > 0.9) * aggression;
     else {
-      chance = clamp(0.42 + (def - drib) * 0.6 + (c.sprint ? 0.06 : 0), 0.12, 0.75) * (0.6 + 0.4 * facing) * aggression;
+      let control = clamp(0.42 + (def - drib) * 0.6 + (c.sprint ? 0.06 : 0), 0.12, 0.75);
+      const brain = this.brains[p.side];
+      const pad = this.ctl[c.side].prev;
+      const idle = this.isHumanControlled(c) && !this.isHumanControlled(p) && c.speed() < 0.6 && c.protectT <= 0 &&
+        brain.stallBy === c.idx && this.clock - brain.stallSince >= STALL_S && Math.hypot(pad.mx, pad.mz) < 0.25 &&
+        !pad.skill && !pad.shoot && !pad.pass && !pad.through && this.ctl[c.side].skill.move === null;
+      // Once he gets round an unattended player's body, even a weak defender can jab a ball left still on
+      // his foot. Moving dribblers keep their stat advantage; a rear tackle still has its normal risk.
+      idleBall = idle && (bx * tx + bz * tz) / (bl * tl) > 0.35;
+      if (idleBall) control = Math.max(control, 0.5);
+      chance = control * (0.6 + 0.4 * facing) * aggression;
       chance *= (1 - shielded * 0.4) * (0.84 + skill * 0.06);
       if (this.isHumanControlled(p)) chance *= 1.2;
       chance *= TACKLE_WIN;
     }
     chance *= carrierGuard(this, p, c);
     // (Dynamic difficulty: the AI's tackle on the human's carrier is that much less sure.)
-    if (this.isHumanControlled(c)) chance *= 1 - DDA_TACKLE * this.assistEase(p.side);
+    if (this.isHumanControlled(c) && !idleBall) chance *= 1 - DDA_TACKLE * this.assistEase(p.side);
     if (this.rng.chance(chance)) {
       this.stats.tackles[p.side]++;
       this.events.push({ type: 'tackle', by: p.idx, won: true, slide: false });
@@ -6203,6 +6214,13 @@ export class Match {
     if (b.owner < 0 || b.held || p.sentOff) return;
     const c = this.players[b.owner];
     if (c.side === p.side || tackleClosing(this, this.h.side)) return; // (a TACKLE tap closing in makes its own challenge)
+    // A bump tackle follows a player closing the carrier or actively holding PRESS. Standing over a ball
+    // just lost must not tackle it straight back in the very same step, before the winner can take a touch.
+    if (p.kickCooldown > 0 || p.stumbleT > 0) return;
+    // Challenge the ball he is running towards, including a touch exposed past the carrier's body. Using
+    // the carrier's centre rejects that real approach as soon as the two runners draw level or pass.
+    const closing = p.vel.x * (b.pos.x - p.pos.x) + p.vel.z * (b.pos.z - p.pos.z);
+    if (!this.h.pressing && (Math.hypot(this.h.prev.mx, this.h.prev.mz) < 0.25 || p.speed() < 1.2 || closing <= 0.1)) return;
     // (The assisted standing tackle, less sure than one he went in for, by difficulty: dribble.ts vsHuman.auto.
     // A bump he didn't ask for shouldn't leave him stranded or give away a free kick.)
     if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) < 1.0) this.tryTackle(p, c, vsHuman(this.aiSkill(c.side)).auto, true, false);
