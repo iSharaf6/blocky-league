@@ -12,6 +12,8 @@ import { Rng, hashString } from '../core/rng';
 import { overall } from '../sim/types';
 import type { PlayerDef, PlayerStats, Role } from '../sim/types';
 import { makePlayer, surnameOf } from './data';
+// (Runtime cycle: only used inside functions.) A player's potential: the overall his natural growth stops at.
+import { hasRoom, pinCeil } from './growth';
 import {
   KEY_STATS, SQUAD_MAX, SQUAD_MIN, STAT_CAP, STAT_KEYS, canSell, clonePlayer, divisionLevel, divisionPlayerOverall, freeNumber,
   playerPrice, removeFromSquad, rivalRating, rivalSquad, tuneToOverall, wageBudgetFor,
@@ -33,9 +35,9 @@ export const SCOUT_COST = 30;
 /** An offer is 60%..110% of the asking price. */
 export const BID_MIN = 0.6;
 export const BID_MAX = 1.1;
-/** Weeks (matches played so far) the window is open: the first three of the season and one mid-season. */
+/** Weeks (matches played so far) the window is open: the first three of the season and two at the halfway point. */
 export const OPEN_WEEKS: readonly number[] = [0, 1, 2];
-export const MID_WEEKS: readonly number[] = [4];
+export const MID_WEEKS: readonly number[] = [7, 8];
 export const AI_TRADES_PER_WEEK = 2;
 /** Weeks an AI offer for one of your listed players stays on the table. */
 export const OFFER_LIFE = 2;
@@ -294,13 +296,18 @@ export function bidRange(l: Pick<Listing, 'asking'>): [number, number] {
 
 // ------------------------------------------------------------------ growth (season rollover)
 
-/** Age everyone a year, grow the young by their potential, fade the old. Contracts tick down (never below 1). */
+/**
+ * Age everyone a year, grow the young by their potential stars (up to the overall they can reach: growth.ts ceilOf),
+ * fade the old. Contracts tick down (never below 1).
+ */
 export function ageSquad(club: ClubState): void {
   for (const p of club.squad) {
     const m = pinMeta(p);
+    // (His potential is fixed before the year moves him.)
+    pinCeil(p);
     m.age = (m.age ?? playerAge(p)) + 1;
     m.contract = Math.max(1, (m.contract ?? 1) - 1);
-    const grow = m.age <= YOUNG_AGE ? (m.potential ?? 0) : 0;
+    const grow = m.age <= YOUNG_AGE && hasRoom(p) ? (m.potential ?? 0) : 0;
     const keys = new Set<keyof PlayerStats>(KEY_STATS[p.role]);
     for (const k of STAT_KEYS) {
       let d = 0;

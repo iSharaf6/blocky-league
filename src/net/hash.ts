@@ -93,5 +93,9 @@ export function stateHash(m: Match): number {
     const hm = hypeMeters(m);
     h.word(0x48595045).num(hm[0]).num(hm[1]);
   }
+  // The AI coach (sim/coach.ts): each coached side's plan and cover, only in a match that has one.
+  for (const c of m.coach) if (c) h.word(0x434f4143).str(c.plan).str(c.cover).str(c.want);
+  // FLAIR (sim/skills.ts): each human side's pips (a different gauge is a different move at the next press).
+  for (const side of [0, 1] as const) if (m.human[side]) h.word(0x464c4152).num(m.ctl[side].skill.flair);
   return h.value();
 }

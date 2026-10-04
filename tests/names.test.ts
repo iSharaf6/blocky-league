@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { NAME_MAX, cleanName, fallbackShort, isNameAllowed, isPairAllowed, nameProblem, safeName, safeShort } from '../src/core/names';
+import {
+  NAME_MAX, cleanName, fallbackShort, isNameAllowed, isNameReserved, isPairAllowed, nameIssue, nameProblem, nameWhy, safeName, safeShort, suggestName,
+} from '../src/core/names';
+import { PRESET_CLUBS, randomClubSeed } from '../src/meta/data';
+import { Rng } from '../src/core/rng';
 import { sanitizeName, sanitizeShort } from '../src/meta/career';
 
 // A handful of blocked words, enough to exercise every disguise; the list itself lives in src/core/names.ts.
@@ -160,5 +164,134 @@ describe('look-alike letters, doubled letters, stray letters, split codes', () =
     for (const n of ['Спартак', 'Ολυμπιακός', 'Assist FC', 'Class Rovers', 'Sussex Town', 'Cummins XI', 'Hoopers', 'Boston Wanderers', 'Cockerel Bay']) {
       expect(isNameAllowed(n)).toBe(true);
     }
+  });
+});
+
+// ------------------------------------------------------------------ October 2026: the wider filter
+// (The words under test are kept in rot13 here, so nothing rude is printed by a failing run or a test name.)
+const rot13 = (w: string) => w.replace(/[a-z]/g, (c) => String.fromCharCode(((c.charCodeAt(0) - 97 + 13) % 26) + 97));
+const WORST = ['shpx', 'fuvg', 'phag', 'ovgpu', 'avttre', 'snttbg', 'ergneq', 'cbea'].map(rot13);
+const WIDER_ANYWHERE = ['znfgheong', 'ubybpnhfg', 'pbpnvar', 'fhvpvqr', 'chgnva', 'xhejn', 'pnmmb', 'fpurvff', 'zvreqn', 'erqfxva'].map(rot13);
+const WIDER_WHOLE = ['urebva', 'chgn', 'zrgu', 'fynt', 'ohgg', 'ervpu'].map(rot13);
+
+describe('name filter: more disguises', () => {
+  it('sound-alike spellings of the worst words are blocked (v for u, y for i, z for s)', () => {
+    for (const w of WORST) {
+      for (const [from, to] of [['u', 'v'], ['i', 'y'], ['s', 'z']] as const) {
+        const v = w.split(from).join(to);
+        if (v !== w) expect(isNameAllowed(v), `${rot13(w)} ${from}>${to}`).toBe(false);
+      }
+    }
+  });
+
+  it('invisible characters, full-width, circled and maths letters, underscores and a 6 for a g do not get a word through', () => {
+    const circled = (w: string) => [...w].map((c) => String.fromCodePoint(0x24d0 + c.charCodeAt(0) - 97)).join('');
+    const fullwidth = (w: string) => [...w].map((c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)).join('');
+    const mathBold = (w: string) => [...w].map((c) => String.fromCodePoint(0x1d41a + c.charCodeAt(0) - 97)).join('');
+    for (const w of WORST) {
+      expect(isNameAllowed([...w].join('\u200b')), rot13(w)).toBe(false);
+      expect(isNameAllowed([...w].join('_')), rot13(w)).toBe(false);
+      expect(isNameAllowed(circled(w)), rot13(w)).toBe(false);
+      expect(isNameAllowed(fullwidth(w)), rot13(w)).toBe(false);
+      expect(isNameAllowed(mathBold(w)), rot13(w)).toBe(false);
+      expect(isNameAllowed(w.replace(/g/g, '6')), rot13(w)).toBe(false);
+      expect(isNameAllowed(`Real${w[0].toUpperCase()}${w.slice(1)}FC`), rot13(w)).toBe(false);
+    }
+  });
+
+  it('the wider lists: sex, hate, drugs, self-harm and other languages', () => {
+    for (const w of WIDER_ANYWHERE) {
+      expect(isNameAllowed(w), rot13(w)).toBe(false);
+      expect(isNameAllowed(`${w} United`), rot13(w)).toBe(false);
+      expect(isNameAllowed(`x${w}x`), rot13(w)).toBe(false);
+    }
+    for (const w of WIDER_WHOLE) {
+      expect(isNameAllowed(w), rot13(w)).toBe(false);
+      expect(isNameAllowed(`${w.toUpperCase()} FC`), rot13(w)).toBe(false);
+    }
+  });
+
+  it('a sex, drug or hate number standing on its own is blocked; years and other numbers are fine', () => {
+    for (const n of ['Team 69', '69ers', 'FC 420', '1488 FC', 'A69']) expect(isNameAllowed(n), n).toBe(false);
+    for (const n of ['Est 1969', 'Class of 1988', 'Unit 4200', 'Route 66', 'Area 51', 'Apollo 11', 'FC 2026', 'Level 42']) expect(isNameAllowed(n), n).toBe(true);
+  });
+});
+
+describe('name filter: ordinary names still pass', () => {
+  it('the game\'s own clubs, every generated club and every suggestion pass both layers', () => {
+    for (const c of PRESET_CLUBS) {
+      expect(nameIssue(c.name), c.name).toBe('');
+      expect(isNameAllowed(c.short), c.short).toBe(true);
+    }
+    const rng = new Rng(11);
+    for (let i = 0; i < 400; i++) {
+      const c = randomClubSeed(rng, 50);
+      expect(isNameAllowed(c.name), c.name).toBe(true);
+      expect(isNameAllowed(c.short), c.short).toBe(true);
+    }
+    for (let i = 0; i < 300; i++) {
+      const s = suggestName('', i);
+      expect(nameIssue(s), s).toBe('');
+      expect(s.length).toBeLessThanOrEqual(NAME_MAX);
+    }
+  }, 30_000);
+
+  it('places and words the wider lists would trip over are let through', () => {
+    for (const n of [
+      'Winchester City', 'Middlesbrough', 'Penny Stars', 'Roxy Kent FC', 'Foxy Kestrels', 'Twin Crest FC', 'Nightwatch FC', 'Sweetwater United',
+      'Saltwater Rovers', 'Peninsula FC', 'Whistler Wolves', 'Perfection FC', 'Town Symphony', 'Aryan United', 'Heroes FC', 'Heroine City',
+      'Motherwell', 'Cumnock Juniors', 'Hellas Verona', 'Dynamo Kyiv', 'Fortuna Sittard', 'Grasshopper Zurich', 'Young Boys', 'Rapid Wien',
+      'Partick Thistle', 'Plymouth Argyle', 'Sheffield Wednesday', 'Crystal Palace', 'Nazionale', 'Unique FC', 'Computer Club', 'Butterfly FC',
+      'Golden Eagles', 'Thunder Cats', 'Killer Bees', 'Pass Masters', 'Top Bins', 'Tiki Taka',
+    ]) expect(isNameAllowed(n), n).toBe(true);
+  });
+});
+
+describe('reserved names (typed names only)', () => {
+  it('a real club\'s name is taken as the whole name, whatever the club words, case, accents or year', () => {
+    for (const n of ['Arsenal', 'Arsenal FC', 'The Arsenal Club', 'Arsenal 1886', 'Real Madrid', 'Real Madrid CF', 'REAL  MADRID', 'Réal Madríd', 'Man Utd', 'ManUtd', 'Liverpool', 'Juventus']) {
+      expect(isNameReserved(n), n).toBe(true);
+      expect(nameProblem(n), n).toBe('blocked');
+      expect(nameIssue(n), n).toBe('reserved');
+    }
+    for (const n of ['Arsenal Road', 'Liverpool Blocks', 'Real Voxel', 'Redcliff Rangers', 'Romans', 'Santosh FC', 'Inter Yer Nan', 'Sporting Lisboa', 'Bayern Bru']) {
+      expect(isNameReserved(n), n).toBe(false);
+      expect(nameProblem(n), n).toBe('');
+    }
+  });
+
+  it('competitions, brands, other games and names that pose as staff are taken anywhere in the name', () => {
+    for (const n of ['FIFA Stars', 'Nike Town', 'Lego City', 'Pepsi Max', 'Champions League', 'Blocky League', 'Admin', 'Admin FC', 'Official Rovers', 'Calynx United']) {
+      expect(isNameReserved(n), n).toBe(true);
+    }
+    for (const n of ['Badminton', 'Staffordshire', 'Supporters Club', 'Blocky Town', 'Blocky FC']) expect(isNameReserved(n), n).toBe(false);
+  });
+
+  it('the hard filter and the save never rename a club for a reserved name', () => {
+    // (Reserved names are refused when typed; a save from before the rule, and the game's own clubs, keep theirs.)
+    expect(isNameAllowed('Arsenal')).toBe(true);
+    expect(safeName('Arsenal')).toBe('Arsenal');
+    expect(sanitizeName('Real Madrid')).toBe('Real Madrid');
+  });
+
+  it('every refusal comes with a friendly line and a name to use instead', () => {
+    expect(nameWhy('rude')).toMatch(/friendly/i);
+    expect(nameWhy('rude', 'code')).toMatch(/code/i);
+    expect(nameWhy('reserved')).toMatch(/real club|brand/i);
+    // One line under a phone's name field.
+    for (const line of [nameWhy('rude'), nameWhy('rude', 'code'), nameWhy('reserved')]) expect(line.length).toBeLessThanOrEqual(30);
+    expect(nameWhy('')).toBe('');
+    expect(nameWhy('short')).toBe('');
+    // A reserved name keeps what the player was going for.
+    expect(suggestName('Arsenal')).toBe('Arsenal Blocks');
+    expect(suggestName('Liverpool FC')).toBe('Liverpool Blocks');
+    // A rude one gets a made-up club: never the rude word back, always a name that passes.
+    for (const w of WORST) {
+      const s = suggestName(`${w} town`, 3);
+      expect(s.toLowerCase()).not.toContain(w);
+      expect(nameIssue(s)).toBe('');
+    }
+    // No dots, dashes or emoji in the lines (the owner's taste).
+    for (const line of [nameWhy('rude'), nameWhy('rude', 'code'), nameWhy('reserved')]) expect(line).not.toMatch(/[·●—–]/);
   });
 });

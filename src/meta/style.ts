@@ -1,3 +1,4 @@
+import { crestFor, type CrestDesign } from '../core/crest';
 import type { SaveData } from '../core/save';
 import { contrastAwayKit } from '../game/kitContrast';
 import { designKit, type LookSet, type StyledKit } from '../render/kitDesigns';
@@ -64,12 +65,16 @@ export interface DecorStyle {
   shirt: number;
   shirt2: number;
   short: string;
+  /** The club's name and its crest (the centre circle, the tifo, the flag, the big screen): core/crest.ts. */
+  name?: string;
+  crest?: CrestDesign;
 }
 
-/** The save's stadium style for its club (`kit`, `short`), or null when nothing is worn. */
-export function decorOf(save: Pick<SaveData, 'shop' | 'progress' | 'settings'>, kit: Kit, short: string): DecorStyle | null {
+/** The save's stadium style for its club (`kit`, `short`, called `name`), or null when nothing is worn. */
+export function decorOf(save: Pick<SaveData, 'shop' | 'progress' | 'settings'>, kit: Kit, short: string, name = ''): DecorStyle | null {
   const slots = equippedSlots(save, 'decor');
   if (!Object.keys(slots).length) return null;
   const two = kit.shirt2 === kit.shirt ? (kit.shirt === 0xfbfbf4 ? 0x26262e : 0xfbfbf4) : kit.shirt2;
-  return { slots, shirt: kit.shirt, shirt2: two, short: (short || 'BLK').toUpperCase().slice(0, 4) };
+  const code = (short || 'BLK').toUpperCase().slice(0, 4);
+  return { slots, shirt: kit.shirt, shirt2: two, short: code, name, crest: crestFor(name, code.slice(0, 3), kit) };
 }

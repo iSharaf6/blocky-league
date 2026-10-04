@@ -13,7 +13,10 @@ import { YOU, type CareerState } from '../meta/career';
 import { boardView, confidenceWord, seasonResults } from '../meta/board';
 import { COMP_FINISH, COMP_NAMES, CONT_FINAL_AFTER, CONT_GROUP_AFTER, CONT_SF_AFTER, compClub, fixtureWinner, groupTable, type Competition, type CompFixture } from '../meta/comps';
 import { LEGACY_PERKS, canStartAsLegend, legacyLevel, nextPerk } from '../meta/legacy';
-import { CHEMISTRY_NAMES, MORALE_NAMES, captainOf, chemistry, morale, prospectCeiling, seasonTopScorer, type LifePlayer, type MatchFacts } from '../meta/life';
+import { CHEMISTRY_NAMES, MORALE_NAMES, captainOf, chemistry, prospectCeiling, seasonTopScorer, type LifePlayer, type MatchFacts } from '../meta/life';
+import { seasonHeadlines } from '../meta/events';
+import { partnerships, squadMorale, teamMood } from '../meta/morale';
+import { headlinesHtml, soonHtml, storyHtml } from './glory';
 import { playerAge, playerPotential } from '../meta/market';
 import { takeMoment, type StoryMoment } from '../meta/story';
 import type { MatchResult } from '../game/matchSession';
@@ -91,15 +94,19 @@ function academySection(st: CareerState): string {
 
 function moodSection(st: CareerState): string {
   const club = st.club!;
-  const m = morale(st.story.form);
+  // The eleven's own morale (meta/morale.ts: each player has his, the badge on his chip says when it is high or low).
+  const m = teamMood(st);
   const c = chemistry(club, st.season?.number ?? 1);
+  const last = (n: string) => (n.split(' ').pop() ?? n).toUpperCase();
+  const pairs = partnerships(club).slice(0, 3).map((p) => `${esc(last(p.a.name))} + ${esc(last(p.b.name))}`);
+  const partners = pairs.length ? `<div class="fv-form"><span>PARTNERSHIPS</span><small>${pairs.join(sep())}</small></div>` : '';
   const cap = captainOf(club) as LifePlayer | undefined;
   const form = st.story.form.length ? st.story.form.map((f) => `<i class="mc-wdl ${f === 'W' ? 'w' : f === 'D' ? 'd' : 'l'}">${f}</i>`).join('') : '<small>NO GAMES YET</small>';
   return section('THE SQUAD', `<div class="fv-mood">
-      <div class="fv-m m${m}">${pixelIcon('fire', 'currentColor', 2)}<span>MORALE</span><b>${MORALE_NAMES[m]}</b></div>
+      <div class="fv-m m${m}" title="The eleven's morale: ${squadMorale(club)} of 100">${pixelIcon(m === 2 ? 'happy' : m === 0 ? 'sad' : 'okay', 'currentColor', 2)}<span>MORALE</span><b>${MORALE_NAMES[m]}</b></div>
       <div class="fv-m m${c}">${pixelIcon('duo', 'currentColor', 2)}<span>CHEMISTRY</span><b>${CHEMISTRY_NAMES[c]}</b></div>
       <div class="fv-m cap">${pixelIcon('shield', 'currentColor', 2)}<span>CAPTAIN</span><b>${cap ? esc(cap.name.toUpperCase()) : '?'}</b></div>
-    </div><div class="fv-form"><span>FORM</span>${form}</div>`);
+    </div><div class="fv-form"><span>FORM</span>${form}</div>${partners}`);
 }
 
 function legacySection(st: CareerState): string {
@@ -152,10 +159,13 @@ function hallSection(st: CareerState, confirm: boolean): string {
   return section('HALL OF FAME', `${body}${anew}`);
 }
 
-/** The CLUB tab of the hub: everything the club is building up, season after season. */
-export function clubTabHtml(st: CareerState, confirmLegend = false): string {
+/**
+ * The CLUB tab of the hub: what is coming up and the story so far (ui/glory.ts), then everything the club is
+ * building up, season after season.
+ */
+export function clubTabHtml(st: CareerState, confirmLegend = false, storyAll = false): string {
   if (!st.club) return '';
-  return `<div class="fv-club">${boardSection(st)}${academySection(st)}${moodSection(st)}${legacySection(st)}${rivalSection(st)}${recordsSection(st)}${hallSection(st, confirmLegend)}</div>`;
+  return `<div class="fv-club">${soonHtml(st)}${storyHtml(st, storyAll)}${boardSection(st)}${academySection(st)}${moodSection(st)}${legacySection(st)}${rivalSection(st)}${recordsSection(st)}${hallSection(st, confirmLegend)}</div>`;
 }
 
 // ------------------------------------------------------------------ the CUPS tab: Continental and World Club Cups
@@ -257,7 +267,9 @@ export function recapHtml(st: CareerState): string {
     .map((f) => `<div class="fv-row fv-legend"><span class="mc-role r-${f.role}">${f.role}</span><span class="fv-t">${esc(f.name.toUpperCase())}<small>AGE ${f.age}${sep()}${f.apps} GAMES${sep()}${f.goals} GOALS</small></span>${f.legend ? '<b class="fv-ok">LEGEND</b>' : ''}</div>`)
     .join('');
   const treble = sum.treble ? `<div class="fv-treblebig">${pixelIcon('crown', '#ffd23a', 3)}<b>THE TREBLE!</b></div>` : '';
-  return `<div class="fv-club">${treble}${section('THE BOARD', board || '<p class="fv-empty">NO OBJECTIVES THIS SEASON</p>', `<em class="fv-confchip">${st.board.confidence}% ${confidenceWord(st.board.confidence)}</em>`)}${section('HIGHLIGHTS', hl)}${bye ? section('FAREWELL', bye) : ''}</div>`;
+  // The season's headlines: what the event cards and the club's story left behind (meta/events.ts).
+  const headlines = headlinesHtml(seasonHeadlines(st, sum.season, 5));
+  return `<div class="fv-club">${treble}${section('THE BOARD', board || '<p class="fv-empty">NO OBJECTIVES THIS SEASON</p>', `<em class="fv-confchip">${st.board.confidence}% ${confidenceWord(st.board.confidence)}</em>`)}${section('HIGHLIGHTS', hl)}${headlines}${bye ? section('FAREWELL', bye) : ''}</div>`;
 }
 
 // ------------------------------------------------------------------ the moments (stamp cards, one at a time)

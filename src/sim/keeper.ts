@@ -11,6 +11,9 @@ import type { Side } from './types';
 
 type RestartLike = { kind: string; side: Side; x: number; z: number };
 
+/** The human's keeper lets a ball in his hands go himself this long (s) after the catch: before the six seconds are up. */
+export const HUMAN_KEEPER_HOLD = 5.2;
+
 /**
  * Lateral dive pace scale (how far across goal a keeper gets in time). (Round 9: shots are SHOT_TEMPO faster
  * and his base reaction that much quicker; the dive itself isn't, so a well-struck one beats him a little
@@ -286,10 +289,12 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
     b.pos.z = k.pos.z + Math.sin(k.facing) * 0.35;
     b.pos.y = 1.05;
     b.vel.x = b.vel.y = b.vel.z = 0;
-    k.facing = ad > 0 ? 0 : Math.PI;
-    // Human keepers wait for input (handled by the match); AI keepers distribute.
-    if (!m.isHumanControlled(k) && k.stateT > m.keeperHoldTime) m.keeperDistribute(k);
-    else if (m.isHumanControlled(k) && k.stateT > 3) m.keeperDistribute(k);
+    // Human keepers wait for input (handled by the match: he walks it about his box, facing his way) and let it go
+    // themselves before the six seconds are up (HUMAN_KEEPER_HOLD from the catch); AI keepers distribute.
+    if (!m.isHumanControlled(k)) {
+      k.facing = ad > 0 ? 0 : Math.PI;
+      if (k.stateT > m.keeperHoldTime) m.keeperDistribute(k);
+    } else if (m.keeperHeldT > HUMAN_KEEPER_HOLD) m.keeperDistribute(k);
     return;
   }
   if (k.state !== 'move') return;
@@ -439,6 +444,9 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
     }
   }
 
+  // ---- KEEPER held (the human's manual keeper): he comes off his line for it, inside his box (keeperRush).
+  if (m.keeperOutHeld(k.side) && keeperRush(m, k)) return;
+
   // ---- Crosses: come and claim high balls dropping into the goal area (SIX_CLAIM, SIX_TRAFFIC) -----
   if (b.owner < 0 && !b.held && m.shotClock > 0.6 && m.kickSide !== k.side && m.sinceKick < 3.5) {
     const c = crossDrop(m, k);
@@ -536,6 +544,55 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   if (Math.abs(tx - gx) < 0.5) tx = gx + ad * 0.5;
   moveTo(k, tx, tz, false);
   k.faceTarget = Math.atan2(bz - k.pos.z, bx - k.pos.x);
+}
+
+/**
+ * The human's manual keeper (KEEPER held: Match.keeperOutHeld), with the ball not theirs to shoot yet (shot reading and
+ * a chip come first, above: he still dives). The ball within RUSH_RANGE m of his goal: a cross dropping where he can
+ * claim it he comes for (the claim itself is the usual one); a loose ball he goes to meet; a carrier he runs out at, to
+ * smother it at his feet. Never out of his box (RUSH_BOX_IN m inside its lines), and the moment the button is let go the
+ * AI has him again and takes him back to his line: he is never left out there by accident. False: nothing to come for.
+ */
+export const RUSH_RANGE = 42;
+const RUSH_BOX_IN = 1;
+function keeperRush(m: Match, k: Player): boolean {
+  const b = m.ball;
+  const ad = m.attackDir(k.side);
+  const gx = -ad * HALF_L;
+  if (b.held || dist2(b.pos.x, b.pos.z, gx, 0) > RUSH_RANGE) return false;
+  if (b.owner >= 0 && m.players[b.owner].side === k.side) return false;
+  const inBox = (x: number, z: number) => ({
+    x: gx + ad * clamp(Math.abs(x - gx), 0.5, BOX_DEPTH - RUSH_BOX_IN),
+    z: clamp(z, -BOX_W / 2 + RUSH_BOX_IN, BOX_W / 2 - RUSH_BOX_IN),
+  });
+  if (b.owner < 0) {
+    // In the air where he can get his hands to it: he comes for it and claims it (checkKeeperHands, the claim's reach).
+    const c = crossDrop(m, k);
+    if (c && dist2(k.pos.x, k.pos.z, c.x, c.z) / (k.top * 0.95) + 0.12 < c.t + 0.25) {
+      k.claimKick = m.kickId;
+      k.claiming = true;
+      moveTo(k, c.x, c.z, true);
+      k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
+      if (k.y === 0 && b.pos.y > 1.9 && dist2(k.pos.x, k.pos.z, b.pos.x, b.pos.z) < 2) {
+        k.vy = 4;
+        k.y = 0.01;
+      }
+      return true;
+    }
+    k.claiming = false;
+    const i = reach(m, k);
+    const t = inBox(i.x, i.z);
+    moveTo(k, t.x, t.z, true);
+    k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
+    return true;
+  }
+  // A man of theirs with it: out at him, down the line from the ball to the middle of his goal.
+  k.claiming = false;
+  const c = m.players[b.owner];
+  const t = inBox(c.pos.x - ad * 0.8, c.pos.z);
+  moveTo(k, t.x, t.z, true);
+  k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
+  return true;
 }
 
 /** Where a lofted ball first drops to catchable height inside the keeper's claiming area. */

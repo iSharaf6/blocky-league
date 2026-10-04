@@ -134,10 +134,11 @@ export function setObjectives(state: CareerState): void {
   const reward = 120 + 30 * step;
   const o = (k: ObjectiveKind, target: number, role?: Role): Objective => ({ kind: k, target, reward, state: 'open', ...(role ? { role } : {}) });
   switch (kind) {
-    case 'cleanSheets': objectives.push(o(kind, edge >= 0 ? 3 : 2)); break;
+    // (Sized for a home and away season of 14 league matchdays.)
+    case 'cleanSheets': objectives.push(o(kind, edge >= 0 ? 5 : 4)); break;
     case 'bigWin': objectives.push(o(kind, 3)); break;
-    case 'goals': objectives.push(o(kind, edge >= 0 ? 14 : 10)); break;
-    case 'wins': objectives.push(o(kind, edge >= 0 ? 4 : 3)); break;
+    case 'goals': objectives.push(o(kind, edge >= 0 ? 26 : 18)); break;
+    case 'wins': objectives.push(o(kind, edge >= 0 ? 8 : 6)); break;
     case 'derby': objectives.push(o(kind, 1)); break;
     case 'academy': objectives.push(o(kind, 1)); break;
     case 'sign': {

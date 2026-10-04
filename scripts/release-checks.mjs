@@ -11,7 +11,7 @@ export function sourceFingerprint(root) {
       for (const name of readdirSync(path).sort()) if (name !== '.DS_Store') add(join(path, name));
     } else files.push(path);
   };
-  for (const path of ['src', 'public', 'index.html', 'package.json', 'package-lock.json', 'vite.config.ts', 'tsconfig.json', 'scripts/release.mjs', 'scripts/lib.mjs', 'scripts/release-checks.mjs']) add(join(root, path));
+  for (const path of ['src', 'public', 'index.html', 'package.json', 'package-lock.json', 'vite.config.ts', 'tsconfig.json', '.env.production', 'scripts/release.mjs', 'scripts/lib.mjs', 'scripts/release-checks.mjs']) add(join(root, path));
   const hash = createHash('sha256');
   for (const file of files.sort()) hash.update(relative(root, file)).update('\0').update(readFileSync(file)).update('\0');
   return hash.digest('hex');

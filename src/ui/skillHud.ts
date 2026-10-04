@@ -5,6 +5,7 @@ import { PITCH_Y } from '../render/stadium';
 import { SKILL_NAMES, type ChainKind } from '../sim/skills';
 import type { SkillGrade, SkillMoveKind } from '../sim/types';
 import { escHtml } from './text';
+import './skill.css';
 
 /** How long (s) a move's pop stays up (matches the CSS animation), and a PERFECT's ring flash. */
 const POP_S = 1.1;
@@ -37,6 +38,10 @@ export class SkillHud {
   private fill: HTMLElement;
   private pop: HTMLDivElement;
   private ring: HTMLDivElement;
+  private zone: HTMLDivElement;
+  private flair: HTMLDivElement;
+  private pips: HTMLElement[];
+  private flairKey = -1;
   private v = new Vector3();
   private popT = 0;
   private popPlayer = -1;
@@ -47,13 +52,31 @@ export class SkillHud {
   constructor() {
     this.root.className = 'skill-hud';
     this.root.innerHTML = `<div class="sk-ring" aria-hidden="true"></div>
+      <div class="sk-zone" aria-hidden="true"><i class="sk-time"></i></div>
       <div class="sk-tell" aria-hidden="true"><kbd class="sk-key"></kbd><b>!</b><i class="sk-bar"><i></i></i></div>
-      <div class="sk-pop" aria-live="polite"></div>`;
+      <div class="sk-pop" aria-live="polite"></div>
+      <div class="sk-flair" aria-hidden="true"><b>SKILL</b><i></i><i></i><i></i></div>`;
     this.tell = this.root.querySelector('.sk-tell')!;
     this.key = this.root.querySelector('.sk-key')!;
     this.fill = this.root.querySelector('.sk-bar > i')!;
     this.pop = this.root.querySelector('.sk-pop')!;
     this.ring = this.root.querySelector('.sk-ring')!;
+    this.zone = this.root.querySelector('.sk-zone')!;
+    this.flair = this.root.querySelector('.sk-flair')!;
+    this.pips = [...this.flair.querySelectorAll<HTMLElement>('i')];
+  }
+
+  /**
+   * FLAIR (sim/skills.ts skillFlair) for keys and pads: `pips` whole ones lit, the chip up only while `show` (his man
+   * on the ball in open play, and not on touch, where the SKILL button wears them).
+   */
+  setFlair(pips: number, show: boolean): void {
+    const n = Math.max(0, Math.min(this.pips.length, Math.floor(pips + 1e-6)));
+    const key = show ? n : -1;
+    if (key === this.flairKey) return;
+    this.flairKey = key;
+    this.flair.classList.toggle('on', show);
+    this.pips.forEach((el, i) => el.classList.toggle('full', i < n));
   }
 
   /**
@@ -96,6 +119,7 @@ export class SkillHud {
   /** Everything off at once (a replay, a pause, a cut away from live play). */
   clear(): void {
     this.tell.classList.remove('on');
+    this.zone.classList.remove('on');
     this.pop.classList.remove('on');
     this.ring.classList.remove('on');
     this.popT = this.ringT = 0;
@@ -150,8 +174,17 @@ export class SkillHud {
         const pick = opts.find(clear) ?? opts[0];
         this.tell.style.transform = `translate(${Math.round(pick.l)}px,${Math.round(pick.t)}px)`;
         this.fill.style.transform = `scaleX(${clamp(tell.left, 0, 1).toFixed(3)})`;
+        // The timing ring: a zone under his feet, the ring closing in on it as the window runs out (red for its last third).
+        const left = clamp(tell.left, 0, 1);
+        this.zone.style.transform = `translate(${Math.round(f.x)}px,${Math.round(f.y)}px)`;
+        this.zone.style.setProperty('--k', (1 + left * 1.2).toFixed(3));
+        this.zone.classList.toggle('last', left < 0.34);
       }
-    } else this.tell.classList.remove('on');
+      this.zone.classList.toggle('on', on);
+    } else {
+      this.tell.classList.remove('on');
+      this.zone.classList.remove('on');
+    }
     // The pop rides over the dribbler as it rises and fades.
     if (this.popT > 0) {
       this.popT -= dt;

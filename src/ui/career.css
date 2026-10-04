@@ -127,6 +127,10 @@
   padding-bottom: 4px;
 }
 
+/* With STAFF there are five: a little tighter so every label still reads. */
+.cr-quick.five { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.panel .cr-quick.five .btn { font-size: 11px; letter-spacing: 0.2px; }
+
 .panel .cr-quick .btn {
   position: relative;
   display: flex;

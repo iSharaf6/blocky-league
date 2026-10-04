@@ -1,5 +1,7 @@
 /**
- * Store purchases (real money): coin packs, the Starter Pack and NO ADS, behind one provider-agnostic API.
+ * Store purchases (real money): GEM packs, the Starter Pack, NO ADS, the Coin Doubler, the Club Pass and the PRO
+ * bundle, behind one provider-agnostic API. Money buys gems (meta/gems.ts), never coins directly: one ladder, one
+ * currency for money, and coins come from playing or from swapping gems at a shown rate (economy v3, docs/ECONOMY.md).
  *
  * Who sells what, where:
  * - `native`: the iOS and Android apps (Capacitor wrapping the web build, cordova-plugin-purchase installed). The
@@ -8,7 +10,7 @@
  * - `dev`: a fake store for trying the shop UI. Only in a dev server (import.meta.env.DEV) with ?iap=dev in
  *   the URL; instant success. ?iapresult=cancelled|failed|pending forces that outcome.
  * - `none`: everywhere else, and ALWAYS on CrazyGames, Poki, itch and the plain website: their rules and
- *   payment integrations differ, so coins there come from play and rewarded ads (meta/shop.ts FREE COINS).
+ *   payment integrations differ, so coins and gems there come from play and rewarded ads (meta/shop.ts FREE COINS).
  *
  * Grants are idempotent. Every payout is recorded in the save (SaveData.iap) as `${transactionId}|${productId}`
  * and a one-time product is recorded as owned, so a store that delivers a transaction twice (a crash before it
@@ -20,6 +22,7 @@
  * See docs/MONETIZATION.md.
  */
 import { IAP_APPLIED_MAX, type SaveData } from '../core/save';
+import { addGems } from '../meta/gems';
 import { activatePass, passActive } from '../meta/pass';
 import { creditCoins, grantItem, iapOf, itemKey, type ShopCat } from '../meta/shop';
 import { inNativeApp } from './native';
@@ -35,17 +38,19 @@ export interface IapEntry {
   id: string;
   kind: IapKind;
   title: string;
-  /** Coins in the pack, before the bonus. */
+  /** Coins handed over with it (the Starter Pack's), before the bonus. */
   coins: number;
-  /** Extra coins on top, in % of `coins` (real: it is added to the grant). */
+  /** Gems in the pack, before the bonus. */
+  gems: number;
+  /** Extra on top, in % of the pack (real: it is added to the grant). */
   bonusPct: number;
   /** Shop items handed over with it (the Starter Pack's Gold ball). */
   items: readonly { cat: ShopCat; id: string }[];
-  /** NO ADS: no interstitial ads (rewarded ads stay: they are the player's choice). */
+  /** NO ADS: no interstitial ads (rewarded ads stay: they are the player's choice). The PRO bundle has it too. */
   noAds?: true;
   /** The Club Pass: the pass track of the season it is bought in (meta/pass.ts). Consumable: a new one each month. */
   pass?: true;
-  /** The Coin Doubler: every match pays double coins, for good (main.ts full time). */
+  /** The Coin Doubler: every match pays double coins, for good (main.ts full time). The PRO bundle has it too. */
   doubler?: true;
   /** A tag on the card: an editorial call, keep it true if the prices move. */
   tag?: 'POPULAR' | 'BEST VALUE';
@@ -57,26 +62,33 @@ export const PRODUCT_STARTER = 'bl.starter';
 export const PRODUCT_NOADS = 'bl.noads';
 export const PRODUCT_PASS = 'bl.pass';
 export const PRODUCT_DOUBLER = 'bl.doubler';
+export const PRODUCT_PRO = 'bl.pro';
 
 /**
- * What is for sale, in display order. About what a Normal win pays (170 to 210 coins): 500 coins is two or three
- * wins, so the smallest pack is a small head start, never a wall; bonuses grow with the pack. The Starter Pack
- * is worth more than its price on purpose (it is the once-only first purchase) and says so with real numbers.
+ * What is for sale, in display order (economy v3). The ladder: 100 gems for $0.99, and every bigger pack a better
+ * rate (101, 110, 120, 130 and 150 gems a dollar), up to $19.99: no pack above that in a game children play. 100 gems
+ * is two replays, or five finished builds, or about 1,500 coins: a real head start, never a wall.
+ * The one-time offers are worth more than their price on purpose and say so with real numbers: the Starter Pack
+ * (the first purchase) and the PRO bundle (NO ADS, the Coin Doubler and 600 gems: $13.97 of products for $9.99).
  */
 export const CATALOGUE: readonly IapEntry[] = [
-  { id: 'bl.coins.500', kind: 'consumable', title: '500 Coins', coins: 500, bonusPct: 0, items: [], usd: 0.99 },
-  { id: 'bl.coins.1500', kind: 'consumable', title: '1500 Coins', coins: 1500, bonusPct: 10, items: [], usd: 2.99, tag: 'POPULAR' },
-  { id: 'bl.coins.4000', kind: 'consumable', title: '4000 Coins', coins: 4000, bonusPct: 25, items: [], usd: 6.99 },
-  { id: 'bl.coins.10000', kind: 'consumable', title: '10000 Coins', coins: 10000, bonusPct: 40, items: [], usd: 14.99, tag: 'BEST VALUE' },
-  { id: PRODUCT_STARTER, kind: 'non-consumable', title: 'Starter Pack', coins: 2000, bonusPct: 0, items: [{ cat: 'ball', id: 'gold' }], usd: 1.99 },
-  { id: PRODUCT_NOADS, kind: 'non-consumable', title: 'No Ads', coins: 0, bonusPct: 0, items: [], noAds: true, usd: 3.99 },
-  { id: PRODUCT_PASS, kind: 'consumable', title: 'Club Pass', coins: 0, bonusPct: 0, items: [], pass: true, usd: 3.99 },
-  { id: PRODUCT_DOUBLER, kind: 'non-consumable', title: 'Coin Doubler', coins: 0, bonusPct: 0, items: [], doubler: true, usd: 4.99 },
+  { id: 'bl.gems.100', kind: 'consumable', title: '100 Gems', coins: 0, gems: 100, bonusPct: 0, items: [], usd: 0.99 },
+  { id: 'bl.gems.300', kind: 'consumable', title: '300 Gems', coins: 0, gems: 300, bonusPct: 10, items: [], usd: 2.99 },
+  { id: 'bl.gems.500', kind: 'consumable', title: '500 Gems', coins: 0, gems: 500, bonusPct: 20, items: [], usd: 4.99, tag: 'POPULAR' },
+  { id: 'bl.gems.1000', kind: 'consumable', title: '1000 Gems', coins: 0, gems: 1000, bonusPct: 30, items: [], usd: 9.99 },
+  { id: 'bl.gems.2000', kind: 'consumable', title: '2000 Gems', coins: 0, gems: 2000, bonusPct: 50, items: [], usd: 19.99, tag: 'BEST VALUE' },
+  { id: PRODUCT_STARTER, kind: 'non-consumable', title: 'Starter Pack', coins: 2000, gems: 150, bonusPct: 0, items: [{ cat: 'ball', id: 'gold' }], usd: 1.99 },
+  { id: PRODUCT_NOADS, kind: 'non-consumable', title: 'No Ads', coins: 0, gems: 0, bonusPct: 0, items: [], noAds: true, usd: 3.99 },
+  { id: PRODUCT_PASS, kind: 'consumable', title: 'Club Pass', coins: 0, gems: 0, bonusPct: 0, items: [], pass: true, usd: 3.99 },
+  { id: PRODUCT_DOUBLER, kind: 'non-consumable', title: 'Coin Doubler', coins: 0, gems: 0, bonusPct: 0, items: [], doubler: true, usd: 4.99 },
+  { id: PRODUCT_PRO, kind: 'non-consumable', title: 'Pro Bundle', coins: 0, gems: 600, bonusPct: 0, items: [], noAds: true, doubler: true, usd: 9.99 },
 ];
 
-/** A coin pack (not the pass): the first buy of each pays double (FIRST_BUY_MULT, IapState.firsts). */
-export const isCoinPack = (e: Pick<IapEntry, 'kind' | 'pass' | 'coins'>): boolean => e.kind === 'consumable' && !e.pass && e.coins > 0;
+/** A gem pack (not the pass or a one-time offer): the first buy of each pays double (FIRST_BUY_MULT, IapState.firsts). */
+export const isGemPack = (e: Pick<IapEntry, 'kind' | 'pass' | 'gems'>): boolean => e.kind === 'consumable' && !e.pass && e.gems > 0;
 export const FIRST_BUY_MULT = 2;
+/** The dearest thing in the store, in US dollars: a ceiling on purpose (kids play this; tests pin it). */
+export const MAX_PRICE_USD = 19.99;
 
 export function entryOf(id: string): IapEntry | undefined {
   return CATALOGUE.find((e) => e.id === id);
@@ -85,6 +97,11 @@ export function entryOf(id: string): IapEntry | undefined {
 /** The coins a product hands over: the pack plus its bonus. */
 export function coinsOf(e: Pick<IapEntry, 'coins' | 'bonusPct'>): number {
   return e.coins + Math.floor((e.coins * e.bonusPct) / 100);
+}
+
+/** The gems a product hands over: the pack plus its bonus (before any first-buy doubling). */
+export function gemsOf(e: Pick<IapEntry, 'gems' | 'bonusPct'>): number {
+  return e.gems + Math.floor((e.gems * e.bonusPct) / 100);
 }
 
 /** One product as the shop shows it. */
@@ -98,15 +115,21 @@ export interface IapProduct {
   coins: number;
   baseCoins: number;
   bonusPct: number;
+  /** Total gems handed over (pack plus bonus, before the first-buy doubling) and the pack alone. */
+  gems: number;
+  baseGems: number;
   /** Item keys handed over ('ball:gold'). */
   items: string[];
   noAds: boolean;
   tag?: IapEntry['tag'];
-  /** A one-time product the player already has (never true for coin packs; the Club Pass: on for this month). */
+  /**
+   * A one-time product the player already has (never true for gem packs; the Club Pass: on for this month; NO ADS
+   * and the Coin Doubler: also once the PRO bundle is owned).
+   */
   owned: boolean;
   pass: boolean;
   doubler: boolean;
-  /** A coin pack never bought before: this buy pays FIRST_BUY_MULT times its coins. */
+  /** A gem pack never bought before: this buy pays FIRST_BUY_MULT times its gems. */
   firstBonus: boolean;
   /**
    * The store can sell it right now. False only on Iap.shelf()'s stand-ins: the app's store hasn't answered for
@@ -125,9 +148,11 @@ export function cataloguePrice(e: Pick<IapEntry, 'usd'>): string {
 export interface IapGrant {
   productId: string;
   coins: number;
+  /** Gems handed over (the first-buy bonus included). */
+  gems: number;
   items: string[];
   noAds: boolean;
-  /** Extra coins from the first-buy bonus (already in `coins`). */
+  /** Extra gems from the first-buy bonus (already in `gems`). */
   firstBonus: number;
   /** The Club Pass went on for this month. */
   pass: boolean;
@@ -148,14 +173,34 @@ export type DeliverResult = 'applied' | 'duplicate' | 'unknown' | 'unbound';
 
 // ------------------------------------------------------------------ the rules (pure, no store)
 
-/** NO ADS is owned. */
+/** NO ADS is owned (on its own, or in the PRO bundle). */
 export function adFree(save: Pick<SaveData, 'iap'>): boolean {
-  return iapOf(save).owned.includes(PRODUCT_NOADS);
+  const owned = iapOf(save).owned;
+  return owned.includes(PRODUCT_NOADS) || owned.includes(PRODUCT_PRO);
 }
 
-/** The Coin Doubler is owned: every match pays double coins. */
+/** The Coin Doubler is owned (on its own, or in the PRO bundle): every match pays double coins. */
 export function coinDoubler(save: Pick<SaveData, 'iap'>): boolean {
-  return iapOf(save).owned.includes(PRODUCT_DOUBLER);
+  const owned = iapOf(save).owned;
+  return owned.includes(PRODUCT_DOUBLER) || owned.includes(PRODUCT_PRO);
+}
+
+/**
+ * The PRO bundle is an honest offer only while neither of its parts is owned (it is priced against both): the
+ * shop shows it then, and never once NO ADS or the Coin Doubler was bought on its own.
+ */
+export function proOffered(save: Pick<SaveData, 'iap'>): boolean {
+  const owned = iapOf(save).owned;
+  return !owned.includes(PRODUCT_PRO) && !owned.includes(PRODUCT_NOADS) && !owned.includes(PRODUCT_DOUBLER);
+}
+
+/** What the PRO bundle's parts cost bought one by one, in US dollars (the card's "worth" line; tests pin the saving). */
+export function proWorthUsd(): number {
+  const usd = (id: string) => entryOf(id)?.usd ?? 0;
+  const pro = entryOf(PRODUCT_PRO);
+  // (Its gems at the rate of the pack that sells that many: the 500 pack hands over 600.)
+  const pack = CATALOGUE.find((e) => isGemPack(e) && gemsOf(e) === (pro?.gems ?? 0));
+  return Math.round((usd(PRODUCT_NOADS) + usd(PRODUCT_DOUBLER) + (pack?.usd ?? 0)) * 100) / 100;
 }
 
 /** A one-time product is already owned. */
@@ -164,32 +209,36 @@ export function ownsProduct(save: Pick<SaveData, 'iap'>, id: string): boolean {
 }
 
 /**
- * Pay one transaction of one product out into the save: coins, items, the ownership record and the
+ * Pay one transaction of one product out into the save: gems, coins, items, the ownership record and the
  * transaction's id. Null, and nothing changes, when it was paid before: the same transaction id again, or a
  * one-time product that is already owned (a restore's transactions carry new ids). A one-time product handed back
- * by a restore (a new device) brings its items and ownership back but not its coins: coins were spent where they
- * were paid, and a reinstall must not be a coin tap. The caller saves, then finishes the transaction with the store.
+ * by a restore (a new device) brings its items and ownership back but not its coins or gems: those were spent where
+ * they were paid, and a reinstall must not be a currency tap. The caller saves, then finishes the transaction with
+ * the store. Everything paid out is fixed and stated: nothing here is random.
  */
 export function applyPurchase(save: SaveData, entry: IapEntry, txId: string, restored = false): IapGrant | null {
   const st = iapOf(save);
   const key = `${txId}|${entry.id}`;
   if (st.applied.includes(key)) return null;
   if (entry.kind === 'non-consumable' && st.owned.includes(entry.id)) return null;
-  let coins = restored && entry.kind === 'non-consumable' ? 0 : coinsOf(entry);
-  // The first buy of each coin pack pays double, once ever per pack (the save remembers which were bought).
+  const back = restored && entry.kind === 'non-consumable';
+  const coins = back ? 0 : coinsOf(entry);
+  let gems = back ? 0 : gemsOf(entry);
+  // The first buy of each gem pack pays double, once ever per pack (the save remembers which were bought).
   let firstBonus = 0;
-  if (isCoinPack(entry) && !st.firsts.includes(entry.id)) {
-    firstBonus = coins * (FIRST_BUY_MULT - 1);
-    coins += firstBonus;
+  if (isGemPack(entry) && !st.firsts.includes(entry.id)) {
+    firstBonus = gems * (FIRST_BUY_MULT - 1);
+    gems += firstBonus;
     st.firsts.push(entry.id);
   }
   if (coins > 0) creditCoins(save, coins);
+  if (gems > 0) addGems(save, gems, `iap:${entry.id}`);
   const items = entry.items.filter((it) => grantItem(save, it.cat, it.id)).map((it) => itemKey(it.cat, it.id));
   const pass = !!entry.pass && activatePass(save);
   if (entry.kind === 'non-consumable') st.owned.push(entry.id);
   st.applied.push(key);
   if (st.applied.length > IAP_APPLIED_MAX) st.applied.splice(0, st.applied.length - IAP_APPLIED_MAX);
-  return { productId: entry.id, coins, items, noAds: !!entry.noAds, firstBonus, pass, doubler: !!entry.doubler, restored: false };
+  return { productId: entry.id, coins, gems, items, noAds: !!entry.noAds, firstBonus, pass, doubler: !!entry.doubler, restored: false };
 }
 
 // ------------------------------------------------------------------ cordova-plugin-purchase (v13): the slice we use
@@ -518,8 +567,8 @@ export class Iap {
   /**
    * Everything for sale, in display order, for the shop in the app: the store's own products where it has them,
    * else a stand-in at the catalogue price with `sellable` false (the store can't sell it yet: a tap says so).
-   * So the Club Pass, NO ADS, the Coin Doubler, the Starter Pack and the coin packs always show in the app, even
-   * before App Store Connect has them. Empty off the storefront (the web, the portals).
+   * So the Club Pass, NO ADS, the Coin Doubler, the Starter Pack, the PRO bundle and the gem packs always show in
+   * the app, even before App Store Connect has them. Empty off the storefront (the web, the portals).
    */
   shelf(): IapProduct[] {
     if (!this.storefront) return [];
@@ -533,12 +582,20 @@ export class Iap {
   }
 
   private product(e: IapEntry, price: string, sellable: boolean): IapProduct {
+    const save = this.ctx?.save;
+    // (NO ADS and the Coin Doubler read OWNED once the PRO bundle brought them.)
+    const owned = !save ? false
+      : e.pass ? passActive(save)
+        : e.id === PRODUCT_NOADS ? adFree(save)
+          : e.id === PRODUCT_DOUBLER ? coinDoubler(save)
+            : e.kind === 'non-consumable' && ownsProduct(save, e.id);
     return {
       id: e.id, title: e.title, price, kind: e.kind, coins: coinsOf(e), baseCoins: e.coins, bonusPct: e.bonusPct,
+      gems: gemsOf(e), baseGems: e.gems,
       items: e.items.map((it) => itemKey(it.cat, it.id)), noAds: !!e.noAds, tag: e.tag,
-      owned: !!this.ctx && (e.pass ? passActive(this.ctx.save) : e.kind === 'non-consumable' && ownsProduct(this.ctx.save, e.id)),
+      owned,
       pass: !!e.pass, doubler: !!e.doubler,
-      firstBonus: isCoinPack(e) && !!this.ctx && !iapOf(this.ctx.save).firsts.includes(e.id),
+      firstBonus: isGemPack(e) && !!save && !iapOf(save).firsts.includes(e.id),
       sellable,
     };
   }
@@ -556,8 +613,10 @@ export class Iap {
   async buy(id: string): Promise<IapBuyResult> {
     const e = entryOf(id);
     if (!this.impl || !e || !this.ctx) return 'failed';
-    // A one-time product is buyable once (the Starter Pack, NO ADS, the Coin Doubler); the Club Pass once a month.
+    // A one-time product is buyable once (the Starter Pack, NO ADS, the Coin Doubler, the PRO bundle: its parts
+    // count as owned through it); the Club Pass once a month.
     if (e.kind === 'non-consumable' && this.owns(id)) return 'failed';
+    if ((id === PRODUCT_NOADS && adFree(this.ctx.save)) || (id === PRODUCT_DOUBLER && coinDoubler(this.ctx.save))) return 'failed';
     if (e.pass && passActive(this.ctx.save)) return 'failed';
     if (this.buying) return 'pending';
     this.buying = true;
@@ -572,7 +631,8 @@ export class Iap {
 
   /**
    * RESTORE PURCHASES (Apple requires the button): hands back the one-time products the store says this account
-   * owns (NO ADS, the Starter Pack and its Gold ball). Coin packs are consumed on purchase and never come back.
+   * owns (NO ADS, the Coin Doubler, the PRO bundle, the Starter Pack and its Gold ball). Gem packs are consumed on
+   * purchase and never come back.
    */
   async restore(): Promise<IapRestoreResult> {
     if (!this.impl || !this.ctx) return { ok: false, restored: [] };

@@ -15,11 +15,27 @@ import {
 import { PARTS as GROUND_PARTS, capacity, groundLevel, nextBuild, partView, stadiumParts, type GroundState, type PartId } from '../meta/ground';
 import { pixelIcon } from './pixelIcons';
 import './forever.css';
-import { NAME_DISALLOWED, cleanName, fallbackShort, isNameAllowed, nameProblem } from '../core/names';
+import { NAME_DISALLOWED, cleanName, fallbackShort, isNameAllowed, nameIssue, nameProblem, nameWhy, suggestName } from '../core/names';
+import { defaultCrest, randomCrest, setMyCrest, type CrestDesign } from '../core/crest';
+import { crestDesignSvg } from './crest';
+import { crestEditorHandlers, crestEditorHtml, crestFollowKit, type CrestEditState } from './crestEditor';
 import { KIT_COLORS } from '../meta/data';
 import { SHORTLIST_MAX, WAGE_DIP, marketSummary, wageOf } from '../meta/market';
-import { BENCH_SIZE, autoLineup, trainBest } from '../meta/squad';
+import { BENCH_SIZE, autoLineupFit, trainBest } from '../meta/squad';
+// The long game (ui/glory.ts draws it): the STAFF tab, the GROW card, morale badges, ROTATE and TEAM TALK.
+import { assignMentors } from '../meta/events';
+import { isInjured, rotate, rotateSuggestion, talkWait, teamTalk } from '../meta/morale';
+import { isOpen } from '../meta/week';
+import { defaultStaffUi, growHandlers, growHtml, moodBadge, moodWord, seeReport, staffHandlers, staffTab } from './glory';
 import { buzz } from '../platform/haptics';
+import { localDay } from '../core/day';
+import { gems } from '../meta/gems';
+import { adsLeft, useAd } from '../meta/loops';
+import { finishBuildCost, finishBuildNow, skipBuildMatchday } from '../meta/premium';
+import { ads } from '../platform/ads';
+import { iap } from '../platform/iap';
+import { confirmGems, gemPrice, gemsHtml } from './gemUi';
+import { openShop } from './shop';
 import { openMarket } from './market';
 import { sep } from './text';
 import { cssHex } from '../render/palette';
@@ -73,6 +89,8 @@ export interface MetaScreen {
 }
 
 let activeRoot: HTMLDivElement | null = null;
+/** The save of the screen now mounted (mountMeta): topBar draws its gems beside the coins. */
+let barSave: AppContext['save'] | null = null;
 /** Run when the meta screen closes (3D previews free their WebGL context). */
 let cleanups: (() => void)[] = [];
 
@@ -97,6 +115,7 @@ export function closeMeta(): void {
 export function mountMeta(app: AppContext, cls: string): MetaScreen {
   app.menus.close();
   closeMeta();
+  barSave = app.save;
   const root = document.createElement('div');
   root.className = `screen meta ${cls}`;
   root.innerHTML = '<div class="panel-wrap dim mc-wrap"><div class="panel mc"></div></div><div class="mc-toast" role="status" aria-live="polite"></div>';
@@ -185,7 +204,7 @@ export function topBar(back: string, title: string, sub: string, coins: number):
   return `<header class="mc-top">
     <button class="btn btn-white mc-back" data-a="back" aria-label="${esc(back)}">←<span>${esc(back)}</span></button>
     <div class="mc-title"><h2>${title}</h2><span>${sub}</span></div>
-    ${coinsHtml(coins)}
+    <div class="mc-wallet">${barSave ? gemsHtml(gems(barSave)) : ''}${coinsHtml(coins)}</div>
   </header>`;
 }
 
@@ -245,7 +264,7 @@ const COLORS = Object.entries(KIT_COLORS) as [string, number][];
 function kitEditorHtml(kit: Kit, part: KitPart): string {
   return `<div class="mc-kited">
     <div class="ck-partrow">
-      <div class="seg mc-parts">${PARTS.map(([k, l]) => `<button class="${k === part ? 'on' : ''}" data-a="part" data-v="${k}">${l}</button>`).join('')}</div>
+      <div class="seg mc-parts">${PARTS.map(([k, l]) => `<button class="${k === part ? 'on' : ''}" data-a="kpart" data-v="${k}">${l}</button>`).join('')}</div>
       <button class="btn btn-white mc-rand" data-a="randkit" aria-label="Shuffle the kit">SHUFFLE</button>
     </div>
     <div class="mc-swatches">${COLORS.map(([n, c]) => `<button class="mc-sw ${kit[part] === c ? 'on' : ''}" data-a="color" data-v="${c}" style="--sw:${cssHex(c)}" aria-label="${n}" title="${n.toUpperCase()}"></button>`).join('')}</div>
@@ -255,7 +274,8 @@ function kitEditorHtml(kit: Kit, part: KitPart): string {
 
 function kitHandlers(kit: Kit, part: { v: KitPart }, changed: () => void): Handlers {
   return {
-    part: (el) => {
+    // ('kpart', not 'part': MY CLUB's STADIUM tab has a 'part' action of its own.)
+    kpart: (el) => {
       part.v = el.dataset.v as KitPart;
       changed();
     },
@@ -279,8 +299,34 @@ function formationButtons(cur: FormationId, action: string): string {
   return `<div class="mc-forms">${FORMATION_IDS.map((f) => `<button class="${f === cur ? 'on' : ''}" data-a="${action}" data-v="${f}">${f}</button>`).join('')}</div>`;
 }
 
-function previewHtml(kit: Kit, name: string, short: string): string {
-  return `${shirtArt(kit, 12)}<b>${esc(name || 'YOUR CLUB')}</b><span>${esc(short.length === 3 ? short : '???')}</span>`;
+/** KIT or CREST: which editor the right pane shows (the preview makes that one the bigger). */
+type KitMode = 'kit' | 'crest';
+
+function previewHtml(kit: Kit, name: string, short: string, crest?: CrestDesign, mode: KitMode = 'kit'): string {
+  const badge = crest ? crestDesignSvg(crest, short.length === 3 ? short : '', name, 6) : '';
+  return `<div class="ck-pvrow ${mode}">${badge}${shirtArt(kit, 12)}</div><b>${esc(name || 'YOUR CLUB')}</b><span>${esc(short.length === 3 ? short : '???')}</span>`;
+}
+
+function modeTabs(mode: KitMode): string {
+  return `<div class="seg ck-mode" role="tablist">${(['kit', 'crest'] as const).map((k) => `<button class="${k === mode ? 'on' : ''}" data-a="kmode" data-v="${k}" role="tab" aria-selected="${k === mode}">${k === 'kit' ? 'KIT' : 'CREST'}</button>`).join('')}</div>`;
+}
+
+/**
+ * A name field's verdict with its friendly line (core/names.ts nameWhy), and the "use this instead" chip under the
+ * fields: a name to tap when the typed one was turned down (rude, or a real club's or a brand's).
+ */
+function markName(panel: HTMLElement, input: HTMLElement | null, raw: string, seed: number): void {
+  const issue = nameIssue(raw);
+  markField(input, issue === 'rude' || issue === 'reserved' ? 'blocked' : issue, nameWhy(issue) || undefined);
+  const chip = panel.querySelector<HTMLButtonElement>('.mc-suggest');
+  if (!chip) return;
+  const off = issue !== 'rude' && issue !== 'reserved';
+  chip.hidden = off;
+  if (!off) {
+    const s = suggestName(raw, seed);
+    chip.dataset.v = s;
+    chip.textContent = `USE ${s.toUpperCase()}`;
+  }
 }
 
 const SUGGESTED = ['Pixel Park FC', 'Cube City', 'Voxel Rovers', 'Brick Lane FC', 'Blocky Town', 'Square United', 'Crate Albion'];
@@ -298,14 +344,23 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
     formation: '4-4-2' as FormationId,
   };
   const part = { v: 'shirt' as KitPart };
-  const valid = () => sanitizeName(d.name).length >= 2 && sanitizeShort(d.short).length === 3 && isPairAllowed(d.name, d.short);
+  // The crest starts in the kit's colours and follows them until the player picks crest colours of his own.
+  const kitColors = (Object.values(KIT_COLORS) as number[]);
+  const ced: CrestEditState = { crest: randomCrest(Math.random, kitColors, { c1: d.kit.shirt, c2: d.kit.shirt2 }), tab: 'shape', col: 'c1' };
+  crestFollowKit(ced.crest, d.kit);
+  let ownColors = false;
+  let mode: KitMode = 'kit';
+  const suggestSeed = Math.floor(Math.random() * 1000);
+  const valid = () => sanitizeName(d.name).length >= 2 && nameProblem(d.name) === '' && sanitizeShort(d.short).length === 3 && isPairAllowed(d.name, d.short);
+  const shown = () => sanitizeName(d.name) || (nameProblem(d.name) === 'blocked' ? '' : cleanName(d.name));
   const update = () => {
     const pv = scr.panel.querySelector('.mc-preview');
-    if (pv) pv.innerHTML = previewHtml(d.kit, sanitizeName(d.name) || cleanName(d.name), d.short);
+    if (pv) pv.innerHTML = previewHtml(d.kit, shown(), d.short, ced.crest, mode);
     const btn = scr.panel.querySelector<HTMLButtonElement>('[data-a=create]');
     if (btn) btn.disabled = !valid();
-    markField(scr.panel.querySelector('[data-in=name]'), nameProblem(d.name));
-    markField(scr.panel.querySelector('[data-in=short]'), shortProblem(d.short), 'Pick another code');
+    markName(scr.panel, scr.panel.querySelector('[data-in=name]'), d.name, suggestSeed);
+    const sp = shortProblem(d.short);
+    markField(scr.panel.querySelector('[data-in=short]'), sp === '' && d.short.length === 3 && !isPairAllowed(d.name, d.short) && nameProblem(d.name) === '' ? 'blocked' : sp, nameWhy('rude', 'code'));
   };
   const draw = () =>
     scr.render(
@@ -313,15 +368,18 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
       `${topBar('BACK', 'NEW CLUB', 'FOUND YOUR TEAM', app.save.coins)}
       <div class="mc-body ck-body">
         <div class="pane ck-id">
-          <div class="mc-preview">${previewHtml(d.kit, sanitizeName(d.name), d.short)}</div>
+          <div class="mc-preview">${previewHtml(d.kit, shown(), d.short, ced.crest, mode)}</div>
           <div class="mc-fields">
             <label class="mc-field"><span>CLUB NAME</span><input data-in="name" maxlength="18" value="${esc(d.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
             <label class="mc-field mc-short"><span>SHORT</span><input data-in="short" maxlength="3" value="${esc(d.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
           </div>
+          <button class="mc-suggest" data-a="usename" hidden></button>
         </div>
         <div class="pane ck-ed">
-          ${kitEditorHtml(d.kit, part.v)}
-          <div class="ck-forms"><span class="ck-lbl">FORMATION</span>${formationButtons(d.formation, 'form')}</div>
+          ${modeTabs(mode)}
+          ${mode === 'kit'
+            ? `${kitEditorHtml(d.kit, part.v)}<div class="ck-forms"><span class="ck-lbl">FORMATION</span>${formationButtons(d.formation, 'form')}</div>`
+            : crestEditorHtml(ced, shown(), d.short.length === 3 ? d.short : '')}
         </div>
       </div>
       <div class="mc-actions">
@@ -330,14 +388,35 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
       </div>`,
       {
         back: onBack,
-        ...kitHandlers(d.kit, part, draw),
+        ...kitHandlers(d.kit, part, () => {
+          if (!ownColors) crestFollowKit(ced.crest, d.kit);
+          redraw();
+        }),
+        ...crestEditorHandlers(ced, () => d.kit, redraw),
+        ccolor: (el) => {
+          ownColors = true;
+          ced.crest[ced.col] = Number(el.dataset.v);
+          redraw();
+        },
+        kmode: (el) => {
+          mode = el.dataset.v as KitMode;
+          redraw();
+        },
+        usename: (el) => {
+          const v = el.dataset.v ?? '';
+          if (!v) return;
+          d.name = v;
+          if (!d.shortEdited) d.short = fallbackShort(v);
+          redraw();
+        },
         form: (el) => {
           d.formation = el.dataset.v as FormationId;
-          draw();
+          redraw();
         },
         create: () => {
           if (!valid()) return;
-          st.club = createClub({ name: d.name, short: d.short, kit: d.kit, formation: d.formation }, st.seed, newClubLevel(st));
+          st.club = createClub({ name: d.name, short: d.short, kit: d.kit, formation: d.formation, crest: ced.crest }, st.seed, newClubLevel(st));
+          setMyCrest(st.club);
           app.persist();
           sfx.coin();
           onDone();
@@ -365,13 +444,18 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
         },
       },
     );
-  draw();
+  /** Redraw, then put the name fields' verdicts (and the suggestion chip) back on the fresh markup. */
+  const redraw = () => {
+    draw();
+    update();
+  };
+  redraw();
 }
 
 // ------------------------------------------------------------------ club hub
 
 /** 'market' opens the transfer market screen (ui/market.ts) with BACK returning to the club hub. */
-export type ClubTab = 'squad' | 'train' | 'kit' | 'stadium' | 'market';
+export type ClubTab = 'squad' | 'train' | 'staff' | 'kit' | 'stadium' | 'market';
 
 export interface ClubOpts {
   tab?: ClubTab;
@@ -383,6 +467,9 @@ export interface ClubOpts {
 /** The club screen's last tab and TRAIN pick, kept for the session (docs/UX.md section 8: memory). */
 let lastTab: Exclude<ClubTab, 'market'> = 'squad';
 let lastTrainId = '';
+/** The TRAIN tab's right pane: the paid +2 sessions, or the player's GROW card (ui/glory.ts). */
+let lastTrainMode: 'stats' | 'grow' = 'stats';
+let lastKitMode: KitMode = 'kit';
 /** The SQUAD hint ("TAP OR DRAG TO SWAP") shows until the first swap of the session. */
 let swappedOnce = false;
 
@@ -406,7 +493,7 @@ export function openClub(app: AppContext, opts: ClubOpts = {}): void {
   clubHub(app, st, st.club, opts.tab ?? lastTab, back, backLabel);
 }
 
-const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['train', 'TRAIN'], ['market', 'MARKET'], ['kit', 'KIT'], ['stadium', 'STADIUM']];
+const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['train', 'TRAIN'], ['staff', 'STAFF'], ['market', 'MARKET'], ['kit', 'KIT'], ['stadium', 'STADIUM']];
 
 function lastName(name: string): string {
   const parts = name.split(' ');
@@ -425,13 +512,21 @@ function lastName(name: string): string {
  */
 function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTab, back: () => void, backLabel: string): void {
   const scr = mountMeta(app, 'mc-club-screen shell');
-  let tab: Exclude<ClubTab, 'market'> = tab0 === 'market' ? 'squad' : tab0;
+  // (STAFF opens after a career's first matches, meta/week.ts: until then the tab isn't there.)
+  let tab: Exclude<ClubTab, 'market'> = tab0 === 'market' || (tab0 === 'staff' && !isOpen(st, 'staff')) ? 'squad' : tab0;
   lastTab = tab;
+  let trainMode = lastTrainMode;
+  const staffUi = defaultStaffUi(st);
   let sel = -1;
   let trainIdx = Math.max(0, club.squad.findIndex((p) => p.id === lastTrainId));
   /** Squad indices just swapped (they pop once). */
   let fresh: number[] = [];
   const part = { v: 'shirt' as KitPart };
+  // The KIT tab's second editor: the crest (a club from before the designer gets its default to start from).
+  club.crest ??= defaultCrest(club.name, club.short, club.kit);
+  const ced: CrestEditState = { crest: club.crest, tab: 'shape', col: 'c1' };
+  let kitMode: KitMode = lastKitMode;
+  const suggestSeed = Math.floor(Math.random() * 1000);
 
   // ---- SQUAD
 
@@ -439,9 +534,10 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
 
   /** A bench or reserve chip: number, surname, role (its colour) and OVR. The whole chip is the tap and drag target. */
   const chip = (p: PlayerDef, i: number) => {
-    const cls = ['sq-chip', roleCls(p), sel === i ? 'sel' : '', sel >= 0 && sel !== i ? 'hot' : '', fresh.includes(i) ? 'fresh' : ''];
+    const cls = ['sq-chip', roleCls(p), sel === i ? 'sel' : '', sel >= 0 && sel !== i ? 'hot' : '', fresh.includes(i) ? 'fresh' : '', isInjured(p) ? 'hurt' : ''];
+    // (A badge only when there is something to say: injured, morale high, morale low. ui/glory.ts)
     return `<button class="${cls.filter(Boolean).join(' ')}" data-a="pick" data-i="${i}" data-drag="${i}" aria-pressed="${sel === i}"
-      aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}"><i class="sq-num">${p.number}</i><span class="sq-nm">${esc(lastName(p.name))}</span><em class="sq-role">${p.role}</em><b class="sq-ovr">${overall(p)}</b></button>`;
+      aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}${moodWord(p)}"><i class="sq-num">${p.number}</i><span class="sq-nm">${esc(lastName(p.name))}</span>${moodBadge(p)}<em class="sq-role">${p.role}</em><b class="sq-ovr">${overall(p)}</b></button>`;
   };
 
   const pitchHtml = (issues: Set<number>) => {
@@ -456,9 +552,9 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           if (!p) return '';
           const [left, top, room] = pos[i];
           const warn = issues.has(i);
-          const cls = ['tx-p', roleCls(p), i === 0 ? 'gk' : '', sel === i ? 'sel' : '', sel >= 0 && sel !== i ? 'hot' : '', warn ? 'warn' : '', fresh.includes(i) ? 'fresh' : ''];
+          const cls = ['tx-p', roleCls(p), i === 0 ? 'gk' : '', sel === i ? 'sel' : '', sel >= 0 && sel !== i ? 'hot' : '', warn ? 'warn' : '', fresh.includes(i) ? 'fresh' : '', isInjured(p) ? 'hurt' : ''];
           return `<button class="${cls.filter(Boolean).join(' ')}" data-a="pick" data-i="${i}" data-drag="${i}" aria-pressed="${sel === i}" style="left:${left}%;top:${top}%;--room:${room}%"
-            aria-label="${s.label} ${esc(p.name)}, ${p.role}, overall ${overall(p)}${warn ? ', out of position' : ''}"><span class="tx-shirt"><b>${p.number}</b><i class="tx-ovr">${overall(p)}</i></span><em class="tx-nm">${esc(lastName(p.name))}</em>${warn ? '<i class="tx-warn" aria-hidden="true">!</i>' : ''}</button>`;
+            aria-label="${s.label} ${esc(p.name)}, ${p.role}, overall ${overall(p)}${warn ? ', out of position' : ''}${moodWord(p)}"><span class="tx-shirt"><b>${p.number}</b><i class="tx-ovr">${overall(p)}</i></span><em class="tx-nm">${esc(lastName(p.name))}</em>${warn ? '<i class="tx-warn" aria-hidden="true">!</i>' : ''}${moodBadge(p)}</button>`;
         })
         .join('')}
     </div>`;
@@ -475,13 +571,23 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
         : issues.length
           ? `<b class="sq-hint warn">${issues.length} OUT OF POSITION</b>`
           : swappedOnce ? '' : '<b class="sq-hint">TAP OR DRAG TO SWAP</b>';
+    // The one-tap helpers beside AUTO PICK (meta/morale.ts): ROTATE when there is a swap worth making (an injured
+    // starter, a man who wants a game), TEAM TALK every third matchday.
+    const swapPick = isOpen(st, 'rotate') ? rotateSuggestion(st) : null;
+    const rotateBtn = swapPick
+      ? `<button class="btn gl-help go pulse" data-a="rotate" aria-label="Rotate: ${esc(club.squad[swapPick.in].name)} in for ${esc(club.squad[swapPick.out].name)}">ROTATE</button>`
+      : '';
+    const wait = talkWait(st);
+    const talkBtn = isOpen(st, 'talk')
+      ? `<button class="btn gl-help" data-a="talk" ${wait > 0 || st.events.talk ? 'disabled' : ''} aria-label="Team talk${st.events.talk ? ', on for your next match' : wait ? `, ready after ${wait} more matches` : ''}">${pixelIcon('chat', 'currentColor', 1.2)}TALK${st.events.talk ? '<small>ON</small>' : wait ? `<small>${wait}</small>` : ''}</button>`
+      : '';
     return `<div class="mc-body sq-body">
         <div class="pane sq-pitchpane">
           <div class="sq-rail" role="group" aria-label="Formation">${FORMATION_IDS.map((f) => `<button class="${f === club.formation ? 'on' : ''}" data-a="form" data-v="${f}" aria-pressed="${f === club.formation}">${f}</button>`).join('')}</div>
           ${pitchHtml(new Set(issues))}
         </div>
         <div class="pane sq-benchpane">
-          <div class="pane-h"><span class="sq-ph">BENCH</span><span class="grow">${hint}</span><button class="btn btn-yellow sq-auto ${issues.length ? 'pulse' : ''}" data-a="autopick">AUTO PICK</button></div>
+          <div class="pane-h"><span class="sq-ph">BENCH</span><span class="grow">${hint}</span>${rotateBtn}${talkBtn}<button class="btn btn-yellow sq-auto ${issues.length ? 'pulse' : ''}" data-a="autopick">AUTO PICK</button></div>
           <div class="pane-scroll sq-list" data-scroll-key="sq-bench">
             <div class="sq-grid">${bench.map((p, j) => chip(p, 11 + j)).join('')}</div>
             ${reserves.length ? `<div class="sq-sub">RESERVES</div><div class="sq-grid">${reserves.map((p, j) => chip(p, 11 + BENCH_SIZE + j)).join('')}</div>` : ''}
@@ -531,10 +637,13 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     // His role's key stats first (green), then the rest.
     const order = [...keys, ...STAT_KEYS.filter((k) => !keys.includes(k))];
     const best = trainBest(club.squad);
+    // The GROW card (ui/glory.ts) once the training focus has opened: the chart, XP, focus, mentor, morale.
+    const growOpen = isOpen(st, 'focus');
+    const growing = growOpen && trainMode === 'grow';
     const slots = FORMATIONS[club.formation];
     const where = trainIdx < 11 ? slots[trainIdx]?.label ?? '' : trainIdx < 11 + BENCH_SIZE ? 'BENCH' : 'RESERVE';
     const row = (q: PlayerDef, i: number) => `<button class="tr-row ${roleCls(q)} ${i === trainIdx ? 'sel' : ''}" data-a="tpick" data-i="${i}" aria-pressed="${i === trainIdx}">
-        <em class="sq-role">${q.role}</em><i class="sq-num">${q.number}</i><span class="sq-nm">${esc(q.name)}</span>${best?.index === i ? '<i class="tr-tip">BEST</i>' : ''}<b class="sq-ovr">${overall(q)}</b></button>`;
+        <em class="sq-role">${q.role}</em><i class="sq-num">${q.number}</i><span class="sq-nm">${esc(q.name)}</span>${best?.index === i && !growing ? '<i class="tr-tip">BEST</i>' : ''}${moodBadge(q)}<b class="sq-ovr">${overall(q)}</b></button>`;
     const stats = order
       .map((k) => {
         const v = p.stats[k];
@@ -549,18 +658,22 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       .join('');
     return `<div class="mc-body split-l tr-body">
         <div class="pane">
-          <div class="pane-h"><span class="sq-ph">SQUAD</span><span class="grow"></span><button class="btn btn-yellow tr-best" data-a="trainbest" ${best ? '' : 'disabled'}>TRAIN BEST</button></div>
+          <div class="pane-h"><span class="sq-ph">SQUAD</span><span class="grow"></span>${
+            growing && isOpen(st, 'mentors')
+              ? '<button class="btn btn-yellow tr-best" data-a="mentorall">AUTO MENTOR</button>'
+              : `<button class="btn btn-yellow tr-best" data-a="trainbest" ${best ? '' : 'disabled'}>TRAIN BEST</button>`
+          }</div>
           <div class="pane-scroll tr-list" data-scroll-key="tr-list">${club.squad.map(row).join('')}</div>
         </div>
         <div class="pane tr-detail">
           <div class="tr-id">
             ${faceHtml(p, club.kit, 'md')}
             <div class="tr-who"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<i>#${p.number}</i><i>${where}</i></span></div>
-            <div class="tr-cost ${poor ? 'poor' : ''}"><small>+${TRAIN_STEP} COSTS</small><span class="coins mc-coins"><i></i><span>${fmt(cost)}</span></span></div>
+            ${growing ? '' : `<div class="tr-cost ${poor ? 'poor' : ''}"><small>+${TRAIN_STEP} COSTS</small><span class="coins mc-coins"><i></i><span>${fmt(cost)}</span></span></div>`}
             ${ovrBadge(overall(p))}
           </div>
-          <div class="tr-stats">${stats}</div>
-          ${wageLine(p)}
+          ${growOpen ? `<div class="seg gl-seg"><button class="${growing ? '' : 'on'}" data-a="tmode" data-v="stats" aria-pressed="${!growing}">TRAIN</button><button class="${growing ? 'on' : ''}" data-a="tmode" data-v="grow" aria-pressed="${growing}">GROW</button></div>` : ''}
+          ${growing ? growHtml(st, club, p) : `<div class="tr-stats">${stats}</div>${wageLine(p)}`}
         </div>
       </div>`;
   };
@@ -587,15 +700,16 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
 
   const kitHtml = () => `<div class="mc-body ck-body">
       <div class="pane ck-id">
-        <div class="mc-preview">${previewHtml(club.kit, club.name, club.short)}</div>
+        <div class="mc-preview">${previewHtml(club.kit, club.name, club.short, ced.crest, kitMode)}</div>
         <div class="mc-fields">
           <label class="mc-field"><span>CLUB NAME</span><input data-in="cname" maxlength="18" value="${esc(club.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
           <label class="mc-field mc-short"><span>SHORT</span><input data-in="cshort" maxlength="3" value="${esc(club.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
         </div>
+        <button class="mc-suggest" data-a="usename" hidden></button>
       </div>
       <div class="pane ck-ed">
-        ${kitEditorHtml(club.kit, part.v)}
-        <p class="ck-note">CHANGES SAVE AUTOMATICALLY</p>
+        ${modeTabs(kitMode)}
+        ${kitMode === 'kit' ? `${kitEditorHtml(club.kit, part.v)}<p class="ck-note">CHANGES SAVE AUTOMATICALLY</p>` : crestEditorHtml(ced, club.name, club.short)}
       </div>
     </div>`;
 
@@ -664,7 +778,13 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
       v.status === 'built'
         ? '<button class="btn btn-go sd-up" disabled>BUILT</button>'
         : v.status === 'building'
-          ? `<button class="btn btn-go sd-up" disabled>OPENS IN ${v.left} ${v.left === 1 ? 'MATCHDAY' : 'MATCHDAYS'}</button>`
+          // Going up: it opens by itself after its matchdays. FINISH NOW opens it at once for gems (asked first, with the
+          // price), and one rewarded ad a day takes a matchday off (economy v3: meta/premium.ts, meta/loops.ts).
+          ? `<div class="sd-now">
+              <button class="btn btn-go sd-up" data-a="finishnow" aria-label="Finish the ${esc(name.toLowerCase())} now for ${finishBuildCost(st)} gems">FINISH NOW ${gemPrice(finishBuildCost(st))}</button>
+              ${ads.portal !== 'none' && adsLeft(app.save, 'build', localDay()) > 0 ? `<button class="btn btn-yellow sd-up sd-ad" data-a="buildad" aria-label="Watch an ad to take one matchday off this build">${pixelIcon('film', '#26262e', 2, 'inl')}1 MATCHDAY OFF</button>` : ''}
+            </div>
+            <small class="sd-opens">OR IT OPENS IN ${v.left} ${v.left === 1 ? 'MATCHDAY' : 'MATCHDAYS'}</small>`
           : v.status === 'locked'
             ? `<button class="btn btn-go sd-up" disabled>${esc(v.needs ?? 'LOCKED')}</button>`
             : busy
@@ -711,13 +831,50 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
 
   const draw = () => {
     if (tab === 'stadium') takeOpened();
-    const body = tab === 'squad' ? squadHtml() : tab === 'train' ? trainHtml() : tab === 'kit' ? kitHtml() : stadiumHtml();
+    const body = tab === 'squad' ? squadHtml() : tab === 'train' ? trainHtml() : tab === 'staff' ? staffTab(app, st, staffUi) : tab === 'kit' ? kitHtml() : stadiumHtml();
+    const tabs = TABS.filter(([k]) => k !== 'staff' || isOpen(st, 'staff'));
     scr.render(
       `${topBar(backLabel, 'MY CLUB', sub(), app.save.coins)}
-      <div class="seg mc-tabs" role="tablist">${TABS.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}" role="tab" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
+      <div class="seg mc-tabs" role="tablist">${tabs.map(([k, l]) => `<button class="${k === tab ? 'on' : ''}" data-a="tab" data-v="${k}" role="tab" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
       ${body}`,
       {
         back,
+        // The long game's taps (ui/glory.ts): the STAFF tab, and the GROW card of the player picked on TRAIN.
+        ...staffHandlers(app, st, staffUi, draw, scr.toast, () => scr.root),
+        ...growHandlers(app, st, club, () => club.squad[trainIdx], draw, scr.toast, () => scr.root),
+        tmode: (el) => {
+          trainMode = el.dataset.v === 'grow' ? 'grow' : 'stats';
+          lastTrainMode = trainMode;
+          draw();
+        },
+        mentorall: () => {
+          const n = assignMentors(st);
+          app.persist();
+          buzz('tap');
+          draw();
+          scr.toast(n ? `${n} ${n === 1 ? 'YOUNGSTER HAS' : 'YOUNGSTERS HAVE'} A MENTOR NOW` : 'NO FREE VETERAN FOR A YOUNGSTER', n ? 'good' : 'info');
+        },
+        rotate: () => {
+          const pick = rotateSuggestion(st);
+          const names = pick ? [lastName(club.squad[pick.in].name), lastName(club.squad[pick.out].name)] : [];
+          if (!pick || !rotate(st)) return;
+          sel = -1;
+          fresh = [pick.in, pick.out];
+          app.persist();
+          buzz('tap');
+          draw();
+          fresh = [];
+          scr.toast(`${names[0].toUpperCase()} IN FOR ${names[1].toUpperCase()}`, 'good');
+        },
+        talk: () => {
+          const lift = teamTalk(st);
+          if (!lift) return;
+          app.persist();
+          sfx.coin();
+          buzz('success');
+          draw();
+          scr.toast(`TEAM TALK: MORALE +${lift}, AND +1 IN YOUR NEXT MATCH`, 'good');
+        },
         tab: (el) => {
           const next = el.dataset.v as ClubTab;
           if (next === 'market') {
@@ -747,7 +904,8 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           draw();
         },
         autopick: () => {
-          club.squad = autoLineup(club.squad, club.formation);
+          // (The best XI of the fit players: anyone injured goes to the reserves.)
+          club.squad = autoLineupFit(club.squad, club.formation);
           sel = -1;
           fresh = club.squad.slice(0, 11).map((_, i) => i);
           app.persist();
@@ -773,9 +931,29 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           revealInPane(scr.panel.querySelector('.tr-row.sel'));
         },
         ...kitHandlers(club.kit, part, () => {
+          setMyCrest(club);
           app.persist();
           draw();
         }),
+        ...crestEditorHandlers(ced, () => club.kit, () => {
+          club.crest = ced.crest;
+          setMyCrest(club);
+          app.persist();
+          draw();
+        }),
+        kmode: (el) => {
+          kitMode = el.dataset.v as KitMode;
+          lastKitMode = kitMode;
+          draw();
+        },
+        usename: (el) => {
+          const v = sanitizeName(el.dataset.v ?? '');
+          if (!v || nameProblem(v) !== '' || !isPairAllowed(v, club.short)) return;
+          club.name = v;
+          setMyCrest(club);
+          app.persist();
+          draw();
+        },
         part: (el) => {
           partSel = el.dataset.v as PartId;
           draw();
@@ -793,36 +971,91 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           const name = partView(st.ground, partSel).def.name;
           scr.toast(`BUILDING THE ${name}: READY IN ${r.weeks} ${r.weeks === 1 ? 'MATCHDAY' : 'MATCHDAYS'}`, 'good');
         },
+        // FINISH NOW: the build opens at once for gems (GEM_PRICES.finishBuildPerMatchday a matchday left). One tap
+        // to confirm, with the price and the free way on the sheet.
+        finishnow: () => {
+          const b = st.ground.building;
+          if (!b) return;
+          const what = partView(st.ground, b.id).def.steps[b.level - 1]?.name ?? partView(st.ground, b.id).def.name;
+          confirmGems(scr.root, {
+            title: `FINISH THE ${what} NOW?`, text: 'IT OPENS FOR YOUR NEXT HOME MATCH', price: finishBuildCost(st), have: gems(app.save), yes: 'FINISH',
+            free: `OR PLAY ${b.left} ${b.left === 1 ? 'MATCHDAY' : 'MATCHDAYS'} AND IT OPENS BY ITSELF`,
+            getGems: iap.storefront
+              ? () => openShop(app, { tab: 'coins', section: 'gems', backLabel: 'MY CLUB', onBack: () => openClub(app, { tab: 'stadium' }) })
+              : undefined,
+            onYes: () => {
+              if (!finishBuildNow(st, app.save)) return;
+              app.persist();
+              sfx.coin();
+              buzz('success');
+              draw();
+              scr.toast(`THE ${what} IS OPEN`, 'good');
+            },
+          });
+        },
+        // One rewarded ad a day takes a matchday off the build: the player's own tap, a stated reward, a daily cap.
+        buildad: async () => {
+          if (!st.ground.building) return;
+          if (adsLeft(app.save, 'build', localDay()) <= 0) {
+            scr.toast("TODAY'S BUILD AD IS USED. BACK TOMORROW", 'info');
+            return;
+          }
+          if (!ads.rewardedAvailable) {
+            scr.toast('NO AD RIGHT NOW. TRY AGAIN LATER', 'info');
+            return;
+          }
+          const watched = await ads.rewarded();
+          if (!watched || !st.ground.building || !useAd(app.save, 'build', localDay())) {
+            scr.toast('THE AD DID NOT FINISH, SO NOTHING CHANGED', 'info');
+            return;
+          }
+          skipBuildMatchday(st);
+          app.persist();
+          sfx.coin();
+          buzz('success');
+          if (scr.root.isConnected) draw();
+          const left = st.ground.building?.left ?? 0;
+          scr.toast(left > 0 ? `ONE MATCHDAY OFF: ${left} TO GO` : 'IT IS OPEN', 'good');
+        },
       },
       {
         cname: (el) => {
           const v = el.value.replace(NAME_DISALLOWED, '');
           if (v !== el.value) el.value = v;
           const problem = nameProblem(v);
-          markField(el, problem);
+          markName(scr.panel, el, v, suggestSeed);
           if (problem) return;
+          // (A word split across the name and the code is turned down too: the old name stays.)
+          if (!isPairAllowed(v, club.short)) {
+            markField(el, 'blocked', nameWhy('rude'));
+            return;
+          }
           club.name = sanitizeName(v);
+          setMyCrest(club);
           app.persist();
           const kp = scr.panel.querySelector('.mc-preview');
-          if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short);
+          if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short, ced.crest, kitMode);
           const nm = scr.panel.querySelector('.mc-clubname');
           if (nm) nm.textContent = club.name.toUpperCase();
         },
         cshort: (el) => {
           const v = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
           if (v !== el.value) el.value = v;
-          const problem = shortProblem(v);
-          markField(el, problem, 'Pick another code');
+          const problem = shortProblem(v) || (isPairAllowed(club.name, v) ? '' : 'blocked');
+          markField(el, problem, nameWhy('rude', 'code'));
           if (problem) return;
           club.short = v;
+          setMyCrest(club);
           app.persist();
           const kp = scr.panel.querySelector('.mc-preview');
-          if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short);
+          if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short, ced.crest, kitMode);
         },
       },
     );
     bindPreview();
     hydrateFaces(scr.panel);
+    // A scout's report on screen is a report read (the REPORT tag shows this once).
+    if (tab === 'staff' && seeReport(st, staffUi)) app.persist();
   };
   draw();
   if (tab === 'train') revealInPane(scr.panel.querySelector('.tr-row.sel'), 'center');

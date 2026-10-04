@@ -2,7 +2,7 @@ import { clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
 import { headerAtGoal, throughLead } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, DDA_PRESS, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
-import { readsHuman, takeOnVsHuman, vsHuman } from './dribble';
+import { LINE_ENGAGE_R, LINE_PRESS, LINE_REACH, LINE_TACKLE, readsHuman, straightRead, takeOnVsHuman, vsHuman } from './dribble';
 import { DUEL_TACKLE, startTell, telegraphs, tellReady, TELL_DUEL, TELL_PRESS, TELL_REACH, TOLD_TACKLE } from './skills';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import { FIRST_MATCH_PRESS, type Match } from './match';
@@ -130,6 +130,11 @@ export interface StyleParams {
   /** Runs in behind (times the chance), and the in-possession width (times). */
   runs: number;
   width: number;
+  /**
+   * The AI coach's cover (sim/coach.ts): the defending block slides this far (m, world z) to one wing. Left out by
+   * every club's own style.
+   */
+  flank?: number;
 }
 
 export const STYLES: Record<TeamStyle, StyleParams> = {
@@ -161,7 +166,8 @@ export const STYLES: Record<TeamStyle, StyleParams> = {
 
 /** The style `side` plays. */
 export function styleOf(m: Match, side: Side): StyleParams {
-  return STYLES[m.teams[side].style ?? 'balanced'] ?? STYLES.balanced;
+  // (A side with a coach plays its club's style as the coach has changed it: sim/coach.ts.)
+  return m.coach[side]?.style ?? STYLES[m.teams[side].style ?? 'balanced'] ?? STYLES.balanced;
 }
 
 /** A pass longer than this (m) costs a possession side StyleParams.longCost a metre. */
@@ -349,6 +355,8 @@ function defendHome(m: Match, p: Player, brain: TeamBrain, refX: number, refZ: n
     if (st.trap) x = Math.max(x, Math.min(bx - 0.12, 0.45));
     z = slot.z * 0.75 * w + bz * BLOCK_SLIDE * 0.75;
   }
+  // (The coach's cover: the back line and the midfield bank slid towards the wing his goals keep coming from.)
+  if (st.flank && p.role !== 'FW') z += (st.flank * ad) / HALF_W;
   x = clamp(x, -0.9, 0.6);
   z = clamp(z, -0.9, 0.9);
   return { x: x * HALF_L * ad, z: z * HALF_W * ad };
@@ -451,6 +459,8 @@ function assignRoles(m: Match, side: Side, brain: TeamBrain): void {
   }
 }
 
+/** The human's PRESS brings a team-mate this near the carrier (pickPresser's score, about metres) to press him too. */
+const PRESS_HELP_R = 16;
 function pickPresser(m: Match, side: Side, brain: TeamBrain, c: Player): void {
   const ad = m.attackDir(side);
   const cN = nX(m, side, c.pos.x);
@@ -474,11 +484,19 @@ function pickPresser(m: Match, side: Side, brain: TeamBrain, c: Player): void {
   // is closed down, the presser in and the cover with him, as against a carrier inside the zone.
   brain.screen = cN > st.pressFrom && !inOwnBox(m, side, c.pos.x, c.pos.z) && !humanStalling(m, brain, c);
   let engaged: Player | null;
+  // The human holding PRESS (Match.pressHelp) asks for the ball back now: no screen, and the nearest team-mate comes
+  // to press the carrier with him (the one after covers). (Never an AI side: its press is the style's.)
+  const help = m.pressHelp(side);
+  if (help) brain.screen = false;
   if (human && human.s < first.s + 4) {
     // The human is on it; the nearest AI teammate covers.
     engaged = human.p;
     const next = ranked.find((r) => r.p !== human.p);
-    if (next && next.s < 18 && !brain.screen) brain.cover = next.p.idx;
+    if (help && next && next.s < PRESS_HELP_R) {
+      brain.presser = next.p.idx;
+      const third = ranked.find((r) => r.p !== human.p && r.p !== next.p);
+      if (third && third.s < 18) brain.cover = third.p.idx;
+    } else if (next && next.s < 18 && !brain.screen) brain.cover = next.p.idx;
   } else {
     engaged = first.p;
     brain.presser = first.p.idx;
@@ -1052,8 +1070,11 @@ function zonalSpot(m: Match, p: Player, x: number, z: number): { x: number; z: n
   const b = m.ball.pos;
   if (dist2(b.x, b.z, -m.attackDir(p.side) * HALF_L, 0) < ENGAGE_BOX) return { x, z };
   // (Against the human's carrier the block keeps ENGAGE_R_HUMAN off: it drops a touch less deep off him.)
+  // (And a man running one straight line at it, dribble.ts straightRead, it doesn't drop off at all: the line holds its
+  // shape and he runs into it, LINE_ENGAGE_R.)
   const o = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
-  return keepOff(m, p, x, z, o && m.isHumanControlled(o) ? ENGAGE_R_HUMAN : ENGAGE_R, true);
+  const human = !!o && m.isHumanControlled(o);
+  return keepOff(m, p, x, z, human ? ENGAGE_R_HUMAN - (ENGAGE_R_HUMAN - LINE_ENGAGE_R) * straightRead(m, o) : ENGAGE_R, true);
 }
 
 /**
@@ -1198,6 +1219,8 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   const vsHuman = m.isHumanControlled(c);
   const hk = vsHuman ? pressVsHuman(skill) : 1;
   const st = styleOf(m, p.side);
+  // How well he reads the human's carrier (0..1): one straight line with the ball, no feint, no turn (dribble.ts).
+  const read = vsHuman ? straightRead(m, c) : 0;
   const guarded = vsHuman && c.protectT > 0;
   // Jockey goal-side, then commit to a tackle now and then: more often when the ball is
   // exposed, when the carrier has their back to goal, and when a teammate is covering.
@@ -1206,7 +1229,7 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   if (commit) p.commitT -= dt;
   // (Winding up a telegraphed challenge, Player.tellT: skills.ts sends him in when it's up.)
   // (At the human's man from in front or beside him, a told challenge can start further out, TELL_REACH: the duel.)
-  else if (hasBall && p.tackleCooldown <= 0 && !guarded && p.tellT <= 0 && (d < 2.7 || (vsHuman && d < TELL_REACH && telegraphs(m, p, c)))) {
+  else if (hasBall && p.tackleCooldown <= 0 && !guarded && p.tellT <= 0 && (d < 2.7 || (vsHuman && d < TELL_REACH + LINE_REACH * read && telegraphs(m, p, c)))) {
     const exposed = dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.8 ? 2.2 : 1;
     const backToGoal = Math.cos(c.facing) * ad > 0.3 ? 1.5 : 1;
     const covered = brain.cover >= 0 ? 1.3 : 0.8;
@@ -1221,7 +1244,9 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     // mugging.)
     const styleK = st.pressRate * (nX(m, p.side, c.pos.x) > 0 ? st.pressHigh : 1);
     const style = (vsHuman ? 1 + (styleK - 1) * STYLE_VS_HUMAN : styleK) * (vsHuman ? 1 - DDA_PRESS * m.assistEase(p.side) : 1);
-    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25) * ease * style;
+    // (A man running one straight line at him is easy to time, dribble.ts straightRead: he goes in LINE_PRESS as readily again.)
+    const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25) * ease * style *
+      (1 + LINE_PRESS * read);
     // At the human's man from in front of him or beside him it's telegraphed first: the SKILL counter (skills.ts). (A
     // told challenge comes TELL_PRESS x as often: the warning it gives him costs it the surprise.)
     const told = vsHuman && telegraphs(m, p, c);
@@ -1256,7 +1281,10 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   const footD = dist2(p.footX(), p.footZ(), b.x, b.z);
   if (commit && hasBall && p.tackleCooldown <= 0 && footD < 1.15) {
     // (Going in out of a tell, skills.ts, the man ignored it: the tackle is the surer for it.)
-    m.tryTackle(p, c, aggression * (p.toldT > 0 ? (p.tellDuel ? DUEL_TACKLE : TOLD_TACKLE) : 1));
+    // (A duel's tell barks more than it bites, DUEL_TACKLE, at a man who is dribbling; at one he has READ, running
+    // straight on into it, it is a tackle and a sure one: up to LINE_TACKLE.)
+    const told = p.toldT > 0 ? (p.tellDuel ? DUEL_TACKLE : TOLD_TACKLE) : 1;
+    m.tryTackle(p, c, aggression * (told + (LINE_TACKLE - told) * read));
     p.commitT = 0;
     p.jockeyT = 0;
   } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded && p.tellT <= 0 && !(p.toldT > 0 && p.tellDuel) &&
@@ -2342,6 +2370,39 @@ export function setPieceAim(m: Match, t: Player, nearPost = false, dir?: { x: nu
   // (A driven ball, whipped in flat and fast, is harder to put on a sixpence.)
   const spread = nearPost ? DRIVEN_SPREAD : 0.6;
   return { x: aim.x + m.rng.gauss() * spread, z: aim.z + m.rng.gauss() * spread, target: best };
+}
+
+/** A human's delivery to his landing ring is for the runner whose zone (or who himself) is nearest it (within this, m: anywhere in the area). */
+const RING_PICK = 40;
+
+/** The runner a delivery to the landing ring at (x, z) would be for (setPieceAimAt's pick, nothing changed), or -1. */
+export function setPieceRunnerAt(m: Match, side: Side, x: number, z: number): number {
+  const brain = m.brains[side];
+  setPieceTargets(m, side);
+  let best = -1;
+  let bd = RING_PICK;
+  for (const idx of brain.spRunners) {
+    const p = m.players[idx];
+    if (p.sentOff) continue;
+    const zone = brain.spZones.get(idx) ?? brain.spTargets.get(idx) ?? p.pos;
+    const d = Math.min(dist2(zone.x, zone.z, x, z), dist2(p.pos.x, p.pos.z, x, z));
+    if (d < bd) {
+      bd = d;
+      best = idx;
+    }
+  }
+  return best;
+}
+
+/**
+ * A human's delivery to his landing ring at (x, z) (sim/setPiece.ts): the runner nearest it is the man it is for, and
+ * he attacks the ring instead of his own zone. Where it comes down has the usual error (a driven one a little more).
+ */
+export function setPieceAimAt(m: Match, t: Player, x: number, z: number, driven: boolean): { x: number; z: number; target: number } {
+  const best = setPieceRunnerAt(m, t.side, x, z);
+  if (best >= 0) m.brains[t.side].spZones.set(best, { x, z });
+  const spread = driven ? DRIVEN_SPREAD : 0.6;
+  return { x: x + m.rng.gauss() * spread, z: z + m.rng.gauss() * spread, target: best };
 }
 
 /** Error (sd, m) in where a driven set-piece delivery arrives (was 0.95: a third of them missed the runner). */

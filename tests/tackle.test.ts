@@ -337,7 +337,8 @@ describe('TACKLE: readable', () => {
           pokeFrames++;
         }
       }
-      if (pokeFrames >= 12 && pokeFrames <= 20) shown++;
+      // (One jab, or two: a miss he can follow up inside the tap's window, MISS_COOLDOWN s on, goes in again by itself.)
+      if (pokeFrames >= 12 && pokeFrames <= 36) shown++;
       if (first >= 0) latency.push(first);
       if (!won) {
         misses++;

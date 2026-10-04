@@ -132,6 +132,7 @@ const PROBE_SHORT = 0.45;
 export function solveStrike(
   bx: number, by: number, bz: number, gx: number, tz: number, h: number, speed: number, spinY: number,
   out: { vx: number; vy: number; vz: number },
+  iters = 3,
 ): { vx: number; vy: number; vz: number } {
   const dx = gx - bx;
   const dz = tz - bz;
@@ -144,7 +145,8 @@ export function solveStrike(
   // (Flown to just short of the frame, PROBE_SHORT m, so a post or the bar never knocks the probe about; the last
   // few centimetres on its line.)
   const short = gx - ad * PROBE_SHORT;
-  for (let iter = 0; iter < 3; iter++) {
+  // (`iters`: a penalty's three; a bent free kick from range, setPiece.ts, takes a few more to settle on its point.)
+  for (let iter = 0; iter < iters; iter++) {
     probe.reset(bx, bz);
     probe.pos.y = Math.max(BALL_R, by);
     probe.vel.x = vx;
@@ -251,6 +253,14 @@ export function shootoutWinner(kicks: [boolean[], boolean[]], rounds = SHOOTOUT_
 export function nextTurn(kicks: [boolean[], boolean[]], first: Side): Side {
   const other: Side = first === 0 ? 1 : 0;
   return kicks[first].length > kicks[other].length ? other : first;
+}
+
+/**
+ * The side stepping up, for the tracker (ui/shootoutHud.ts): once a kick is settled (the result beat) it is the NEXT
+ * taker's, not the side that has just kicked (`turn` only moves on when the next man is on the spot).
+ */
+export function steppingUp(s: { kicks: [boolean[], boolean[]]; turn: Side; first?: Side; stage?: string }): Side {
+  return s.stage === 'result' && s.first !== undefined ? nextTurn(s.kicks, s.first) : s.turn;
 }
 
 /** Outfield takers, best shooter first (the keeper never takes one). */

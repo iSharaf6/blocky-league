@@ -1,5 +1,7 @@
 import { normalizeMastery, type MasteryState } from '../meta/mastery';
 import { PRESET_CLUBS } from '../meta/data';
+import { normalizeGems, type GemState } from '../meta/gems';
+import { normalizeLoops, type LoopState } from '../meta/loops';
 import { normalizeRun, type RunState } from '../meta/run';
 import { normalizeSeason, type SeasonState } from '../meta/season';
 import type { Quality, TimeOfDay } from '../render/world';
@@ -223,6 +225,13 @@ export interface SaveData {
   iap?: IapState;
   /** SHOWTIME (game/funLayer.ts): the best style grade and points by mode (see showtimeMode, recordShowtime). */
   showtime?: { [mode: string]: ShowtimeBest };
+  /**
+   * GEMS, the premium currency (src/meta/gems.ts): the balance, lifetime totals, one-time rewards paid and the
+   * Scouting Network tier. Always whole once loaded; a save from before gems starts with the welcome gift.
+   */
+  gems?: GemState;
+  /** The reasons to come back (src/meta/loops.ts): weekly objectives, the daily sweep, rewarded-ad caps. Always whole once loaded. */
+  loops?: LoopState;
   updatedAt: string;
 }
 
@@ -383,6 +392,8 @@ export function defaultSave(): SaveData {
     season: normalizeSeason(undefined),
     shop: normalizeShop(undefined),
     iap: normalizeIap(undefined),
+    gems: normalizeGems(undefined),
+    loops: normalizeLoops(undefined),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -457,6 +468,9 @@ function mergeSave(raw: unknown): SaveData {
     shop: normalizeShop(d.shop),
     // Saves from before store purchases own nothing and have watched no ads.
     iap: normalizeIap(d.iap),
+    // Saves from before gems start with the welcome gift (meta/gems.ts WELCOME_GEMS); the loops start empty.
+    gems: normalizeGems(d.gems),
+    loops: normalizeLoops(d.loops),
   } as SaveData;
 }
 

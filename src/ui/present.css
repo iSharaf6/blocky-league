@@ -1,0 +1,237 @@
+/*
+ * The match presentation's captions (ui/presentHud.ts): the chant line, the substitution lower third and the plate
+ * under the line-up and the man of the match. All inside the HUD, none of them takes a tap.
+ */
+
+.hud > .hud-pz {
+  inset: 0;
+  pointer-events: none;
+}
+
+.hud-pz > * {
+  position: absolute;
+}
+
+/* ---------------------------------------------------------------- the chant caption
+   Under the camera and pause buttons, top right: the score bug, the HYPE bars and the live goal are all top left, the
+   ticker runs along the top band between them, and the minimap and the touch controls own the bottom. It steps left
+   of the quick-sub card while that is up. */
+.pz-chant {
+  top: calc(max(12px, env(safe-area-inset-top)) + 54px);
+  right: max(12px, env(safe-area-inset-right));
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: min(46vw, 360px);
+  padding: 5px 9px 4px 7px;
+  background: rgba(38, 38, 46, 0.78);
+  border-right: 4px solid var(--yellow);
+  color: var(--cream);
+  font: 700 12px / 1.1 var(--px);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 0.25s, transform 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.pz-chant.on {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.pz-chant .pz-note {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.pz-chant.on .pz-note { animation: pz-note 0.5s steps(2) infinite; }
+
+@keyframes pz-note {
+  50% { transform: translateY(-2px); }
+}
+
+.pz-chant-t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud:has(.hud-qsub.on) .pz-chant { right: calc(max(12px, env(safe-area-inset-right)) + 274px); }
+
+/* Nothing sung over a replay, a close-up or a staged shot's own caption. */
+.hud.replaying .pz-chant,
+.hud.cinematic .pz-chant {
+  opacity: 0 !important;
+}
+
+@media (max-width: 720px), (max-height: 480px) {
+  .pz-chant { top: calc(max(12px, env(safe-area-inset-top)) + 46px); font-size: 11px; max-width: 44vw; }
+}
+
+/* A staged shot (the line-up, a change, the man of the match) is a clean frame with its own caption: no banner
+   across it, and the score bug steps out (the fourth official's board goes up where it sits). Pause stays. */
+.hud.staged .hud-banner,
+.hud.staged .scorebug,
+.hud.staged .hud-cam {
+  opacity: 0 !important;
+  transition: opacity 0.15s ease-out !important;
+}
+
+.hud.staged .hud-cam { pointer-events: none; }
+
+/* ---------------------------------------------------------------- the substitution lower third */
+
+.pz-sub {
+  left: 50%;
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 34px);
+  transform: translate(-50%, 10px);
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.pz-sub.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.pz-sub-tag {
+  padding: 4px 9px 3px;
+  background: var(--yellow);
+  color: var(--ink);
+  font: 700 12px / 1 var(--px);
+  letter-spacing: 1.5px;
+  box-shadow: 0 3px 0 var(--yellow-d);
+}
+
+.pz-sub-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.3));
+}
+
+.pz-sub-row .pz-swap {
+  align-self: center;
+  width: 20px;
+  height: 20px;
+}
+
+.pz-off,
+.pz-on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 0;
+  background: rgba(38, 38, 46, 0.92);
+  color: var(--cream);
+  font: 700 clamp(15px, 2.1vw, 22px) / 1 var(--px);
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+.pz-off b,
+.pz-on b {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  padding: 7px 8px 5px;
+  font-size: 0.72em;
+  letter-spacing: 1.5px;
+  color: #fff;
+}
+
+.pz-off b { background: var(--red); }
+.pz-on b { background: var(--go); }
+
+.pz-off i,
+.pz-on i {
+  font-style: normal;
+  font-size: 1.15em;
+}
+
+.pz-off i { color: #ff8f86; }
+.pz-on i { color: #7df29a; }
+
+.pz-off span,
+.pz-on span {
+  max-width: 24vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------- the lower-third plate (line-up, man of the match) */
+
+.pz-plate {
+  left: max(18px, env(safe-area-inset-left));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 34px);
+  display: flex;
+  align-items: stretch;
+  max-width: min(78vw, 560px);
+  background: rgba(38, 38, 46, 0.92);
+  border-left: 8px solid var(--pz, var(--yellow));
+  color: var(--cream);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.2s, transform 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.pz-plate.on {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pz-art {
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 6px 2px 6px 10px;
+}
+
+.pz-art[hidden] { display: none; }
+
+.pz-words {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 8px 14px 7px 10px;
+}
+
+.pz-tag {
+  justify-self: start;
+  padding: 3px 7px 2px;
+  background: var(--yellow);
+  color: var(--ink);
+  font: 700 11px / 1 var(--px);
+  letter-spacing: 1.5px;
+}
+
+.pz-title {
+  font: 700 clamp(18px, 3vw, 30px) / 1 var(--px);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pz-line {
+  font: 400 clamp(13px, 1.5vw, 16px) / 1.1 var(--round);
+  font-style: normal;
+  letter-spacing: 0.5px;
+  color: var(--cream-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pz-line[hidden] { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pz-chant.on .pz-note { animation: none; }
+}

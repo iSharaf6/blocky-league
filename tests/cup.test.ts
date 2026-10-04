@@ -98,21 +98,22 @@ describe('the draw', () => {
 });
 
 describe('the season calendar', () => {
-  it('the QF comes after matchday 2, the SF after 4, the final after 6; the league waits for each tie', () => {
+  it('the QF comes after matchday 4, the SF after 8, the final after 12; the league waits for each tie', () => {
     const st = career(13);
     const wallet = { coins: 0 };
     expect(nextMatch(st)).toMatchObject({ competition: 'league', label: 'MATCHDAY 1', tag: 'MD 1', cupRound: -1, neutral: false });
     expect(toCupTie(st, wallet)).toBe(0);
     expect(st.season!.matchday).toBe(CUP_AFTER[0]);
     const qf = nextMatch(st)!;
-    expect(qf).toMatchObject({ competition: 'cup', label: 'BLOCKY CUP QUARTER FINAL', tag: 'CUP QF', cupRound: 0, md: 2 });
+    expect(CUP_AFTER).toEqual([4, 8, 12]);
+    expect(qf).toMatchObject({ competition: 'cup', label: 'BLOCKY CUP QUARTER FINAL', tag: 'CUP QF', cupRound: 0, md: CUP_AFTER[0] });
     expect(qf.rival.id).toBe(st.season!.cup!.slots[userTie(st.season!.cup!)!.rival]);
     // Not before the tie is played.
     expect(league(st, wallet)).toBe(false);
-    expect(st.season!.matchday).toBe(2);
+    expect(st.season!.matchday).toBe(CUP_AFTER[0]);
     expect(resolveCupTie(st, 2, 1, true)).toMatchObject({ round: 0, won: true, trophy: false });
     expect(cupDue(st)).toBe(-1);
-    expect(nextMatch(st)).toMatchObject({ competition: 'league', label: 'MATCHDAY 3' });
+    expect(nextMatch(st)).toMatchObject({ competition: 'league', label: `MATCHDAY ${CUP_AFTER[0] + 1}` });
     expect(toCupTie(st, wallet)).toBe(1);
     expect(st.season!.matchday).toBe(CUP_AFTER[1]);
     expect(nextMatch(st)).toMatchObject({ label: 'BLOCKY CUP SEMI FINAL', tag: 'CUP SF' });
@@ -126,8 +127,11 @@ describe('the season calendar', () => {
     expect(resolveCupTie(st, 3, 0, true)).toMatchObject({ round: 2, won: true, trophy: true });
     expect(st.season!.cup!.status).toBe('won');
     expect(champion(st.season!.cup!)).toBe(st.season!.cup!.user);
-    // Then the league's last matchday decides the table.
-    expect(nextMatch(st)).toMatchObject({ competition: 'league', label: 'MATCHDAY 7' });
+    // Then the league's last two matchdays decide the table.
+    expect(nextMatch(st)).toMatchObject({ competition: 'league', label: `MATCHDAY ${CUP_AFTER[2] + 1}` });
+    expect(league(st, wallet)).toBe(true);
+    expect(st.summary).toBeNull();
+    expect(nextMatch(st)).toMatchObject({ competition: 'league', label: `MATCHDAY ${MATCHDAYS}` });
     expect(league(st, wallet)).toBe(true);
     expect(st.summary!.cup).toBe(3);
     expect(st.history.at(-1)!.cup).toBe(3);
@@ -229,18 +233,17 @@ describe('results and prizes', () => {
     expect(ROUND_TIES[0].every((i) => cup.ties[i].winner >= 0)).toBe(true);
     expect(cup.round).toBe(1);
     expect(cup.ties[4].winner).toBe(-1);
-    expect(nextMatch(st)).toMatchObject({ competition: 'league', label: 'MATCHDAY 3' });
-    league(st, wallet);
+    expect(nextMatch(st)).toMatchObject({ competition: 'league', label: `MATCHDAY ${CUP_AFTER[0] + 1}` });
+    while (st.season!.matchday < CUP_AFTER[1] - 1) league(st, wallet);
     expect(cup.ties[4].winner).toBe(-1);
     league(st, wallet);
-    expect(st.season!.matchday).toBe(4);
+    expect(st.season!.matchday).toBe(CUP_AFTER[1]);
     expect(cup.ties[4].winner).toBeGreaterThanOrEqual(0);
     expect(champion(cup)).toBe(-1);
-    league(st, wallet);
-    league(st, wallet);
+    while (st.season!.matchday < CUP_AFTER[2]) league(st, wallet);
     expect(champion(cup)).toBeGreaterThanOrEqual(0);
     expect(champion(cup)).not.toBe(cup.user);
-    league(st, wallet);
+    while (!st.summary) league(st, wallet);
     expect(st.summary).toMatchObject({ cup: 0 });
     expect(st.history.at(-1)!.cup).toBe(0);
     expect(trophyCount(st).cups).toBe(0);
@@ -326,14 +329,14 @@ describe('cup save migration', () => {
     expect(back.season!.cup).toEqual(st.season!.cup);
     expect(cupDue(back)).toBe(-1);
 
-    // Three matchdays in (past the QF's slot): the QF is due straight away, then the season carries on.
+    // A matchday past the QF's slot: the QF is due straight away, then the season carries on.
     const late = career(42);
     late.season!.cup = null;
-    for (let i = 0; i < 3; i++) expect(league(late, { coins: 0 })).toBe(true);
+    for (let i = 0; i < CUP_AFTER[0] + 1; i++) expect(league(late, { coins: 0 })).toBe(true);
     const raw3 = JSON.parse(JSON.stringify(late));
     delete raw3.season.cup;
     const b3 = migrateCareer(raw3, 1);
-    expect(b3.season!.matchday).toBe(3);
+    expect(b3.season!.matchday).toBe(CUP_AFTER[0] + 1);
     expect(b3.season!.cup).not.toBeNull();
     expect(cupDue(b3)).toBe(0);
     expect(nextMatch(b3)).toMatchObject({ competition: 'cup', cupRound: 0 });

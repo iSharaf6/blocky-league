@@ -146,12 +146,15 @@ describe('listings', () => {
 });
 
 describe('transfer window', () => {
-  it('is open for the first three weeks and one mid-season week', () => {
-    expect([0, 1, 2, 3, 4, 5, 6].map(windowOpen)).toEqual([true, true, true, false, true, false, false]);
+  it('is open for the first three weeks and two at the halfway point of the 14 matchday season', () => {
+    const open = Array.from({ length: MATCHDAYS }, (_, w) => w).filter(windowOpen);
+    expect(open).toEqual([0, 1, 2, 7, 8]);
     expect(windowInfo(0)).toMatchObject({ open: true, weeks: 3 });
-    expect(windowInfo(3)).toMatchObject({ open: false, weeks: 1 });
-    expect(windowInfo(5)).toMatchObject({ open: false, weeks: 0 });
-    expect(windowInfo(5).label).toMatch(/NEXT SEASON/);
+    expect(windowInfo(3)).toMatchObject({ open: false, weeks: 4 });
+    expect(windowInfo(6)).toMatchObject({ open: false, weeks: 1 });
+    expect(windowInfo(7)).toMatchObject({ open: true, weeks: 2 });
+    expect(windowInfo(9)).toMatchObject({ open: false, weeks: 0 });
+    expect(windowInfo(9).label).toMatch(/NEXT SEASON/);
   });
 
   it('refuses offers while closed but still lets you scout and shortlist', () => {
@@ -165,7 +168,8 @@ describe('transfer window', () => {
     expect(canBuy(st, wallet.coins, 0)).toEqual({ ok: false, reason: 'window-closed' });
     expect(scoutListing(st, wallet, l.id)).toEqual({ ok: true, potential: l.potential });
     expect(toggleShortlist(st, l.id)).toEqual({ ok: true, on: true });
-    play(st, wallet);
+    // The window opens again at the halfway point.
+    while (st.season!.matchday < 7) play(st, wallet);
     expect(windowOpen(st.season!.matchday)).toBe(true);
     expect(canBid(st, wallet.coins, l.id, l.asking).ok || !listingById(st, l.id)).toBe(true);
   });
@@ -311,12 +315,12 @@ describe('offers for players', () => {
   it('a season ending refunds any offer still out', () => {
     const st = career(6);
     const wallet = { coins: 100000 };
-    for (let i = 0; i < 4; i++) play(st, wallet);
+    while (st.season!.matchday < 8) play(st, wallet);
     expect(windowOpen(st.season!.matchday)).toBe(true);
     const l = findListing(st, { starter: true, hot: false, minSquad: 15 }) ?? st.tm.listings.find((x) => x.club)!;
     const amount = Math.round((l.asking * 0.8) / 10) * 10;
     expect(placeBid(st, wallet, l.id, amount).ok).toBe(true);
-    for (let i = 0; i < 3; i++) play(st, wallet);
+    for (let i = 0; i < MATCHDAYS && !st.summary; i++) play(st, wallet);
     expect(st.summary).not.toBeNull();
     expect(st.tm.bids).toHaveLength(0);
     expect(st.tm.listings).toHaveLength(0);
@@ -457,7 +461,8 @@ describe('no flipping', () => {
     expect(offers).toBeGreaterThan(5);
     expect(expired).toBeGreaterThan(0);
     expect(OFFER_LIFE).toBe(2);
-  });
+    // (Ten whole home and away seasons: a longer limit than a unit test's.)
+  }, 30_000);
 });
 
 describe('your own news', () => {
@@ -562,6 +567,8 @@ describe('wage bill', () => {
     expect(canBid(st, wallet.coins, l.id, l.asking)).toEqual({ ok: false, reason: 'wages' });
     // Every player on the match-day sheet is WAGE_DIP down (a listed one loses MORALE_DIP on top).
     listPlayer(st, club.squad[12].id);
+    // (No traits here: a hot head or a super sub has small tendencies of his own on the day, tests/glory.test.ts.)
+    for (const p of club.squad) (p as PlayerDef & { traits?: string[] }).traits = [];
     const nm = nextMatch(st)!;
     const mine = nm.userHome ? nm.home : nm.away;
     for (const copy of [...mine.players, ...(mine.bench ?? [])]) {

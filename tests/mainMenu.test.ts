@@ -61,9 +61,16 @@ describe('main menu: a hub with your club first', () => {
 
   it('TRANSFERS opens the market itself, SEASON the season screen, the coins the shop\'s coins', () => {
     const main = readFileSync('src/main.ts', 'utf8');
-    expect(main).toContain('transfers: () => openMarket(app)');
-    expect(main).toContain("season: () => openBadges(app, mainMenu, 'season')");
-    expect(main).toContain("openShop(app, { tab: 'coins' })");
+    expect(main).toContain('transfers: online(() => openMarket(app))');
+    expect(main).toContain("season: online(() => openBadges(app, mainMenu, 'season'))");
+    // (Economy v3: the coins open the STORE's COINS section, the gems its GEMS section.)
+    expect(main).toContain("openShop(app, { tab: 'coins', section: 'coins' })");
+    expect(main).toContain("openShop(app, { tab: 'coins', section: 'gems' })");
+  });
+
+  it('shows the gems beside the coins, and what tomorrow\'s gift pays once today\'s is claimed', () => {
+    const src = hubSource();
+    for (const part of ['data-a="gems"', 'hub-gems', 'hub-tomorrow', 'THIS WEEK']) expect(src, part).toContain(part);
   });
 
   it('keeps the gift, the coins, REMOVE ADS, the level (to the unlock ladder), HOW TO PLAY and today\'s challenges', () => {

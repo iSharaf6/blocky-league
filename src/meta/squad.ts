@@ -175,6 +175,17 @@ export function autoLineup(squad: readonly PlayerDef[], formation: FormationId):
   return [...starters, ...bench, ...pool];
 }
 
+/**
+ * AUTO PICK for a living squad: the best XI of the players who are fit. The injured (meta/week.ts) go to the end of
+ * the reserves, unless there are not eleven fit men: then the best of them play.
+ */
+export function autoLineupFit(squad: readonly PlayerDef[], formation: FormationId): PlayerDef[] {
+  const hurt = (p: PlayerDef) => ((p as PlayerDef & { inj?: number }).inj ?? 0) > 0;
+  const fit = squad.filter((p) => !hurt(p));
+  if (fit.length < 11 || fit.length === squad.length) return autoLineup(squad, formation);
+  return [...autoLineup(fit, formation), ...squad.filter(hurt).sort(byRole)];
+}
+
 /** The stat a session on `p` should go into: the one his overall leans on most that still has room (or none). */
 export function bestStat(p: PlayerDef): keyof PlayerStats | null {
   let best: keyof PlayerStats | null = null;

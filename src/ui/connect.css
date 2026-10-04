@@ -1,0 +1,93 @@
+/* CONNECT TO PLAY (src/ui/connect.ts): the panel, and the hub's tiles while the game is not connected.
+   Builds on .screen / .panel / .btn from style.css. */
+
+.cn-screen {
+  z-index: 30;
+}
+
+.cn-panel {
+  gap: 12px;
+  text-align: center;
+}
+
+.cn-art {
+  display: block;
+  line-height: 0;
+  margin: 0 auto -2px;
+}
+
+.cn-art .picon {
+  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.25));
+}
+
+.cn-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(38, 38, 46, 0.06);
+  font: 400 15px var(--round);
+  letter-spacing: 0.5px;
+  color: var(--ink-2);
+}
+
+.cn-status i {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: #b9b5aa;
+  box-shadow: 0 2px 0 #8a877e;
+}
+
+.cn-status.busy i {
+  background: var(--yellow);
+  box-shadow: 0 2px 0 var(--yellow-d);
+  animation: cn-blink 0.8s steps(2) infinite;
+}
+
+.cn-status.bad i {
+  background: var(--red);
+  box-shadow: 0 2px 0 var(--red-d);
+}
+
+@keyframes cn-blink {
+  to { opacity: 0.3; }
+}
+
+.cn-row {
+  justify-content: center;
+}
+
+.cn-row .btn {
+  min-height: 44px;
+}
+
+/* The hub while the gate is shut: the tiles stay where they are, greyed, and say what to do. */
+.hub .cn-locked {
+  filter: grayscale(0.9) brightness(0.9);
+}
+
+.hub .cn-locked .ht-s,
+.hub .cn-locked .hs-pass,
+.hub .cn-locked .hh-play {
+  filter: none;
+  opacity: 1;
+}
+
+/* Landscape phones (667 x 375): the art steps aside so the panel fits with no scroll. */
+@media (max-height: 480px) {
+  .cn-panel {
+    gap: 8px;
+  }
+
+  .cn-art {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cn-status.busy i {
+    animation: none;
+  }
+}

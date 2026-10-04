@@ -1,0 +1,229 @@
+--- a/docs/APP_STORE.md
++++ b/docs/APP_STORE.md
+@@ -1,7 +1,12 @@
+ # App Store release: Blocky League 1.0 (iPhone and iPad)
+ 
+-Everything App Store Connect asks for, ready to paste, and the order to do it in. The app is the itch web build in a
+-Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape only, no account, no online play.
++Everything App Store Connect asks for, ready to paste, and the order to do it in. The app is the `ios` web build
++(`npm run ios`) in a Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape only, no matches against
++other players.
++
++- **Accounts:** the app signs the player in by itself, with Game Center (or, without it, an account for the device).
++  No password, no email, nothing to type. Progress is saved to that account (docs/CLOUD.md). ROAD TO GLORY, EVENTS,
++  the SHOP and SEASON need a connection; QUICK MATCH and the basics play offline. ACCOUNT has DELETE ACCOUNT.
+ 
+ - **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (gem packs,
+   Starter Pack, NO ADS, Club Pass, Coin Doubler, PRO bundle). The design is docs/ECONOMY.md (economy v3).
+@@ -113,7 +118,7 @@
+ 
+ **Promotional text** (170 max):
+ 
+-> Skill past defenders, smash screamers and build your club from Sunday League to the top. Free to play, no account needed, plays offline.
++> Skill past defenders, smash screamers and build your club from Sunday League to the top. Free to play, nothing to sign up for, quick matches play offline.
+ 
+ **Description:**
+ 
+@@ -135,15 +140,17 @@
+ >
+ > New to it? Three quick drills teach you the basics in under a minute.
+ >
+-> No account needed. Plays offline. Touch controls built for landscape, and it works with a game controller too.
++> Nothing to sign up for: your club is saved with Game Center and comes back on a new device. Quick matches play offline. Touch controls built for landscape, and it works with a game controller too.
+ >
+ > Lace up and kick off now!
+ 
+-**Keywords** (100 max, exactly 100):
++**Keywords** (100 max; this is 99):
+ 
+ ```
+-soccer,football,voxel,skills,dribble,cup,penalty,shootout,goal,striker,career,manager,arcade,offline
++soccer,football,voxel,skills,dribble,cup,penalty,shootout,goal,striker,career,manager,arcade,league
+ ```
++
++(`league` replaced `offline`: only QUICK MATCH plays offline now, so the keyword would mislead. 99 characters.)
+ 
+ | Field | Value |
+ |---|---|
+@@ -164,7 +171,24 @@
+ 
+ ## App Privacy (the questionnaire)
+ 
+-Data is collected, all of it by Google's ad SDK. These answers are from its own privacy manifest
++Data is collected by two parties: Google's ad SDK, and the game's own account and cloud save (Supabase).
++
++**The game's own account (answer these yourself; they are not in any SDK manifest):**
++
++| Data type | What it is here | Linked to the user | Used for tracking | Purposes |
++|---|---|---|---|---|
++| Identifiers, **User ID** | The account's random id; the Game Center player id Apple gives this app (`teamPlayerID`, not a name); for a device account, a hash of a random secret | Yes | **No** | App Functionality |
++| User Content, **Gameplay Content** | The cloud save: coins, gems, record, career, the club's name, settings | Yes | **No** | App Functionality |
++
++Not collected by the game: name, email address, phone number, contacts, photos, location, purchases, browsing or
++search history, and no analytics of its own. The Game Center name and friends never reach the game's server: only
++Apple's signed id does. Requests are counted per network address for abuse limits using a hashed value kept about
++two days; that is not a listed data type and is not linked to the account.
++
++**Account deletion (guideline 5.1.1(v)):** ACCOUNT (top bar of the main menu), DELETE ACCOUNT, YES, DELETE. The
++`delete-account` edge function removes the account and every row it owns, and the app resets its local progress.
++
++**Google's ad SDK.** These answers are from its own privacy manifest
+ (GoogleMobileAds.framework/PrivacyInfo.xcprivacy). Xcode's privacy report (Organizer, right-click the archive,
+ Generate Privacy Report) shows the same.
+ 
+@@ -183,7 +207,12 @@
+ sends every request as child-directed, so nothing is tracked.
+ 
+ Declaring tracking without asking for permission is a common reason for rejection, so keep it No unless a later
+-version adds the prompt. Purchases and Game Center are handled by Apple and aren't "collected" by the app.
++version adds the prompt. Purchases, achievements and leaderboards are handled by Apple and aren't "collected" by
++the app; the Game Center player id used for sign-in is declared above as User ID.
++
++**Children:** the game collects nothing a child types except a club name (kept inside the save) and asks for no
++name, email or birthday. If you ever move the app into the Kids Category, its rules allow this (an opaque id and
++gameplay data for app functionality, no third-party analytics), but the AdMob SDK would need Apple's Kids review too.
+ 
+ ## Export compliance
+ 
+@@ -235,7 +264,11 @@
+ 
+ ## Notes for the reviewer (App Review Information)
+ 
+-> Blocky League is a single-player football game. No account or login is needed. The app is landscape only on iPhone and iPad.
++> Blocky League is a single-player football game. There is no login screen and no credentials are needed: the app signs in by itself with Game Center (or, if Game Center is off, with an account for the device) and saves progress to it. The app is landscape only on iPhone and iPad.
++>
++> An internet connection is needed for ROAD TO GLORY, EVENTS, the SHOP and SEASON; without one they show CONNECT TO PLAY with a RETRY button, and QUICK MATCH and the basics still play.
++>
++> Account deletion: on the main menu tap ACCOUNT (top bar), then DELETE ACCOUNT, then YES, DELETE. This erases the account and its cloud save from our server and resets the progress on the device.
+ >
+ > To start: tap TAP TO PLAY, then LEARN THE BASICS (a short tutorial) or QUICK MATCH, then KICK OFF. Move by holding a thumb on the left of the screen; the buttons on the right pass, shoot and tackle.
+ >
+@@ -252,7 +285,7 @@
+ ## What the app leaves out (on purpose)
+ 
+ The app hides three web features. `src/platform/native.ts` (`inNativeApp()`) checks for `window.Capacitor`, so
+-the same itch build still has them on the web:
++the web builds still have them:
+ 
+ - **ONLINE:** codes are swapped by hand, with no relay server. They mostly fail on mobile data, and the "this browser"
+   room means nothing in an app.
+--- a/public/privacy.html
++++ b/public/privacy.html
+@@ -21,15 +21,33 @@
+   <body>
+     <main>
+       <h1>Privacy Policy</h1>
+-      <p class="meta">Blocky League, by Calynx<br>Last updated: 3 October 2026</p>
++      <p class="meta">Blocky League, by Calynx<br>Last updated: 4 October 2026</p>
+ 
+       <p>Blocky League is a football game for the web, iPhone and iPad. This page explains what information the game handles.
+-      The short version: <strong>you never need an account to play single-player. Optional sign-in, online friendlies,
+-      sharing clips and game-portal services handle the information described below.</strong></p>
++      The short version: <strong>the game never asks for your name, your email or a password. In the app and on our own
++      website it keeps your progress in an account that is only a random id, so you can get your club back on a new
++      device. There is no tracking and no analytics of our own.</strong></p>
+ 
+       <h2>The iPhone and iPad app</h2>
+-      <p>Your progress (coins, match record, clubs, badges and settings) is saved only on your iPhone or iPad, inside the
+-      app's own storage. We cannot see it. Your device's backup includes it, and deleting the app deletes it.</p>
++      <p><strong>Your account.</strong> The app makes an account for you by itself, with nothing to type. If you are signed
++      in to Game Center, the account belongs to your Game Center player: Apple confirms who you are, and we store the id
++      Apple gives this game for you (a string of letters and numbers that is different for every developer; it is not your
++      name or your nickname). If you are not, the account belongs to your device: the app keeps a random secret, and we
++      store a scrambled copy (a hash) of it. Either way the account itself is a random id. We never receive your Apple ID,
++      your email address, your Game Center name or your friends.</p>
++      <p><strong>Your cloud save.</strong> Your progress (coins, gems, match record, your club and its name, badges, career
++      and settings) is saved on your iPhone or iPad and copied to your account on our server, so it comes back if you
++      change device or reinstall. Only your account can read or change it. If you invite a friend with your friend code,
++      we store that the two accounts are linked and that the reward was paid.</p>
++      <p><strong>Being online.</strong> ROAD TO GLORY, EVENTS, the SHOP and SEASON need an internet connection and your
++      account. QUICK MATCH and the basics play offline.</p>
++      <p><strong>Deleting it.</strong> ACCOUNT, then DELETE ACCOUNT, erases your account, your cloud save and every record
++      linked to it from our server at once, and the progress on that device. It cannot be undone. You can also email us
++      (below) and we will delete it for you.</p>
++      <p><strong>Where it is kept.</strong> Accounts and cloud saves are stored with Supabase (our hosting provider, servers
++      in Singapore), which processes them only for us. To stop abuse, the sign-in service counts requests per network
++      address using a scrambled value that is kept for a short time only (about two days). We do not sell or share this
++      data, and we do not use it for advertising.</p>
+       <p><strong>Ads.</strong> The app shows ads from Google AdMob: a short video you can choose to watch for coins, and
+       now and then a full-screen ad between matches (never during play). Every ad request is marked as directed to
+       children, so Google serves only family-rated ads, never personalised ones, and the app never asks to track you
+@@ -39,16 +57,17 @@
+       and Switzerland, Google may ask for your consent first. Buying NO ADS removes the ads between matches.</p>
+       <p><strong>Purchases.</strong> Coin packs, the Starter Pack and NO ADS are optional and paid through Apple. We
+       receive only confirmation of what was bought, never your payment details.</p>
+-      <p><strong>Game Center.</strong> If you are signed in to Game Center, the app reports your achievements to Apple,
+-      under Apple's own privacy policy.</p>
+-      <p>The app has no account of ours, no analytics of our own, no online play and no goal clips. It asks for no
+-      permissions (camera, microphone, photos, contacts or location). The sections below about sign-in, online
+-      friendlies, clips and portals apply to the web versions only.</p>
++      <p><strong>Game Center.</strong> If you are signed in to Game Center, the app reports your achievements and
++      leaderboard scores to Apple, under Apple's own privacy policy.</p>
++      <p>The app has no analytics of our own, no chat, no matches against other players and no goal clips. It asks for no
++      permissions (camera, microphone, photos, contacts or location). The sections below about browser storage, sign-in
++      with Google, GitHub or email, online friendlies, clips and portals apply to the web versions only.</p>
+ 
+       <h2>What the game stores</h2>
+       <p>Your progress (coins, match record, chosen clubs, badges and settings such as sound, difficulty, graphics quality and
+       your key bindings) is saved in your browser's <code>localStorage</code> under the key <code>blocky-league-save-v1</code>.
+-      It stays on your device. We cannot see it, and it is not linked to your identity.</p>
++      On game portals (CrazyGames, Poki) and itch.io it stays on your device: those versions have no account of ours and
++      we cannot see it. On our own website it is also copied to your account, as described next.</p>
+       <p>When you play the standalone web version, your browser may also keep a cache of the game's files
+       (a "service worker" cache) so it loads faster next time. That cache only contains game code, fonts and images.</p>
+       <p>You can erase all of this at any time by clearing this site's data in your browser settings.
+@@ -60,15 +79,18 @@
+       save or share it. It is never uploaded: it only leaves the game when you press SAVE CLIP (a file on your device) or SHARE
+       (your device's own share sheet, to the app you pick). It is gone when you leave the match.</p>
+ 
+-      <h2>Optional sign-in and cloud saves</h2>
+-      <p>Some builds offer an ACCOUNT button. Signing in is optional and only does one thing: it keeps a copy of your save
+-      in the cloud so you can carry it between devices. While you are signed in we store:</p>
++      <h2>Accounts and cloud saves on our website</h2>
++      <p>The game on our own website works like the app: it makes an account for your browser by itself (a random secret
++      kept in the browser, of which we store only a scrambled copy), keeps a copy of your save in it, and needs a
++      connection for ROAD TO GLORY, EVENTS, the SHOP and SEASON. We store:</p>
+       <ul>
+-        <li>your save, as-is (coins, match record, settings, career and cup progress, level and challenges): one row per account, readable and writable only by you;</li>
+-        <li>what the sign-in itself needs: for email, Google or GitHub sign-in, your email address, the provider's user id and the display name it sends, plus timestamps. Guest sign-ins keep none of that.</li>
++        <li>your save, as-is (coins, gems, match record, settings, career and cup progress, your club's name, level and challenges): one row per account, readable and writable only by you;</li>
++        <li>the account's random id, and the scrambled copy of your browser's secret;</li>
++        <li>only if you choose to add Google, GitHub or email sign-in in the ACCOUNT panel (to open your account on another device): your email address, the provider's user id and the display name it sends, plus timestamps.</li>
+       </ul>
+-      <p>Cloud saves are private to your account and are not shared with opponents. Signing out keeps your local save; deleting your cloud
+-      save (in the account panel) or your account removes the stored copy.</p>
++      <p>Cloud saves are private to your account and are not shared with opponents. ACCOUNT, then DELETE ACCOUNT, erases
++      the account and everything stored with it. Clearing this site's data in your browser removes the secret, so that
++      browser can no longer reach the account.</p>
+ 
+       <h2>Optional online friendlies</h2>
+       <p>The standalone web and itch.io builds offer optional peer-to-peer matches through your browser's WebRTC data channels.
+@@ -81,9 +103,9 @@
+ 
+       <h2>What we do not collect</h2>
+       <ul>
+-        <li>No account is needed to play; there is no sign-up wall.</li>
+-        <li>No contact-list or device-location permissions. Optional sign-in and online connections handle the details listed above.</li>
+-        <li>No analytics or tracking scripts of our own.</li>
++        <li>No name, no email address and no password are asked for: there is no sign-up form.</li>
++        <li>No contact-list or device-location permissions. Accounts and online connections handle only the details listed above.</li>
++        <li>No analytics or tracking scripts of our own, and no tracking across other apps or websites.</li>
+         <li>No in-game chat.</li>
+       </ul>
+ 
+@@ -100,8 +122,13 @@
+       That storage is governed by the portal's privacy policy.</p>
+ 
+       <h2>Children</h2>
+-      <p>Single-player does not require personal information. Optional sign-in and online features handle the information described above.
+-      Ads and accounts on portals are controlled by the portal, which applies its own rules for younger players.</p>
++      <p>The game is made to be safe for children. It never asks a child for a name, an email address, a birthday or a
++      photo. The account is a random id, and there is no chat. In the app the only things a player types are a club name
++      and a three-letter code (both checked against a list of rude words and never shown to other players) and a
++      friend's code. Ads in the app are
++      family-rated and never personalised. A parent can delete a child's account and data in the app (ACCOUNT, DELETE
++      ACCOUNT) or by emailing us. Ads and accounts on portals are controlled by the portal, which applies its own rules
++      for younger players.</p>
+ 
+       <h2>Changes</h2>
+       <p>If this policy changes, we will update this page and the "Last updated" date above.</p>

@@ -254,6 +254,28 @@ export function clubCall(t: Pick<TeamDef, 'name'>): string {
   return words.join(' ') || t.name;
 }
 
+/**
+ * The AI coach's change, as the ticker shouts it (sim/coach.ts 'tactics'): "LAKEMOOR GO 4-3-3, PRESSING HIGH". The
+ * wings are named from the gantry: the near one is the camera's side (world +z).
+ */
+export function tacticsCall(club: string, e: Extract<MatchEvent, { type: 'tactics' }>): string {
+  const t = club.toUpperCase();
+  switch (e.cover) {
+    case 'wingL': return `${t} DOUBLE UP ON THE FAR WING`;
+    case 'wingR': return `${t} DOUBLE UP ON THE NEAR WING`;
+    case 'behind': return `${t} DROP OFF TO STOP THE BALL IN BEHIND`;
+    case 'range': return `${t} CLOSE DOWN THE EDGE OF THE BOX`;
+    default:
+  }
+  const f = e.formation;
+  switch (e.plan) {
+    case 'chase': return e.shape ? `${t} GO ${f}, PRESSING HIGH` : `${t} PUSH UP, PRESSING HIGH`;
+    case 'allout': return e.shape ? `${t} GO ${f}, EVERYONE FORWARD` : `${t} THROW EVERYONE FORWARD`;
+    case 'hold': return e.shape ? `${t} GO ${f} AND DROP DEEP` : `${t} DROP DEEP AND WAIT FOR THE BREAK`;
+    default: return e.shape ? `${t} BACK TO ${f}` : `${t} SETTLE BACK INTO THEIR GAME`;
+  }
+}
+
 function fill(tpl: string, v: Vars): string {
   return tpl.replace(/\{(\w+)\}/g, (_, k: string) => (k in v ? String(v[k]) : ''));
 }
@@ -506,6 +528,9 @@ export class Commentator {
         return L(this.pick('advantage', { ...v, t: clubCall(m.teams[e.side]) }), 3, e.side);
       case 'sub':
         return L(this.pick('sub', { ...v, t: clubCall(m.teams[e.side]), on: this.sn(e.on), off: this.sn(e.off) }), 3, e.side);
+      case 'tactics':
+        // The AI coach has changed how they play (sim/coach.ts): said loud, so he can answer it.
+        return L(tacticsCall(clubCall(m.teams[e.side]), e), 5, e.side, 'big');
       case 'halftime': {
         const [hs, as] = m.score;
         if (hs === as) return L(this.pick(hs === 0 ? 'htGoalless' : 'htLevel', v), 5, -1, 'info', 'HT');

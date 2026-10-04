@@ -16,9 +16,12 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * button on the pad, and the AI's telegraphed challenges on a human's carrier: sim/skills.ts. 4: AUTO SPRINT on the pad,
  * the new skill moves and their shield, the human's quicker dribble; and the added-time whistle, sim/match.ts
  * addedTimeUp, which changes when every half ends. 5: HYPE meters and the SUPER SHOT, sim/hype.ts, on in classic online
- * matches: netConfig's `hype`; and added time by the Laws, earned and announced on the board, sim/match.ts STOP_BASE_S.)
+ * matches: netConfig's `hype`; and added time by the Laws, earned and announced on the board, sim/match.ts STOP_BASE_S.
+ * 6: the core controls' rules, the same on both machines: the protected kick-off (Match.koGuard), the keeper who is his
+ * human's with the ball and comes out on KEEPER (the pad's SKILL bit with the ball not ours: no new bit on the wire),
+ * the aerial lock, the standing tackle's new odds and PRESS's helper, AUTO SPRINT's lower threshold and flat-out push.)
  */
-export const NET_VERSION = 5;
+export const NET_VERSION = 6;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides

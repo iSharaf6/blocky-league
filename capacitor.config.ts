@@ -3,6 +3,9 @@ import type { CapacitorConfig } from '@capacitor/cli';
 /**
  * The iPhone / iPad app: the same game as the itch.io build (no portal SDK, no ads, no install prompt, no cloud
  * login), wrapped by Capacitor. `npm run ios` rebuilds that variant and copies it into ios/ (then open Xcode).
+ *
+ * When accounts and cloud saves are switched on (supabase/README.md, "Switching it on"), the app takes the `ios`
+ * build instead (`npm run build:ios`, which carries the backend): webDir becomes 'dist-ios'.
  */
 const config: CapacitorConfig = {
   appId: 'com.calynx.blockyleague',

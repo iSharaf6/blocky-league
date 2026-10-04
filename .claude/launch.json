@@ -45,6 +45,14 @@
         "/private/tmp/claude-501/-Users-IslamSharaf-1-iCloud-Drive--Archive----1-Desktop-stickmanFootball/4521b77d-7cd9-4740-9066-eab719d1b492/scratchpad/cloud-dev.mjs"
       ],
       "port": 4192
+    },
+    {
+      "name": "redback-builder",
+      "runtimeExecutable": "/private/tmp/claude-501/-Users-IslamSharaf-1-iCloud-Drive--Archive----1-Desktop-stickmanFootball/514d7672-2d54-454e-b3e1-f5ab7c9b3009/scratchpad/venv/bin/python",
+      "runtimeArgs": [
+        "/private/tmp/claude-501/-Users-IslamSharaf-1-iCloud-Drive--Archive----1-Desktop-stickmanFootball/514d7672-2d54-454e-b3e1-f5ab7c9b3009/scratchpad/builder/server.py"
+      ],
+      "port": 4210
     }
   ]
 }

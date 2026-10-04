@@ -9,6 +9,8 @@
 import { hashString } from '../core/rng';
 import { MATCHDAYS, TOP_DIVISION, BOTTOM_DIVISION, CLUBS_PER_DIVISION, YOU, leagueTable, type CareerState, type LeagueClub, type NextMatch } from './career';
 import { pushNews, townOf, type NewsKind } from './market';
+// (Runtime cycle: only used inside functions.) Every story line is also a line of the club's timeline.
+import { addTimeline } from './events';
 import type { FormationId, Kit } from '../sim/types';
 
 /** The club that has it in for you: who they are, and how the derbies have gone. */
@@ -85,6 +87,8 @@ function pick<T>(list: readonly T[], seed: string): T {
 
 export function storyNews(state: CareerState, text: string, kind: NewsKind = 'info'): void {
   pushNews(state, text, kind, false, true);
+  // The NEWS keeps a dozen lines; the timeline (meta/events.ts) keeps the story so far.
+  addTimeline(state, text, kind === 'good' ? 'star' : kind === 'bad' ? 'flag' : 'ball', kind);
 }
 
 // ------------------------------------------------------------------ the rival
@@ -203,8 +207,8 @@ export function storyTag(state: CareerState, nm: NextMatch | null): StoryTag | n
     const h2h = r && r.met ? `${r.won}W ${r.drawn}D ${r.lost}L IN DERBIES` : 'THE FIRST DERBY';
     return { tag: 'DERBY DAY', line: h2h, tone: 'hot' };
   }
-  // The run in: a title race, a relegation scare.
-  if (season.matchday >= 3 && !last) {
+  // The run in (the second half of the season): a title race, a relegation scare.
+  if (season.matchday >= MATCHDAYS / 2 && !last) {
     if (season.division < BOTTOM_DIVISION && me >= CLUBS_PER_DIVISION - 2 && pts(CLUBS_PER_DIVISION - 3) - myPts <= 3 * left) return { tag: 'RELEGATION SCARE', line: 'POINTS NEEDED TO STAY UP', tone: 'danger' };
     if (left <= 3 && me <= 2 && gapTop <= 3) return { tag: 'TITLE RACE', line: me === 0 ? 'STAY AHEAD OF THE PACK' : `${gapTop} POINTS OFF THE TOP`, tone: 'gold' };
   }

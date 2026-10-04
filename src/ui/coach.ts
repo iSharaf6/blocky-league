@@ -32,11 +32,13 @@ export interface CoachCue {
 }
 
 /** Which labels the touch buttons wear (mirrors ui/touch.ts LABELS): with the ball, defending, at a set piece. */
-export type CoachCtx = 'attack' | 'defend' | 'setpiece';
+export type CoachCtx = 'attack' | 'defend' | 'setpiece' | 'delivery';
 const TOUCH_BUTTONS: Record<CoachCtx, Record<'pass' | 'shoot' | 'through', string>> = {
   attack: { pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH' },
   defend: { pass: 'SWITCH', shoot: 'TACKLE', through: 'PRESS' },
   setpiece: { pass: 'PASS', shoot: 'SHOOT', through: 'CROSS' },
+  // His corner or wide free kick (sim/setPiece.ts): the three deliveries.
+  delivery: { pass: 'SHORT', shoot: 'DRIVEN', through: 'CROSS' },
 };
 
 /** The key cap for an action: the bound key / pad button, or the touch button's label in this situation. */
@@ -81,10 +83,20 @@ export function defendCue(device: Device): CoachCue {
 
 // ------------------------------------------------------------------ set pieces, penalties, the keeper's ball
 
-/** Our restart (kick-off, throw-in, corner, goal kick, free kick; penalties have penaltyCue). */
-export function restartCue(kind: RestartKind, device: Device): CoachCue {
-  const k = (a: PadAction) => keyCap(a, device, 'setpiece');
+/**
+ * Our restart (kick-off, throw-in, corner, goal kick, free kick; penalties have penaltyCue). `mode` (sim/setPiece.ts):
+ * 'goal' a shooting free kick (the reticle on the goal), 'zone' a corner or a wide free kick (the landing ring).
+ */
+export function restartCue(kind: RestartKind, device: Device, mode?: 'goal' | 'zone'): CoachCue {
+  const k = (a: PadAction) => keyCap(a, device, mode === 'zone' ? 'delivery' : 'setpiece');
   const aim = moveCap(device);
+  const place: [string, string] = device === 'touch' ? ['', 'Drag to place it'] : [aim, 'Place it'];
+  if (mode === 'zone') {
+    return { title: kind === 'corner' ? 'CORNER' : 'FREE KICK', actions: [place, [k('through'), 'Float it'], [k('shoot'), 'Drive it low'], [k('pass'), 'Short']] };
+  }
+  if (mode === 'goal') {
+    return { title: 'FREE KICK', actions: [device === 'touch' ? ['', 'Drag to aim'] : [aim, 'Aim'], [k('shoot'), 'Hold for power'], [aim, 'Bend it while held']] };
+  }
   switch (kind) {
     case 'kickoff': return { title: 'KICK OFF', actions: [[k('pass'), 'Kick off']] };
     case 'throwin': return { title: 'THROW IN', actions: [[aim, 'Aim'], [k('pass'), 'Throw']] };
@@ -117,7 +129,7 @@ export function skillCue(device: Device): CoachCue {
 
 /** Our keeper has it in his hands. */
 export function keeperCue(device: Device): CoachCue {
-  return { title: "KEEPER'S BALL", actions: [[keyCap('pass', device), 'Roll out'], [keyCap('through', device), 'Kick long']], detail: 'Aim at a free teammate' };
+  return { title: "KEEPER'S BALL", actions: [[moveCap(device), 'Walk it'], [keyCap('pass', device), 'Throw'], [keyCap('through', device), 'Kick long']], detail: 'Aim at a free teammate' };
 }
 
 // ------------------------------------------------------------------ plain-text hints

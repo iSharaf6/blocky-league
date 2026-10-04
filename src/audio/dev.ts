@@ -4,7 +4,8 @@
  *   __blaudio.state()            what the sound and the match director are doing now
  *   __blaudio.unlock()           build the audio context (a click in the page does it too)
  *   __blaudio.cue(name)          fire one cue now: a song (menu halftime win draw loss), a sting (kickoff goal trophy
- *                                promotion), a chant (claps ohs name drum horn), a reaction (roarHome roarAway ooh
+ *                                promotion), a chant (claps ohs name drum horn ole comeon hey callname stomp lala
+ *                                letsgo whoa), a reaction (roarHome roarAway ooh
  *                                groan applause whistles boo ole surge fulltimeWin fulltimeDraw), a hook (superShot
  *                                objective coins finalOn finalOff), or stop
  *   __blaudio.toHalftime()       end the first half now (the match on screen; __bl.step(n) to run it on)
@@ -16,7 +17,7 @@
 import type { Match } from '../sim/match';
 import { matchAudio } from './director';
 import type { StingId, TrackId } from './music';
-import { Sfx, sfx, type ChantKind, type Stand } from './sfx';
+import { CHANT_KINDS, Sfx, sfx, type ChantKind, type Stand } from './sfx';
 
 interface DevSession {
   match: Match;
@@ -24,7 +25,7 @@ interface DevSession {
 
 const SONGS: readonly TrackId[] = ['menu', 'halftime', 'win', 'draw', 'loss'];
 const STING_IDS: readonly StingId[] = ['kickoff', 'goal', 'trophy', 'promotion'];
-const CHANTS: readonly ChantKind[] = ['claps', 'ohs', 'name', 'drum', 'horn'];
+const CHANTS: readonly ChantKind[] = CHANT_KINDS;
 
 function session(): DevSession | null {
   return (window as unknown as { __bl?: { session?: DevSession | null } }).__bl?.session ?? null;
@@ -161,6 +162,11 @@ export async function measureMix(only?: readonly string[]): Promise<Record<strin
     crowdL5: () => render(40, [[0, live(5, 0.95)]], { dt: 0.05, fn: (s) => s.tick(0.05) }),
     chantNameL0: () => render(8, [[0, live(0, 0.19)], [0.1, (s) => s.chant('name')]]),
     chantOhsL5: () => render(8, [[0, live(5, 0.95)], [0.1, (s) => s.chant('ohs')]]),
+    // Every chant at a mid-size ground (the names sung: Cube City), one scene each: chant<Kind>.
+    ...Object.fromEntries(CHANT_KINDS.map((k) => [
+      `chant${k[0].toUpperCase()}${k.slice(1)}`,
+      () => render(9, [[0, (s: Sfx) => { live(3, 0.8)(s); s.setClubNames('Cube City', 'Mossvale Rovers'); }], [0.1, (s: Sfx) => s.chant(k)]]),
+    ])),
     goalL0: () => render(8, [[0, live(0, 0.19)], [1, (s) => { s.goal(0); s.sting('goal'); }]]),
     goalL5: () => render(8, [[0, live(5, 0.95)], [1, (s) => { s.goal(0); s.sting('goal'); }]]),
     goalAwayL5: () => render(8, [[0, live(5, 0.95)], [1, (s) => s.goal(1)]]),

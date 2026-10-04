@@ -9,8 +9,10 @@ import { boardView, finishGap } from './board';
 import { nextBuild, partDef } from './ground';
 import { legacyLevel, nextPerk } from './legacy';
 import { storyTag } from './story';
+import { comingUp, type Soon } from './week';
 
-export type GoalTarget = 'career' | 'board' | 'academy' | 'stadium' | 'market' | 'unlocks';
+/** Where a tap on the line goes (main.ts): the hub, its CLUB tab, MY CLUB's tabs, the market, the unlocks. */
+export type GoalTarget = 'career' | 'board' | 'academy' | 'stadium' | 'market' | 'unlocks' | 'staff' | 'squad' | 'train';
 
 export interface NextGoal {
   text: string;
@@ -93,6 +95,17 @@ export function nextGoal(state: CareerState | null, coins: number, unlock?: Unlo
   } catch {
     nm = null;
   }
+  // What is in progress at the club (meta/week.ts): something is always on its way, and waiting when you come back.
+  let soon: Soon[] = [];
+  try {
+    soon = comingUp(state);
+  } catch {
+    soon = [];
+  }
+  const asGoal = (x: Soon): NextGoal => ({ text: x.text, go: x.go, icon: x.icon });
+  // A card to answer, or a scout report nobody has read: waiting for you now.
+  const waiting = soon.find((x) => x.in === 0 && (x.kind === 'card' || x.kind === 'report'));
+  if (waiting) return asGoal(waiting);
   // A decider (or a derby) next: that is the story.
   const tag = storyTag(state, nm);
   if (tag && tag.tone !== 'hot') return { text: tag.line, go: 'career', icon: tag.tone === 'gold' ? 'trophy' : 'shield' };
@@ -101,15 +114,25 @@ export function nextGoal(state: CareerState | null, coins: number, unlock?: Unlo
   }
   const obj = objectiveGoal(state);
   if (obj && obj.need <= 2) return obj.goal;
+  // A promise to keep, the board's pledge, a player on his way back, a scout report due: within two matches.
+  const near = soon.find((x) => x.in <= 2 && (x.kind === 'promise' || x.kind === 'pledge' || x.kind === 'injury' || x.kind === 'scout' || x.kind === 'mentor'));
+  if (near) return asGoal(near);
   const g = state.ground;
   const build = nextBuild(g);
   if (!g.building && build && coins >= build.cost) return { text: `BUILD THE ${build.name} NOW`, go: 'stadium', icon: 'flag' };
   if (tag) return { text: tag.line === 'THE FIRST DERBY' ? `DERBY DAY AGAINST ${nm?.rival.short ?? 'YOUR RIVALS'}` : `DERBY DAY: ${tag.line}`, go: 'career', icon: 'fire' };
+  // One match from opening: the reason to play the next one (it comes before an objective still far off).
+  if (g.building && g.building.left <= 1) {
+    return { text: `THE ${partDef(g.building.id).steps[g.building.level - 1]?.name ?? 'NEW PART'} OPENS AFTER YOUR NEXT MATCH`, go: 'stadium', icon: 'clock' };
+  }
   if (obj) return obj.goal;
   if (g.building) {
     const left = g.building.left;
     return { text: `THE ${partDef(g.building.id).steps[g.building.level - 1]?.name ?? 'NEW PART'} OPENS AFTER ${plural(left, 'MATCH', 'MATCHES')}`, go: 'stadium', icon: 'clock' };
   }
+  // The next piece of the long game to open (a career's first matches).
+  const opening = soon.find((x) => x.kind === 'unlock' && x.in <= 2);
+  if (opening) return asGoal(opening);
   if (build) return { text: `${fmt(build.cost - coins)} COINS TO BUILD THE ${build.name}`, go: 'stadium', icon: 'flag' };
   if (state.season.division === TOP_DIVISION && state.legacy.trebles === 0) return { text: 'THE DREAM: LEAGUE, CUP AND CONTINENTAL IN ONE SEASON', go: 'board', icon: 'crown' };
   const lv = legacyLevel(state.legacy.points);

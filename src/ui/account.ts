@@ -2,13 +2,19 @@
  * The account / cloud-sync panel, the "which save?" choice and the cloud toast. src/platform/cloud.ts owns
  * the logic and loads this file on demand; this file owns the DOM. Panels mount into #ui on top of whatever
  * screen is open and never block play: BACK (or Escape) always closes them.
+ *
+ * The iPhone / iPad app signs in by itself (Game Center, else this device: src/platform/signin.ts), so there the
+ * panel has no sign-in buttons: it shows the account, SYNC NOW, the FRIEND CODE and DELETE ACCOUNT. The web game
+ * also offers Google / GitHub / email.
  */
 import './account.css';
 import { sfx } from '../audio/sfx';
 import {
-  PROVIDER_LABEL, cloudAvailable, cloudStatus, cloudUser, deleteCloudSave, loadFromCloud, onCloudChange, signInAsGuest, signInWith,
-  signInWithEmail, signOutCloud, syncNow, upgradeGuest, upgradeGuestEmail, type CloudContext, type CloudToastKind, type SaveSummary,
+  PROVIDER_LABEL, accountsRequired, cloudAvailable, cloudProfile, cloudStatus, cloudUser, deleteCloudSave, loadFromCloud, onCloudChange, signInAsGuest,
+  signInWith, signInWithEmail, signOutCloud, syncNow, upgradeGuest, upgradeGuestEmail, type CloudContext, type CloudToastKind, type SaveSummary,
 } from '../platform/cloud';
+import { inNativeApp } from '../platform/native';
+import { claimFriendCode, connect, deleteAccount, friendCodeSeen, type ClaimResult } from '../platform/signin';
 
 const $ = <T extends HTMLElement>(root: ParentNode, sel: string): T | null => root.querySelector(sel) as T | null;
 
@@ -16,6 +22,8 @@ const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"
 const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ESC[c] ?? c);
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** A friend code as the server makes it: 7 characters, no look-alikes (0 O 1 I). */
+const CODE_RE = /^[A-HJ-NP-Z2-9]{7}$/;
 
 function uiRoot(): HTMLElement {
   return document.getElementById('ui') ?? document.body;
@@ -48,7 +56,7 @@ function mount(cls: string, panelCls: string): { root: HTMLDivElement; panel: HT
 
 // ------------------------------------------------------------------ account panel
 
-type Mode = 'main' | 'email' | 'link-email' | 'confirm-load' | 'confirm-delete' | 'confirm-signout';
+type Mode = 'main' | 'email' | 'link-email' | 'confirm-load' | 'confirm-delete' | 'confirm-signout' | 'confirm-account' | 'friend';
 
 let activeAccount: HTMLDivElement | null = null;
 
@@ -88,24 +96,88 @@ function unavailableHtml(): string {
 
 function signedOutHtml(mode: Mode, working: string): string {
   const dis = working ? 'disabled' : '';
+  const busy = working ? `<div class="ac-status busy"><i></i><span>${esc(working)}...</span></div>` : '';
+  // The app signs in by itself (Game Center, else this device): one button to try again, nothing to type.
+  if (inNativeApp()) {
+    return `
+      <h2>YOUR ACCOUNT</h2>
+      <p class="fine big ac-lead">Connect to keep your club safe and play ROAD TO GLORY.</p>
+      ${busy}
+      <button class="btn btn-go" data-a="connect" ${dis}>CONNECT</button>
+      <p class="fine ac-note">No password and no email. The game signs in with Game Center, or with this device.</p>
+      ${backRow}`;
+  }
   return `
     <h2>PROTECT YOUR CLUB</h2>
     <p class="fine big ac-lead">Sign in to save your progress across devices.</p>
-    ${working ? `<div class="ac-status busy"><i></i><span>${esc(working)}...</span></div>` : ''}
+    ${busy}
     ${providerButtons('', dis)}
     ${mode === 'email' ? emailForm('sendlink', 'SEND LINK', dis) : `<button class="btn btn-blue" data-a="email" ${dis}>EMAIL LINK</button>`}
     <button class="btn btn-yellow" data-a="guest" ${dis}>CONTINUE AS GUEST</button>
-    <p class="fine ac-note">No account is needed to play: progress stays on this device either way. A guest account backs it up now; add Google, GitHub or email later.</p>
+    <p class="fine ac-note">${accountsRequired()
+    ? 'A guest account needs nothing typed and backs your progress up now. Add Google, GitHub or email later to open it on other devices.'
+    : 'No account is needed to play: progress stays on this device either way. A guest account backs it up now; add Google, GitHub or email later.'}</p>
     ${backRow}`;
 }
 
-function signedInHtml(mode: Mode, working: string): string {
+/** What the friend-code view knows (loaded when it opens). */
+interface FriendView {
+  code: string | null;
+  loading: boolean;
+  note: string;
+  noteKind: 'good' | 'bad' | '';
+}
+
+const CLAIM_SAYS: Record<ClaimResult, string> = {
+  ok: '',
+  unknown_code: 'No club has that code. Check it and try again.',
+  own_code: 'That is your own code. Send it to a friend.',
+  already_used: 'You have already used a friend code.',
+  win_first: 'Win a match first, then enter the code.',
+  too_late: 'Friend codes are for new players only.',
+  friend_full: 'That friend has already invited the most players allowed.',
+  rate_limited: 'Too many tries. Try again tomorrow.',
+  offline: 'You are offline. Connect and try again.',
+  failed: 'That did not work. Try again in a moment.',
+};
+
+function friendHtml(f: FriendView, working: string): string {
+  const dis = working ? 'disabled' : '';
+  const code = f.code
+    ? `<div class="ac-code" aria-label="Your friend code">${esc(f.code)}</div>`
+    : `<div class="ac-status ${f.loading ? 'busy' : 'off'}"><i></i><span>${f.loading ? 'Getting your code...' : 'Your code is not ready. Connect and open this again.'}</span></div>`;
+  const note = working
+    ? `<div class="ac-status busy"><i></i><span>${esc(working)}...</span></div>`
+    : f.note ? `<div class="ac-status ${f.noteKind === 'bad' ? 'bad' : 'on'}"><i></i><span>${esc(f.note)}</span></div>` : '';
+  return `
+    <h2>FRIEND CODE</h2>
+    <p class="fine big ac-lead">A friend enters your code after their first win. You both get 100 coins.</p>
+    ${code}
+    ${f.code ? `<button class="btn btn-go" data-a="share" ${dis}>SHARE MY CODE</button>` : ''}
+    <div class="ac-field">
+      <label for="ac-code">GOT A FRIEND'S CODE?</label>
+      <input id="ac-code" class="ac-input ac-code-in" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="7" placeholder="ABC2345" ${dis}>
+      <div class="ac-field-row">
+        <button class="btn btn-blue" data-a="claim" ${dis}>USE CODE</button>
+        <button class="btn btn-ghost" data-a="cancel" ${dis}>DONE</button>
+      </div>
+    </div>
+    ${note}`;
+}
+
+function signedInHtml(mode: Mode, working: string, friend: FriendView): string {
   const u = cloudUser();
   if (!u) return signedOutHtml('main', working);
+  if (mode === 'friend') return friendHtml(friend, working);
   const st = cloudStatus();
   const dis = working ? 'disabled' : '';
-  const via = u.guest ? 'Guest account' : `Signed in with ${u.provider === 'google' ? 'Google' : u.provider === 'github' ? 'GitHub' : 'email'}`;
-  const who = `<div class="ac-who"><b>${esc(u.name)}</b><span>${via}${u.email && u.email !== u.name ? ` (${esc(u.email)})` : ''}</span></div>`;
+  const native = inNativeApp();
+  const via = u.provider === 'gamecenter' ? 'Signed in with Game Center'
+    : u.provider === 'device' ? 'An account for this device'
+      : u.guest ? 'Guest account' : `Signed in with ${u.provider === 'google' ? 'Google' : u.provider === 'github' ? 'GitHub' : 'email'}`;
+  const who = u.auto
+    ? `<div class="ac-who"><b>${u.provider === 'gamecenter' ? 'GAME CENTER' : 'THIS DEVICE'}</b><span>${via}</span></div>`
+    : `<div class="ac-who"><b>${esc(u.name)}</b><span>${via}${u.email && u.email !== u.name ? ` (${esc(u.email)})` : ''}</span></div>`;
 
   let cls = 'on';
   let text: string;
@@ -114,42 +186,54 @@ function signedInHtml(mode: Mode, working: string): string {
     text = `${working}...`;
   } else if (st.busy) {
     cls = 'busy';
-    text = 'Cloud sync: syncing...';
+    text = 'Cloud save: syncing...';
   } else if (st.offline) {
     cls = 'off';
-    text = 'Cloud sync: offline, will retry';
+    text = 'Cloud save: offline, will retry';
   } else if (st.paused) {
     cls = 'off';
-    text = 'Cloud sync: paused';
+    text = 'Cloud save: paused';
   } else if (st.lastError) {
     cls = 'bad';
-    text = 'Cloud sync: retrying';
+    text = 'Cloud save: retrying';
   } else if (st.pending) {
     cls = 'busy';
-    text = 'Cloud sync: on, changes waiting';
+    text = 'Cloud save: on, changes waiting';
   } else {
-    text = `Cloud sync: on${st.lastSynced ? `, last synced ${timeOf(st.lastSynced)}` : ''}`;
+    text = `Cloud save: on${st.lastSynced ? `, last synced ${timeOf(st.lastSynced)}` : ''}`;
   }
   const status = `<div class="ac-status ${cls}"><i></i><span>${esc(text)}</span></div>`;
 
+  // A guest or a device account on the web can add a sign-in, to open the account on other devices.
+  const canLink = !native && (u.guest || u.provider === 'device');
   let body: string;
   if (mode === 'confirm-load') {
     body = confirmBox('calm', 'Replace the save on this device with your cloud copy? Anything not yet synced from here is lost.', 'load-yes', 'YES, LOAD', 'btn-blue', dis);
   } else if (mode === 'confirm-delete') {
     body = confirmBox('', 'Delete your cloud save? This device keeps its copy. Sync pauses until you press SYNC NOW.', 'delete-yes', 'YES, DELETE', 'btn-red', dis);
+  } else if (mode === 'confirm-account') {
+    body = confirmBox('', 'Delete your account for good? Your cloud save and your progress on this device are erased. This cannot be undone.', 'account-yes', 'YES, DELETE', 'btn-red', dis);
   } else if (mode === 'confirm-signout') {
     body = confirmBox('', 'A guest account cannot be signed into again, so its cloud copy goes out of reach. Add Google, GitHub or email first to keep it. Your progress stays on this device either way.', 'signout-yes', 'SIGN OUT ANYWAY', 'btn-red', dis);
   } else if (mode === 'link-email') {
     body = emailForm('sendlinkemail', 'ADD EMAIL', dis);
   } else {
-    body = `
-      ${u.guest ? `<p class="fine ac-note">Add a sign-in to open this account on other devices:</p>${providerButtons('link-', dis)}<button class="btn btn-blue" data-a="link-email" ${dis}>EMAIL LINK</button>` : ''}
-      <div class="menu-col ac-actions">
-        <button class="btn btn-go" data-a="sync" ${dis}>SYNC NOW</button>
+    // An account the game made itself has nothing to sign out of or to load by hand: three actions.
+    // (FRIEND CODE and DELETE ACCOUNT come with required accounts; switched off, the panel is the one it always was.)
+    const extra = accountsRequired();
+    const actions = u.auto
+      ? `<button class="btn btn-go" data-a="sync" ${dis}>SYNC NOW</button>
+        <button class="btn btn-yellow" data-a="friend" ${dis}>FRIEND CODE</button>
+        <button class="btn btn-red" data-a="account" ${dis}>DELETE ACCOUNT</button>`
+      : `<button class="btn btn-go" data-a="sync" ${dis}>SYNC NOW</button>
         <button class="btn btn-blue" data-a="load" ${dis}>LOAD FROM CLOUD</button>
+        ${extra ? `<button class="btn btn-yellow" data-a="friend" ${dis}>FRIEND CODE</button>` : ''}
         <button class="btn btn-white" data-a="signout" ${dis}>SIGN OUT</button>
         <button class="btn btn-red" data-a="delete" ${dis}>DELETE CLOUD SAVE</button>
-      </div>`;
+        ${extra ? `<button class="btn btn-red" data-a="account" ${dis}>DELETE ACCOUNT</button>` : ''}`;
+    body = `
+      ${canLink ? `<p class="fine ac-note">Add a sign-in to open this account on other devices:</p>${providerButtons('link-', dis)}<button class="btn btn-blue" data-a="link-email" ${dis}>EMAIL LINK</button>` : ''}
+      <div class="menu-col ac-actions">${actions}</div>`;
   }
   return `<h2>YOUR ACCOUNT</h2>${who}${status}${body}${backRow}`;
 }
@@ -163,11 +247,12 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void): void {
   let working = '';
   let focusNext = false;
   let closed = false;
+  const friend: FriendView = { code: null, loading: false, note: '', noteKind: '' };
 
   const render = (): void => {
     if (closed) return;
     const keep = $<HTMLInputElement>(panel, 'input')?.value;
-    panel.innerHTML = !cloudAvailable() ? unavailableHtml() : cloudUser() ? signedInHtml(mode, working) : signedOutHtml(mode, working);
+    panel.innerHTML = !cloudAvailable() ? unavailableHtml() : cloudUser() ? signedInHtml(mode, working, friend) : signedOutHtml(mode, working);
     const input = $<HTMLInputElement>(panel, 'input');
     if (input && keep !== undefined) input.value = keep;
     if (input && focusNext) {
@@ -184,7 +269,8 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void): void {
     if (activeAccount === root) activeAccount = null;
     onClose();
   };
-  const run = async (label: string, fn: () => Promise<unknown>): Promise<void> => {
+  /** Run an action with the buttons off; `stay` keeps the current view afterwards (else back to the main one). */
+  const run = async (label: string, fn: () => Promise<unknown>, stay = false): Promise<void> => {
     if (working) return;
     working = label;
     render();
@@ -194,24 +280,83 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void): void {
       console.warn('[cloud] account action failed:', err);
     } finally {
       working = '';
-      mode = 'main';
+      if (!stay) mode = 'main';
       render();
     }
   };
   const email = (): string => ($<HTMLInputElement>(panel, 'input')?.value ?? '').trim();
-  const badEmail = (): boolean => {
-    const input = $<HTMLInputElement>(panel, 'input');
-    if (!input || EMAIL_RE.test(input.value.trim())) return false;
+  const shake = (input: HTMLInputElement): void => {
     input.classList.remove('bad');
     void input.offsetWidth;
     input.classList.add('bad');
     input.focus();
+  };
+  const badEmail = (): boolean => {
+    const input = $<HTMLInputElement>(panel, 'input');
+    if (!input || EMAIL_RE.test(input.value.trim())) return false;
+    shake(input);
     return true;
   };
   const show = (m: Mode, focus = false): void => {
     mode = m;
     focusNext = focus;
     render();
+  };
+  const openFriend = (): void => {
+    friend.note = '';
+    friend.loading = !friend.code;
+    show('friend');
+    friendCodeSeen();
+    if (friend.code) return;
+    void cloudProfile().then((p) => {
+      friend.code = p?.code ?? null;
+      friend.loading = false;
+      render();
+    });
+  };
+  const shareCode = async (): Promise<void> => {
+    if (!friend.code) return;
+    const text = `Play Blocky League with me! Enter my friend code ${friend.code} after your first win and we both get 100 coins.`;
+    try {
+      if (typeof navigator.share === 'function') {
+        await navigator.share({ title: 'Blocky League', text });
+        return;
+      }
+      await navigator.clipboard.writeText(text);
+      cloudToast('Copied. Paste it to a friend', 'good');
+    } catch {
+      // The share sheet was closed, or the clipboard is not allowed: the code is on screen to read out.
+    }
+  };
+  const claim = (): void => {
+    const input = $<HTMLInputElement>(panel, '#ac-code');
+    const code = (input?.value ?? '').trim().toUpperCase();
+    if (!input || !CODE_RE.test(code)) {
+      if (input) shake(input);
+      return;
+    }
+    void run('Checking the code', async () => {
+      const r = await claimFriendCode(ctx, code);
+      if (r.result === 'ok') {
+        friend.note = `Done! +${r.coins || 100} coins for you, and 100 for your friend.`;
+        friend.noteKind = 'good';
+        input.value = '';
+      } else {
+        friend.note = CLAIM_SAYS[r.result];
+        friend.noteKind = 'bad';
+      }
+    }, true);
+  };
+  const removeAccount = (): void => {
+    void run('Deleting your account', async () => {
+      const r = await deleteAccount(ctx);
+      if (r === 'ok') {
+        cloudToast('Your account and its data are deleted', 'good');
+        close();
+      } else {
+        cloudToast(r === 'offline' ? 'You are offline. Connect to delete your account' : 'Could not delete the account. Try again in a moment', 'bad');
+      }
+    });
   };
 
   panel.addEventListener('click', (e) => {
@@ -220,11 +365,13 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void): void {
     switch (el.dataset.a) {
       case 'back': close(); break;
       case 'cancel': show('main'); break;
+      case 'connect': void run('Connecting', () => connect(true)); break;
       case 'google': void run('Opening Google', () => signInWith('google')); break;
       case 'github': void run('Opening GitHub', () => signInWith('github')); break;
       case 'email': show('email', true); break;
       case 'sendlink': if (!badEmail()) void run('Sending the link', () => signInWithEmail(email())); break;
-      case 'guest': void run('Setting up a guest account', () => signInAsGuest()); break;
+      // A guest: this device's own account (nothing to type); the anonymous sign-in is the fallback.
+      case 'guest': void run('Setting up a guest account', async () => (await connect(true)) || signInAsGuest()); break;
       case 'link-google': void run(`Opening ${PROVIDER_LABEL.google}`, () => upgradeGuest('google')); break;
       case 'link-github': void run(`Opening ${PROVIDER_LABEL.github}`, () => upgradeGuest('github')); break;
       case 'link-email': show('link-email', true); break;
@@ -234,6 +381,11 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void): void {
       case 'load-yes': void run('Loading', () => loadFromCloud(ctx)); break;
       case 'delete': show('confirm-delete'); break;
       case 'delete-yes': void run('Deleting', () => deleteCloudSave()); break;
+      case 'account': show('confirm-account'); break;
+      case 'account-yes': removeAccount(); break;
+      case 'friend': openFriend(); break;
+      case 'share': void shareCode(); break;
+      case 'claim': claim(); break;
       case 'signout':
         if (cloudUser()?.guest) show('confirm-signout');
         else void run('Signing out', () => signOutCloud());
@@ -243,7 +395,7 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void): void {
   });
   panel.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') close();
-    else if (e.key === 'Enter' && (e.target as Element).matches('input')) $<HTMLElement>(panel, '[data-a="sendlink"], [data-a="sendlinkemail"]')?.click();
+    else if (e.key === 'Enter' && (e.target as Element).matches('input')) $<HTMLElement>(panel, '[data-a="sendlink"], [data-a="sendlinkemail"], [data-a="claim"]')?.click();
   });
   render();
 }

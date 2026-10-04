@@ -1,0 +1,38 @@
+/* The word over his man that answers a TACKLE press (ui/actionPop.ts): TACKLE! in green when he wins it, the reason
+   (TOO FAR, MISTIMED, FROM BEHIND) smaller and in white when he doesn't. The HUD's pixel face, outlined in ink so it
+   reads over grass, kits and the crowd. */
+.act-pop {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  font: 700 clamp(15px, 1.5vw, 20px) / 1 var(--px);
+  letter-spacing: 1px;
+  color: var(--cream);
+  text-shadow:
+    0 3px 0 var(--ink), 2px 3px 0 var(--ink), -2px 3px 0 var(--ink),
+    2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink), 2px -2px 0 var(--ink), -2px -2px 0 var(--ink);
+}
+.act-pop.on { opacity: 1; }
+.act-pop[data-cue='won'] {
+  font-size: clamp(20px, 2.2vw, 30px);
+  color: #6dff7e;
+}
+.act-pop[data-cue='behind'] { color: #ffd23e; }
+@media (prefers-reduced-motion: no-preference) {
+  .act-pop.on { animation: act-pop 0.85s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+}
+@keyframes act-pop {
+  0% { opacity: 0; transform: translate(-50%, -100%) translateY(8px) scale(0.6); }
+  18% { opacity: 1; transform: translate(-50%, -100%) scale(1.12); }
+  32% { transform: translate(-50%, -100%) scale(1); }
+  74% { opacity: 1; transform: translate(-50%, -100%) translateY(-5px); }
+  100% { opacity: 0; transform: translate(-50%, -100%) translateY(-14px); }
+}
+@media (max-height: 480px) {
+  .act-pop { font-size: 15px; }
+  .act-pop[data-cue='won'] { font-size: 20px; }
+}

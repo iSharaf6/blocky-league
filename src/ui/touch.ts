@@ -1,7 +1,7 @@
 import type { Input } from '../core/input';
 import { pixelIcon } from './pixelIcons';
 
-export type TouchContext = 'attack' | 'defend' | 'setpiece';
+export type TouchContext = 'attack' | 'defend' | 'setpiece' | 'delivery';
 
 /**
  * The three action buttons' labels by where they sit: the big one bottom right (data-k pass), the one left of it
@@ -12,9 +12,18 @@ const LABELS: Record<TouchContext, [string, string, string]> = {
   attack: ['PASS', 'SHOOT', 'THROUGH'],
   defend: ['PRESS', 'TACKLE', 'SWITCH'],
   setpiece: ['PASS', 'SHOOT', 'CROSS'],
+  // His corner or wide free kick (sim/setPiece.ts): short to the nearest man, driven low to the ring, floated to it.
+  delivery: ['SHORT', 'DRIVEN', 'CROSS'],
 };
 
-type BtnKey = 'pass' | 'shoot' | 'through' | 'sprint' | 'skill';
+type BtnKey = 'pass' | 'shoot' | 'through' | 'skill';
+/**
+ * The buttons in the DOM (data-k). There is no SPRINT (2026-10-04, the owner: "sprinting button shoudlnt exist as
+ * players should be sprinting automatcially": the stick sprints, sim/dribble.ts autoRun). KEEPER (shown while defending
+ * near our own goal: setKeeper) sends the pad's SKILL, which without the ball is "keeper, come out" (sim/keeper.ts
+ * keeperRush): held, he comes for it; let go, he is the AI's again.
+ */
+type DomKey = BtnKey | 'keeper';
 
 /**
  * What a button sends by context (its own key unless listed): defending, the big bottom-right button is PRESS (the
@@ -25,10 +34,13 @@ const SENDS: Record<TouchContext, Partial<Record<BtnKey, BtnKey>>> = {
   attack: {},
   defend: { pass: 'through', through: 'pass' },
   setpiece: {},
+  delivery: {},
 };
 
 /** How long (ms) a power button tap stays down at least, so a tap shorter than a frame still reaches the sim as a press. */
 const POWER_TAP_MS = 70;
+/** FAKE SHOT: how long (ms) PASS and SHOOT stay down together once the thumb has slid from SHOOT onto PASS. */
+const FAKE_SHOT_MS = 90;
 
 /** Settings > Controls > THUMBSTICK: under the thumb wherever it lands, or anchored bottom-left. */
 export type StickMode = 'floating' | 'fixed';
@@ -48,8 +60,9 @@ export class TouchControls {
   /** The stick style for new overlays (main.ts sets it from the save; setStickMode changes a live one). */
   static stickMode: StickMode = 'floating';
   /**
-   * AUTO SPRINT (Settings > Controls, default on; main.ts sets it from the save): the thumbstick pushed all the way
-   * sprints (the session puts it on the pad while touch is the device in hand: Pad.autoSprint, sim/dribble.ts autoRun).
+   * AUTO SPRINT (Settings > Controls, default on; main.ts sets it from the save), for keys and a gamepad: the stick
+   * pushed sprints without the SPRINT key (Pad.autoSprint, sim/dribble.ts autoRun). On touch it is always on: there is
+   * no SPRINT button (the session: MatchSession.autoSprint).
    */
   static autoSprint = true;
   readonly root: HTMLDivElement;
@@ -70,6 +83,7 @@ export class TouchControls {
   onPower: (() => void) | null = null;
   private powerTimer = 0;
   private powerHeld = false;
+  private fakeTimer = 0;
   private readonly blur = () => this.releaseAll();
   private readonly visibility = () => {
     if (document.hidden) this.releaseAll();
@@ -87,9 +101,9 @@ export class TouchControls {
         <button class="tb tb-through" data-k="through"><span>THROUGH</span></button>
         <button class="tb tb-shoot" data-k="shoot"><span>SHOOT</span></button>
         <button class="tb tb-pass" data-k="pass"><span>PASS</span></button>
-        <button class="tb tb-sprint" data-k="sprint"><span>SPRINT</span></button>
+        <button class="tb tb-keeper" data-k="keeper" aria-label="Keeper, come out"><span>KEEPER</span></button>
         <button class="tb tb-power" data-k="power" aria-label="Use power-up"><span>${pixelIcon('bolt', '#fff', 3)}</span></button>
-        <button class="tb tb-skill" data-k="skill" aria-label="Skill move"><span>SKILL</span></button>
+        <button class="tb tb-skill" data-k="skill" aria-label="Skill move"><span>SKILL</span><i class="tb-pips" aria-hidden="true"><i></i><i></i><i></i></i></button>
       </div>
       <div class="touch-skip" aria-hidden="true"></div>`;
     this.base = this.root.querySelector('.touch-base')!;
@@ -184,16 +198,16 @@ export class TouchControls {
 
     this.root.querySelectorAll<HTMLButtonElement>('.tb:not(.tb-power)').forEach((b) => {
       this.btns.push(b);
-      const own = b.dataset.k as BtnKey;
-      // (What this press sends: fixed at the press, see SENDS.)
-      let sent: BtnKey = own;
+      const own = b.dataset.k as DomKey;
+      // (What this press sends: fixed at the press, see SENDS. KEEPER is the pad's SKILL with the ball not ours.)
+      let sent: BtnKey = own === 'keeper' ? 'skill' : own;
       const up = () => {
         t[sent] = false;
         b.classList.remove('down');
       };
       b.addEventListener('pointerdown', (e) => {
         b.setPointerCapture(e.pointerId);
-        sent = SENDS[this.ctx][own] ?? own;
+        sent = own === 'keeper' ? 'skill' : SENDS[this.ctx][own] ?? own;
         t[sent] = true;
         b.classList.add('down');
         this.onPress?.(sent);
@@ -204,6 +218,25 @@ export class TouchControls {
       b.addEventListener('pointercancel', up);
       b.addEventListener('lostpointercapture', up);
       b.addEventListener('contextmenu', (e) => e.preventDefault());
+      // FAKE SHOT (sim/skills.ts fakeShot): the thumb slid off a held SHOOT onto PASS is PASS pressed with SHOOT still
+      // down, which the sim reads as the shot called off for a feint; both are then let go.
+      if (own === 'shoot') {
+        b.addEventListener('pointermove', (e) => {
+          if (sent !== 'shoot' || !t.shoot || this.fakeTimer || this.ctx !== 'attack') return;
+          const pass = this.btns.find((x) => x.dataset.k === 'pass');
+          const r = pass?.getBoundingClientRect();
+          if (!pass || !r || e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+          t.pass = true;
+          pass.classList.add('down');
+          this.onPress?.('pass');
+          this.fakeTimer = window.setTimeout(() => {
+            this.fakeTimer = 0;
+            t.pass = false;
+            pass.classList.remove('down');
+            up();
+          }, FAKE_SHOT_MS);
+        });
+      }
     });
 
     // Replays: a tap anywhere is a short PASS press, which the session reads as "skip".
@@ -251,6 +284,8 @@ export class TouchControls {
     window.clearTimeout(this.powerTimer);
     this.powerTimer = 0;
     this.powerHeld = false;
+    window.clearTimeout(this.fakeTimer);
+    this.fakeTimer = 0;
     this.btns.forEach((b) => b.classList.remove('down'));
     this.root.querySelector('.tb-power')?.classList.remove('down');
     this.releaseStick();
@@ -296,7 +331,15 @@ export class TouchControls {
    * The SKILL button (sim/skills.ts): shown while his man has the ball in open play ('on'), and lit up while a
    * defender's tell is open over him ('cue': tap now for a PERFECT); 'off' hides it (it never crowds the other buttons).
    */
-  setSkill(state: 'off' | 'on' | 'cue'): void {
+  setSkill(state: 'off' | 'on' | 'cue', flair = -1): void {
+    // FLAIR (sim/skills.ts): the pips he has to spend, on the button; with none left its label dims (a plain move).
+    const n = flair < 0 ? -1 : Math.floor(flair + 1e-6);
+    if (n !== this.skillPips) {
+      this.skillPips = n;
+      const sk = this.btns.find((x) => x.dataset.k === 'skill');
+      sk?.classList.toggle('empty', n === 0);
+      sk?.querySelectorAll('.tb-pips > i').forEach((el, i) => el.classList.toggle('full', i < n));
+    }
     if (state === this.skillState) return;
     this.skillState = state;
     this.root.classList.toggle('skill-on', state !== 'off');
@@ -304,6 +347,39 @@ export class TouchControls {
   }
 
   private skillState: 'off' | 'on' | 'cue' = 'off';
+
+  /**
+   * The KEEPER button: shown while the other side has the ball (or it is loose) near enough our goal for him to come
+   * for it (the session: sim/keeper.ts RUSH_RANGE), in the corner of the cluster SKILL has with the ball. Hidden, a
+   * hold on it is let go.
+   */
+  setKeeper(on: boolean): void {
+    if (on === this.keeperOn) return;
+    this.keeperOn = on;
+    this.root.classList.toggle('keeper-on', on);
+    if (!on) {
+      const b = this.btns.find((x) => x.dataset.k === 'keeper');
+      if (b?.classList.contains('down')) {
+        b.classList.remove('down');
+        this.input.touch.skill = false;
+      }
+    }
+  }
+
+  private keeperOn = false;
+
+  /**
+   * TACKLE lit: their carrier's ball is in his man's reach, so a tap now goes in at once (the session: sim/dribble.ts
+   * STAND_REACH). The button says when it will work, whoever the two players are.
+   */
+  setTackleReady(on: boolean): void {
+    if (on === this.tackleReady) return;
+    this.tackleReady = on;
+    this.root.classList.toggle('tackle-ready', on);
+  }
+
+  private tackleReady = false;
+  private skillPips = -1;
 
   /** The power-up in hand (blitz): the bolt button lights up; null greys it out. */
   setPowerHeld(kind: string | null): void {

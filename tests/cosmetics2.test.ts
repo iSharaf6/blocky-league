@@ -12,7 +12,8 @@ import {
 import { captainOf, decorOf, styleMatch } from '../src/meta/style';
 import { Footballer, VU } from '../src/render/characters';
 import { FxKit } from '../src/render/fx/kit';
-import { DRAGON_BREATH, KICKOFF_SHOWS } from '../src/render/fx/stadiumFx';
+import { ALL_STADIUM_SHOWS, GOAL_SHOWS, KICKOFF_SHOWS, STAGE_SHOWS, WIN_SHOWS } from '../src/render/fx/stadiumFx';
+import { HALF_L, HALF_W } from '../src/sim/constants';
 import { bootStep } from '../src/render/fx/trails';
 import { KIT_DESIGNS, designKit, designOf, kitDesign, paintTorso, type StyledKit } from '../src/render/kitDesigns';
 import { HAIR_LOOKS, armbandCell, bootCell, gloveCell, headgearGeometry, isHeadgear, paintHair, shadesGeometry } from '../src/render/looks';
@@ -237,25 +238,72 @@ describe('stadium style', () => {
     expect(bits[0]).toHaveLength(3 * 3 + 2);
   });
 
-  it('the walkout shows and the dragon\'s breath run clean and leave nothing behind', () => {
+  const lens = (): THREE.PerspectiveCamera => {
     const camera = new THREE.PerspectiveCamera(30, 16 / 9, 0.1, 400);
     camera.position.set(0, 24, 60);
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
-    for (const def of [...Object.values(KICKOFF_SHOWS), DRAGON_BREATH]) {
+    return camera;
+  };
+
+  it('every stadium show runs clean and leaves nothing behind; the walkouts stop inside the fly-in', () => {
+    const camera = lens();
+    for (const def of ALL_STADIUM_SHOWS) {
       const kit = new FxKit();
       kit.play(def.run, def.dur, 0, 0, 0, 1, 0, def.k, [0xff0000, 0xffffff], 0);
-      let peak = 0;
-      for (let t = 0; t < def.dur + 6; t += 1 / 30) {
-        kit.update(1 / 30, camera);
-        peak = Math.max(peak, kit.live);
-      }
-      expect(peak).toBeGreaterThan(20);
+      for (let t = 0; t < def.dur + 6; t += 1 / 30) kit.update(1 / 30, camera);
       expect(kit.live).toBe(0);
       expect(kit.running).toBe(0);
       kit.dispose();
     }
+    for (const def of [...Object.values(KICKOFF_SHOWS), ...Object.values(GOAL_SHOWS), ...Object.values(WIN_SHOWS), ...Object.values(STAGE_SHOWS)]) {
+      const kit = new FxKit();
+      kit.play(def.run, def.dur, 0, 0, 0, 1, 0, def.k, [0xff0000, 0xffffff], 0);
+      let peak = 0;
+      for (let t = 0; t < def.dur; t += 1 / 30) {
+        kit.update(1 / 30, camera);
+        peak = Math.max(peak, kit.live);
+      }
+      expect(peak).toBeGreaterThan(20);
+      kit.dispose();
+    }
     expect(Object.keys(KICKOFF_SHOWS).sort()).toEqual(DECOR_IDS.filter((id) => DECOR_SLOT_OF[id] === 'kickoff').sort());
+    // Short: every walkout has stopped spawning before play can start (the 2.4 s fly-in).
+    for (const def of Object.values(KICKOFF_SHOWS)) expect(def.dur).toBeLessThanOrEqual(2.4);
+    // Every walkout has a goal show of its own.
+    for (const id of Object.keys(KICKOFF_SHOWS)) expect(GOAL_SHOWS[id], id).toBeDefined();
+  });
+
+  it('THE RULE: nothing a stadium show spawns is on the playing surface', () => {
+    // (Every particle a show adds is caught as it is spawned, the sparks a rocket bursts into included: none may start
+    // inside the touchlines and goal lines. The owner's playtest: pyro on the pitch among the players "reads as a glitch".)
+    const camera = lens();
+    const v = new THREE.Vector3();
+    const run = (def: { dur: number; run: Parameters<FxKit['play']>[0]; k: number }, x: number, fx: number, onPitch: (px: number, pz: number) => boolean, what: string) => {
+      const kit = new FxKit();
+      const add = kit.add.bind(kit);
+      let bad = 0;
+      let n = 0;
+      kit.add = (shape, u, y, w, ...rest) => {
+        kit.toWorld(u, y, w, v);
+        n++;
+        if (onPitch(v.x, v.z)) bad++;
+        return add(shape, u, y, w, ...rest);
+      };
+      kit.play(def.run, def.dur, x, 0, 0, fx, 0, def.k, [0xff0000, 0xffffff], 18);
+      for (let t = 0; t < def.dur + 4; t += 1 / 30) kit.update(1 / 30, camera);
+      expect(n, what).toBeGreaterThan(10);
+      expect(bad, what).toBe(0);
+      kit.dispose();
+    };
+    const inside = (px: number, pz: number) => Math.abs(px) < HALF_L && Math.abs(pz) < HALF_W;
+    for (const [id, def] of Object.entries(KICKOFF_SHOWS)) run(def, 0, 1, inside, `walkout ${id}`);
+    for (const [id, def] of Object.entries(WIN_SHOWS)) run(def, 0, 1, inside, `win ${id}`);
+    // A goal show plays at the goal line facing out of the goal: everything is on or behind that line.
+    for (const [id, def] of Object.entries(GOAL_SHOWS)) {
+      run(def, HALF_L, -1, (px) => px < HALF_L - 0.05, `goal ${id} (right)`);
+      run(def, -HALF_L, 1, (px) => px > -HALF_L + 0.05, `goal ${id} (left)`);
+    }
   });
 });
 

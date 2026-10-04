@@ -1,102 +1,110 @@
-# Supabase setup for Blocky League cloud saves
+# Supabase backend for Blocky League
 
-Everything the game needs from the backend is one table (`saves`) and Supabase Auth. Nothing here costs money on
-the **Free** plan (no card needed). Until you finish these steps the game runs exactly as before: no accounts,
-progress in `localStorage`. The feature switches on by itself when the two values in step 6 reach a build.
+Accounts, cloud saves, account deletion and friend codes. How the game uses them is docs/CLOUD.md.
 
-Owner-only steps: the code cannot (and must not) create projects, OAuth apps or secrets for you.
+**State (4 October 2026): the backend is live, the game is not using it yet.** The database and the four edge
+functions are applied to the owner's project (`kkumittamjteollyxszd`, Singapore, Free plan). In the repo the
+feature is **switched off**: `.env.production` has its three values commented out, so every build is fully local.
+Nothing here costs money on the Free plan.
 
-## 1. Create the project (free)
+Never put a `service_role` or secret key in the repo or the client. The edge functions read theirs from their own
+environment.
 
-1. https://supabase.com/dashboard → **New project**. Any name (e.g. `blocky-league`), a strong database password
-   (keep it; the game never uses it), the region closest to your players. Plan: **Free**.
-2. Wait for it to provision (about a minute). Note the **Project ref** in the URL: `https://supabase.com/dashboard/project/<ref>`.
+## What is in the project
 
-Free-plan facts worth knowing: 50 000 monthly active users, 500 MB database, and **a project that gets no
-requests for 7 days is paused** (one click in the dashboard restores it; while paused the game just shows
-"Cloud sync failed, will keep trying" and plays on locally). Two free projects per account.
+| | |
+|---|---|
+| `saves` | One row per account: the save JSON, `version`, `client_updated_at`, `updated_at`, `rev`. A trigger (`saves_guard`) refuses a write from a stale `rev`, a save that is not an object, and absurd `coins` / `gems`. Max 256 KB. |
+| `profiles` | Display name ("Player"), the club's name, the 7-character friend code. Made on first use by `my_profile()`. |
+| `gc_links` | Game Center `teamPlayerID` to account. |
+| `device_links` | SHA-256 of a device's secret to account. |
+| `referrals` | A friend code used: referrer, referee, coins, when each side collected. |
+| `rate_limits` | Request counts per hashed address, for the edge functions. |
 
-## 2. Create the table
+Row level security is on for every table, with policies on `(select auth.uid())`: a player reads and writes only
+their own `saves` and `profiles` rows, reads their own `gc_links` and `referrals`, and has no access to
+`device_links` or `rate_limits` (the edge functions write those with the service role). The `anon` role has no
+access to anything. Security advisor: no findings. Performance advisor: two "unused index" notes on new
+foreign-key indexes, which is expected until there is traffic.
 
-Dashboard → **SQL Editor** → **New query** → paste the whole of [`migrations/0001_saves.sql`](migrations/0001_saves.sql) → **Run**.
+| Edge function | JWT check | What it does |
+|---|---|---|
+| `gc-login` | off (Apple's signature is the credential) | Verifies the Game Center identity, finds or makes the account, returns a session. |
+| `device-login` | off (the device's secret is the credential) | Finds or makes the device's account, returns a session. |
+| `delete-account` | on | Deletes the caller's rows and the account. |
+| `referral` | on | `claim` a friend code, `collect` the coins owed. |
 
-It creates `public.saves` with row level security so every user can only read / write their own row, and it is
-safe to run again. (CLI alternative: `npx supabase link --project-ref <ref>` then `npx supabase db push`.)
+The two with the check off still require the project's publishable key in `apikey` and are rate limited per
+address.
 
-Check: **Table Editor** shows `saves` with the columns `user_id, data, version, client_updated_at, updated_at`.
+## Rebuilding it from the repo
 
-## 3. Auth settings
+Run `migrations/0001_saves.sql` then `migrations/0002_accounts.sql` in the SQL editor (both are safe to re-run),
+or `npx supabase link --project-ref <ref>` and `npx supabase db push`. Deploy the functions with
+`npx supabase functions deploy gc-login device-login delete-account referral` (`config.toml` sets the JWT checks).
 
-Dashboard → **Authentication** → **Sign In / Providers** (older dashboards: **Providers** and **Settings**):
+## Switching it on (the checklist for resuming)
 
-- **Email**: leave enabled. The game only sends magic links (no passwords). The built-in email sender is limited to a
-  handful of messages per hour and is meant for testing; for real players add your own SMTP under
-  **Authentication → Emails → SMTP settings** (free options exist, e.g. Resend / Brevo free tiers) before you rely on it.
-- **Anonymous sign-ins**: switch **Allow anonymous sign-ins** ON. This is the CONTINUE AS GUEST button.
-- **Manual linking**: switch **Allow manual linking** ON. This lets a guest add Google / GitHub later
-  (the "ADD GOOGLE / ADD GITHUB" buttons call `linkIdentity`). Without it those buttons fail with a toast.
+Code:
 
-## 4. Google and GitHub sign-in
+1. `.env.production`: uncomment `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and `VITE_ONLINE_ACCOUNTS=on`. (The
+   third is the switch for the silent sign-in and the online rule. If the repository's GitHub Actions secrets set
+   the first two, the web build has a backend but, without the third, only the optional ACCOUNT panel as before.)
+2. `package.json`: `"ios": "npm run build:ios && npx cap sync ios"`. `capacitor.config.ts`: `webDir: 'dist-ios'`.
+3. `git apply supabase/pending/docs-when-switched-on.patch`: the privacy page and the App Store answers, store
+   copy and reviewer notes for accounts and the online rule. (It was written against 4 October's files: if it no
+   longer applies, make the same edits by hand.) Then delete the `pending` folder.
+4. Build and check: `npm run build:ios` and `npm run build:web` report the backend host; `npm run build:crazygames`
+   and `npm run build:poki` must not (the release script fails them if they do).
+5. On an iPhone signed in to Game Center: first launch signs in silently, a second device with the same Game
+   Center player loads the same club, airplane mode shows CONNECT TO PLAY after three minutes, ACCOUNT > DELETE
+   ACCOUNT works. This is the one path that could not be run without a device (docs/CLOUD.md, Status).
 
-Both providers need an OAuth app that you own; Supabase shows the callback URL to paste into each. It is always
+Dashboard (the owner):
+
+1. **Authentication > Sign In / Providers > Email:** leave it enabled. The login functions redeem a one-time
+   token through it; no email is ever sent and players never see an address.
+2. **Authentication > Rate Limits > Token verifications:** every sign-in from the login functions counts against
+   this, from the functions' own addresses. Raise it (to a few thousand an hour) before a launch so a busy day does
+   not turn players away. Sessions last, so a player signs in about once per install.
+3. **Keep the project awake:** a Free project with no requests for 7 days is paused, and while it is paused nobody
+   new can sign in (so nobody new can play ROAD TO GLORY). Any player activity prevents it; restore is one click.
+4. The legacy `anon` / `service_role` keys stop working at the end of 2026. The game ships the publishable key and
+   the functions prefer the project's secret key, so nothing needs changing.
+5. App Store Connect: nothing new. The Game Center capability is already in the app; the privacy answers are in
+   docs/APP_STORE.md once step 3 above is applied.
+
+Optional, for the web game only (the ACCOUNT panel's GOOGLE / GITHUB / EMAIL LINK buttons, which let a player open
+the account on another device): enable **Manual linking**, and set up the providers as below. Without them those
+buttons show a toast and everything else works.
+
+## Google and GitHub sign-in (web, optional)
+
+Both need an OAuth app that you own; Supabase shows the callback URL to paste into each. It is always
 `https://<ref>.supabase.co/auth/v1/callback`.
 
 **Google** (https://console.cloud.google.com, free):
-1. Create a project (or reuse one) → **APIs & Services → OAuth consent screen**: External, app name "Blocky League",
-   your support email, developer contact. Scopes: none beyond the defaults (email / profile / openid). Publish it
-   (or leave in Testing and add yourself as a test user while you try it).
-2. **Credentials → Create credentials → OAuth client ID** → type **Web application**.
+1. Create a project (or reuse one) > **APIs & Services > OAuth consent screen**: External, app name "Blocky League",
+   your support email, developer contact. Scopes: none beyond the defaults. Publish it.
+2. **Credentials > Create credentials > OAuth client ID** > **Web application**.
    - Authorised JavaScript origins: `https://isharaf6.github.io` and `http://localhost:5173`
    - Authorised redirect URIs: `https://<ref>.supabase.co/auth/v1/callback`
-3. Copy the **Client ID** and **Client secret** into Supabase → **Authentication → Sign In / Providers → Google**,
-   enable it, save.
+3. Copy the **Client ID** and **Client secret** into Supabase > **Authentication > Sign In / Providers > Google**.
 
 **GitHub** (https://github.com/settings/developers, free):
-1. **OAuth Apps → New OAuth App**: name "Blocky League", Homepage `https://isharaf6.github.io/blocky-league/`,
-   Authorization callback URL `https://<ref>.supabase.co/auth/v1/callback`. Register.
-2. **Generate a new client secret**. Copy the **Client ID** and the secret into Supabase → **Sign In / Providers →
-   GitHub**, enable it, save.
+1. **OAuth Apps > New OAuth App**: name "Blocky League", Homepage `https://isharaf6.github.io/blocky-league/`,
+   Authorization callback URL `https://<ref>.supabase.co/auth/v1/callback`.
+2. **Generate a new client secret**. Copy the **Client ID** and the secret into Supabase > **Sign In / Providers >
+   GitHub**.
 
-## 5. Redirect URLs (where the browser may land after signing in)
+**Redirect URLs** (Authentication > URL Configuration): Site URL `https://isharaf6.github.io/blocky-league/`;
+Redirect URLs: that, `http://localhost:5173/` and `http://localhost:5173/**`.
 
-Dashboard → **Authentication → URL Configuration**:
+**Email links:** the built-in sender is limited to a few messages an hour; add your own SMTP under
+**Authentication > Emails > SMTP settings** before relying on it.
 
-- **Site URL**: `https://isharaf6.github.io/blocky-league/`
-- **Redirect URLs** (add each): `https://isharaf6.github.io/blocky-league/`, `http://localhost:5173/`,
-  and `http://localhost:5173/**`. If you play the dev server from a phone on your Wi-Fi (`npm run dev` binds
-  to the LAN), add that address too, e.g. `http://192.168.1.*:5173/**`.
+## Deleting data
 
-The game sends the current page URL (origin + path, no query) as `redirectTo`; anything not on this list is refused
-by Supabase and the sign-in silently lands on the Site URL.
-
-## 6. Put the two values where the builds read them
-
-Dashboard → **Project Settings → API** (or **API Keys**):
-
-- **Project URL** → `VITE_SUPABASE_URL` (looks like `https://<ref>.supabase.co`)
-- **anon / public key** → `VITE_SUPABASE_ANON_KEY`. Newer projects show a *publishable* key (`sb_publishable_...`)
-  next to the legacy anon JWT; either works. Never use the `service_role` / secret key: it bypasses row level security.
-
-The anon key is designed to ship in the browser; the row level security from step 2 is what protects the data.
-
-**GitHub Pages (the public playtest):** repo → **Settings → Secrets and variables → Actions → New repository secret**,
-twice: `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. The next push to `main` bakes them into the web build
-(`.github/workflows/pages.yml` passes them to `npm run build:web`). Portal / itch zips never get them.
-
-**Local dev:** `cp .env.example .env.local`, fill in both values, `npm run dev`. `.env.local` is git-ignored.
-
-## 7. Check it works
-
-1. Open the game, press **ACCOUNT** → **CONTINUE AS GUEST**. The toast says the progress is backed up; the
-   **Table Editor → saves** shows one row.
-2. Play a match, wait ~5 s, refresh the table: `client_updated_at` moved.
-3. **SIGN OUT**, then **GOOGLE**: after the round trip the panel names you. From another browser, sign in with the
-   same Google account: the game loads the cloud save (or asks which to keep if that browser had its own progress).
-4. Any failure shows as a small toast at the top; the browser console (`[cloud] ...`) has the detail.
-
-## Turning it off, deleting data
-
-- Off for everyone: delete the two repository secrets (and `.env.local`), push. The next build has no backend
-  and the ACCOUNT panel says so. Existing rows stay in the project until you delete them.
-- Delete a player's data: **Authentication → Users** → delete the user (the `saves` row goes with it, `on delete cascade`).
-- Delete everything: delete the project.
+- A player: ACCOUNT > DELETE ACCOUNT in the game, or **Authentication > Users** > delete the user (every row goes
+  with it, `on delete cascade`).
+- Everything: delete the project.

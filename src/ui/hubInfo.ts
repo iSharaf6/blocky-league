@@ -53,6 +53,8 @@ export type RoadCard =
     comp?: string;
     /** THIS SEASON: the board's objectives as chips (meta/board.ts). */
     board?: BoardPip[];
+    /** Things waiting for you inside: event cards to answer and scout reports not read (meta/events.ts, meta/staff.ts). */
+    waiting?: number;
   }
   /** The season is over (the summary waits in ROAD TO GLORY). */
   | { kind: 'over'; club: ClubBadge; division: string; season: number };
@@ -151,6 +153,9 @@ export function roadCard(career: CareerState | null): RoadCard {
   };
   if (nm.competition === 'continental' || nm.competition === 'world') card.comp = COMP_NAMES[nm.competition];
   if (board.length) card.board = board;
+  // What is waiting inside: a card to answer, a scout's report (the count on the hero card).
+  const waiting = (career.events?.queue.length ?? 0) + (career.staff?.reports.filter((x) => !x.seen && x.finds.length > 0).length ?? 0);
+  if (waiting > 0) card.waiting = waiting;
   return card;
 }
 

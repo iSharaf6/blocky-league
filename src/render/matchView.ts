@@ -71,6 +71,8 @@ const PIP_UP = 0.36;
 const CARD_SCALE = 0.35;
 /** Pass charging: the pass colour (teal, whitening towards full power) for the bar, recipient ring and arrow. */
 const PASS_TEAL = 0x2fe6d2;
+/** The landing ring's inner colour while his man is locked onto the ball in the air (the HUD's gold). */
+const LANDING_LOCKED = 0xffd23e;
 const PASS_LIGHT = 0x9ff7ee;
 const PASS_WHITE = 0xfbfbf4;
 /** The pass arrow: starts this far (m) out from the passer, stops this far short of the recipient, at most this long. */
@@ -284,6 +286,11 @@ export class MatchView {
   private refState_ = { x: 0, z: 0, faceX: 0, faceZ: 0, booking: false };
   /** Interpolated frame the renderer last drew (read by camera, HUD). */
   readonly frame: Float32Array;
+  /**
+   * A staged shot's hand on the frame about to be drawn (after the pins and the celebration rig, before anyone is
+   * posed): the session sets it for the line-up, a substitution and the man of the match, and clears it after.
+   */
+  frameHook: ((f: Float32Array, dt: number) => void) | null = null;
   private readonly humanSide_: number;
   /** The human side's headgear look on the man he controls, and who wears it now (-1: nobody). */
   private roamHead: THREE.Mesh | null = null;
@@ -612,6 +619,9 @@ export class MatchView {
 
     // The choreographed celebration takes over the scoring side's positions and poses (nothing in a replay).
     this.celeb.apply(f, dt, this.camPos.x, this.camPos.z);
+    // A staged shot (the line-up, a substitution, the man of the match: game/showcase.ts) places and poses its cast
+    // in the DRAWN frame only: the sim, its frames and the replays never see it.
+    this.frameHook?.(f, dt);
 
     const pose = this.pose;
     this.charK = screenCharK();
@@ -1504,7 +1514,7 @@ export class MatchView {
    * Where an airborne ball will come down (the human side's lobs, crosses and clearances): a ring on the spot,
    * so the receiver can see where to be. Off when `on` is false. `pulse` is a clock for the gentle throb.
    */
-  setLanding(on: boolean, x = 0, z = 0, pulse = 0): void {
+  setLanding(on: boolean, x = 0, z = 0, pulse = 0, locked = false): void {
     if (!on) {
       if (this.landingRing) this.landingRing.visible = false;
       return;
@@ -1523,9 +1533,20 @@ export class MatchView {
     }
     this.landingRing.visible = true;
     this.landingRing.position.set(x, 0.03, z);
-    const k = 1 + 0.1 * Math.sin(pulse * 9);
+    // (`locked`: his man is locked onto this ball in the air, the sim's aerial lock: the spot he meets it at, its inner
+    // ring gold, bigger and beating faster.)
+    const k = locked ? 1.25 + 0.16 * Math.sin(pulse * 16) : 1 + 0.1 * Math.sin(pulse * 9);
     this.landingRing.scale.set(k, 1, k);
+    const fill = this.landingRing.children[1] as THREE.Mesh | undefined;
+    const fm = fill?.material as THREE.MeshBasicMaterial | undefined;
+    if (fm && this.landingLocked !== locked) {
+      this.landingLocked = locked;
+      fm.color.setHex(locked ? LANDING_LOCKED : PASS_TEAL);
+      fm.opacity = locked ? 0.95 : 0.7;
+    }
   }
+
+  private landingLocked = false;
 
   private makePreviewRing(): THREE.Group {
     const mat = (color: number) =>

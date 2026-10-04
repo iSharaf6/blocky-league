@@ -187,7 +187,7 @@ const DECOR: { readonly [k in DecorId]: Look } = {
   mowchecks: { name: 'Mown Checks', price: 300, blurb: 'The lawn mown in a big chessboard.' },
   mowdiag: { name: 'Diagonal Stripes', price: 450, blurb: 'Sharp diagonal mowing stripes.' },
   mowcircle: { name: 'Mown Circles', price: 800, blurb: 'Rings mown out from the centre spot.' },
-  mowcrest: { name: 'Centre Crest', price: 1500, blurb: 'Your crest mown into the centre circle.' },
+  mowcrest: { name: 'Centre Crest', price: 1500, blurb: 'Your own crest mown into the centre circle.' },
   netclub: { name: 'Club Nets', price: 300, blurb: 'Goal nets striped in your club colours.' },
   nethex: { name: 'Hex Nets', price: 600, blurb: 'Honeycomb nets like the big stadiums.' },
   netrainbow: { name: 'Rainbow Nets', price: 900, blurb: 'Every goal hits a rainbow.' },
@@ -196,16 +196,16 @@ const DECOR: { readonly [k in DecorId]: Look } = {
   flagcheck: { name: 'Chequered Flags', price: 400, blurb: 'Racing chequered corner flags.' },
   flagfire: { name: 'Flame Flags', price: 700, blurb: 'Corner flags that flicker like fire.' },
   seatname: { name: 'Name In The Seats', price: 1200, blurb: 'Your club\'s name spelt out in the seats.' },
-  tifoflags: { name: 'Flag Wave', price: 600, blurb: 'Your fans wave flags in your colours.' },
-  tifobig: { name: 'Giant Tifo', price: 1800, blurb: 'A giant crest banner rolls over the home end.' },
-  kickconfetti: { name: 'Confetti Walkout', price: 600, blurb: 'Confetti cannons fire as you kick off.' },
-  kickfire: { name: 'Fireworks Walkout', price: 2000, blurb: 'Fireworks over the stands at kick off.' },
-  kickpyro: { name: 'Pyro Show', price: 4500, blurb: 'Flame jets down the touchline, then fireworks.' },
-  lightclub: { name: 'Club Floodlights', price: 700, blurb: 'Your floodlights shine in club colours.' },
-  lightshow: { name: 'Light Show', price: 2500, blurb: 'Colour cycling lights and beams after your goals.' },
-  mascotbear: { name: 'Bear Mascot', price: 1500, blurb: 'A big bear on the touchline dances after goals.' },
-  mascotrobot: { name: 'Robo Mascot', price: 2500, blurb: 'A robot mascot that does the robot when you score.' },
-  mascotdragon: { name: 'Dragon Mascot', price: 5000, blurb: 'A dragon mascot that breathes confetti fire.' },
+  tifoflags: { name: 'Flag Wave', price: 600, blurb: 'Fans wave your colours and a giant flag surfs over the home end.' },
+  tifobig: { name: 'Giant Tifo', price: 1800, blurb: 'A giant banner of your crest, and a card mosaic in the top tier.' },
+  kickconfetti: { name: 'Confetti Cannons', price: 600, blurb: 'Confetti cannons at kick off and behind the goal when you score.' },
+  kickfire: { name: 'Fireworks Show', price: 2000, blurb: 'Fireworks off the roof at kick off, on your goals and when you win.' },
+  kickpyro: { name: 'Pyro Show', price: 4500, blurb: 'Flame jets behind the boards, and a ring of fire round the goal when you score.' },
+  lightclub: { name: 'Club Floodlights', price: 700, blurb: 'An LED strip round the pitch and searchlights in your colours.' },
+  lightshow: { name: 'Light Show', price: 2500, blurb: 'Spotlights sweep the stands in every colour, and GOAL on the big screen.' },
+  mascotbear: { name: 'Bear Mascot', price: 1500, blurb: 'A big bear by your dugout who drums for the crowd.' },
+  mascotrobot: { name: 'Robo Mascot', price: 2500, blurb: 'A robot by your dugout that does the robot when you score.' },
+  mascotdragon: { name: 'Dragon Mascot', price: 5000, blurb: 'A dragon by your dugout that breathes fire into the air.' },
 };
 
 /** Club Pass kits and looks by month (January first), on top of the month's goal explosion and trail. */
@@ -321,7 +321,7 @@ export const CAT_LABEL: { readonly [k in ShopCat]: string } = {
 /** What each slot is, in a word or two (the shop's slot chips and the detail line). */
 export const SLOT_LABEL: { readonly [k in LookSlot | DecorSlot]: string } = {
   hair: 'hair', head: 'headgear', arm: 'armband', boots: 'boots', gloves: 'keeper gloves', shades: 'shades',
-  pitch: 'pitch', net: 'nets', flags: 'corner flags', seats: 'seats', tifo: 'crowd', kickoff: 'kick off', lights: 'floodlights', mascot: 'mascot',
+  pitch: 'pitch', net: 'nets', flags: 'corner flags', seats: 'seats', tifo: 'crowd', kickoff: 'shows', lights: 'floodlights', mascot: 'mascot',
 };
 
 /** Who wears a player look in a match (the detail pane says so in a line). */
@@ -410,6 +410,20 @@ export function dailyDeal(save: Pick<SaveData, 'shop' | 'progress'>, day: string
   const item = shopItem(cat, id);
   if (!item || item.pass || item.price <= 0) return null;
   return { item, price: Math.round((item.price * (100 - DEAL_OFF)) / 100 / 10) * 10 };
+}
+
+/**
+ * A NEW DEAL TODAY (a rewarded ad once a day, or GEM_PRICES.dealRefresh: the caller counts it): today's deal moves
+ * to another look the save doesn't own. Fixed again for the rest of the day; null when nothing else is left to sell.
+ */
+export function rerollDeal(save: Pick<SaveData, 'shop' | 'progress'>, day: string): { item: ShopItem; price: number } | null {
+  const shop = shopOf(save);
+  const cur = dailyDeal(save, day);
+  const pool = ITEMS.filter((it) => it.price > 0 && !it.pass && !owns(save, it.cat, it.id) && !(cur && it.cat === cur.item.cat && it.id === cur.item.id));
+  if (!pool.length) return null;
+  const pick = pool[hashString(`deal|${day}|again|${shop.deal?.key ?? ''}`) % pool.length];
+  shop.deal = { day, key: itemKey(pick.cat, pick.id) };
+  return dailyDeal(save, day);
 }
 
 /** What `it` costs on `day` (today's deal price for the deal look, else its price). */

@@ -960,6 +960,8 @@ body {
 .ht-tb.shoot { --c: var(--red); --cd: var(--red-d); right: 72px; bottom: 2px; width: 58px; height: 58px; }
 .ht-tb.through { --c: var(--blue); --cd: var(--blue-d); right: 0; bottom: 72px; width: 62px; height: 62px; font-size: 14px; letter-spacing: -0.3px; }
 .ht-tb.sprint { --c: var(--ink-2); --cd: var(--ink); right: 74px; bottom: 70px; width: 54px; height: 54px; }
+.ht-tb.keeper { --c: #f08a24; --cd: #a85a0c; right: 74px; bottom: 70px; width: 54px; height: 54px; font-size: 12px; }
+.ht-dot.keeper { --c: #f08a24; --cd: #a85a0c; }
 
 .ht-note {
   margin: 0;
@@ -1928,7 +1930,28 @@ kbd {
 .tb-pass { --c: var(--go); --cd: var(--go-d); right: 0; bottom: 0; width: 98px; height: 98px; font-size: 19px; }
 .tb-shoot { --c: var(--red); --cd: var(--red-d); right: 108px; bottom: 4px; }
 .tb-through { --c: var(--blue); --cd: var(--blue-d); right: 4px; bottom: 106px; width: 90px; height: 90px; }
-.tb-sprint { --c: var(--ink-2); --cd: var(--ink); right: 106px; bottom: 104px; width: 72px; height: 72px; font-size: 16px; }
+/* There is no SPRINT button (the stick sprints). Its corner of the cluster, up and left of PASS, is SKILL's with the
+   ball (below) and KEEPER's while defending near our own goal (TouchControls.setKeeper: hold to bring him out). */
+.tb-keeper {
+  --c: #f08a24;
+  --cd: #a85a0c;
+  right: 106px;
+  bottom: 104px;
+  width: 72px;
+  height: 72px;
+  font-size: 15px;
+  visibility: hidden;
+  opacity: 0;
+}
+.touch.keeper-on .tb-keeper { visibility: visible; opacity: 0.65; }
+.touch.keeper-on .tb-keeper.down { opacity: 1; }
+/* TACKLE lit while their carrier is in reach (TouchControls.setTackleReady): solid, with the white and ink rings the
+   SKILL cue wears. A tap now goes in at once. */
+.touch.tackle-ready[data-ctx='defend'] .tb-shoot {
+  opacity: 1;
+  background: var(--c);
+  box-shadow: 0 5px 0 var(--cd), 0 8px 0 rgba(0, 0, 0, 0.16), 0 0 0 3px #fff, 0 0 0 5px var(--ink);
+}
 
 /* Defending (ui/touch.ts SENDS): the big button is PRESS (blue, under the thumb) and the top one SWITCH (yellow, dark
    label for contrast). */
@@ -2011,7 +2034,7 @@ kbd {
   .tb-shoot { right: 94px; bottom: 4px; }
   /* THROUGH is the longest label: a slightly bigger button so it clears the rim. */
   .tb-through { right: 2px; bottom: 94px; width: 80px; height: 80px; }
-  .tb-sprint { right: 90px; bottom: 92px; width: 66px; height: 66px; font-size: 16px; }
+  .tb-keeper { right: 90px; bottom: 92px; width: 66px; height: 66px; font-size: 14px; }
   .touch-btns { width: 170px; height: 180px; }
 }
 
@@ -5933,16 +5956,16 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 
 /* ---------------------------------------------------------------- SKILL moves (sim/skills.ts, ui/skillHud.ts) */
 
-/* Touch: the SKILL button, over SPRINT at the top left of the cluster, a clear gap from SPRINT below it and from the
-   blitz bolt beside it (with room for its lit ring and pulse). Shown only with the ball at his feet in open play
-   (TouchControls.setSkill), lit and pulsing while a tell is open. */
+/* Touch: the SKILL button, in the top left corner of the cluster (up from SHOOT, left of THROUGH: where SPRINT was), a
+   clear gap from the blitz bolt above it (with room for its lit ring and pulse). Shown only with the ball at his feet
+   in open play (TouchControls.setSkill), lit and pulsing while a tell is open. */
 .tb-skill {
   --c: #f0479b;
   --cd: #a8215f;
-  right: 120px;
-  bottom: 198px;
-  width: 64px;
-  height: 64px;
+  right: 106px;
+  bottom: 104px;
+  width: 72px;
+  height: 72px;
   font-size: 16px;
   visibility: hidden;
   opacity: 0;
@@ -5962,17 +5985,12 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   to { transform: scale(1.08); background: var(--yellow); color: var(--ink); text-shadow: none; }
 }
 @media (max-width: 720px), (max-height: 480px) {
-  .tb-skill { right: 100px; bottom: 182px; width: 54px; height: 54px; font-size: 14px; }
-}
-/* A landscape phone has no height to spare over SPRINT (the quick-sub card hangs down from the top right): SKILL sits
-   in the cluster instead, left of SPRINT and up from SHOOT (still well clear of the thumbstick's half). */
-@media (max-height: 480px) and (orientation: landscape) {
-  .tb-skill { right: 174px; bottom: 82px; }
+  .tb-skill { right: 90px; bottom: 92px; width: 66px; height: 66px; font-size: 15px; }
 }
 
 /* HOW TO PLAY: the SKILL button's dot, and the button in the drawn cluster (beside SPRINT there). */
 .ht-dot.skill { --c: #f0479b; --cd: #a8215f; }
-.ht-tb.skill { --c: #f0479b; --cd: #a8215f; right: 134px; bottom: 76px; width: 44px; height: 44px; font-size: 11px; }
+.ht-tb.skill { --c: #f0479b; --cd: #a8215f; right: 74px; bottom: 70px; width: 54px; height: 54px; font-size: 13px; }
 
 /* The tell over a defender winding up a challenge: a chunky "!" block, the window draining under it, and while the
    player is still learning it the button to press. */

@@ -674,6 +674,11 @@ export class Hud {
     if (!text) this.hideLine();
   }
 
+  /** Settings > COMMENTARY as it stands (the chant caption follows it: game/matchSession.ts). */
+  get commentaryOn(): boolean {
+    return this.cmTextOn;
+  }
+
   /** Colour-blind aid (Settings > COLOUR-BLIND): shape cues on the minimap as well as the kit colours. */
   setColorblind(on: boolean): void {
     this.colorblind = on;

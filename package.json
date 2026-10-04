@@ -14,6 +14,7 @@
     "build:crazygames": "tsc --noEmit && node scripts/release.mjs crazygames",
     "build:poki": "tsc --noEmit && node scripts/release.mjs poki",
     "build:itch": "tsc --noEmit && node scripts/release.mjs itch",
+    "build:ios": "tsc --noEmit && node scripts/release.mjs ios",
     "build:all": "tsc --noEmit && node scripts/release.mjs web crazygames poki itch",
     "submission": "node scripts/submission.mjs",
     "ios": "npm run build:itch && npx cap sync ios"

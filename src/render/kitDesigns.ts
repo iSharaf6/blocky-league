@@ -1,3 +1,4 @@
+import { myCrestForKit } from '../core/crest';
 import { grassLike } from '../meta/data';
 import type { Kit, KitPattern } from '../sim/types';
 import type { VoxelGrid } from './voxel';
@@ -279,9 +280,16 @@ const D: KitDesign[] = [
 /** Every premium kit design by id (the club's own kit, 'club', is not a design: it is drawn as ever). */
 export const KIT_DESIGNS: { readonly [id: string]: KitDesign } = Object.fromEntries(D.map((d) => [d.id, d]));
 
+/** The chest crest's outline by the designed crest's shape (core/crest.ts): a shield, a round badge or a diamond. */
+const CHEST_SHIELD = ['.GGGGGG.', '.G2S22G.', '.G2222G.', '..G22G..', '...GG...'];
+const CHEST_ROUND = ['..GGGG..', '.G2S22G.', '.G2222G.', '.G2222G.', '..GGGG..'];
+const CHEST_DIAMOND = ['...GG...', '..G2SG..', '.G2222G.', '..G22G..', '...GG...'];
+
 /**
- * Big Crest: not a fixed palette but your club's own colours, with a giant crest across the chest (a shield in the
- * second colour, a gold rim and a star). Made per club and cached.
+ * Big Crest: not a fixed palette but your club's own colours, with a giant crest across the chest: a gold rim, the
+ * field in the second colour and the emblem's colour as its mark. When the club has a crest of its own design
+ * (core/crest.ts), the chest wears that one: its outline (shield, round or diamond), its field and its emblem colour.
+ * Made per club and cached.
  */
 const crestCache = new Map<string, KitDesign>();
 function crestDesign(club: Kit): KitDesign {
@@ -290,14 +298,21 @@ function crestDesign(club: Kit): KitDesign {
   const greenMain = grassLike(club.shirt);
   const main = greenMain ? (grassLike(club.shirt2) || club.shirt2 === club.shirt ? WHITE : club.shirt2) : club.shirt;
   const base = { ...club, shirt: main, shorts: grassLike(club.shorts) ? main : club.shorts, socks: grassLike(club.socks) ? main : club.socks };
-  const key = `${base.shirt}-${club.shirt}-${club.shirt2}-${base.shorts}-${base.socks}`;
+  const mine = myCrestForKit(club)?.design;
+  const key = `${base.shirt}-${club.shirt}-${club.shirt2}-${base.shorts}-${base.socks}-${mine ? `${mine.shape}-${mine.c1}-${mine.c2}-${mine.c3}` : ''}`;
   let d = crestCache.get(key);
   if (!d) {
     const other = greenMain ? club.shirt : club.shirt2;
     const two = other === main ? (main === WHITE ? 0x26262e : WHITE) : other;
+    // The designed crest's field: its first colour unless that is the shirt's own (then its second), and its mark.
+    const field = mine ? (mine.c1 !== base.shirt ? mine.c1 : mine.c2 !== base.shirt ? mine.c2 : two) : two;
+    const mark: Cell = mine && mine.c3 !== field ? mine.c3 : [WHITE, FX.metal];
+    const chest = !mine ? CHEST_SHIELD
+      : mine.shape === 'roundel' || mine.shape === 'oval' || mine.shape === 'cog' || mine.shape === 'hex' ? CHEST_ROUND
+        : mine.shape === 'diamond' || mine.shape === 'pennant' ? CHEST_DIAMOND : CHEST_SHIELD;
     d = {
       id: 'crest', shirt: base.shirt, shirt2: two, shorts: base.shorts, socks: base.socks, pattern: 'plain', ink: two,
-      body: art(['.GGGGGG.', '.G2S22G.', '.G2222G.', '..G22G..', '...GG...'], { '.': base.shirt, G: [GOLD, FX.metal], '2': two, S: [WHITE, FX.metal] }, [
+      body: art(chest, { '.': base.shirt, G: [GOLD, FX.metal], '2': field, S: mark }, [
         '........', '........', '........', '........', '........',
       ]),
       collar: { style: 'polo', c: two }, cuff: two, stripe: two, sock: [base.socks, two],

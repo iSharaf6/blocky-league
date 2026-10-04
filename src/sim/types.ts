@@ -150,6 +150,12 @@ export type MatchEvent =
   | { type: 'tackle'; by: number; won: boolean; slide: boolean }
   /** A TACKLE press committed to a lunge or slide (fires on the attempt, before any contact; render/HUD react). */
   | { type: 'tackleTry'; by: number; slide: boolean }
+  /**
+   * How a human's TACKLE press (or his PRESS steal) came off, for the HUD's word over his man (sim/dribble.ts): `won`
+   * (he has it, or poked it away), `far` (out of reach when pressed, or his closing run never got there), `mistimed`
+   * (in reach, the carrier rode it), `behind` (through the back of him).
+   */
+  | { type: 'tackleCue'; by: number; cue: TackleCue }
   | { type: 'bounce'; speed: number }
   | { type: 'net'; x: number; y: number; z: number; speed: number }
   | { type: 'ooh' }
@@ -210,11 +216,29 @@ export type MatchEvent =
   | { type: 'hypeFull'; side: Side }
   | { type: 'superShot'; side: Side; player: number }
   /** The clock has reached 45:00 / 90:00: the fourth official's board, `minutes` of added time (sim/match.ts STOP_BASE_S). */
-  | { type: 'addedTime'; minutes: number };
+  | { type: 'addedTime'; minutes: number }
+  /**
+   * The AI coach (sim/coach.ts, MatchConfig.coach): `side` has changed how it plays. `plan` is the game plan now (and
+   * `formation` the shape it is in, `shape` true when that changed with it); `cover`, when set, is what it has moved
+   * to stop instead (the human keeps scoring that way) and the plan is as it was.
+   */
+  | { type: 'tactics'; side: Side; plan: CoachPlan; formation: FormationId; shape: boolean; cover: CoachCover | null };
+
+/** The AI coach's game plans (sim/coach.ts): its own way, chasing the game, everyone forward, shutting up shop. */
+export type CoachPlan = 'base' | 'chase' | 'allout' | 'hold';
+/** What the AI coach moves to stop: his goals from that wing (world z: -1 / +1), balls in behind, shots from range. */
+export type CoachCover = 'wingL' | 'wingR' | 'behind' | 'range';
 
 export type KickKind = 'pass' | 'through' | 'lob' | 'shot' | 'clear' | 'header' | 'throw' | 'keeper';
-/** The SKILL button's moves (sim/skills.ts: the stick against his run picks one). */
-export type SkillMoveKind = 'roulette' | 'rainbow' | 'stepover' | 'dragback' | 'elastico' | 'croqueta' | 'nutmeg' | 'heelchop' | 'ballroll';
+/** A human's TACKLE press, as the HUD names it (the 'tackleCue' event). */
+export type TackleCue = 'won' | 'far' | 'mistimed' | 'behind';
+/**
+ * The SKILL button's moves (sim/skills.ts: the stick against his run picks one, and what is in front of him). `boost`
+ * is the BURST (the stick along his run with nobody in the way), `sombrero` the flick over a man sliding in, `fakeshot`
+ * SHOOT called off with PASS, `flickon` SKILL pressed as a pass arrives.
+ */
+export type SkillMoveKind = 'roulette' | 'rainbow' | 'stepover' | 'dragback' | 'elastico' | 'croqueta' | 'nutmeg' | 'heelchop' | 'ballroll' |
+  'boost' | 'sombrero' | 'fakeshot' | 'flickon';
 /**
  * How a SKILL move came off: a PERFECT (timed into a defender's tell), a GOOD (it wrong-footed a man near him), a
  * plain move (a man near, not fooled) or a show-off one (nobody near).

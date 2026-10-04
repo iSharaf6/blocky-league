@@ -322,6 +322,36 @@
 .panel.ht-panel.shell .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(5, auto); grid-auto-flow: column; column-gap: 14px; row-gap: 5px; }
 .panel.ht-panel.shell .stats .st-row:nth-child(n + 6) { border-left: 3px solid var(--cream-2); padding-left: 12px; }
 
+/* Half time's header: QUIT (FORFEIT) where BACK sits, CONTROLS and SETTINGS on the right; the question that QUIT asks
+   takes the body's place (one screen, nothing scrolls). */
+.panel.ht-panel.shell .hf-top .btn { min-height: 40px; padding: 8px 12px 6px; font-size: 13px; letter-spacing: 1px; white-space: nowrap; }
+.panel.ht-panel.shell .hf-tools { display: flex; gap: 8px; justify-content: flex-end; }
+.panel.ht-panel.shell .hf-top.asking .btn { visibility: hidden; }
+/* (The title in the middle of the screen, whatever the two sides weigh.) */
+.panel.ht-panel.shell > .hf-top { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+.panel.ht-panel.shell .hf-top > :first-child { justify-self: start; }
+.panel.ht-panel.shell .hf-top > :last-child { justify-self: end; }
+/* (SECOND HALF is the thing to do next: the biggest and brightest button on the screen.) */
+.panel.ht-panel.shell .hf-actions .btn-blue { min-height: 44px; padding: 9px 16px 7px; font-size: 14px; letter-spacing: 1px; }
+.panel.ht-panel.shell .hf-actions .btn-lg { min-width: 280px; min-height: 54px; font-size: 22px; letter-spacing: 2px; }
+.panel.ht-panel.shell .hf-ask { flex: 1 1 auto; min-height: 0; display: grid; align-content: center; justify-items: center; gap: 18px; }
+.panel.ht-panel.shell .hf-ask[hidden],
+.panel.ht-panel.shell .ht-body[hidden],
+.panel.ht-panel.shell .hf-actions[hidden] { display: none; }
+.panel.ht-panel.shell .hf-ask .fine.big { max-width: 30em; font-size: clamp(16px, 2.2vw, 20px); line-height: 1.3; }
+.panel.ht-panel.shell .hf-ask-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; }
+.panel.ht-panel.shell .hf-ask-row .btn { min-height: 44px; }
+.panel.ht-panel.shell .hf-ask-row .btn-lg { min-width: 220px; }
+/* A toast while half time is up (the half-time show's coins) goes under the header (docs/UX.md 7): never over
+   TACTICS & SUBS and SECOND HALF, where the menus' toast usually sits. */
+#ui:has(> .screen.ht) > .menu-toast { top: calc(max(6px, env(safe-area-inset-top)) + 50px); bottom: auto; }
+
+@media (max-width: 720px) {
+  .panel.ht-panel.shell .hf-top .btn { padding: 8px 9px 6px; font-size: 12px; letter-spacing: 0.5px; }
+  .panel.ht-panel.shell .hf-tools { gap: 6px; }
+  .panel.ht-panel.shell .hf-actions .btn-lg { min-width: 230px; font-size: 20px; }
+}
+
 /* Full time: the match on the left (the score, then man of the match and the stats in a list), what you earned on
    the right (the coins with 2x COINS beside them, the stars and the XP bar, then the extras), REMATCH and CONTINUE. */
 .panel.ft-panel.shell .ft-body { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; }

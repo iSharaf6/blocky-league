@@ -6,10 +6,11 @@ import { goalFxColors, trailColors } from '../render/cosmetics';
 import { Effects } from '../render/effects';
 import { goalShow } from '../render/fx/goals';
 import { FxKit, TrailState } from '../render/fx/kit';
-import { KICKOFF_SHOWS } from '../render/fx/stadiumFx';
+import { BEAR_DRUM, DRAGON_BREATH, ROBOT_SPARK, STAGE_SHOWS } from '../render/fx/stadiumFx';
 import { BOOT_STEP_M, bootStep, emitTrail, trailDef } from '../render/fx/trails';
 import { designKit, type LookSet, type StyledKit } from '../render/kitDesigns';
-import { CREST, Mascot, cornerFlagGeometry, mascotKind, mowColor, nameBitmap, netAlpha, netColor, sheet, tifoTexture } from '../render/stadiumStyle';
+import { Mascot, cornerFlagGeometry, crestLawnGeometry, flagTexture, mascotKind, mowColor, nameBitmap, netAlpha, netColor, sheet, tifoTexture } from '../render/stadiumStyle';
+import { crestFor, type CrestDesign } from '../core/crest';
 import { BoxBuilder, voxelMaterial } from '../render/voxel';
 import type { Kit, PlayerDef } from '../sim/types';
 
@@ -34,6 +35,8 @@ export type StageCat = 'celebration' | 'ball' | 'goalfx' | 'trail' | 'kit' | 'lo
 export interface StageClub {
   kit: Kit;
   short: string;
+  /** The club's name (its crest comes from it: core/crest.ts crestFor). */
+  name?: string;
   star: PlayerDef;
   mates: PlayerDef[];
   keeper: PlayerDef;
@@ -57,8 +60,6 @@ const PROFILE = Math.atan2(CAM.x, CAM.z);
 const STAGE_K = 0.34;
 /** The ground slides back under the sprinter at this speed (m/s): his trail streams away behind him. */
 const TREADMILL = 3.4;
-/** The walkout shows run at this scale over the big block (a whole pitch's show in a few metres). */
-const KICK_K = 0.08;
 /** The big block (line-ups and dioramas) and the small one, half sizes (m). */
 const BIG = 2.4;
 const SMALL = 1.6;
@@ -185,14 +186,22 @@ interface Props {
   free: { dispose(): void }[];
   flags: THREE.Object3D[];
   beams: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; x: number; y: number; z: number; ph: number }[];
+  /** The LED strip's three phases (a chase) and the lamps' lit heads. */
+  leds: THREE.MeshBasicMaterial[];
   mascot: Mascot | null;
+  /** Which loop of the mascot's act has started (it rests, then celebrates, again and again). */
+  danceN: number;
   tifo: THREE.Mesh | null;
+  /** The giant flag surfing over the stand: the cloth and how far each way it goes. */
+  surfer: { mesh: THREE.Mesh; reach: number } | null;
   net: THREE.Mesh | null;
 }
 
 const WHITE = 0xfbfbf4;
 
 export class ShopStage {
+  /** Scratch colour for the props' lights (nothing allocated per frame). */
+  private readonly propColor = new THREE.Color();
   private renderer: THREE.WebGLRenderer | null = null;
   private camera = new THREE.PerspectiveCamera(30, 1, 0.1, 80);
   private scene = new THREE.Scene();
@@ -534,7 +543,7 @@ export class ShopStage {
         case 'seats': case 'tifo': L.back = 2.3; L.look = 1.3; L.lx = -1.2; break;
         case 'kickoff': L.back = 2.5; L.look = 1.4; break;
         case 'lights': L.back = 2.5; L.look = 1.3; break;
-        case 'mascot': L.back = 1.35; L.look = 1.3; break;
+        case 'mascot': L.back = 1.5; L.look = 1.35; break;
       }
     }
   }
@@ -550,6 +559,11 @@ export class ShopStage {
     setKitGlow(dark ? 1 : 0);
   }
 
+  /** The club's crest (yours as you designed it; any other club's from its name and colours). */
+  private get crest(): CrestDesign {
+    return crestFor(this.club.name ?? '', this.club.short, this.club.kit);
+  }
+
   /** The block's lawn pattern (a mowing style or the crest), on a block of half size `h`. */
   private buildTop(h: number, id: string): void {
     const key = `${h}|${id}`;
@@ -563,16 +577,9 @@ export class ShopStage {
     if (!id) return;
     let geo: THREE.BufferGeometry;
     if (id === 'mowcrest') {
-      const cell = 0.17;
-      const cw = CREST[0].length * cell, ch = CREST.length * cell;
-      const pal: { [c: string]: number } = { S: this.club.kit.shirt, T: this.club.kit.shirt2 === this.club.kit.shirt ? WHITE : this.club.kit.shirt2, W: WHITE, G: 0xffc23a };
-      geo = sheet(-h, h, -h, h, cell / 2, 0.003, (x, z) => {
-        const col = Math.floor((z + cw / 2) / cell);
-        const row = Math.floor((-x + ch / 2) / cell);
-        const c = CREST[row]?.[col];
-        if (c && c !== '.') return pal[c];
-        return Math.hypot(x, z) < 1.25 ? 0x88c247 : 0x9ed25a;
-      });
+      // The match's own decal (the club's crest in grass tones on the centre circle's disc), a fifth of the size,
+      // its top away from the lens.
+      geo = crestLawnGeometry(this.crest, this.club.short, this.club.name ?? '', 0.2, 0.003, true);
     } else geo = sheet(-h, h, -h, h, 0.08, 0.003, (x, z) => (mowColor(id, x, z, 0.075) === 0xa2d65c ? 0xa8dc62 : 0x86bf47));
     this.top = new THREE.Mesh(geo, voxelMaterial);
     this.top.receiveShadow = true;
@@ -584,7 +591,7 @@ export class ShopStage {
     const key = `${focus}|${big}|${JSON.stringify(decor)}`;
     if (this.props?.key === key) return;
     this.freeProps();
-    const P: Props = { key, group: new THREE.Group(), free: [], flags: [], beams: [], mascot: null, tifo: null, net: null };
+    const P: Props = { key, group: new THREE.Group(), free: [], flags: [], beams: [], leds: [], mascot: null, danceN: -1, tifo: null, surfer: null, net: null };
     this.props = P;
     this.scene.add(P.group);
     const { shirt } = this.club.kit;
@@ -673,7 +680,7 @@ export class ShopStage {
       stand.receiveShadow = true;
       P.group.add(stand);
       if (decor.tifo === 'tifobig') {
-        const tex = tifoTexture(shirt, shirt2, this.club.short);
+        const tex = tifoTexture(shirt, shirt2, this.club.short, this.crest, this.club.name ?? '');
         const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
         const geo = new THREE.PlaneGeometry(edge * 1.9, 1.15, 12, 3);
         P.free.push(tex, mat, geo);
@@ -695,9 +702,21 @@ export class ShopStage {
             P.group.add(m);
           }
         }
+        // ...and the giant flag passed along over their heads (the match's own cloth, lying on the stand's rake).
+        const ft = flagTexture(shirt, shirt2, this.club.short, this.crest, this.club.name ?? '');
+        const fm = new THREE.MeshLambertMaterial({ map: ft, side: THREE.DoubleSide });
+        const fg = new THREE.PlaneGeometry(1.9, 1.2, 8, 4);
+        P.free.push(ft, fm, fg);
+        const flag = new THREE.Mesh(fg, fm);
+        flag.rotation.order = 'YXZ';
+        flag.rotation.set(Math.atan2(stepH, stepD) - Math.PI / 2, Math.PI / 2, 0);
+        flag.position.set(x0 - 3.2 * stepD, 3.2 * stepH + 0.75, 0);
+        P.surfer = { mesh: flag, reach: edge - 1.1 };
+        P.group.add(flag);
       }
     }
-    // The floodlights: a little tower each side at the back, beams sweeping the block.
+    // The floodlights: a lamp tower at each back corner with a searchlight into the sky, and the LED strip on a low
+    // board along the block's two back edges (the match's own design: no light is thrown on the grass).
     if (decor.lights) {
       const tb = new BoxBuilder();
       const spots = [[-edge - 0.4, -edge - 0.4], [-edge - 0.4, edge + 0.4]] as const;
@@ -705,35 +724,59 @@ export class ShopStage {
         tb.box(x, 1.6, z, 0.14, 3.2, 0.14, 0x3a3f48);
         tb.box(x, 3.25, z, 0.5, 0.36, 0.5, 0x26262e);
       }
+      tb.box(-edge + 0.06, 0.2, 0, 0.1, 0.4, edge * 2, 0x26262e);
+      tb.box(0, 0.2, -edge + 0.06, edge * 2, 0.4, 0.1, 0x26262e);
       const tg = tb.build();
       P.free.push(tg);
       P.group.add(new THREE.Mesh(tg, voxelMaterial));
-      const cone = new THREE.ConeGeometry(0.12, 1, 14, 1, true);
+      const led = [0, 1, 2].map(() => new BoxBuilder());
+      let k = 0;
+      for (let v = -edge; v < edge - 1e-3; v += 0.4, k++) {
+        led[k % 3].box(-edge + 0.06, 0.45, v + 0.2, 0.12, 0.1, 0.34, WHITE);
+        led[(k + 1) % 3].box(v + 0.2, 0.45, -edge + 0.06, 0.34, 0.1, 0.12, WHITE);
+      }
+      for (const [x, z] of spots) led[k++ % 3].box(x, 3.25, z, 0.56, 0.16, 0.56, WHITE);
+      for (const lb of led) {
+        const lg = lb.build();
+        const lm = new THREE.MeshBasicMaterial({ vertexColors: true });
+        P.free.push(lg, lm);
+        P.leds.push(lm);
+        P.group.add(new THREE.Mesh(lg, lm));
+      }
+      const cone = new THREE.ConeGeometry(0.09, 1, 12, 1, true);
       cone.rotateX(-Math.PI / 2);
       cone.translate(0, 0, 0.5);
       const cp = cone.getAttribute('position');
       const ca = new Float32Array(cp.count * 4);
       for (let i = 0; i < cp.count; i++) {
         ca[i * 4] = ca[i * 4 + 1] = ca[i * 4 + 2] = 1;
-        ca[i * 4 + 3] = 0.12 + 0.88 * Math.max(0, 1 - cp.getZ(i)) ** 1.4;
+        ca[i * 4 + 3] = Math.max(0, 1 - cp.getZ(i)) ** 1.6;
       }
       cone.setAttribute('color', new THREE.Float32BufferAttribute(ca, 4));
       P.free.push(cone);
-      spots.forEach(([x, z], k) => {
-        for (let j = 0; j < 2; j++) {
-          const mat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-          P.free.push(mat);
-          const mesh = new THREE.Mesh(cone, mat);
-          mesh.frustumCulled = false;
-          P.beams.push({ mesh, mat, x, y: 3.25, z, ph: k * 2 + j * 1.3 });
-          P.group.add(mesh);
-        }
+      spots.forEach(([x, z], n) => {
+        const mat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+        P.free.push(mat);
+        const mesh = new THREE.Mesh(cone, mat);
+        mesh.frustumCulled = false;
+        P.beams.push({ mesh, mat, x, y: 3.3, z, ph: n * 2 });
+        P.group.add(mesh);
       });
     }
     // The mascot, on its own block or beside the line-up.
     if (decor.mascot) {
-      const m = new Mascot(mascotKind(decor.mascot), shirt, shirt2, focus === 'mascot' ? 0 : 0.6, focus === 'mascot' ? 0 : -edge + 0.6, FACE);
-      if (focus !== 'mascot') m.group.scale.setScalar(0.8);
+      const m = new Mascot(mascotKind(decor.mascot), shirt, shirt2, focus === 'mascot' ? 0 : 0.6, focus === 'mascot' ? 0 : -edge + 0.7, FACE);
+      // (A mascot is a head and shoulders over the players: brought down a little to fit the block.)
+      const sc = focus === 'mascot' ? 0.74 : 0.6;
+      m.group.scale.setScalar(sc);
+      // Its drum beats, sparks and fire, in the stage's own effects (the match's shows, at the mascot's scale).
+      m.onFx = (what, lx, ly, lz) => {
+        const yaw = m.group.rotation.y;
+        const fx = Math.cos(yaw), fz = -Math.sin(yaw);
+        const def = what === 'fire' ? DRAGON_BREATH : what === 'drum' ? BEAR_DRUM : ROBOT_SPARK;
+        const g = m.group.position;
+        this.rig.kit.play(def.run, def.dur, g.x + (fx * lx - fz * lz) * sc, ly * sc, g.z + (fz * lx + fx * lz) * sc, fx, fz, def.k * sc, [shirt, shirt2, 0xffd23a, WHITE]);
+      };
       P.mascot = m;
       P.group.add(m.group);
     }
@@ -867,14 +910,15 @@ export class ShopStage {
 
   /** The walkout `id` over the block, again every few seconds. */
   private kickoffLoop(t: number, dt: number, id: string): void {
-    const show = KICKOFF_SHOWS[id];
+    // (The stage's own layout of the show: along the back edge of the block, behind the line-up.)
+    const show = STAGE_SHOWS[id];
     const R = this.rig;
     if (!show) return;
     const cycle = show.dur + 1.6;
     const n = Math.floor(t / cycle);
     if (dt > 0 && n !== R.burstAt && t % cycle >= 0.3) {
       R.burstAt = n;
-      R.kit.play(show.run, show.dur, 0, 0, 0, 1, 0, show.k * KICK_K, [this.club.kit.shirt, this.club.kit.shirt2, 0xffd23a, WHITE]);
+      R.kit.play(show.run, show.dur, 0, 0, 0, 1, 0, show.k, [this.club.kit.shirt, this.club.kit.shirt2, 0xffd23a, WHITE]);
     }
   }
 
@@ -953,25 +997,46 @@ export class ShopStage {
       for (let i = 0; i < arr.length; i += 3) arr[i + 2] = base[i + 2] + Math.sin(t * 3 + base[i] * 2 + base[i + 1] * 3) * 0.04;
       pos.needsUpdate = true;
     }
-    if (P.beams.length) {
+    if (P.surfer) {
+      // Along the stand and back, rippling.
+      const sf = P.surfer.mesh;
+      sf.position.z = Math.sin(t * 0.7) * P.surfer.reach;
+      const pos = sf.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const base = (sf.userData.base ??= Float32Array.from(pos.array as Float32Array)) as Float32Array;
+      const arr = pos.array as Float32Array;
+      for (let i = 0; i < arr.length; i += 3) arr[i + 2] = base[i + 2] + Math.sin(t * 4 + base[i] * 5 + base[i + 1] * 4) * 0.05;
+      pos.needsUpdate = true;
+    }
+    if (P.leds.length) {
       const show = this.cur.decor.lights === 'lightshow';
-      const c = new THREE.Color();
+      const two = this.club.kit.shirt2 === this.club.kit.shirt ? WHITE : this.club.kit.shirt2;
+      const c = this.propColor;
+      const tint = (i: number) => (show ? c.setHSL((t * 0.12 + i * 0.17) % 1, 0.95, 0.58) : c.setHex(i % 2 ? two : this.club.kit.shirt));
+      // The LED strip chases; the searchlights sway about a line up and out from the block.
+      for (let i = 0; i < P.leds.length; i++) {
+        const pulse = 0.55 + 0.45 * Math.sin(t * (show ? 3.2 : 1.6) - (i * Math.PI * 2) / 3);
+        P.leds[i].color.copy(tint(i)).multiplyScalar(0.35 + 0.65 * pulse);
+      }
       for (let i = 0; i < P.beams.length; i++) {
         const b = P.beams[i];
-        const ph = b.ph + t * 1.2;
+        const out = Math.atan2(b.z, b.x);
+        const ph = b.ph + t * (show ? 1.1 : 0.5);
+        const az = out + Math.sin(ph) * 0.7;
+        const el = 1 + Math.sin(ph * 0.7 + 1) * 0.28;
         b.mesh.position.set(b.x, b.y, b.z);
-        b.mesh.lookAt(Math.sin(ph) * 1.4, 0, Math.cos(ph * 0.8) * 1.4);
-        const d = Math.hypot(b.x - Math.sin(ph) * 1.4, b.y, b.z - Math.cos(ph * 0.8) * 1.4);
-        b.mesh.scale.set(5, 5, d);
-        if (show) c.setHSL((t * 0.15 + i * 0.13) % 1, 0.95, 0.6);
-        else c.setHex(i % 2 ? (this.club.kit.shirt2 === this.club.kit.shirt ? WHITE : this.club.kit.shirt2) : this.club.kit.shirt);
-        b.mat.color.copy(c);
-        b.mat.opacity = 0.55;
+        b.mesh.lookAt(b.x + Math.cos(az) * Math.cos(el) * 9, b.y + Math.sin(el) * 9, b.z + Math.sin(az) * Math.cos(el) * 9);
+        b.mesh.scale.set(8, 8, 7);
+        b.mat.color.copy(tint(i));
+        b.mat.opacity = 0.5;
       }
     }
     if (P.mascot) {
-      // Idle a moment, then the goal dance, on a loop.
-      if (dt > 0 && t % 7 < dt) P.mascot.dance();
+      // Its act at rest for a moment, then the goal celebration, on a loop.
+      const n = Math.floor((t - 2) / 9);
+      if (dt > 0 && t >= 2 && n !== P.danceN) {
+        P.danceN = n;
+        P.mascot.dance(6.5);
+      }
       P.mascot.update(dt, t);
     }
   }

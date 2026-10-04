@@ -36,6 +36,8 @@ export interface PlaytestOptions {
   htMenuS?: number;
   /** He skips the pre-match fly-in this long in (s); undefined: he watches it. */
   introSkipS?: number;
+  /** The AI coach (MatchConfig.coach, as the game's own matches have it): default off. */
+  coach?: boolean;
 }
 
 export type DeadKind = RestartKind | 'goal' | 'replay' | 'halftime' | 'fulltime' | 'intro' | 'kickoffHalf';
@@ -168,6 +170,7 @@ export function playtestMatch(o: PlaytestOptions): PlaytestMatch {
     difficulty: o.difficulty ?? 1.8,
     humanSide: HS,
     seed: o.seed,
+    coach: o.coach,
   });
   const bot = new HumanBot(o.seed, { casual: true, sprint: 'auto', skills: 'react', ...o.bot });
   const spy = bot as unknown as Spy;

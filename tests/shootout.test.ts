@@ -3,7 +3,7 @@ import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { angleDiff } from '../src/core/math';
 import { DT, HALF_W } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad, type Phase } from '../src/sim/match';
-import { goalsOf, nextTurn, shootoutWinner } from '../src/sim/shootout';
+import { goalsOf, nextTurn, shootoutWinner, steppingUp } from '../src/sim/shootout';
 import type { MatchEvent } from '../src/sim/types';
 
 const T = true;
@@ -69,6 +69,63 @@ describe('shootout rules', () => {
     expect(nextTurn([[F], [T]], 1)).toBe(1);
     expect(nextTurn([[T], []], 0)).toBe(1);
   });
+});
+
+describe('shootout audit (2026-10-04)', () => {
+  it('the tracker lights the NEXT taker once a kick is settled, not the side that has just kicked', () => {
+    // Home has just scored the first kick: away steps up.
+    expect(steppingUp({ kicks: [[T], []], turn: 0, first: 0, stage: 'result' })).toBe(1);
+    // ... and after away's reply it is home again.
+    expect(steppingUp({ kicks: [[T], [F]], turn: 1, first: 0, stage: 'result' })).toBe(0);
+    // While a man is on the spot (or his kick is in the air) it is his side.
+    expect(steppingUp({ kicks: [[T], []], turn: 1, first: 0, stage: 'aim' })).toBe(1);
+    expect(steppingUp({ kicks: [[T], []], turn: 1, first: 0, stage: 'flight' })).toBe(1);
+    // Away kicking first: the pairs still alternate from it.
+    expect(steppingUp({ kicks: [[], [T]], turn: 1, first: 1, stage: 'result' })).toBe(0);
+    // Sudden death is the same rule.
+    const five: [boolean[], boolean[]] = [[T, T, T, T, T, F], [T, T, T, T, T]];
+    expect(steppingUp({ kicks: five, turn: 0, first: 0, stage: 'result' })).toBe(1);
+  });
+
+  it('a human keeper who goes the right way saves as often as the AI keeper going the right way', () => {
+    // (Before: the human's dive missed its spot by 0.35 m whoever was in goal, the AI keeper's by 0.35 x (1.2 - keeping):
+    // the right side picked, the human saved 38% of them against the AI's 47%. Now 45% and 47%.)
+    const tally = (humanSide: 1 | -1) => {
+      let right = 0;
+      let saved = 0;
+      for (let seed = 0; seed < 60; seed++) {
+        const m = lateLevel(500 + seed, true, humanSide);
+        let wasRight = false;
+        for (let i = 0; i < 60 * 240 && m.phase !== 'fulltime'; i++) {
+          const so = m.shootout;
+          // (The human: the stick held the way the kick is going, once the taker has made his mind up.)
+          const hold = humanSide === 1 && !!so && so.turn === 0 && !!so.pen && Math.abs(so.pen.z) >= 1.2;
+          m.step(DT, hold ? { ...EMPTY_PAD, mz: Math.sign(so!.pen!.z) } : EMPTY_PAD);
+          const s2 = m.shootout;
+          if (s2 && s2.turn === 0 && s2.stage === 'flight' && s2.pen && Math.abs(s2.pen.z) >= 1.2) {
+            const k = m.players[s2.keeper];
+            if (k.state === 'dive' && Math.sign(k.vel.z) === Math.sign(s2.pen.z)) wasRight = true;
+          }
+          for (const e of m.drainEvents()) {
+            if (e.type !== 'shootoutKick' || e.side !== 0) continue;
+            if (wasRight) {
+              right++;
+              if (!e.scored && m.shootout?.last?.how === 'saved') saved++;
+            }
+            wasRight = false;
+          }
+        }
+      }
+      return { right, rate: saved / Math.max(1, right) };
+    };
+    const human = tally(1);
+    const ai = tally(-1);
+    // eslint-disable-next-line no-console
+    console.log(`going the right way: the human's keeper saved ${(human.rate * 100).toFixed(0)}% of ${human.right}, the AI's ${(ai.rate * 100).toFixed(0)}% of ${ai.right}`);
+    expect(human.right).toBeGreaterThan(150);
+    expect(human.rate).toBeGreaterThan(0.41);
+    expect(human.rate).toBeGreaterThan(ai.rate - 0.06);
+  }, 240_000);
 });
 
 describe('penalty shootout in the match', () => {

@@ -1,11 +1,13 @@
 /**
  * The Club Pass (docs/ECONOMY.md): a second track on the monthly season (meta/season.ts), sold in the app's store
- * ('bl.pass', platform/iap.ts) for the month it is bought in. About 6,000 coins over the 30 tiers plus that month's
- * own sprint trail (tier 10) and goal explosion (tier 20), looks no one can buy with coins. Buying it late hands
- * over every tier already reached; nothing reached is ever lost (a month's unclaimed pass coins and looks carry
- * into the next). It is looks and coins only: nothing on the pitch, nothing random.
+ * ('bl.pass', platform/iap.ts) for the month it is bought in, or bought with gems (buyPassWithGems). About 5,500
+ * coins and 150 gems over the 30 tiers plus that month's own player look, sprint trail, premium kit and goal
+ * explosion, looks no one can buy with coins. Buying it late hands over every tier already reached; nothing reached
+ * is ever lost (a month's unclaimed pass coins, gems and looks carry into the next). It is looks, coins and gems
+ * only: nothing on the pitch, nothing random.
  */
 import type { SaveData } from '../core/save';
+import { GEM_PRICES, PASS_GEMS, SEASON_GEMS, addGems, gems, grantGemsOnce, spendGems, sumGems, type GemBuyResult } from './gems';
 import { PASS_BIG_COINS, SEASON_TIERS, passReward, rollSeason, seasonOf, seasonTier, unclaimedPassTiers } from './season';
 import { grantItem, itemKey, shopItem, type ShopItem } from './shop';
 
@@ -25,8 +27,49 @@ export function passActive(save: Pick<SaveData, 'season'>, now: Date = new Date(
   return s.pass;
 }
 
-/** Everything one season's pass gives: its coins and its two looks (the offer card says so with real numbers). */
-export function passTotals(id: string): { coins: number; items: ShopItem[] } {
+/**
+ * The Club Pass for gems instead of money (GEM_PRICES.clubPass): the same pass, for the season running at `now`.
+ * Gems are earned by playing, so a keen free player can earn the pass and its looks too.
+ */
+export function buyPassWithGems(save: Pick<SaveData, 'season' | 'gems'>, now: Date = new Date()): GemBuyResult {
+  if (passActive(save, now)) return { ok: false, reason: 'maxed', short: 0 };
+  const price = GEM_PRICES.clubPass;
+  if (!spendGems(save, price, 'clubPass')) return { ok: false, reason: 'no-gems', short: price - gems(save) };
+  activatePass(save, now);
+  return { ok: true, price, gems: gems(save) };
+}
+
+/**
+ * The season's gems (economy v3): a few on free tiers 10, 20 and 30 (SEASON_GEMS), more on six pass tiers
+ * (PASS_GEMS). Paid once per tier CLAIMED, whichever way it was claimed (one tier, CLAIM ALL), plus what a past
+ * season's reached tiers never paid. Returns the gems paid now (0 nearly always): call it after any claim.
+ */
+export function syncSeasonGems(save: Pick<SaveData, 'season' | 'gems'>): number {
+  const s = seasonOf(save);
+  let paid = 0;
+  for (const t of s.claimed) {
+    const n = SEASON_GEMS[t];
+    if (n && grantGemsOnce(save, `season:${s.id}:f${t}`, n, 'season')) paid += n;
+  }
+  for (const t of s.passClaimed) {
+    const n = PASS_GEMS[t];
+    if (n && grantGemsOnce(save, `season:${s.id}:p${t}`, n, 'pass')) paid += n;
+  }
+  const carry = Math.max(0, Math.floor(s.carryGems ?? 0));
+  if (carry > 0) {
+    addGems(save, carry, 'season');
+    paid += carry;
+  }
+  delete s.carryGems;
+  return paid;
+}
+
+/** Gems the pass track pays over a month, and the free track's (the offer card's numbers). */
+export const PASS_TRACK_GEMS = sumGems(PASS_GEMS);
+export const FREE_TRACK_GEMS = sumGems(SEASON_GEMS);
+
+/** Everything one season's pass gives: its coins, its gems and its looks (the offer card says so with real numbers). */
+export function passTotals(id: string): { coins: number; gems: number; items: ShopItem[] } {
   let coins = 0;
   const items: ShopItem[] = [];
   for (let t = 1; t <= SEASON_TIERS; t++) {
@@ -35,7 +78,7 @@ export function passTotals(id: string): { coins: number; items: ShopItem[] } {
     const it = rw.item && shopItem(rw.item.cat, rw.item.id);
     if (it) items.push(it);
   }
-  return { coins, items };
+  return { coins, gems: PASS_TRACK_GEMS, items };
 }
 
 /** The pass tiers worth calling out on the track (the looks and the big coin prizes). */

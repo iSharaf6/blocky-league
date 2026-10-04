@@ -1,10 +1,16 @@
 /**
  * Cloud saves and sign-in (Supabase, free tier). Off unless the build carries VITE_SUPABASE_URL and
- * VITE_SUPABASE_ANON_KEY: the web build gets them from GitHub Actions secrets (or .env.local in dev);
- * scripts/release.mjs blanks them for the crazygames / poki / itch zips (portals forbid login requirements,
- * and the game never needs one). Signed-out play is untouched: everything here is a no-op or a small toast.
+ * VITE_SUPABASE_ANON_KEY: the web build and the iPhone / iPad app get them from .env.production (public values);
+ * scripts/release.mjs blanks them for the crazygames / poki / itch zips (portals forbid accounts of our own).
+ * In a build without them everything here is a no-op and the game is fully local.
  *
- * Data: one row per user in `saves` (supabase/migrations/0001_saves.sql), the save JSON as-is, under RLS.
+ * Who signs in, and how, is src/platform/signin.ts: Game Center in the app, else a device account (both silent,
+ * through edge functions that hand back a session: `adoptSession`); Google / GitHub / email / guest stay on the
+ * web. What needs a connection is src/platform/online.ts.
+ *
+ * Data: one row per user in `saves` (supabase/migrations), the save JSON as-is, under RLS. Each write names the
+ * row's revision (`rev`) as this device last saw it: the server refuses a write from a stale copy ("stale_save"),
+ * and the row is fetched and compared again instead of overwriting another device's progress.
  *
  * Sync: `cloudBoot` compares the cloud row with this device's save three ways. The last-synced marker
  * (SYNC_MARK_KEY, per user) records the timestamp both sides agreed on, so only the side that moved wins.
@@ -27,10 +33,12 @@ export interface CloudContext {
 
 export interface CloudUser {
   name: string;
-  /** 'google' | 'github' | 'email' | 'guest' (anonymous). */
+  /** 'google' | 'github' | 'email' | 'guest' (anonymous) | 'gamecenter' | 'device'. */
   provider: string;
   email?: string;
   guest?: boolean;
+  /** An account the game made by itself (Game Center or this device): no email, nothing to type. */
+  auto?: boolean;
 }
 
 export type OAuthProvider = 'google' | 'github';
@@ -38,6 +46,10 @@ export type OAuthProvider = 'google' | 'github';
 export const SAVE_KEY = 'blocky-league-save-v1';
 /** Side channel: JSON { user, synced } — the cloud client_updated_at (ms) this device last pushed or pulled. */
 export const SYNC_MARK_KEY = 'blocky-league-save-v1:ts';
+/** Side channel: JSON { user, sent: [] } — the stamps of pushes whose answers never arrived (a closing app, a dropped connection). */
+export const SYNC_SENT_KEY = 'blocky-league-save-v1:sent';
+/** Back in the foreground after this long: the cloud row is compared again (another device may have played). */
+export const RESUME_CHECK_MS = 60_000;
 /** Local changes are pushed this long after the last one. */
 export const PUSH_DEBOUNCE_MS = 5000;
 /** How often the save's updatedAt is checked for changes made by the game's own persist(). */
@@ -53,18 +65,37 @@ interface Env {
   key?: string;
   portal?: string;
   query?: string;
+  /** VITE_ONLINE_ACCOUNTS: 'on' switches on the silent sign-in and the online rule (see accountsRequired). */
+  online?: string;
 }
 let envOverride: Env | null = null;
 
 function env(): Env {
   if (envOverride) return envOverride;
   const m = import.meta.env as Record<string, string | undefined>;
+  const dev = devEnv();
   return {
-    url: m.VITE_SUPABASE_URL,
-    key: m.VITE_SUPABASE_ANON_KEY,
+    url: m.VITE_SUPABASE_URL || dev?.url,
+    key: m.VITE_SUPABASE_ANON_KEY || dev?.key,
     portal: m.VITE_PORTAL,
     query: typeof location === 'undefined' ? '' : location.search,
+    // (The dev tab switch turns the whole feature on.)
+    online: m.VITE_ONLINE_ACCOUNTS || (dev ? 'on' : undefined),
   };
+}
+
+/**
+ * The dev server only: one tab switches the backend on without an .env file (which would switch it on for
+ * everyone sharing the server): sessionStorage['bl-dev-cloud'] = '{"url":"...","key":"..."}', then reload.
+ */
+function devEnv(): { url?: string; key?: string } | null {
+  if (!import.meta.env.DEV || typeof sessionStorage === 'undefined') return null;
+  try {
+    const o = JSON.parse(sessionStorage.getItem('bl-dev-cloud') ?? 'null') as { url?: unknown; key?: unknown } | null;
+    return o && typeof o.url === 'string' && typeof o.key === 'string' ? { url: o.url, key: o.key } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** True when a backend is configured for this build (never on a portal build, or a dev ?portal= preview). */
@@ -76,9 +107,19 @@ export function cloudAvailable(): boolean {
   return true;
 }
 
+/**
+ * Accounts are required in this build: the game signs the player in by itself (src/platform/signin.ts) and
+ * progression needs a connection (src/platform/online.ts). It takes a backend AND VITE_ONLINE_ACCOUNTS=on. Off (the
+ * default), a build with a backend has only what it always had: the optional ACCOUNT panel and cloud save, and
+ * nothing is gated.
+ */
+export function accountsRequired(): boolean {
+  return cloudAvailable() && env().online === 'on';
+}
+
 // ------------------------------------------------------------------ the client slice this module uses
 
-type Err = { message: string } | null;
+type Err = { message: string; code?: string } | null;
 
 /** The part of supabase-js this module calls (tests pass a fake). */
 export interface CloudClient {
@@ -91,12 +132,16 @@ export interface CloudClient {
     linkIdentity(c: { provider: OAuthProvider; options?: { redirectTo?: string } }): PromiseLike<{ error: Err }>;
     updateUser(a: { email: string }, o?: { emailRedirectTo?: string }): PromiseLike<{ error: Err }>;
     signOut(o?: { scope: 'local' | 'global' | 'others' }): PromiseLike<{ error: Err }>;
+    /** A session an edge function handed back (Game Center / device sign-in: src/platform/signin.ts). */
+    setSession?(t: { access_token: string; refresh_token: string }): PromiseLike<{ data: { session: Session | null }; error: Err }>;
   };
   from(table: 'saves'): {
     select(columns: string): { eq(column: string, value: string): { maybeSingle(): PromiseLike<{ data: unknown; error: Err }> } };
     upsert(row: Record<string, unknown>, opts?: { onConflict?: string }): PromiseLike<{ error: Err }>;
     delete(): { eq(column: string, value: string): PromiseLike<{ error: Err }> };
   };
+  /** Database functions (my_profile: the friend code and the club name). */
+  rpc?(fn: string, args?: Record<string, unknown>): PromiseLike<{ data: unknown; error: Err }>;
 }
 
 let client: CloudClient | null = null;
@@ -104,6 +149,17 @@ let clientOverride: CloudClient | null = null;
 let clientLoading: Promise<CloudClient | null> | null = null;
 let session: Session | null = null;
 let ctxRef: CloudContext | null = null;
+/** The cloud row's revision as last seen: undefined = not known (the write is unconditional), null = no row yet. */
+let cloudRev: number | null | undefined;
+/** When the cloud row was last compared with this device's save (ms). */
+let lastCheck = 0;
+/** The player signed out himself (web): the silent sign-in leaves him signed out until he asks to connect. */
+let signedOutByPlayer = false;
+/**
+ * Two real saves wait for the player's pick (WHICH SAVE?) and it has not been made: the panel could not open, or the
+ * app was closed on it. Nothing is written to the cloud until it is settled, so neither save is lost.
+ */
+let unsettled = false;
 /** ctx.save.updatedAt as last seen by the watcher. */
 let seenUpdatedAt = '';
 let dirty = false;
@@ -135,8 +191,9 @@ async function getClient(): Promise<CloudClient | null> {
 async function loadClient(): Promise<CloudClient | null> {
   const e = env();
   // The literal env check is deliberate: a build without the value compiles this to dead code, so
-  // supabase-js is not even emitted as a chunk for the portal / itch zips.
-  if (!import.meta.env.VITE_SUPABASE_URL || !e.url || !e.key) return null;
+  // supabase-js is not even emitted as a chunk for the portal / itch zips. (DEV is a literal too: the dev
+  // server may switch the backend on per tab, see devEnv.)
+  if (!(import.meta.env.DEV || import.meta.env.VITE_SUPABASE_URL) || !e.url || !e.key) return null;
   try {
     const { createClient } = await import('@supabase/supabase-js');
     const c = createClient(e.url, e.key, {
@@ -154,6 +211,7 @@ async function loadClient(): Promise<CloudClient | null> {
 function hookAuth(c: CloudClient): void {
   try {
     c.auth.onAuthStateChange((event, s) => {
+      if (s?.user.id !== session?.user.id) cloudRev = undefined;
       session = s;
       if (event === 'SIGNED_OUT') dirty = false;
       notify();
@@ -168,11 +226,27 @@ export function cloudUser(): CloudUser | null {
   const u = session?.user;
   if (!u) return null;
   const md = (u.user_metadata ?? {}) as Record<string, unknown>;
+  const am = (u.app_metadata ?? {}) as Record<string, unknown>;
+  // Accounts the game made by itself (the gc-login / device-login edge functions): no name, no email to show.
+  if (am.bl_kind === 'gamecenter') return { name: 'Game Center', provider: 'gamecenter', guest: false, auto: true };
+  if (am.bl_kind === 'device') return { name: 'This device', provider: 'device', guest: false, auto: true };
   const guest = u.is_anonymous === true;
   const pick = (k: string): string => (typeof md[k] === 'string' ? (md[k] as string).trim() : '');
-  const provider = guest ? 'guest' : String((u.app_metadata as Record<string, unknown> | undefined)?.provider ?? 'email');
+  const provider = guest ? 'guest' : String(am.provider ?? 'email');
   const name = guest ? 'Guest' : pick('full_name') || pick('name') || pick('user_name') || pick('preferred_username') || u.email || 'Player';
   return { name, provider, email: u.email ?? undefined, guest };
+}
+
+/** The signed-in account's id and access token (the edge functions take the token), or null. */
+export function cloudSession(): { userId: string; accessToken: string } | null {
+  return session ? { userId: session.user.id, accessToken: session.access_token } : null;
+}
+
+/** Where the backend is (the project URL and the publishable key), or null in a build without one. */
+export function cloudEndpoint(): { url: string; key: string } | null {
+  if (!cloudAvailable()) return null;
+  const e = env();
+  return e.url && e.key ? { url: e.url.replace(/\/+$/, ''), key: e.key } : null;
 }
 
 export interface CloudStatus {
@@ -187,10 +261,17 @@ export interface CloudStatus {
   paused: boolean;
   lastSynced: number | null;
   lastError: string | null;
+  /** The player pressed SIGN OUT: nothing signs him back in until he asks. */
+  signedOut: boolean;
+  /** Accounts are required in this build (accountsRequired): the online rule applies. */
+  required: boolean;
 }
 
 export function cloudStatus(): CloudStatus {
-  return { available: cloudAvailable(), user: cloudUser(), busy: busy || inflight !== null, pending: dirty, offline: offline(), paused, lastSynced, lastError };
+  return {
+    available: cloudAvailable(), user: cloudUser(), busy: busy || inflight !== null, pending: dirty, offline: offline(), paused, lastSynced, lastError,
+    signedOut: signedOutByPlayer, required: accountsRequired(),
+  };
 }
 
 /** Subscribe to status changes (the account panel re-renders). Returns the unsubscribe. */
@@ -220,6 +301,8 @@ export interface CloudRow {
   /** ms epoch of the server-side write. */
   updatedAt: number | null;
   version: number;
+  /** The row's revision (absent on a backend without the column: writes are then unconditional). */
+  rev?: number;
 }
 
 /** ms epoch of an ISO / Postgres timestamp, 0 when missing or unreadable. */
@@ -239,9 +322,12 @@ function stable(v: unknown): string {
   return JSON.stringify(v) ?? 'null';
 }
 
-/** The same progress (timestamps aside, key order aside). */
+/**
+ * The same progress (timestamps aside, key order aside). Both sides are made whole first: a brand-new save and
+ * the same save read back from storage or the cloud differ only by defaults filled in on load, which is not progress.
+ */
 export function sameSave(a: SaveData, b: SaveData): boolean {
-  return stable({ ...a, updatedAt: undefined }) === stable({ ...b, updatedAt: undefined });
+  return stable({ ...normalizeCloud(a), updatedAt: undefined }) === stable({ ...normalizeCloud(b), updatedAt: undefined });
 }
 
 interface CareerPeek {
@@ -302,6 +388,22 @@ export function decideSync(local: SaveData, cloud: CloudRow | null, base: number
   if (localSmall) return 'pull';
   if (cloudSmall) return 'push';
   return 'ask';
+}
+
+/**
+ * The agreed point to compare from. `synced` is the marker (the last push or pull this device saw confirmed);
+ * `sent` are the stamps of pushes whose answers never came back (the app was closed, the connection dropped). When
+ * the cloud row carries exactly one of those stamps that push did land: the cloud holds this device's own progress,
+ * so it has not moved, and nobody is asked which save to keep.
+ */
+export function baseFor(synced: number | null, sent: readonly number[], cloudTs: number | null): number | null {
+  if (cloudTs !== null) for (const s of sent) if (near(s, cloudTs)) return s;
+  return synced;
+}
+
+/** The server refused a write made from a stale copy of the row (saves_guard in supabase/migrations/0002_accounts.sql). */
+export function isStale(err: { message?: string; code?: string } | null | undefined): boolean {
+  return !!err && (err.code === 'PT409' || /stale_save/.test(err.message ?? ''));
 }
 
 /** A cloud payload (any build, any tampering) made whole the way loadSave does for storage. */
@@ -371,28 +473,93 @@ function writeMark(uid: string, synced: number): void {
 function clearMark(): void {
   try {
     localStorage.removeItem(SYNC_MARK_KEY);
+    localStorage.removeItem(SYNC_SENT_KEY);
   } catch {
     // ignore
   }
 }
 
+/** How many unanswered pushes are remembered (the newest). */
+const SENT_MAX = 6;
+
+function readSent(uid: string): number[] {
+  try {
+    const raw = localStorage.getItem(SYNC_SENT_KEY);
+    if (!raw) return [];
+    const m = JSON.parse(raw) as { user?: unknown; sent?: unknown };
+    return m.user === uid && Array.isArray(m.sent) ? m.sent.filter((x): x is number => typeof x === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeSent(uid: string, list: number[]): void {
+  try {
+    if (!list.length) localStorage.removeItem(SYNC_SENT_KEY);
+    else localStorage.setItem(SYNC_SENT_KEY, JSON.stringify({ user: uid, sent: list.slice(-SENT_MAX) }));
+  } catch {
+    // Storage unavailable: the next boot may ask which save to keep, which is safe.
+  }
+}
+
+/** A push is leaving with this stamp: remembered until an answer says whether it landed. */
+function noteSent(uid: string, stamp: number): void {
+  const list = readSent(uid);
+  if (!list.includes(stamp)) storeSent(uid, [...list, stamp]);
+}
+
+/** That push was refused (nothing was written): there is no answer to wait for. */
+function dropSent(uid: string, stamp: number): void {
+  storeSent(uid, readSent(uid).filter((x) => x !== stamp));
+}
+
+/** A write is confirmed, or the two sides are known to agree: nothing is in doubt any more. */
+function clearSent(uid: string): void {
+  if (readSent(uid).length) storeSent(uid, []);
+}
+
 async function fetchRow(c: CloudClient, uid: string): Promise<CloudRow | null> {
-  const { data, error } = await c.from('saves').select('data,updated_at,client_updated_at,version').eq('user_id', uid).maybeSingle();
+  const { data, error } = await c.from('saves').select('data,updated_at,client_updated_at,version,rev').eq('user_id', uid).maybeSingle();
   if (error) throw new Error(error.message);
-  if (!data || typeof data !== 'object') return null;
-  const r = data as { data?: unknown; updated_at?: string | null; client_updated_at?: string | null; version?: number };
+  if (!data || typeof data !== 'object') {
+    cloudRev = null;
+    return null;
+  }
+  const r = data as { data?: unknown; updated_at?: string | null; client_updated_at?: string | null; version?: number; rev?: unknown };
+  cloudRev = typeof r.rev === 'number' ? r.rev : undefined;
   return {
     data: normalizeCloud(r.data),
     clientUpdatedAt: r.client_updated_at ? ms(r.client_updated_at) : null,
     updatedAt: r.updated_at ? ms(r.updated_at) : null,
     version: typeof r.version === 'number' ? r.version : 1,
+    rev: cloudRev,
   };
 }
 
-function rowOf(ctx: CloudContext, uid: string): { user_id: string; data: SaveData; client_updated_at: string; version: number } {
+// (A type alias, not an interface: the client takes any plain record.)
+type SaveRow = {
+  user_id: string;
+  data: SaveData;
+  client_updated_at: string;
+  version: number;
+  /** The revision this write is based on (1 for the first write); left out when it is not known. */
+  rev?: number;
+};
+
+function rowOf(ctx: CloudContext, uid: string): SaveRow {
   const stamp = ctx.save.updatedAt || new Date().toISOString();
-  return { user_id: uid, data: ctx.save, client_updated_at: stamp, version: 1 };
+  const row: SaveRow = { user_id: uid, data: ctx.save, client_updated_at: stamp, version: 1 };
+  if (cloudRev !== undefined) row.rev = cloudRev ?? 1;
+  return row;
 }
+
+/** The write landed: the row's revision is now one past the base (a first write keeps the 1 it was given). */
+function bumpRev(row: SaveRow): void {
+  if (row.rev !== undefined) cloudRev = cloudRev === null ? row.rev : row.rev + 1;
+}
+
+/** A write was refused because another device moved the row: the caller fetches it and decides again. */
+class StaleSave extends Error {}
 
 async function push(): Promise<boolean> {
   const c = await getClient();
@@ -400,9 +567,22 @@ async function push(): Promise<boolean> {
   const ctx = ctxRef;
   if (!c || !s || !ctx) return false;
   const row = rowOf(ctx, s.user.id);
+  const stamp = ms(row.client_updated_at);
+  noteSent(s.user.id, stamp);
   const { error } = await c.from('saves').upsert(row, { onConflict: 'user_id' });
-  if (error) throw new Error(error.message);
-  writeMark(s.user.id, ms(row.client_updated_at));
+  if (error) {
+    // (A refused write changed nothing. Any other failure may still have landed: its stamp stays noted.)
+    if (isStale(error)) {
+      dropSent(s.user.id, stamp);
+      throw new StaleSave(error.message);
+    }
+    throw new Error(error.message);
+  }
+  // (The account changed while the write was on its way: its marker is not this session's business any more.)
+  if (session?.user.id !== s.user.id) return false;
+  bumpRev(row);
+  clearSent(s.user.id);
+  writeMark(s.user.id, stamp);
   seenUpdatedAt = ctx.save.updatedAt ?? '';
   // A persist during the request leaves it dirty; the queue pushes again.
   if ((ctx.save.updatedAt ?? '') === row.client_updated_at) dirty = false;
@@ -414,6 +594,7 @@ async function push(): Promise<boolean> {
 }
 
 function applyRow(ctx: CloudContext, row: CloudRow): void {
+  unsettled = false;
   ctx.reload(row.data);
   ctx.persist();
   seenUpdatedAt = ctx.save.updatedAt ?? '';
@@ -437,16 +618,16 @@ function schedulePush(delay = PUSH_DEBOUNCE_MS): void {
   }, delay);
 }
 
-function scheduleRetry(fn: () => void): void {
+function scheduleRetry(fn: () => void, delay = RETRY_MS): void {
   if (retryTimer) clearTimeout(retryTimer);
   retryTimer = setTimeout(() => {
     retryTimer = null;
     fn();
-  }, RETRY_MS);
+  }, delay);
 }
 
 async function flush(): Promise<boolean> {
-  if (!dirty || holding || paused || !session || !ctxRef) return false;
+  if (!dirty || holding || paused || unsettled || !session || !ctxRef) return false;
   if (offline()) {
     notify();
     return false;
@@ -459,6 +640,12 @@ async function flush(): Promise<boolean> {
     try {
       return await push();
     } catch (err) {
+      if (err instanceof StaleSave) {
+        // Another device wrote the row since this one last looked: fetch it and decide again (nothing is lost:
+        // the local save is untouched and still marked as waiting).
+        if (ctxRef) void resync();
+        return false;
+      }
       // One toast per outage, not one per retry.
       if (!lastError) fail('Cloud sync failed, will keep trying', err);
       lastError = message(err);
@@ -496,12 +683,40 @@ function checkLocal(): void {
   }
 }
 
+/**
+ * A moment worth syncing at once (full time): whatever the save moved goes up now instead of after the usual
+ * wait. Offline it stays queued and goes up with the `online` event, so a played match is never lost.
+ */
+export function syncSoon(): void {
+  if (!session || !ctxRef) return;
+  checkLocal();
+  if (dirty) schedulePush(300);
+}
+
+/** Push whatever is waiting and wait for the answer (true: the cloud row is up to date). Quiet: no toast. */
+export async function flushNow(): Promise<boolean> {
+  if (!session || !ctxRef) return false;
+  checkLocal();
+  if (!dirty) return true;
+  if (pushTimer) {
+    clearTimeout(pushTimer);
+    pushTimer = null;
+  }
+  return flush();
+}
+
+/** Compare this device's save with the cloud row again (back in the foreground, or after a refused write). */
+export async function resync(): Promise<void> {
+  if (!ctxRef || !session || busy || holding) return;
+  await syncAfterSignIn(ctxRef, false, true);
+}
+
 /** Tab hiding / closing: one keepalive upsert straight to PostgREST (supabase-js can't keepalive). */
 function flushOnHide(): void {
   checkLocal();
   const s = session;
   const ctx = ctxRef;
-  if (!dirty || holding || paused || !s || !ctx || offline()) return;
+  if (!dirty || holding || paused || unsettled || !s || !ctx || offline()) return;
   const e = env();
   const token = s.access_token;
   if (!e.url || !e.key || !token || typeof fetch === 'undefined') return;
@@ -515,6 +730,9 @@ function flushOnHide(): void {
     clearTimeout(pushTimer);
     pushTimer = null;
   }
+  // (Noted first: if the app is closed before the answer, the next launch knows the cloud row may be this push.)
+  const stamp = ms(row.client_updated_at);
+  noteSent(s.user.id, stamp);
   try {
     void fetch(`${e.url.replace(/\/+$/, '')}/rest/v1/saves?on_conflict=user_id`, {
       method: 'POST',
@@ -530,8 +748,14 @@ function flushOnHide(): void {
       .then((r) => {
         // Only a confirmed write advances the marker: an unconfirmed one stays dirty, so the next boot's
         // three-way compare pushes it again instead of pulling the older cloud copy over it.
-        if (!r.ok) return;
-        writeMark(s.user.id, ms(row.client_updated_at));
+        if (!r.ok) {
+          // Refused as stale (another device moved the row): nothing was written, so there is no answer to wait for.
+          if (r.status === 409) dropSent(s.user.id, stamp);
+          return;
+        }
+        bumpRev(row);
+        clearSent(s.user.id);
+        writeMark(s.user.id, stamp);
         if ((ctx.save.updatedAt ?? '') === row.client_updated_at) dirty = false;
         lastSynced = Date.now();
         notify();
@@ -540,6 +764,13 @@ function flushOnHide(): void {
   } catch {
     // Leave it dirty.
   }
+}
+
+/** Back in the foreground: push what waited, and after a while away look at the cloud row again. */
+function onResume(): void {
+  if (!session || !ctxRef) return;
+  if (dirty) schedulePush(0);
+  if (!offline() && Date.now() - lastCheck > RESUME_CHECK_MS) void resync();
 }
 
 function installListeners(): void {
@@ -555,6 +786,7 @@ function installListeners(): void {
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') flushOnHide();
+      else onResume();
     });
   }
 }
@@ -610,7 +842,11 @@ export async function cloudBoot(ctx: CloudContext): Promise<void> {
   }
 }
 
-async function syncAfterSignIn(ctx: CloudContext, announce: boolean): Promise<void> {
+/**
+ * Compare this device's save with the account's cloud row and settle it: push, pull, nothing, or (two real saves
+ * that both moved) ask the player once. `quiet`: a silent sign-in or a re-check, so the first backup is not announced.
+ */
+async function syncAfterSignIn(ctx: CloudContext, announce: boolean, quiet = false): Promise<void> {
   const c = await getClient();
   const s = session;
   // A "which save?" panel is already up: its answer settles everything; a second pass would stack another.
@@ -621,14 +857,18 @@ async function syncAfterSignIn(ctx: CloudContext, announce: boolean): Promise<vo
   notify();
   try {
     const row = await fetchRow(c, uid);
-    const decision = decideSync(ctx.save, row, readMark(uid));
+    lastCheck = Date.now();
+    const cloudTs = row ? row.clientUpdatedAt ?? row.updatedAt ?? 0 : null;
+    const decision = decideSync(ctx.save, row, baseFor(readMark(uid), readSent(uid), cloudTs));
     if (announce) toast(`Signed in as ${cloudUser()?.name ?? 'player'}`, 'good');
+    unsettled = decision === 'ask';
     if (decision === 'push' || !row) {
       dirty = true;
       await push();
-      if (!row) toast('Progress backed up to the cloud', 'good');
+      if (!row && !quiet) toast('Progress backed up to the cloud', 'good');
     } else if (decision === 'none') {
       writeMark(uid, row.clientUpdatedAt ?? row.updatedAt ?? ms(ctx.save.updatedAt));
+      clearSent(uid);
       lastSynced = Date.now();
     } else if (decision === 'pull') {
       applyRow(ctx, row);
@@ -638,17 +878,157 @@ async function syncAfterSignIn(ctx: CloudContext, announce: boolean): Promise<vo
     }
     lastError = null;
   } catch (err) {
-    lastError = message(err);
-    fail('Cloud sync failed, will keep trying', err);
-    scheduleRetry(() => void syncAfterSignIn(ctx, false));
+    if (err instanceof StaleSave) {
+      // The row moved between the read and the write (two devices at once): look again shortly.
+      scheduleRetry(() => void syncAfterSignIn(ctx, false, true), 1500);
+    } else {
+      lastError = message(err);
+      fail('Cloud sync failed, will keep trying', err);
+      scheduleRetry(() => void syncAfterSignIn(ctx, false, quiet));
+    }
   } finally {
     busy = false;
     notify();
   }
 }
 
+/**
+ * Take a session an edge function handed back (Game Center or device sign-in: src/platform/signin.ts), then
+ * settle the save as after any sign-in. A different account than before compares against its own marker, so a
+ * device that moves to another account never overwrites that account's progress unasked.
+ */
+export async function adoptSession(t: { access_token: string; refresh_token: string }): Promise<boolean> {
+  const c = await getClient();
+  if (!c?.auth.setSession) return false;
+  try {
+    const { data, error } = await c.auth.setSession(t);
+    if (error || !data.session) {
+      console.warn('[cloud] could not take the session:', error?.message ?? 'no session');
+      return false;
+    }
+    if (data.session.user.id !== session?.user.id) {
+      cloudRev = undefined;
+      unsettled = false;
+    }
+    session = data.session;
+    signedOutByPlayer = false;
+    notify();
+    if (ctxRef) await syncAfterSignIn(ctxRef, false, true);
+    return true;
+  } catch (err) {
+    console.warn('[cloud] could not take the session:', err);
+    return false;
+  }
+}
+
+export interface FunctionResult<T> {
+  ok: boolean;
+  /** HTTP status (0: the request never got there). */
+  status: number;
+  data: T | null;
+  /** The function's own error word ('rate_limited', 'bad_signature', ...), 'network', or 'unavailable'. */
+  error: string | null;
+}
+
+/**
+ * Call an edge function (supabase/functions). The publishable key always goes in `apikey`; the player's access
+ * token goes in Authorization when he is signed in (`auth: false` leaves it out).
+ */
+export async function callFunction<T = Record<string, unknown>>(name: string, body: unknown, opts: { auth?: boolean; timeoutMs?: number } = {}): Promise<FunctionResult<T>> {
+  const ep = cloudEndpoint();
+  if (!ep || typeof fetch === 'undefined') return { ok: false, status: 0, data: null, error: 'unavailable' };
+  const headers: Record<string, string> = { apikey: ep.key, 'Content-Type': 'application/json' };
+  if (opts.auth !== false && session) {
+    // (getSession refreshes a token that ran out while the app slept.)
+    try {
+      const fresh = (await (await getClient())?.auth.getSession())?.data.session;
+      if (fresh) session = fresh;
+    } catch {
+      // The token in hand is tried as it is.
+    }
+    if (session) headers.Authorization = `Bearer ${session.access_token}`;
+  }
+  const ctl = typeof AbortController === 'undefined' ? null : new AbortController();
+  const timer = ctl ? setTimeout(() => ctl.abort(), opts.timeoutMs ?? 15_000) : null;
+  try {
+    const r = await fetch(`${ep.url}/functions/v1/${name}`, { method: 'POST', headers, body: JSON.stringify(body ?? {}), signal: ctl?.signal });
+    const data = (await r.json().catch(() => null)) as (T & { error?: unknown }) | null;
+    if (r.ok) return { ok: true, status: r.status, data, error: null };
+    return { ok: false, status: r.status, data: null, error: typeof data?.error === 'string' ? data.error : String(r.status) };
+  } catch {
+    return { ok: false, status: 0, data: null, error: 'network' };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export interface CloudProfile {
+  /** The friend code to share. */
+  code: string;
+  club: string | null;
+}
+
+/** The player's profile row (made on first use): the friend code; the club's name is stored with it. */
+export async function cloudProfile(): Promise<CloudProfile | null> {
+  const c = await getClient();
+  if (!c?.rpc || !session) return null;
+  const name = ctxRef ? peekCareer(ctxRef.save)?.club?.name : null;
+  try {
+    const { data, error } = await c.rpc('my_profile', { p_club: typeof name === 'string' && name.trim() ? name.trim() : null });
+    const p = data as { referral_code?: unknown; club_name?: unknown } | null;
+    if (error || !p || typeof p.referral_code !== 'string') return null;
+    return { code: p.referral_code, club: typeof p.club_name === 'string' ? p.club_name : null };
+  } catch {
+    return null;
+  }
+}
+
+/** The auth library's own stored session (its key is `sb-<project ref>-auth-token`), removed by hand. */
+function dropStoredSession(): void {
+  try {
+    const ref = new URL(env().url ?? '').hostname.split('.')[0];
+    if (ref) localStorage.removeItem(`sb-${ref}-auth-token`);
+  } catch {
+    // No URL or no storage: nothing is stored.
+  }
+}
+
+/**
+ * The account is gone on the server (DELETE ACCOUNT): drop the session and every trace of it on this device. The
+ * caller resets the save itself.
+ */
+export async function forgetAccount(): Promise<void> {
+  if (pushTimer) clearTimeout(pushTimer);
+  if (retryTimer) clearTimeout(retryTimer);
+  pushTimer = retryTimer = null;
+  // Nothing signs him back in by itself this session: a new account is made only when he asks to connect again (or
+  // on the next launch). Set first: the auth library announces the sign-out during the call, and the silent sign-in
+  // is listening.
+  signedOutByPlayer = true;
+  const uid = session?.user.id;
+  try {
+    const { error } = (await (await getClient())?.auth.signOut({ scope: 'local' })) ?? { error: null };
+    // (The account is gone, so the server may refuse the call: the stored session must not outlive it.)
+    if (error) dropStoredSession();
+  } catch {
+    dropStoredSession();
+  }
+  session = null;
+  if (uid) storeSent(uid, []);
+  dirty = false;
+  paused = false;
+  unsettled = false;
+  lastSynced = null;
+  lastError = null;
+  cloudRev = undefined;
+  clearMark();
+  notify();
+}
+
 async function panelModule(): Promise<typeof import('../ui/account') | null> {
   if (typeof document === 'undefined') return null;
+  // (The literal check lets the bundler drop the account screens, and the sign-in code they use, from a portal build.)
+  if (import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'none') return null;
   try {
     return await import('../ui/account');
   } catch (err) {
@@ -667,6 +1047,7 @@ async function askPlayer(ctx: CloudContext, row: CloudRow): Promise<void> {
       ui.openSyncChoice(summarize(row.data, row.clientUpdatedAt ?? row.updatedAt), summarize(ctx.save, ms(ctx.save.updatedAt)), resolve),
     );
     holding = false;
+    unsettled = false;
     if (choice === 'cloud') {
       applyRow(ctx, row);
       toast('Loaded your cloud save', 'good');
@@ -734,6 +1115,8 @@ export async function signInAsGuest(): Promise<boolean> {
     return false;
   }
   session = data.session;
+  signedOutByPlayer = false;
+  cloudRev = undefined;
   notify();
   if (ctxRef) await syncAfterSignIn(ctxRef, false);
   toast('Guest account ready: progress is backed up', 'good');
@@ -776,13 +1159,18 @@ export async function signOutCloud(): Promise<boolean> {
       // Best effort: the local save is kept either way.
     }
   }
+  // (Set first: the auth library announces the sign-out during the call, and the silent sign-in is listening.)
+  signedOutByPlayer = true;
   const { error } = await c.auth.signOut({ scope: 'local' });
   if (error) {
+    signedOutByPlayer = false;
     fail('Sign-out failed', error);
     return false;
   }
   // The marker stays (it is per user): signing back in on this device compares three ways, no question asked.
   session = null;
+  cloudRev = undefined;
+  unsettled = false;
   dirty = false;
   paused = false;
   lastSynced = null;
@@ -806,6 +1194,8 @@ export async function syncNow(ctx: CloudContext): Promise<boolean> {
   }
   busy = true;
   paused = false;
+  // (SYNC NOW is the player's own word: this device's save goes up.)
+  unsettled = false;
   notify();
   try {
     dirty = true;
@@ -862,6 +1252,7 @@ export async function deleteCloudSave(): Promise<boolean> {
     }
     const { error } = await c.from('saves').delete().eq('user_id', s.user.id);
     if (error) throw new Error(error.message);
+    cloudRev = null;
     dirty = false;
     paused = true;
     clearMark();
@@ -900,10 +1291,14 @@ export function openAccount(ctx: CloudContext, onClose: () => void): void {
 export type CloudToastKind = 'info' | 'good' | 'bad';
 
 function toast(msg: string, kind: CloudToastKind = 'info'): void {
-  if (typeof document === 'undefined') return;
-  void import('../ui/account')
-    .then((m) => m.cloudToast(msg, kind))
+  void panelModule()
+    .then((m) => m?.cloudToast(msg, kind))
     .catch(() => {});
+}
+
+/** A small line at the top of the screen (for src/platform/signin.ts: a friend joined, and the like). */
+export function cloudNotice(msg: string, kind: CloudToastKind = 'info'): void {
+  toast(msg, kind);
 }
 
 function message(err: unknown): string {
@@ -939,6 +1334,10 @@ export function _resetForTests(): void {
   session = null;
   ctxRef = null;
   seenUpdatedAt = '';
+  cloudRev = undefined;
+  lastCheck = 0;
+  signedOutByPlayer = false;
+  unsettled = false;
   dirty = holding = paused = busy = false;
   inflight = null;
   again = false;
@@ -948,6 +1347,6 @@ export function _resetForTests(): void {
   subs.clear();
 }
 
-export function _debugState(): { dirty: boolean; timer: boolean; holding: boolean; paused: boolean; signedIn: boolean } {
-  return { dirty, timer: pushTimer !== null, holding, paused, signedIn: session !== null };
+export function _debugState(): { dirty: boolean; timer: boolean; holding: boolean; paused: boolean; signedIn: boolean; unsettled: boolean } {
+  return { dirty, timer: pushTimer !== null, holding, paused, signedIn: session !== null, unsettled };
 }

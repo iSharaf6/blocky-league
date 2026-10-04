@@ -10,8 +10,26 @@ import { achievementProgress } from '../meta/achievements';
 import { leaderboardScores, scoreKey } from '../meta/leaderboards';
 import { inNativeApp } from './native';
 
+/**
+ * What Game Center hands the app to prove who the player is (GKLocalPlayer.fetchItems(forIdentityVerificationSignature:)).
+ * The gc-login edge function checks Apple's signature over it before it trusts `teamPlayerId` (src/platform/signin.ts).
+ */
+export interface GameCenterIdentity {
+  publicKeyUrl: string;
+  /** Base64. */
+  signature: string;
+  /** Base64. */
+  salt: string;
+  /** ms since 1970, a decimal string. */
+  timestamp: string;
+  teamPlayerId: string;
+  bundleId: string;
+}
+
 interface GameCenterNative {
-  signIn(): Promise<{ signedIn: boolean }>;
+  /** `playerId`: the signed-in player's team-scoped id ('' when not signed in; absent in an older app shell). */
+  signIn(): Promise<{ signedIn: boolean; playerId?: string }>;
+  identity(): Promise<GameCenterIdentity>;
   report(o: { achievements: { id: string; percent: number }[] }): Promise<{ reported: number }>;
   showAchievements(): Promise<{ shown: boolean }>;
   /** Resolves with the ids Game Center took (a board missing from App Store Connect is left out). */
@@ -30,6 +48,7 @@ const SYNC_DELAY_MS = 1500;
 // promise resolved with the proxy itself would wait on it forever.)
 let native: Promise<{ gc: GameCenterNative } | null> | null = null;
 let signedIn = false;
+let playerId: string | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 function plugin(): Promise<{ gc: GameCenterNative } | null> {
@@ -62,9 +81,12 @@ export async function gameCenterSignIn(): Promise<boolean> {
   const p = (await plugin())?.gc;
   if (!p) return false;
   try {
-    signedIn = (await p.signIn()).signedIn;
+    const r = await p.signIn();
+    signedIn = r.signedIn;
+    playerId = signedIn && typeof r.playerId === 'string' && r.playerId ? r.playerId : null;
   } catch (e) {
     signedIn = false;
+    playerId = null;
     console.warn('Game Center unavailable:', e instanceof Error ? e.message : e);
   }
   return signedIn;
@@ -73,6 +95,34 @@ export async function gameCenterSignIn(): Promise<boolean> {
 /** The player is signed in to Game Center (so an achievements button is worth showing). */
 export function gameCenterReady(): boolean {
   return signedIn;
+}
+
+/** Game Center's id for the signed-in player (scoped to this developer team; not a name), or null when not known. */
+export function gameCenterPlayerId(): string | null {
+  return signedIn ? playerId : null;
+}
+
+/** The in-flight (or finished) launch sign-in, so the account sign-in can wait for Game Center's answer. */
+let signingIn: Promise<boolean> | null = null;
+
+/** gameCenterSignIn, once: later callers get the same answer. */
+export function gameCenterSignInOnce(): Promise<boolean> {
+  signingIn ??= gameCenterSignIn();
+  return signingIn;
+}
+
+/** The signed-in player's identity for the game's own account, or null (not the app, not signed in, Apple unreachable). */
+export async function gameCenterIdentity(): Promise<GameCenterIdentity | null> {
+  if (!signedIn) return null;
+  const p = (await plugin())?.gc;
+  if (!p) return null;
+  try {
+    const id = await p.identity();
+    return id && typeof id.teamPlayerId === 'string' && id.teamPlayerId && typeof id.signature === 'string' ? id : null;
+  } catch (e) {
+    console.warn('Game Center identity unavailable:', e instanceof Error ? e.message : e);
+    return null;
+  }
 }
 
 /** Report whatever moved since the last report (percent up only). Safe to call after every save. */

@@ -64,7 +64,7 @@ function carrier(m: Match, x0 = -20): Player {
 }
 
 describe('AUTO SPRINT (touch)', () => {
-  it('the stick all the way sprints; a light push jogs; without it the stick never sprints', () => {
+  it('the stick pushed sprints, flat out from half way; a light push jogs; without it the stick never sprints', () => {
     const speed = (k: number, auto: boolean) => {
       const m = scenario(3);
       const p = carrier(m);
@@ -72,10 +72,14 @@ describe('AUTO SPRINT (touch)', () => {
       return { v: p.speed(), sprint: p.sprint, own: m.ball.owner === p.idx };
     };
     const full = speed(1, true);
-    const light = speed(0.5, true);
+    const half = speed(0.6, true);
+    const light = speed(0.3, true);
     const off = speed(1, false);
     expect(full.sprint).toBe(true);
     expect(full.own).toBe(true);
+    // (2026-10-04: there is no SPRINT button on touch. A thumb resting past half way is his full pace, not 60% of it.)
+    expect(half.sprint).toBe(true);
+    expect(half.v).toBeGreaterThan(full.v * 0.98);
     expect(light.sprint).toBe(false);
     expect(off.sprint).toBe(false);
     expect(full.v).toBeGreaterThan(off.v * 1.25);
@@ -330,30 +334,37 @@ describe('SKILL: the RAINBOW FLICK does what a rainbow flick does', () => {
     console.log(rows.join('\n'));
   }, 120_000);
 
-  it('with nobody in front it is a forward lift he runs onto; near a touchline it stays in play', () => {
+  it('with nobody in front the stick along his run is a BURST, the ball kept; a flick near a touchline stays in play', () => {
+    // (It was a rainbow flick over nobody: the casual thumb, still pushing the way he ran, got that every time.)
     const m = scenario(77);
     const p = carrier(m, -20);
     steps(m, 40, pad(1, 0));
-    const x0 = m.ball.pos.x;
-    steps(m, 1, pad(1, 0, { skill: true }));
+    const jog = p.speed();
+    const evs = steps(m, 1, pad(1, 0, { skill: true }));
     let top = 0;
-    let got = -1;
-    for (let i = 0; i < 120 && got < 0; i++) {
+    for (let i = 0; i < 40; i++) {
       m.step(DT, pad(1, 0));
-      if (m.drainEvents().some((e) => e.type === 'control' && e.player === p.idx)) got = i;
+      evs.push(...m.drainEvents());
       top = Math.max(top, m.ball.pos.y);
     }
-    expect(top).toBeGreaterThan(1.8);
-    expect(got).toBeGreaterThan(30);
-    expect(m.ball.pos.x - x0).toBeGreaterThan(3);
-    // Running at the touchline: shortened to land inside it.
+    const mv = evs.find((e) => e.type === 'skillMove');
+    expect(mv && mv.type === 'skillMove' ? mv.move : '').toBe('boost');
+    expect(top).toBeLessThan(0.6);
+    expect(m.ball.owner).toBe(p.idx);
+    expect(p.speed()).toBeGreaterThan(jog + 1.5);
+    // Running at the touchline with a man in the way: the flick over him is shortened to land inside it.
     const n = scenario(78);
     const q = n.players[9];
     place(q, -20, HALF_W - 8);
     q.facing = Math.PI / 2;
     giveBall(n, q);
+    const o = n.players[14];
+    place(o, -20, HALF_W - 3.2);
+    o.facing = -Math.PI / 2;
+    o.tackleCooldown = 9;
     steps(n, 20, pad(0, 1));
-    steps(n, 1, pad(0, 1, { skill: true }));
+    const flicked = steps(n, 1, pad(0, 1, { skill: true })).find((e) => e.type === 'skillMove');
+    expect(flicked && flicked.type === 'skillMove' ? flicked.move : '').toBe('rainbow');
     // (Until it's his again: after that he's the one running it out.)
     let maxZ = 0;
     let his = false;

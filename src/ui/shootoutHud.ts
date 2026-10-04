@@ -1,4 +1,5 @@
 import { cssHex } from '../render/palette';
+import { steppingUp } from '../sim/shootout';
 import type { Kit, Side } from '../sim/types';
 import { crestSvg } from './crest';
 
@@ -15,6 +16,9 @@ export interface TrackerState {
   kicks: [boolean[], boolean[]];
   turn: Side;
   winner: Side | -1;
+  /** Who kicks first in every pair, and the kick's stage (sim/shootout.ts ShootoutState): with them, the side stepping up NEXT is lit once a kick is settled. */
+  first?: Side;
+  stage?: string;
 }
 
 /** Most kicks shown per row; long sudden deaths scroll the oldest off. */
@@ -52,7 +56,10 @@ export class ShootoutHud {
   update(s: TrackerState): void {
     if (this.clock && this.clock.textContent !== 'PENS') this.clock.textContent = 'PENS';
     const [a, b] = s.kicks;
-    const key = `${a.map(Number).join('')}|${b.map(Number).join('')}|${s.turn}|${s.winner}`;
+    // The side stepping up: once a kick is settled (the result beat) it is the NEXT taker's, not the side that has just
+    // kicked (`turn` only moves on when the next man is on the spot: its row and its next dot stayed lit for 1.2 s).
+    const up = steppingUp(s);
+    const key = `${a.map(Number).join('')}|${b.map(Number).join('')}|${up}|${s.winner}`;
     if (key === this.key) return;
     this.key = key;
     const level = a.length === b.length;
@@ -63,12 +70,12 @@ export class ShootoutHud {
       const t = this.teams[side];
       let dots = '';
       for (let i = from; i < n; i++) {
-        const cls = i < k.length ? (k[i] ? 'ok' : 'no') : s.winner < 0 && side === s.turn && i === k.length ? 'next' : 'wait';
+        const cls = i < k.length ? (k[i] ? 'ok' : 'no') : s.winner < 0 && side === up && i === k.length ? 'next' : 'wait';
         dots += `<i class="so-dot ${cls}"></i>`;
       }
       const goals = k.filter(Boolean).length;
-      const up = s.winner < 0 && side === s.turn ? ' up' : s.winner === side ? ' won' : '';
-      return `<div class="so-row${up}">
+      const lit = s.winner < 0 && side === up ? ' up' : s.winner === side ? ' won' : '';
+      return `<div class="so-row${lit}">
         ${this.crests[side]}
         <b>${t.short}</b><span class="so-dots">${dots}</span><em>${goals}</em>
       </div>`;

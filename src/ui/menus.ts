@@ -7,6 +7,7 @@ import {
 import { APP_VERSION, CONTACT_EMAIL, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
 import { pixelIcon } from './pixelIcons';
+import { gemArt } from './gemUi';
 import './menus.css';
 import './rewards.css';
 import { buzz, hapticsAvailable, type HapticLevel } from '../platform/haptics';
@@ -88,7 +89,7 @@ const CONTROL_ROWS: ControlRow[] = [
   },
   {
     k: 'autoSprint', kind: 'switch', label: 'AUTO SPRINT',
-    why: { true: `Thumbstick all the way: sprint${sep()}a light push jogs`, false: 'Hold SPRINT to sprint' },
+    why: { true: `Push to sprint${sep()}a light push jogs`, false: 'Hold SPRINT to sprint' },
   },
   {
     // (The app only: the web and the portals have nothing to feel. platform/haptics.ts says what fires where.)
@@ -111,7 +112,14 @@ export interface MainInfo {
   noAds?: { price: string };
   /** Unread news about your own transfers (a count on TRANSFERS). */
   transfers?: number;
-  gift?: { amount: number; streak: number };
+  /** Today's calendar day, unclaimed (meta/loops.ts CALENDAR): coins, and on some days gems or a Scout Token. */
+  gift?: { amount: number; streak: number; gems?: number; tokens?: number };
+  /** Gems in the wallet, beside the coins (meta/gems.ts). */
+  gems?: number;
+  /** Tomorrow's calendar day, once today's is claimed: the reason to come back, in the top bar. */
+  tomorrow?: { coins: number; gems: number; tokens: number };
+  /** This week's three objectives (meta/loops.ts), under today's challenges: coins and gems each. */
+  weekly?: { list: readonly { text: string; goal: number; coins: number }[]; progress: readonly number[]; claimed: readonly boolean[]; gems: number };
   /** Level badge: level, title and progress into the level. */
   level?: { level: number; title: string; into: number; need: number };
   /** Today's challenges card. */
@@ -298,7 +306,7 @@ const dot = (cls: string) => `<i class="ht-dot ${cls}"></i>`;
 const htPad = (defend: boolean) => `<div class="ht-pad" aria-hidden="true">
     <div class="ht-stick"><i></i></div>
     <span class="ht-pad-l">DRAG TO MOVE</span>
-    <div class="ht-cluster">${touchBtn('skill', 'SKILL')}${touchBtn('sprint', 'SPRINT')}${defend ? touchBtn('through dsw', 'SWITCH') : touchBtn('through', 'THROUGH')}${touchBtn('shoot', defend ? 'TACKLE' : 'SHOOT')}${defend ? touchBtn('pass dp', 'PRESS') : touchBtn('pass', 'PASS')}</div>
+    <div class="ht-cluster">${defend ? touchBtn('keeper', 'KEEPER') : touchBtn('skill', 'SKILL')}${defend ? touchBtn('through dsw', 'SWITCH') : touchBtn('through', 'THROUGH')}${touchBtn('shoot', defend ? 'TACKLE' : 'SHOOT')}${defend ? touchBtn('pass dp', 'PRESS') : touchBtn('pass', 'PASS')}</div>
   </div>`;
 
 /** One HOW TO PLAY row: the control (the touch button's colour, or the player's own key), its name and a few words. */
@@ -321,9 +329,9 @@ function howtoBody(tab: HtTab, dev: HtDev): string {
   if (tab === 'defend') {
     return withPad([
       htRow(touch ? dot('def') : kc('pass', dev), 'SWITCH', 'Change player'),
-      htRow(cap('shoot', 'shoot'), 'TACKLE', `${tap('{Tap} to tackle')}${sep()}hold to slide`),
-      htRow(touch ? dot('through') : kc('through', dev), 'PRESS', `Hold${sep()}he stays goal side and steals loose touches`),
-      htRow(cap('sprint', 'sprint'), 'SPRINT', touch ? 'Stick all the way to chase' : 'Hold to chase'),
+      htRow(cap('shoot', 'shoot'), 'TACKLE', `${tap('{Tap} in reach to win it')}${sep()}hold to slide`),
+      htRow(touch ? dot('through') : kc('through', dev), 'PRESS', `Hold${sep()}he closes down and a mate helps`),
+      htRow(touch ? dot('keeper') : kc('skill', dev), 'KEEPER', `Hold near your goal${sep()}he comes out for it`),
       htRow(touch ? '<kbd>II</kbd>' : kc('pause', dev), 'PAUSE', touch ? `Top of the screen${sep()}tap to skip a replay` : 'Pause the match'),
     ], true);
   }
@@ -378,7 +386,7 @@ function howtoBody(tab: HtTab, dev: HtDev): string {
     htRow(cap('shoot', 'shoot'), 'FINISH', tap('{Tap} SHOOT again as you strike')),
     htRow(cap('shoot', 'shoot'), 'FIRST TIME', 'SHOOT just before it reaches you'),
     htRow(cap('shoot', 'shoot'), 'CHIP', tap('Hold SHOOT, {tap} THROUGH')),
-    htRow(cap('sprint', 'sprint'), 'SPRINT', touch ? `Stick all the way${sep()}double tap to knock it on` : `Hold${sep()}press twice to knock it on`),
+    touch ? htRow(stick, 'SPRINT', `Push the stick${sep()}a light push jogs`) : htRow(cap('sprint', 'sprint'), 'SPRINT', `Automatic${sep()}press twice to knock it on`),
   ], false);
 }
 
@@ -396,6 +404,17 @@ function bagIcon(color: string, px: number): string {
 const KEY_ACTION_NAMES: Record<KeyAction, string> = {
   up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT', pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', skill: 'SKILL', power: 'POWER', pause: 'PAUSE',
 };
+
+/** What half time offers beside TACTICS & SUBS and SECOND HALF: the pause menu's set (Menus.halftime). */
+export interface HalftimeMore {
+  settings?: () => void;
+  howto?: () => void;
+  quit?: () => void;
+  /** What walking off costs, said before he does (a forfeit defeat in the career and the cup; a friendly doesn't count). */
+  quitNote?: string;
+  /** Walking off is a defeat: the button and the question say FORFEIT. */
+  forfeit?: boolean;
+}
 
 /** A finished match's goal clip (the session's clip API, when the browser can record one). */
 export interface ClipSource {
@@ -514,6 +533,8 @@ export class Menus {
       gift?: () => void; playNow?: () => void; account?: () => void; unlocks?: () => void;
       /** The coins in the top bar: the shop's COINS tab where coins can be topped up (absent: the shop). */
       coins?: () => void;
+      /** The gems in the top bar: the shop's STORE tab. */
+      gems?: () => void;
       /** REMOVE ADS in the top bar (drawn with `info.noAds`). */
       removeAds?: () => void;
       locked?: (f: LockedFeature) => void;
@@ -560,6 +581,7 @@ export class Menus {
           <span class="hh-sub">SEASON ${road.season}${sep()}${escHtml(what)}${sep()}${venue}</span>
           ${pips}
           ${play('PLAY')}
+          ${road.waiting ? `<em class="hub-badge" aria-label="${road.waiting} waiting for you">${road.waiting > 9 ? '9+' : road.waiting}</em>` : ''}
         </button>`;
     } else if (road.kind === 'create') {
       hero = `<button class="hub-hero road create" data-a="career" aria-label="Road to Glory. Create your club">
@@ -617,11 +639,20 @@ export class Menus {
         const ok = !!dl.claimed[k];
         return `<li class="${ok ? 'done' : ''}"><span class="dc-text">${c.text}</span><span class="dc-bar"><i style="width:${pct(c, k)}%"></i></span><b class="dc-n">${ok ? '✓' : `${p}/${c.goal}`}</b><em class="dc-coins">+${c.coins}</em></li>`;
       }).join('');
+      // THIS WEEK, under today's three: the weekly objectives (coins and gems each; they last all week).
+      const wk = info?.weekly;
+      const wkRows = wk
+        ? `<li class="dc-h">THIS WEEK</li>${wk.list.slice(0, 3).map((c, k) => {
+          const p = Math.min(c.goal, wk.progress[k] ?? 0);
+          const ok = !!wk.claimed[k];
+          return `<li class="wk ${ok ? 'done' : ''}"><span class="dc-text">${c.text}</span><span class="dc-bar"><i style="width:${Math.round((p / c.goal) * 100)}%"></i></span><b class="dc-n">${ok ? '✓' : `${p}/${c.goal}`}</b><em class="dc-coins">+${c.coins}<u class="dc-gems">${gemArt(1.4)}${wk.gems}</u></em></li>`;
+        }).join('')}`
+        : '';
       daily = `<div class="hub-daily-wrap">
-          <button class="hub-daily ${dl.fresh ? 'fresh' : ''}" data-a="daily" aria-expanded="false" aria-controls="hub-dl" aria-label="Daily challenges, ${done} of 3 done">
+          <button class="hub-daily ${dl.fresh ? 'fresh' : ''}" data-a="daily" aria-expanded="false" aria-controls="hub-dl" aria-label="Daily challenges, ${done} of 3 done${wk ? '. Weekly objectives' : ''}">
             <span class="hd-h"><b>DAILY</b><em>${done}/3</em></span>${next}
           </button>
-          <ul class="hub-dl" id="hub-dl" hidden>${rows}</ul>
+          <ul class="hub-dl" id="hub-dl" hidden>${rows}${wkRows}</ul>
         </div>`;
     }
     const foot = `<div class="hub-foot">
@@ -643,12 +674,25 @@ export class Menus {
     const wallet = h.coins || h.shop
       ? `<button class="coins shop-btn hub-coins" data-a="coins" aria-label="${coins} coins. ${h.coins ? 'Get coins' : 'Shop'}"><i></i><span>${coins}</span><b class="shop-tag">${h.coins ? '+' : 'SHOP'}</b></button>`
       : `<div class="coins hub-coins"><i></i><span>${coins}</span></div>`;
+    // Gems, the premium currency, beside the coins (a tap: the shop's STORE).
+    const gemN = info?.gems;
+    const gemChip = gemN === undefined ? ''
+      : h.gems ? `<button class="gems hub-gems" data-a="gems" aria-label="${gemN.toLocaleString()} gems. Store">${gemArt(2)}<span>${gemN.toLocaleString()}</span></button>`
+        : `<div class="gems hub-gems" aria-label="${gemN.toLocaleString()} gems">${gemArt(2)}<span>${gemN.toLocaleString()}</span></div>`;
+    // The reason to come back: today's gift until it is claimed, then what tomorrow's pays (no timer, no penalty).
+    const gf = info?.gift;
+    const giftExtra = gf?.gems ? `<i class="hg-gem">${gemArt(1.6)}${gf.gems}</i>` : '';
+    const tm = info?.tomorrow;
+    const tomorrow = !gf && tm
+      ? `<span class="hub-tomorrow" aria-label="Tomorrow's gift: ${tm.coins} coins${tm.gems ? ` and ${tm.gems} gems` : ''}${tm.tokens ? ' and a scout token' : ''}"><small>TOMORROW</small><b>+${tm.coins}</b>${tm.gems ? `<i>${gemArt(1.4)}${tm.gems}</i>` : ''}</span>`
+      : '';
     const top = `<header class="hub-top">
         ${lvChip}
         <div class="hub-acts">
-          ${h.gift && info?.gift ? `<button class="btn btn-yellow hub-gift" data-a="gift" aria-label="Daily gift, ${info.gift.amount} coins">${pixelIcon('gift', '#26262e', 2, 'inl')}<span class="hg-w">GIFT</span><b>+${info.gift.amount}</b></button>` : ''}
+          ${h.gift && info?.gift ? `<button class="btn btn-yellow hub-gift" data-a="gift" aria-label="Daily gift, ${info.gift.amount} coins${info.gift.gems ? ` and ${info.gift.gems} gems` : ''}">${pixelIcon('gift', '#26262e', 2, 'inl')}<span class="hg-w">GIFT</span><b>+${info.gift.amount}</b>${giftExtra}</button>` : tomorrow}
           ${h.account ? `<button class="btn btn-white hub-acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
           ${h.removeAds && info?.noAds ? `<button class="btn btn-red hub-noads" data-a="noads" aria-label="Remove ads, ${escHtml(info.noAds.price)}">${pixelIcon('film', '#fff', 2, 'inl')}<span>REMOVE ADS</span><b class="hn-p">${escHtml(info.noAds.price)}</b></button>` : ''}
+          ${gemChip}
           ${wallet}
           <button class="hub-ico" data-a="howto" aria-label="How to play"><b>?</b></button>
           <button class="hub-ico" data-a="settings" aria-label="Settings">${pixelIcon('gear', '#fbfbf4', 3)}</button>
@@ -706,6 +750,7 @@ export class Menus {
     on('account', h.account);
     on('noads', h.removeAds);
     on('coins', h.coins ?? h.shop);
+    on('gems', h.gems);
     on('unlocks', h.unlocks);
     on('howto', h.howto);
     on('settings', h.settings);
@@ -935,6 +980,8 @@ export class Menus {
     skip?: () => void;
     /** The quit button's words (default QUIT MATCH). */
     quitLabel?: string;
+    /** Walking off is a defeat (the career, the cup, a run): the button and the question say FORFEIT. */
+    forfeit?: boolean;
   }): void {
     const d = this.mount(`
       <div class="panel-wrap dim">
@@ -947,13 +994,13 @@ export class Menus {
             <button class="btn btn-white" data-a="settings">SETTINGS</button>
             ${this.clipRow(h.clip)}
             ${h.skip ? '<button class="btn btn-white" data-a="skip">SKIP THE BASICS</button>' : ''}
-            <button class="btn btn-red" data-a="quit">${escHtml(h.quitLabel ?? 'QUIT MATCH')}</button>
+            <button class="btn btn-red" data-a="quit">${escHtml(h.quitLabel ?? (h.forfeit ? 'FORFEIT' : 'QUIT MATCH'))}</button>
           </div>
           <div class="quit-ask" hidden>
             <p class="fine big">${h.quitNote ?? "This match won't count."}</p>
             <div class="menu-col">
               <button class="btn btn-go btn-lg" data-a="stay">KEEP PLAYING</button>
-              <button class="btn btn-red" data-a="really">YES, QUIT</button>
+              <button class="btn btn-red" data-a="really">${h.forfeit ? 'YES, FORFEIT' : 'YES, QUIT'}</button>
             </div>
           </div>
         </div>
@@ -964,7 +1011,7 @@ export class Menus {
     const asking = (on: boolean) => {
       main.hidden = on;
       ask.hidden = !on;
-      title.textContent = on ? 'QUIT MATCH?' : 'PAUSED';
+      title.textContent = on ? (h.forfeit ? 'FORFEIT MATCH?' : 'QUIT MATCH?') : 'PAUSED';
       $<HTMLButtonElement>(d, on ? '[data-a=stay]' : '[data-a=quit]').focus();
     };
     $(d, '[data-a=stay]').addEventListener('click', () => asking(false));
@@ -1318,35 +1365,83 @@ export class Menus {
   /** The tactics hint ("TAP OR DRAG TO SUB") shows until the first sub of the session. */
   private static subbedOnce = false;
 
-  /** Half time, one screen: the score over the stats (five by two), TACTICS & SUBS and SECOND HALF pinned. */
-  halftime(m: Match, kits: [Kit, Kit], onContinue: () => void, onTactics?: () => void): void {
+  /**
+   * Half time, one screen: the score over the stats (five by two). It offers what the pause menu offers (the owner:
+   * "i cant quit the game during half time ... theres no settings button ... or no controls button"): QUIT (FORFEIT
+   * where walking off is a defeat) top left, where BACK sits on every other screen; CONTROLS and SETTINGS top right;
+   * TACTICS & SUBS and the big SECOND HALF pinned at the bottom. QUIT asks first and says what it costs (`quitNote`).
+   */
+  halftime(m: Match, kits: [Kit, Kit], onContinue: () => void, onTactics?: () => void, more: HalftimeMore = {}): void {
+    const quitWord = more.forfeit ? 'FORFEIT' : 'QUIT';
+    const gap = '<span class="mc-top-gap" aria-hidden="true"></span>';
+    const tools = [
+      more.howto ? '<button class="btn btn-white mc-back" data-a="howto">CONTROLS</button>' : '',
+      more.settings ? '<button class="btn btn-white mc-back" data-a="settings">SETTINGS</button>' : '',
+    ].join('');
     const d = this.mount(`
       <div class="panel-wrap dim shell">
         <div class="panel mc shell ht-panel">
-          ${shellTop('HALF TIME', '', '', '')}
+          <header class="mc-top hf-top">
+            ${more.quit ? `<button class="btn btn-red mc-back hf-quit" data-a="quit">${quitWord}</button>` : gap}
+            <div class="mc-title"><h2>HALF TIME</h2></div>
+            ${tools ? `<div class="hf-tools">${tools}</div>` : gap}
+          </header>
           <div class="mc-body ht-body">
             ${this.scoreHeader(m, kits)}
             ${this.statsTable(m, kits)}
           </div>
-          <div class="mc-actions">
+          <div class="mc-actions hf-actions">
             ${onTactics ? '<button class="btn btn-blue" data-a="tactics">TACTICS &amp; SUBS</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="go">SECOND HALF</button>
           </div>
+          <div class="quit-ask hf-ask" hidden>
+            <p class="fine big">${escHtml(more.quitNote ?? "This match won't count.")}</p>
+            <div class="hf-ask-row">
+              <button class="btn btn-red" data-a="really">${more.forfeit ? 'YES, FORFEIT' : 'YES, QUIT'}</button>
+              <button class="btn btn-go btn-lg" data-a="stay">KEEP PLAYING</button>
+            </div>
+          </div>
         </div>
       </div>`, 'ht');
+    const title = $(d, '.mc-title h2');
+    const ask = $(d, '.hf-ask');
+    const parts = [$(d, '.ht-body'), $(d, '.hf-actions')];
+    const top = $(d, '.hf-top');
+    let asking = false;
+    const setAsking = (on: boolean) => {
+      asking = on;
+      for (const el of parts) el.hidden = on;
+      // (The header's buttons keep their places, unseen: the title stays centred.)
+      top.classList.toggle('asking', on);
+      ask.hidden = !on;
+      title.textContent = on ? (more.forfeit ? 'FORFEIT MATCH?' : 'QUIT MATCH?') : 'HALF TIME';
+      $<HTMLButtonElement>(d, on ? '[data-a=stay]' : '[data-a=go]').focus();
+    };
     const go = () => {
       this.stopKey(key);
       onContinue();
     };
+    // SPACE / ENTER start the second half (never while the quit question is up: there they keep him playing); ESC
+    // closes the question.
     const key = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.code === 'Enter') go();
+      if (asking) {
+        if (e.code === 'Escape') setAsking(false);
+        return;
+      }
+      if ((e.code === 'Space' || e.code === 'Enter') && !(e.target as HTMLElement | null)?.closest?.('button')) go();
     };
     this.listenKey(key);
     $(d, '[data-a=go]').addEventListener('click', go);
-    d.querySelector('[data-a=tactics]')?.addEventListener('click', () => {
+    const leave = (fn?: () => void) => () => {
       this.stopKey(key);
-      onTactics?.();
-    });
+      fn?.();
+    };
+    d.querySelector('[data-a=tactics]')?.addEventListener('click', leave(onTactics));
+    d.querySelector('[data-a=howto]')?.addEventListener('click', leave(more.howto));
+    d.querySelector('[data-a=settings]')?.addEventListener('click', leave(more.settings));
+    d.querySelector('[data-a=quit]')?.addEventListener('click', () => setAsking(true));
+    $(d, '[data-a=stay]').addEventListener('click', () => setAsking(false));
+    $(d, '[data-a=really]').addEventListener('click', leave(more.quit));
   }
 
   fulltime(
@@ -1399,7 +1494,7 @@ export class Menus {
       extra.showtime ? this.showtimeRow(extra.showtime) : '',
       prog && prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">${pixelIcon('fire', '#ff9a3a', 2, 'inl')}${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : '',
       extra.tryEasy ? '<p class="ft-easy">Tough run? <button class="btn btn-white ft-easy-btn" data-a="easy">TRY EASY</button></p>' : '',
-      prog?.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>+${c.coins}</b></li>`).join('')}</ul>` : '',
+      prog?.done.length ? `<ul class="ft-daily">${prog.done.map((c) => `<li><span>✓ ${c.text}</span><b>${c.coins ? `+${c.coins}` : ''}</b></li>`).join('')}</ul>` : '',
       extra.tierUps?.length ? `<ul class="ft-tiers">${extra.tierUps.map((t) => `<li>${escHtml(t)}</li>`).join('')}</ul>` : '',
       extra.shopReach ? `<p class="ft-shop">IN REACH IN THE SHOP: <b>${escHtml(extra.shopReach.name.toUpperCase())}</b> ${escHtml(extra.shopReach.kind.toLowerCase())}</p>` : '',
       this.clipRow(extra.clip, true),
@@ -1744,7 +1839,8 @@ export class Menus {
     const s = save.settings;
     // CONTROLS: a switch is one tappable row (its ON / OFF chip on the right); a level shows its values beside its
     // name. (VIBRATION lives in GENERAL, the app only: its lines still come from CONTROL_ROWS for the hint.)
-    const rows = CONTROL_ROWS.filter((r) => r.k !== 'vibration');
+    // (AUTO SPRINT is for keys and a gamepad: on touch there is no SPRINT button, the stick always sprints.)
+    const rows = CONTROL_ROWS.filter((r) => r.k !== 'vibration' && !(r.k === 'autoSprint' && currentDevice() === 'touch'));
     const vibRow = CONTROL_ROWS.find((r) => r.k === 'vibration');
     const ctlRow = (r: ControlRow) => {
       if (r.kind === 'switch') return `<button class="set-sw" data-c="${r.k}" role="switch"><span>${r.label}</span><b></b></button>`;
@@ -2304,8 +2400,9 @@ export class Menus {
    * The welcome offer, once ever, after the first win (main.ts; the app's store only): the Starter Pack with its
    * real price and worth. No timer and no pressure: it says plainly that the pack stays in the shop.
    */
-  welcomeOffer(o: { price: string; coins: number; worth: number }, h: { see: () => void; later: () => void }): void {
+  welcomeOffer(o: { price: string; coins: number; worth: number; gems?: number }, h: { see: () => void; later: () => void }): void {
     const n = (v: number) => v.toLocaleString('en-US');
+    const gemItem = o.gems ? `<span class="wo-plus" aria-hidden="true">+</span><span class="wo-item">${gemArt(3)}<b>${n(o.gems)}</b><small>GEMS</small></span>` : '';
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel narrow gift-panel wo-panel">
@@ -2313,6 +2410,7 @@ export class Menus {
           <p class="wo-sub">STARTER PACK${sep()}ONE TIME ONLY</p>
           <div class="wo-box">
             <span class="wo-item"><i class="wo-coin" aria-hidden="true"></i><b>${n(o.coins)}</b><small>COINS</small></span>
+            ${gemItem}
             <span class="wo-plus" aria-hidden="true">+</span>
             <span class="wo-item">${pixelIcon('ball', '#ffd23a', 3)}<b>GOLD BALL</b><small>LOOK</small></span>
           </div>
@@ -2330,19 +2428,30 @@ export class Menus {
     });
   }
 
-  gift(amount: number, streak: number, canDouble: boolean, h: { claim: (double: boolean) => Promise<boolean>; back: () => void }): void {
+  /**
+   * The 7-day login calendar (meta/loops.ts CALENDAR, passed in as `cal`): each day's coins, with gems or a Scout
+   * Token on some. It counts the days claimed, never days in a row: MISS A DAY, KEEP YOUR PLACE.
+   */
+  gift(
+    amount: number, streak: number, canDouble: boolean, h: { claim: (double: boolean) => Promise<boolean>; back: () => void },
+    cal?: readonly { coins: number; gems: number; tokens: number }[],
+  ): void {
+    const dayOf = (i: number) => cal?.[i] ?? { coins: 100 + 50 * i, gems: 0, tokens: 0 };
+    const extra = (d: { gems: number; tokens: number }) => `${d.gems ? `<em class="gd-gem">${gemArt(1.6)}${d.gems}</em>` : ''}${d.tokens ? '<em class="gd-tok">+1 TOKEN</em>' : ''}`;
     const days = Array.from({ length: 7 }, (_, i) => {
-      const n = 100 + 50 * i;
+      const d = dayOf(i);
       const state = i < streak - 1 ? 'got' : i === streak - 1 ? 'today' : '';
-      return `<li class="${state}"><span>DAY ${i + 1}</span><b>${n}</b></li>`;
+      return `<li class="${state}"><span>DAY ${i + 1}</span><b>${d.coins}</b>${extra(d)}</li>`;
     }).join('');
+    const today = dayOf(streak - 1);
+    const next = dayOf(streak % 7);
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel narrow gift-panel">
           <h2>DAILY GIFT</h2>
           <ul class="gift-days">${days}</ul>
-          <div class="reward"><i></i><span>+${amount}</span><em>DAY ${streak} OF 7</em></div>
-          <p class="gift-note">TOMORROW +${100 + 50 * (streak % 7)}${sep()}MISS A DAY, KEEP YOUR PLACE</p>
+          <div class="reward"><i></i><span>+${amount}</span>${today.gems ? `<span class="rw-gem">${gemArt(3)}+${today.gems}</span>` : ''}${today.tokens ? '<span class="rw-tok">+1 TOKEN</span>' : ''}<em>DAY ${streak} OF 7</em></div>
+          <p class="gift-note">TOMORROW +${next.coins}${next.gems ? ` AND ${next.gems} GEMS` : ''}${next.tokens ? ' AND A SCOUT TOKEN' : ''}${sep()}MISS A DAY, KEEP YOUR PLACE</p>
           <div class="btn-row">
             ${canDouble ? `<button class="btn btn-white" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× GIFT</button>` : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>
@@ -2358,6 +2467,64 @@ export class Menus {
     };
     $(d, '[data-a=claim]').addEventListener('click', () => void go(false));
     d.querySelector('[data-a=double]')?.addEventListener('click', () => void go(true));
+  }
+
+  /**
+   * A LOST DECIDER (economy v3, main.ts): one chance to play it again before the result counts. The price is on the
+   * button and the wallet beside it, so the one tap is the confirm; a rewarded ad does it once a day where there are
+   * ads; NO THANKS takes the result. Short of gems it says so (and GET GEMS goes to the store, in the app).
+   */
+  replayOffer(
+    o: { what: string; score: string; price: number; have: number; canAd: boolean },
+    h: { gems: () => void; ad?: () => Promise<boolean>; no: () => void; getGems?: () => void },
+  ): void {
+    const short = Math.max(0, o.price - o.have);
+    const main = short > 0
+      ? h.getGems ? '<button class="btn btn-blue btn-lg" data-a="get">GET GEMS</button>' : ''
+      : `<button class="btn btn-go btn-lg" data-a="gems">REPLAY <span class="gem-price">${gemArt(1.6)}${o.price}</span></button>`;
+    const d = this.mount(`
+      <div class="panel-wrap dim">
+        <div class="panel narrow gift-panel rp-panel">
+          <h2>PLAY IT AGAIN?</h2>
+          <p class="wo-sub">${escHtml(o.what)}${sep()}${o.score}</p>
+          <div class="gem-cost"><span><small>REPLAY</small><b>${gemArt(3)}${o.price}</b></span><span><small>YOU HAVE</small><b class="${short > 0 ? 'short' : ''}">${gemArt(3)}${o.have.toLocaleString('en-US')}</b></span></div>
+          <p class="gift-note">ONE REPLAY A MATCH${sep()}THE FIRST RESULT IS WIPED${short > 0 ? `${sep()}${short} MORE ${short === 1 ? 'GEM' : 'GEMS'} NEEDED` : ''}</p>
+          <div class="btn-row">
+            <button class="btn btn-white" data-a="no">NO THANKS</button>
+            ${o.canAd && h.ad ? `<button class="btn btn-yellow" data-a="ad">${pixelIcon('film', '#26262e', 2, 'inl')}WATCH AN AD</button>` : ''}
+            ${main}
+          </div>
+        </div>
+      </div>`, 'gift-screen');
+    let busy = false;
+    const all = () => d.querySelectorAll<HTMLButtonElement>('button');
+    d.querySelector('[data-a=no]')?.addEventListener('click', () => {
+      if (!busy) h.no();
+    });
+    d.querySelector('[data-a=gems]')?.addEventListener('click', () => {
+      if (busy) return;
+      busy = true;
+      buzz('success');
+      h.gems();
+    });
+    d.querySelector('[data-a=get]')?.addEventListener('click', () => {
+      if (!busy) h.getGems?.();
+    });
+    d.querySelector('[data-a=ad]')?.addEventListener('click', () => {
+      if (busy || !h.ad) return;
+      busy = true;
+      all().forEach((b) => (b.disabled = true));
+      void h.ad().then((ok) => {
+        // (The ad did not finish: the offer stays, nothing was used.)
+        if (ok) return;
+        busy = false;
+        all().forEach((b) => (b.disabled = false));
+        this.toast('THE AD DID NOT FINISH. THE OFFER STAYS');
+      });
+    });
+    this.listenKey((e) => {
+      if (e.code === 'Escape' && !busy) h.no();
+    });
   }
 
   comingSoon(title: string, text: string, onBack: () => void): void {

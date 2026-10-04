@@ -4,6 +4,7 @@
  */
 import { Rng, hashString } from '../core/rng';
 import { safeName, safeShort } from '../core/names';
+import { defaultCrest, normalizeCrest, setMyCrest, type CrestDesign } from '../core/crest';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, teamRating } from '../sim/types';
 import type { FormationId, Kit, KitPattern, PlayerDef, PlayerStats, Role, TeamDef } from '../sim/types';
@@ -35,15 +36,25 @@ import {
 } from './life';
 import { LEGACY_POINTS, START_BONUS, addLegacy, archiveClub, defaultLegacy, hasPerk, readLegacy, type LegacyState } from './legacy';
 import {
-  addForm, addMoment, beforeMatchBeats, cupHeadline, defaultStory, derbyResult, placeRival, readStory, seasonStartBeats, storyNews, type StoryState,
+  addForm, addMoment, beforeMatchBeats, cupHeadline, defaultStory, derbyResult, isDerby, placeRival, readStory, seasonStartBeats, storyNews, storyTag,
+  type StoryState,
 } from './story';
+// The long game (runtime cycles again: only ever used inside functions): player development, the staff, the event
+// cards and the club's week.
+import { pinCeil, readGrow, traitLift, type GrowPlayer } from './growth';
+import { defaultStaff, readStaff, type StaffState } from './staff';
+import { addTimeline, afterAnyMatch, defaultEvents, readEvents, rollEvents, rollPress, type EventsState } from './events';
+import { INJURED_DIP, matchXp, openAll, seasonStart, seasonTurn, weekTick } from './week';
 import { sep } from '../ui/text';
 
 export const CAREER_VERSION = 1 as const;
 export const TOP_DIVISION = 1;
 export const BOTTOM_DIVISION = 6;
 export const CLUBS_PER_DIVISION = 8;
-export const MATCHDAYS = CLUBS_PER_DIVISION - 1;
+/** One round robin: the first half of the season (the second half is the return fixtures). */
+export const HALF_SEASON = CLUBS_PER_DIVISION - 1;
+/** A season is home and away: every club twice, 14 league matchdays. */
+export const MATCHDAYS = HALF_SEASON * 2;
 export const SQUAD_MIN = 14;
 export const SQUAD_MAX = 23;
 /** Free agents on the market at any time (the legacy `state.market` view; see meta/market.ts FREE_AGENTS). */
@@ -92,6 +103,8 @@ export interface ClubState {
   name: string;
   short: string;
   kit: Kit;
+  /** The club's crest as designed (core/crest.ts): always set on a club read from a save or made by createClub. */
+  crest?: CrestDesign;
   formation: FormationId;
   /** Whole squad; the first 11 are the starting XI in FORMATIONS[formation] slot order. */
   squad: PlayerDef[];
@@ -216,6 +229,10 @@ export interface CareerState {
   legacy: LegacyState;
   /** The rival, the form and the moments waiting for the hub (meta/story.ts). */
   story: StoryState;
+  /** The staff: coach, physio, scouts and their reports, academy director, commercial manager (meta/staff.ts). */
+  staff: StaffState;
+  /** The event cards waiting, the timeline, and everything an answer set running (meta/events.ts). */
+  events: EventsState;
 }
 
 export interface Wallet {
@@ -366,6 +383,8 @@ export interface ClubInput {
   short: string;
   kit: Kit;
   formation: FormationId;
+  /** The crest designed in the club creator (default: one from the name and colours). */
+  crest?: CrestDesign;
 }
 
 /** New club with a 16-man squad (1 GK, 5 DF, 6 MF, 4 FW) around START_LEVEL, XI auto-picked. */
@@ -388,6 +407,7 @@ export function createClub(input: ClubInput, seed: number, level = START_LEVEL):
     name,
     short,
     kit,
+    crest: normalizeCrest(input.crest, defaultCrest(name, short, kit)),
     formation: FORMATIONS[input.formation] ? input.formation : '4-4-2',
     squad,
     nextId,
@@ -475,6 +495,8 @@ export function clonePlayer(p: PlayerDef): PlayerDef {
 
 /** Match-ready team: the first 11 players in formation slot order. */
 export function clubTeam(club: ClubState): TeamDef {
+  // (Your crest as you designed it, wherever this club's crest is drawn from here on: core/crest.ts crestFor.)
+  setMyCrest(club);
   return {
     id: club.short,
     name: club.name,
@@ -515,6 +537,8 @@ export function trainPlayer(club: ClubState, wallet: Wallet, playerId: string, s
   const cost = trainingCost(p, discount);
   if (wallet.coins < cost) return fail('no-coins');
   wallet.coins -= cost;
+  // (His potential is what he can grow into by himself: a paid session never moves it.)
+  pinCeil(p);
   p.stats[stat] = Math.min(STAT_CAP, p.stats[stat] + TRAIN_STEP);
   return { ok: true, delta: -cost };
 }
@@ -539,12 +563,15 @@ export function defaultCareer(seed: number): CareerState {
     academy: defaultAcademy(),
     legacy: defaultLegacy(),
     story: defaultStory(),
+    staff: defaultStaff(),
+    events: defaultEvents(),
   };
 }
 
 /**
- * Single round robin via the circle method. ids[0] (the player's club) is fixed and alternates home/away
- * each matchday; every pair meets exactly once and every club plays once per matchday.
+ * A home and away season via the circle method: a round robin (ids[0], the player's club, is fixed and alternates
+ * home/away each matchday), then the same fixtures again with the grounds swapped. Every pair meets twice, once at
+ * each ground, and every club plays once per matchday.
  */
 export function buildFixtures(ids: string[], rng: Rng): Fixture[] {
   const n = ids.length;
@@ -562,7 +589,12 @@ export function buildFixtures(ids: string[], rng: Rng): Fixture[] {
       out.push((r + k) % 2 === 0 ? fx(r, a, b) : fx(r, b, a));
     }
   }
-  return out;
+  return [...out, ...returnFixtures(out, m)];
+}
+
+/** The second half of a season: every first-half fixture again, `half` matchdays later, at the other ground. */
+export function returnFixtures(firstHalf: readonly Fixture[], half: number): Fixture[] {
+  return firstHalf.map((f) => ({ md: f.md + half, home: f.away, away: f.home, hg: null, ag: null }));
 }
 
 export function newSeason(state: CareerState, division: number, number: number): SeasonState {
@@ -692,13 +724,21 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
   const home = f.home === YOU;
   const [my, their] = home ? [f.hg, f.ag] : [f.ag, f.hg];
   addForm(state, my, their);
-  if (season.derby && (f.home === season.derby || f.away === season.derby)) derbyResult(state, my, their);
+  const derby = !!season.derby && (f.home === season.derby || f.away === season.derby);
+  if (derby) derbyResult(state, my, their);
   buildWeek(state);
+  // The week at the club (meta/week.ts): the staff are paid, the squad trains, injuries, mentors, morale, the
+  // scouts, the sponsor, promises. A walk-off is a result like any other here.
+  afterAnyMatch(state, my > their);
+  weekTick(state, wallet, { my, their, home, derby });
   if (season.matchday >= MATCHDAYS) finishSeason(state, wallet);
   else {
     checkBoard(state);
     refreshMarket(state, wallet);
-    beforeMatchBeats(state, nextMatch(state));
+    const next = nextMatch(state);
+    beforeMatchBeats(state, next);
+    // What the week brought: at most one new card to answer (meta/events.ts).
+    rollEvents(state, { my, their }, next);
   }
   return true;
 }
@@ -711,6 +751,20 @@ function buildWeek(state: CareerState, all = false): void {
   const name = partDef(opened).steps[(state.ground.built[opened] ?? 1) - 1]?.name ?? partDef(opened).name;
   addMoment(state, { kind: 'build', icon: partDef(opened).icon, title: 'NOW OPEN', text: `THE ${name} IS READY FOR MATCHDAY` });
   storyNews(state, `${state.club?.name ?? 'The club'} open the ${name.toLowerCase()}`, 'good');
+}
+
+/** FINISH NOW (meta/premium.ts): the part being built opens at once, with its moment. False when nothing is going up. */
+export function finishBuild(state: CareerState): boolean {
+  if (!state.ground.building) return false;
+  buildWeek(state, true);
+  return true;
+}
+
+/** One matchday off the build without a match (meta/premium.ts, the rewarded ad). False when nothing is going up. */
+export function skipBuild(state: CareerState): boolean {
+  if (!state.ground.building) return false;
+  buildWeek(state);
+  return true;
 }
 
 /** The Continental or World Club Cup fixture of yours due now, if any (World first: it opens the season). */
@@ -736,6 +790,7 @@ export function resolveCompTie(state: CareerState, my: number, their: number, wo
   const out = recordComp(due.comp, season.matchday, clubRater(state), my, their, won, pens);
   if (!out) return null;
   addForm(state, my, their, my === their && out.stage !== 'group' ? out.won : undefined);
+  afterAnyMatch(state, out.won);
   if (out.stage !== 'group' || out.trophy) cupHeadline(state, COMP_NAMES[out.kind].toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()), STAGE_NAMES[out.stage], out.won, out.trophy);
   if (out.trophy) {
     due.comp.celebrated = true;
@@ -745,6 +800,8 @@ export function resolveCompTie(state: CareerState, my: number, their: number, wo
     });
   }
   checkBoard(state);
+  // (A semi final or a final next: the press wants a word.)
+  rollPress(state);
   return out;
 }
 
@@ -782,6 +839,8 @@ export function afterMatch(state: CareerState, facts: MatchFacts): void {
   if (!state.club || !state.season) return;
   recordMatch(state, facts);
   syncRecordSigning(state);
+  // What the match taught them (meta/week.ts): XP for those who played, and an academy graduate's big day.
+  matchXp(state, facts, new Set(state.club.squad.slice(0, 11).map((p) => p.id)));
   if (!state.summary) checkBoard(state);
 }
 
@@ -829,8 +888,10 @@ export function resolveCupTie(state: CareerState, my: number, their: number, won
   const out = recordCupTie(season.cup, season.division, season.matchday, clubRater(state), my, their, won, pens);
   if (out) {
     addForm(state, my, their, my === their ? out.won : undefined);
+    afterAnyMatch(state, out.won);
     cupHeadline(state, 'Blocky Cup', ROUND_NAMES[out.round], out.won, out.trophy);
     checkBoard(state);
+    rollPress(state);
   }
   return out;
 }
@@ -964,6 +1025,8 @@ export function startNextSeason(state: CareerState): SeasonState | null {
   if (club) {
     // A year passes: the young grow into their potential, the old fade, contracts tick down; the retired say goodbye.
     ageSquad(club);
+    // The summer (meta/week.ts): contracts that ran out without a new deal, knocks healed, old promises forgotten.
+    seasonTurn(state);
     applyRetirements(state, s.retiring ?? []);
     // A new captain is news (the most games for you).
     const cap = captainOf(club) as LifePlayer | undefined;
@@ -980,6 +1043,8 @@ export function startNextSeason(state: CareerState): SeasonState | null {
     season.world = drawWorld(season.seed, club);
     storyNews(state, `${club.name} are invited to the World Club Cup!`, 'good');
   }
+  // A point on everyone's growth chart, after the summer's growth.
+  seasonStart(state);
   return season;
 }
 
@@ -990,9 +1055,14 @@ export function startNextSeason(state: CareerState): SeasonState | null {
  */
 export function startAsLegend(state: CareerState): boolean {
   if (!archiveClub(state)) return false;
-  const keep = { seed: state.seed, legacy: state.legacy, story: state.story };
+  const keep = { seed: state.seed, legacy: state.legacy, story: state.story, events: state.events, network: state.staff.network };
   const fresh = defaultCareer((hashString(`${keep.seed}|legend|${keep.legacy.gen}`) >>> 0) || 1);
   Object.assign(state, fresh, { legacy: keep.legacy, story: { ...defaultStory(), moments: keep.story.moments } });
+  // What a legend has learned stays open (no second tutorial), and so does the Scouting Network; the staff, the
+  // cards and the timeline start again with the new club.
+  state.events.open = [...keep.events.open];
+  state.events.played = keep.events.played;
+  state.staff.network = keep.network;
   return true;
 }
 
@@ -1013,7 +1083,10 @@ export function nextMatch(state: CareerState): NextMatch | null {
   const rival = season.rivals.find((r) => r.id === (userHome ? fixture.away : fixture.home));
   if (!rival) return null;
   const md = season.matchday;
-  const [home, away] = matchSides(state, club, rival, userHome);
+  // A derby or a decider: a BIG GAME player lifts (meta/growth.ts), and the rival may be fired up (the press).
+  const tag = storyTag(state, { competition: 'league', rival, md } as NextMatch);
+  const big = isDerby(state, rival.id) || (!!tag && /DECIDER|SURVIVAL/.test(tag.tag));
+  const [home, away] = matchSides(state, club, rival, userHome, big);
   return {
     md, fixture, userHome, rival, home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)],
     competition: 'league', label: `MATCHDAY ${md + 1}`, tag: `MD ${md + 1}`, cupRound: -1, rivalDivision: season.division, neutral: false,
@@ -1028,7 +1101,7 @@ function nextCupTie(state: CareerState, club: ClubState, season: SeasonState, cu
   // The final is at a neutral ground: you wear your own kit (listed first), neither side is at home.
   const neutral = round === 2;
   const userHome = neutral || ut.userHome;
-  const [home, away] = matchSides(state, club, rival, userHome);
+  const [home, away] = matchSides(state, club, rival, userHome, round >= 1);
   const md = season.matchday;
   const fixture: Fixture = { md, home: userHome ? YOU : rivalId, away: userHome ? rivalId : YOU, hg: null, ag: null };
   return {
@@ -1046,7 +1119,7 @@ function nextCompTie(state: CareerState, club: ClubState, season: SeasonState, c
   if (!rival) return null;
   const neutral = f.stage === 'final';
   const userHome = neutral || f.home === YOU;
-  const [home, away] = matchSides(state, club, rival, userHome);
+  const [home, away] = matchSides(state, club, rival, userHome, f.stage !== 'group');
   const md = season.matchday;
   const fixture: Fixture = { md, home: userHome ? YOU : rivalId, away: userHome ? rivalId : YOU, hg: null, ag: null };
   const name = COMP_NAMES[comp.kind];
@@ -1058,31 +1131,54 @@ function nextCompTie(state: CareerState, club: ClubState, season: SeasonState, c
   };
 }
 
-/** [home, away] teams for a match of yours against `rival`: your XI as it plays now, and the rival's. */
-function matchSides(state: CareerState, club: ClubState, rival: LeagueClub, userHome: boolean): [TeamDef, TeamDef] {
+/**
+ * [home, away] teams for a match of yours against `rival`: your XI as it plays now, and the rival's. `big`: a derby,
+ * a decider, a semi final or a final (where a BIG GAME player lifts).
+ */
+function matchSides(state: CareerState, club: ClubState, rival: LeagueClub, userHome: boolean, big = false): [TeamDef, TeamDef] {
   const you = clubTeam(club);
   // Players you have put up for sale have their mind elsewhere (a small stat dip until unlisted or sold), and
   // a squad whose wages are over budget plays a point down across the board.
   const listed = new Set(state.tm.sales.map((s) => s.playerId));
   const unpaid = wageDrain(state) > 0 ? WAGE_DIP : 0;
-  // HIGH morale, STRONG chemistry and the FAN ZONE at home lift the whole side a little (life.ts, at most +2).
+  // HIGH morale, STRONG chemistry, a TEAM TALK and the FAN ZONE at home lift the whole side a little, LOW morale
+  // costs it a point (life.ts, -1 to +2).
   const lift = matchLift(state, userHome);
-  if (listed.size || unpaid || lift) {
-    for (const p of [...you.players, ...(you.bench ?? [])]) {
-      const d = lift - unpaid - (listed.has(p.id) ? MORALE_DIP : 0);
-      if (!d) continue;
-      for (const k of STAT_KEYS) p.stats[k] = clamp(p.stats[k] + d, 1, STAT_CAP);
+  const tune = (p: PlayerDef, bench: boolean): void => {
+    // A man fielded hurt plays well below himself; his traits show on the day (meta/growth.ts traitLift).
+    const d = lift - unpaid - (listed.has(p.id) ? MORALE_DIP : 0) - (((p as GrowPlayer).inj ?? 0) > 0 ? INJURED_DIP : 0);
+    const t = traitLift(p, { big, bench });
+    for (const k of STAT_KEYS) {
+      const add = d + (typeof t === 'number' ? t : t[k] ?? 0);
+      if (add) p.stats[k] = clamp(p.stats[k] + add, 1, STAT_CAP);
     }
-  }
+  };
+  you.players.forEach((p) => tune(p, false));
+  (you.bench ?? []).forEach((p) => tune(p, true));
   const them = rivalTeam(rival);
+  // What you said to the press before the derby shows up in it: the rival fired up, or relaxed (meta/events.ts).
+  const fire = isDerby(state, rival.id) ? state.events?.rivalFire ?? 0 : 0;
+  if (fire) for (const p of [...them.players, ...(them.bench ?? [])]) for (const k of STAT_KEYS) p.stats[k] = clamp(p.stats[k] + fire, 1, STAT_CAP);
   // No surname twice in the fixture: the rival's clashing players get another (deterministic) name.
   dedupeSurnames(you, them);
   return userHome ? [you, them] : [them, you];
 }
 
+/** Generated rival squads, by what they are generated from (a squad is asked for many times a matchday). */
+const rivalBaseCache = new Map<string, TeamDef>();
+
 function rivalBase(r: LeagueClub): TeamDef {
   // Each league rival plays its own way (styleFor is deterministic from the name, so a club keeps its style).
-  return makeTeam({ name: r.name, short: r.short, kit: r.kit, formation: r.formation, level: r.level, style: styleFor(r.name) }, r.id);
+  // The squad itself is deterministic from the club's id, name, level and shape, so it is generated once and
+  // handed out as fresh copies (callers rename and tune their copy).
+  const key = `${r.id}|${r.name}|${r.short}|${r.level}|${r.formation}`;
+  let t = rivalBaseCache.get(key);
+  if (!t) {
+    if (rivalBaseCache.size > 96) rivalBaseCache.clear();
+    t = makeTeam({ name: r.name, short: r.short, kit: r.kit, formation: r.formation, level: r.level, style: styleFor(r.name) }, r.id);
+    rivalBaseCache.set(key, t);
+  }
+  return { ...t, kit: r.kit, players: t.players.map(clonePlayer), bench: (t.bench ?? []).map(clonePlayer) };
 }
 
 /** Everyone a rival has right now: its generated squad minus the players it sold, plus the ones it signed. */
@@ -1342,6 +1438,8 @@ function readPlayer(v: unknown): PlayerDef | null {
   if (isNum(v.goals)) lp.goals = int(v.goals, 0, 1e6, 0);
   if (isNum(v.joined)) lp.joined = int(v.joined, 0, 1e6, 0);
   if (v.academy === true) lp.academy = true;
+  // The long game (growth.ts): potential, XP, focus, traits, a mentor, the chart, morale, an injury.
+  readGrow(v, p);
   return p;
 }
 
@@ -1364,10 +1462,13 @@ function readClub(v: unknown): ClubState | null {
   const maxId = squad.reduce((m, p) => Math.max(m, Number(p.id.replace(/\D/g, '')) || 0), 0);
   const short = sanitizeShort(v.short);
   const name = sanitizeName(v.name) || 'Blocky FC';
+  const code = short.length === 3 ? short : deriveShort(name);
   return {
     name,
-    short: short.length === 3 ? short : deriveShort(name),
+    short: code,
     kit,
+    // (A club from before the crest designer gets one from its name and colours.)
+    crest: normalizeCrest(v.crest, defaultCrest(name, code, kit)),
     formation,
     squad: squad.slice(0, SQUAD_MAX + 4),
     nextId: Math.max(int(v.nextId, 1, 1e9, 1), maxId + 1),
@@ -1454,7 +1555,11 @@ function readSeason(v: unknown, club: ClubState | null): SeasonState | null {
     if (!f) return null;
     fixtures.push(f);
   }
-  if (fixtures.length !== (CLUBS_PER_DIVISION / 2) * MATCHDAYS) return null;
+  const perMatchday = CLUBS_PER_DIVISION / 2;
+  // A season saved when it was one round robin (seven matchdays): it becomes a home and away season. Every result
+  // played stays where it is, and the return fixtures are added behind it (the matchday counter carries on).
+  if (fixtures.length === perMatchday * HALF_SEASON && fixtures.every((f) => f.md < HALF_SEASON)) fixtures.push(...returnFixtures(fixtures, HALF_SEASON));
+  if (fixtures.length !== perMatchday * MATCHDAYS) return null;
   const season: SeasonState = {
     number: int(v.number, 1, 1e6, 1),
     division: clampDivision(isNum(v.division) ? v.division : BOTTOM_DIVISION),
@@ -1676,7 +1781,16 @@ export function migrateCareer(raw: unknown, freshSeed: number): CareerState {
     academy: readAcademy(raw.academy, readPlayer),
     legacy: readLegacy(raw.legacy, readKit),
     story: readStory(raw.story, readKit, readFormation),
+    staff: readStaff(raw.staff, readPlayer),
+    events: readEvents(raw.events),
   };
+  // A career from before the long game that has already been played: everything it adds is open at once (no
+  // tutorial cards for a manager seasons in), and the clock starts from where the career is.
+  if (raw.events === undefined && club && (st.history.length > 0 || (season?.matchday ?? 0) > 0)) {
+    openAll(st);
+    st.events.played = st.history.length * MATCHDAYS + (season?.matchday ?? 0);
+    addTimeline(st, `${club.name}: the story so far starts here`, 'flag', 'info');
+  }
   if (live) syncLegacyMarket(st);
   // A save from before the board, mid-season: the board sets this season's objectives now (judged from here on).
   if (club && season && !summary && st.board.season !== season.number && raw.board === undefined) setObjectives(st);

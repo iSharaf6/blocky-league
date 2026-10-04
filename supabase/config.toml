@@ -1,0 +1,17 @@
+# Blocky League edge functions (supabase/functions). `supabase functions deploy <name>` reads this.
+#
+# gc-login and device-login are called before anyone is signed in, so the platform's JWT check is off for them:
+# they check the caller themselves (Apple's Game Center signature, or the device's secret, plus the publishable
+# key and a rate limit). delete-account and referral are called by a signed-in player, so the check stays on.
+
+[functions.gc-login]
+verify_jwt = false
+
+[functions.device-login]
+verify_jwt = false
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.referral]
+verify_jwt = true

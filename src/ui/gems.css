@@ -1,0 +1,131 @@
+/* GEMS on screen (src/ui/gemUi.ts): the counter beside the coins, an inline price and the confirm sheet. */
+
+.gem { flex: none; display: inline-block; vertical-align: middle; image-rendering: pixelated; }
+
+/* The counter: the coin chip's twin, in gem blue. */
+.gems {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--ink);
+  color: #7fe0ff;
+  font: 700 16px var(--px);
+  padding: 8px 10px 7px 8px;
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+}
+/* Gems and coins together at the end of a screen's top bar (ui/club.ts topBar). */
+.mc-wallet { display: flex; align-items: center; gap: 8px; min-width: 0; }
+button.gems { appearance: none; border: 0; margin: 0; cursor: pointer; transition: transform 0.06s, box-shadow 0.06s; }
+button.gems:active { transform: translateY(3px); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.3); }
+button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2px; }
+.gems.up { animation: gem-up 0.5s ease-out; }
+@keyframes gem-up { 0% { transform: scale(1); } 40% { transform: scale(1.14); } 100% { transform: scale(1); } }
+
+/* The hub's top bar (src/style.css "the hub"): the same height as the coins there. */
+.hub-acts .gems.hub-gems { height: calc(38px * var(--ts, 1)); padding: 0 9px 0 8px; font-size: calc(17px * var(--ts, 1)); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3); }
+
+/* A price in gems inside a button or a tag. */
+.gem-price { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.btn .gem-price { margin-left: 6px; }
+
+/* The confirm sheet: over the screen it belongs to, one card, the price and the wallet side by side. */
+.gem-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(20, 20, 28, 0.72);
+  animation: fade 0.14s ease-out;
+}
+.gem-card {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 10px;
+  padding: 16px 16px 14px;
+  text-align: center;
+  color: var(--ink);
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.35);
+}
+.gem-card h3 { margin: 0; font: 400 21px / 1.15 var(--round); letter-spacing: 0.8px; color: var(--ink); }
+.gem-card .gem-text { margin: 0; font: 400 15px / 1.25 var(--round); letter-spacing: 0.4px; color: var(--ink-2); }
+.gem-cost { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.gem-cost > span { display: grid; gap: 4px; justify-items: center; padding: 8px 6px 7px; background: #fff; border: 3px solid var(--ink); }
+.gem-cost small { font: 700 10px / 1 var(--px); letter-spacing: 1px; color: var(--ink-2); }
+.gem-cost b { display: inline-flex; align-items: center; gap: 6px; font: 400 24px / 1 var(--round); color: #1a86c2; }
+.gem-cost b.short { color: var(--red-d); }
+.gem-card .gem-short { margin: 0; font: 700 12px / 1.2 var(--px); letter-spacing: 0.8px; color: var(--red-d); }
+.gem-card .gem-free { margin: 4px 0 0; font: 400 13px / 1.2 var(--round); letter-spacing: 0.4px; color: var(--ink-2); }
+.gem-card .btn-row { display: flex; justify-content: center; gap: 10px; margin: 2px 0 0; }
+.gem-card .btn { min-height: 46px; }
+.gem-card .btn-lg { font-size: 18px; padding: 12px 18px 10px; }
+
+@media (max-height: 560px) {
+  .gems { font-size: 14px; padding: 7px 8px 6px 7px; }
+  .gem-card { gap: 8px; padding: 12px 14px 12px; }
+  .gem-card h3 { font-size: 18px; }
+  .gem-cost b { font-size: 21px; }
+}
+
+/* ---- the hub (src/ui/menus.ts main): gems beside the coins, tomorrow's gift, the week's objectives */
+
+.hub-gift .hg-gem { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; font-style: normal; color: #0f5e8f; }
+.hub-tomorrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: calc(38px * var(--ts, 1));
+  padding: 0 9px;
+  font: 400 calc(14px * var(--ts, 1)) / 1 var(--round);
+  letter-spacing: 0.5px;
+  color: var(--cream);
+  background: rgba(38, 38, 46, 0.72);
+  white-space: nowrap;
+}
+.hub-tomorrow small { font: 700 calc(9px * var(--ts, 1)) / 1 var(--px); letter-spacing: 0.8px; color: #cfcab8; }
+.hub-tomorrow b { font-weight: 400; color: var(--yellow); }
+.hub-tomorrow i { display: inline-flex; align-items: center; gap: 3px; font-style: normal; color: #7fe0ff; }
+.hub-dl li.dc-h { display: block; margin-top: 4px; padding-top: 6px; border-top: 2px solid rgba(255, 255, 255, 0.18); font: 700 calc(10px * var(--ts, 1)) / 1 var(--px); letter-spacing: 1px; color: var(--yellow); }
+.hub-dl .dc-gems { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; text-decoration: none; color: #7fe0ff; }
+
+/* The login calendar (Menus.gift): gems and the Scout Token on their days. */
+.gift-days li em { display: flex; align-items: center; justify-content: center; gap: 3px; font: 700 10px / 1.2 var(--px); font-style: normal; letter-spacing: 0.3px; color: #1470a8; white-space: nowrap; }
+.gift-days li em.gd-tok { color: var(--go-d); font-size: 9px; }
+.reward .rw-gem { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; color: #1470a8; }
+.reward .rw-tok { margin-left: 10px; font-size: 0.6em; color: var(--go-d); }
+
+/* PLAY IT AGAIN? (Menus.replayOffer). */
+.rp-panel .gem-cost { margin: 4px 0; }
+.rp-panel .btn-row { flex-wrap: wrap; justify-content: center; }
+
+/* A phone on its side (852 wide): the gems take the room the gift's word had, so the level's title still reads. */
+@media (max-width: 900px) {
+  /* (TOMORROW over its prize, two short lines: it takes no more room than the gift button it replaces.) */
+  .hub-tomorrow { display: inline-grid; grid-template-columns: auto auto; column-gap: 5px; row-gap: 3px; align-content: center; justify-items: center; padding: 0 7px; font-size: calc(13px * var(--ts, 1)); }
+  .hub-tomorrow small { grid-column: 1 / -1; font-size: calc(8px * var(--ts, 1)); letter-spacing: 0.6px; }
+  .hub-tomorrow b:only-of-type:last-child { grid-column: 1 / -1; }
+  .hub-acts .hg-w { display: none; }
+  .hub-acts .gems.hub-gems { padding: 0 6px 0 5px; gap: 4px; font-size: calc(15px * var(--ts, 1)); }
+  .hub-acts:has(.hub-gems) { gap: 5px; }
+}
+
+/* ---- the SEASON screen (src/ui/badges.ts): gems on their tiers, the pass for gems */
+
+.bd-tile .bd-gem { display: inline-flex; align-items: center; gap: 2px; font: 400 12px / 1 var(--round); text-decoration: none; color: #1470a8; }
+.bd-po-facts b.bd-po-gems { color: #7fe0ff; }
+.panel .btn.bd-po-gembuy { width: 100%; min-height: 36px; padding: 6px 6px 5px; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 2px; }
+@media (max-height: 560px) {
+  .bd-passoffer .bd-po-note { display: none; }
+  .bd-passoffer .bd-po-ic { display: none; }
+}
+
+/* ---- MY CLUB > STADIUM, a part going up (src/ui/club.ts): FINISH NOW for gems, one matchday off for an ad */
+
+.sd-now { display: flex; gap: 6px; }
+.sd-now .btn.sd-up { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
+.sd-now .btn.sd-ad { font-size: 13px; }
+.sd-opens { display: block; text-align: center; font: 400 12px / 1.2 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }

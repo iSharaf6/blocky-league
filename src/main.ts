@@ -22,6 +22,11 @@ import { MatchSession, type MatchResult, type SessionOptions } from './game/matc
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
 import { CAT_LABEL, DEFAULT_ID, earnTokens, equippedId, iapOf, inReach, newInShop, shopItem, shopOf, type ShopCat, type ShopItem } from './meta/shop';
 import { decorOf, styleMatch } from './meta/style';
+import { atmosphereOf, chantRate, withCrowd, withIncome, type Atmosphere } from './meta/atmosphere';
+import { GEM_PRICES, GEM_REWARDS, addGems, gems, rewardGems, spendGems } from './meta/gems';
+import { CALENDAR, adsLeft, advanceWeekly, calendarNext, calendarToday, claimSweep, useAd, weeklyFor, weeklyObjectives } from './meta/loops';
+import { payoutText, syncAchievementGems } from './meta/gemSources';
+import { syncSeasonGems } from './meta/pass';
 import { ads } from './platform/ads';
 import { adFree, coinDoubler, iap, PRODUCT_NOADS, PRODUCT_STARTER } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
@@ -42,7 +47,7 @@ import { applyTextSize } from './ui/textSize';
 import type { Projector } from './ui/hud';
 import { openMoments } from './ui/moments';
 import type { OnlineHost } from './ui/online';
-import { SEP_MARK, installSepGuard } from './ui/text';
+import { SEP_MARK, installSepGuard, scoreHtml, sep } from './ui/text';
 import { Lesson, Trainer } from './ui/trainer';
 import { TouchControls } from './ui/touch';
 import { saveClip, shareClip } from './ui/clips';
@@ -52,8 +57,10 @@ import { BASICS } from './meta/moments';
 import { recordMatchMeta, wornTitle, type MasteryMatch } from './meta/mastery';
 import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
-import { cloudAvailable, cloudBoot, cloudUser, openAccount } from './platform/cloud';
-import { gameCenterSignIn, queueGameCenterSync, syncGameCenter } from './platform/gameCenter';
+import { accountsRequired, cloudAvailable, cloudBoot, cloudUser, openAccount, syncSoon } from './platform/cloud';
+import { gameCenterSignInOnce, queueGameCenterSync, syncGameCenter } from './platform/gameCenter';
+import { canStart, gateNow, gateWhy, onGateChange } from './platform/online';
+import { connectOpen, markHub, openConnect } from './ui/connect';
 import { buzz, installUiHaptics, setHapticsLevel, setHapticsQuiet } from './platform/haptics';
 import { inNativeApp } from './platform/native';
 import { maybeAskForReview } from './platform/review';
@@ -91,7 +98,10 @@ ads.adFree = () => adFree(save);
 iap.bind({ save, persist });
 iap.onGrant((g) => {
   // A purchase that completes while the shop is shut (a family approval, one the store re-delivers at launch) still says so.
-  if (!shopOpen() && !g.restored) menus.toast(`PURCHASE ARRIVED${g.coins ? `: +${g.coins.toLocaleString('en-US')} COINS` : ''}`);
+  if (!shopOpen() && !g.restored) {
+    const got = [g.gems ? `+${g.gems.toLocaleString('en-US')} GEMS` : '', g.coins ? `+${g.coins.toLocaleString('en-US')} COINS` : ''].filter(Boolean).join(' AND ');
+    menus.toast(`PURCHASE ARRIVED${got ? `: ${got}` : ''}`);
+  }
 });
 
 /**
@@ -339,16 +349,14 @@ const app: AppContext = {
 };
 
 /**
- * Today's gift if not yet claimed: 100 coins on day 1, +50 a day up to day 7, then round again. It counts the days
- * the gift was claimed, not days in a row: missing a day never costs the player their place (rewarding a return,
- * never punishing an absence: docs/ECONOMY.md).
+ * Today's gift if not yet claimed: the 7-day login calendar (meta/loops.ts CALENDAR: 100 coins on day 1, +50 a day
+ * up to day 7, gems on days 3 and 7, a Scout Token on day 5, then round again). It counts the days the gift was
+ * claimed, not days in a row: missing a day never costs the player their place (rewarding a return, never punishing
+ * an absence: docs/ECONOMY.md).
  */
-function giftToday(): { amount: number; streak: number } | null {
-  const g = save.gift;
-  const today = localDay();
-  if (g?.last === today) return null;
-  const streak = g ? (g.streak % 7) + 1 : 1;
-  return { amount: 100 + 50 * (streak - 1), streak };
+function giftToday(): { amount: number; streak: number; gems: number; tokens: number } | null {
+  const c = calendarToday(save, localDay());
+  return c ? { amount: c.reward.coins, streak: c.step, gems: c.reward.gems, tokens: c.reward.tokens } : null;
 }
 
 function mainInfo(): MainInfo {
@@ -365,7 +373,8 @@ function mainInfo(): MainInfo {
     info.playNow = `${p.club?.short ?? q.short} v ${PRESET_CLUBS[p.rival].short} ${SEP_MARK} ${DIFFICULTIES[p.difficulty]}`;
   }
   const user = cloudUser();
-  if (user) info.account = user.name;
+  // (An account the game made by itself, Game Center or this device, has no name to show: the button reads ACCOUNT.)
+  if (user && !user.auto) info.account = user.name;
   // The hub (ui/hubInfo.ts): your captain in your club's kit, ROAD TO GLORY's next fixture, the transfer news.
   let career: ReturnType<typeof careerOf> = null;
   try {
@@ -395,6 +404,19 @@ function mainInfo(): MainInfo {
   }
   const gift = giftToday();
   if (gift) info.gift = gift;
+  // Tomorrow's gift once today's is claimed: the reason to come back, said plainly (no timer, no penalty).
+  else if (save.gift) info.tomorrow = calendarNext(save).reward;
+  try {
+    // Gems (economy v3): any season tier's gems still owed are paid here, then the balance beside the coins. (The
+    // career's gems are paid on the road itself, where it says so: ui/career.ts.)
+    if (syncSeasonGems(save) > 0) persist();
+    info.gems = gems(save);
+    // This week's objectives, under today's challenges.
+    const wk = weeklyFor(save, localDay());
+    info.weekly = { list: weeklyObjectives(localDay()), progress: wk.progress, claimed: wk.claimed, gems: GEM_REWARDS.weekly };
+  } catch {
+    // (Retention bookkeeping never breaks the menu.)
+  }
   // Progression: the level badge and today's challenges (rolled over to a new day here, and saved if so).
   const p = save.progress;
   const lv = levelOf(p.xp);
@@ -442,6 +464,35 @@ let giftReach: ShopItem | null = null;
 
 const FEATURE_NAMES: Record<LockedFeature, string> = { career: 'ROAD TO GLORY', moments: 'MOMENTS', run: 'CLUB RUN', blitz: 'BLITZ' };
 
+/**
+ * The online rule (platform/online.ts; the app and the plain web game): what is progression needs a connection and a
+ * signed-in account. Connected, `go` runs at once; otherwise CONNECT TO PLAY opens (RETRY signs in again) and `go`
+ * runs as soon as the game is connected. QUICK MATCH, the first match and the basics never come through here.
+ */
+function online(go: () => void): () => void {
+  return () => {
+    if (gateNow() === 'open') go();
+    else connectPanel(go);
+  };
+}
+
+function connectPanel(go: () => void): void {
+  openConnect({
+    done: go,
+    gate: gateNow,
+    why: gateWhy,
+    // (The sign-in code talks to the backend: the literal check keeps it out of the portal builds altogether.)
+    retry: () => (!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none'
+      ? import('./platform/signin').then((m) => m.connect(true), () => false)
+      : Promise.resolve(false)),
+  });
+}
+
+// Connected or dropped while the hub is up: its tiles change with it.
+onGateChange(() => {
+  if (atMenu && !session && !connectOpen() && document.querySelector('.hub-screen')) mainMenu();
+});
+
 function mainMenu(): void {
   atMenu = true;
   basicsNow = false;
@@ -464,11 +515,20 @@ function mainMenu(): void {
     iapOf(save).welcome = true;
     persist();
     const worth = starter.coins + (shopItem('ball', 'gold')?.price ?? 0);
-    menus.welcomeOffer({ price: starter.price, coins: starter.coins, worth }, {
-      see: () => openShop(app, { tab: 'coins' }),
+    menus.welcomeOffer({ price: starter.price, coins: starter.coins, worth, gems: starter.gems }, {
+      // (The STORE's OFFERS section, where the pack is.)
+      see: () => openShop(app, { tab: 'coins', section: 'offers' }),
       later: () => mainMenu(),
     });
     return;
+  }
+  // Achievements earned since the last visit pay their gems here, once each (meta/gemSources.ts), and say so below.
+  let achPaid: ReturnType<typeof syncAchievementGems> = [];
+  try {
+    achPaid = syncAchievementGems(save);
+    if (achPaid.length) persist();
+  } catch {
+    achPaid = [];
   }
   const info = mainInfo();
   const backup = (): void => menus.backup(save, { onImport: reload, back: () => settings() });
@@ -490,6 +550,9 @@ function mainMenu(): void {
           if (double && (await ads.rewarded())) amount *= 2;
           const before = save.coins;
           save.coins += amount;
+          // The calendar's gems and Scout Token (never doubled: the ad doubles the coins only).
+          if (g.gems) addGems(save, g.gems, 'calendar');
+          if (g.tokens) earnTokens(save, g.tokens);
           save.gift = { last: localDay(), streak: g.streak };
           persist();
           giftReach = inReach(save, before, save.coins);
@@ -501,30 +564,34 @@ function mainMenu(): void {
           if (giftReach) menus.toast(`NOW IN REACH IN THE SHOP: ${giftReach.name.toUpperCase()} ${CAT_LABEL[giftReach.cat].toUpperCase()}`);
           giftReach = null;
         },
-      });
+      }, CALENDAR);
     },
     quick: () => quickMatch(),
-    events: () => eventsMenu(),
+    events: online(() => eventsMenu()),
     locked: (f) => menus.toast(`SCORE YOUR FIRST GOAL TO UNLOCK ${FEATURE_NAMES[f]}`),
     unlocks: () => {
       const ladder = (): void => menus.unlocks(save, mainMenu, () => openBadges(app, ladder));
       ladder();
     },
-    career: () => openCareer(app),
+    career: online(() => openCareer(app)),
     // NEXT GOAL: straight to where it points (the ground, the market, the unlocks, the club tab or the road).
-    goal: (go) => {
+    goal: (go) => online(() => {
       if (go === 'stadium') openClub(app, { tab: 'stadium' });
       else if (go === 'market') openMarket(app);
       else if (go === 'unlocks') menus.unlocks(save, mainMenu, () => openBadges(app, mainMenu));
+      // (The long game's goals: a scout report in MY CLUB > STAFF, a promise to keep on SQUAD, a mentor on TRAIN.)
+      else if (go === 'staff' || go === 'squad' || go === 'train') openClub(app, { tab: go });
       else openCareer(app, undefined, go === 'academy' || go === 'board' ? 'club' : undefined);
-    },
-    club: () => openClub(app),
+    })(),
+    club: online(() => openClub(app)),
     // TRANSFERS: straight into the market (no club yet: MY CLUB founds one first); its BACK comes home.
-    transfers: () => openMarket(app),
-    season: () => openBadges(app, mainMenu, 'season'),
-    shop: () => openShop(app),
+    transfers: online(() => openMarket(app)),
+    season: online(() => openBadges(app, mainMenu, 'season')),
+    shop: online(() => openShop(app)),
     // The coins: the shop's COINS tab where coins can be topped up (the app's store, a portal's free coins).
-    coins: iap.storefront || ads.portal !== 'none' ? () => openShop(app, { tab: 'coins' }) : undefined,
+    coins: online(() => openShop(app, { tab: 'coins', section: 'coins' })),
+    // The gems: the STORE's gem packs (the app), the free daily gems, the Scouting Network.
+    gems: online(() => openShop(app, { tab: 'coins', section: 'gems' })),
     removeAds: info.noAds
       ? () => void buyNoAds().then((ok) => {
         // (Bought: the hub loses the button, if the player is still on it.)
@@ -534,6 +601,9 @@ function mainMenu(): void {
     settings,
     howto: () => menus.howTo(mainMenu, input.lastDevice),
   }, info);
+  if (achPaid.length) menus.toast(payoutText(achPaid));
+  // Not connected (the app and the web game): the tiles that need it say CONNECT TO PLAY.
+  markHub(document.querySelector('.hub-screen'), gateNow() !== 'open');
 }
 
 /**
@@ -875,6 +945,13 @@ function clipOf(s: MatchSession): ClipSource | undefined {
 }
 
 async function startMatch(req: MatchRequest): Promise<void> {
+  // The online rule: only exhibition (QUICK MATCH, the first match, the basics) kicks off without a connection.
+  // Reached from a screen that was open when the connection went: back to the hub, and the match starts on RETRY.
+  if (!canStart(req.kind)) {
+    mainMenu();
+    connectPanel(() => void startMatch(req));
+    return;
+  }
   atMenu = false;
   menus.close();
   sfx.stopMusic();
@@ -888,7 +965,18 @@ async function startMatch(req: MatchRequest): Promise<void> {
   // COSMETICS 2.0 (meta/style.ts): your side in its premium kit and player looks (any clash is fixed on the other
   // side), and at home your ground in its stadium style. Looks only: nothing here changes play.
   const kits = styleMatch(save, req.kits, [req.home, req.away], humanSide);
-  const decor = humanSide === 0 ? decorOf(save, req.kits[0], req.home.short) : null;
+  const decor = humanSide === 0 ? decorOf(save, req.kits[0], req.home.short, req.home.name) : null;
+  // CLUB ATMOSPHERE (meta/atmosphere.ts): at a home match, what the stadium style worn and the ground as built are
+  // worth: a fuller ground, more chants, matchday income and the mascot's half time show. The meta only: nothing
+  // here touches the match itself. (A career match is at home when it brings its ground; the others when you host.)
+  let atmo: Atmosphere | null = null;
+  try {
+    const hosting = humanSide === 0 && !basics && !req.scenario && (req.kind === 'career' ? !!req.ground : !!decor);
+    if (hosting) atmo = atmosphereOf(save, req.kind === 'career' ? careerState(app).ground : null);
+    if (atmo && atmo.rating <= 0) atmo = null;
+  } catch {
+    atmo = null;
+  }
   // A new player's first three matches are played in daylight and clear weather (no snow on a first kick-off).
   const early = played() < 3;
   // The hidden ease (core/dda.ts): the request's own, else the save's streaks decide. Shown nowhere.
@@ -903,7 +991,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     halfLength: req.halfMinutes * 60,
     difficulty: DIFF_LEVEL[req.difficulty] ?? 1.8,
     humanSide,
-    attendance: req.attendance,
+    attendance: atmo ? withCrowd(req.attendance, atmo) : req.attendance,
     seed: Math.floor(Math.random() * 1e9),
     timeOfDay: req.timeOfDay ?? (early || basics ? 'day' : pickTime()),
     weather: req.weather ?? (early || basics ? 'clear' : pickWeather()),
@@ -912,6 +1000,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     mode: req.mode ?? 'classic',
     // HYPE and the SUPER SHOT (sim/hype.ts): every classic match (Blitz has its power-ups; not a moment or the basics).
     hype: (req.mode ?? 'classic') === 'classic' && !req.scenario && !basics,
+    // The AI coach (sim/coach.ts): the other side changes its shape and its press with the scoreline (not a moment or the basics).
+    coach: !req.scenario && !basics,
     firstMatch: !!req.firstMatch && played() === 0,
     scenario: req.scenario,
     skipIntro: req.skipIntro,
@@ -934,6 +1024,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     sideDifficulty: req.sideDifficulty,
   });
   applyControls(session.match, basics ? CONTROL_DEFAULTS : controlsOf(save.settings));
+  // (The session set the ground's crowd; a better atmosphere makes the home crowd sing more often.)
+  if (atmo) sfx.setChantRate(chantRate(atmo));
   // The basics prompts live in the trainer: it is on for them whatever Settings says.
   if (basics) session.match.trainer = true;
   session.hud?.setCommentary(save.settings.commentary && !basics);
@@ -990,6 +1082,16 @@ async function startMatch(req: MatchRequest): Promise<void> {
       resume,
       resumeLabel,
     });
+  // QUIT at the pause and at half time alike: what walking off costs (a forfeit defeat where the request says so: the
+  // career, the cup, a run), then out to where the match came from.
+  const quitNote = req.quitNote ?? "This match won't count and you won't earn any coins.";
+  const forfeit = !basics && /defeat/i.test(quitNote);
+  const quitMatch = (): void => {
+    menus.close();
+    endMatch();
+    menuMusic();
+    (req.onQuit ?? mainMenu)();
+  };
   s.onPause = () => {
     ads.gameplayStop();
     const resumeMatch = (): void => {
@@ -999,8 +1101,9 @@ async function startMatch(req: MatchRequest): Promise<void> {
     };
     const pauseMenu = (): void =>
       menus.pause({
-        quitNote: req.quitNote ?? "This match won't count and you won't earn any coins.",
+        quitNote,
         quitLabel: basics ? 'BACK TO MENU' : undefined,
+        forfeit,
         tactics: basics ? undefined : () => tacticsMenu(pauseMenu, resumeMatch),
         resume: resumeMatch,
         howto: () => menus.howTo(pauseMenu, input.lastDevice),
@@ -1016,12 +1119,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
           endMatch();
           mainMenu();
         } : undefined,
-        quit: () => {
-          menus.close();
-          endMatch();
-          menuMusic();
-          (req.onQuit ?? mainMenu)();
-        },
+        quit: quitMatch,
       });
     pauseMenu();
   };
@@ -1032,14 +1130,73 @@ async function startMatch(req: MatchRequest): Promise<void> {
       s.continueSecondHalf();
       ads.gameplayStart();
     };
-    const ht = (): void => menus.halftime(s.match, kits, secondHalf, () => tacticsMenu(ht, secondHalf, 'SECOND HALF'));
+    // The same set as the pause menu: TACTICS & SUBS, CONTROLS, SETTINGS and QUIT (FORFEIT), each back to this screen.
+    const ht = (): void => menus.halftime(s.match, kits, secondHalf, () => tacticsMenu(ht, secondHalf, 'SECOND HALF'), {
+      howto: () => menus.howTo(ht, input.lastDevice),
+      settings: () => menus.settings(save, applySettings, ht, 'controls'),
+      quit: quitMatch,
+      quitNote,
+      forfeit,
+    });
+    // The mascot's HALF TIME SHOW (a home match with a mascot on the touchline): its coins are paid with the match at
+    // full time, and said here.
+    const show = (): void => {
+      ht();
+      if (atmo && atmo.show > 0 && !showSaid) {
+        showSaid = true;
+        menus.toast(`HALF TIME SHOW: +${atmo.show} COINS AT FULL TIME`);
+      }
+    };
     // The app's half-time ad (platform/ads.ts APP_AD_GAP_MS), then the half-time screen. Never in the basics, a
     // moment, the tutorial or a new player's first match.
-    if (!basics && !req.scenario && !req.firstMatch && save.seenTutorial && played() > 0) void ads.midgame('halftime').then(ht, ht);
-    else ht();
+    if (!basics && !req.scenario && !req.firstMatch && save.seenTutorial && played() > 0) void ads.midgame('halftime').then(show, show);
+    else show();
   };
+  /** The half time show was announced (the half-time screen is redrawn from its sub-screens). */
+  let showSaid = false;
+  /** The replay of a lost decider was offered (once per match: economy v3). */
+  let replayAsked = false;
   s.onFinish = (r) => {
     ads.gameplayStop();
+    // A LOST DECIDER (a cup tie, a final, a title or promotion decider: req.decider): one chance to play it again,
+    // BEFORE anything is recorded or paid. Gems (a shown price, one tap) or a rewarded ad once a day; NO THANKS takes
+    // the result as it stands. The replay carries no `decider`, so no match is ever replayed twice.
+    if (req.decider && !replayAsked && !r.scenarioOutcome) {
+      const mine = r.score[hs];
+      const theirs = r.score[hs === 0 ? 1 : 0];
+      const lost = r.winner !== undefined ? r.winner !== hs : mine < theirs;
+      if (lost) {
+        replayAsked = true;
+        const again = (): void => {
+          persist();
+          menus.close();
+          endMatch();
+          void startMatch({ ...req, decider: undefined, skipIntro: true });
+        };
+        const offer = (): void => menus.replayOffer({
+          what: req.decider ?? 'DECIDER', score: scoreHtml(mine, theirs), price: GEM_PRICES.replayMatch, have: gems(save),
+          canAd: ads.rewardedAvailable && adsLeft(save, 'replay', localDay()) > 0,
+        }, {
+          gems: () => {
+            if (spendGems(save, GEM_PRICES.replayMatch, 'replayMatch')) again();
+            else s.onFinish?.(r);
+          },
+          ad: async () => {
+            const ok = (await ads.rewarded()) && useAd(save, 'replay', localDay());
+            if (ok) again();
+            return ok;
+          },
+          no: () => {
+            menus.close();
+            s.onFinish?.(r);
+          },
+          // (Back from the store the offer is still there: nothing was decided.)
+          getGems: iap.storefront ? () => openShop(app, { tab: 'coins', section: 'gems', backLabel: 'BACK', onBack: () => { closeMeta(); offer(); } }) : undefined,
+        });
+        offer();
+        return;
+      }
+    }
     if (basics && r.scenarioOutcome) {
       // LEARN THE BASICS: no result screen. A miss restarts the step at once; a goal goes on to the next one,
       // and the last one hands over to the first match. (Its goals don't count for the unlock: noteGoals.)
@@ -1105,7 +1262,9 @@ async function startMatch(req: MatchRequest): Promise<void> {
     p.streak = nextStreak(p.streak, won, drawn);
     p.bestStreak = Math.max(p.bestStreak, p.streak);
     const mult = won ? streakMult(p.streak) : 1;
-    const base = req.reward(r);
+    const paid = req.reward(r);
+    // CLUB ATMOSPHERE at a home match: the matchday income on top of what the match pays (capped: meta/atmosphere.ts).
+    const base = atmo && atmo.income > 0 && paid.coins > 0 ? { coins: withIncome(paid.coins, atmo), label: `${paid.label}${sep()}+${atmo.income}% ATMOSPHERE` } : paid;
     // The Coin Doubler (a store purchase) doubles what the match itself pays (not challenges or ads).
     const doubler = coinDoubler(save);
     // SHOWTIME (game/funLayer.ts): an S adds 10% to the match's coins, an A 5%.
@@ -1122,6 +1281,9 @@ async function startMatch(req: MatchRequest): Promise<void> {
     const xpFrom = p.xp;
     // (LIVE GOALS done in the match bank their XP too.)
     p.xp += matchXp(summary) + (fun?.xp ?? 0);
+    // Gems, in small steady amounts from play (meta/gems.ts GEM_REWARDS): every new level pays a couple.
+    const levelsUp = Math.max(0, levelOf(p.xp).level - levelOf(xpFrom).level);
+    let gemsEarned = levelsUp > 0 ? rewardGems(save, 'levelUp', levelsUp) : 0;
     const stars = matchStars(summary);
     p.stars += stars;
     const daily = dailyFor(p, localDay());
@@ -1129,6 +1291,19 @@ async function startMatch(req: MatchRequest): Promise<void> {
     const bonus = done.reduce((n, x) => n + x.challenge.coins, 0);
     // Each daily challenge done also earns a Scout Token (packs cost tokens: earned, never bought).
     if (done.length) earnTokens(save, done.length);
+    // All three of today's challenges done: the daily sweep's gems (once a day).
+    const sweep = claimSweep(save, daily.day);
+    gemsEarned += sweep;
+    // THIS WEEK's objectives (meta/loops.ts): the ones this match completed pay coins (never doubled) and gems.
+    const weeklyDone = advanceWeekly(save, daily.day, summary, done.length);
+    const weeklyCoins = weeklyDone.reduce((n, x) => n + x.objective.coins, 0);
+    gemsEarned += weeklyDone.reduce((n, x) => n + x.gems, 0);
+    const weeklyLines = weeklyDone.map((x) => ({ text: `WEEKLY: ${x.objective.text} +${x.gems} GEMS`, coins: x.objective.coins }));
+    // The mascot's HALF TIME SHOW at a home match (meta/atmosphere.ts): a few coins, never doubled.
+    const showCoins = atmo?.show ?? 0;
+    const showLine = showCoins ? [{ text: 'MASCOT HALF TIME SHOW', coins: showCoins }] : [];
+    const sweepLine = sweep ? [{ text: `ALL 3 DAILY CHALLENGES +${sweep} GEMS`, coins: 0 }] : [];
+    const levelLine = levelsUp ? [{ text: `LEVEL UP +${levelsUp * GEM_REWARDS.levelUp} GEMS`, coins: 0 }] : [];
     // SKILL GOALs pay a little on top (shown with the challenges done on the full-time screen).
     const skillCoins = tally.skillGoals * SKILL_GOAL_COINS;
     const skillLine = tally.skillGoals ? [{ text: tally.skillGoals > 1 ? `${tally.skillGoals} SKILL GOALS` : 'SKILL GOAL', coins: skillCoins }] : [];
@@ -1136,7 +1311,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
     const liveCoins = fun?.coins ?? 0;
     const liveLine = fun && fun.done ? [{ text: fun.done > 1 ? `${fun.done} LIVE GOALS` : 'LIVE GOAL', coins: liveCoins }] : [];
     const show = fun && fun.style > 0 ? recordShowtime(save, showtimeMode(req.kind, blitz), fun.grade, fun.style) : null;
-    let earned = reward.coins + bonus + skillCoins + liveCoins;
+    let earned = reward.coins + bonus + skillCoins + liveCoins + weeklyCoins + showCoins;
+    void gemsEarned;
     const coinsBefore = save.coins;
     save.coins += earned;
     // The SHOP item this match's coins brought into reach, if any (one line at full time; nothing otherwise).
@@ -1167,6 +1343,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
       skills: tally.skills, saves: r.match.stats.saves?.[hs] ?? 0,
     }, p.xp - xpFrom);
     persist();
+    // Full time: the result goes to the cloud now (offline it waits on the device and goes up when the connection is back).
+    syncSoon();
     let doubled = false;
     // A happy moment: after a win, Apple's own rating prompt (the app only, rarely: platform/review.ts).
     if (won) window.setTimeout(() => void maybeAskForReview(save), 2500);
@@ -1200,7 +1378,8 @@ async function startMatch(req: MatchRequest): Promise<void> {
         void startMatch({ ...req, ...easy, firstMatch: false, skipIntro: true });
       } : undefined,
     }, r.ratings, {
-      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult, done: [...done.map((x) => ({ text: `${x.challenge.text} +1 TOKEN`, coins: x.challenge.coins })), ...skillLine, ...liveLine],
+      stars, xpFrom, xpTo: p.xp, streak: p.streak, mult,
+      done: [...done.map((x) => ({ text: `${x.challenge.text} +1 TOKEN`, coins: x.challenge.coins })), ...sweepLine, ...weeklyLines, ...skillLine, ...liveLine, ...showLine, ...levelLine],
       owned: shopOf(save).owned,
     }, { tierUps, tryEasy, clip: clipOf(s), noAds: firstEver, shopReach: reach ? { name: reach.name, kind: CAT_LABEL[reach.cat] } : undefined,
       showtime: fun && show ? { grade: fun.grade, score: fun.style, best: show.before?.grade ?? null, newBest: show.newBest, bonus: gradeK } : undefined });
@@ -1405,7 +1584,7 @@ async function boot(): Promise<void> {
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#5cc8f5');
   ads.loadingDone();
   // Game Center (the iPhone / iPad app only): sign in, then report anything earned or beaten since last time.
-  void gameCenterSignIn().then((ok) => {
+  void gameCenterSignInOnce().then((ok) => {
     if (ok) void syncGameCenter(save);
   });
   const params = new URLSearchParams(location.search);
@@ -1414,7 +1593,10 @@ async function boot(): Promise<void> {
     const away = makeTeam(PRESET_CLUBS[save.opponentIdx]);
     startMatch({
       home, away, kits: [home.kit, resolveKitClash(home.kit, away.kit)], humanSide: 0,
-      difficulty: save.settings.difficulty, halfMinutes: save.settings.halfMinutes, attendance: 0.9, stadiumLevel: 5,
+      difficulty: save.settings.difficulty, halfMinutes: save.settings.halfMinutes, attendance: 0.9,
+      // (Dev: ?quick=1&level=2&tod=night looks at a smaller ground or another time of day; &club=1 plays MY CLUB.)
+      stadiumLevel: params.has('level') ? Number(params.get('level')) : 5,
+      ...(['day', 'sunset', 'night'].includes(params.get('tod') ?? '') ? { timeOfDay: params.get('tod') as 'day' | 'sunset' | 'night', weather: 'clear' as const } : {}),
       mode: params.has('blitz') ? 'blitz' : 'classic',
       reward: (r) => standardReward(r, save.settings.difficulty), onDone: () => mainMenu(),
     });
@@ -1427,8 +1609,14 @@ async function boot(): Promise<void> {
     if (straightToBasics(onboarding(), played(), PORTAL)) startBasics(0);
     else mainMenu();
   });
-  // Cloud saves (a no-op until a backend is configured): pull the newer copy, then keep pushing changes.
-  void cloudBoot({ save, persist, reload });
+  // Cloud saves (a no-op until a backend is configured): pull the newer copy, then keep pushing changes. Then the
+  // silent sign-in (platform/signin.ts: Game Center in the app, else this device's own account), kept up from here on.
+  // (The literal check keeps the sign-in code out of the portal builds altogether.)
+  void cloudBoot({ save, persist, reload }).then(() => {
+    if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && accountsRequired()) {
+      void import('./platform/signin').then((m) => m.watchConnection({ save, persist, reload }), () => {});
+    }
+  });
 }
 
 if (import.meta.env.DEV) {
@@ -1462,6 +1650,17 @@ if (import.meta.env.DEV) {
     },
     key(code: string, down: boolean) {
       window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code }));
+    },
+    /**
+     * Set pieces: give yourself one now (in open play): 'freekick' (in range: the reticle on the goal), 'wide' (a wide
+     * free kick: the landing ring), 'corner', 'penalty', or 'shootout' (straight to penalties).
+     */
+    stage(kind: 'freekick' | 'wide' | 'corner' | 'penalty' | 'shootout' = 'freekick') {
+      return session?.devStage(kind) ?? false;
+    },
+    /** The AI coach: put the score at (yours, theirs) now; it changes its plan at the next dead ball and says so on the ticker. */
+    score(mine: number, theirs: number) {
+      return session?.devScore(mine, theirs) ?? false;
     },
   };
   // The sound's dev panel: window.__blaudio (src/audio/dev.ts: cues, half / full time jumps, mix measurements).

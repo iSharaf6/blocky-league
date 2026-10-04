@@ -341,7 +341,7 @@ describe('the Continental Cup and the World Club Cup', () => {
     expect(c.fixtures.filter((f) => f.home === YOU || f.away === YOU)).toHaveLength(3);
   });
 
-  it('slots between league matchdays: group games after MD 1 to 3, the semi after 5, the final after 6', () => {
+  it('slots between league matchdays: three group games in the first half, the semi after 10, the final after 13', () => {
     const st = career(113, TOP_DIVISION);
     const wallet = { coins: 0 };
     const c = st.season!.continental!;
@@ -410,8 +410,8 @@ describe('the rival and the story', () => {
     const d = st.season!.rivals.find((r) => r.id === st.season!.derby)!;
     expect(d.name).toBe(rival.name);
     expect(st.season!.rivals.filter((r) => r.name === rival.name)).toHaveLength(1);
-    // The derby was played last season and counted.
-    expect(rival.met).toBe(1);
+    // Both derbies (home and away) were played last season and counted.
+    expect(rival.met).toBe(2);
     expect(st.tm.news.some((n) => n.story)).toBe(true);
   });
 
@@ -528,7 +528,8 @@ describe('a long career never runs dry', () => {
     expect(st.season!.continental).toBeTruthy();
     expect(st.legacy.points).toBeGreaterThan(1000);
     expect(finishSeason(st, wallet)).toBeNull();
-  });
+    // (Twelve home and away seasons are over two hundred matches: a longer limit than a unit test's.)
+  }, 60_000);
 });
 
 describe('the full-time wiring (ui/career.ts)', () => {

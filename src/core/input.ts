@@ -256,7 +256,8 @@ export function bindings(): { keys: KeyMap; pad: PadMap } {
 /** The label of an action's first binding for the device in hand: "SPACE" / "A" / the touch button's name. */
 export function actionKey(action: PadAction, device: Device): string {
   if (device === 'gamepad') return padLabel(padNow[action][0] ?? DEFAULT_PAD[action][0]);
-  if (device === 'touch') return { pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'SPRINT', skill: 'SKILL', power: 'POWER', pause: 'II' }[action];
+  // (Touch has no SPRINT button: the stick sprints.)
+  if (device === 'touch') return { pass: 'PASS', shoot: 'SHOOT', through: 'THROUGH', sprint: 'STICK', skill: 'SKILL', power: 'POWER', pause: 'II' }[action];
   return keyLabel(keysNow[action][0] ?? DEFAULT_KEYS[action][0]);
 }
 

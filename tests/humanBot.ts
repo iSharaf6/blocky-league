@@ -1,5 +1,5 @@
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
+import { BOX_DEPTH, BOX_W, DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
 import type { MatchEvent, Side } from '../src/sim/types';
@@ -39,9 +39,12 @@ export interface BotOptions {
   /**
    * The SKILL button (src/sim/skills.ts), default 'off': 'react' answers a defender's tell (the "!" over him) after a
    * human reaction time (0.16-0.30 s), four times in five, the stick across his run away from the man; 'spam' presses
-   * it every ~0.75 s whenever a defender is within 3 m, whatever he is doing, the stick anywhere.
+   * it every ~0.75 s whenever a defender is within 3 m, whatever he is doing, the stick anywhere; 'use' is a player
+   * who has found the button worth pressing: he answers the tells as 'react' does, takes on a man in his way (within
+   * 3.5 m ahead, a pip of FLAIR to spend: the stick across his run away from him, or still ahead for a casual thumb),
+   * and with all his pips and open grass ahead presses it for the burst.
    */
-  skills?: 'off' | 'react' | 'spam';
+  skills?: 'off' | 'react' | 'spam' | 'use';
   /**
    * SPRINT (default 'button'): held the way a keyboard player holds it; 'none' never (a thumb on a phone with no
    * free finger for it, and so no knock-on double taps either); 'auto' the touch AUTO SPRINT (Pad.autoSprint: the
@@ -55,7 +58,16 @@ export interface BotOptions {
    * taps SKILL with the thumb still pushing the stick the way he runs half the time.
    */
   casual?: boolean;
+  /**
+   * The owner (2026-10-04): "i been walking in a straight line t opposie goal and i always make it to keeper and
+   * score". With the ball: the stick held at the middle of their goal and nothing else (no pass, no cut, no shield, no
+   * knock-on, no SKILL), and SHOOT the moment he is in their box. Without it he defends as the bot always does.
+   */
+  straight?: boolean;
 }
+
+/** How a carry of the bot's ended (BotTally.runEnds). */
+export type RunEnd = 'shot' | 'tackled' | 'lost' | 'out' | 'fouled' | 'pass';
 
 export interface BotTally {
   /** Skill cuts tried with a defender within ~3.2 m; how many drew a 'beat'; how many still had the ball 1.2 s on. */
@@ -89,13 +101,57 @@ export interface BotTally {
   skillGood: number;
   skillTells: number;
   skillGoals: number;
+  /**
+   * His carries (the active man with the ball in open play, until he loses it, shoots or it goes dead): how many, how
+   * many began with a man of theirs goal-side of him in his way (`runsFaced`), how many of those he got goal-side of
+   * that man with the ball (`runsPast`), how many of all reached their box (`runsBox`), ended in his shot
+   * (`runsShot`) and in a goal (`runsGoal`); and how each ended.
+   */
+  runs: number;
+  runsFaced: number;
+  runsPast: number;
+  runsBox: number;
+  runsShot: number;
+  runsGoal: number;
+  runEnds: Record<RunEnd, number>;
+  /**
+   * The carries that faced a man: the AI's tackle attempts on him and the tells it wound up (totals), the first
+   * defender's nearest approach (m, summed), and the times that man was going backwards (towards his own goal, over
+   * 2 m/s) when the carrier first came within 3 m of him (`backedOff`) against the times he came that near (`metFirst`).
+   */
+  runTackles: number;
+  runTackleWon: number;
+  runTells: number;
+  runNearest: number;
+  metFirst: number;
+  backedOff: number;
+  /** Carries that began in his own half with a man in the way, and how many of those ended in his shot. */
+  longRuns: number;
+  longShots: number;
+  /**
+   * RUNS: carries that began RUN_FROM m or more from their goal line with a man in the way (a run at the defence, not
+   * a rebound in the box): how many, how many got goal-side of that first man, reached their box, ended in his shot,
+   * and were scored.
+   */
+  farRuns: number;
+  farPast: number;
+  farBox: number;
+  farShots: number;
+  farGoals: number;
 }
+
+/** A carry is a RUN (BotTally.farRuns) when it begins this far (m) or more from their goal line. */
+export const RUN_FROM = 30;
 
 const emptyTally = (): BotTally => ({
   cutAttempts: 0, cutBeats: 0, cutKept: 0, knockOns: 0, knockKept: 0,
   tackleTaps: 0, tackleWon: 0, tackleBall: 0, tackleFouls: 0, freeTackles: 0,
   aiTackles: 0, aiTacklesWon: 0, dispossessed: 0, passes: 0, passCmp: 0, shots: 0, fouls: 0, foulsAgainst: 0, thirds: [0, 0, 0],
   skillMoves: 0, skillPerfect: 0, skillGood: 0, skillTells: 0, skillGoals: 0,
+  runs: 0, runsFaced: 0, runsPast: 0, runsBox: 0, runsShot: 0, runsGoal: 0,
+  runEnds: { shot: 0, tackled: 0, lost: 0, out: 0, fouled: 0, pass: 0 },
+  runTackles: 0, runTackleWon: 0, runTells: 0, runNearest: 0, metFirst: 0, backedOff: 0, longRuns: 0, longShots: 0,
+  farRuns: 0, farPast: 0, farBox: 0, farShots: 0, farGoals: 0,
 });
 
 type Btn = 'pass' | 'shoot' | 'through' | 'sprint';
@@ -141,11 +197,15 @@ export class HumanBot {
   private skillCool = 0;
   /** Its own generator for the SKILL decisions, so the bot's other choices draw exactly as they did without them. */
   private sk: number;
+  /** The carry being measured (BotTally.runs): the carrier, the first man in his way (-1: none), and what has happened to it. */
+  private run: { idx: number; first: number; past: boolean; box: boolean; loose: number; near: number; met: boolean; long: boolean; far: boolean } | null = null;
+  private shotRun = -999;
+  private shotFar = false;
 
   constructor(seed: number, opts: BotOptions = {}) {
     this.s = (Math.imul(seed + 17, 2654435761) >>> 0) || 1;
     this.sk = (Math.imul(seed + 71, 2246822519) >>> 0) || 1;
-    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, skills: 'off', sprint: 'button', casual: false, ...opts };
+    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, skills: 'off', sprint: 'button', casual: false, straight: false, ...opts };
   }
 
   private skRnd(): number {
@@ -280,14 +340,42 @@ export class HumanBot {
     const sp = a.speed();
     const hx = sp > 1 ? a.vel.x / sp : Math.cos(a.facing);
     const hz = sp > 1 ? a.vel.z / sp : Math.sin(a.facing);
-    if (this.o.skills === 'react') {
-      if (!fresh || this.skRnd() >= (this.o.casual ? 0.6 : 0.8)) return;
-      const thr = m.ctl[HS].skill.threat;
-      const o = thr ? m.players[thr.by] : null;
-      // Across the run, away from the side he comes from (casual: half the time the thumb is still pushing ahead).
-      const side = o ? lateral(a, o, hx, hz) : 1;
-      this.skillDir = this.o.casual && this.skRnd() < 0.5 ? { x: hx, z: hz } : { x: -hz * side, z: hx * side };
-      this.skillAt = this.frame + Math.round((this.o.casual ? 0.2 + this.skRnd() * 0.25 : 0.16 + this.skRnd() * 0.14) / DT);
+    if (this.o.skills === 'react' || this.o.skills === 'use') {
+      if (fresh && this.skRnd() < (this.o.casual ? 0.6 : 0.8)) {
+        const thr = m.ctl[HS].skill.threat;
+        const o = thr ? m.players[thr.by] : null;
+        // Across the run, away from the side he comes from (casual: half the time the thumb is still pushing ahead).
+        const side = o ? lateral(a, o, hx, hz) : 1;
+        this.skillDir = this.o.casual && this.skRnd() < 0.5 ? { x: hx, z: hz } : { x: -hz * side, z: hx * side };
+        this.skillAt = this.frame + Math.round((this.o.casual ? 0.2 + this.skRnd() * 0.25 : 0.16 + this.skRnd() * 0.14) / DT);
+        this.skillCool = 1;
+        return;
+      }
+      if (this.o.skills === 'react' || this.skillCool > 0 || m.ctl[HS].skill.flair < 1 || a.ballT < 0.5) return;
+      // 'use': a man in his way, or open grass and a full gauge.
+      let ahead: Player | null = null;
+      let ad = 9;
+      for (const o of m.teamPlayers(1)) {
+        if (o.sentOff || o.isKeeper) continue;
+        const ox = o.pos.x - a.pos.x;
+        const oz = o.pos.z - a.pos.z;
+        const along = ox * hx + oz * hz;
+        if (along < 0.5 || along > ad || Math.abs(-hz * ox + hx * oz) > Math.max(1.6, along * 0.5)) continue;
+        ad = along;
+        ahead = o;
+      }
+      if (ahead && ad < 3.5) {
+        if (this.skRnd() < 0.5) {
+          const side = lateral(a, ahead, hx, hz);
+          this.skillDir = this.o.casual && this.skRnd() < 0.5 ? { x: hx, z: hz } : { x: -hz * side, z: hx * side };
+          this.skillDown = 3;
+        }
+        this.skillCool = 1.1 + this.skRnd() * 0.6;
+      } else if (!ahead && m.ctl[HS].skill.flair >= 2.9 && sp > 3 && hx * m.attackDir(HS) > 0.3) {
+        this.skillDir = { x: hx, z: hz };
+        this.skillDown = 3;
+        this.skillCool = 2 + this.skRnd();
+      }
       return;
     }
     // 'spam'
@@ -312,7 +400,36 @@ export class HumanBot {
 
   // ---------------------------------------------------------------- on the ball
 
+  /** BotOptions.straight: the stick at the middle of their goal, SHOOT once he is in their box; nothing else. */
+  private straightAttack(m: Match, c: Player): void {
+    const gx = m.attackDir(HS) * HALF_L;
+    const dx = gx - c.pos.x;
+    const dz = -c.pos.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    this.stick.x = dx / dl;
+    this.stick.z = dz / dl;
+    this.sprintHeld = true;
+    const pl = this.plan;
+    if (pl && pl.kind === 'shoot') {
+      pl.t += DT;
+      if (pl.t >= pl.hold + 0.2) this.plan = null;
+      return;
+    }
+    this.plan = null;
+    if (Math.abs(dx) < BOX_DEPTH && Math.abs(c.pos.z) < BOX_W / 2 && this.ownT > 0.1) {
+      const hold = 0.3;
+      this.plan = { kind: 'shoot', t: 0, hold, x: this.stick.x, z: this.stick.z };
+      this.down.shoot = Math.round(hold / DT);
+      this.gap.shoot = 0;
+      this.tally.shots++;
+    }
+  }
+
   private attack(m: Match, c: Player): void {
+    if (this.o.straight) {
+      this.straightAttack(m, c);
+      return;
+    }
     const ad = m.attackDir(HS);
     const gx = ad * HALF_L;
     const pl = this.plan;
@@ -591,9 +708,105 @@ export class HumanBot {
 
   // ---------------------------------------------------------------- measurement
 
+  /** His carries (BotTally.runs): one step of the count. */
+  private trackRun(m: Match, evs: MatchEvent[]): void {
+    const side = (i: number) => (i >= 0 ? m.players[i].side : -1);
+    const ad = m.attackDir(HS);
+    const gx = ad * HALF_L;
+    const b = m.ball;
+    const T = this.tally;
+    for (const e of evs) {
+      if (e.type !== 'goal' || e.side !== HS || e.own || this.frame - this.shotRun >= 240) continue;
+      T.runsGoal++;
+      if (this.shotFar) T.farGoals++;
+      this.shotRun = -999;
+    }
+    let r = this.run;
+    if (!r) {
+      const a = m.active >= 0 ? m.players[m.active] : null;
+      if (m.phase !== 'play' || !a || b.owner !== a.idx || b.held || a.isKeeper) return;
+      // The first man in his way: the nearest outfielder of theirs goal-side of him, in a lane towards their goal.
+      const tx = gx - a.pos.x;
+      const tz = -a.pos.z;
+      const tl = Math.hypot(tx, tz) || 1;
+      let first = -1;
+      let fd = 40;
+      for (const o of m.teamPlayers(1)) {
+        if (o.sentOff || o.isKeeper) continue;
+        const ox = o.pos.x - a.pos.x;
+        const oz = o.pos.z - a.pos.z;
+        const along = (ox * tx + oz * tz) / tl;
+        if (along < 1 || along > fd || Math.abs(-tz * ox + tx * oz) / tl > 7) continue;
+        fd = along;
+        first = o.idx;
+      }
+      r = this.run = {
+        idx: a.idx, first, past: false, box: false, loose: 0, near: 99, met: false, long: first >= 0 && a.pos.x * ad < 0,
+        far: first >= 0 && Math.abs(gx - a.pos.x) >= RUN_FROM,
+      };
+      T.runs++;
+      if (first >= 0) T.runsFaced++;
+      if (r.long) T.longRuns++;
+      if (r.far) T.farRuns++;
+    }
+    const c = m.players[r.idx];
+    let end: RunEnd | null = null;
+    for (const e of evs) {
+      if (e.type === 'skillTell' && e.on === r.idx && r.first >= 0) T.runTells++;
+      else if (e.type === 'tackle' && side(e.by) === 1) {
+        if (r.first >= 0 && (!e.won || !e.slide)) T.runTackles++;
+        if (e.won) {
+          if (r.first >= 0) T.runTackleWon++;
+          end = 'tackled';
+        }
+      } else if (e.type === 'foul' && e.on === r.idx) end ??= 'fouled';
+      else if (e.type === 'kick' && e.kind === 'shot' && (e.player ?? b.lastTouch) === r.idx) end ??= 'shot';
+    }
+    if (b.owner === r.idx && !end) {
+      r.loose = 0;
+      if (r.first >= 0) {
+        const o = m.players[r.first];
+        const d = Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z);
+        r.near = Math.min(r.near, d);
+        if (!r.met && d < 3) {
+          r.met = true;
+          T.metFirst++;
+          if (o.vel.x * -ad > 2) T.backedOff++;
+        }
+        if (!r.past && c.pos.x * ad > o.pos.x * ad + 1) {
+          r.past = true;
+          T.runsPast++;
+          if (r.far) T.farPast++;
+        }
+      }
+      if (!r.box && Math.abs(gx - c.pos.x) < BOX_DEPTH && Math.abs(c.pos.z) < BOX_W / 2) {
+        r.box = true;
+        T.runsBox++;
+        if (r.far) T.farBox++;
+      }
+    } else if (!end) {
+      if (b.owner >= 0 && side(b.owner) === 1) end = 'lost';
+      else if (m.phase !== 'play') end = 'out';
+      else if (b.owner >= 0) end = 'pass';
+      else if ((r.loose += DT) > 1.2) end = 'lost';
+    }
+    if (!end) return;
+    T.runEnds[end]++;
+    if (end === 'shot') {
+      T.runsShot++;
+      if (r.long) T.longShots++;
+      if (r.far) T.farShots++;
+      this.shotRun = this.frame;
+      this.shotFar = r.far;
+    }
+    if (r.first >= 0) T.runNearest += r.near;
+    this.run = null;
+  }
+
   /** Feed the step's events (and the ball owner before the step). */
   observe(m: Match, evs: MatchEvent[], ownerBefore: number): void {
     const side = (i: number) => (i >= 0 ? m.players[i].side : -1);
+    this.trackRun(m, evs);
     if (m.phase === 'play' && m.ball.owner >= 0 && side(m.ball.owner) === HS) {
       const u = (m.ball.pos.x * m.attackDir(HS)) / HALF_L;
       this.tally.thirds[u < -1 / 3 ? 0 : u < 1 / 3 ? 1 : 2] += DT;
@@ -726,6 +939,8 @@ export interface BotMatchOptions {
   bot?: BotOptions;
   /** MatchConfig.assist (dynamic difficulty) for the match. */
   assist?: number;
+  /** The AI coach (MatchConfig.coach, as the game's own matches have it): default off. */
+  coach?: boolean;
 }
 
 export function playBotMatch(o: BotMatchOptions): BotMatch {
@@ -737,6 +952,7 @@ export function playBotMatch(o: BotMatchOptions): BotMatch {
     humanSide: HS,
     seed: o.seed,
     assist: o.assist,
+    coach: o.coach,
   });
   const bot = new HumanBot(o.seed, o.bot);
   const shape = emptyShape();
@@ -866,4 +1082,87 @@ export function fmtBot(s: BotSummary): string {
     ` | TACKLE taps ${f(s.tapsPerMatch)}/m won ${f(s.tackleWonPct)}% ball ${f(s.tackleBallPct)}% foul ${f(s.tackleFoulPct)}% | free tackles ${f(s.freeTackles)}/m` +
     ` | dispossessed ${f(s.dispossessed)}/m | pass ${f(s.passPct)}% | fouls ${f(s.fouls)}-${f(s.foulsAgainst)} | att third ${f(s.attThird)}% | ${fmtShape(s.shape)}` +
     ` | tells ${f(s.skillTells)}/m SKILL ${f(s.skillMoves)}/m perfect ${f(s.skillPerfectPct)}% good ${f(s.skillGoodPct)}% skill goals ${f(s.skillGoals, 2)}/m`;
+}
+
+// ------------------------------------------------------------------ the straight run
+
+/** The straight-run bot's carries over a series (BotOptions.straight): see BotTally.runs. */
+export interface StraightSummary {
+  n: number;
+  difficulty: number;
+  w: number;
+  d: number;
+  l: number;
+  gf: number;
+  ga: number;
+  /** Carries a match, and those with a man in the way. */
+  runs: number;
+  faced: number;
+  /** Of the carries with a man in the way (%): past him, into the box, a shot, a goal. */
+  pastPct: number;
+  boxPct: number;
+  shotPct: number;
+  goalPct: number;
+  /** Of the carries that began in his own half with a man in the way: how many a match, and the share that ended in his shot (%). */
+  longRuns: number;
+  longShotPct: number;
+  /** RUNS (begun RUN_FROM m or more out, a man in the way): how many a match, and of them (%): past the first man, into the box, a shot, a goal. */
+  farRuns: number;
+  farPastPct: number;
+  farBoxPct: number;
+  farShotPct: number;
+  farGoalPct: number;
+  /** How the carries ended (% of all). */
+  ends: Record<RunEnd, number>;
+  /** Per carry with a man in the way: the AI's tackle attempts, the share of them won (%), tells, the first man's nearest approach (m). */
+  tackles: number;
+  tackleWonPct: number;
+  tells: number;
+  nearest: number;
+  /** Of the times he came within 3 m of the first man: that man going backwards (%). */
+  backedOffPct: number;
+}
+
+export function straightSeries(n: number, difficulty: number, opts: { halfLength?: number; seed0?: number; bot?: BotOptions; coach?: boolean } = {}): StraightSummary {
+  const list: BotMatch[] = [];
+  for (let i = 0; i < n; i++) {
+    const k = 2 + (Math.floor(i / 2) % 8);
+    const [home, away] = i % 2 === 0 ? [k, k + 1] : [k + 1, k];
+    list.push(playBotMatch({
+      seed: (opts.seed0 ?? 7000) + i * 113, difficulty, home, away, halfLength: opts.halfLength, coach: opts.coach,
+      bot: { straight: true, sprint: 'auto', skills: 'off', ...opts.bot },
+    }));
+  }
+  const sum = (f: (r: BotMatch) => number) => list.reduce((a, r) => a + f(r), 0);
+  const t = (f: (x: BotTally) => number) => sum((r) => f(r.tally));
+  const pct = (a: number, b: number) => (a / Math.max(1, b)) * 100;
+  const runs = t((x) => x.runs);
+  const faced = t((x) => x.runsFaced);
+  const ends = { shot: 0, tackled: 0, lost: 0, out: 0, fouled: 0, pass: 0 } as Record<RunEnd, number>;
+  for (const k of Object.keys(ends) as RunEnd[]) ends[k] = pct(t((x) => x.runEnds[k]), runs);
+  return {
+    n, difficulty,
+    w: list.filter((r) => r.gf > r.ga).length, d: list.filter((r) => r.gf === r.ga).length, l: list.filter((r) => r.gf < r.ga).length,
+    gf: sum((r) => r.gf) / n, ga: sum((r) => r.ga) / n,
+    runs: runs / n, faced: faced / n,
+    pastPct: pct(t((x) => x.runsPast), faced), boxPct: pct(t((x) => x.runsBox), runs), shotPct: pct(t((x) => x.runsShot), runs),
+    goalPct: pct(t((x) => x.runsGoal), runs),
+    longRuns: t((x) => x.longRuns) / n, longShotPct: pct(t((x) => x.longShots), t((x) => x.longRuns)),
+    farRuns: t((x) => x.farRuns) / n, farPastPct: pct(t((x) => x.farPast), t((x) => x.farRuns)), farBoxPct: pct(t((x) => x.farBox), t((x) => x.farRuns)),
+    farShotPct: pct(t((x) => x.farShots), t((x) => x.farRuns)), farGoalPct: pct(t((x) => x.farGoals), t((x) => x.farRuns)),
+    ends,
+    tackles: t((x) => x.runTackles) / Math.max(1, faced), tackleWonPct: pct(t((x) => x.runTackleWon), t((x) => x.runTackles)),
+    tells: t((x) => x.runTells) / Math.max(1, faced), nearest: t((x) => x.runNearest) / Math.max(1, faced),
+    backedOffPct: pct(t((x) => x.backedOff), t((x) => x.metFirst)),
+  };
+}
+
+export function fmtStraight(s: StraightSummary): string {
+  const f = (v: number, d = 1) => v.toFixed(d);
+  return `diff ${s.difficulty} N=${s.n}: W${s.w} D${s.d} L${s.l} GF ${f(s.gf, 2)} GA ${f(s.ga, 2)}` +
+    ` | RUNS from ${RUN_FROM} m out ${f(s.farRuns)}/m: PAST THE FIRST MAN ${f(s.farPastPct)}% INTO THE BOX ${f(s.farBoxPct)}% SHOT ${f(s.farShotPct)}% GOAL ${f(s.farGoalPct)}%` +
+    ` | all carries ${f(s.runs)}/m: past ${f(s.pastPct)}% box ${f(s.boxPct)}% shot ${f(s.shotPct)}% goal ${f(s.goalPct)}%` +
+    ` | from his own half ${f(s.longRuns)}/m, shot ${f(s.longShotPct)}%` +
+    ` | ended: shot ${f(s.ends.shot)}% tackled ${f(s.ends.tackled)}% lost ${f(s.ends.lost)}% out ${f(s.ends.out)}% fouled ${f(s.ends.fouled)}%` +
+    ` | per carry: AI tackles ${f(s.tackles, 2)} (won ${f(s.tackleWonPct)}%) tells ${f(s.tells, 2)} first man nearest ${f(s.nearest, 2)} m, backing off ${f(s.backedOffPct)}%`;
 }

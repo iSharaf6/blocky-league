@@ -10,8 +10,8 @@ import { carrierGuard } from '../src/sim/dribble';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
 import {
-  COMBO_T, PERFECT_BEAT_MIN, PERFECT_GRACE, SKILL_CODE, SKILL_COOL, SKILL_EXPOSED, SKILL_STAMINA, SKILL_T, skillGoal, skillKind, startTell,
-  telegraphs, tellTime,
+  COMBO_T, EXIT_BURST, FLAIR_MAX, FLAIR_REGEN_S, FLICK_ON_BUF, PERFECT_BEAT_MIN, PERFECT_GRACE, perfectGrace, SKILL_CODE, SKILL_COOL, SKILL_EXPOSED,
+  SKILL_NAMES, SKILL_STAMINA, SKILL_T, skillFlair, skillGoal, skillKind, startTell, telegraphs, tellTime,
 } from '../src/sim/skills';
 import type { MatchEvent } from '../src/sim/types';
 import { botSeries, fmtBot } from './humanBot';
@@ -118,10 +118,12 @@ describe('SKILL: each move', () => {
     expect(evs.some((e) => e.type === 'skill')).toBe(false);
   });
 
-  it('RAINBOW FLICK: up over head height, down a few metres on, and he runs onto it', () => {
+  it('RAINBOW FLICK (a man standing off in front of him): up over head height, down a few metres on, and he runs onto it', () => {
     const m = scenario(12);
     const p = runUp(m);
     const x0 = p.pos.x;
+    // (A man 5 m on in his lane: with nobody there the stick along his run is a BURST.)
+    defenderAhead(m, p, 5).tackleCooldown = 9;
     const evs = steps(m, 1, pad(1, 0, { skill: true }));
     let top = 0;
     let back = -1;
@@ -293,19 +295,30 @@ describe('SKILL: not overpowered', () => {
     expect(st0 - p.stamina).toBeGreaterThan(n * SKILL_STAMINA * p.fatigue * 0.8);
   });
 
-  it('mid move the ball is off his foot: a tackle on him is likelier (unless a skill has him protected)', () => {
+  it('a move with no FLAIR behind it leaves the ball off his foot (a tackle on him is likelier); a CHARGED one does not', () => {
     const m = scenario(71);
     const p = runUp(m);
     const o = defenderAhead(m, p, 1.2);
     const open = carrierGuard(m, o, p);
+    // With a pip to spend: as safe as his dribble while it plays.
     steps(m, 1, pad(0, 0, { skill: true }));
     p.protectT = 0;
+    expect(m.ctl[0].skill.move?.charged).toBe(true);
+    expect(carrierGuard(m, o, p)).toBeCloseTo(open, 5);
+    steps(m, Math.round(SKILL_T.stepover / DT) + 2, pad(1, 0));
+    // Out of pips: the move still plays, exposed as it always was.
+    const st = m.ctl[0].skill;
+    st.flair = 0;
+    st.last = -9;
+    steps(m, 1, pad(0, 0, { skill: true }));
+    p.protectT = 0;
+    expect(st.move?.charged).toBe(false);
     expect(carrierGuard(m, o, p)).toBeCloseTo(open * SKILL_EXPOSED, 5);
     steps(m, Math.round(SKILL_T.stepover / DT) + 2, pad(1, 0));
     expect(carrierGuard(m, o, p)).toBeCloseTo(open, 5);
   });
 
-  it('mashing next to a man who is only jockeying beats him less than a fresh move; nobody near gains nothing', () => {
+  it('a CHARGED move fools a jockeying man about half the time; mashed with no pips left, far less often', () => {
     let fresh = 0;
     let mashed = 0;
     const N = 60;
@@ -315,16 +328,20 @@ describe('SKILL: not overpowered', () => {
         const p = runUp(m);
         const o = defenderAhead(m, p, 2.4);
         o.tackleCooldown = 5;
-        if (mash) m.ctl[0].skill.last = m.ctl[0].skill.t - SKILL_COOL - 0.05;
+        if (mash) {
+          // (Straight after another move, the pips spent: FLAIR is what stops it being mashed.)
+          m.ctl[0].skill.last = m.ctl[0].skill.t - SKILL_COOL - 0.05;
+          m.ctl[0].skill.flair = 0;
+        }
         const evs = steps(m, 1, pad(0, 1, { skill: true }));
         if (evs.some((e) => e.type === 'beat' && e.on === o.idx)) mash ? mashed++ : fresh++;
       }
     }
     // eslint-disable-next-line no-console
-    console.log(`a jockeying defender beaten: fresh move ${fresh}/${N}, straight after another ${mashed}/${N}`);
-    expect(fresh).toBeGreaterThan(0);
-    expect(fresh).toBeLessThan(N * 0.55);
-    expect(mashed).toBeLessThan(fresh * 0.8);
+    console.log(`a jockeying defender beaten: a CHARGED move ${fresh}/${N}, mashed with no pips ${mashed}/${N}`);
+    expect(fresh).toBeGreaterThan(N * 0.25);
+    expect(fresh).toBeLessThan(N * 0.75);
+    expect(mashed).toBeLessThan(fresh * 0.6);
   }, 120_000);
 });
 
@@ -449,4 +466,176 @@ describe('SKILL: whole matches against the scripted human', () => {
     expect(spam.gf - spam.ga).toBeLessThan(off.gf - off.ga + 1);
     expect(react.gf - react.ga).toBeLessThan(off.gf - off.ga + 1.2);
   }, 900_000);
+});
+
+describe('SKILL: every press pays (2026-10-04)', () => {
+  const press = (m: Match, mx: number, mz: number, extra: Partial<Pad> = {}) => moveOf(steps(m, 1, pad(mx, mz, { skill: true, ...extra })));
+
+  it('FLAIR: three pips, a move spends one and is CHARGED, one comes back every FLAIR_REGEN_S s, a PERFECT costs nothing', () => {
+    const m = scenario(400);
+    const p = runUp(m);
+    const st = m.ctl[0].skill;
+    expect(skillFlair(m, 0)).toBe(FLAIR_MAX);
+    press(m, 0, 1);
+    expect(st.move?.charged).toBe(true);
+    expect(skillFlair(m, 0)).toBeGreaterThan(FLAIR_MAX - 1 - 0.01);
+    expect(skillFlair(m, 0)).toBeLessThan(FLAIR_MAX - 1 + 0.05);
+    // Back at one a FLAIR_REGEN_S.
+    steps(m, Math.round(FLAIR_REGEN_S / DT), pad(1, 0));
+    expect(skillFlair(m, 0)).toBeGreaterThan(FLAIR_MAX - 0.05);
+    // No pips: the move still plays, uncharged.
+    st.flair = 0;
+    st.last = -9;
+    expect(press(m, 0, 1)).toMatchObject({ move: 'roulette' });
+    expect(st.move?.charged).toBe(false);
+    // A PERFECT is CHARGED whatever he has left, and takes nothing.
+    const m2 = scenario(401);
+    const q = runUp(m2);
+    const o = defenderAhead(m2, q);
+    m2.ctl[0].skill.flair = 0.4;
+    startTell(m2, o, q, false);
+    steps(m2, 4, pad(1, 0));
+    expect(press(m2, 0, 1)).toMatchObject({ grade: 'perfect' });
+    expect(m2.ctl[0].skill.move?.charged).toBe(true);
+    expect(skillFlair(m2, 0)).toBeGreaterThan(0.39);
+    void p;
+  });
+
+  it('a CHARGED move ends in a burst the way the stick points: quicker than he went in, and quicker than a sprint for a moment', () => {
+    const m = scenario(402);
+    const p = runUp(m);
+    const v0 = p.speed();
+    press(m, 0, 1);
+    steps(m, Math.round(SKILL_T.roulette / DT) + 1, pad(1, 0));
+    expect(m.ctl[0].skill.move).toBeNull();
+    expect(p.speed()).toBeGreaterThan(v0 + 1);
+    expect(p.burstT).toBeGreaterThan(EXIT_BURST.show - 0.1);
+    expect(m.ball.owner).toBe(p.idx);
+    // The same move with no pip behind it: no burst (he comes out of the spin slower than he went in).
+    const n = scenario(402);
+    const q = runUp(n);
+    n.ctl[0].skill.flair = 0;
+    press(n, 0, 1);
+    steps(n, Math.round(SKILL_T.roulette / DT) + 1, pad(1, 0));
+    expect(q.burstT).toBe(0);
+    expect(q.speed()).toBeLessThan(p.speed() - 1);
+  });
+
+  it('BURST: the stick along his run with nobody in the way is a step and away, the ball on his foot', () => {
+    const m = scenario(403);
+    const p = runUp(m);
+    const v0 = p.speed();
+    const mv = press(m, 1, 0);
+    expect(mv).toMatchObject({ move: 'boost', grade: 'show' });
+    expect(SKILL_NAMES.boost).toBe('BURST');
+    let top = 0;
+    for (let i = 0; i < 40; i++) {
+      m.step(DT, pad(1, 0));
+      top = Math.max(top, m.ball.pos.y);
+    }
+    expect(top).toBeLessThan(0.6);
+    expect(m.ball.owner).toBe(p.idx);
+    expect(p.speed()).toBeGreaterThan(v0 + 1.5);
+    expect(p.speed()).toBeGreaterThan(p.sprintPace() * 0.8);
+  });
+
+  it('SOMBRERO: the stick along his run with a man sliding in flicks it low over him, and his slide goes under it', () => {
+    let got = 0;
+    let over = 0;
+    const N = 12;
+    for (let s = 0; s < N; s++) {
+      const m = scenario(410 + s);
+      const p = runUp(m);
+      const o = m.players[14];
+      place(o, p.pos.x + 3.6, p.pos.z + 0.3);
+      o.facing = Math.PI;
+      m.startSlide(o);
+      const evs = steps(m, 1, pad(1, 0, { skill: true }));
+      expect(moveOf(evs)).toMatchObject({ move: 'sombrero' });
+      let top = 0;
+      for (let i = 0; i < 110; i++) {
+        m.step(DT, pad(1, 0));
+        evs.push(...m.drainEvents());
+        top = Math.max(top, m.ball.pos.y);
+      }
+      // Lower than a rainbow (he is on the grass), and never won by the man on the floor.
+      expect(top).toBeGreaterThan(1.1);
+      expect(top).toBeLessThan(2.8);
+      expect(evs.some((e) => e.type === 'tackle' && e.by === o.idx && e.won)).toBe(false);
+      if (evs.some((e) => e.type === 'beat' && e.on === o.idx)) over++;
+      if (m.ball.owner === p.idx) got++;
+    }
+    expect(over).toBe(N);
+    expect(got).toBeGreaterThanOrEqual(N - 2);
+  }, 60_000);
+
+  it('FAKE SHOT: PASS while SHOOT is charging calls the shot off for a feint; no pass is played, no shot when SHOOT is let go', () => {
+    const m = scenario(420);
+    const p = runUp(m);
+    const evs = steps(m, 8, pad(1, 0, { shoot: true }));
+    steps(m, 2, pad(1, 0, { shoot: true, pass: true }), evs);
+    expect(moveOf(evs)).toMatchObject({ move: 'fakeshot' });
+    steps(m, 2, pad(1, 0, { shoot: true }), evs);
+    steps(m, 40, pad(1, 0), evs);
+    expect(evs.some((e) => e.type === 'kick')).toBe(false);
+    expect(m.ball.owner).toBe(p.idx);
+    expect(SKILL_NAMES.fakeshot).toBe('FAKE SHOT');
+    // The pose is on the frame (code 12).
+    const m2 = scenario(421);
+    const q = runUp(m2);
+    steps(m2, 8, pad(1, 0, { shoot: true }));
+    steps(m2, 4, pad(1, 0, { shoot: true, pass: true }));
+    const f = new Float32Array(FRAME_LEN);
+    writeFrame(m2, f, 0);
+    expect(f[q.idx * PF + 4]).toBe(STATE_CODE.skill);
+    expect(f[q.idx * PF + 11]).toBe(SKILL_CODE.fakeshot);
+  });
+
+  it('FLICK ON: SKILL with a pass on its way to him is played off his first touch, the stick\'s way', () => {
+    const m = scenario(430);
+    const passer = m.players[8];
+    const p = m.players[9];
+    place(passer, -20, 0);
+    place(p, -8, 0);
+    passer.facing = 0;
+    p.facing = Math.PI;
+    giveBall(m, passer);
+    // A pass to him; SKILL while it is on its way, the stick up the pitch.
+    const evs = steps(m, 3, pad(1, 0, { pass: true }));
+    steps(m, 6, pad(0, 0), evs);
+    let pressed = false;
+    for (let i = 0; i < 180 && !moveOf(evs); i++) {
+      const coming = m.ball.owner < 0 && m.passTarget === p.idx && Math.hypot(m.ball.pos.x - p.pos.x, m.ball.pos.z - p.pos.z) < FLICK_ON_BUF * 14;
+      const sk = coming && !pressed;
+      if (sk) pressed = true;
+      m.step(DT, pad(1, 0, { skill: sk }));
+      evs.push(...m.drainEvents());
+    }
+    expect(pressed).toBe(true);
+    expect(moveOf(evs)).toMatchObject({ move: 'flickon' });
+    const x0 = p.pos.x;
+    steps(m, 70, pad(1, 0), evs);
+    expect(m.ball.owner).toBe(p.idx);
+    expect(p.pos.x - x0).toBeGreaterThan(3);
+  });
+
+  it('the PERFECT window is wider on EASY and NORMAL: a casual thumb, 0.45 s after the tell, still gets it', () => {
+    expect(perfectGrace(0.6)).toBeCloseTo(0.28, 5);
+    expect(perfectGrace(1.8)).toBeCloseTo(0.2, 5);
+    expect(perfectGrace(3)).toBeCloseTo(0.12, 5);
+    expect(perfectGrace(4)).toBeCloseTo(PERFECT_GRACE, 5);
+    const late = (difficulty: number, after: number) => {
+      const m = scenario(440, difficulty);
+      const p = runUp(m);
+      const o = defenderAhead(m, p, 3.4);
+      startTell(m, o, p, false);
+      steps(m, Math.round(after / DT), pad(1, 0));
+      // (Kept from going in meanwhile, so the ball is still there to skill.)
+      o.tackleCooldown = 5;
+      return moveOf(steps(m, 1, pad(0, 1, { skill: true })))?.grade;
+    };
+    expect(late(1.8, tellTime(1.8) + 0.15)).toBe('perfect');
+    expect(late(0.6, tellTime(0.6) + 0.24)).toBe('perfect');
+    expect(late(4, tellTime(4) + 0.15)).not.toBe('perfect');
+  });
 });

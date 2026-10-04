@@ -3,6 +3,7 @@
 //
 //   node scripts/release.mjs web                 # one variant
 //   node scripts/release.mjs web crazygames poki itch
+//   node scripts/release.mjs ios                 # the web build inside the iPhone / iPad app (npm run ios)
 //   SITE_URL=https://blockyleague.example node scripts/release.mjs web   # absolute og:image for social cards
 //
 // Each variant produces dist-<variant>/ (index.html at the root, relative paths — vite base is './')
@@ -19,16 +20,40 @@ import { fileFingerprint, sourceFingerprint } from './release-checks.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 const ZIP_BUDGET = 5 * 1024 * 1024;
-const CLOUD_ENV = [process.env.VITE_SUPABASE_URL ?? '', process.env.VITE_SUPABASE_ANON_KEY ?? '']; // web build only (src/platform/cloud.ts)
+// The backend (src/platform/cloud.ts): the web build and the app only. The values are public (the project URL and
+// the publishable key) and live in .env.production; the environment (GitHub Actions secrets) wins when it sets them.
+function envFile(name) {
+  const out = {};
+  const path = join(ROOT, name);
+  if (!existsSync(path)) return out;
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
+    if (m) out[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+  return out;
+}
+const PRODUCTION_ENV = envFile('.env.production');
+// (The third value, VITE_ONLINE_ACCOUNTS=on, makes accounts required: the silent sign-in and the online rule.)
+const CLOUD_ENV = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'VITE_ONLINE_ACCOUNTS'].map((k) => process.env[k] || PRODUCTION_ENV[k] || '');
+const CLOUD_HOST = (() => {
+  try {
+    return new URL(CLOUD_ENV[0]).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+})();
 
 const VARIANTS = {
-  // Own site. Keeps the PWA bits (manifest, icons, service worker, og image, privacy page).
-  web: { portal: 'none', webOnly: true },
+  // Own site. Keeps the PWA bits (manifest, icons, service worker, og image, privacy page). Accounts and cloud saves.
+  web: { portal: 'none', webOnly: true, cloud: true },
   // Portal builds: the portal's SDK is loaded at runtime by src/platform/ads.ts.
   crazygames: { portal: 'crazygames', webOnly: false },
   poki: { portal: 'poki', webOnly: false },
   // itch.io embeds the game in an iframe on its own CDN; no ads, no PWA.
   itch: { portal: 'none', webOnly: false },
+  // The iPhone / iPad app (Capacitor wraps dist-ios: capacitor.config.ts). Like itch (no PWA bits), plus the
+  // backend: Game Center sign-in and cloud saves.
+  ios: { portal: 'none', webOnly: false, cloud: true },
 };
 
 // Files from public/ that only make sense on a top-level site we control.
@@ -94,10 +119,18 @@ function checkOutput(outDir, variant) {
       hosts.set(h, (hosts.get(h) ?? 0) + 1);
     }
   }
-  if (!VARIANTS[variant].webOnly) {
+  if (!VARIANTS[variant].webOnly && !VARIANTS[variant].cloud) {
     const allowed = PORTAL_HOSTS[variant];
     for (const host of hosts.keys()) if (!NOT_REQUESTS.has(host) && !allowed.includes(host)) problems.push(`unexpected external host in ${variant}: ${host}`);
     for (const host of allowed) if (!hosts.has(host)) problems.push(`${variant} SDK host missing: ${host}`);
+    // Accounts never ship in a portal or itch zip.
+    if (CLOUD_HOST && hosts.has(CLOUD_HOST)) problems.push(`the backend host is in ${variant}: ${CLOUD_HOST}`);
+  }
+  if (VARIANTS[variant].cloud) {
+    // (Its hosts are an inventory, not a whitelist: the backend's client library names a few of its own.)
+    // No backend is a valid build: accounts and cloud saves are simply off and the game is fully local.
+    if (!CLOUD_HOST) warnings.push(`${variant} has no backend (accounts and cloud saves are off): the two values in .env.production switch them on`);
+    else if (!hosts.has(CLOUD_HOST)) problems.push(`${variant} backend host missing from the bundle: ${CLOUD_HOST}`);
   }
   return { problems, warnings, hosts };
 }
@@ -109,7 +142,7 @@ async function buildVariant(variant) {
 
   // Vite exposes VITE_* vars from process.env to import.meta.env; ads.ts reads VITE_PORTAL.
   process.env.VITE_PORTAL = cfg.portal;
-  [process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY] = cfg.webOnly ? CLOUD_ENV : ['', '']; // cloud saves never ship in portal / itch zips
+  [process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY, process.env.VITE_ONLINE_ACCOUNTS] = cfg.cloud ? CLOUD_ENV : ['', '', '']; // accounts never ship in portal / itch zips (an empty value here beats .env.production)
   const sourceHash = sourceFingerprint(ROOT);
   await build({
     root: ROOT,

@@ -30,6 +30,11 @@ export interface StadiumOptions {
    * buildings stand. Omitted = the classic look of `level`. See the STRUCTURAL PARTS section.
    */
   parts?: StadiumParts;
+  /**
+   * The two clubs' crests for the big screen, as pixels (core/crest.ts crestPixels: 26 x 30 hex colours, -1 clear),
+   * home then away. Omitted: the screen shows the colours and names only.
+   */
+  crests?: readonly [Int32Array | null, Int32Array | null];
 }
 
 /** Built level per part of a ground (meta/ground.ts PartId): 0 or missing = not built. */
@@ -293,6 +298,8 @@ export class Stadium {
   private standSpots: { x: number; z: number; rot: number }[] = [];
   /** Full-screen night vignette (a clip-space quad drawn last). */
   private vignette: THREE.Mesh | null = null;
+  /** The big screen's face, where one stands (decorAnchors: the stadium style's GOAL graphic goes over it). */
+  private screenAt: { x: number; y: number; z: number; w: number; h: number } | null = null;
 
   /** Floodlight masts at the corners (level 3 up, or the FLOODLIGHTS part); otherwise portable lamps at night. */
   private readonly masts: boolean;
@@ -1750,6 +1757,7 @@ export class Stadium {
     screen.position.set(x - 0.62, y, 0);
     screen.rotation.y = -Math.PI / 2;
     this.group.add(screen);
+    this.screenAt = { x: x - 0.62, y, z: 0, w: 15.6, h: 5.4 };
   }
 
   // ------------------------------------------------------------------ STRUCTURAL PARTS (meta/ground.ts)
@@ -1836,6 +1844,7 @@ export class Stadium {
       screen.position.set(x - 0.52, y, 0);
       screen.rotation.y = -Math.PI / 2;
       this.group.add(screen);
+      this.screenAt = { x: x - 0.52, y, z: 0, w: 13.6, h: 4.7 };
     }
     if (b.empty) return;
     const m = new THREE.Mesh(b.build(), this.outerMat);
@@ -1855,12 +1864,26 @@ export class Stadium {
     };
     cell(16, 150, this.opt.home);
     cell(c.width - 166, 150, this.opt.away);
+    // The clubs' crests (26 x 30 pixels, two canvas pixels each) on a cream plate at the outer end of each cell,
+    // the name beside it; without them, the name alone.
+    const crests = this.opt.crests;
+    const crest = (px: Int32Array, x: number) => {
+      g.fillStyle = '#fbfbf4';
+      g.fillRect(x - 4, 24, 60, 72);
+      for (let i = 0; i < px.length; i++) {
+        if (px[i] < 0) continue;
+        g.fillStyle = cssHex(px[i]);
+        g.fillRect(x + (i % 26) * 2, 30 + Math.floor(i / 26) * 2, 2, 2);
+      }
+    };
+    if (crests?.[0]) crest(crests[0], 24);
+    if (crests?.[1]) crest(crests[1], c.width - 76);
     g.fillStyle = '#fbfbf4';
-    g.font = '900 56px "Lilita One", "Arial Black", sans-serif';
+    g.font = `900 ${crests ? 38 : 56}px "Lilita One", "Arial Black", sans-serif`;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.fillText(this.opt.homeName.slice(0, 3).toUpperCase(), 91, 62);
-    g.fillText(this.opt.awayName.slice(0, 3).toUpperCase(), c.width - 91, 62);
+    g.fillText(this.opt.homeName.slice(0, 3).toUpperCase(), crests?.[0] ? 123 : 91, 62);
+    g.fillText(this.opt.awayName.slice(0, 3).toUpperCase(), c.width - (crests?.[1] ? 123 : 91), 62);
     g.font = '900 84px "Lilita One", "Arial Black", sans-serif';
     g.fillText(`${h}:${a}`, c.width / 2, 66);
     g.font = '700 30px "Lilita One", "Arial Black", sans-serif';
@@ -2036,6 +2059,8 @@ export class Stadium {
   decorAnchors(): DecorAnchors {
     const far = this.layout.far;
     const left = this.layout.left;
+    const right = this.layout.right;
+    const near = this.layout.near;
     const crowd = this.group.children.find((o) => (o as THREE.InstancedMesh).isInstancedMesh && !!(o as THREE.InstancedMesh).geometry.getAttribute('aSkin'));
     return {
       group: this.group,
@@ -2043,6 +2068,9 @@ export class Stadium {
       level: this.level,
       far: far ? { t1: far.t1, t2: far.t2, span: far.span } : null,
       left: left ? { t1: left.t1, t2: left.t2, span: left.span } : null,
+      right: right ? { t1: right.t1, t2: right.t2, span: right.span } : null,
+      near: near ? { t1: near.t1, t2: near.t2, span: near.span } : null,
+      screen: this.screenAt,
       standZ: STAND_Z,
       standX: STAND_X,
       stepD: STEP_D,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BOTTOM_DIVISION, CAREER_VERSION, CLUBS_PER_DIVISION, MARKET_SIZE, MATCHDAYS, SQUAD_MAX, SQUAD_MIN, STADIUM_MAX, STAT_CAP, YOU,
+  BOTTOM_DIVISION, CAREER_VERSION, CLUBS_PER_DIVISION, HALF_SEASON, MARKET_SIZE, MATCHDAYS, SQUAD_MAX, SQUAD_MIN, STADIUM_MAX, STAT_CAP, YOU,
   autoPick, buyPlayer, canBuy, canSell, clubTeam, computeTable, createClub, cupDue, deriveShort, divisionLevel, divisionPlayerOverall,
   finishSeason, forfeitScore, resolveCupTie,
   leagueTable, lineupIssues, matchAttendance, matchCoins, matchDifficulty, migrateCareer, newSeason, nextMatch, playerPrice,
@@ -15,6 +15,8 @@ import { defaultGround } from '../src/meta/ground';
 import { defaultAcademy } from '../src/meta/life';
 import { defaultLegacy } from '../src/meta/legacy';
 import { defaultStory } from '../src/meta/story';
+import { defaultStaff } from '../src/meta/staff';
+import { defaultEvents } from '../src/meta/events';
 import { Rng } from '../src/core/rng';
 import { FORMATIONS } from '../src/sim/formations';
 import { overall, type Kit } from '../src/sim/types';
@@ -123,7 +125,8 @@ describe('squad names', () => {
         playMine(st, wallet, 1, 1);
       }
     }
-  });
+    // (Four whole home and away seasons: a longer limit than a unit test's.)
+  }, 30_000);
 
   it('dedupeSurnames renames the clashing players of one side, deterministically, keeping their initials', () => {
     const a = makeTeam(PRESET_CLUBS[3]);
@@ -192,11 +195,13 @@ describe('club creation', () => {
 });
 
 describe('season generation', () => {
-  it('has 7 matchdays of 4 fixtures; you face each rival once, alternating home and away', () => {
+  it('has 14 matchdays of 4 fixtures: home and away, you face each rival twice, once at each ground', () => {
     const st = freshCareer(11);
     const s = st.season!;
+    expect(MATCHDAYS).toBe(14);
+    expect(HALF_SEASON).toBe(7);
     expect(s.rivals).toHaveLength(CLUBS_PER_DIVISION - 1);
-    expect(s.fixtures).toHaveLength(28);
+    expect(s.fixtures).toHaveLength(56);
     const mine: Fixture[] = [];
     for (let md = 0; md < MATCHDAYS; md++) {
       const day = s.fixtures.filter((f) => f.md === md);
@@ -205,16 +210,23 @@ describe('season generation', () => {
       expect(new Set(teams).size).toBe(8);
       const f = userFixture(s, md)!;
       mine.push(f);
-      expect(f.home === YOU).toBe(md % 2 === 0);
+      // The first half alternates from a home game; the second half is the same fixtures at the other ground.
+      expect(f.home === YOU).toBe(md < HALF_SEASON ? md % 2 === 0 : (md - HALF_SEASON) % 2 === 1);
     }
-    const opponents = mine.map((f) => (f.home === YOU ? f.away : f.home));
-    expect(new Set(opponents)).toEqual(new Set(s.rivals.map((r) => r.id)));
+    for (const half of [mine.slice(0, HALF_SEASON), mine.slice(HALF_SEASON)]) {
+      const opponents = half.map((f) => (f.home === YOU ? f.away : f.home));
+      expect(new Set(opponents)).toEqual(new Set(s.rivals.map((r) => r.id)));
+    }
+    // Seven at home, seven away.
+    expect(mine.filter((f) => f.home === YOU)).toHaveLength(HALF_SEASON);
   });
 
-  it('every pair of clubs meets exactly once', () => {
+  it('every pair of clubs meets exactly twice, once at each ground', () => {
     const s = freshCareer(99).season!;
     const pairs = new Set(s.fixtures.map((f) => [f.home, f.away].sort().join('|')));
     expect(pairs.size).toBe(28);
+    const legs = new Set(s.fixtures.map((f) => `${f.home}|${f.away}`));
+    expect(legs.size).toBe(56);
   });
 
   it('rivals sit within ±5 of the division level, are unique, and are deterministic from the seed', () => {
@@ -318,7 +330,7 @@ describe('matchday flow', () => {
     const wallet = { coins: 0 };
     for (let i = 0; i < MATCHDAYS; i++) expect(playMine(st, wallet, 9, 0)).toBe(true);
     expect(st.season!.matchday).toBe(MATCHDAYS);
-    expect(leagueTable(st).every((r) => r.P === 7)).toBe(true);
+    expect(leagueTable(st).every((r) => r.P === MATCHDAYS)).toBe(true);
     const sum = st.summary!;
     expect(sum).toMatchObject({ position: 1, outcome: 'promoted', champion: true, nextDivision: 5 });
     expect(sum.prize).toBe(7 * 20 + 600 + 300);
@@ -470,6 +482,8 @@ describe('save migration', () => {
       version: CAREER_VERSION, seed: 1234, club: null, season: null, summary: null, market: [], marketKey: '', tm: defaultMarket(), stadium: 0, history: [], notice: null,
       // The forever game (board, ground, academy, legacy, story): empty to start.
       board: defaultBoard(), ground: defaultGround(), academy: defaultAcademy(), legacy: defaultLegacy(), story: defaultStory(),
+      // The long game (staff, event cards and the timeline): empty to start.
+      staff: defaultStaff(), events: defaultEvents(),
     });
   });
 

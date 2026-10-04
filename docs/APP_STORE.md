@@ -3,8 +3,8 @@
 Everything App Store Connect asks for, ready to paste, and the order to do it in. The app is the itch web build in a
 Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape only, no account, no online play.
 
-- **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (coin packs,
-  Starter Pack, NO ADS, Club Pass, Coin Doubler). The design is docs/ECONOMY.md.
+- **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (gem packs,
+  Starter Pack, NO ADS, Club Pass, Coin Doubler, PRO bundle). The design is docs/ECONOMY.md (economy v3).
 - **Game Center:** 21 achievements.
 - **Build:** version **1.0**, build **1**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
 
@@ -12,13 +12,17 @@ Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape only, no accou
 
 | Where | What | Rules |
 |---|---|---|
-| Shop, COINS tab | **FREE COINS:** watch a rewarded ad, +75 coins | Up to 5 a day; only on the player's tap |
+| Shop, STORE tab, COINS | **FREE COINS:** watch a rewarded ad, +75 coins | Up to 5 a day; only on the player's tap |
+| Shop, STORE tab, GEMS | **FREE GEMS:** watch a rewarded ad, +3 gems | Once a day; only on the player's tap |
 | Full time | **Double your coins** with a rewarded ad | Optional |
-| Daily gift | **Double the gift** with a rewarded ad | Optional |
+| Daily gift | **Double the gift's coins** with a rewarded ad | Optional |
+| A lost cup tie or decider | **Play it again** with a rewarded ad (or 50 gems) | Once a day by ad; one replay a match |
+| Shop, today's deal | **A new deal today** with a rewarded ad (or 15 gems) | Once a day |
+| MY CLUB, STADIUM | **One matchday off a build** with a rewarded ad | Once a day |
 | Before a kick-off | A full-screen ad (interstitial) | At most every 2 breaks and 4 minutes apart; never mid-match; never in the first match or the basics |
-| Shop, COINS tab | Coin packs US$0.99 to $14.99 (the first buy of each doubled), Starter Pack $1.99, **NO ADS $3.99** | NO ADS removes the full-screen ads; rewarded ads stay (they're the player's choice) |
-| Shop, COINS tab and BADGES, SEASON | **Club Pass** $3.99 a month: about 6,000 coins and that month's own goal explosion and trail | Buying late unlocks reached tiers; nothing reached is lost |
-| Shop, COINS tab | **Coin Doubler** $4.99 once: every match pays double coins | Looks and coins only, never an edge in a match |
+| Shop, STORE tab | **Gem packs** US$0.99 to $19.99 (the first buy of each doubled), Starter Pack $1.99, **NO ADS $3.99**, **PRO bundle $9.99** (NO ADS, the Coin Doubler and 600 gems) | NO ADS removes the full-screen ads; rewarded ads stay (they're the player's choice). Gems never buy anything random |
+| Shop, STORE tab and BADGES, SEASON | **Club Pass** $3.99 a month (or 600 gems): about 5,560 coins, 150 gems and that month's own player look, trail, kit and goal explosion | Buying late unlocks reached tiers; nothing reached is lost |
+| Shop, STORE tab | **Coin Doubler** $4.99 once: every match pays double coins | Looks, coins and gems only, never an edge in a match |
 | After the first win | A one-time welcome offer for the Starter Pack | No timer; it stays in the shop |
 
 **Kid-safe:** every ad request is child-directed, so ads are family-rated (G), never personalised, and there's no
@@ -61,16 +65,33 @@ COPPA). The switch is `ADMOB_KID_SAFE` in `src/platform/adConfig.ts`.
    - Bundle ID `com.calynx.blockyleague`, SKU `blocky-league-ios`.
 
    Then:
-   - **In-App Purchases:** create the eight products exactly as docs/MONETIZATION.md section 1 lists them (ids,
-     types, prices). That includes the **Club Pass** (`bl.pass`, Consumable, $3.99) and the **Coin Doubler**
-     (`bl.doubler`, Non-Consumable, $4.99). Each needs a display name, a description and a review screenshot.
-     Use a shop screenshot from the simulator.
+   - **In-App Purchases:** create the ten products in the table below (the same as docs/MONETIZATION.md section 1:
+     ids, types, prices). Each needs a display name, a description and a review screenshot. Use a screenshot of the
+     shop's STORE tab from the simulator. The four coin packs of the old economy (`bl.coins.*`) are gone: if any
+     was already created, leave it out of the version (an id can never be reused, so do not delete and recreate).
+
+     | Product ID | Type | Price (US$) | Display name | Description |
+     |---|---|---|---|---|
+     | `bl.gems.100` | Consumable | 0.99 | 100 Gems | 100 gems for your club. |
+     | `bl.gems.300` | Consumable | 2.99 | 330 Gems | 300 gems and 30 bonus gems. |
+     | `bl.gems.500` | Consumable | 4.99 | 600 Gems | 500 gems and 100 bonus gems. |
+     | `bl.gems.1000` | Consumable | 9.99 | 1,300 Gems | 1,000 gems and 300 bonus gems. |
+     | `bl.gems.2000` | Consumable | 19.99 | 3,000 Gems | 2,000 gems and 1,000 bonus gems. |
+     | `bl.starter` | Non-Consumable | 1.99 | Starter Pack | 2,000 coins, 150 gems and the Gold ball. One time only. |
+     | `bl.noads` | Non-Consumable | 3.99 | No Ads | No ad breaks between matches or at half time. |
+     | `bl.pass` | Consumable | 3.99 | Club Pass | This month's Club Pass: more coins, gems and four looks on the season track. |
+     | `bl.doubler` | Non-Consumable | 4.99 | Coin Doubler | Every match pays double coins, for good. |
+     | `bl.pro` | Non-Consumable | 9.99 | Pro Bundle | No Ads, the Coin Doubler and 600 gems in one. |
+
+     Review notes for each gem pack: "Gems are the premium currency. They never buy anything random: every use is a
+     stated outcome at a shown price (finish a stadium build, replay a lost cup tie, a Scouting Network tier, coins
+     at a fixed rate, the Club Pass). The first purchase of each pack grants double."
    - **Game Center:** turn it on for the app, then add the 21 achievements and the 4 leaderboards below, each
      achievement with its image from `store-assets/game-center/<id>.png`.
    - Fill in the fields below, pick the uploaded build, and add the in-app purchases to the version.
 7. **Try it first:** the TestFlight tab, then add yourself as an internal tester and install it on your iPhone.
    Purchases there are free sandbox ones. Check:
-   - a coin pack, NO ADS and RESTORE PURCHASES
+   - a gem pack, NO ADS and RESTORE PURCHASES
    - a rewarded ad
    - the Game Center banner when you win a match
 8. **Add for Review**, then **Submit**. Review usually takes a day or two.
@@ -220,9 +241,9 @@ Best Season is a Classic board of each player's best month.
 >
 > ROAD TO GLORY, MOMENTS, CLUB RUN and BLITZ unlock after you score your first goal in any match.
 >
-> Ads (Google AdMob, family-rated, child-directed, no tracking): an optional rewarded video for coins (SHOP, COINS, FREE COINS; also "double" offers at full time and on the daily gift), and an occasional full-screen ad before a kick-off, never during play.
+> Ads (Google AdMob, family-rated, child-directed, no tracking): optional rewarded videos (SHOP, STORE: FREE COINS and FREE GEMS; "double" offers at full time and on the daily gift; a replay of a lost cup tie; a new daily deal), each capped per day, and an occasional full-screen ad before a kick-off or at half time, never during play.
 >
-> In-app purchases are in SHOP, COINS: four coin packs (the first buy of each pays double), a Starter Pack, NO ADS (removes the full-screen ads), the Club Pass (this month's extra season track, also shown in BADGES, SEASON) and the Coin Doubler, with RESTORE PURCHASES. Coins are also earned by playing. Player scout packs in SHOP, PLAYERS cost Scout Tokens, which are earned by playing and can't be bought; their odds are shown.
+> In-app purchases are in SHOP, STORE: five gem packs (the first buy of each pays double), a Starter Pack, NO ADS (removes the full-screen ads), the Club Pass (this month's extra season track, also shown in BADGES, SEASON), the Coin Doubler and the PRO bundle, with RESTORE PURCHASES. Gems are also earned by playing. Gems buy only stated outcomes at a shown price, each confirmed with one tap: coins at a fixed rate, finishing a stadium build, a replay of a lost cup tie, a Scouting Network tier (a guaranteed prospect quality, never a chance), the Club Pass. Player scout packs in SHOP, SCOUT cost Scout Tokens, which are earned by playing and can't be bought with money, gems or coins; their odds are shown.
 >
 > Game Center achievements and leaderboards are reported as you play; BADGES has GAME CENTER ACHIEVEMENTS and LEADERBOARDS buttons. After some wins the app may show Apple's own rating prompt.
 

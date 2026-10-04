@@ -171,6 +171,8 @@ describe('persistent contextual trainer', () => {
     expect(trainerCue(m, 'keyboard').title).toBe('ON THE BALL');
     m.ball.held = true;
     expect(trainerCue(m, 'keyboard').title).toBe("KEEPER'S BALL");
-    expect(trainerCue(m, 'keyboard').actions).toContainEqual(['SPACE', 'Roll out']);
+    // (His keeper is his with the ball: he walks it about his box, throws it or kicks it long.)
+    expect(trainerCue(m, 'keyboard').actions).toContainEqual(['SPACE', 'Throw']);
+    expect(trainerCue(m, 'keyboard').actions).toContainEqual(['WASD', 'Walk it']);
   });
 });

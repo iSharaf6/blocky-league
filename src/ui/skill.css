@@ -1,0 +1,87 @@
+/* SKILL, round 15 (ui/skillHud.ts, ui/touch.ts): the timing ring on the defender, the FLAIR pips, and the set-piece
+   aim's power ring. Colours are the SKILL pink of style.css (.tb-skill). */
+
+/* The moment: a zone under the defender who is winding up (flattened onto the grass), and a ring closing in on it as
+   the PERFECT window runs out. Press while the ring is still outside the zone. */
+.sk-zone {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 92px;
+  height: 34px;
+  margin: -17px 0 0 -46px;
+  border-radius: 50%;
+  background: rgba(240, 71, 155, 0.42);
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 3px var(--ink);
+  opacity: 0;
+  pointer-events: none;
+}
+.sk-zone.on { opacity: 1; }
+.sk-time {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 4px solid var(--yellow);
+  box-shadow: 0 0 0 2px var(--ink), inset 0 0 0 2px var(--ink);
+  transform: scale(var(--k, 2));
+}
+.sk-zone.last .sk-time { border-color: #ff5a4a; }
+@media (prefers-reduced-motion: no-preference) {
+  .sk-zone.on { animation: sk-zone 0.16s steps(2, jump-none) infinite alternate; }
+}
+@keyframes sk-zone {
+  from { background: rgba(240, 71, 155, 0.42); }
+  to { background: rgba(255, 210, 58, 0.5); }
+}
+
+/* FLAIR for keys and pads: three pips over the player chip, only while his man is on the ball. (On touch the pips
+   are on the SKILL button itself.) */
+.sk-flair {
+  position: absolute;
+  left: max(14px, env(safe-area-inset-left));
+  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 58px);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0;
+  pointer-events: none;
+}
+.sk-flair.on { opacity: 1; }
+.sk-flair b {
+  margin-right: 3px;
+  font: 400 13px / 1 var(--round);
+  letter-spacing: 1px;
+  color: var(--cream);
+  text-shadow: 0 2px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink);
+}
+.sk-flair i,
+.tb-pips i {
+  display: block;
+  width: 12px;
+  height: 12px;
+  background: rgba(27, 34, 48, 0.55);
+  border: 2px solid var(--ink);
+}
+.sk-flair i.full,
+.tb-pips i.full { background: #f0479b; }
+.sk-flair i.full:last-of-type,
+.tb-pips i.full:last-of-type { background: var(--yellow); }
+
+/* The pips on the touch SKILL button: a row under its label. */
+.tb-pips {
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  display: flex;
+  gap: 3px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.tb-pips i { width: 9px; height: 9px; background: rgba(27, 34, 48, 0.4); }
+.tb-skill > span { transform: translateY(-5px); }
+.tb-skill.empty > span { opacity: 0.6; }
+@media (max-width: 720px), (max-height: 480px) {
+  .tb-pips { bottom: 5px; }
+  .tb-pips i { width: 8px; height: 8px; }
+}

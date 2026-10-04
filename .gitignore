@@ -15,3 +15,6 @@ dist-*/
 release/
 .env.local
 .env.*.local
+
+# Local backend configuration; use .env.example for shared setup.
+.env.production

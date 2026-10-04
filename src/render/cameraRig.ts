@@ -5,7 +5,14 @@ import { PF } from '../game/replay';
 import { GOAL_DEPTH, GOAL_H, GOAL_W, HALF_L, HALF_W, WALL_DIST } from '../sim/constants';
 import { PUSH_IN, PUSH_LEAN_M, Shake } from './juice';
 
-export type CamMode = 'broadcast' | 'replay' | 'celebrate' | 'menu' | 'intro' | 'penalty' | 'card';
+export type CamMode = 'broadcast' | 'replay' | 'celebrate' | 'menu' | 'intro' | 'penalty' | 'card' | 'scene';
+
+/** A staged shot (CamMode 'scene'): where the lens is, what it looks at and its field of view (degrees). */
+export interface SceneShot {
+  px: number; py: number; pz: number;
+  tx: number; ty: number; tz: number;
+  fov: number;
+}
 
 export interface CamFocus {
   bx: number; by: number; bz: number;
@@ -41,6 +48,13 @@ export interface CamFocus {
   lockAngle?: number;
   /** Celebrate: a head-and-shoulders close-up (the lens at his eye line, the face above centre, waist up). */
   close?: boolean;
+  /**
+   * Celebrate: your own scorer filmed full length and big (boots to hair filling over half the frame's height), so
+   * his kit, boots and hair are seen, where the usual shot keeps him to the lower third for the mob.
+   */
+  tight?: boolean;
+  /** CamMode 'scene': the staged shot, taken exactly (game/showcase.ts: a substitution, the line-up, the man of the match). */
+  scene?: SceneShot | null;
   /** After one of our set pieces is struck: the ball is still live (or in the net), so the shot may stay on it. */
   hold?: boolean;
   /** Card close-up: where the referee stands and the spot he faces (the offender). */
@@ -891,10 +905,13 @@ export class CameraRig {
         const tall = (f.tall ?? 1.9) + 0.25;
         // (A scripted move alone in frame: boots clear of the bottom edge, the head just under the lower-third
         // line, so the flip rises through the middle of the picture.)
-        const feet = this.portrait ? -0.45 : locked ? -0.75 : -0.9;
-        const head = this.portrait ? (locked ? 0.2 : 0.1) : locked ? -0.05 : -0.3;
+        // (Your own scorer, f.tight: boots near the bottom edge, the head well above centre: over half the frame's
+        // height, from about 6 m. An arms-up hop still fits under the top edge.)
+        const tight = !!f.tight && !locked && !this.portrait;
+        const feet = this.portrait ? -0.45 : locked ? -0.75 : tight ? -0.86 : -0.9;
+        const head = this.portrait ? (locked ? 0.2 : 0.1) : locked ? -0.05 : tight ? 0.45 : -0.3;
         let dist = (tall - feet * g * tanH) / ((head - feet) * tanH);
-        dist = Math.max(dist, (3.2 + g) / (tanH * cam.aspect));
+        dist = Math.max(dist, ((tight ? 1.6 : 3.2) + g) / (tanH * cam.aspect));
         let aimY = -feet * (dist - g) * tanH;
         let lensY = aimY;
         if (f.close) {
@@ -943,11 +960,35 @@ export class CameraRig {
         }
         px = sx + Math.cos(az) * dist;
         pz = sz + Math.sin(az) * dist;
+        if (tight) {
+          // A lens this low and close stays on the pitch side of the ad boards (render/stadium.ts: 3.2 m past the
+          // touchlines, 4.6 m past the goal lines): from behind one it would film the back of it. The scorer's
+          // flag is 6 m in from them, so in front of him there is just room.
+          px = clamp(px, -(HALF_L + 3.4), HALF_L + 3.4);
+          pz = clamp(pz, -(HALF_W + 2.2), HALF_W + 2.2);
+        }
         py = lensY;
         tx = sx; tz = sz;
         ty = aimY;
         rate = 5;
         glide = true;
+        break;
+      }
+      case 'scene': {
+        // A staged shot: the session hands the lens over outright (a dolly along the line-up, the touchline for a
+        // substitution, the man of the match), and it is followed exactly: a cut onto it, never a fly-in.
+        const sc = f.scene;
+        if (!sc) {
+          const b = this.broadcastShot(f, dt);
+          ({ tx, ty, tz, px, py, pz, fov } = b);
+          rate = this.bRate;
+          glide = true;
+          spring = true;
+          break;
+        }
+        ({ tx, ty, tz, px, py, pz, fov } = sc);
+        rate = 60;
+        scripted = true;
         break;
       }
       case 'card': {

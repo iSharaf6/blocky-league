@@ -117,8 +117,10 @@ export function trainerCue(m: Match, device: Device): TrainerCue {
   }
   if (own >= 0 && m.players[own].side !== m.cfg.humanSide) return defendCue(device);
   // A team-mate has it (the touch buttons still read PASS / SHOOT / THROUGH); a loose ball (SWITCH / TACKLE / PRESS).
-  if (own >= 0) return { title: 'MAKE A RUN', actions: [[k('sprint'), 'Sprint'], [k('pass'), 'Switch']] };
-  return { title: 'GET TO THE BALL', actions: [[k('sprint'), 'Sprint'], [keyCap('pass', device, 'defend'), 'Switch']] };
+  // (On touch there is no SPRINT button: the stick sprints.)
+  const run: [string, string] = device === 'touch' ? [moveCap(device), 'Push to sprint'] : [k('sprint'), 'Sprint'];
+  if (own >= 0) return { title: 'MAKE A RUN', actions: [run, [k('pass'), 'Switch']] };
+  return { title: 'GET TO THE BALL', actions: [run, [keyCap('pass', device, 'defend'), 'Switch']] };
 }
 
 /** A basics prompt's title (the action), over its key cap and line. */
@@ -126,6 +128,8 @@ const LESSON_TITLE: Record<LessonCue['key'], string> = { pass: 'PASS', shoot: 'S
 
 /** A LEARN THE BASICS prompt as a card: its title, the cap (the binding, or the button on screen), its line. */
 export function lessonCue(lc: LessonCue, device: Device): TrainerCue {
+  // (SPRINT on touch is the stick: there is no button to name.)
+  if (lc.key === 'sprint' && device === 'touch') return { title: LESSON_TITLE.sprint, actions: [[moveCap(device), 'Push the stick to chase the ball']] };
   return { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveCap(device) : keyCap(lc.key, device), coachText(lc.text, device)]] };
 }
 

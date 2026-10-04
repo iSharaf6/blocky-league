@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAP_APPLIED_MAX, defaultSave, importSave, loadSave, normalizeIap, type SaveData } from '../src/core/save';
 import { localDay } from '../src/core/day';
+import { WELCOME_GEMS, gems } from '../src/meta/gems';
 import { owns, FREE_AD_COINS, FREE_AD_DAILY_CAP, claimFreeAd, freeAdsLeft } from '../src/meta/shop';
 import { Ads } from '../src/platform/ads';
 import { isSmall, normalizeCloud } from '../src/platform/cloud';
 import {
-  CATALOGUE, FIRST_BUY_MULT, PRODUCT_DOUBLER, PRODUCT_NOADS, PRODUCT_PASS, PRODUCT_STARTER, Iap, adFree, applyPurchase, coinsOf, entryOf, isCoinPack,
+  CATALOGUE, FIRST_BUY_MULT, MAX_PRICE_USD, PRODUCT_DOUBLER, PRODUCT_NOADS, PRODUCT_PASS, PRODUCT_PRO, PRODUCT_STARTER, Iap, adFree, applyPurchase, coinDoubler,
+  coinsOf, entryOf, gemsOf, isGemPack, proOffered, proWorthUsd,
   type CdvPurchaseGlobal, type CdvTransaction, type IapGrant,
 } from '../src/platform/iap';
 
@@ -48,89 +50,132 @@ afterEach(() => {
 // ------------------------------------------------------------------ the catalogue and the economy
 
 describe('catalogue and economy', () => {
-  it('sells the eight products under their stable ids, bonuses included', () => {
-    expect(CATALOGUE.map((e) => e.id)).toEqual(['bl.coins.500', 'bl.coins.1500', 'bl.coins.4000', 'bl.coins.10000', 'bl.starter', 'bl.noads', 'bl.pass', 'bl.doubler']);
-    expect(CATALOGUE.map((e) => e.kind)).toEqual(['consumable', 'consumable', 'consumable', 'consumable', 'non-consumable', 'non-consumable', 'consumable', 'non-consumable']);
-    expect(CATALOGUE.filter(isCoinPack).map(coinsOf)).toEqual([500, 1650, 5000, 14000]);
-    // The Club Pass is bought again each month (consumable) and is no coin pack; the Coin Doubler is for good.
+  it('sells the ten products under their stable ids, bonuses included (economy v3: money buys gems, never coins)', () => {
+    expect(CATALOGUE.map((e) => e.id)).toEqual([
+      'bl.gems.100', 'bl.gems.300', 'bl.gems.500', 'bl.gems.1000', 'bl.gems.2000', 'bl.starter', 'bl.noads', 'bl.pass', 'bl.doubler', 'bl.pro',
+    ]);
+    expect(CATALOGUE.map((e) => e.kind)).toEqual([
+      'consumable', 'consumable', 'consumable', 'consumable', 'consumable', 'non-consumable', 'non-consumable', 'consumable', 'non-consumable', 'non-consumable',
+    ]);
+    expect(CATALOGUE.filter(isGemPack).map(gemsOf)).toEqual([100, 330, 600, 1300, 3000]);
+    // No pack sells coins: coins come from playing, or from swapping gems at a shown rate (meta/gems.ts COIN_OFFERS).
+    expect(CATALOGUE.filter(isGemPack).every((e) => e.coins === 0)).toBe(true);
+    // The Club Pass is bought again each month (consumable) and is no gem pack; the Coin Doubler is for good.
     expect(entryOf(PRODUCT_PASS)!.pass).toBe(true);
-    expect(isCoinPack(entryOf(PRODUCT_PASS)!)).toBe(false);
+    expect(isGemPack(entryOf(PRODUCT_PASS)!)).toBe(false);
     expect(entryOf(PRODUCT_DOUBLER)!.doubler).toBe(true);
     expect(coinsOf(entryOf(PRODUCT_STARTER)!)).toBe(2000);
+    expect(gemsOf(entryOf(PRODUCT_STARTER)!)).toBe(150);
     expect(entryOf(PRODUCT_STARTER)!.items).toEqual([{ cat: 'ball', id: 'gold' }]);
     expect(entryOf(PRODUCT_NOADS)!.noAds).toBe(true);
   });
 
-  it('keeps the packs honest: the bigger the pack the better the rate, and the smallest is two or three wins', () => {
-    const packs = CATALOGUE.filter(isCoinPack);
-    const perDollar = packs.map((e) => coinsOf(e) / e.usd);
+  it('keeps the packs honest: the bigger the pack the better the rate, and nothing costs more than $19.99', () => {
+    const packs = CATALOGUE.filter(isGemPack);
+    const perDollar = packs.map((e) => gemsOf(e) / e.usd);
     for (let i = 1; i < perDollar.length; i++) expect(perDollar[i]).toBeGreaterThan(perDollar[i - 1]);
-    // A Normal win pays about 170 to 210 coins (main.ts standardReward): 500 coins is two or three of them.
-    expect(500 / 210).toBeGreaterThanOrEqual(2);
-    expect(500 / 170).toBeLessThanOrEqual(3);
     // Prices are only the suggestions for the store consoles; the shop shows the store's own string.
-    expect(entryOf('bl.coins.500')!.usd).toBe(0.99);
+    expect(entryOf('bl.gems.100')!.usd).toBe(0.99);
+    // Children play this: no pack above the ceiling.
+    expect(MAX_PRICE_USD).toBe(19.99);
+    for (const e of CATALOGUE) expect(e.usd, e.id).toBeLessThanOrEqual(MAX_PRICE_USD);
+  });
+
+  it('the PRO bundle is NO ADS, the Coin Doubler and 600 gems for less than they cost one by one, bought once', async () => {
+    const pro = entryOf(PRODUCT_PRO)!;
+    expect(pro).toMatchObject({ kind: 'non-consumable', noAds: true, doubler: true, gems: 600, usd: 9.99 });
+    // Its parts one by one: NO ADS 3.99, the Coin Doubler 4.99 and the pack that hands over 600 gems 4.99.
+    expect(proWorthUsd()).toBe(13.97);
+    expect(pro.usd).toBeLessThan(proWorthUsd());
+    const { iap, save } = await devStore();
+    expect(proOffered(save)).toBe(true);
+    expect(await iap.buy(PRODUCT_PRO)).toBe('ok');
+    expect(adFree(save)).toBe(true);
+    expect(coinDoubler(save)).toBe(true);
+    expect(gems(save)).toBe(WELCOME_GEMS + 600);
+    expect(proOffered(save)).toBe(false);
+    // Its parts read OWNED and can't be bought again on top.
+    expect(iap.products().find((p) => p.id === PRODUCT_NOADS)!.owned).toBe(true);
+    expect(iap.products().find((p) => p.id === PRODUCT_DOUBLER)!.owned).toBe(true);
+    expect(await iap.buy(PRODUCT_NOADS)).toBe('failed');
+    expect(await iap.buy(PRODUCT_DOUBLER)).toBe('failed');
+    expect(await iap.buy(PRODUCT_PRO)).toBe('failed');
+    expect(gems(save)).toBe(WELCOME_GEMS + 600);
+  });
+
+  it('the PRO bundle is not offered once one of its parts was bought on its own (it is priced against both)', async () => {
+    const { iap, save } = await devStore();
+    await iap.buy(PRODUCT_NOADS);
+    expect(proOffered(save)).toBe(false);
   });
 });
 
 // ------------------------------------------------------------------ paying out once
 
-describe('consumable coin packs', () => {
-  it('credit the right coins once, even if the store delivers the transaction twice (the first buy of a pack doubled)', async () => {
+describe('consumable gem packs', () => {
+  it('credit the right gems once, even if the store delivers the transaction twice (the first buy of a pack doubled)', async () => {
     const { iap, save, persist } = await devStore();
     const grants: IapGrant[] = [];
     iap.onGrant((g) => grants.push(g));
-    const start = save.coins;
-    expect(iap.products().find((p) => p.id === 'bl.coins.1500')!.firstBonus).toBe(true);
-    expect(iap.deliver('bl.coins.1500', 'tx-1', false)).toBe('applied');
-    expect(save.coins).toBe(start + 1650 * FIRST_BUY_MULT);
+    const start = gems(save);
+    const coins = save.coins;
+    expect(iap.products().find((p) => p.id === 'bl.gems.300')!.firstBonus).toBe(true);
+    expect(iap.deliver('bl.gems.300', 'tx-1', false)).toBe('applied');
+    expect(gems(save)).toBe(start + 330 * FIRST_BUY_MULT);
     expect(persist).toHaveBeenCalledTimes(1);
-    expect(iap.deliver('bl.coins.1500', 'tx-1', false)).toBe('duplicate');
-    expect(save.coins).toBe(start + 1650 * FIRST_BUY_MULT);
+    expect(iap.deliver('bl.gems.300', 'tx-1', false)).toBe('duplicate');
+    expect(gems(save)).toBe(start + 330 * FIRST_BUY_MULT);
     expect(persist).toHaveBeenCalledTimes(1);
-    expect(grants).toEqual([{ productId: 'bl.coins.1500', coins: 3300, items: [], noAds: false, firstBonus: 1650, pass: false, doubler: false, restored: false }]);
+    expect(grants).toEqual([{ productId: 'bl.gems.300', coins: 0, gems: 660, items: [], noAds: false, firstBonus: 330, pass: false, doubler: false, restored: false }]);
     // A different transaction is a different purchase, and the same pack can be bought again: at its normal size now.
-    expect(iap.products().find((p) => p.id === 'bl.coins.1500')!.firstBonus).toBe(false);
-    expect(iap.deliver('bl.coins.1500', 'tx-2', false)).toBe('applied');
-    expect(save.coins).toBe(start + 3300 + 1650);
+    expect(iap.products().find((p) => p.id === 'bl.gems.300')!.firstBonus).toBe(false);
+    expect(iap.deliver('bl.gems.300', 'tx-2', false)).toBe('applied');
+    expect(gems(save)).toBe(start + 660 + 330);
+    // A gem pack never touches the coins, and what it bought counts as bought (not earned).
+    expect(save.coins).toBe(coins);
+    expect(save.gems!.bought).toBe(990);
   });
 
   it('are bought through the store and never marked as owned', async () => {
     const { iap, save } = await devStore();
-    const start = save.coins;
+    const start = gems(save);
     expect(iap.available).toBe(true);
-    expect(await iap.buy('bl.coins.500')).toBe('ok');
-    expect(await iap.buy('bl.coins.500')).toBe('ok');
+    expect(await iap.buy('bl.gems.100')).toBe('ok');
+    expect(await iap.buy('bl.gems.100')).toBe('ok');
     // (The first buy of a pack pays double, once.)
-    expect(save.coins).toBe(start + 1000 + 500);
+    expect(gems(save)).toBe(start + 200 + 100);
     expect(save.iap!.owned).toEqual([]);
-    expect(iap.products().find((p) => p.id === 'bl.coins.500')!.owned).toBe(false);
+    expect(iap.products().find((p) => p.id === 'bl.gems.100')!.owned).toBe(false);
   });
 
   it('never pay for an unknown product, or before there is a save to pay into', async () => {
     const { iap, save } = await devStore();
-    expect(iap.deliver('bl.coins.7', 'tx-9', false)).toBe('unknown');
+    expect(iap.deliver('bl.gems.7', 'tx-9', false)).toBe('unknown');
+    // (The coin packs of economy v2 are gone: their ids pay nothing.)
+    expect(iap.deliver('bl.coins.500', 'tx-9', false)).toBe('unknown');
     expect(save.coins).toBe(defaultSave().coins);
-    expect(new Iap().deliver('bl.coins.500', 'tx-1', false)).toBe('unbound');
+    expect(gems(save)).toBe(WELCOME_GEMS);
+    expect(new Iap().deliver('bl.gems.100', 'tx-1', false)).toBe('unbound');
   });
 
   it('keep only the newest transaction ids, so the save stays small', () => {
     const save = defaultSave();
-    const e = entryOf('bl.coins.500')!;
+    const e = entryOf('bl.gems.100')!;
     for (let i = 0; i < IAP_APPLIED_MAX + 50; i++) applyPurchase(save, e, `tx-${i}`);
     expect(save.iap!.applied).toHaveLength(IAP_APPLIED_MAX);
-    expect(save.iap!.applied[IAP_APPLIED_MAX - 1]).toBe(`tx-${IAP_APPLIED_MAX + 49}|bl.coins.500`);
-    expect(save.iap!.applied).not.toContain('tx-0|bl.coins.500');
+    expect(save.iap!.applied[IAP_APPLIED_MAX - 1]).toBe(`tx-${IAP_APPLIED_MAX + 49}|bl.gems.100`);
+    expect(save.iap!.applied).not.toContain('tx-0|bl.gems.100');
   });
 });
 
 describe('the Starter Pack', () => {
-  it('is one time only, and hands over its coins and the Gold ball', async () => {
+  it('is one time only, and hands over its coins, its gems and the Gold ball', async () => {
     const { iap, save } = await devStore();
     const start = save.coins;
     expect(save.shop!.owned).not.toContain('ball:gold');
     expect(await iap.buy(PRODUCT_STARTER)).toBe('ok');
     expect(save.coins).toBe(start + 2000);
+    expect(gems(save)).toBe(WELCOME_GEMS + 150);
     expect(save.shop!.owned).toContain('ball:gold');
     expect(owns(save, 'ball', 'gold')).toBe(true);
     expect(save.iap!.owned).toEqual([PRODUCT_STARTER]);
@@ -141,6 +186,7 @@ describe('the Starter Pack', () => {
     // A restore brings it back under a new transaction id: still paid once.
     expect(iap.deliver(PRODUCT_STARTER, 'another-id', true)).toBe('duplicate');
     expect(save.coins).toBe(start + 2000);
+    expect(gems(save)).toBe(WELCOME_GEMS + 150);
   });
 });
 
@@ -205,9 +251,9 @@ describe('NO ADS', () => {
 // ------------------------------------------------------------------ restoring
 
 describe('restore purchases', () => {
-  it('hands back the one-time products only, never coin packs', async () => {
+  it('hands back the one-time products only, never gem packs', async () => {
     const { iap, save } = await devStore();
-    await iap.buy('bl.coins.4000');
+    await iap.buy('bl.gems.1000');
     await iap.buy(PRODUCT_STARTER);
     await iap.buy(PRODUCT_NOADS);
 
@@ -222,15 +268,18 @@ describe('restore purchases', () => {
     expect([...r.restored].sort()).toEqual([PRODUCT_NOADS, PRODUCT_STARTER].sort());
     expect(adFree(fresh)).toBe(true);
     expect(owns(fresh, 'ball', 'gold')).toBe(true);
-    // No coins: the Starter Pack's 2000 were paid on the first device (a reinstall is no coin tap); the Gold ball is back.
+    // No coins or gems: the Starter Pack's were paid on the first device (a reinstall is no currency tap); the Gold ball is back.
     expect(fresh.coins).toBe(defaultSave().coins);
+    expect(gems(fresh)).toBe(WELCOME_GEMS);
 
     // Restoring again changes nothing and says so.
     const twice = await again.restore();
     expect(twice).toEqual({ ok: true, restored: [] });
     expect(fresh.coins).toBe(defaultSave().coins);
-    // (The 4000 pack's first buy paid double.)
-    expect(save.coins).toBe(defaultSave().coins + 5000 * FIRST_BUY_MULT + 2000);
+    expect(gems(fresh)).toBe(WELCOME_GEMS);
+    // (The 1000 pack's first buy paid double; the Starter Pack its coins and gems.)
+    expect(save.coins).toBe(defaultSave().coins + 2000);
+    expect(gems(save)).toBe(WELCOME_GEMS + 1300 * FIRST_BUY_MULT + 150);
   });
 
   it('reports a store that cannot be reached, and nothing without one', async () => {
@@ -261,7 +310,7 @@ describe('providers', () => {
     expect(prod.provider).toBe('none');
     expect(prod.available).toBe(false);
     expect(prod.products()).toEqual([]);
-    expect(await prod.buy('bl.coins.500')).toBe('failed');
+    expect(await prod.buy('bl.gems.100')).toBe('failed');
   });
 
   it.each(['crazygames', 'poki'])('is none on %s, whatever else is on the page', async (portal) => {
@@ -277,8 +326,9 @@ describe('providers', () => {
     expect(iap.provider).toBe('none');
     expect(iap.available).toBe(false);
     expect(iap.products()).toEqual([]);
-    expect(await iap.buy('bl.coins.500')).toBe('failed');
+    expect(await iap.buy('bl.gems.100')).toBe('failed');
     expect(save.coins).toBe(defaultSave().coins);
+    expect(gems(save)).toBe(WELCOME_GEMS);
   });
 
   it('is none in the dev server on ?portal=, and on itch and the website (nothing to detect)', async () => {
@@ -360,26 +410,26 @@ describe('the native store', () => {
     const registered = (cdv.store.register.mock.calls[0][0] as { id: string; type: string; platform: string }[]);
     expect(new Set(registered.map((p) => p.id))).toEqual(new Set(CATALOGUE.map((e) => e.id)));
     expect(registered.filter((p) => p.platform === 'ios-appstore').find((p) => p.id === PRODUCT_NOADS)!.type).toBe('non consumable');
-    expect(registered.find((p) => p.id === 'bl.coins.500')!.type).toBe('consumable');
+    expect(registered.find((p) => p.id === 'bl.gems.100')!.type).toBe('consumable');
     expect(cdv.store.initialize).toHaveBeenCalledWith(['ios-appstore']);
-    expect(iap.products().find((p) => p.id === 'bl.coins.500')!.price).toBe('EUR 0.99');
+    expect(iap.products().find((p) => p.id === 'bl.gems.100')!.price).toBe('EUR 0.99');
   });
 
   it('pays a purchase out, saves, and only then finishes it; a second delivery pays nothing', async () => {
     const cdv = fakeCdv();
     const { iap, save, persist } = await nativeStore(cdv);
-    const start = save.coins;
-    expect(await iap.buy('bl.coins.500')).toBe('ok');
-    expect(save.coins).toBe(start + 500 * FIRST_BUY_MULT);
+    const start = gems(save);
+    expect(await iap.buy('bl.gems.100')).toBe('ok');
+    expect(gems(save)).toBe(start + 100 * FIRST_BUY_MULT);
     expect(cdv.finishes).toHaveLength(1);
     expect(cdv.finishes[0]).toHaveBeenCalledTimes(1);
     // Saved before the store was told: a crash in between only re-delivers a purchase we recognise.
     expect(persist.mock.invocationCallOrder[0]).toBeLessThan(cdv.finishes[0].mock.invocationCallOrder[0]);
 
     const txId = save.iap!.applied[0].split('|')[0];
-    cdv.redeliver('bl.coins.500', txId);
+    cdv.redeliver('bl.gems.100', txId);
     await Promise.resolve();
-    expect(save.coins).toBe(start + 500 * FIRST_BUY_MULT);
+    expect(gems(save)).toBe(start + 100 * FIRST_BUY_MULT);
     expect(persist).toHaveBeenCalledTimes(1);
     expect(cdv.finishes[1]).toHaveBeenCalledTimes(1); // finished again: harmless, and it clears the store's queue
   });
@@ -387,9 +437,9 @@ describe('the native store', () => {
   it('calls a backed out purchase cancelled and charges nothing', async () => {
     const cdv = fakeCdv({ cancel: true });
     const { iap, save } = await nativeStore(cdv);
-    const start = save.coins;
-    expect(await iap.buy('bl.coins.4000')).toBe('cancelled');
-    expect(save.coins).toBe(start);
+    const start = gems(save);
+    expect(await iap.buy('bl.gems.1000')).toBe('cancelled');
+    expect(gems(save)).toBe(start);
     expect(cdv.finishes).toHaveLength(0);
   });
 
@@ -403,18 +453,18 @@ describe('the native store', () => {
     const { iap, save } = await nativeStore(cdv);
     const grants: IapGrant[] = [];
     iap.onGrant((g) => grants.push(g));
-    const start = save.coins;
-    const result = iap.buy('bl.coins.500');
+    const start = gems(save);
+    const result = iap.buy('bl.gems.100');
     await vi.advanceTimersByTimeAsync(61_000);
     expect(await result).toBe('pending');
-    expect(save.coins).toBe(start);
-    cdv.redeliver('bl.coins.500', 'late-1');
+    expect(gems(save)).toBe(start);
+    cdv.redeliver('bl.gems.100', 'late-1');
     await Promise.resolve();
-    expect(save.coins).toBe(start + 500 * FIRST_BUY_MULT);
+    expect(gems(save)).toBe(start + 100 * FIRST_BUY_MULT);
     expect(grants).toHaveLength(1);
   });
 
-  it('restores the one-time products the store says the account owns, not coin packs', async () => {
+  it('restores the one-time products the store says the account owns, not gem packs', async () => {
     vi.useFakeTimers();
     const cdv = fakeCdv({ owned: [PRODUCT_STARTER, PRODUCT_NOADS] });
     const { iap, save } = await nativeStore(cdv);
@@ -487,10 +537,13 @@ describe('saves', () => {
   it('keep their purchases through a store, an export and the cloud', async () => {
     const { iap, save } = await devStore();
     await iap.buy(PRODUCT_NOADS);
-    await iap.buy('bl.coins.500');
+    await iap.buy('bl.gems.100');
     const copy = JSON.parse(JSON.stringify(save)) as SaveData;
     expect(importSave(copy)!.iap).toEqual(save.iap);
     expect(normalizeCloud(copy).iap).toEqual(save.iap);
+    // The gems bought travel with the save too.
+    expect(importSave(copy)!.gems).toEqual(save.gems);
+    expect(gems(importSave(copy)!)).toBe(WELCOME_GEMS + 200);
     expect(adFree(normalizeCloud(copy))).toBe(true);
   });
 
@@ -512,7 +565,7 @@ describe('saves', () => {
     save.iap!.owned.push(PRODUCT_NOADS);
     expect(isSmall(save)).toBe(false);
     const coinsOnly = defaultSave();
-    coinsOnly.iap!.applied.push('tx-1|bl.coins.500');
+    coinsOnly.iap!.applied.push('tx-1|bl.gems.100');
     expect(isSmall(coinsOnly)).toBe(false);
   });
 });

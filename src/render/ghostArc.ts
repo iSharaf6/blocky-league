@@ -59,6 +59,15 @@ export class GhostArc {
     this.alpha = 1;
   }
 
+  /** The path ends at the wall (game/ghostArc.ts ghostBlocked): drawn in red, so a blocked kick is seen before it is struck. */
+  setBlocked(on: boolean): void {
+    if (on === this.blocked) return;
+    this.blocked = on;
+    this.mat.color.setHex(on ? 0xff5a4a : 0xfbfbf4);
+  }
+
+  private blocked = false;
+
   /** The ball has been struck (or the preview is no longer wanted): what is drawn fades out. */
   release(): void {
     if (this.alpha > 0) this.fading = true;

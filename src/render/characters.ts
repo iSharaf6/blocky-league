@@ -512,7 +512,10 @@ export const PSTATE = {
 } as const;
 
 /** The skill moves by their frame code (sim/skills.ts SKILL_CODE). */
-const SKILL_MOVE = { roulette: 1, rainbow: 2, stepover: 3, dragback: 4, elastico: 5, croqueta: 6, nutmeg: 7, heelchop: 8, ballroll: 9 } as const;
+const SKILL_MOVE = {
+  roulette: 1, rainbow: 2, stepover: 3, dragback: 4, elastico: 5, croqueta: 6, nutmeg: 7, heelchop: 8, ballroll: 9,
+  boost: 10, sombrero: 11, fakeshot: 12, flickon: 13,
+} as const;
 
 /**
  * Celebration styles (frame channel 13, PoseInput.celebrate). 0-3 are the sim's scorer styles (arms-up hop,
@@ -1196,8 +1199,10 @@ export class Footballer {
    * ball each half, the RAINBOW FLICK's heel kicked up behind, the STEPOVER's two legs circling the ball with the
    * hips swaying after them, the DRAG BACK's sole rolling it back under him, the ELASTICO's boot out and snapped back
    * in, LA CROQUETA's quick foot to foot hop, the NUTMEG's toe poke low through the legs, the HEEL CHOP's boot whipped
-   * behind the standing leg as he turns away, the BALL ROLL's sole dragging it across him. The side (the stick's,
-   * kickLeg) mirrors the side moves.
+   * behind the standing leg as he turns away, the BALL ROLL's sole dragging it across him, the BURST's dropped shoulder
+   * and low drive away, the SOMBRERO's toe scooping it up in front of him with a hop, the FAKE SHOT's leg drawn right
+   * back and then hooked across him instead, the FLICK ON's first touch off the instep as he spins after it. The side
+   * (the stick's, kickLeg) mirrors the side moves.
    */
   private skillMove(p: PoseInput, time: number, dt: number, ph: number, run: number, swing: number): void {
     const body = this.body, torso = this.torso, head = this.head;
@@ -1306,6 +1311,57 @@ export class Footballer {
       body.position.y = HIP_Y - 0.04;
       aL.rotation.set(0.7, 0, 0.45);
       aR.rotation.set(-0.7, 0, 0.45);
+    } else if (kind === SKILL_MOVE.boost) {
+      // A dropped shoulder and one quick step round the ball, then a low drive away: torso right over, arms pumping.
+      const step = Math.sin(clamp(u / 0.4, 0, 1) * Math.PI);
+      const go = smoothstep(0.3, 0.75, u);
+      lR.rotation.z += 0.6 * step;
+      lR.rotation.x = -0.5 * Math.sin(clamp(u / 0.4, 0, 1) * Math.PI * 2);
+      body.rotation.x = 0.26 * step;
+      torso.rotation.y = 0.3 * step;
+      torso.rotation.z = -0.2 * step - 0.5 * go;
+      head.rotation.z = 0.3 * go;
+      body.position.y = HIP_Y - 0.07 * step - 0.05 * go;
+      const pump = Math.sin(time * 26);
+      aL.rotation.set(0.25, 0, 1.2 * go * pump + 0.3 * step);
+      aR.rotation.set(-0.25, 0, -1.2 * go * pump + 0.3 * step);
+    } else if (kind === SKILL_MOVE.sombrero) {
+      // The toe under it and up: the boot scoops forward and high, a hop as it goes over, arms thrown up after it.
+      const scoop = Math.sin(clamp(u / 0.55, 0, 1) * Math.PI);
+      const hop = Math.sin(clamp((u - 0.15) / 0.7, 0, 1) * Math.PI);
+      lR.rotation.z = 1.25 * scoop - 0.1;
+      lL.rotation.z = -0.25 * scoop;
+      torso.rotation.z = 0.22 * scoop;
+      head.rotation.z = 0.3 * scoop;
+      body.position.y = HIP_Y + 0.1 * hop;
+      aL.rotation.set(0.6 + 0.5 * hop, 0, 0.5 + 1.1 * hop);
+      aR.rotation.set(-0.6 - 0.5 * hop, 0, 0.5 + 1.1 * hop);
+    } else if (kind === SKILL_MOVE.fakeshot) {
+      // The whole strike but the strike: planted, the leg drawn right back, arm out; then the boot comes down on
+      // top of it and hooks it across him (the side: kickLeg) and the hips go after it.
+      const s = p.kickLeg >= 0 ? 1 : -1;
+      const wind = Math.sin(clamp(u / 0.5, 0, 1) * Math.PI * 0.5);
+      const hook = smoothstep(0.42, 0.85, u);
+      lR.rotation.z = lerp(-1.25 * wind, 0.5, hook);
+      lR.rotation.x = s * 0.7 * hook * (1 - smoothstep(0.85, 1, u));
+      lL.rotation.z = 0.28 * wind * (1 - hook);
+      torso.rotation.z = lerp(0.2 * wind, -0.15, hook);
+      torso.rotation.y = lerp(-0.45 * wind, s * 0.4, hook);
+      body.rotation.x = -s * 0.22 * hook;
+      body.position.y = HIP_Y - 0.06 * wind;
+      aL.rotation.set(lerp(1.3 * wind, 0.8, hook), 0, 0.5);
+      aR.rotation.set(lerp(-0.4 * wind, -0.8, hook), 0, lerp(-0.6 * wind, 0.5, hook));
+    } else if (kind === SKILL_MOVE.flickon) {
+      // One touch off the instep, the body already spinning the way it went, arms out wide.
+      const tap = Math.sin(clamp(u / 0.6, 0, 1) * Math.PI);
+      lR.rotation.z = 0.8 * tap;
+      lR.rotation.x = -0.35 * tap;
+      lL.rotation.z = -0.3 * tap;
+      torso.rotation.y = 0.5 * tap;
+      torso.rotation.z = -0.25 * tap;
+      body.position.y = HIP_Y + 0.05 * tap;
+      aL.rotation.set(1.2, 0, 0.5 * tap);
+      aR.rotation.set(-1.2, 0, 0.5 * tap);
     } else {
       // DRAG BACK: the sole on top of it, drawn back under him as he leans back off it.
       const pull = smoothstep(0.08, 0.72, u);

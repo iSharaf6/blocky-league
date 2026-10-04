@@ -105,6 +105,49 @@ const ICON_ROWS = {
     '.XX..XX...', 'X..XX..X..', 'X..XX..X..', '.XX..XX...', 'XXXXXXX..X',
     'XXXXXXX.XX', 'XXXXXXXXXX', 'XXXXXXX.XX', 'XXXXXXX..X', '..........',
   ],
+  /** Two beamed notes (the crowd is singing: the chant caption). */
+  note: [
+    '...XXXXXXX', '...XXXXXXX', '...X.....X', '...X.....X', '...X.....X',
+    '...X.....X', '.XXX...XXX', 'XXXX..XXXX', 'XXXX..XXXX', '.XX....XX.',
+  ],
+  /** A medical cross (the physio, an injured player). */
+  medic: [
+    '...XXXX...', '...XXXX...', '...XXXX...', 'XXXXXXXXXX', 'XXXXXXXXXX',
+    'XXXXXXXXXX', 'XXXXXXXXXX', '...XXXX...', '...XXXX...', '...XXXX...',
+  ],
+  /** A magnifying glass (a scout, a scout report). */
+  scout: [
+    '..XXXX....', '.XX..XX...', 'XX....XX..', 'XX....XX..', 'XX....XX..',
+    '.XX..XX...', '..XXXXXX..', '......XXX.', '.......XXX', '........XX',
+  ],
+  /** A speech bubble (a press conference, the team talk). */
+  chat: [
+    '.XXXXXXXX.', 'XXXXXXXXXX', 'XXXXXXXXXX', 'XX.XX.XX.X', 'XXXXXXXXXX',
+    'XXXXXXXXXX', '.XXXXXXXX.', '..XXX.....', '..XX......', '..X.......',
+  ],
+  /** A coin (a sponsor, the commercial manager). */
+  coin: [
+    '..XXXXXX..', '.XXXXXXXX.', 'XXXX..XXXX', 'XXX.XXXXXX', 'XXX.XXXXXX',
+    'XXX.XXXXXX', 'XXX.XXXXXX', 'XXXX..XXXX', '.XXXXXXXX.', '..XXXXXX..',
+  ],
+  /** A rising line on a base (a player growing). */
+  chart: [
+    '.......XXX', '........XX', '......XX.X', '..X..XX...', '.XXXXX....',
+    'XX.XX.....', 'X.........', '..........', 'XXXXXXXXXX', 'XXXXXXXXXX',
+  ],
+  /** Three faces: a player's morale, high, steady and low. */
+  happy: [
+    '..XXXXXX..', '.XXXXXXXX.', 'XX.XXXX.XX', 'XX.XXXX.XX', 'XXXXXXXXXX',
+    'XXXXXXXXXX', 'X.XXXXXX.X', 'XX......XX', '.XXXXXXXX.', '..XXXXXX..',
+  ],
+  okay: [
+    '..XXXXXX..', '.XXXXXXXX.', 'XX.XXXX.XX', 'XX.XXXX.XX', 'XXXXXXXXXX',
+    'XXXXXXXXXX', 'XX......XX', 'XXXXXXXXXX', '.XXXXXXXX.', '..XXXXXX..',
+  ],
+  sad: [
+    '..XXXXXX..', '.XXXXXXXX.', 'XX.XXXX.XX', 'XX.XXXX.XX', 'XXXXXXXXXX',
+    'XXXXXXXXXX', 'XX......XX', 'X.XXXXXX.X', '.XXXXXXXX.', '..XXXXXX..',
+  ],
 } satisfies Record<string, readonly string[]>;
 
 export type IconName = keyof typeof ICON_ROWS;

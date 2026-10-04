@@ -12,8 +12,12 @@
  *   5th-tier titles are archived in `titles`.
  * - The Club Pass (meta/pass.ts) adds a second track to the same tiers for the month it is bought in: more coins
  *   and that month's own goal explosion and sprint trail. Buying it late hands over every tier already reached.
- * Nothing on the pitch can be bought: the pass is looks and coins.
+ * - Economy v3: free tiers 10, 20 and 30 also pay a few gems, and six pass tiers pay more (meta/gems.ts SEASON_GEMS,
+ *   PASS_GEMS); they are paid once per tier claimed (meta/pass.ts syncSeasonGems).
+ * Nothing on the pitch can be bought: the pass is looks, coins and gems.
  */
+import { PASS_GEMS, SEASON_GEMS } from './gems';
+
 export const SEASON_TIERS = 30;
 
 export interface SeasonState {
@@ -31,6 +35,11 @@ export interface SeasonState {
   passClaimed: number[];
   /** Club Pass looks a past season's pass reached but never claimed (`cat:id` keys): handed over by meta/pass.ts. */
   carryItems: string[];
+  /**
+   * Gems a past season's reached tiers never paid (the free track's and the pass's: meta/gems.ts SEASON_GEMS and
+   * PASS_GEMS), paid into the wallet by meta/pass.ts syncSeasonGems. Optional: older saves lack it (0).
+   */
+  carryGems?: number;
 }
 
 export function seasonId(now: Date = new Date()): string {
@@ -62,8 +71,11 @@ export function normalizeSeason(raw: unknown, now: Date = new Date()): SeasonSta
     ? [...new Set(r.carryItems.filter((k): k is string => typeof k === 'string' && /^(goalfx|trail|kit|look):pass\d{2}$/.test(k)))]
     : [];
   // Progress under an id we can't read belongs to no season we know: start this one afresh (titles and carry stay).
-  if (typeof r.id !== 'string' || !/^\d{4}-\d{2}$/.test(r.id)) return { ...defaultSeason(now), titles, carry, carryItems };
-  const s: SeasonState = { id: r.id, xp: num(r.xp), claimed, titles, carry, pass: r.pass === true, passClaimed, carryItems };
+  // (Kept only when there is something to carry: a season with none reads as it always did.)
+  const owed = Math.min(9999, num(r.carryGems));
+  const carryGems = owed > 0 ? { carryGems: owed } : {};
+  if (typeof r.id !== 'string' || !/^\d{4}-\d{2}$/.test(r.id)) return { ...defaultSeason(now), titles, carry, carryItems, ...carryGems };
+  const s: SeasonState = { id: r.id, xp: num(r.xp), claimed, titles, carry, pass: r.pass === true, passClaimed, carryItems, ...carryGems };
   rollSeason(s, now);
   return s;
 }
@@ -200,19 +212,26 @@ export function rollSeason(s: SeasonState, now: Date = new Date()): boolean {
   if (s.id === id) return false;
   const reached = seasonTier(s.xp);
   let coins = 0;
+  let gems = 0;
   for (let t = 1; t <= reached; t++) {
     const rw = seasonReward(t, s.id);
-    if (!s.claimed.includes(t)) coins += rw.coins;
+    if (!s.claimed.includes(t)) {
+      coins += rw.coins;
+      gems += SEASON_GEMS[t] ?? 0;
+    }
     if (rw.title && !s.titles.includes(rw.title)) s.titles.push(rw.title);
   }
   // The pass's reached, unclaimed tiers are kept too: coins into the carry, its looks into carryItems.
   for (const t of unclaimedPassTiers(s)) {
     const rw = passReward(t, s.id);
     coins += rw.coins;
+    gems += PASS_GEMS[t] ?? 0;
     const key = rw.item ? `${rw.item.cat}:${rw.item.id}` : '';
     if (key && !s.carryItems.includes(key)) s.carryItems.push(key);
   }
   if (coins > 0) s.carry = { id: s.id, coins: (s.carry?.coins ?? 0) + coins };
+  // (Their gems too: nothing reached is lost. meta/pass.ts syncSeasonGems pays them.)
+  if (gems > 0) s.carryGems = (s.carryGems ?? 0) + gems;
   s.id = id;
   s.xp = 0;
   s.claimed = [];

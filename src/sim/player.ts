@@ -146,7 +146,14 @@ export const HUMAN_DRIBBLE_MULT = 0.97;
  * The human's man sprints far more than anyone the AI runs (a held button, and on touch AUTO SPRINT whenever the stick
  * is pushed all the way), so his sprint drains HUMAN_SPRINT_DRAIN as fast: a man he has run all half still has legs.
  */
-export const HUMAN_SPRINT_DRAIN = 0.45;
+export const HUMAN_SPRINT_DRAIN = 0.36;
+/**
+ * ... and tired legs cost the man under the thumb far less of his top pace than they cost anyone else: HUMAN_PACE_FLOOR
+ * of it with nothing left, where an AI player is down to 0.7 (2026-10-04, the owner: "game feels heavy". Over whole
+ * casual matches the man he controlled averaged 0.56 stamina and sprinted at 87% of his top pace: every run was through
+ * mud. The stamina bar, the substitutions and the AI's players are as they were.)
+ */
+export const HUMAN_PACE_FLOOR = 0.88;
 /** Close control (the human's dribbler jogging, not sprinting): he turns this much quicker again. */
 export const CLOSE_TURN = 1.2;
 /**
@@ -468,7 +475,9 @@ export class Player {
         }
         break;
       case 'hold':
-        this.brake(dt, 10);
+        // (The human's keeper walks the ball about his box with the stick: Match.applyHuman; anyone else stands.)
+        if (agile && (this.wantX !== 0 || this.wantZ !== 0)) this.locomote(dt, false, true);
+        else this.brake(dt, 10);
         break;
       case 'celebrate':
       case 'dejected':
@@ -504,13 +513,14 @@ export class Player {
     return this.jog * (0.93 + 0.07 * this.stamina);
   }
 
-  /** Flat-out pace: tired legs lose a lot of it (never below a jog). */
-  sprintPace(): number {
-    return Math.max(this.jogPace() * 1.04, this.top * (0.7 + 0.3 * this.stamina));
+  /** Flat-out pace: tired legs lose a lot of it (never below a jog); the human's man (`agile`) far less: HUMAN_PACE_FLOOR. */
+  sprintPace(agile = false): number {
+    const floor = agile ? HUMAN_PACE_FLOOR : 0.7;
+    return Math.max(this.jogPace() * 1.04, this.top * (floor + (1 - floor) * this.stamina));
   }
 
   private locomote(dt: number, dribbling: boolean, agile = false): void {
-    let max = this.sprint ? this.sprintPace() : this.jogPace();
+    let max = this.sprint ? this.sprintPace(agile) : this.jogPace();
     if (this.state === 'celebrate' && this.sprint) max = Math.max(max, CELEBRATE_SPRINT);
     if (this.burstT > 0) max = Math.max(max, this.top) * 1.1;
     // (The human's quicker dribble only while the stick drives him: shaping up to a shot he plants, as anyone does.)

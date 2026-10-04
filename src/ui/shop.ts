@@ -6,12 +6,15 @@
  * - GOALS: goal explosions (GOAL FX), sprint TRAILS, CELEBrations;
  * - STADIUM style for your home ground (by slot);
  * - SCOUT: scout packs for MY CLUB (a random card, earned tokens only) and the way into the transfer market;
- * - PASS AND COINS: the Club Pass, coin packs, NO ADS and RESTORE PURCHASES where a store sells them (the iOS and
- *   Android apps: platform/iap.ts), or FREE COINS (a few rewarded ads a day) on the web portals.
+ * - STORE: everything to do with money and gems, in four sections: GEMS (the gem packs where a store sells them,
+ *   the iOS and Android apps: platform/iap.ts; the free daily gems), COINS (gems swapped for coins at a shown rate,
+ *   FREE COINS from a few rewarded ads a day), OFFERS (the PRO bundle, the Starter Pack, NO ADS, the Coin Doubler)
+ *   and CLUB (the Scouting Network, and what else gems do). The Club Pass stays beside them all, for money or gems.
  * Every look is master and detail (docs/UX.md): tiles on the left, the picked look live on a 3D stage on the right
  * (ui/shopStage.ts) with one-tap BUY, TRY IT ON (your whole team in it, with your ball, lawn and goal explosion) and,
  * for kits, the whole line-up and a night view. Rules live in meta/shop.ts; this file only draws them.
- * Honest by design: every price on show, no timers, nothing random for money, nothing that changes a match.
+ * Honest by design: every price on show, no timers, nothing random for money or gems, nothing that changes a match,
+ * and every gem spend asks once with its price (ui/gemUi.ts confirmGems).
  */
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
@@ -22,14 +25,25 @@ import {
   BUNDLES, BUNDLE_OFF, CAT_LABEL, FREE_AD_COINS, FREE_AD_DAILY_CAP, LOOK_WHO, PACKS, PACK_TOKENS, RARITIES, RARITY_OVR, SHOP_CATS,
   SLOT_LABEL, DEAL_OFF, ITEM_TIER_NAMES, bundleItems, bundleMissing, bundleOf, bundlePrice, bundleValue, buyBundle, buyItem, claimFreeAd,
   dailyDeal, equipItem, equippedId, equippedSlots, featuredShelf, freeAdsLeft, freePackReady, isEquipped, isSlotCat, itemKey, itemTier,
-  makeRoom, markSeen, openPack, owns, packPrice, pendingCard, priceOn, releaseCandidate, scoutTokens, seasonPassItems, sellCard,
+  makeRoom, markSeen, openPack, owns, packPrice, pendingCard, priceOn, releaseCandidate, rerollDeal, scoutTokens, seasonPassItems, sellCard,
   settlePack, shopItem, shopItems, shopOf, signCard, unequipItem,
   type Bundle, type PackCard, type PackKind, type Rarity, type ShopCat, type ShopItem,
 } from '../meta/shop';
 import { ads } from '../platform/ads';
 import { buzz } from '../platform/haptics';
-import { FIRST_BUY_MULT, PRODUCT_NOADS, PRODUCT_STARTER, iap, type IapGrant, type IapProduct } from '../platform/iap';
-import { passTotals } from '../meta/pass';
+import {
+  CATALOGUE, FIRST_BUY_MULT, PRODUCT_DOUBLER, PRODUCT_NOADS, PRODUCT_PRO, PRODUCT_STARTER, iap, proOffered, proWorthUsd, type IapGrant, type IapProduct,
+} from '../platform/iap';
+import { atmosphereOf, decorBonusParts, decorBonusShort, INCOME_CAP } from '../meta/atmosphere';
+import {
+  COIN_OFFERS, GEM_PRICES, GEM_REWARDS, SCOUT_NETWORKS, buyCoinsWithGems, buyScoutNetwork, coverShortfall, gems, nextScoutNetwork, scoutNetworkTier,
+  spendGems, topUpGems,
+} from '../meta/gems';
+import { AD_CAPS, adsLeft, claimDailyGems, useAd } from '../meta/loops';
+import { syncNetwork } from '../meta/premium';
+import { buyPassWithGems, passActive, passTotals } from '../meta/pass';
+import type { GroundState } from '../meta/ground';
+import { confirmGems, gemArt, gemPrice } from './gemUi';
 import { seasonDaysLeft, seasonOf, seasonTheme } from '../meta/season';
 import { quickSaleValue, squadWages, wageBudget, wageOf } from '../meta/market';
 import { GOAL_FX_COLORS, TRAIL_COLORS } from '../render/cosmetics';
@@ -44,18 +58,27 @@ import { faceHtml, hydrateFaces } from './preview';
 import { ShopStage, type StageClub, type StageShow, type StageWear } from './shopStage';
 import { sep } from './text';
 import './shop.css';
+import './store.css';
 
 export type ShopTab = 'featured' | ShopCat | 'players' | 'coins';
 
 const isCat = (t: ShopTab): t is ShopCat => (SHOP_CATS as readonly string[]).includes(t);
 
 /**
- * The COINS tab exists where coins can be topped up: the app (its store's Club Pass, NO ADS, packs: shown even before
- * the store has answered, see Iap.shelf) or a portal's rewarded ads. Plain web: no tab.
+ * The STORE tab is in every build (economy v3): gems are earned by playing everywhere, so there is always something
+ * to swap them for (coins, the Club Pass, the Scouting Network). The app adds its store's products (shown even before
+ * the store has answered, see Iap.shelf), a portal its rewarded ads.
  */
 function coinsTab(): boolean {
-  return iap.storefront || ads.portal !== 'none';
+  return true;
 }
+
+/** The STORE tab's sections (the chips over its right pane), remembered for the session. */
+export type StoreSec = 'gems' | 'coins' | 'offers' | 'club';
+const STORE_SECS: readonly { sec: StoreSec; label: string }[] = [
+  { sec: 'gems', label: 'GEMS' }, { sec: 'coins', label: 'COINS' }, { sec: 'offers', label: 'OFFERS' }, { sec: 'club', label: 'CLUB' },
+];
+let lastStore: StoreSec = 'gems';
 
 /** A tap on something the app's store can't sell yet (not set up in App Store Connect, offline): said plainly, nothing charged. */
 export const STORE_NOT_READY = "THE APP STORE ISN'T READY YET. TRY AGAIN SOON";
@@ -109,6 +132,8 @@ function revealIn(list: HTMLElement, el: HTMLElement): void {
 
 export interface ShopOpts {
   tab?: ShopTab;
+  /** On the STORE tab ('coins'): the section to open (GEMS unless said, or this session's last). */
+  section?: StoreSec;
   /** An item to have picked on that tab (a look id; on FEATURED a set id). */
   pick?: string;
   /** Where BACK goes (defaults to the main menu). */
@@ -129,7 +154,7 @@ const RAIL: readonly { tab: RailTab; label: string; icon: string; group: number 
   { tab: 'goals', label: 'GOALS', icon: 'burst', group: 2 },
   { tab: 'decor', label: 'STADIUM', icon: 'flag', group: 2 },
   { tab: 'players', label: 'SCOUT', icon: 'duo', group: 3 },
-  { tab: 'coins', label: 'COINS', icon: 'gift', group: 4 },
+  { tab: 'coins', label: 'STORE', icon: 'gift', group: 4 },
 ];
 /** The GOALS section's chips. */
 const GOALS: readonly { tab: ShopCat; label: string }[] = [
@@ -199,6 +224,19 @@ function coinPile(tier: number): string {
   return `<svg class="sh-px" viewBox="0 0 15 12" shape-rendering="crispEdges" aria-hidden="true">${rects}</svg>`;
 }
 
+/** Crisp pixel art for a gem pack: 1 to 5 gems in a pile (the bigger the pack the bigger the pile). */
+function gemPile(tier: number): string {
+  const n = Math.max(1, Math.min(5, tier));
+  // (Centres on a 5 by 2 grid of slots, bottom row first, so the pile grows like the coins'.)
+  const spots: [number, number][] = [[2, 1], [1, 1], [3, 1], [1.5, 0], [2.5, 0]];
+  const shown = spots.slice(0, n);
+  const minX = Math.min(...shown.map((p) => p[0]));
+  const maxX = Math.max(...shown.map((p) => p[0]));
+  const off = 2 - (minX + maxX) / 2;
+  const one = (x: number, y: number): string => `<span style="left:${((x + off) / 4) * 100}%;top:${n > 3 ? (y === 0 ? 18 : 62) : 50}%">${gemArt(2.4)}</span>`;
+  return `<span class="sh-gempile" aria-hidden="true">${shown.map(([x, y]) => one(x, y)).join('')}</span>`;
+}
+
 /** A small play triangle for the watch-an-ad button. */
 const PLAY_ART = '<svg class="sh-play" viewBox="0 0 7 7" width="16" height="16" shape-rendering="crispEdges" aria-hidden="true"><path d="M0 0h1v7H0zM1 1h1v5H1zM2 1h1v5H2zM3 2h1v3H3zM4 2h1v3H4zM5 3h1v1H5z" fill="currentColor"/></svg>';
 
@@ -216,12 +254,12 @@ function stageClub(app: AppContext, club: ClubState | null): StageClub {
     const xi = club.squad.slice(0, 11);
     const out = xi.filter((p) => p.role !== 'GK').sort((a, b) => overall(b) - overall(a));
     const keeper = xi.find((p) => p.role === 'GK') ?? club.squad.find((p) => p.role === 'GK');
-    if (out.length) return { kit: club.kit, short: club.short, star: out[0], mates: out.slice(1, 5), keeper: keeper ?? out[out.length - 1] };
+    if (out.length) return { kit: club.kit, short: club.short, name: club.name, star: out[0], mates: out.slice(1, 5), keeper: keeper ?? out[out.length - 1] };
   }
   const seed = PRESET_CLUBS[app.save.clubIdx] ?? PRESET_CLUBS[0];
   const team = makeTeam(seed);
   const out = team.players.filter((p) => p.role !== 'GK').sort((a, b) => overall(b) - overall(a));
-  return { kit: seed.kit, short: team.short, star: out[0] ?? team.players[9], mates: out.slice(1, 5), keeper: team.players[0] };
+  return { kit: seed.kit, short: team.short, name: team.name, star: out[0] ?? team.players[9], mates: out.slice(1, 5), keeper: team.players[0] };
 }
 
 /** Open the shop (FEATURED unless `opts.tab` or this session's last tab says otherwise). */
@@ -239,6 +277,7 @@ export function openShop(app: AppContext, opts: ShopOpts = {}): void {
     return raw && typeof raw === 'object' && raw.club ? careerState(app).club : null;
   };
   const tab = opts.tab ?? lastTab ?? 'featured';
+  if (opts.section) lastStore = opts.section;
   if (opts.pick) {
     if (tab === 'featured') lastFeat = { kind: 'set', id: opts.pick };
     else if (isCat(tab)) lastPick[tab] = opts.pick;
@@ -276,6 +315,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   const kitKey = `${club.star.id}|${club.kit.shirt}|${club.kit.shirt2}|${club.kit.pattern}`;
   /** Coins shown in the top bar before the last purchase (the counter runs down from it). */
   let shownCoins = save.coins;
+  /** Gems as last drawn (the counter pops when they change). */
+  let shownGems = gems(save);
+  /** The STORE tab's section. */
+  let sec: StoreSec = lastStore;
   let popKey = '';
 
   const say = (msg: string, kind: 'good' | 'bad' | 'info' = 'good') => scr.toast(msg, kind);
@@ -321,20 +364,35 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   const storeHtml = (): string => {
     // (Every product, the store's own where it has them; until it answers, stand-ins at the catalogue price.)
     const list = iap.shelf();
-    const packs = list.filter((p) => p.kind === 'consumable' && !p.pass);
+    const packs = list.filter((p) => p.kind === 'consumable' && !p.pass && p.gems > 0);
     const starter = list.find((p) => p.id === PRODUCT_STARTER);
     const noAds = list.find((p) => p.id === PRODUCT_NOADS);
     const pass = list.find((p) => p.pass);
-    const doubler = list.find((p) => p.doubler);
+    const doubler = list.find((p) => p.id === PRODUCT_DOUBLER);
+    const pro = list.find((p) => p.id === PRODUCT_PRO);
     const off = busy !== '' ? 'disabled' : '';
+    const have = gems(save);
     const label = (p: IapProduct) => esc(busy === p.id ? 'ONE MOMENT' : p.price);
-    const pack = (p: IapProduct, i: number) => `<button class="sh-iap ${p.tag ? 'tagged' : ''} ${busy === p.id ? 'wait' : ''}" data-a="iap" data-id="${esc(p.id)}" ${off}
-        aria-label="${fmt(p.coins * (p.firstBonus ? FIRST_BUY_MULT : 1))} coins, ${esc(p.price)}${p.firstBonus ? ', doubled on your first buy' : p.tag ? `, ${p.tag.toLowerCase()}` : ''}">
+    // A gem pack: what you get in big numbers (doubled on the first buy, and it says so), the store's price.
+    const pack = (p: IapProduct, i: number) => {
+      const total = p.gems * (p.firstBonus ? FIRST_BUY_MULT : 1);
+      return `<button class="sh-iap gem ${p.tag ? 'tagged' : ''} ${busy === p.id ? 'wait' : ''}" data-a="iap" data-id="${esc(p.id)}" ${off}
+        aria-label="${fmt(total)} gems, ${esc(p.price)}${p.firstBonus ? ', doubled on your first buy' : p.tag ? `, ${p.tag.toLowerCase()}` : ''}">
         ${p.firstBonus ? `<i class="sh-ribbon first">FIRST BUY X${FIRST_BUY_MULT}</i>` : p.tag ? `<i class="sh-ribbon ${p.tag === 'BEST VALUE' ? 'best' : 'pop'}">${p.tag}</i>` : ''}
-        <span class="sh-pile">${coinPile(i + 1)}</span>
-        <b>${fmt(p.coins * (p.firstBonus ? FIRST_BUY_MULT : 1))}</b>
-        <small>${p.firstBonus ? 'COINS, DOUBLED' : p.bonusPct ? `COINS +${p.bonusPct}%` : 'COINS'}</small>
+        <span class="sh-pile gems">${gemPile(i + 1)}</span>
+        <b>${fmt(total)}</b>
+        <small>${p.firstBonus ? 'GEMS, DOUBLED' : p.bonusPct ? `GEMS +${p.bonusPct}%` : 'GEMS'}</small>
         <em class="sh-tag price buy">${label(p)}</em>
+      </button>`;
+    };
+    // Gems swapped for coins: the coins in big numbers, the gem price on the tag (a tap asks once, with the price).
+    const swap = (o: (typeof COIN_OFFERS)[number], i: number) => `<button class="sh-iap ${o.tag ? 'tagged' : ''} ${have < o.gems ? 'poor' : ''}" data-a="swap" data-id="${o.id}"
+        aria-label="${fmt(o.coins)} coins for ${o.gems} gems${o.tag ? `, ${o.tag.toLowerCase()}` : ''}">
+        ${o.tag ? `<i class="sh-ribbon ${o.tag === 'BEST VALUE' ? 'best' : 'pop'}">${o.tag}</i>` : ''}
+        <span class="sh-pile">${coinPile(i + 1)}</span>
+        <b>${fmt(o.coins)}</b>
+        <small>COINS</small>
+        <em class="sh-tag price ${have < o.gems ? 'poor' : 'buy'}">${gemPrice(o.gems)}</em>
       </button>`;
     // A compact offer: icon, name, a few words, the price on its button (or OWNED).
     const offer = (cls: string, p: IapProduct, icon: string, name: string, what: string, btn: string) => `<section class="sh-offer ${cls}">
@@ -346,33 +404,99 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const theme = seasonTheme(season.id).name.toUpperCase();
     const totals = passTotals(season.id);
     const days = seasonDaysLeft();
-    // The Club Pass is the big card: the month, its numbers, the price. Tiers already reached unlock at once.
-    const passCard = pass ? `<section class="sh-passcard ${pass.owned ? 'on' : ''}">
+    const passOn = passActive(save);
+    // The Club Pass is the big card: the month, everything it pays in real numbers, and its two prices (the store's,
+    // where there is one, or gems). Tiers already reached unlock at once.
+    const passCard = `<section class="sh-passcard ${passOn ? 'on' : ''}">
           <span class="sh-pc-ic" aria-hidden="true">${pixelIcon('crown', '#ffd23a', 4)}</span>
           <b class="sh-pc-name">CLUB PASS</b>
-          <small class="sh-pc-theme">${esc(theme)}</small>
+          <small class="sh-pc-theme">${esc(theme)}${sep()}${days} ${days === 1 ? 'DAY' : 'DAYS'} LEFT</small>
           <ul class="sh-pc-facts">
             <li><b>+${fmt(totals.coins)}</b>COINS</li>
+            <li><b>+${fmt(totals.gems)}</b>GEMS</li>
             <li><b>${totals.items.length}</b>PASS LOOKS</li>
-            <li><b>${days}</b>${days === 1 ? 'DAY LEFT' : 'DAYS LEFT'}</li>
           </ul>
           <small class="sh-pc-note">A KIT, A LOOK, A TRAIL AND A GOAL FX</small>
-          ${pass.owned ? '<em class="sh-tag own sh-pc-on">ON THIS MONTH</em>' : `<button class="btn btn-yellow btn-lg sh-pc-buy" data-a="iap" data-id="${esc(pass.id)}" ${off} aria-label="Get the Club Pass, ${esc(pass.price)}"><small>GET IT</small><b>${label(pass)}</b></button>`}
-        </section>` : '';
-    // The one-time offers (NO ADS, the Coin Doubler, the Starter Pack until bought) and the free coins, side by side.
-    const offers = [
-      noAds ? offer('noads', noAds, pixelIcon('film', '#fff', 3), 'REMOVE ADS', 'NO AD BREAKS', 'btn-red') : '',
-      doubler ? offer('doubler', doubler, pixelIcon('bolt', '#ffd23a', 3), 'COIN DOUBLER', 'EVERY MATCH PAYS X2', 'btn-white') : '',
-      starter && !starter.owned ? offer('starter', starter, pixelIcon('ball', '#ffd23a', 3), 'STARTER PACK', `${fmt(starter.coins)} + GOLD BALL`, 'btn-yellow') : '',
-      ads.portal !== 'none' ? freeHtml(false) : '',
-    ].filter(Boolean);
+          ${passOn ? '<em class="sh-tag own sh-pc-on">ON THIS MONTH</em>' : `
+            ${pass ? `<button class="btn btn-yellow btn-lg sh-pc-buy" data-a="iap" data-id="${esc(pass.id)}" ${off} aria-label="Get the Club Pass, ${esc(pass.price)}"><small>GET IT</small><b>${label(pass)}</b></button>` : ''}
+            <button class="btn btn-white sh-pc-gems" data-a="passgems" ${off} aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${pass ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>`}
+        </section>`;
+    const chips = `<div class="chips sh-slots sh-secs" role="group" aria-label="Store sections">${STORE_SECS.map((x) =>
+      `<button class="${x.sec === sec ? 'on' : ''}" data-a="sec" data-v="${x.sec}" aria-pressed="${x.sec === sec}">${x.label}</button>`).join('')}</div>`;
+    let main = '';
+    if (sec === 'gems') {
+      // The gem packs (the app), the free daily gems (an ad, where there are ads), and where gems come from in play.
+      const earn = `<p class="sh-earn"><b>FREE BY PLAYING</b>BOARD GOALS +${GEM_REWARDS.boardObjective}${sep()}CUPS +${GEM_REWARDS.cup}${sep()}WEEKLY +${GEM_REWARDS.weekly}${sep()}DAILY GIFT${sep()}SEASON TIERS</p>`;
+      main = `${packs.length ? `<div class="sh-iaps n5">${packs.map(pack).join('')}</div>` : ''}
+        <div class="sh-offers n1">${ads.portal !== 'none' ? gemAdHtml() : ''}${earn}</div>`;
+    } else if (sec === 'coins') {
+      const extra = [
+        ads.portal !== 'none' ? freeHtml(false) : '',
+        doubler && !doubler.owned ? offer('doubler', doubler, pixelIcon('bolt', '#ffd23a', 3), 'COIN DOUBLER', 'EVERY MATCH PAYS X2', 'btn-white') : '',
+      ].filter(Boolean);
+      main = `<div class="sh-iaps">${COIN_OFFERS.map(swap).join('')}</div>
+        <div class="sh-offers n${extra.length}">${extra.join('')}</div>`;
+    } else if (sec === 'offers') {
+      // The one-time offers. The PRO bundle only while neither of its parts is owned (it is priced against both).
+      const proUsd = CATALOGUE.find((e) => e.id === PRODUCT_PRO)?.usd ?? 0;
+      const saving = proUsd ? Math.round((1 - proUsd / proWorthUsd()) * 100) : 0;
+      const list2 = [
+        pro && proOffered(save) ? offer('pro', pro, pixelIcon('crown', '#ffd23a', 3), 'PRO BUNDLE', `NO ADS + DOUBLER + ${fmt(pro.gems)} GEMS${saving > 0 ? `${sep()}SAVE ${saving}%` : ''}`, 'btn-yellow') : '',
+        starter && !starter.owned ? offer('starter', starter, pixelIcon('ball', '#ffd23a', 3), 'STARTER PACK', `${fmt(starter.coins)} COINS + ${fmt(starter.gems)} GEMS + GOLD BALL`, 'btn-yellow') : '',
+        noAds ? offer('noads', noAds, pixelIcon('film', '#fff', 3), 'REMOVE ADS', 'NO AD BREAKS, FOR GOOD', 'btn-red') : '',
+        doubler ? offer('doubler', doubler, pixelIcon('bolt', '#ffd23a', 3), 'COIN DOUBLER', 'EVERY MATCH PAYS X2, FOR GOOD', 'btn-white') : '',
+      ].filter(Boolean);
+      main = list2.length
+        ? `<div class="sh-offers wide n${list2.length}">${list2.join('')}</div>`
+        : '<div class="sh-offers n1"><p class="sh-earn"><b>NO OFFERS HERE</b>THE STORE IS IN THE IPHONE AND IPAD APP. EVERYTHING ELSE IS EARNED BY PLAYING</p></div>';
+    } else {
+      main = clubHtml();
+    }
     return `${passCard}
-      <div class="sh-offers n${offers.length}">${offers.join('')}</div>
-      <div class="sh-iaps">${packs.map(pack).join('')}</div>
+      ${chips}
+      <div class="sh-storemain s-${sec}">${main}</div>
       <div class="sh-foot">
-        <button class="btn btn-white sh-restore" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE'}</button>
-        <p class="sh-fine">${iap.available ? '' : '<b>STORE NOT READY YET.</b> '}No cash value. Coins never buy scout packs. Nothing you buy changes a match.</p>
+        ${iap.storefront ? `<button class="btn btn-white sh-restore" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE'}</button>` : ''}
+        <p class="sh-fine">${iap.storefront && !iap.available ? '<b>STORE NOT READY YET.</b> ' : ''}No cash value. Gems and coins never buy anything random. Nothing you buy changes a match.</p>
       </div>`;
+  };
+
+  /** The STORE's CLUB section: the Scouting Network (permanent tiers, each a stated guarantee) and what else gems do. */
+  const clubHtml = (): string => {
+    const tier = scoutNetworkTier(save);
+    const next = nextScoutNetwork(save);
+    const cur = SCOUT_NETWORKS[tier - 1];
+    const steps = SCOUT_NETWORKS.map((n) => `<i class="${n.tier <= tier ? 'on' : ''}" aria-hidden="true"></i>`).join('');
+    const net = `<section class="sh-net">
+        <span class="sh-offart" aria-hidden="true">${pixelIcon('star', '#ffd23a', 3)}</span>
+        <div class="sh-offtxt">
+          <b>SCOUTING NETWORK <span class="sh-netsteps" aria-label="Tier ${tier} of ${SCOUT_NETWORKS.length}">${steps}</span></b>
+          <small>${next ? `${esc(next.name)}: ${esc(next.text)}` : `${esc(cur?.name ?? '')}: ${esc(cur?.text ?? '')}`}</small>
+          <small class="sh-netnote">${next ? 'FOR GOOD, FROM YOUR NEXT ACADEMY INTAKE. GUARANTEED, NEVER A CHANCE' : 'THE BEST NETWORK THERE IS. YOURS FOR GOOD'}</small>
+        </div>
+        ${next ? `<button class="btn btn-go sh-offbuy" data-a="network" aria-label="Buy the ${esc(next.name.toLowerCase())}, ${next.price} gems">${gemPrice(next.price)}</button>` : '<em class="sh-tag own">OWNED</em>'}
+      </section>`;
+    const use = (what: string, price: string, where: string) => `<li><b>${what}</b><em>${price}</em><small>${where}</small></li>`;
+    return `${net}
+      <ul class="sh-uses" aria-label="What else gems do">
+        ${use('FINISH A BUILD NOW', `${gemPrice(GEM_PRICES.finishBuildPerMatchday)} A MATCHDAY`, 'MY CLUB, STADIUM')}
+        ${use('HEAL A PLAYER NOW', gemPrice(GEM_PRICES.healPlayer), 'WHEN HE IS INJURED')}
+        ${use('REPLAY A LOST DECIDER', gemPrice(GEM_PRICES.replayMatch), 'AT FULL TIME')}
+      </ul>`;
+  };
+
+  /** FREE GEMS for one rewarded ad, once a day (meta/loops.ts): the player's tap, a stated reward, a daily cap. */
+  const gemAdHtml = (): string => {
+    const left = adsLeft(save, 'gem', localDay());
+    const ready = ads.rewardedAvailable;
+    const state = left <= 0 ? 'done' : !ready ? 'none' : busy === 'gemad' ? 'wait' : 'go';
+    const lbl = state === 'done' ? 'DONE TODAY' : state === 'none' ? 'NO AD YET' : state === 'wait' ? 'ONE MOMENT' : `${PLAY_ART}+${GEM_REWARDS.dailyAd}`;
+    const note = state === 'done' ? 'BACK TOMORROW' : state === 'none' ? 'TRY AGAIN SOON' : `WATCH AN AD${sep()}${AD_CAPS.gem === 1 ? 'ONCE A DAY' : `${left} LEFT TODAY`}`;
+    return `<section class="sh-offer free gemad">
+        <span class="sh-offart" aria-hidden="true">${gemArt(3)}</span>
+        <div class="sh-offtxt"><b>FREE GEMS</b><small class="sh-left ${state}">${note}</small></div>
+        <button class="btn btn-yellow sh-offbuy sh-watch" data-a="gemad" ${state === 'go' ? '' : 'disabled'} aria-label="Watch an ad for ${GEM_REWARDS.dailyAd} gems">${lbl}</button>
+      </section>`;
   };
 
   /** FREE COINS from a rewarded ad: a compact offer beside the store's, or the one big card on a portal. */
@@ -389,10 +513,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       </section>`;
   };
 
-  // In the app: every money card on one screen, the Club Pass the biggest. On a portal: the free coins alone.
-  const coinsHtml = (): string => iap.storefront
-    ? `<div class="sh-content sh-money">${storeHtml()}</div>`
-    : `<div class="sh-content sh-money free-only">${freeHtml(true)}</div>`;
+  // The STORE: the Club Pass on the left, the section picked on the right (GEMS, COINS, OFFERS, CLUB).
+  const coinsHtml = (): string => `<div class="sh-content sh-money v3">${storeHtml()}</div>`;
 
   // ---- tile art (3D stills of the real thing, taken one a frame after a draw; flat art stands in till then)
 
@@ -486,6 +608,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       ${tierHtml(it)}
       <span class="sh-art">${artOf(it)}</span>
       <b>${esc(it.name.toUpperCase())}</b>
+      ${it.cat === 'decor' ? `<small class="sh-perk">${decorBonusShort(it.id)}</small>` : ''}
       ${tag}
     </button>`;
   };
@@ -507,15 +630,19 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     if (s === 'pass') {
       return `<div class="sh-btns">${iap.storefront
         ? '<button class="btn btn-blue btn-lg sh-act" data-a="tab" data-v="coins">SEE THE CLUB PASS</button>'
-        : '<button class="btn btn-white btn-lg sh-act" disabled>CLUB PASS ONLY</button>'}</div>
+        : `<button class="btn btn-blue btn-lg sh-act" data-a="tab" data-v="coins">CLUB PASS ${gemPrice(GEM_PRICES.clubPass)}</button>`}</div>
         ${line('EARNED IN THIS MONTH\'S CLUB PASS', 'pass')}`;
     }
     const price = priceOf(it);
     const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s> ` : '';
     if (s === 'buy') return `<div class="sh-btns"><button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY ${was}${coin(price)}</button></div>${line(lv, 'free')}`;
+    // Short of coins: gems can cover the difference (a stated price, asked once), else the way to more coins.
+    const need = topUpGems(price - save.coins);
     return `<div class="sh-btns">
         <button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short">${was}${coin(price)}</button>
-        ${coinsTab() ? '<button class="btn btn-blue btn-lg sh-more" data-a="tab" data-v="coins">GET COINS</button>' : ''}
+        ${gems(save) >= need
+          ? `<button class="btn btn-blue btn-lg sh-more" data-a="topup" aria-label="Cover the ${fmt(price - save.coins)} coins you are short with ${need} gems">ADD ${gemPrice(need)}</button>`
+          : '<button class="btn btn-blue btn-lg sh-more" data-a="getcoins">GET COINS</button>'}
       </div>
       ${line(`${fmt(price - save.coins)} SHORT${lv ? `${sep()}${lv}` : ''}`)}`;
   };
@@ -536,6 +663,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       <div class="sh-id">
         <small class="sh-kind">${kindHtml(it)}</small>
         <h3 class="sh-name">${esc(it.name.toUpperCase())}</h3>
+        ${it.cat === 'decor' ? `<p class="sh-bonus" aria-label="What it does at your home matches">${decorBonusParts(it.id).map((x) => `<i>${x}</i>`).join('')}</p>` : ''}
         <p class="sh-blurb">${esc(it.blurb)}</p>
       </div>
       <div class="sh-actrow">${actionHtml(it)}</div>`;
@@ -575,9 +703,36 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const d = dailyDeal(save, today());
     if (!d) return '';
     const got = owns(save, d.item.cat, d.item.id);
+    // A NEW DEAL TODAY: one rewarded ad a day where there are ads (the player's tap), else a few gems (asked first).
+    const adOk = ads.portal !== 'none' && adsLeft(save, 'deal', localDay()) > 0;
+    const again = `<button class="sh-dealnew" data-a="newdeal" aria-label="A new deal today: ${adOk ? 'watch an ad' : `${GEM_PRICES.dealRefresh} gems`}">${adOk ? PLAY_ART : gemArt(1.4)}<span>NEW</span></button>`;
     return `<button class="sh-dealchip ${got ? 'got' : ''}" data-a="deal" aria-label="Today's deal: ${esc(d.item.name)} ${esc(CAT_LABEL[d.item.cat])}, ${DEAL_OFF}% off, ${d.price} coins">
         <b>TODAY'S DEAL</b><span>${esc(d.item.name.toUpperCase())}</span><em>${got ? 'OWNED' : `${DEAL_OFF}% OFF`}</em>${got ? '' : `<i class="sh-dealprice">${coin(d.price)}</i>`}
-      </button>`;
+      </button>${again}`;
+  };
+
+  /**
+   * STADIUM's header: your club's ATMOSPHERE from what is worn (and, in ROAD TO GLORY, the ground as built), and what
+   * it is worth at every home match (meta/atmosphere.ts). The stadium style's reason to exist, said in one line.
+   */
+  const atmoHtml = (): string => {
+    let ground: GroundState | null = null;
+    try {
+      ground = clubOf() ? careerState(app).ground : null;
+    } catch {
+      ground = null;
+    }
+    const a = atmosphereOf(save, ground);
+    const bits = [
+      `+${a.income}% INCOME${a.raw.income >= INCOME_CAP ? ' MAX' : ''}`,
+      a.crowd ? `+${a.crowd}% CROWD` : '',
+      a.chants ? `+${a.chants} ${a.chants === 1 ? 'CHANT' : 'CHANTS'}` : '',
+      a.show ? `SHOW +${a.show}` : '',
+    ].filter(Boolean);
+    return `<div class="sh-atmo" aria-label="Atmosphere ${a.rating} of 100, ${a.word.toLowerCase()}. At your home matches: ${bits.join(', ').toLowerCase()}">
+        <span class="sh-atmotop"><b>ATMOSPHERE</b><em>${a.rating}</em><i class="sh-atmobar"><u style="width:${a.rating}%"></u></i><b class="sh-atmoword">${a.word}</b></span>
+        <small>${bits.join(sep())}</small>
+      </div>`;
   };
 
   /** The items a category lists: Club Pass looks of this month (to earn) and any earned; past months' stay out. */
@@ -612,6 +767,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     return `<div class="sh-content split sh-cat">
         <section class="pane sh-list">
           <div class="pane-h sh-listh"><span class="sh-count">${mine}/${all.length} OWNED</span><span class="grow"></span>${dealHtml()}</div>
+          ${cat === 'decor' ? atmoHtml() : ''}
           ${chips}
           <div class="pane-scroll sh-grid" data-scroll-key="sh-${cat}-${slot}">${tiles}</div>
         </section>
@@ -684,7 +840,11 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const action = done
       ? '<div class="sh-btns"><button class="btn btn-go btn-lg sh-act" data-a="wearset">WEAR THE WHOLE SET</button></div>'
       : `<div class="sh-btns"><button class="btn ${save.coins >= price ? 'btn-yellow' : 'btn-white poor'} btn-lg sh-act" data-a="buyset">${missing.length < items.length ? 'COMPLETE IT' : 'BUY SET'} <s class="sh-was">${fmt(full)}</s>${coin(price)}</button>
-          ${save.coins < price && coinsTab() ? '<button class="btn btn-blue btn-lg sh-more" data-a="tab" data-v="coins">GET COINS</button>' : ''}</div>
+          ${save.coins < price
+            ? gems(save) >= topUpGems(price - save.coins)
+              ? `<button class="btn btn-blue btn-lg sh-more" data-a="topupset" aria-label="Cover the ${fmt(price - save.coins)} coins you are short with ${topUpGems(price - save.coins)} gems">ADD ${gemPrice(topUpGems(price - save.coins))}</button>`
+              : '<button class="btn btn-blue btn-lg sh-more" data-a="getcoins">GET COINS</button>'
+            : ''}</div>
           <p class="sh-short free">SAVE ${fmt(full - price)}${missing.length < items.length ? `${sep()}ONLY THE ${missing.length} YOU DON'T OWN` : ''}</p>`;
     return `<section class="pane sh-detail sh-setdetail">
         <div class="sh-stage ${stage.ok ? '' : 'flat'}" style="--sb:${b.bg}">
@@ -963,7 +1123,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       const gap = r.group !== lastGroup && lastGroup >= 0 ? 'gap' : '';
       lastGroup = r.group;
       const money = r.tab === 'coins';
-      const label = money && iap.storefront ? 'PASS AND COINS' : r.label;
+      const label = r.label;
       const on = r.tab === tab || (r.tab === 'goals' && isGoals(tab));
       return `<button class="sh-rb ${gap} ${on ? 'on' : ''} ${money ? 'money' : ''} ${r.tab === 'featured' ? 'feat' : ''}" data-a="tab" data-v="${r.tab}" aria-pressed="${on}" aria-label="${label}">
           <span class="sh-ri" aria-hidden="true">${pixelIcon(r.icon, on ? '#ffd23a' : money ? '#26262e' : '#fbfbf4', 2)}</span><span class="sh-rl">${label}</span>${railBadge(r.tab, s)}
@@ -977,7 +1137,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const body = tab === 'players' ? playersHtml() : tab === 'coins' ? coinsHtml() : tab === 'featured' ? featuredHtml() : catHtml(tab);
     keepScrolls(scr.panel);
     scr.render(
-      `${topBar(backLabel, 'SHOP', iap.storefront ? 'EARN COINS PLAYING OR TOP UP' : 'COINS COME FROM PLAYING', shownCoins)}
+      `${topBar(backLabel, 'SHOP', iap.storefront ? 'EARN COINS AND GEMS PLAYING OR TOP UP' : 'COINS AND GEMS COME FROM PLAYING', shownCoins)}
       <div class="mc-body sh-body">
         <nav class="sh-rail pane-scroll" data-scroll-key="sh-rail" aria-label="Shop sections">${railHtml()}</nav>
         ${body}
@@ -990,6 +1150,9 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const span = scr.panel.querySelector<HTMLElement>('.mc-top .coins span');
     if (span && shownCoins !== save.coins) runCoins(span, shownCoins, save.coins);
     shownCoins = save.coins;
+    // (The gem counter pops when it moved: a purchase, a swap, a reward.)
+    if (gems(save) !== shownGems) scr.panel.querySelector('.mc-top .gems')?.classList.add('up');
+    shownGems = gems(save);
     popKey = '';
     const cv = scr.panel.querySelector<HTMLCanvasElement>('.sh-3d');
     if (cv) stage.attach(cv);
@@ -1061,6 +1224,16 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     stageFor();
     draw();
   };
+
+  /** To a section of the STORE tab. */
+  const goStore = (to: StoreSec): void => {
+    tab = 'coins';
+    sec = to;
+    lastStore = to;
+    draw();
+  };
+  /** Where a confirm sheet's GET GEMS goes: the gem packs, where a store sells them (else it only says what is missing). */
+  const getGems = (): (() => void) | undefined => (iap.storefront ? () => goStore('gems') : undefined);
 
   // (Esc: mountMeta sends it to BACK, which waits while a pack reveal is up.)
   const handlers = {
@@ -1158,7 +1331,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       stageFor();
       showPick();
     },
-    buy: () => {
+    buy: (): void => {
       const it = shownItem();
       if (!it) return;
       const before = save.coins;
@@ -1172,7 +1345,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       }
       bought([r.item], before, `${r.item.name.toUpperCase()} IS YOURS. ${isSlotCat(r.item.cat) ? 'YOU WEAR IT NOW' : 'EQUIPPED'}!`);
     },
-    buyset: () => {
+    buyset: (): void => {
       const b = feat.kind === 'set' ? bundleOf(feat.id) : undefined;
       if (!b) return;
       const before = save.coins;
@@ -1243,7 +1416,153 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       draw();
       reveal(r.card, r.price);
     },
-    // A coin pack, the Starter Pack or NO ADS: the store takes the payment and the grant listener (above) does the rest.
+    // ---- the STORE (gems): every spend asks once, with its price (ui/gemUi.ts)
+    sec: (el: HTMLElement) => {
+      const v = el.dataset.v as StoreSec;
+      if (v === sec) return;
+      sec = v;
+      lastStore = v;
+      draw();
+    },
+    getcoins: () => goStore('coins'),
+    swap: (el: HTMLElement) => {
+      const o = COIN_OFFERS.find((x) => x.id === el.dataset.id);
+      if (!o) return;
+      confirmGems(scr.root, {
+        title: `SWAP FOR ${fmt(o.coins)} COINS?`, price: o.gems, have: gems(save), yes: 'SWAP', getGems: getGems(),
+        onYes: () => {
+          const before = save.coins;
+          if (!buyCoinsWithGems(save, o.id).ok) return;
+          app.persist();
+          shownCoins = before;
+          sfx.coin();
+          draw();
+          say(`+${fmt(o.coins)} COINS`, 'good');
+        },
+      });
+    },
+    passgems: () => {
+      confirmGems(scr.root, {
+        title: 'GET THE CLUB PASS?', text: 'THIS MONTH. TIERS YOU HAVE REACHED UNLOCK AT ONCE', price: GEM_PRICES.clubPass, have: gems(save), yes: 'GET IT', getGems: getGems(),
+        onYes: () => {
+          if (!buyPassWithGems(save).ok) return;
+          app.persist();
+          sfx.coin();
+          window.setTimeout(() => sfx.powerup(), 120);
+          draw();
+          say('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN SEASON', 'good');
+        },
+      });
+    },
+    network: () => {
+      const next = nextScoutNetwork(save);
+      if (!next) return;
+      confirmGems(scr.root, {
+        title: `BUY THE ${next.name}?`, text: `${next.text}. FOR GOOD`, price: next.price, have: gems(save), yes: 'BUY', getGems: getGems(),
+        free: 'YOUR ACADEMY BRINGS PROSPECTS EVERY SEASON WITHOUT IT',
+        onYes: () => {
+          if (!buyScoutNetwork(save).ok) return;
+          // (The career keeps a mirror of the tier for its academy intake: meta/premium.ts.)
+          try {
+            if (clubOf()) syncNetwork(careerState(app), save);
+          } catch {
+            // No club yet (or a damaged career): the tier is kept in the save and mirrored when the career opens.
+          }
+          app.persist();
+          sfx.coin();
+          window.setTimeout(() => sfx.powerup(), 120);
+          draw();
+          say(`${next.name} IS YOURS: ${next.text}`, 'good');
+        },
+      });
+    },
+    // Short of coins for the look on show: gems cover the difference, then it is bought as usual.
+    topup: (): void => {
+      const it = shownItem();
+      if (!it) return;
+      const price = priceOf(it);
+      const need = topUpGems(price - save.coins);
+      if (need <= 0) {
+        handlers.buy();
+        return;
+      }
+      confirmGems(scr.root, {
+        title: `BUY ${it.name.toUpperCase()}?`, text: `YOUR ${fmt(save.coins)} COINS AND ${need} GEMS FOR THE REST`, price: need, have: gems(save), yes: 'BUY', getGems: getGems(),
+        onYes: () => {
+          if (!coverShortfall(save, price, `${it.cat}:${it.id}`)) return;
+          handlers.buy();
+        },
+      });
+    },
+    topupset: (): void => {
+      const b = feat.kind === 'set' ? bundleOf(feat.id) : undefined;
+      if (!b) return;
+      const price = bundlePrice(save, b);
+      const need = topUpGems(price - save.coins);
+      if (need <= 0) {
+        handlers.buyset();
+        return;
+      }
+      confirmGems(scr.root, {
+        title: `BUY THE ${b.name.toUpperCase()}?`, text: `YOUR ${fmt(save.coins)} COINS AND ${need} GEMS FOR THE REST`, price: need, have: gems(save), yes: 'BUY', getGems: getGems(),
+        onYes: () => {
+          if (!coverShortfall(save, price, `set:${b.id}`)) return;
+          handlers.buyset();
+        },
+      });
+    },
+    // The free daily gems: only ever on the player's own tap, once a day.
+    gemad: async () => {
+      if (busy) return;
+      if (adsLeft(save, 'gem', localDay()) <= 0) {
+        say('TODAY\'S FREE GEMS ARE TAKEN. BACK TOMORROW', 'info');
+        return;
+      }
+      if (!ads.rewardedAvailable) {
+        say('NO AD RIGHT NOW. TRY AGAIN LATER', 'info');
+        return;
+      }
+      busy = 'gemad';
+      draw();
+      const watched = await ads.rewarded();
+      busy = '';
+      const n = watched ? claimDailyGems(save, localDay()) : 0;
+      if (n > 0) {
+        app.persist();
+        sfx.coin();
+        buzz('success');
+      }
+      draw();
+      say(n > 0 ? `+${n} GEMS. BACK TOMORROW FOR MORE` : watched ? 'TODAY\'S FREE GEMS ARE TAKEN. BACK TOMORROW' : 'THE AD DID NOT FINISH, SO NO GEMS THIS TIME', n > 0 ? 'good' : 'info');
+    },
+    // A NEW DEAL TODAY: a rewarded ad once a day (where there are ads), else a few gems, asked first.
+    newdeal: async () => {
+      if (busy) return;
+      const day = localDay();
+      const moved = (): void => {
+        const d = rerollDeal(save, today());
+        app.persist();
+        if (d) goItem(d.item.cat, d.item.id);
+        else draw();
+        say(d ? `NEW DEAL: ${d.item.name.toUpperCase()} ${DEAL_OFF}% OFF` : 'NOTHING ELSE LEFT TO SELL', d ? 'good' : 'info');
+      };
+      if (ads.portal !== 'none' && adsLeft(save, 'deal', day) > 0 && ads.rewardedAvailable) {
+        busy = 'dealad';
+        const watched = await ads.rewarded();
+        busy = '';
+        if (watched && useAd(save, 'deal', localDay())) moved();
+        else say('THE AD DID NOT FINISH, SO THE DEAL STAYS', 'info');
+        return;
+      }
+      confirmGems(scr.root, {
+        title: 'A NEW DEAL TODAY?', text: `ANOTHER LOOK AT ${DEAL_OFF}% OFF`, price: GEM_PRICES.dealRefresh, have: gems(save), yes: 'NEW DEAL', getGems: getGems(),
+        free: 'THE DEAL CHANGES BY ITSELF EVERY DAY',
+        onYes: () => {
+          if (spendGems(save, GEM_PRICES.dealRefresh, 'dealRefresh')) moved();
+        },
+      });
+    },
+    // A gem pack, the Starter Pack, NO ADS, the PRO bundle: the store takes the payment and the grant listener (above) does the rest.
     iap: async (el: HTMLElement) => {
       const id = el.dataset.id;
       if (!id || busy) return;
@@ -1259,7 +1578,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       // (A paid purchase was drawn by the grant listener already, with the wallet running up.)
       if (r !== 'ok') draw();
       if (r === 'cancelled') say('NO PROBLEM. NOTHING WAS CHARGED', 'info');
-      else if (r === 'pending') say('WAITING FOR THE STORE. YOUR COINS ARRIVE WHEN IT CONFIRMS', 'info');
+      else if (r === 'pending') say('WAITING FOR THE STORE. IT ARRIVES WHEN THE STORE CONFIRMS', 'info');
       else if (r === 'failed') say('THAT DID NOT GO THROUGH. TRY AGAIN IN A MOMENT', 'bad');
     },
     restore: async () => {
@@ -1328,6 +1647,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
 /** One line for what a purchase handed over: "+2,000 COINS AND THE GOLD BALL LOOK", "NO ADS IS ON". */
 function grantText(g: IapGrant): string {
   const things: string[] = [];
+  if (g.gems) things.push(`+${fmt(g.gems)} GEMS`);
   if (g.coins) things.push(`+${fmt(g.coins)} COINS`);
   for (const key of g.items) {
     const [cat, id] = key.split(':') as [ShopCat, string];
@@ -1338,7 +1658,7 @@ function grantText(g: IapGrant): string {
   if (g.pass) things.push('THE CLUB PASS IS ON: CLAIM YOUR TIERS IN SEASON');
   if (g.doubler) things.push('EVERY MATCH NOW PAYS DOUBLE');
   if (g.firstBonus) things.push('FIRST BUY DOUBLED');
-  return things.length ? things.join(' AND ') : 'THANK YOU';
+  return things.length ? things.join(', ') : 'THANK YOU';
 }
 
 function lastName(name: string): string {

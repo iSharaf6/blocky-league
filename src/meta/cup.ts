@@ -33,10 +33,13 @@ export const TROPHY_PRIZE = 1000;
  * 1,040) and 1,530 in the Elite League (2,640). Each tie also pays the usual match fee (career.ts cupTieReward).
  */
 export const CUP_DIV_SCALE = [0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4] as const;
-/** League matchdays played before each round is due: the QF after matchday 2, the SF after 4, the final after 6 (the 7th settles the league). */
-export const CUP_AFTER = [2, 4, 6] as const;
+/**
+ * League matchdays played before each round is due, spread over the home and away season (14 matchdays): the QF after
+ * matchday 4, the SF after 8, the final after 12 (the last two settle the league).
+ */
+export const CUP_AFTER = [4, 8, 12] as const;
 /** A season that meets the cup part-way (a save from before it) still gets one while it fits: up to this many matchdays played. */
-export const CUP_JOIN_BY = 4;
+export const CUP_JOIN_BY = 8;
 /** Where the five guests come from, in divisions from yours (clamped to the ladder): two up, one up twice, one down, two down. */
 const GUEST_STEPS = [-2, -1, -1, 1, 2] as const;
 /** League rivals in the draw (the other five entrants are the guests). */

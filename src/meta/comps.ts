@@ -67,10 +67,10 @@ export interface CompOutcome {
 export const COMP_NAMES: Record<CompKind, string> = { continental: 'CONTINENTAL CUP', world: 'WORLD CLUB CUP' };
 export const COMP_SHORT: Record<CompKind, string> = { continental: 'CONT', world: 'WORLD' };
 export const STAGE_NAMES: Record<CompStage, string> = { group: 'GROUP', sf: 'SEMI FINAL', final: 'FINAL' };
-/** League matchdays played before each Continental group round, the semi finals and the final. */
-export const CONT_GROUP_AFTER = [1, 2, 3] as const;
-export const CONT_SF_AFTER = 5;
-export const CONT_FINAL_AFTER = 6;
+/** League matchdays played before each Continental group round, the semi finals and the final (a 14 matchday season). */
+export const CONT_GROUP_AFTER = [2, 5, 7] as const;
+export const CONT_SF_AFTER = 10;
+export const CONT_FINAL_AFTER = 13;
 /** The World Club Cup opens the season: both rounds before the first league matchday. */
 export const WORLD_AFTER = 0;
 /** Prizes: a group win, a semi final won, the final won (plus the trophy). */
@@ -346,7 +346,7 @@ export function readComp(v: unknown, readClub: (x: unknown) => LeagueClub | null
     if (hg === undefined || ag === undefined || (hg === null) !== (ag === null)) return null;
     let pens: [number, number] | null = null;
     if (Array.isArray(x.pens) && x.pens.length === 2 && isNum(x.pens[0]) && isNum(x.pens[1])) pens = [clampInt(x.pens[0], 0, 99), clampInt(x.pens[1], 0, 99)];
-    fixtures.push({ after: clampInt(isNum(x.after) ? x.after : 0, 0, 7), stage: x.stage, group: clampInt(isNum(x.group) ? x.group : -1, -1, 1), home: x.home, away: x.away, hg, ag, pens });
+    fixtures.push({ after: clampInt(isNum(x.after) ? x.after : 0, 0, 14), stage: x.stage, group: clampInt(isNum(x.group) ? x.group : -1, -1, 1), home: x.home, away: x.away, hg, ag, pens });
   }
   if (!fixtures.length) return null;
   return {

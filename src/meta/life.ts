@@ -18,6 +18,10 @@ import { has } from './ground';
 import { LEGACY_POINTS, LEGEND_APPS, LEGEND_GOALS, addLegacy, hasPerk, induct, milestoneOnce } from './legacy';
 import { playerAge, playerPotential, pinMeta, type MetaPlayer } from './market';
 import { addMoment, storyNews, type FormMark } from './story';
+// The long game (runtime cycles: only ever used inside functions).
+import { SCOUT_NETWORKS } from './gems';
+import { teamMood, togetherness } from './morale';
+import { DIRECTOR_EXTRA, DIRECTOR_OVR, DIRECTOR_STARS, staffLevel } from './staff';
 
 /** A squad player's life with you (missing on old saves: zero, and a founding member). */
 export interface LifePlayer extends MetaPlayer {
@@ -94,7 +98,10 @@ export function morale(form: readonly FormMark[]): Mood {
   return 1;
 }
 
-/** Chemistry of the eleven: the seasons they have played together (STRONG from two). */
+/**
+ * Chemistry of the eleven: the seasons they have played together (STRONG from two), and how settled the eleven is
+ * this season (meta/morale.ts togetherness: an eleven that keeps starting together gets there up to a season sooner).
+ */
 export function chemistry(club: ClubState, season: number): Mood {
   const xi = club.squad.slice(0, 11);
   if (!xi.length) return 0;
@@ -103,18 +110,26 @@ export function chemistry(club: ClubState, season: number): Mood {
     const from = m.joined ?? m.boughtSeason ?? 1;
     return s + Math.max(0, Math.min(3, season - from));
   }, 0) / xi.length;
-  return yrs >= 2 ? 2 : yrs >= 1 ? 1 : 0;
+  const settled = togetherness(club);
+  const score = yrs + (settled >= 0.75 ? 1 : settled >= 0.4 ? 0.5 : 0);
+  return score >= 2 ? 2 : score >= 1 ? 1 : 0;
 }
 
-/** Stat points the whole side gets on the day: +1 for HIGH morale, +1 for STRONG chemistry, +1 at home with the FAN ZONE (at most +2). */
+/**
+ * Stat points the whole side gets on the day: +1 for HIGH morale (the eleven's own, meta/morale.ts), +1 for STRONG
+ * chemistry, +1 at home with the FAN ZONE, +1 after a TEAM TALK (at most +2); LOW morale takes one off.
+ */
 export function matchLift(state: CareerState, home: boolean): number {
   const club = state.club;
   if (!club || !state.season) return 0;
   let n = 0;
-  if (morale(state.story.form) === 2) n++;
+  const mood = teamMood(state);
+  if (mood === 2) n++;
   if (chemistry(club, state.season.number) === 2) n++;
   if (home && has(state.ground, 'fanzone')) n++;
-  return Math.min(2, n);
+  if (state.events?.talk) n++;
+  n = Math.min(2, n);
+  return mood === 0 ? n - 1 : n;
 }
 
 /** The captain: the most appearances for you (then the best player). */
@@ -293,10 +308,12 @@ function youngster(state: CareerState, role: Role, salt: string): LifePlayer {
   const div = season?.division ?? 6;
   const rng = new Rng(hashString(`${state.seed}|academy|${season?.number ?? 0}|${salt}`));
   const names = new Set<string>([...(state.club?.squad ?? []).map((p) => surnameOf(p.name)), ...state.academy.prospects.map((p) => surnameOf(p.name))]);
-  const target = divisionPlayerOverall(div, role) - 12 - rng.int(5);
+  // (The ACADEMY DIRECTOR, meta/staff.ts: prospects arrive a little better, and with a star more from level 2.)
+  const director = staffLevel(state, 'academy');
+  const target = divisionPlayerOverall(div, role) - 12 - rng.int(5) + (DIRECTOR_OVR[director] ?? 0);
   const p = makePlayer(rng, role, target - 6, 0, `y${season?.number ?? 0}${salt}`, names);
   tuneToOverall(p, Math.max(20, target));
-  let pot = 2 + rng.int(3);
+  let pot = 2 + rng.int(3) + (DIRECTOR_STARS[director] ?? 0);
   if (has(state.ground, 'academy')) pot++;
   if (hasPerk(state.legacy, 'scouts')) pot++;
   const m = pinMeta(p, { age: 16 + rng.int(2), potential: Math.min(5, pot), contract: 3 }) as LifePlayer;
@@ -313,13 +330,20 @@ export function academyIntake(state: CareerState): void {
   if (old.length) storyNews(state, `${old.length === 1 ? old[0].name : `${old.length} academy prospects`} left to find a club elsewhere`, 'info');
   state.academy.prospects = [];
   state.academy.season = season.number;
-  const n = INTAKE + (has(state.ground, 'academy') ? 1 : 0);
+  // The SCOUTING NETWORK (meta/gems.ts, mirrored into the career by meta/premium.ts): a stated guarantee, never odds.
+  const network = SCOUT_NETWORKS[(state.staff?.network ?? 0) - 1];
+  const n = INTAKE + (has(state.ground, 'academy') ? 1 : 0) + (DIRECTOR_EXTRA[staffLevel(state, 'academy')] ?? 0) + (network?.extra ?? 0);
   const rng = new Rng(hashString(`${state.seed}|intake|${season.number}`));
   const short = club.squad.filter((p) => p.role === 'GK').length < 2;
   const roles: Role[] = ['DF', 'MF', 'FW', 'MF', 'FW', 'DF'];
   for (let i = 0; i < n; i++) {
     const role: Role = i === 0 && short ? 'GK' : roles[(rng.int(roles.length) + i) % roles.length];
     state.academy.prospects.push(youngster(state, role, `p${i}`));
+  }
+  // The network's promise: the best of the intake has at least its stars, every time.
+  if (network) {
+    const top = state.academy.prospects[bestProspectIndex(state)];
+    if (top && playerPotential(top) < network.minStars) top.potential = network.minStars;
   }
   const best = state.academy.prospects[bestProspectIndex(state)];
   storyNews(state, `Academy intake: ${n} prospects are ready${best ? `, ${best.name} looks special` : ''}`, 'good');
@@ -389,7 +413,7 @@ export function readAcademy(v: unknown, readPlayer: (x: unknown) => PlayerDef | 
   a.season = isNum(v.season) ? Math.max(0, Math.round(v.season)) : 0;
   a.promoted = isNum(v.promoted) ? Math.max(0, Math.round(v.promoted)) : 0;
   if (Array.isArray(v.prospects)) {
-    for (const x of v.prospects.slice(0, 4)) {
+    for (const x of v.prospects.slice(0, 6)) {
       const p = readPlayer(x) as LifePlayer | null;
       if (p) a.prospects.push(p);
     }

@@ -30,9 +30,12 @@ import type { Side } from './types';
  *   with the carrier AUTO_SLIDE_MIN..MAX m off and getting away (moving away or across faster than a standing
  *   reach can follow): a slide (Match.startSlide), aimed where the ball will be, the human's long forgiving one;
  * - every committed press (the lunge / closing run, or the slide) is a 'tackleTry' event (render / HUD);
- * - PRESS (THROUGH held): a goal-side jockey PRESS_GAP m off the ball, facing it, plus pressSteal, an
- *   automatic poke when the carrier's touch leaves the ball exposed and our man is nearer it. Running into
- *   the carrier still tackles on its own (Match.autoTackle), a little less surely.
+ * - every press is answered in words too (the 'tackleCue' event: TACKLE!, TOO FAR, MISTIMED, FROM BEHIND);
+ * - PRESS (THROUGH held, whatever the stick is doing unless it is pulled hard away): he closes the carrier down flat
+ *   out and jockeys goal-side PRESS_GAP m off the ball, facing it, plus pressSteal, an automatic poke when the
+ *   carrier's touch leaves the ball exposed and our man is nearer it; and the nearest team-mate comes to press with
+ *   him (Match.pressHelp, ai.ts pickPresser). Running into the carrier still tackles on its own (Match.autoTackle),
+ *   a little less surely.
  *
  * The AI against the human (vsHuman, by difficulty): how readily it goes in on his dribbler and how often
  * that comes off, how its carriers stand up to his tackles and take his man on, how his skill cuts fare.
@@ -75,14 +78,42 @@ const CLOSE_PULSE = 0.5;
  */
 const SPRINT_PULSE = 0.6;
 /**
- * AUTO SPRINT (touch, Settings > Controls; Pad.autoSprint): the stick pushed this far over (0..1, past the dead zone)
- * sprints without the SPRINT button, and keeps sprinting until it drops under AUTO_SPRINT_OFF (a thumb resting near
- * the edge doesn't flicker between a jog and a sprint). A light push still jogs, with the close control.
+ * AUTO SPRINT (Pad.autoSprint: always on touch, where there is no SPRINT button; Settings > Controls for keys and a
+ * gamepad): the stick pushed this far over (0..1, past the dead zone) sprints, and keeps sprinting until it drops under
+ * AUTO_SPRINT_OFF (a thumb resting near the edge doesn't flicker between a jog and a sprint). Only a light push jogs,
+ * with the close control. (2026-10-04, the owner: "sprinting button shoudlnt exist as players should be sprinting
+ * automatcially". It was 0.7 / 0.58: a thumb resting three quarters of the way out jogged, and the game felt heavy.)
  */
-export const AUTO_SPRINT_ON = 0.7;
-export const AUTO_SPRINT_OFF = 0.58;
+export const AUTO_SPRINT_ON = 0.5;
+export const AUTO_SPRINT_OFF = 0.38;
 /** A 'skill' event is emitted for a cut near a defender at most this often (s). */
 const SKILL_GAP = 1.2;
+
+/**
+ * The straight line (the owner, 2026-10-04: "i been walking in a straight line t opposie goal and i always make it to
+ * keeper and score"). A defender can time a man who never changes his line. While the human's stick holds one line
+ * (within LINE_ARC of where it pointed when the line began) with the ball at a run (over LINE_PACE m/s), the line's
+ * clock runs (AssistState.line); a change of direction, a skill cut, a SKILL move or a new carrier starts it again,
+ * and it runs down twice as fast as it ran up while he stands or walks. From LINE_FROM s of it to LINE_FULL s he is
+ * READ (straightRead: 0..1, times the AI's vsHuman.line by difficulty): the AI's challenge on him goes in for real
+ * (ai.ts press: a duel's tell stops being a bark, up to LINE_TACKLE of a tackle; it commits LINE_PRESS as readily
+ * again), the block stops dropping off him (ai.ts zonalSpot: LINE_ENGAGE_R) and the path assist stops steering him
+ * round the man in his way. A pass, a feint or a turn is all it takes to be unread again.
+ */
+export const LINE_ARC = (18 * Math.PI) / 180;
+export const LINE_PACE = 3;
+export const LINE_FROM = 0.9;
+export const LINE_FULL = 1.9;
+export const LINE_TACKLE = 2;
+export const LINE_PRESS = 1;
+export const LINE_ENGAGE_R = 2.5;
+/**
+ * ... and the told challenge on a man who is read starts from LINE_REACH m further out (a man sprinting straight at
+ * him is on him before a tell begun at 3.8 m is up), with LINE_GAP of the usual wait between two tells left off (the
+ * next man in his way winds up too: skills.ts tellReady).
+ */
+export const LINE_REACH = 2;
+export const LINE_GAP = 0.6;
 
 /** Double-tap SPRINT with the ball: the second press within this (s) knocks it on. */
 export const KNOCK_TAP = 0.35;
@@ -112,7 +143,26 @@ export const AUTO_SLIDE_ACROSS = 3;
 /** How long (s) the tap keeps closing in before it gives up. */
 export const CLOSE_T = 0.8;
 /** Foot-to-ball reach (m) of the assisted standing tackle (the AI's is 1.15): it goes in the moment it's in reach. */
-export const STAND_REACH = 1.9;
+export const STAND_REACH = 2.1;
+/**
+ * The human's standing tackle (2026-10-04, the owner: "the button feels useless when its a standing tackle ... im not
+ * sure if this is relatded to teh players skill level"): in reach and from the front or the side it wins the ball
+ * TACKLE_FRONT of the time, whoever the two players are (their stats move it TACKLE_STAT at the very most, the AI's
+ * level no more than TACKLE_LEVEL of it); through the back of the carrier it loses TACKLE_BEHIND of that (from past
+ * TACKLE_SIDE of "behind": beside him, or just off his shoulder, still counts as facing him), and only from there
+ * (FOUL_BEHIND, the carrier facing away) can a miss be a foul. (Over whole casual matches a tap in reach won 35%.)
+ */
+export const TACKLE_FRONT = 0.92;
+export const TACKLE_BEHIND = 0.5;
+export const TACKLE_SIDE = 0.3;
+export const TACKLE_STAT = 0.12;
+export const TACKLE_LEVEL = 0.3;
+export const FOUL_BEHIND = 0.6;
+/** A human's missed standing tackle: this long (s) before he can go again, keeping this much of his pace (it was 0.6 s, 0.6). */
+export const MISS_COOLDOWN = 0.35;
+export const MISS_PACE = 0.8;
+/** TOO FAR is said at most this often (s). */
+const CUE_GAP = 0.5;
 /** The lunge: at least this pace (m/s) at the ball the moment a close tap lands. */
 const LUNGE_SPEED = 9 * TEMPO;
 /** PRESS auto-steal: the carrier's ball this far (m) from him, and our foot within this of it. */
@@ -128,11 +178,18 @@ export class AssistState {
   carrier = -1;
   lastCut = -9;
   lastSkill = -9;
+  /** The straight line (LINE_ARC): seconds his stick has held one line with the ball at a run, and that line (rad). */
+  line = 0;
+  lineA = 0;
+  /** Match.clock when the line's clock last ran (a gap: he lost it and has it back, so the line starts again). */
+  lineAt = 0;
   /** TACKLE: the press being played out (tap / hold; `born`: Match.clock when pressed), and when the last one was. */
   tackle: { t: number; held: boolean; target: number; player: number; born: number } | null = null;
   lastPress = -9;
   /** AUTO SPRINT is sprinting his man (autoRun: the stick's past AUTO_SPRINT_ON, and not yet back under AUTO_SPRINT_OFF). */
   autoRun = false;
+  /** When TOO FAR was last said (CUE_GAP). */
+  lastCue = -9;
 }
 
 /**
@@ -158,8 +215,19 @@ export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt
   if (st.carrier !== p.idx) {
     st.carrier = p.idx;
     st.hist.length = 0;
+    st.line = 0;
   }
   if (p.state !== 'move') return;
+  // ---- The straight line (straightRead): the clock runs while the stick holds its line at a run.
+  if (m.clock - st.lineAt > 0.2 || m.clock < st.lineAt) st.line = 0;
+  st.lineAt = m.clock;
+  if (stickLen > 0.5 && p.speed() > LINE_PACE) {
+    const a = Math.atan2(pad.mz, pad.mx);
+    if (st.line <= 0 || Math.abs(angleDiff(st.lineA, a)) > LINE_ARC) {
+      st.lineA = a;
+      st.line = dt;
+    } else st.line += dt;
+  } else st.line = Math.max(0, st.line - 2 * dt);
   // (Charging a shot or a pass, or aiming one with PASS / THROUGH down, the stick is aiming: no skill move. With SKILL
   // down it is picking the move: skills.ts, never a cut as well.)
   const busy = pad.shoot || pad.pass || pad.through || !!pad.skill || m.ctl[p.side].passMode !== null;
@@ -266,8 +334,10 @@ function nearestOpponent(m: Match, p: Player): { p: Player; d: number } | null {
 
 /** A defender square in his run within PATH_R m: bend the run up to PATH_BEND round him, to the free side. */
 function pathAssist(m: Match, p: Player, stickLen: number): void {
-  const ux = p.wantX / stickLen;
-  const uz = p.wantZ / stickLen;
+  // (His run's own length: AUTO SPRINT's push is flat out whatever the stick's, Match.applyHuman.)
+  const wl = Math.hypot(p.wantX, p.wantZ) || stickLen;
+  const ux = p.wantX / wl;
+  const uz = p.wantZ / wl;
   let block: Player | null = null;
   let bAlong = Infinity;
   let bLat = 0;
@@ -302,7 +372,8 @@ function pathAssist(m: Match, p: Player, stickLen: number): void {
     if (taken(-side)) return;
     side = -side;
   }
-  const f = clamp((PATH_R + 0.5 - bAlong) / PATH_R, 0.3, 1) * clamp(1.2 - Math.abs(bLat) / PATH_LANE, 0, 1);
+  // (A man who is read, straightRead, isn't steered round the defender in his way: that is his to do.)
+  const f = clamp((PATH_R + 0.5 - bAlong) / PATH_R, 0.3, 1) * clamp(1.2 - Math.abs(bLat) / PATH_LANE, 0, 1) * (1 - straightRead(m, p));
   const bend = side * PATH_BEND * f;
   const c = Math.cos(bend);
   const s = Math.sin(bend);
@@ -368,6 +439,17 @@ export function knockAssist(m: Match, p: Player, ux: number, uz: number): { x: n
   return { x: ux * c - uz * s, z: ux * s + uz * c };
 }
 
+/**
+ * How well the AI reads the human's carrier `c` (0..1): how long he has run one straight line with the ball (LINE_FROM
+ * to LINE_FULL s), times the AI's vsHuman.line. 0 for anyone else, and for a man who has just changed his line.
+ */
+export function straightRead(m: Match, c: Player): number {
+  if (!m.isHumanControlled(c)) return 0;
+  const st = m.ctl[c.side].assist;
+  if (st.carrier !== c.idx || m.ball.owner !== c.idx || st.line <= LINE_FROM) return 0;
+  return clamp((st.line - LINE_FROM) / (LINE_FULL - LINE_FROM), 0, 1) * vsHuman(m.aiSkill(c.side === 0 ? 1 : 0)).line;
+}
+
 // ------------------------------------------------------------------ tackles on the human's carrier
 
 /**
@@ -428,6 +510,11 @@ export interface VsHuman {
    * HUMAN_STRIKE_UNREAD). All of it on EASY and NORMAL, half on HARD, none on LEGEND.
    */
   shotHelp: number;
+  /**
+   * How much of a straight run it reads (straightRead): the share of the read's full effect (a duel that goes in for
+   * real, a block that holds). Lenient on EASY, all of it from NORMAL up.
+   */
+  line: number;
 }
 
 /** The menu's difficulty levels (MatchConfig.difficulty), and vsHuman's value at each (linear between). */
@@ -450,6 +537,7 @@ const VS_HUMAN: Record<keyof VsHuman, number[]> = {
   read: [0.3, 10.5, 12, 15],
   tight: [0, 0.64, 0.68, 0.75],
   shotHelp: [1, 1, 0.5, 0],
+  line: [0.6, 1, 1, 1],
 };
 /** The human's man this near (m) an AI carrier: the carrier keeps it tighter (vsHuman.tight). */
 const TIGHT_R = 3.5;
@@ -462,7 +550,7 @@ export function vsHuman(skill: number): VsHuman {
   const at = (k: keyof VsHuman) => VS_HUMAN[k][i] + (VS_HUMAN[k][i + 1] - VS_HUMAN[k][i]) * f;
   return {
     press: at('press'), tackle: at('tackle'), resist: at('resist'), cut: at('cut'), takeOn: at('takeOn'), beaten: at('beaten'), auto: at('auto'),
-    read: at('read'), tight: at('tight'), shotHelp: at('shotHelp'),
+    read: at('read'), tight: at('tight'), shotHelp: at('shotHelp'), line: at('line'),
   };
 }
 
@@ -472,23 +560,36 @@ export function humanCarrierTackle(skill: number, dribbling: number): number {
 }
 
 /**
- * The human's assisted standing tackle (Match.tryTackle with `assisted`): high from the front or side, lower
- * from behind; `exposed` (the carrier's touch left the ball off his foot) makes it easier. Before carrierGuard.
+ * The human's assisted standing tackle (Match.tryTackle with `assisted`): see TACKLE_FRONT. `behind` 0 (in front of
+ * the carrier, or beside him) .. 1 (straight through his back); `shielded`: his body between the tackler and the ball;
+ * `exposed`: his touch has left the ball off his foot. Before carrierGuard.
  */
 export function standingTackleChance(m: Match, p: Player, c: Player, behind: number, shielded: number, exposed: boolean): number {
-  const edge = (p.stat.defending - c.stat.dribbling) / 100;
-  let k = 0.92 - behind * 0.42 + edge * 0.5 + (exposed ? 0.15 : 0) + (c.sprint ? 0.04 : 0);
-  k *= 1 - shielded * 0.35;
-  // Harder sides' carriers are cuter on the ball (resist); a touch that's left the ball exposed is only half as
-  // well protected (they already keep it tighter under his press: vsHuman.tight).
-  const resist = vsHuman(m.aiSkill(c.side)).resist;
-  k *= exposed ? 1 - (1 - resist) * 0.5 : resist;
-  return clamp(k, 0.2, 0.92);
+  const edge = clamp((p.stat.defending - c.stat.dribbling) / 50, -1, 1);
+  // (Beside him, or a little behind his shoulder, is still "facing him": only the back third of the circle costs.)
+  const back = clamp((behind - TACKLE_SIDE) / (1 - TACKLE_SIDE), 0, 1);
+  let k = TACKLE_FRONT - back * TACKLE_BEHIND + edge * TACKLE_STAT + (exposed ? 0.05 : 0);
+  k *= 1 - shielded * 0.15;
+  // The harder sides' carriers ride a little more of it (vsHuman.resist: 1 on EASY .. 0.42 on LEGEND), never most of it.
+  k *= 1 - TACKLE_LEVEL * (1 - Math.min(1, vsHuman(m.aiSkill(c.side)).resist));
+  return clamp(k, 0.2, 0.95);
 }
 
-/** Foul chance when the assisted standing tackle misses: from the front rarely, through the back of him often. */
+/** Foul chance when the assisted standing tackle misses: only through the back of the man (FOUL_BEHIND). */
 export function standingFoulChance(behind: number, shielded: number): number {
-  return 0.015 + behind * 0.28 + shielded * 0.06;
+  return behind > FOUL_BEHIND ? 0.22 + shielded * 0.1 : 0;
+}
+
+/** The word for a human's missed standing tackle: through the back of him, or simply ridden. */
+export function missCue(behind: number): 'behind' | 'mistimed' {
+  return behind > FOUL_BEHIND ? 'behind' : 'mistimed';
+}
+
+/** TOO FAR, over his man (at most every CUE_GAP s). */
+function tooFar(m: Match, p: Player, st: AssistState): void {
+  if (st.t - st.lastCue < CUE_GAP) return;
+  st.lastCue = st.t;
+  m.events.push({ type: 'tackleCue', by: p.idx, cue: 'far' });
 }
 
 // ------------------------------------------------------------------ the human's TACKLE button
@@ -533,7 +634,7 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
       st.tackle = { t: 0, held: true, target: c.idx, player: p.idx, born: m.clock };
       m.events.push({ type: 'tackleTry', by: p.idx, slide: false });
       if (d < TAP_LUNGE) lunge(p, b.pos.x + b.vel.x * 0.1, b.pos.z + b.vel.z * 0.1);
-    }
+    } else if (d >= TAP_CLOSE && p.state === 'move') tooFar(m, p, st);
   }
   const tk = st.tackle;
   if (!tk) return;
@@ -550,8 +651,9 @@ export function humanTackle(m: Match, p: Player, pad: Pad, shootP: boolean, stic
   const tx = b.pos.x + b.vel.x * 0.15 - p.pos.x;
   const tz = b.pos.z + b.vel.z * 0.15 - p.pos.z;
   const tl = Math.hypot(tx, tz) || 1;
-  // Pulling the stick hard away from it calls the tap off; so does running out of time.
+  // Pulling the stick hard away from it calls the tap off; so does running out of time (TOO FAR: he never got there).
   if ((stickLen > 0.6 && (pad.mx * tx + pad.mz * tz) / (stickLen * tl) < -0.2) || tk.t > CLOSE_T) {
+    if (tk.t > CLOSE_T) tooFar(m, p, st);
     st.tackle = null;
     return;
   }

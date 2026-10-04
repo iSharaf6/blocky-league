@@ -36,7 +36,7 @@ class Element extends EventTarget {
   }
   querySelectorAll(selector: string): Element[] {
     if (selector !== '.tb:not(.tb-power)') return [];
-    return ['pass', 'shoot', 'through', 'sprint'].map((k) => {
+    return ['pass', 'shoot', 'through', 'keeper', 'skill'].map((k) => {
       const el = this.querySelector(`.tb-${k}`);
       el.dataset.k = k;
       return el;
@@ -197,6 +197,37 @@ describe('touch lifecycle', () => {
     expect(input.read().through).toBe(false);
     pointer(top, 'pointerup', 3);
     expect(pressed).toEqual(['through', 'pass', 'pass']);
+    touch.dispose();
+  });
+
+  it('there is no SPRINT button; KEEPER is the pad\'s SKILL while it is held, and hiding it lets go', () => {
+    const input = new Input();
+    const touch = new TouchControls(input);
+    touch.setEnabled(true);
+    const el = touch.root as unknown as Element;
+    expect(el.innerHTML).not.toContain('tb-sprint');
+    expect(el.innerHTML).not.toContain('SPRINT');
+    expect(el.innerHTML).toContain('tb-keeper');
+    const keeper = el.querySelector('.tb-keeper');
+    touch.setContext('defend');
+    touch.setKeeper(true);
+    expect(el.classList.contains('keeper-on')).toBe(true);
+    pointer(keeper, 'pointerdown', 1);
+    expect(input.read().skill).toBe(true);
+    expect(input.read().sprint).toBe(false);
+    pointer(keeper, 'pointerup', 1);
+    expect(input.read().skill).toBe(false);
+    // Held as the ball is won (the button goes): the hold is over.
+    pointer(keeper, 'pointerdown', 2);
+    expect(input.read().skill).toBe(true);
+    touch.setKeeper(false);
+    expect(el.classList.contains('keeper-on')).toBe(false);
+    expect(input.read().skill).toBe(false);
+    // TACKLE lights up while the carrier is in reach.
+    touch.setTackleReady(true);
+    expect(el.classList.contains('tackle-ready')).toBe(true);
+    touch.setTackleReady(false);
+    expect(el.classList.contains('tackle-ready')).toBe(false);
     touch.dispose();
   });
 

@@ -1,19 +1,23 @@
 /**
- * Haptic taps across the game (the owner: "no haptic feedback", then "add haptic feedback pls as much as where feasible
- * and good to make it more engaging and have ablitiy t disable without making haptic feedbackannnoying"). The iPhone /
- * iPad app only: the native 'Haptics' plugin (ios/App/App/GameCenterPlugin.swift: UIImpactFeedbackGenerator light,
- * medium, heavy, rigid, soft; UISelectionFeedbackGenerator; UINotificationFeedbackGenerator's success). On the web and the
- * portals there is nothing to feel, and Settings hides the row.
+ * Haptics across the game (the owner: "no haptic feedback", then "add haptic feedback pls as much as where feasible
+ * and good to make it more engaging and have ablitiy t disable without making haptic feedbackannnoying", then, on his
+ * phone, "i cant fel the vibration in full, i think it can be better"). The iPhone / iPad app only: the native 'Haptics'
+ * plugin (ios/App/App/GameCenterPlugin.swift HapticsPlugin: Core Haptics, with the UIKit generators as the fallback).
+ * On the web and the portals there is nothing to feel, and Settings hides the row.
  *
- * What fires where (HAPTIC_FEEL is how each one feels):
- * - in a match (hapticForEvent, from the match session): his own pass (light) and shot (light, firmer), a timed or perfect
- *   finish (a crisp rigid tap), a tackle his man wins or loses (medium), a skill move that beats a man (medium; a PERFECT
- *   firmer), a goal for his side (the success pattern and a heavy double), one conceded (one soft tap), the woodwork
- *   (medium), a save by his keeper (medium), the half-time whistle (light), full time (a win: the success pattern; else a
- *   light whistle), a shootout won, the camera button (light);
- * - in the menus: a selection tick on the primary buttons only (the green GO buttons and the hub's big cards:
- *   installUiHaptics), and the success pattern for coins bought or claimed, a level up, the daily gift, a season or pass
- *   tier claimed, the cup won, and each card of a pack as it flips (a legend or epic one: the success pattern).
+ * A single transient tap is easy to miss with a thumb on the glass, so the match's contacts are short CONTINUOUS
+ * buzzes (40 to 120 ms: HapticFeel.buzzMs) under the tap, and the big moments are patterns of their own
+ * (HapticFeel.pattern, played whole by the plugin):
+ * - in a match (hapticForEvent, from the match session): his own pass (a firm tap) and shot (a 70 ms buzz), a timed or
+ *   perfect finish (a crisp tap and a short buzz), a tackle his man wins or loses (a 90 ms thud), a skill move that
+ *   beats a man (a tap; a PERFECT a buzz too), a save by his keeper (a 110 ms slap), the woodwork ('post': a sharp
+ *   crack that rings on), a goal for his side ('goal': 0.6 s of rumble rising through four thumps into a heavy double),
+ *   one conceded ('concede': a low sinking rumble), a SUPER SHOT ('super': a wind-up, a slam and its aftershock), the
+ *   half-time and full-time whistles ('whistle': two short blasts and a long one), a win ('win': three rising thumps
+ *   and a long buzz dying away), a substitution's high five ('sub': a quick double tap), the camera button;
+ * - in the menus: a tick on every button and tab pressed (installUiHaptics), and the success pattern for coins bought
+ *   or claimed, a level up, the daily gift, a season or pass tier claimed, the cup won, and each card of a pack as it
+ *   flips (a legend or epic one: the success pattern).
  *
  * VIBRATION (Settings > Controls, the app only): OFF, LIGHT (only the big moments: goals, wins, level ups, purchases and
  * rewards; HapticFeel.big) or FULL (the default). Never annoying (HapticGate): at most one tap every GAP_MS (a stronger one
@@ -31,14 +35,26 @@ export type HapticKind =
   | 'tap' | 'camera' | 'pass' | 'shot' | 'finish' | 'whistle' | 'skill' | 'perfect' | 'tackle' | 'save' | 'post' | 'reveal'
   | 'concede' | 'goal' | 'win' | 'success'
   /** HYPE (sim/hype.ts): his side's SUPER SHOT struck (a heavy double); a live goal done (game/funLayer.ts). */
-  | 'super' | 'bounty';
+  | 'super' | 'bounty'
+  /** A substitution's high five on the touchline (game/matchSession.ts). */
+  | 'sub';
+
+/** The patterns the plugin plays whole (HapticsPlugin.pattern): each a different shape, so they are told apart by feel. */
+export type HapticPattern = 'goal' | 'win' | 'super' | 'post' | 'whistle' | 'sub' | 'concede';
 
 type Style = 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' | 'selection';
 
-/** How one feels: the generator, its intensity (0..1), a notification first, a repeat (the goal's double). */
+/**
+ * How one feels: the tap's style and strength (0..1), a continuous buzz under it (`buzzMs`), or a whole pattern of
+ * its own (`pattern`). `notify` and `count` are what an older build of the app (no patterns) plays instead.
+ */
 export interface HapticFeel {
   style: Style;
   intensity: number;
+  /** A continuous buzz this long (ms, 40..120) starting with the tap: what makes a contact unmistakable. */
+  buzzMs?: number;
+  /** One of the plugin's own patterns, played instead of the tap. */
+  pattern?: HapticPattern;
   notify?: 'success';
   /** Impacts in a row (the goal's heavy double), `apart` ms apart. */
   count?: number;
@@ -52,24 +68,25 @@ export interface HapticFeel {
 }
 
 export const HAPTIC_FEEL: Readonly<Record<HapticKind, HapticFeel>> = {
-  tap: { style: 'selection', intensity: 1, gap: 120, rank: 0, big: false },
-  camera: { style: 'light', intensity: 0.5, gap: 200, rank: 0, big: false },
-  pass: { style: 'light', intensity: 0.55, gap: 140, rank: 0, big: false },
-  shot: { style: 'light', intensity: 1, gap: 140, rank: 1, big: false },
-  finish: { style: 'rigid', intensity: 0.95, gap: 200, rank: 2, big: false },
-  whistle: { style: 'light', intensity: 0.7, gap: 400, rank: 0, big: false },
-  skill: { style: 'medium', intensity: 0.6, gap: 250, rank: 1, big: false },
-  perfect: { style: 'medium', intensity: 0.9, gap: 250, rank: 2, big: false },
-  tackle: { style: 'medium', intensity: 0.85, gap: 250, rank: 2, big: false },
-  save: { style: 'medium', intensity: 0.7, gap: 300, rank: 2, big: false },
-  post: { style: 'medium', intensity: 1, gap: 300, rank: 2, big: false },
-  reveal: { style: 'medium', intensity: 0.8, gap: 150, rank: 1, big: false },
-  concede: { style: 'soft', intensity: 0.6, gap: 1000, rank: 2, big: true },
-  goal: { style: 'heavy', intensity: 1, notify: 'success', count: 2, apart: 110, gap: 1500, rank: 3, big: true },
-  win: { style: 'heavy', intensity: 0.8, notify: 'success', gap: 1500, rank: 3, big: true },
-  success: { style: 'medium', intensity: 0.7, notify: 'success', gap: 400, rank: 3, big: true },
-  super: { style: 'heavy', intensity: 1, count: 2, apart: 90, gap: 800, rank: 3, big: true },
-  bounty: { style: 'medium', intensity: 0.75, notify: 'success', gap: 600, rank: 2, big: false },
+  tap: { style: 'selection', intensity: 1, gap: 60, rank: 0, big: false },
+  camera: { style: 'light', intensity: 0.8, gap: 200, rank: 0, big: false },
+  pass: { style: 'light', intensity: 0.85, gap: 140, rank: 0, big: false },
+  shot: { style: 'medium', intensity: 1, buzzMs: 70, gap: 140, rank: 1, big: false },
+  finish: { style: 'rigid', intensity: 1, buzzMs: 50, gap: 200, rank: 2, big: false },
+  whistle: { style: 'light', intensity: 0.9, pattern: 'whistle', gap: 400, rank: 0, big: false },
+  skill: { style: 'medium', intensity: 0.85, gap: 250, rank: 1, big: false },
+  perfect: { style: 'rigid', intensity: 1, buzzMs: 60, gap: 250, rank: 2, big: false },
+  tackle: { style: 'heavy', intensity: 1, buzzMs: 90, gap: 250, rank: 2, big: false },
+  save: { style: 'heavy', intensity: 0.95, buzzMs: 110, gap: 300, rank: 2, big: false },
+  post: { style: 'rigid', intensity: 1, pattern: 'post', gap: 300, rank: 2, big: false },
+  reveal: { style: 'medium', intensity: 0.95, buzzMs: 40, gap: 150, rank: 1, big: false },
+  concede: { style: 'soft', intensity: 0.8, pattern: 'concede', gap: 1000, rank: 2, big: true },
+  goal: { style: 'heavy', intensity: 1, pattern: 'goal', notify: 'success', count: 2, apart: 110, gap: 1500, rank: 3, big: true },
+  win: { style: 'heavy', intensity: 1, pattern: 'win', notify: 'success', gap: 1500, rank: 3, big: true },
+  success: { style: 'medium', intensity: 0.9, notify: 'success', gap: 400, rank: 3, big: true },
+  super: { style: 'heavy', intensity: 1, pattern: 'super', count: 2, apart: 90, gap: 800, rank: 3, big: true },
+  bounty: { style: 'medium', intensity: 0.9, notify: 'success', gap: 600, rank: 2, big: false },
+  sub: { style: 'medium', intensity: 0.8, pattern: 'sub', gap: 500, rank: 1, big: false },
 };
 
 /** Any two taps at least GAP_MS apart (unless the second ranks higher), heavy ones HEAVY_GAP_MS, and MAX_PER_S a second. */
@@ -77,7 +94,8 @@ export const GAP_MS = 80;
 export const HEAVY_GAP_MS = 600;
 export const MAX_PER_S = 6;
 
-const heavy = (f: HapticFeel) => f.style === 'heavy' || !!f.notify;
+/** The ones kept HEAVY_GAP_MS apart: the long patterns and the notifications (a tackle's thud is not one of them). */
+const heavy = (f: HapticFeel) => (f.style === 'heavy' && !f.buzzMs) || !!f.notify || f.pattern === 'super';
 
 /** The throttle (pure: the clock is passed in, for tests). */
 export class HapticGate {
@@ -145,7 +163,10 @@ export function hapticForEvent(e: MatchEvent, m: Match, side: Side, ownerBefore:
 }
 
 interface HapticsNative {
-  impact(o: { style: Style; intensity: number; count?: number; apart?: number }): Promise<void>;
+  /** `duration` (ms): a continuous buzz that long under the tap. */
+  impact(o: { style: Style; intensity: number; count?: number; apart?: number; duration?: number }): Promise<void>;
+  /** One of the plugin's own patterns (rejects on a build of the app from before they existed). */
+  pattern(o: { name: HapticPattern }): Promise<void>;
   selection(): Promise<void>;
   notify(o: { type: 'success' | 'warning' | 'error' }): Promise<void>;
   prepare(): Promise<void>;
@@ -202,19 +223,33 @@ export function buzz(kind: HapticKind): void {
   void plugin().then((p) => {
     if (!p) return;
     // (Called straight off the registration, never returned through a promise.)
-    if (f.notify) p.h.notify({ type: f.notify }).catch(() => undefined);
-    if (f.style === 'selection') p.h.selection().catch(() => undefined);
-    else p.h.impact({ style: f.style, intensity: f.intensity, count: f.count, apart: f.apart }).catch(() => undefined);
+    const taps = (): void => {
+      if (f.notify) p.h.notify({ type: f.notify }).catch(() => undefined);
+      if (f.style === 'selection') p.h.selection().catch(() => undefined);
+      else p.h.impact({ style: f.style, intensity: f.intensity, count: f.count, apart: f.apart, duration: f.buzzMs }).catch(() => undefined);
+    };
+    // A pattern of its own; an app built before the patterns plays the taps it always did.
+    if (f.pattern) p.h.pattern({ name: f.pattern }).catch(taps);
+    else taps();
   });
 }
 
+/** What ticks in the menus: anything that is a button, a tab or a tile. */
+const UI_TICK = 'button, [role="button"], [role="tab"], .btn, .tile, summary, select, input[type="checkbox"], input[type="range"]';
+
 /**
- * Menus: a selection tick when a primary button is pressed (the green GO buttons, the hub's big cards), never on every
- * tap. One listener on the document, for the life of the page (main.ts).
+ * Menus: a tick as a control is pressed (the owner couldn't feel the app "in full": only the green buttons used to
+ * tick). Every button, tab and tile, on the press itself; never the match's own touch controls (the match's events are
+ * felt instead: a pass, a shot), and the gate keeps a flurry of taps from buzzing. One listener on the document, for
+ * the life of the page (main.ts).
  */
 export function installUiHaptics(doc: Document): void {
   doc.addEventListener('pointerdown', (e) => {
     const t = e.target as Element | null;
-    if (t && typeof t.closest === 'function' && t.closest('.btn-go, .hub-hero')) buzz('tap');
+    if (!t || typeof t.closest !== 'function') return;
+    if (t.closest('.touch') || !t.closest(UI_TICK)) return;
+    const el = t.closest(UI_TICK) as HTMLButtonElement | null;
+    if (el && 'disabled' in el && el.disabled) return;
+    buzz('tap');
   }, { passive: true, capture: true });
 }

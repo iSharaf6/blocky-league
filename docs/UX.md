@@ -60,6 +60,12 @@ Every chore gets a one-tap helper:
 - rewards: CLAIM ALL
 - the hub: PLAY NEXT, and NEXT GOAL under the hero (one line, a tap goes there: meta/goal.ts)
 - the academy: PROMOTE BEST (ROAD TO GLORY > CLUB)
+- the long season: SIM (an ordinary league match settled in one tap, beside PLAY), and the match length chip on
+  the match card
+- morale and injuries: ROTATE (the one swap that helps most) and TEAM TALK, beside AUTO PICK (which leaves the
+  injured out)
+- player development: ALL DEFENDERS (one training focus for a whole position) and AUTO MENTOR (MY CLUB > TRAIN > GROW)
+- decisions: event cards come one at a time with two or three answers, each saying what it does; never a spreadsheet
 - the ground: the best part to build next starts selected (MY CLUB > STADIUM), so BUILD is one tap
 
 ## 6. Less to read

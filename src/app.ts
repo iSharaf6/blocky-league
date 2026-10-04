@@ -87,6 +87,13 @@ export interface MatchRequest {
   onQuit?: () => void;
   /** What quitting costs, shown on the quit confirmation (default: the match doesn't count, no coins). */
   quitNote?: string;
+  /**
+   * An important match that can be played again if it is lost (economy v3): a cup tie, a final, a title or promotion
+   * decider. What it is, as the offer says it ("BLOCKY CUP SEMI FINAL", "TITLE DECIDER"). main.ts offers ONE replay
+   * before the result counts, for GEM_PRICES.replayMatch gems or a rewarded ad once a day; the replay itself carries
+   * no `decider`, so a match is never replayed twice.
+   */
+  decider?: string;
 }
 
 /** Shared services the menus and meta screens use. */
