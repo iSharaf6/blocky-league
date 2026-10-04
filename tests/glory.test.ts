@@ -1296,6 +1296,36 @@ describe('the gem shortcuts (meta/gems.ts owns the wallet and the prices)', () =
     expect(g(p).inj).toBe(2);
     expect(w.coins).toBe(1000 - c2.choices[1].coins!);
   });
+
+  it('never charges coins or gems from an injury offer after the player has recovered', () => {
+    const st = seasoned(97);
+    const p = st.club!.squad[12];
+    const wallet = { coins: 1000 };
+    const s = save(200);
+    for (const choice of [1, 2]) {
+      g(p).inj = 3;
+      injuryCard(st, p, 3, false, GEM_PRICES.healPlayer);
+      const card = pendingEvent(st)!;
+      // The offer was displayed, then treatment elsewhere or natural recovery made it obsolete.
+      g(p).inj = 0;
+      const spend = vi.fn((n: number, why: string) => spendGems(s, n, why));
+      expect(resolveEvent(st, wallet, card.id, choice, spend)).toEqual({ ok: false, reason: 'not-found' });
+      expect(spend).not.toHaveBeenCalled();
+      expect(wallet.coins).toBe(1000);
+      expect(gems(s)).toBe(200);
+      expect(pendingEvent(st)).toBeNull();
+    }
+    // Opening the hub skips the stale injury and retains another player's still-useful offer.
+    const other = st.club!.squad[13];
+    g(p).inj = 3;
+    injuryCard(st, p, 3, false, GEM_PRICES.healPlayer);
+    g(other).inj = 2;
+    injuryCard(st, other, 2, false, GEM_PRICES.healPlayer);
+    expect(healNow(st, s, p.id)).toBe(true);
+    expect(pendingEvent(st)?.who).toEqual([other.id]);
+    st.club!.squad = st.club!.squad.filter((q) => q.id !== other.id);
+    expect(pendingEvent(st)).toBeNull();
+  });
 });
 
 describe('the save', () => {

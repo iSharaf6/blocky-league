@@ -149,6 +149,10 @@ export function playEvents(app: AppContext, root: HTMLElement, st: CareerState, 
     const go = (spend?: (n: number, why: string) => boolean) => {
       const r = resolveEvent(st, app.save, c.id, i, spend);
       if (!r.ok) {
+        if (r.reason === 'not-found') {
+          next();
+          return;
+        }
         show(c);
         return;
       }

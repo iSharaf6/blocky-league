@@ -65,7 +65,7 @@ confirm sheet (ui/gemUi.ts `confirmGems`) that shows the price, the wallet and t
 | Finish a build now | 20 a matchday left | $0.20 to $0.40 | Play the matchdays; one rewarded ad a day takes a matchday off |
 | Heal a player now | 30 | $0.30 | He is back by himself after his matchdays out |
 | Replay a lost decider | 50 | $0.50 | A rewarded ad replays one a day; the season carries on either way |
-| A new deal today | 15 | $0.15 | A rewarded ad once a day; the deal changes by itself daily |
+| A new deal today, with the exact next item and discounted coin price shown before charging | 15 | $0.15 | A rewarded ad once a day; the deal changes by itself daily |
 | Scouting Network 1, 2, 3 | 200, 500, 1,000 | $2, $5, $10 | Gems earned by playing; the academy brings prospects every season without it |
 | Club Pass (this month) | 600 | $3.99 in the store is cheaper | Gems earned by playing; the free track pays every tier anyway |
 | Coins | 50 for 700, 150 for 2,400, 400 for 7,500, 1,000 for 22,000 | 14 to 22 coins a gem | Play |
@@ -160,7 +160,7 @@ two Scouting Networks.
 | Atmosphere (NEW) | Up to +12% of a home match, and a mascot's 20 to 60 a home match | Capped: see below |
 | Season track | About 3,900 a month free, 5,560 more with the pass | |
 | Career | Prizes, the board's objectives, the megastore, the big screen | See below |
-| Gems | 14 to 22 coins a gem | The only way money becomes coins |
+| Gems | 14 to 22 coins a gem | Currency packs convert to coins here; the one-time Starter Pack also includes 2,000 coins |
 
 **Coin sinks:** the looks catalogue (about 187,000), the ground (about 35,600), players in the transfer market,
 training, and what the career adds (staff, facilities). A keen free player still owns everything eventually (about
@@ -397,9 +397,11 @@ tab still swaps gems earned by playing.
     never sold. Neither money, gems nor coins can buy a random card.
   - Every gem sink is a stated outcome. The Scouting Network is a guarantee ("every intake has a 5 star prospect"),
     never a chance; a test runs the academy against it.
-  - Apple rates loot boxes 9+, PEGI gives paid random items a 16 by default from June 2026, Brazil bans them for
-    under-18s, and the FTC fined HoYoverse $20M in 2025. Blocky League stays 4+ with no loot-box label.
+  - A paid deal refresh shows the exact next look and its discounted coin price before spending; it buys a disclosed
+    discount, not an unknown draw. Store questionnaires must describe the actual mechanics; no age rating is guaranteed.
   - A specific player is still bought directly with coins in the transfer market. That is a known, chosen item.
+  - Injury offers disappear once the player is fit or has left. Coins or gems are never charged from an obsolete
+    treatment card. One-time gem rewards retain their payout receipts across long careers and reloads.
 - **Honest sets and shelves.** A set's price is its missing parts at a fixed 40% off, shown against what they cost
   alone; every part is on sale on its own; the FEATURED shelf changes on Mondays and shows no countdown.
 - **No fake scarcity.** The deal rotates daily and every look comes round again. The welcome offer has no timer and

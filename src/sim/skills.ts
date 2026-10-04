@@ -690,9 +690,11 @@ function trySkill(m: Match, p: Player, pad: Pad, st: SkillState, force?: SkillMo
   // (A flick, a burst and a flick-on go the way the stick points when it's pushed: the run can still be coming round to it.)
   const fx = pushed ? pad.mx / sl : ux;
   const fz = pushed ? pad.mz / sl : uz;
+  let slideUnder: Player | null = null;
   if (kind === 'rainbow') {
     // The stick along his run reads what is in front of him: a man sliding in, a man standing off, or open grass.
-    if (laneMan(m, p, fx, fz, SOMBRERO_R, FLICK_LANE, true)) kind = 'sombrero';
+    slideUnder = laneMan(m, p, fx, fz, SOMBRERO_R, FLICK_LANE, true);
+    if (slideUnder) kind = 'sombrero';
     else if (!laneMan(m, p, fx, fz, FLICK_SEEK, FLICK_LANE)) kind = 'boost';
   }
   // The side a FAKE SHOT is dragged to: the stick's when it's pushed across him, else away from the nearest man.
@@ -709,7 +711,7 @@ function trySkill(m: Match, p: Player, pad: Pad, st: SkillState, force?: SkillMo
   const mv: SkillMove = {
     kind, player: p.idx, t: 0, dur: SKILL_T[kind], ux, uz, lx: -uz * turn, lz: ux * turn,
     bx: pushed ? pad.mx / sl : -ux, bz: pushed ? pad.mz / sl : -uz, entry: sp, grade: 'show',
-    flicked: false, landX: 0, landZ: 0, chaseEnd: 0, through: kind === 'nutmeg' && sq ? sq.idx : -1, round: 1,
+    flicked: false, landX: 0, landZ: 0, chaseEnd: 0, through: kind === 'nutmeg' && sq ? sq.idx : slideUnder?.idx ?? -1, round: 1,
     fx: own ? fx : ux, fz: own ? fz : uz, landed: false, charged: false,
   };
   if (kind === 'nutmeg' && sq) mv.round = -Math.sign(-uz * (sq.pos.x - p.pos.x) + ux * (sq.pos.z - p.pos.z)) || 1;
@@ -803,12 +805,15 @@ function gradeMove(m: Match, p: Player, st: SkillState, since: number): SkillGra
     }
     if (d > SHOW_R) continue;
     near = true;
-    if (d > GOOD_R) continue;
+    const mv = st.move!;
+    // The selected slide may start farther out than the usual feint radius. A charged sombrero already read
+    // that slide: keep it under the flick from the press, before the sliding boot reaches the ball.
+    const under = mv.kind === 'sombrero' && o.idx === mv.through && o.state === 'slide' && mv.charged;
+    if (d > GOOD_R && !under) continue;
     // Late (he's already in: committed, or on the floor): likelier than a man still jockeying.
     const edge = (p.stat.dribbling - o.stat.defending) / 100;
     const shift = vsHuman(m.aiSkill(o.side)).cut;
     const late = o.commitT > 0 || o.state === 'slide';
-    const mv = st.move!;
     const fit = moveFit(m, p, mv, o);
     // (A CHARGED move fools him more often: CHARGED_WIN, up to CHARGED_TOP more.)
     const up = mv.charged ? CHARGED_WIN : 0;
@@ -816,7 +821,6 @@ function gradeMove(m: Match, p: Player, st: SkillState, since: number): SkillGra
     const pWin = (late ? clamp(0.5 + up + edge * 0.6 + shift + fit, 0.3, 0.8 + top) : clamp(0.3 + up + edge * 0.6 + shift + fit, 0.12, 0.6 + top)) *
       (mv.charged ? 1 : spam);
     // (A sombrero over the man on the grass: his slide goes under it, whatever the roll says.)
-    const under = mv.kind === 'sombrero' && o.state === 'slide' && mv.charged;
     if (m.rng.chance(pWin) || under) {
       wrongFoot(m, p, o);
       if (o.state === 'slide') o.slideHit = true;
@@ -1036,6 +1040,11 @@ function exitBurst(p: Player, pad: Pad, mv: SkillMove): void {
   p.vel.x = dx * v;
   p.vel.z = dz * v;
   p.burstT = Math.max(p.burstT, EXIT_BURST[mv.grade]);
+  // The movement step follows this one: carry the exit's direction and pace through it instead of immediately
+  // braking the new velocity back down to the spin/feint's slow run.
+  runAt(p, dx, dz, 99);
+  p.quickLegs = true;
+  p.faceTarget = Math.atan2(dz, dx);
 }
 
 const smooth = (x: number) => {

@@ -122,8 +122,8 @@ export function applyLineup(f: Float32Array, order: readonly number[], k: number
 export const SUB_S = 2.5;
 export const SUB_TOTAL_S = 6;
 export const SUB_MIN_S = 1;
-/** The most changes shown in one stoppage (the rest get the event flag only). */
-export const SUB_MAX_SHOWN = 6;
+/** Both teams can make five changes: every substitution gets its own shot, even when they share a stoppage. */
+export const SUB_MAX_SHOWN = 10;
 
 /** Seconds each of `n` changes gets when they play back to back. */
 export function subBeatS(n: number): number {

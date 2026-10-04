@@ -516,7 +516,9 @@ export class Player {
   /** Flat-out pace: tired legs lose a lot of it (never below a jog); the human's man (`agile`) far less: HUMAN_PACE_FLOOR. */
   sprintPace(agile = false): number {
     const floor = agile ? HUMAN_PACE_FLOOR : 0.7;
-    return Math.max(this.jogPace() * 1.04, this.top * (floor + (1 - floor) * this.stamina));
+    // Preserve the AI's original float64 calculation (1 - 0.7 is not bit-identical to 0.3).
+    const gain = agile ? 1 - HUMAN_PACE_FLOOR : 0.3;
+    return Math.max(this.jogPace() * 1.04, this.top * (floor + gain * this.stamina));
   }
 
   private locomote(dt: number, dribbling: boolean, agile = false): void {

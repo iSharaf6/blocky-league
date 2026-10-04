@@ -5,17 +5,18 @@ import { botSeries, fmtBot } from './humanBot';
 /**
  * Difficulty against a realistic scripted human (tests/humanBot.ts: taps PASS at open teammates, cuts past
  * defenders who close, shoots from inside ~18 m with a clear lane, taps TACKLE near the carrier, holds PRESS)
- * over whole 2x2-minute matches between equal-rated sides. The menu's levels are MatchConfig.difficulty
+ * over whole 2x2-minute matches between equal-rated sides, with the AI coach enabled as in the game itself.
+ * The menu's levels are MatchConfig.difficulty
  * EASY 0.6 · NORMAL 1.8 · HARD 3 · LEGEND 4; the AI's play against the human scales by dribble.ts vsHuman.
- * (Eight matches at Easy and Legend keep the suite quick; Normal uses forty so the dribble and tackle rates
- * are not decided by a few encounters in one match. The full measurement is N=40-60 a level:
- * round 9 targets the bot at NORMAL W 50-60% / L 15-25% with goals at both ends, HARD ~40/30/30, LEGEND hard.)
+ * Eight matches at Easy and Legend keep the suite quick; Normal uses forty so the dribble and tackle rates
+ * are not decided by a few encounters in one match. These checks verify difficulty ordering and useful controls;
+ * the scripted bot's precise defender chase cannot establish human win rates, enjoyment or retention.
  */
 describe('difficulty against a realistic human', () => {
   it('EASY is clearly winnable, LEGEND clearly harder, and the dribble / tackle assists work over whole matches', () => {
-    const easy = botSeries(8, 0.6);
-    const normal = botSeries(40, 1.8);
-    const legend = botSeries(8, 4);
+    const easy = botSeries(8, 0.6, { coach: true });
+    const normal = botSeries(40, 1.8, { coach: true });
+    const legend = botSeries(8, 4, { coach: true });
     // eslint-disable-next-line no-console
     console.log([easy, normal, legend].map(fmtBot).join('\n'));
     expect(easy.w).toBeGreaterThan(easy.l);

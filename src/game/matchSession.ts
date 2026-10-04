@@ -512,6 +512,7 @@ export class MatchSession {
   private skillPerfects = 0;
   /** The ball's owner and pace before the last sim step (who was tackled; was a strike first-time; how hard it hit the post). */
   private ownerBefore = -1;
+  private activeBefore = -1;
   private ballSpeedBefore = 0;
   /** The ball's trail look since the last kick (see juice.ts kickTrailStyle), and the recent kicks' for replays. */
   private trailStyle: TrailStyle = 'strike';
@@ -875,7 +876,6 @@ export class MatchSession {
   /** The changes waiting, back to back: each gets subBeatS of the touchline shot. */
   private startSubCut(): void {
     const list = this.subQueue.splice(0, SUB_MAX_SHOWN);
-    this.subQueue.length = 0;
     this.subCut = { list, i: 0, t: 0, per: subBeatS(list.length), age: 0, met: false };
     this.sceneKeep = [];
     this.sceneClear = SUB_CLEAR;
@@ -1166,8 +1166,18 @@ export class MatchSession {
   /** Make a substitution (human manager). Returns false if not allowed. */
   substitute(side: Side, slot: number, benchIdx: number): boolean {
     const m = this.match;
+    const off = m.teamPlayers(side)[slot]?.def;
     const ok = m.substitute(side, slot, benchIdx);
-    if (ok) this.view.replacePlayer(m.teamPlayers(side)[slot].idx, m.teamPlayers(side)[slot].def, this.opt.kits[side]);
+    if (ok) {
+      const on = m.teamPlayers(side)[slot];
+      // Snapshot each manager change now. Two changes in the same slot before the next sim step would otherwise
+      // both see only its final occupant when the queued events are drained.
+      if (off && !this.demo && !this.driver && !this.moment && this.hud) {
+        this.subQueue.push({ side, off, on: on.def, idx: on.idx, keeper: on.isKeeper });
+      }
+      this.wearing[on.idx] = on.def;
+      this.view.replacePlayer(on.idx, on.def, this.opt.kits[side]);
+    }
     return ok;
   }
 
@@ -1376,6 +1386,8 @@ export class MatchSession {
         } else pad = this.buildPad();
         this.prev.set(this.cur);
         this.ownerBefore = m.ball.owner;
+        const hs = m.cfg.humanSide;
+        this.activeBefore = hs === 0 || hs === 1 ? m.activeOf(hs) : -1;
         this.ballSpeedBefore = Math.hypot(m.ball.vel.x, m.ball.vel.y, m.ball.vel.z);
         const livePrev = m.phase === 'play';
         m.step(DT, pad);
@@ -2250,7 +2262,7 @@ export class MatchSession {
     for (const e of events) {
       // Haptics (platform/haptics.ts): his pass and shot, a tackle won or lost, a skill that beat a man, a goal, the
       // woodwork, the whistle; throttled there.
-      const hk = hs === 0 || hs === 1 ? hapticForEvent(e, m, hs, this.ownerBefore) : null;
+      const hk = hs === 0 || hs === 1 ? hapticForEvent(e, m, hs, this.ownerBefore, this.activeBefore) : null;
       if (hk && !this.demo) buzz(hk);
       // Every event goes to the commentary ticker too (a moment's own ending has no half-time / full-time line:
       // the verdict card is that beat).

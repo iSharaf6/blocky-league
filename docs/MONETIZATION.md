@@ -1,4 +1,4 @@
-# Monetisation: coins you can buy in the apps, coins you can earn on the web portals
+# Monetisation: gem packs in the apps, progress earned everywhere
 
 _Written 3 October 2026. The code and tests below were run. Every console click path, fee and price-point figure was written from the stores' documentation, not from a live console (no accounts exist yet), so check each one as you go._
 
@@ -59,7 +59,7 @@ Ids are final: neither store lets you rename or reuse one. They are lower case w
 
 itch and the plain website have no `CdvPurchase`, so they are `none` too.
 
-**NO ADS is only shown where it means something.** The card appears when the build can show interstitials (`ads.showsInterstitials`), when the player already owns it, or on the dev store. The native app has no ad network yet, so the card stays hidden there until you add one (PUBLISHING.md section 9: AdMob). **Do not create `bl.noads` in the consoles until the app really shows ads.**
+**NO ADS is only shown where it means something.** The card appears when the build can show interstitials (`ads.showsInterstitials`), when the player already owns it, or on the dev store. The native app has an AdMob provider; test ids are configured until production ids are supplied. Verify interstitial delivery on the release device before listing NO ADS in the consoles.
 
 ---
 
@@ -85,11 +85,9 @@ The rate improves with every step (a test enforces it), and even the biggest pac
 
 **The Starter Pack is deliberately generous:** 2,000 coins, 150 gems and a Gold ball that costs 2,500 in the shop (it is also free at level 12) for US$1.99. It is a one-time first-purchase hook, offered once after the first win with no timer. **The PRO bundle** is the anchor: NO ADS (US$3.99), the Coin Doubler (US$4.99) and 600 gems (US$4.99) for US$9.99, about 28% less than one by one; the shop works that out from the catalogue (`proWorthUsd`) and hides the bundle once either part is owned.
 
-**Scout packs are paid random items once coins are bought with real money.** A card for MY CLUB at fixed odds (SCOUT 62/28/8/2 percent common/rare/epic/legend, ELITE 0/55/35/10) is a loot box in the stores' eyes.
+**Scout packs use earned-only tokens.** SCOUT costs one Scout Token and ELITE costs three, with odds shown before opening (SCOUT 62/28/8/2 percent common/rare/epic/legend, ELITE 0/55/35/10). Tokens come from completed daily challenges and calendar day 5; one SCOUT pack is also free each day. Coins, gems, rewarded ads and store purchases never grant tokens or pay for a random card (`PACK_TOKENS`, `openPack`, `tests/economyV3.test.ts`).
 
-- Apple (guideline 3.1.1) and Google Play both require the odds to be shown before purchase. They already are, on every pack (`src/ui/shop.ts`).
-- Some countries restrict or ban paid loot boxes (Belgium is the usual example; other regions have their own rules or rulings). **No region logic is built.** Before launch, check the rules for the countries you release in, and consider: not offering the gem packs there, or not letting scout packs be bought in those regions, or both. Store age-rating questionnaires ask about this too; answer honestly.
-- Fairness holds either way: ONLINE friendlies use the preset clubs, so no coin purchase wins a match against a friend.
+The Scouting Network sells a stated minimum prospect potential per intake, earned gems can buy every tier, and online friendlies use preset clubs. A paid deal refresh discloses the exact next item and its discounted coin price before charging gems (`nextDeal`). Store questionnaires should describe these implemented mechanics accurately; the final classification belongs to the store review process.
 
 ---
 
@@ -131,7 +129,7 @@ The rate improves with every step (a test enforces it), and even the biggest pac
 5. When each product is **Ready to Submit**, the first ones must be attached to an app version (the version page, In-App Purchases) and go to review with the binary.
 6. **Sandbox testers:** App Store Connect, Users and Access, Sandbox, add a tester (an email address that is not a real Apple ID). On the test iPhone (iOS 16 and later), install a build from Xcode, then Settings, Developer, Sandbox Apple Account, and sign in with the tester. Purchases then show a Sandbox banner and cost nothing. TestFlight builds also use the sandbox.
 7. In Xcode, Signing & Capabilities, add **In-App Purchase**.
-8. For review: RESTORE PURCHASES is on the STORE tab (Apple requires it); loot-box odds are shown (3.1.1); fill the privacy labels and age rating honestly (purchases, random paid items).
+8. For review: RESTORE PURCHASES is on the STORE tab, scout-pack odds are shown, and the privacy labels and age-rating answers should describe purchases and earned-only random rewards accurately.
 
 ### 4.2 Google Play
 
@@ -140,7 +138,7 @@ The rate improves with every step (a test enforces it), and even the biggest pac
 3. Create the app and upload a first build to the **Internal testing** track. The build must carry the billing permission (`com.android.vending.BILLING`); the plugin adds it. In-app products can only be created once such a build is in the console.
 4. **Monetize with Play, Products, In-app products, Create product**, with the same ten ids, a name and description for each, and a default price in US dollars (Play converts the rest; you can edit each country). Set each to Active. Ids cannot be changed or reused later. Play has one product kind for these; whether a product is consumable is decided by the app consuming it, which the plugin does when we finish the transaction (gem packs), and the plugin acknowledges the one-time products the same way (an unacknowledged purchase is refunded after 3 days).
 5. **License testers:** Play Console, Settings, License testing: add the testers' Google accounts, response RESPOND_NORMALLY. Also add them to the Internal testing testers list and install from the opt-in link on that same Google account. Test purchases are free.
-6. Complete the Data safety form (purchases are handled by Google; the game stores no payment data) and the content rating. Paid random items need their odds disclosed (they are).
+6. Complete the Data safety form (purchases are handled by Google; the game stores no payment data) and the content rating. Describe the scout packs as earned-only random rewards; their odds are displayed.
 
 ### 4.3 Capacitor (the app shell)
 
@@ -166,9 +164,9 @@ npm run ios                                         # after every web change; np
 
 ### 4.4 Testing
 
-- **Dev store, no accounts needed:** `npm run dev`, then open `http://localhost:5173/?iap=dev`. Open SHOP, then COINS. Buying is instant. Add `&iapresult=cancelled`, `&iapresult=failed` or `&iapresult=pending` to see the calm messages. The fake store remembers one-time purchases under `localStorage` key `blocky-league-iap-dev` (delete it to act as a new store account; delete `blocky-league-save-v1` to act as a new device) so RESTORE PURCHASES has something to restore.
+- **Dev store, no accounts needed:** `npm run dev`, then open `http://localhost:5173/?iap=dev`. Open SHOP, then STORE > GEMS. Buying is instant. Add `&iapresult=cancelled`, `&iapresult=failed` or `&iapresult=pending` to see the calm messages. The fake store remembers one-time purchases under `localStorage` key `blocky-league-iap-dev` (delete it to act as a new store account; delete `blocky-league-save-v1` to act as a new device) so RESTORE PURCHASES has something to restore.
 - **Real stores:** test every product in the sandbox (Apple) and with a license tester (Google). Cases to run: buy each gem pack (gems rise by the right amount, the wallet animates); buy the Starter Pack (coins, Gold ball equipped, the card disappears) and NO ADS (card shows OWNED); cancel at the payment sheet; airplane mode; reinstall, then RESTORE PURCHASES (NO ADS and the Gold ball return); kill the app mid-purchase and relaunch (it must arrive once).
-- **Portals:** `?portal=crazygames` in the dev server shows FREE COINS and never a pack.
+- **Portals:** `?portal=crazygames` in the dev server shows FREE COINS and never a real-money currency pack; earned-only scout packs remain available.
 
 ### 4.5 Receipt validation
 
@@ -181,7 +179,7 @@ v1 trusts the plugin's local handling: it grants on `approved`. That is fine to 
 ### 4.6 Before you submit the native build
 
 - [ ] Products created with the exact ids (4.1, 4.2), prices set, `bl.noads` only if the app shows ads.
-- [ ] Loot-box rules checked for your launch countries (section 2); decide on region settings.
+- [ ] Store content-rating answers reflect the earned-only scout packs and fixed, disclosed premium outcomes (section 2).
 - [ ] `public/privacy.html` and both stores' privacy answers mention purchases (handled by Apple or Google; the game stores no payment details). That page was not edited here.
 - [ ] Sandbox and license-tester runs from 4.4 done on a real iPhone and a real Android phone.
 - [ ] RESTORE PURCHASES visible on the STORE tab (it is).
@@ -196,7 +194,7 @@ CrazyGames, Poki and itch get **no real-money offers**: their rules and payment 
 
 - Matches, challenges and the daily gift, as everywhere.
 - The existing "2x COINS" rewarded offers after a match and on the daily gift.
-- **FREE COINS** in the shop's STORE tab: WATCH AN AD for +75 coins, at most **5 a day** (counted per local day and saved). It shows only on a portal where `ads.rewardedAvailable` is true. If the portal has no ad right now it says to come back later, and when the 5 are used it says come back tomorrow. The ad starts only on the player's tap (portal rule), the reward is paid only when the ad was watched through, and a button is disabled while an ad is running. Plain web has no ads, so it has no STORE tab and the shop looks as before.
+- **FREE COINS** in the shop's STORE tab: WATCH AN AD for +75 coins, at most **5 a day** (counted per local day and saved). It shows only where `ads.rewardedAvailable` is true. If there is no ad right now it says to come back later, and when the 5 are used it says come back tomorrow. The ad starts only on the player's tap, the reward is paid only when the ad was watched through, and a button is disabled while an ad is running. Plain web has no ads; STORE still offers earned-gem swaps, the gem-funded Club Pass and the Scouting Network.
 
 **Money from the portals (the owner's notes):** about a 40% revenue share and monthly payouts above EUR 100. These figures are as the owner pasted them and are not checked here. Note that PUBLISHING.md section 4.4 records that CrazyGames' own developer terms (18 August 2025) do not state a share, and that figures quoted online come from specific deals; confirm yours in your own agreement before relying on it.
 
@@ -206,6 +204,5 @@ CrazyGames, Poki and itch get **no real-money offers**: their rules and payment 
 
 - **A restore never pays coins.** A one-time product handed back on a new device (RESTORE PURCHASES, or the store's owned list at start-up) brings back its items and ownership (the Gold ball, NO ADS) but not the Starter Pack's 2,000 coins: those were paid on the device that bought it, so a reinstall is no coin tap (`applyPurchase`'s `restored`). The plugin cannot tell a restore from an interrupted first purchase; the rare player whose app died mid-purchase on a brand-new install keeps the ball but not the coins (support can top them up). A receipt-validation server (4.5) with a ledger would close that gap.
 - The record of paid transactions keeps the newest 200 per save.
-- NO ADS has no effect in the native app until an ad network is added there.
-- No region logic for paid loot boxes (section 2).
+- AdMob uses test ads until production ids are supplied; real-device ad and purchase checks remain release requirements.
 - A `native` entry in `scripts/release.mjs` (a dedicated web build for the app shell) would be tidier than reusing the itch build; not done.

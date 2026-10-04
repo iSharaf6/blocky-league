@@ -127,13 +127,15 @@ export class HapticGate {
  * (a tackle on his own carrier is felt; one elsewhere on the pitch is not). A match with nobody at the controls (the
  * menu's demo) never gets here.
  */
-export function hapticForEvent(e: MatchEvent, m: Match, side: Side, ownerBefore: number): HapticKind | null {
+export function hapticForEvent(e: MatchEvent, m: Match, side: Side, ownerBefore: number, activeBefore = m.activeOf(side)): HapticKind | null {
+  // A pass hands control to its receiver in the same step that emits the kick. Judge the contact against the
+  // player under the thumb before that step, rather than losing the feedback when control moves on.
   const me = m.activeOf(side);
   const ours = (i: number | undefined) => i !== undefined && i >= 0 && m.players[i]?.side === side;
   switch (e.type) {
     case 'kick': {
       const k = e.player ?? m.ball.lastTouch;
-      if (k < 0 || k !== me) return null;
+      if (k < 0 || !ours(k) || (k !== me && k !== activeBefore)) return null;
       return e.kind === 'shot' || e.kind === 'header' ? 'shot' : e.kind === 'throw' ? null : 'pass';
     }
     case 'timing':
@@ -221,9 +223,13 @@ export function buzz(kind: HapticKind): void {
   if (!gate.allow(kind, now, level)) return;
   const f = HAPTIC_FEEL[kind];
   void plugin().then((p) => {
-    if (!p) return;
+    const allowed = (): boolean => level !== 'off' && !(level === 'light' && !f.big) && !quiet &&
+      (typeof document === 'undefined' || !document.hidden);
+    // Loading the bridge can finish after an ad, a setting change or the app going into the background.
+    if (!p || !allowed()) return;
     // (Called straight off the registration, never returned through a promise.)
     const taps = (): void => {
+      if (!allowed()) return;
       if (f.notify) p.h.notify({ type: f.notify }).catch(() => undefined);
       if (f.style === 'selection') p.h.selection().catch(() => undefined);
       else p.h.impact({ style: f.style, intensity: f.intensity, count: f.count, apart: f.apart, duration: f.buzzMs }).catch(() => undefined);

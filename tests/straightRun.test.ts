@@ -106,8 +106,8 @@ describe('the straight run: the read', () => {
       const m = scenario(4, difficulty);
       return straightRead(m, runUp(m, -30, Math.round((LINE_FULL + 0.3) / DT)));
     };
-    expect(read(0.6)).toBeGreaterThan(0.2);
-    expect(read(0.6)).toBeLessThan(0.6);
+    expect(read(0.6)).toBeCloseTo(0.6, 5);
+    expect(read(0.6)).toBeLessThan(read(1.8));
     expect(read(1.8)).toBeCloseTo(1, 5);
     expect(read(3)).toBeCloseTo(1, 5);
   });
@@ -163,7 +163,7 @@ describe('the straight run: the challenge', () => {
 describe('the straight run: whole matches', () => {
   it('holding the stick at their goal no longer walks through NORMAL', () => {
     // (A short series; the full measurement, 16 matches a level at 2 x 120 s, is in the round's report.)
-    const s = straightSeries(4, 1.8, { halfLength: 60 });
+    const s = straightSeries(4, 1.8, { halfLength: 60, coach: true });
     // eslint-disable-next-line no-console
     console.log(fmtStraight(s));
     expect(s.farRuns).toBeGreaterThan(2);

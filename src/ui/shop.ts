@@ -25,7 +25,7 @@ import {
   BUNDLES, BUNDLE_OFF, CAT_LABEL, FREE_AD_COINS, FREE_AD_DAILY_CAP, LOOK_WHO, PACKS, PACK_TOKENS, RARITIES, RARITY_OVR, SHOP_CATS,
   SLOT_LABEL, DEAL_OFF, ITEM_TIER_NAMES, bundleItems, bundleMissing, bundleOf, bundlePrice, bundleValue, buyBundle, buyItem, claimFreeAd,
   dailyDeal, equipItem, equippedId, equippedSlots, featuredShelf, freeAdsLeft, freePackReady, isEquipped, isSlotCat, itemKey, itemTier,
-  makeRoom, markSeen, openPack, owns, packPrice, pendingCard, priceOn, releaseCandidate, rerollDeal, scoutTokens, seasonPassItems, sellCard,
+  makeRoom, markSeen, nextDeal, openPack, owns, packPrice, pendingCard, priceOn, releaseCandidate, rerollDeal, scoutTokens, seasonPassItems, sellCard,
   settlePack, shopItem, shopItems, shopOf, signCard, unequipItem,
   type Bundle, type PackCard, type PackKind, type Rarity, type ShopCat, type ShopItem,
 } from '../meta/shop';
@@ -1539,6 +1539,11 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     newdeal: async () => {
       if (busy) return;
       const day = localDay();
+      const preview = nextDeal(save, day);
+      if (!preview) {
+        say('NOTHING ELSE LEFT TO SELL', 'info');
+        return;
+      }
       const moved = (): void => {
         const d = rerollDeal(save, today());
         app.persist();
@@ -1555,9 +1560,16 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         return;
       }
       confirmGems(scr.root, {
-        title: 'A NEW DEAL TODAY?', text: `ANOTHER LOOK AT ${DEAL_OFF}% OFF`, price: GEM_PRICES.dealRefresh, have: gems(save), yes: 'NEW DEAL', getGems: getGems(),
+        title: 'A NEW DEAL TODAY?', text: `${preview.item.name.toUpperCase()} FOR ${preview.price.toLocaleString('en-US')} COINS (${DEAL_OFF}% OFF)`, price: GEM_PRICES.dealRefresh, have: gems(save), yes: 'NEW DEAL', getGems: getGems(),
         free: 'THE DEAL CHANGES BY ITSELF EVERY DAY',
         onYes: () => {
+          // A purchase elsewhere or midnight must not swap the disclosed deal before charging.
+          const current = nextDeal(save, localDay());
+          if (localDay() !== day || current?.item.cat !== preview.item.cat || current.item.id !== preview.item.id || current.price !== preview.price) {
+            say('THE DEAL CHANGED. TAKE ANOTHER LOOK', 'info');
+            draw();
+            return;
+          }
           if (spendGems(save, GEM_PRICES.dealRefresh, 'dealRefresh')) moved();
         },
       });

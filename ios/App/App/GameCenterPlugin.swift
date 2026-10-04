@@ -66,26 +66,35 @@ public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     // Core Haptics first: the engine games use. It plays crisp, strong taps and buzzes with set intensity and
-    // sharpness. The UIKit generators above only fire with Settings > Sounds & Haptics > System Haptics on and feel
-    // faint, so they are the fallback for hardware without Core Haptics. The engine idles off by itself and restarts
-    // on the next tap.
+    // sharpness. The UIKit generators above provide the fallback when a custom pattern cannot play. Hardware
+    // support and iOS vibration settings still apply; neither API can override the user's settings. The engine
+    // idles off by itself and restarts on the next tap.
     private var engine: CHHapticEngine?
-    private var engineOK = CHHapticEngine.capabilitiesForHardware().supportsHaptics
+    private let supportsHaptics = CHHapticEngine.capabilitiesForHardware().supportsHaptics
 
     private func hapticEngine() -> CHHapticEngine? {
-        guard engineOK else { return nil }
-        if let e = engine { return e }
+        guard supportsHaptics, UIApplication.shared.applicationState == .active else { return nil }
         do {
+            if let e = engine {
+                try e.start()
+                return e
+            }
             let e = try CHHapticEngine()
             e.playsHapticsOnly = true
             e.isAutoShutdownEnabled = true
             // (After an interruption, a call or the app going to the background, the engine resets: start it again.)
-            e.resetHandler = { [weak e] in try? e?.start() }
+            e.resetHandler = { [weak e] in
+                DispatchQueue.main.async {
+                    guard UIApplication.shared.applicationState == .active else { return }
+                    try? e?.start()
+                }
+            }
             try e.start()
             engine = e
             return e
         } catch {
-            engineOK = false
+            // Calls, ads and app suspension can make startup fail temporarily. Keep the hardware capability
+            // separate: the next user-initiated contact must retry rather than disabling haptics for the session.
             return nil
         }
     }
@@ -131,7 +140,6 @@ public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
                 pattern = try CHHapticPattern(events: events, parameterCurves: [curve])
             }
             let player = try e.makePlayer(with: pattern)
-            try e.start()
             try player.start(atTime: CHHapticTimeImmediate)
             return true
         } catch {

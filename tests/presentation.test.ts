@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CHANT_KINDS, Sfx, chantCaption, chantWords, type ChantKind } from '../src/audio/sfx';
-import { PRESENTATION } from '../src/game/matchSession';
+import { MatchSession, PRESENTATION } from '../src/game/matchSession';
 import { PF, STATE_CODE } from '../src/game/replay';
 import {
   LINEUP_INTRO_FROM, LINEUP_S, MOTM_S, SUB_MAX_SHOWN, SUB_MEET, SUB_MIN_S, SUB_S, SUB_TOTAL_S, applyLineup, applyMotm, lineupOrder, lineupShot, lineupSpot,
   motmShot, motmSpot, newSubStage, subBeatS, subCaption, subSpotX, subStage,
 } from '../src/game/showcase';
-import { GAP_MS, HAPTIC_FEEL, HapticGate, type HapticKind } from '../src/platform/haptics';
+import { GAP_MS, HAPTIC_FEEL, HapticGate, hapticForEvent, type HapticKind } from '../src/platform/haptics';
 import { boardCells } from '../src/render/subScene';
 import { HALF_L, HALF_W } from '../src/sim/constants';
+import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
+import { Match } from '../src/sim/match';
+import type { Player } from '../src/sim/player';
+import type { PlayerDef } from '../src/sim/types';
 
 /**
  * MATCH PRESENTATION (the owner, after playing on his iPhone): "i cant quit the game during half time ... theres no
@@ -72,11 +76,31 @@ describe('the substitution on the touchline', () => {
     expect(subBeatS(2)).toBe(SUB_S);
     expect(SUB_S).toBeLessThanOrEqual(2.5);
     for (let n = 3; n <= SUB_MAX_SHOWN; n++) {
-      expect(n * subBeatS(n), `${n} changes`).toBeLessThanOrEqual(SUB_TOTAL_S + 1e-9);
+      expect(n * subBeatS(n), `${n} changes`).toBeLessThanOrEqual(Math.max(SUB_TOTAL_S, n * SUB_MIN_S) + 1e-9);
       expect(subBeatS(n)).toBeGreaterThanOrEqual(SUB_MIN_S);
     }
     expect(subBeatS(5)).toBeLessThan(subBeatS(2));
     expect(PRESENTATION.subS).toBe(SUB_S);
+    expect(SUB_MAX_SHOWN).toBeGreaterThanOrEqual(10);
+  });
+
+  it('keeps each player in two changes to the same slot before play resumes', () => {
+    const m = new Match({ home: makeTeam(PRESET_CLUBS[0]), away: makeTeam(PRESET_CLUBS[1]), halfLength: 150, difficulty: 1.8, humanSide: 0, seed: 27 });
+    const first = m.teamPlayers(0)[9].def;
+    const subQueue: { off: PlayerDef; on: PlayerDef }[] = [];
+    const session = Object.assign(Object.create(MatchSession.prototype), {
+      match: m, opt: { kits: [m.teams[0].kit, m.teams[1].kit] }, wearing: m.players.map((p) => p.def),
+      view: { replacePlayer: vi.fn() }, hud: {}, subQueue,
+    }) as MatchSession;
+    const bench1 = m.bench[0].findIndex((p) => p.role !== 'GK');
+    const second = m.bench[0][bench1];
+    expect(session.substitute(0, 9, bench1)).toBe(true);
+    const bench2 = m.bench[0].findIndex((p) => p.role !== 'GK');
+    const third = m.bench[0][bench2];
+    expect(session.substitute(0, 9, bench2)).toBe(true);
+    expect(subQueue).toHaveLength(2);
+    expect(subQueue[0]).toMatchObject({ off: first, on: second });
+    expect(subQueue[1]).toMatchObject({ off: second, on: third });
   });
 
   it('the man coming off jogs to the line, they meet palms, the new man runs on and the old one goes to the bench', () => {
@@ -367,6 +391,28 @@ describe('chants that are obviously chants', () => {
 
 describe('haptics you can feel in full', () => {
   const kinds = Object.keys(HAPTIC_FEEL) as HapticKind[];
+
+  it('feels a human pass after that strike transfers control to its recipient', () => {
+    const m = new Match({ home: makeTeam(PRESET_CLUBS[0]), away: makeTeam(PRESET_CLUBS[1]), halfLength: 150, difficulty: 1.8, humanSide: 0, seed: 27 });
+    m.phase = 'play';
+    m.restart = null;
+    const p = m.players[9];
+    const receiver = m.players[7];
+    m.active = p.idx;
+    m.ball.owner = p.idx;
+    p.facing = Math.atan2(receiver.pos.z - p.pos.z, receiver.pos.x - p.pos.x);
+    p.order = { kind: 'pass', target: receiver.idx, power: 0.5,
+      dirX: Math.cos(p.facing), dirZ: Math.sin(p.facing), expires: 1, firstTime: false };
+    m.drainEvents();
+    const before = m.activeOf(0);
+    (m as unknown as { execute(p: Player): void }).execute(p);
+    expect(m.activeOf(0)).toBe(receiver.idx);
+    const kick = m.drainEvents().find((e) => e.type === 'kick');
+    expect(kick).toBeDefined();
+    expect(hapticForEvent(kick!, m, 0, p.idx, before)).toBe('pass');
+    // An AI teammate's pass is still silent even when the human controls its receiver.
+    expect(hapticForEvent(kick!, m, 0, p.idx, receiver.idx)).toBe(null);
+  });
 
   it('a shot, a tackle and a save are short continuous buzzes (40 to 120 ms), not lone taps', () => {
     for (const k of ['shot', 'tackle', 'save'] as const) {

@@ -299,6 +299,7 @@ describe('SKILL: not overpowered', () => {
     const m = scenario(71);
     const p = runUp(m);
     const o = defenderAhead(m, p, 1.2);
+    o.tackleCooldown = 5;
     const open = carrierGuard(m, o, p);
     // With a pip to spend: as safe as his dribble while it plays.
     steps(m, 1, pad(0, 0, { skill: true }));
@@ -628,6 +629,8 @@ describe('SKILL: every press pays (2026-10-04)', () => {
       const m = scenario(440, difficulty);
       const p = runUp(m);
       const o = defenderAhead(m, p, 3.4);
+      // Keep the ball available throughout the grace window; this isolates grading from tackle success.
+      o.tackleCooldown = 5;
       startTell(m, o, p, false);
       steps(m, Math.round(after / DT), pad(1, 0));
       // (Kept from going in meanwhile, so the ball is still there to skill.)

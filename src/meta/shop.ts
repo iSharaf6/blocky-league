@@ -1,16 +1,16 @@
 /**
- * The coin SHOP's rules (no DOM: ui/shop.ts draws it). Two things to spend coins on:
+ * The SHOP's rules (no DOM: ui/shop.ts draws it):
  *
  * - Cosmetics: goal celebrations and ball looks (the level ladder's items: bought with coins OR earned free at
  *   their level, whichever comes first), goal explosion themes and sprint trails (coins only). Owned, equipped
  *   into Settings, drawn in every match (render/cosmetics.ts, game/matchSession.ts).
- * - SCOUT PACKS: a random player card for MY CLUB (meta/career.ts ClubState, the club PLAY NOW and CAREER field)
- *   at a fixed price with the odds on show. A card signs into the squad (squad limit and all) or is sold on.
+ * - SCOUT PACKS: earned-only Scout Tokens open a random player card for MY CLUB (meta/career.ts ClubState, the club
+ *   PLAY NOW and CAREER field), with the odds on show. A card signs into the squad (squad limit and all) or is sold on.
  *
  * Where coins come from: playing (matches, challenges, the daily gift), rewarded ads on the web portals (FREE
  * COINS below: a few a day) and, in the iOS and Android apps only, store purchases (platform/iap.ts). Cosmetics
  * are looks, and ONLINE friendlies use the preset clubs, so nothing bought here wins a match against a friend.
- * Scout packs are random cards whoever earned or bought the coins, so their odds are always on show.
+ * Coins and gems never buy Scout Tokens or random cards; every pack's odds are still always on show.
  * Everything persists in SaveData.shop and SaveData.iap (core/save.ts normalizeShop / normalizeIap) and Settings.
  */
 import { Rng, hashString } from '../core/rng';
@@ -413,17 +413,25 @@ export function dailyDeal(save: Pick<SaveData, 'shop' | 'progress'>, day: string
 }
 
 /**
- * A NEW DEAL TODAY (a rewarded ad once a day, or GEM_PRICES.dealRefresh: the caller counts it): today's deal moves
- * to another look the save doesn't own. Fixed again for the rest of the day; null when nothing else is left to sell.
+ * The exact next deal, without changing the save. A gem-spend confirmation must show this item's name and coin
+ * price before charging: a paid refresh buys a known discount, never an undisclosed draw. Null when none remain.
  */
-export function rerollDeal(save: Pick<SaveData, 'shop' | 'progress'>, day: string): { item: ShopItem; price: number } | null {
-  const shop = shopOf(save);
-  const cur = dailyDeal(save, day);
-  const pool = ITEMS.filter((it) => it.price > 0 && !it.pass && !owns(save, it.cat, it.id) && !(cur && it.cat === cur.item.cat && it.id === cur.item.id));
+export function nextDeal(save: Pick<SaveData, 'shop' | 'progress'>, day: string): { item: ShopItem; price: number } | null {
+  // Preview on a copy: rendering a gem-spend confirmation must not advance or create today's saved deal.
+  const preview = { progress: save.progress, shop: normalizeShop(save.shop) };
+  const cur = dailyDeal(preview, day);
+  const pool = ITEMS.filter((it) => it.price > 0 && !it.pass && !owns(preview, it.cat, it.id) && !(cur && it.cat === cur.item.cat && it.id === cur.item.id));
   if (!pool.length) return null;
-  const pick = pool[hashString(`deal|${day}|again|${shop.deal?.key ?? ''}`) % pool.length];
-  shop.deal = { day, key: itemKey(pick.cat, pick.id) };
-  return dailyDeal(save, day);
+  const pick = pool[hashString(`deal|${day}|again|${preview.shop.deal?.key ?? ''}`) % pool.length];
+  return { item: pick, price: Math.round((pick.price * (100 - DEAL_OFF)) / 100 / 10) * 10 };
+}
+
+/** Replace today's deal with the exact item shown by `nextDeal`; null leaves it unchanged when none remains. */
+export function rerollDeal(save: Pick<SaveData, 'shop' | 'progress'>, day: string): { item: ShopItem; price: number } | null {
+  const next = nextDeal(save, day);
+  if (!next) return null;
+  shopOf(save).deal = { day, key: itemKey(next.item.cat, next.item.id) };
+  return next;
 }
 
 /** What `it` costs on `day` (today's deal price for the deal look, else its price). */

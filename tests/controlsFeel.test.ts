@@ -359,7 +359,8 @@ describe('SKILL: the RAINBOW FLICK does what a rainbow flick does', () => {
     q.facing = Math.PI / 2;
     giveBall(n, q);
     const o = n.players[14];
-    place(o, -20, HALF_W - 3.2);
+    // Across the rainbow's lane, outside the narrower squared-up nutmeg lane.
+    place(o, -18.8, HALF_W - 3.2);
     o.facing = -Math.PI / 2;
     o.tackleCooldown = 9;
     steps(n, 20, pad(0, 1));

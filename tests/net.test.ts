@@ -50,27 +50,32 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * Later the same day the nine rows whose driver presses while their ball is in the air into its end (fuzz*, pen*, ko3,
  * ko6) were re-recorded: a "just clear it" press is now answered by whichever of his men the ball comes within reach
  * of (match.ts checkHumanClear). The AI v AI rows, the scripted bot's and ko1 came out exactly as before.
+ * Revision 2026-10-04b (NET_VERSION 6) re-recorded only the 13 human rows for automatic sprint, lighter human
+ * stamina loss, protected kickoffs, keeper movement/rushing, aerial assistance, responsive standing tackles, the
+ * straight-line read, charged skill exits and placed set pieces. The hash now includes human FLAIR. All six AI-only
+ * rows remain bit-identical, including the intermediate hash fold; the AI's original stamina calculation is kept
+ * exactly to avoid float64 drift. The same drivers and exact six-value comparisons are retained.
  */
 const BEFORE: Record<string, Row> = {
-  aiClassic: [2017188631, 352340912, 19086, 0, 1, 0],
-  aiBlitz: [1582265165, 1309870222, 12218, 1, 2, 0],
-  aiStyles: [2169161809, 3859010485, 12310, 0, 3, 0],
-  botSide0: [1581416009, 1076470562, 17663, 6, 1, 0],
-  botPerks: [551454636, 1315519321, 12566, 5, 1, 0],
-  botFirstMatch: [1468565586, 2277923504, 12153, 2, 0, 0],
-  fuzzSide1: [1848367879, 2239220835, 12307, 2, 1, 0],
-  fuzzBlitz0: [1788810890, 3829490918, 11567, 0, 1, 0],
-  fuzzBlitzPerks1: [790297077, 2124414345, 11797, 2, 0, 0],
-  penTaker0: [1916068335, 1959104267, 7349, 0, 0, 0],
-  penTaker1Low: [685801524, 3476524401, 8149, 1, 2, 0],
-  penTimeout1: [2900041037, 3684050025, 7553, 0, 0, 0],
-  penKeeper1: [2291005179, 1637367520, 8222, 3, 0, 0],
-  ko1: [3562532861, 2592221092, 4957, 0, 0, 1],
-  ko3: [2964397297, 3379525808, 5333, 0, 0, 1],
-  ko6: [1688102224, 1340312657, 3666, 1, 0, 0],
-  aiKo1: [2469038319, 23655505, 4876, 0, 0, 1],
-  aiKo4: [975643068, 4091315228, 3821, 0, 1, 0],
-  aiKo7: [843597184, 3710384732, 4881, 0, 0, 1],
+  aiClassic: [2017188631,352340912,19086,0,1,0],
+  aiBlitz: [1582265165,1309870222,12218,1,2,0],
+  aiStyles: [2169161809,3859010485,12310,0,3,0],
+  botSide0: [3934514830,3507290232,16935,5,0,0],
+  botPerks: [1146773300,280297306,12285,3,1,0],
+  botFirstMatch: [1342008532,1662680329,13568,7,0,0],
+  fuzzSide1: [3741471131,1346644952,11119,0,0,0],
+  fuzzBlitz0: [3845200276,1348378564,11205,0,0,0],
+  fuzzBlitzPerks1: [1981958086,390394629,11451,1,0,0],
+  penTaker0: [1138174705,3835431875,7844,0,2,0],
+  penTaker1Low: [2999085029,1060990671,7943,0,2,0],
+  penTimeout1: [2139961345,3467281889,7671,0,1,0],
+  penKeeper1: [1772413223,4262640305,7590,1,0,0],
+  ko1: [1048390301,643499515,3383,1,0,0],
+  ko3: [3958102706,3078522871,5220,0,0,1],
+  ko6: [1316568905,3483256939,5082,0,0,1],
+  aiKo1: [2469038319,23655505,4876,0,0,1],
+  aiKo4: [975643068,4091315228,3821,0,1,0],
+  aiKo7: [843597184,3710384732,4881,0,0,1],
 };
 
 describe('single-player stays bit-identical', () => {

@@ -5,6 +5,7 @@ import { Ball, type BallHit } from '../src/sim/ball';
 import { BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_W, HALF_L, HALF_W, PEN_SPOT, SEP_MATE, SEP_OPP, WALL_DIST } from '../src/sim/constants';
 import { EMPTY_PAD, Match, OFFSIDE_TOL, type Pad } from '../src/sim/match';
 import type { KickOrder, Player } from '../src/sim/player';
+import { zoneBounds } from '../src/sim/setPiece';
 import type { MatchEvent, Side } from '../src/sim/types';
 
 function newMatch(seed: number, humanSide: Side | -1 = -1, halfLength = 150): Match {
@@ -335,12 +336,21 @@ describe('set pieces', () => {
         const t = m.players[r.taker];
         const want = Math.atan2(-r.z, ad * (HALF_L - 7) - r.x);
         expect(Math.abs(Math.atan2(Math.sin(t.facing - want), Math.cos(t.facing - want)))).toBeLessThan(0.05);
+        if (human === 0) {
+          // The current human controls deliver to a landing ring. Aim the post zone this test measures,
+          // alternating near and far; the AI still chooses its own post zone.
+          const bounds = zoneBounds(m, 0);
+          const aimX = gx - ad * 6;
+          const aimZ = seed % 3 ? Math.sign(r.z) : -Math.sign(r.z);
+          for (let i = 0; i < 35; i++) m.step(DT, pad(((aimX - bounds.cx) / ((bounds.x1 - bounds.x0) / 2)) * 0.9,
+            (aimZ / bounds.z1) * 0.9, { digital: false }));
+        }
         // Human: no stick, hold and release THROUGH (the cross). AI: it takes it itself (now and
         // then short, which isn't a delivery into the box).
         let kicked = false;
         let short = false;
         for (let i = 0; i < 60 * 8 && !kicked; i++) {
-          const hold = human === 0 && m.phaseT > 0.4 && m.phaseT < 0.8;
+          const hold = human === 0 && i < 24;
           m.step(DT, hold ? pad(0, 0, { through: true }) : EMPTY_PAD);
           const ks = m.drainEvents().filter((e) => e.type === 'kick');
           kicked = ks.length > 0;

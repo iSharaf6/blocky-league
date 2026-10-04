@@ -3,8 +3,10 @@ import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { clearOfLens, CORNER_BOX, CORNER_ZONAL, CORNER_ZONAL_D, FK_LENS_CLEAR, FK_LENS_CONE_DEPTH } from '../src/sim/ai';
 import { Ball, type BallHit } from '../src/sim/ball';
 import { DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
-import { AIM_TURN, EMPTY_PAD, isDigitalStick, Match, SHOOT_FULL_T, type Pad } from '../src/sim/match';
+import { EMPTY_PAD, isDigitalStick, Match, SHOOT_FULL_T, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
+import { zoneBounds } from '../src/sim/setPiece';
+import { PEN_AIM_H0, PEN_AIM_H_MAX, PEN_AIM_Z } from '../src/sim/shootout';
 import type { RestartKind, Side } from '../src/sim/types';
 
 /*
@@ -103,9 +105,8 @@ function shotRates(dist: number, z: number, trials = 16): { goal: number; parrie
 type FkPlan = 'straight' | 'wallIn';
 
 /**
- * fkb.js: a human free kick through the real restart. The behind-the-ball camera maps W along
- * ball-goal and D to its right; 'wallIn' turns the aim (keys, AIM_TURN) to the wall-side corner and
- * bends it back in from outside with the key held at the strike; 'straight' just strikes it.
+ * A human free kick through the real restart and current reticle controls. 'wallIn' places the reticle at the
+ * wall-side top corner, then bends it in while charging; 'straight' leaves the reticle in the middle.
  */
 function fkTrial(seed: number, dist: number, z: number, plan: FkPlan, hold: number): { goal: boolean; wall: boolean } {
   const m = newMatch(seed);
@@ -119,25 +120,21 @@ function fkTrial(seed: number, dist: number, z: number, plan: FkPlan, hold: numb
   const gx = ad * HALF_L;
   const dl = Math.hypot(gx - r.x, -r.z);
   const u = { x: (gx - r.x) / dl, z: -r.z / dl };
-  const key = (k: 'A' | 'D'): Pad => (k === 'D' ? pad(-u.z, u.x) : pad(u.z, -u.x));
+  const stick = (across: number, up: number): Pad => pad(up * u.x - across * ad * u.z, up * u.z + across * ad * u.x, { digital: false });
   for (let i = 0; i < 40; i++) m.step(DT, EMPTY_PAD);
-  let curlKey: 'A' | 'D' | null = null;
+  const near = Math.sign(r.z) || 1;
   if (plan === 'wallIn') {
-    const near = Math.sign(r.z) || 1;
-    const t = m.players[r.taker];
-    const want = Math.atan2(near * (GOAL_W / 2 - 0.7) - r.z, gx - r.x);
-    const dA = Math.atan2(Math.sin(want - t.facing), Math.cos(want - t.facing));
-    const frames = Math.round((Math.abs(dA) / AIM_TURN) * 60);
-    for (let i = 0; i < frames; i++) m.step(DT, key(dA > 0 ? 'D' : 'A'));
-    m.step(DT, EMPTY_PAD);
-    curlKey = -near * ad > 0 ? 'D' : 'A';
+    const aim = stick((near * (GOAL_W / 2 - 0.6) / PEN_AIM_Z) * 0.9, ((2 - PEN_AIM_H0) / (PEN_AIM_H_MAX - PEN_AIM_H0)) * 0.9);
+    for (let i = 0; i < 45; i++) m.step(DT, aim);
   }
-  for (let i = 0; i < charge(hold); i++) m.step(DT, pad(0, 0, { shoot: true }));
-  m.step(DT, curlKey ? key(curlKey) : EMPTY_PAD);
+  const bend = plan === 'wallIn' ? stick(-near * 0.8 * 0.85, 0) : EMPTY_PAD;
+  for (let i = 0; i < hold; i++) m.step(DT, { ...bend, shoot: true });
+  // Release without moving the reticle: curl was set while the power was charged.
+  m.step(DT, EMPTY_PAD);
   const g0 = m.score[0];
   let wall = false;
   for (let i = 0; i < 420; i++) {
-    m.step(DT, curlKey && i < 20 ? key(curlKey) : EMPTY_PAD);
+    m.step(DT, EMPTY_PAD);
     for (const e of m.drainEvents()) if (e.type === 'block') wall = true;
     if (m.score[0] > g0) return { goal: true, wall };
     if (phase(m) === 'out' || (m.ball.owner >= 0 && i > 20)) break;
@@ -150,7 +147,7 @@ function fkRates(plan: FkPlan, trials = 20): { goal: number; wall: number } {
   let goals = 0;
   let walls = 0;
   for (const [dist, z] of [[24, 0], [22, 5], [20, -3], [25, 2]] as const) {
-    for (const hold of [30, 46]) {
+    for (const hold of (plan === 'wallIn' ? [6, 14] : [24, 34])) {
       for (let k = 0; k < trials; k++) {
         const r = fkTrial(1 + k * 13, dist, z, plan, hold);
         n++;
@@ -162,7 +159,7 @@ function fkRates(plan: FkPlan, trials = 20): { goal: number; wall: number } {
   return { goal: goals / n, wall: walls / n };
 }
 
-/** cob.js: a human corner, SHOOT held 20 frames (driven) or THROUGH held 40 (hung up). */
+/** A human aims into a post zone, delivers, then asks his receiver to strike the incoming corner. */
 function cornerTrial(seed: number, mode: 'driven' | 'lofted'): { goal: boolean; directThrow: boolean } {
   const m = newMatch(seed);
   m.clock = 20;
@@ -172,12 +169,18 @@ function cornerTrial(seed: number, mode: 'driven' | 'lofted'): { goal: boolean; 
   goOut(m, 'corner', 0, ad * (HALF_L - 0.35), (seed % 2 ? 1 : -1) * (HALF_W - 0.35));
   for (let i = 0; phase(m) !== 'restart' && i < 400; i++) m.step(DT, EMPTY_PAD);
   for (let j = 0; j < 30; j++) m.step(DT, EMPTY_PAD);
+  const bounds = zoneBounds(m, 0);
+  const near = Math.sign(m.restart!.z);
+  const aimX = ad * (HALF_L - 6);
+  const aimZ = (seed % 3 ? near : -near) * 3;
+  for (let j = 0; j < 35; j++) m.step(DT, pad(((aimX - bounds.cx) / ((bounds.x1 - bounds.x0) / 2)) * 0.9, (aimZ / bounds.z1) * 0.9, { digital: false }));
   const btn = mode === 'driven' ? 'shoot' : 'through';
   for (let j = 0; j < (mode === 'driven' ? 20 : 40); j++) m.step(DT, pad(0, 0, { [btn]: true }));
   const g0 = m.score[0];
   let kick = -1;
   for (let j = 0; j < 300; j++) {
-    m.step(DT, EMPTY_PAD);
+    const incoming = phase(m) === 'play' && m.ball.owner < 0 && m.passTarget === m.active;
+    m.step(DT, incoming ? pad(0, 0, { shoot: j % 12 === 0 }) : EMPTY_PAD);
     if (kick < 0 && m.drainEvents().some((e) => e.type === 'kick')) kick = m.kickId;
     if (m.score[0] > g0) return { goal: true, directThrow: false };
     if (phase(m) === 'out' && j > 10) return { goal: false, directThrow: m.restart!.kind === 'throwin' && m.kickId === kick };
@@ -610,7 +613,7 @@ describe('keyboard set-piece aim', () => {
     expect(isDigitalStick(Math.cos(ref + Math.PI / 2), Math.sin(ref + Math.PI / 2), ref)).toBe(true);
   });
 
-  it('on a free kick A / D turn the aim ~60 deg/s from the default, W puts it back; an analog stick aims directly', () => {
+  it('on a free kick A / D slide the reticle across, W raises it; an analog stick places it and release keeps it', () => {
     const m = newMatch(21);
     m.clock = 5;
     m.phase = 'play';
@@ -626,29 +629,31 @@ describe('keyboard set-piece aim', () => {
     const D = pad(-u.z, u.x, { digital: true });
     const A = pad(u.z, -u.x, { digital: true });
     const W = pad(u.x, u.z, { digital: true });
-    const off = () => Math.atan2(Math.sin(t.facing - aim0), Math.cos(t.facing - aim0));
-    // Half a second of D: ~30 degrees to the right, not a snap to 90.
+    const h0 = m.penAim!.h;
     for (let i = 0; i < 30; i++) m.step(DT, D);
-    expect(off()).toBeGreaterThan(0.4);
-    expect(off()).toBeLessThan(0.62);
+    expect(m.penAim!.z * ad).toBeGreaterThan(1.5);
+    expect(m.penAim!.z * ad).toBeLessThan(2);
+    expect(m.penAim!.h).toBeCloseTo(h0, 6);
+    const held = m.penAim!.z;
     m.step(DT, EMPTY_PAD);
-    const held = off();
-    expect(held).toBeCloseTo(off(), 6);
+    expect(m.penAim!.z).toBeCloseTo(held, 6);
     for (let i = 0; i < 20; i++) m.step(DT, A);
-    expect(off()).toBeLessThan(held - 0.25);
-    m.step(DT, W);
-    expect(off()).toBeCloseTo(0, 6);
+    expect(m.penAim!.z * ad).toBeLessThan(held * ad - 0.8);
+    const zBeforeUp = m.penAim!.z;
+    for (let i = 0; i < 20; i++) m.step(DT, W);
+    expect(m.penAim!.h).toBeGreaterThan(h0 + 0.5);
+    expect(m.penAim!.z).toBeCloseTo(zBeforeUp, 6);
     // The keys sent without the flag are read as keys too (their vector is exact).
     for (let i = 0; i < 12; i++) m.step(DT, pad(u.z, -u.x));
-    expect(off()).toBeLessThan(-0.15);
-    expect(off()).toBeGreaterThan(-0.3);
-    // An analog stick sets the aim where it points.
+    expect(m.penAim!.z * ad).toBeLessThan(zBeforeUp * ad - 0.3);
+    // Analog aim eases to the point it indicates in the goal mouth, rather than an angle on the grass.
     const a = aim0 + 0.3;
-    m.step(DT, pad(Math.cos(a) * 0.8, Math.sin(a) * 0.8, { digital: false }));
-    expect(off()).toBeCloseTo(0.3, 3);
+    for (let i = 0; i < 45; i++) m.step(DT, pad(Math.cos(a) * 0.8, Math.sin(a) * 0.8, { digital: false }));
+    expect(m.penAim!.z).toBeCloseTo((Math.sin(0.3) * 0.8 * ad / 0.9) * PEN_AIM_Z, 3);
+    expect(t.facing).toBeCloseTo(Math.atan2(m.penAim!.z - m.ball.pos.z, ad * HALF_L - m.ball.pos.x), 6);
   });
 
-  it('the strike: aimed where the arrow points, and the key held at the strike bends it without swinging the aim', () => {
+  it('the strike: the reticle stays fixed while the key held during the charge bends the ball', () => {
     const m = newMatch(33);
     m.clock = 5;
     m.phase = 'play';
@@ -660,26 +665,29 @@ describe('keyboard set-piece aim', () => {
     const t = m.players[m.restart!.taker];
     const aim0 = m.restartAim;
     const u = { x: Math.cos(aim0), z: Math.sin(aim0) };
-    for (let i = 0; i < 8; i++) m.step(DT, pad(-u.z, u.x, { digital: true }));
+    for (let i = 0; i < 40; i++) m.step(DT, pad(-u.z, u.x, { digital: true }));
     const aimed = t.facing;
     const aimZ = m.aimOnGoalLine(t)!;
     expect(Math.abs(aimZ)).toBeGreaterThan(2);
     expect(Math.abs(aimZ)).toBeLessThan(GOAL_W / 2);
-    for (let i = 0; i < charge(36); i++) m.step(DT, pad(0, 0, { shoot: true }));
-    // Release with A held: bend towards A's side.
     const Akey = pad(u.z, -u.x, { digital: true });
-    m.step(DT, Akey);
+    const height = m.penAim!.h;
+    for (let i = 0; i < 30; i++) m.step(DT, { ...Akey, shoot: true });
+    expect(m.penAim!.z).toBeCloseTo(aimZ, 6);
+    expect(m.penAim!.h).toBeCloseTo(height, 6);
+    expect(m.fkCurl * ad).toBeLessThan(-0.6);
+    m.step(DT, EMPTY_PAD);
     expect(t.facing).toBeCloseTo(aimed, 6);
     let spin = 0;
     for (let i = 0; i < 60 && phase(m) === 'restart'; i++) {
-      m.step(DT, Akey);
+      m.step(DT, EMPTY_PAD);
       spin = m.ball.spin.y;
     }
     expect(m.phase).toBe('play');
     // A is to the world -z side when attacking +x (and +z attacking -x): the bend goes that way.
     const bendZ = -Math.sign(spin) * Math.sign(m.ball.vel.x);
     expect(bendZ).toBe(-ad);
-    expect(m.shotCurl).toBeGreaterThan(0.8);
+    expect(m.shotCurl).toBeGreaterThan(0.6);
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FOUL_BEAT_S, FoulPresentation, type BookingShot } from '../src/game/foulPresentation';
 import { MatchSession } from '../src/game/matchSession';
 import { FRAME_LEN, writeFrame } from '../src/game/replay';
+import { newSubStage } from '../src/game/showcase';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { DT, HALF_W } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Phase, type Restart } from '../src/sim/match';
@@ -77,7 +78,7 @@ function sessionFor(m: Match) {
   const frame = new Float32Array(FRAME_LEN);
   writeFrame(m, frame, 0);
   const hud = {
-    commentary: vi.fn(), card: vi.fn(), show: vi.fn(), toastMsg: vi.fn(), setCinematic: vi.fn(),
+    commentary: vi.fn(), card: vi.fn(), show: vi.fn(), toastMsg: vi.fn(), setCinematic: vi.fn(), setSkippable: vi.fn(),
   };
   const refState = { x: -15, z: 3, faceX: -13.3, faceZ: 3 };
   const view = {
@@ -96,10 +97,13 @@ function sessionFor(m: Match) {
     cardLens: () => ({ x: -20, z: 12 }),
     setMode: vi.fn((mode: string) => { cam.mode = mode; }),
   };
+  const subScene = { begin: vi.fn(), update: vi.fn(), end: vi.fn() };
   const session = Object.create(MatchSession.prototype) as MatchSession;
   Object.assign(session, {
     match: m, foulPresentation: beat, hud, view, cam, demo: false, paused: false, driver: null,
     opt: { kits: [m.teams[0].kit, m.teams[1].kit] }, tally: { sub: vi.fn() }, lastPasser: [-1, -1],
+    wearing: m.players.map((p) => p.def), subQueue: [], subCut: null,
+    subScene, subSt: newSubStage(), sceneShot: { px: 0, py: 20, pz: 40, tx: 0, ty: 0, tz: 0, fov: 30 }, sceneKeep: [], sceneClear: 0,
     input: { reset: vi.fn(), read: () => ({ sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false }), lastDevice: 'keyboard' },
     touch: null, onPause: null, moment: null, replay: null, introLeft: 0, holdFirst: false,
     acc: 0, time: 0, hitStopT: 0, cardT: 0, cineHud: false, recorded: 0,
@@ -115,7 +119,7 @@ function sessionFor(m: Match) {
     updateAtmosphere: vi.fn(), updateHud: vi.fn(), updateGhost: vi.fn(),
   });
   const events = (list: MatchEvent[]) => (session as unknown as { handleEvents(e: MatchEvent[]): void }).handleEvents(list);
-  return { session, beat, hud, view, cam, events };
+  return { session, beat, hud, view, cam, subScene, events };
 }
 
 describe('the tackle has time to read before the referee decision', () => {
@@ -236,7 +240,9 @@ describe('the tackle has time to read before the referee decision', () => {
     expect(h.hud.show).toHaveBeenCalledWith('YELLOW CARD', name, expect.any(String), expect.any(Number));
     expect(h.view.showCard.mock.calls[0][4]).toBe(false);
     expect(h.view.pinPlayer).not.toHaveBeenCalled();
-    expect(h.cam.mode).toBe('broadcast');
+    // The card does not pin the replacement; his queued touchline scene can start after the verdict.
+    expect(h.cam.mode).toBe('scene');
+    expect(h.subScene.begin).toHaveBeenCalledWith(expect.objectContaining({ id }), by.def, m.teams[by.side].kit, false);
     expect(h.hud.card).toHaveBeenCalledTimes(1);
   });
 

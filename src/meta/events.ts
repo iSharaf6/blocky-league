@@ -246,8 +246,16 @@ function push(state: CareerState, c: EventCard | null): boolean {
   return true;
 }
 
-/** The card waiting for an answer (the oldest), or null. */
+/** Injury offers stop being useful once the player has recovered (or left the squad). Never charge for them. */
+function dropRecoveredInjuries(state: CareerState): void {
+  const ev = state.events;
+  if (!ev) return;
+  ev.queue = ev.queue.filter((c) => c.kind !== 'injury' || state.club?.squad.some((p) => c.who.includes(p.id) && isInjured(p)));
+}
+
+/** The oldest card waiting for an answer, after discarding obsolete injury offers, or null. */
 export function pendingEvent(state: CareerState): EventCard | null {
+  dropRecoveredInjuries(state);
   return state.events?.queue[0] ?? null;
 }
 
@@ -359,6 +367,9 @@ export type EventResult = { ok: true; card: EventCard; choice: EventChoice } | {
 export function resolveEvent(
   state: CareerState, wallet: Wallet, cardId: string, idx: number, spendGems?: (n: number, reason: string) => boolean,
 ): EventResult {
+  // A card can have waited while the player healed naturally, was treated on his GROW card, or left the squad.
+  // Revalidate before either wallet is touched, including when the stale card is already on screen.
+  dropRecoveredInjuries(state);
   const ev = state.events;
   const c = ev.queue.find((x) => x.id === cardId);
   const choice = c?.choices[idx];

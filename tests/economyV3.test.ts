@@ -28,7 +28,7 @@ import { playerPotential } from '../src/meta/market';
 import { buyPassWithGems, claimAllPass, passActive, passTotals, syncSeasonGems } from '../src/meta/pass';
 import { claimAllSeason, rollSeason, seasonOf, tierXp } from '../src/meta/season';
 import {
-  PACK_TOKENS, buyItem, dailyDeal, equipItem, grantItem, itemTier, owns, rerollDeal, scoutTokens, shopItems,
+  PACK_TOKENS, buyItem, dailyDeal, equipItem, grantItem, itemTier, nextDeal, owns, rerollDeal, scoutTokens, shopItems,
 } from '../src/meta/shop';
 import { CATALOGUE, applyPurchase, gemsOf, isGemPack } from '../src/platform/iap';
 import type { Kit } from '../src/sim/types';
@@ -90,6 +90,20 @@ describe('gems: the wallet', () => {
     expect(grantGemsOnce(s, 'legacy:1', 20, 'legacyLevel')).toBe(true);
     expect(grantGemsOnce(s, 'legacy:1', 20, 'legacyLevel')).toBe(false);
     expect(gems(s)).toBe(WELCOME_GEMS + 20);
+  });
+
+  it('keeps lifetime payout receipts after hundreds of seasons and a reload', () => {
+    const s = defaultSave();
+    grantGemsOnce(s, 'legacy:1', GEM_REWARDS.legacyLevel, 'legacyLevel');
+    for (let season = 1; season <= 700; season++) grantGemsOnce(s, `board:0:${season}:0`, GEM_REWARDS.boardObjective, 'boardObjective');
+    const before = gems(s);
+    expect(grantGemsOnce(s, 'legacy:1', GEM_REWARDS.legacyLevel, 'legacyLevel')).toBe(false);
+    const back = importSave(JSON.parse(JSON.stringify(s)))!;
+    expect(grantGemsOnce(back, 'legacy:1', GEM_REWARDS.legacyLevel, 'legacyLevel')).toBe(false);
+    expect(grantGemsOnce(back, 'board:0:1:0', GEM_REWARDS.boardObjective, 'boardObjective')).toBe(false);
+    expect(gems(back)).toBe(before);
+    // Receipts are short identifiers, so a long career's whole ledger remains small.
+    expect(JSON.stringify(back.gems!.claimed).length).toBeLessThan(15_000);
   });
 
   it('is made whole when damaged, and survives a reload', () => {
@@ -367,6 +381,32 @@ describe('invariant: no purchase is random', () => {
     const t = defaultSave();
     dailyDeal(t, DAY);
     expect(rerollDeal(t, DAY)!.item.id).toBe(next.item.id);
+  });
+
+  it('shows the exact next deal without changing the save or charging anything', () => {
+    const s = defaultSave();
+    for (const establish of [false, true]) {
+      if (establish) dailyDeal(s, DAY);
+      const before = JSON.parse(JSON.stringify(s));
+      const preview = nextDeal(s, DAY)!;
+      expect(s).toEqual(before);
+      expect(nextDeal(s, DAY)).toEqual(preview);
+      expect(rerollDeal(s, DAY)).toEqual(preview);
+      expect(s.coins).toBe(before.coins);
+      expect(gems(s)).toBe(before.gems.balance);
+    }
+    delete s.shop;
+    const old = JSON.parse(JSON.stringify(s));
+    expect(nextDeal(s, DAY)).not.toBeNull();
+    expect(s).toEqual(old);
+    // With just today's item left, a refresh offers no outcome and changes nothing.
+    const full = defaultSave();
+    const current = dailyDeal(full, DAY)!;
+    for (const it of shopItems()) if (it.id !== current.item.id || it.cat !== current.item.cat) grantItem(full, it.cat, it.id);
+    const complete = JSON.parse(JSON.stringify(full));
+    expect(nextDeal(full, DAY)).toBeNull();
+    expect(rerollDeal(full, DAY)).toBeNull();
+    expect(full).toEqual(complete);
   });
 });
 

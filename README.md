@@ -11,24 +11,24 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 - Quick Match against the AI with 11 hand-made clubs and 4 difficulty levels (Easy to Legend), 1.5 to 4 minute halves.
 - **Play Now** goes straight to kick-off. The first match waits for input while the AI eases into the game.
 - A hidden ease (`src/core/dda.ts`) softens the AI for the first two matches and after three defeats in a row (career, or quick match at one difficulty, which also suggests Easy). It is described honestly in `docs/PUBLISHING.md`.
-- Instant assisted passing, sprint-and-pass one-twos, power shots, through balls, lobs and crosses, headers and buffered first-time finishes, player switching, pressing,
-  standing and slide tackles, and a knock-on skill move (double-tap sprint).
+- Instant assisted passing, one-twos, power shots, through balls, lobs and crosses, headers and buffered first-time finishes, player switching, pressing,
+  standing and slide tackles, automatic sprinting and contextual skill moves. On touch, pushing the stick sprints; a lighter push jogs.
 - An on-pitch trainer is enabled by default, with contextual keyboard/gamepad/touch hints and a guide to the selected pass recipient. Disable it in **Pause → Settings → Controls**.
-- Keepers dive, claim crosses, rush out and distribute. Fouls, free kicks with walls, penalties and yellow cards from an on-pitch referee.
-- Corners and wide free kicks with loaded boxes, an aim arrow and a behind-the-ball camera.
-- Half-time tactics: mentality (defensive / balanced / attacking) and up to three substitutions with fresh legs.
+- Keepers dive, claim crosses, rush out and distribute. You can move your keeper with the ball in his hands or at his feet, and hold KEEPER to bring him out while defending.
+- Fouls, penalties and yellow cards from an on-pitch referee. Direct free kicks use a goal reticle; corners and wide free kicks use a landing ring for the delivery.
+- Half-time tactics: mentality (defensive / balanced / attacking) and up to five substitutions with fresh legs and a short scene for each change. Controls, settings and quit or forfeit are available at half time.
 - Goal celebrations, TV-style instant replays, Man of the Match and player ratings, and a text commentary ticker (no spoken commentary).
 - Goal clips: where the browser can record the canvas, SAVE CLIP and SHARE on the full-time screen and the pause menu.
 - Day, sunset and floodlit night matches, rain and voxel snow, in front of an animated voxel crowd.
 
 **Modes**
-- **Career**: six divisions of eight clubs, promotion and relegation, transfers, training, kit designer and stadium upgrades.
+- **Road to Glory**: six divisions of eight clubs, 14-matchday home-and-away seasons, promotion and relegation, transfers, training focuses, player growth, mentors, morale, staff, scouting and story decisions. Design your crest and kit, build your ground and earn a lasting club legacy.
 - **Blocky Cup**: an 8-team knockout with a bracket, prize money, a trophy, and penalty shootouts (aim your kicks, dive with your keeper).
 - **Football Moments**: eight challenges lasting 15 to 90 seconds of play, with retries, three-star best scores and an unlock ladder. Attempts earn XP without changing coins or the full-match record.
 - **Club Run**: seven short matches against a ladder of stronger clubs, one life, a perk after every win.
 - **Badges and season**: mastery badges on five skill tracks and a free monthly season track (from the level badge's unlock ladder).
 - **Unlocks**: view the level requirements for ball skins, celebrations and Legend difficulty from the main menu's level badge.
-- **Daily gift** with a seven-day streak.
+- **Daily gift** with a seven-day calendar that keeps your place when you miss a day.
 
 **Tech**
 - Every sound is synthesised live with WebAudio, so there are no audio files.
@@ -124,7 +124,8 @@ src/
 | Pass and make a return run | Shift + Space | RT + A |
 | Shoot (hold to power) / tackle (tap), slide (hold) | K | B |
 | Through ball (tap) / lob-cross (hold) / press | L | X |
-| Sprint (double-tap to knock it on) | Shift | RT |
+| Sprint automatically (push the stick); manual sprint override | Shift | RT |
+| Contextual skill / keeper rush while defending | Q | LB |
 | Pause | Esc / P | Start |
 
 These are the defaults; everything can be rebound in Settings › Keys. On touch screens there's a virtual stick on the left and action buttons on the right. Attacking labels stay visible while your pass is travelling.

@@ -960,13 +960,6 @@ export class CameraRig {
         }
         px = sx + Math.cos(az) * dist;
         pz = sz + Math.sin(az) * dist;
-        if (tight) {
-          // A lens this low and close stays on the pitch side of the ad boards (render/stadium.ts: 3.2 m past the
-          // touchlines, 4.6 m past the goal lines): from behind one it would film the back of it. The scorer's
-          // flag is 6 m in from them, so in front of him there is just room.
-          px = clamp(px, -(HALF_L + 3.4), HALF_L + 3.4);
-          pz = clamp(pz, -(HALF_W + 2.2), HALF_W + 2.2);
-        }
         py = lensY;
         tx = sx; tz = sz;
         ty = aimY;
@@ -1145,6 +1138,12 @@ export class CameraRig {
       const o = this.clearOfPlayers(px, pz, f.subject ?? -1);
       px = o.x;
       pz = o.z;
+    }
+    if (this.mode === 'celebrate') {
+      // Every low celebration lens stays in front of the boards, including portrait framing and a move's own
+      // requested angle. Apply this after clearing players, which can also nudge a safe lens into the stand.
+      px = clamp(px, -(HALF_L + 3.4), HALF_L + 3.4);
+      pz = clamp(pz, -(HALF_W + 2.2), HALF_W + 2.2);
     }
     // Cuts: asked for (only when the new framing is far away), or the wanted shot jumped (players reset
     // for a kick-off or a set piece, a new stoppage framing): a cut, never a 50 m whip pan.

@@ -52,7 +52,6 @@ type GemSave = Pick<SaveData, 'gems'>;
 export const WELCOME_GEMS = 50;
 export const GEM_MAX = 999_999;
 const LOG_MAX = 12;
-const CLAIMED_MAX = 600;
 
 const whole = (v: unknown, max = GEM_MAX): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.min(max, Math.floor(v)) : 0);
 
@@ -65,7 +64,7 @@ export function normalizeGems(raw: unknown): GemState {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return defaultGems();
   const r = raw as Partial<GemState>;
   const claimed = Array.isArray(r.claimed)
-    ? [...new Set(r.claimed.filter((k): k is string => typeof k === 'string' && /^[A-Za-z0-9:._-]{1,64}$/.test(k)))].slice(-CLAIMED_MAX)
+    ? [...new Set(r.claimed.filter((k): k is string => typeof k === 'string' && /^[A-Za-z0-9:._-]{1,64}$/.test(k)))]
     : [];
   const log = Array.isArray(r.log)
     ? r.log
@@ -142,7 +141,10 @@ export function spendGems(save: GemSave, n: number, reason: string): boolean {
 export function grantGemsOnce(save: GemSave, key: string, n: number, source: string): boolean {
   const g = gemsOf(save);
   if (g.claimed.includes(key)) return false;
-  g.claimed = [...g.claimed, key].slice(-CLAIMED_MAX);
+  // These are lifetime payout receipts, not recent history. Dropping an old key lets the career's next sync pay
+  // the same legacy level, achievement or trophy again. Keep the short receipts across arbitrarily long careers;
+  // only the display log is capped. Even a hundred seasons adds just a few kilobytes.
+  g.claimed.push(key);
   addGems(save, n, source);
   return true;
 }

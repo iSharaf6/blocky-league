@@ -17,6 +17,8 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
  * Covers AI v AI (classic, blitz, contrasting team styles), a scripted human (the bot: side 0), a masher on either
  * side with non-default controls, dynamic difficulty and the Club Run perks, the first-match onboarding, blitz with
  * starting power-ups, and knockout ties through penalty shootouts.
+ * The protocol-6 controls/skills revision (2026-10-04b) re-recorded the human rows only. The six AI-only rows keep
+ * their exact previous hashes, ticks, scores and shootout flags; see the revision note beside tests/net.test.ts's table.
  */
 export type Row = [number, number, number, number, number, number];
 

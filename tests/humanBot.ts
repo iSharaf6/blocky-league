@@ -1025,12 +1025,12 @@ export interface BotSummary {
  * `n` matches at `difficulty` between equal-rated sides on average: adjacent preset clubs (levels ~5 apart),
  * with the bot on the weaker club in half of them and on the stronger in the other half.
  */
-export function botSeries(n: number, difficulty: number, opts: { halfLength?: number; seed0?: number; bot?: BotOptions } = {}): BotSummary {
+export function botSeries(n: number, difficulty: number, opts: { halfLength?: number; seed0?: number; bot?: BotOptions; coach?: boolean } = {}): BotSummary {
   const list: BotMatch[] = [];
   for (let i = 0; i < n; i++) {
     const k = 2 + (Math.floor(i / 2) % 8);
     const [home, away] = i % 2 === 0 ? [k, k + 1] : [k + 1, k];
-    list.push(playBotMatch({ seed: (opts.seed0 ?? 1000) + i * 97, difficulty, home, away, halfLength: opts.halfLength, bot: opts.bot }));
+    list.push(playBotMatch({ seed: (opts.seed0 ?? 1000) + i * 97, difficulty, home, away, halfLength: opts.halfLength, bot: opts.bot, coach: opts.coach }));
   }
   return summariseBot(list, difficulty);
 }
