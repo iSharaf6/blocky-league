@@ -19,6 +19,8 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
  * starting power-ups, and knockout ties through penalty shootouts.
  * The protocol-6 controls/skills revision (2026-10-04b) re-recorded the human rows only. The six AI-only rows keep
  * their exact previous hashes, ticks, scores and shootout flags; see the revision note beside tests/net.test.ts's table.
+ * The protocol-7 stationary-possession revision (2026-10-04c) re-recorded only ten changed human rows. All six AI-only
+ * rows and all three human knockout rows are bit-identical; the drivers and exact assertions are unchanged.
  */
 export type Row = [number, number, number, number, number, number];
 

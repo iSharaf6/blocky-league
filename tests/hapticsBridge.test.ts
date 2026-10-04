@@ -43,6 +43,29 @@ describe('native haptics dispatch', () => {
     expect(bridge.then).not.toHaveBeenCalled();
   });
 
+  it('acknowledges a gameplay button immediately without swallowing its actual pass contact', async () => {
+    api.buzz('button');
+    api.buzz('pass');
+    await vi.waitFor(() => expect(bridge.impact).toHaveBeenCalledTimes(2));
+    expect(bridge.impact).toHaveBeenNthCalledWith(1, {
+      style: 'light', intensity: 0.8, count: undefined, apart: undefined, duration: 40,
+    });
+    expect(bridge.impact).toHaveBeenNthCalledWith(2, {
+      style: 'light', intensity: 0.85, count: undefined, apart: undefined, duration: undefined,
+    });
+    expect(bridge.then).not.toHaveBeenCalled();
+  });
+
+  it.each(['quiet', 'off', 'light', 'hidden'] as const)('does not acknowledge a gameplay button when %s', async (change) => {
+    if (change === 'quiet') api.setHapticsQuiet(true);
+    else if (change === 'hidden') doc.hidden = true;
+    else api.setHapticsLevel(change);
+    api.buzz('button');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bridge.impact).not.toHaveBeenCalled();
+  });
+
   it('falls back to impacts when an older installed native build has no pattern method', async () => {
     bridge.pattern.mockRejectedValueOnce(new Error('unimplemented'));
     api.buzz('goal');

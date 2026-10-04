@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Input, setBindings } from '../src/core/input';
 import { Menus } from '../src/ui/menus';
 import { TouchControls } from '../src/ui/touch';
+import { buzz } from '../src/platform/haptics';
+
+vi.mock('../src/platform/haptics', async (original) => ({
+  ...await original<typeof import('../src/platform/haptics')>(),
+  buzz: vi.fn(),
+}));
 
 /** Event-capable elements for testing focus and pointer lifecycles without a WebGL renderer. */
 class Element extends EventTarget {
@@ -68,6 +74,7 @@ function pointer(el: Element, type: string, pointerId = 1, clientX = 0, clientY 
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.clearAllMocks();
   root = new Element();
   win = Object.assign(new EventTarget(), { setTimeout, clearTimeout });
   doc = Object.assign(new EventTarget(), {
@@ -148,6 +155,39 @@ describe('menu keyboard lifecycle', () => {
 });
 
 describe('touch lifecycle', () => {
+  it('acknowledges every attack, defence, keeper and power button once per press, even before an action succeeds', () => {
+    const input = new Input();
+    const touch = new TouchControls(input);
+    touch.setEnabled(true);
+    const el = touch.root as unknown as Element;
+    for (const ctx of ['attack', 'defend'] as const) {
+      touch.setContext(ctx);
+      for (const k of ['pass', 'shoot', 'through', 'skill', 'keeper']) {
+        const b = el.querySelector(`.tb-${k}`);
+        const before = vi.mocked(buzz).mock.calls.length;
+        pointer(b, 'pointerdown');
+        expect(buzz).toHaveBeenLastCalledWith('button');
+        expect(vi.mocked(buzz).mock.calls.length).toBe(before + 1);
+        // A held PRESS / keeper rush / charge is sampled every frame, but never repeats the acknowledgement.
+        for (let frame = 0; frame < 120; frame++) input.read();
+        pointer(b, 'pointerdown', 2);
+        pointer(b, 'pointerup', 2);
+        expect(b.classList.contains('down')).toBe(true);
+        expect(vi.mocked(buzz).mock.calls.length).toBe(before + 1);
+        pointer(b, 'pointercancel');
+      }
+    }
+    const before = vi.mocked(buzz).mock.calls.length;
+    pointer(el.querySelector('.tb-power'), 'pointerdown');
+    pointer(el.querySelector('.tb-power'), 'pointerdown', 2);
+    vi.advanceTimersByTime(1000);
+    expect(vi.mocked(buzz).mock.calls.length).toBe(before + 1);
+    touch.setVisible(false);
+    pointer(el.querySelector('.touch-skip'), 'pointerdown');
+    expect(vi.mocked(buzz).mock.calls.length).toBe(before + 2);
+    touch.dispose();
+  });
+
   it('drops stick and action holds on blur, then accepts a fresh touch', () => {
     const input = new Input();
     const touch = new TouchControls(input);

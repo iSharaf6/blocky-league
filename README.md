@@ -17,9 +17,11 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 - Keepers dive, claim crosses, rush out and distribute. You can move your keeper with the ball in his hands or at his feet, and hold KEEPER to bring him out while defending.
 - Fouls, penalties and yellow cards from an on-pitch referee. Direct free kicks use a goal reticle; corners and wide free kicks use a landing ring for the delivery.
 - Half-time tactics: mentality (defensive / balanced / attacking) and up to five substitutions with fresh legs and a short scene for each change. Controls, settings and quit or forfeit are available at half time.
+- Short, skippable match scenes: both teams head into the dressing-room tunnel at half time, return for the second half, and greet and applaud one another at the final whistle.
 - Goal celebrations, TV-style instant replays, Man of the Match and player ratings, and a text commentary ticker (no spoken commentary).
 - Goal clips: where the browser can record the canvas, SAVE CLIP and SHARE on the full-time screen and the pause menu.
 - Day, sunset and floodlit night matches, rain and voxel snow, in front of an animated voxel crowd.
+- Seventeen crowd chant patterns with visible chant captions and rotating post-goal songs. In the iOS app, FULL vibration acknowledges every gameplay action button as it is pressed, alongside stronger contact feedback.
 
 **Modes**
 - **Road to Glory**: six divisions of eight clubs, 14-matchday home-and-away seasons, promotion and relegation, transfers, training focuses, player growth, mentors, morale, staff, scouting and story decisions. Design your crest and kit, build your ground and earn a lasting club legacy.

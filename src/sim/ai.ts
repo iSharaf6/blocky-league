@@ -2,7 +2,8 @@ import { clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
 import { headerAtGoal, throughLead } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, DDA_PRESS, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
-import { LINE_ENGAGE_R, LINE_PRESS, LINE_REACH, LINE_TACKLE, readsHuman, straightRead, takeOnVsHuman, vsHuman } from './dribble';
+import { LINE_ENGAGE_R, LINE_PACE, LINE_PRESS, LINE_REACH, LINE_TACKLE, readsHuman, STALL_S, straightRead, takeOnVsHuman, vsHuman } from './dribble';
+export { STALL_S } from './dribble';
 import { DUEL_TACKLE, startTell, telegraphs, tellReady, TELL_DUEL, TELL_PRESS, TELL_REACH, TOLD_TACKLE } from './skills';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import { FIRST_MATCH_PRESS, type Match } from './match';
@@ -482,7 +483,10 @@ function pickPresser(m: Match, side: Side, brain: TeamBrain, c: Player): void {
   // Beyond the style's press zone (a low block, a mid-block) the presser holds a screen in front of the block and
   // nobody else steps out of it. Not for ever: the human's man standing on it there (no ground gained for STALL_S)
   // is closed down, the presser in and the cover with him, as against a carrier inside the zone.
-  brain.screen = cN > st.pressFrom && !inOwnBox(m, side, c.pos.x, c.pos.z) && !humanStalling(m, brain, c);
+  // Watch him in every press zone, including inside our half. A short-circuited screen check used to leave
+  // stationary carriers there without a stall clock, so the duel's soft challenge could repeat indefinitely.
+  const stalling = humanStalling(m, brain, c);
+  brain.screen = cN > st.pressFrom && !inOwnBox(m, side, c.pos.x, c.pos.z) && !stalling;
   let engaged: Player | null;
   // The human holding PRESS (Match.pressHelp) asks for the ball back now: no screen, and the nearest team-mate comes
   // to press the carrier with him (the one after covers). (Never an AI side: its press is the style's.)
@@ -529,7 +533,6 @@ function humanStalling(m: Match, brain: TeamBrain, c: Player): boolean {
   }
   return m.clock - brain.stallSince >= STALL_S;
 }
-export const STALL_S = 3;
 const STALL_GAIN = 2;
 
 /** A high press's trap engages while the carrier is this far up (our frame: 0 is halfway, so in his own half; the human's, his own third). */
@@ -1216,12 +1219,15 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   const hasBall = m.ball.owner === c.idx;
   // Against the human's dribbler he jockeys more and commits less (pressVsHuman, by difficulty), and never
   // goes in during the protection window after a skill (Player.protectT).
-  const vsHuman = m.isHumanControlled(c);
-  const hk = vsHuman ? pressVsHuman(skill) : 1;
+  const humanCarrier = m.isHumanControlled(c);
+  const hk = humanCarrier ? pressVsHuman(skill) : 1;
   const st = styleOf(m, p.side);
-  // How well he reads the human's carrier (0..1): one straight line with the ball, no feint, no turn (dribble.ts).
-  const read = vsHuman ? straightRead(m, c) : 0;
-  const guarded = vsHuman && c.protectT > 0;
+  // Ignoring the tell while standing on the ball is as readable as running one straight line. The first
+  // STALL_S seconds remain his to look up, pass or turn; thereafter these are real challenges, with the same
+  // SKILL counter and protection window. Briefly stopping after a run does not reset the defender's read.
+  const stalled = humanCarrier && c.speed() < LINE_PACE && brain.stallBy === c.idx && m.clock - brain.stallSince >= STALL_S;
+  const read = humanCarrier ? Math.max(straightRead(m, c), stalled ? vsHuman(skill).line : 0) : 0;
+  const guarded = humanCarrier && c.protectT > 0;
   // Jockey goal-side, then commit to a tackle now and then: more often when the ball is
   // exposed, when the carrier has their back to goal, and when a teammate is covering.
   let commit = p.commitT > 0;
@@ -1229,27 +1235,27 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   if (commit) p.commitT -= dt;
   // (Winding up a telegraphed challenge, Player.tellT: skills.ts sends him in when it's up.)
   // (At the human's man from in front or beside him, a told challenge can start further out, TELL_REACH: the duel.)
-  else if (hasBall && p.tackleCooldown <= 0 && !guarded && p.tellT <= 0 && (d < 2.7 || (vsHuman && d < TELL_REACH + LINE_REACH * read && telegraphs(m, p, c)))) {
+  else if (hasBall && p.tackleCooldown <= 0 && !guarded && p.tellT <= 0 && (d < 2.7 || (humanCarrier && d < TELL_REACH + LINE_REACH * read && telegraphs(m, p, c)))) {
     const exposed = dist2(b.x, b.z, c.pos.x, c.pos.z) > 0.8 ? 2.2 : 1;
     const backToGoal = Math.cos(c.facing) * ad > 0.3 ? 1.5 : 1;
     const covered = brain.cover >= 0 ? 1.3 : 0.8;
     const box = inOwnBox(m, p.side, c.pos.x, c.pos.z) ? 0.7 : 1;
     // Don't shadow forever: the longer we've jockeyed, the likelier we go in (~2.5/s after 1.2 s; against
     // the human, later and less).
-    const ramp = vsHuman ? clamp((p.jockeyT - 0.9) / 0.9, 0, 1) * 2.2 * hk : clamp((p.jockeyT - 0.5) / 0.7, 0, 1) * 2.2;
+    const ramp = humanCarrier ? clamp((p.jockeyT - 0.9) / 0.9, 0, 1) * 2.2 * hk : clamp((p.jockeyT - 0.5) / 0.7, 0, 1) * 2.2;
     // (His very first minute: the AI shadows him at FIRST_MATCH_PRESS of its usual aggression.)
-    const ease = vsHuman && m.firstMatchEase() ? FIRST_MATCH_PRESS : 1;
+    const ease = humanCarrier && m.firstMatchEase() ? FIRST_MATCH_PRESS : 1;
     // (The style's press, and against the human his dynamic difficulty: assistEase.)
     // (Against the human a style's extra press is STYLE_VS_HUMAN of what it is against the AI: a high press is felt, not a
     // mugging.)
     const styleK = st.pressRate * (nX(m, p.side, c.pos.x) > 0 ? st.pressHigh : 1);
-    const style = (vsHuman ? 1 + (styleK - 1) * STYLE_VS_HUMAN : styleK) * (vsHuman ? 1 - DDA_PRESS * m.assistEase(p.side) : 1);
+    const style = (humanCarrier ? 1 + (styleK - 1) * STYLE_VS_HUMAN : styleK) * (humanCarrier ? 1 - DDA_PRESS * m.assistEase(p.side) : 1);
     // (A man running one straight line at him is easy to time, dribble.ts straightRead: he goes in LINE_PRESS as readily again.)
     const rate = ((0.3 + skill * 0.09) * exposed * backToGoal * covered * hk + ramp) * box * (1 + m.mentality[p.side] * 0.25) * ease * style *
       (1 + LINE_PRESS * read);
     // At the human's man from in front of him or beside him it's telegraphed first: the SKILL counter (skills.ts). (A
     // told challenge comes TELL_PRESS x as often: the warning it gives him costs it the surprise.)
-    const told = vsHuman && telegraphs(m, p, c);
+    const told = humanCarrier && telegraphs(m, p, c);
     // (And taking a man on brings one most of the time: TELL_DUEL a second more while a tell may go up, eased like
     // the press for a new player.)
     const duel = told && tellReady(m, c) ? TELL_DUEL * ease * (1 - DDA_PRESS * m.assistEase(p.side)) : 0;
@@ -1270,7 +1276,7 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   // (A high press in their half stands tighter on him: HIGH_PRESS_TIGHT m less room.)
   const tight = st.pressHigh > 1 && nX(m, p.side, c.pos.x) > 0 ? HIGH_PRESS_TIGHT : 0;
   const gap = commit ? 0.1 : clamp(1.95 + (c.speed() > 5 ? 0.45 : 0) - skill * 0.06 - tight, 1.3, 2.5) +
-    (vsHuman ? HUMAN_JOCKEY_ROOM + DDA_ROOM * m.assistEase(p.side) : 0);
+    (humanCarrier ? HUMAN_JOCKEY_ROOM + DDA_ROOM * m.assistEase(p.side) : 0);
   const jx = b.x + c.vel.x * 0.28 + (ux / ul) * gap;
   const jz = b.z + c.vel.z * 0.28 + (uz / ul) * gap;
   moveTo(p, jx, jz, 1, b);
@@ -1288,7 +1294,7 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     p.commitT = 0;
     p.jockeyT = 0;
   } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded && p.tellT <= 0 && !(p.toldT > 0 && p.tellDuel) &&
-    dist2(b.x, b.z, c.pos.x, c.pos.z) > (vsHuman ? HUMAN_POKE_EXPOSED : 0.95)) {
+    dist2(b.x, b.z, c.pos.x, c.pos.z) > (humanCarrier ? HUMAN_POKE_EXPOSED : 0.95)) {
     // Poke it away when the carrier's touch takes it too far from his feet.
     m.tryTackle(p, c, aggression * 1.25);
     p.jockeyT = 0;

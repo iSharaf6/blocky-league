@@ -55,21 +55,25 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * straight-line read, charged skill exits and placed set pieces. The hash now includes human FLAIR. All six AI-only
  * rows remain bit-identical, including the intermediate hash fold; the AI's original stamina calculation is kept
  * exactly to avoid float64 drift. The same drivers and exact six-value comparisons are retained.
+ * Revision 2026-10-04c (NET_VERSION 7) re-recorded the ten changed human rows: a stationary carrier becomes readable
+ * after the three-second grace in every press zone, the stationary automatic shield fades under continued pressure,
+ * and a won deliberate standing tackle gives control rather than randomly knocking the ball loose. All six AI-only
+ * rows and the three human knockout rows retain their exact prior hashes, steps, scores and shootout flags.
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2017188631,352340912,19086,0,1,0],
   aiBlitz: [1582265165,1309870222,12218,1,2,0],
   aiStyles: [2169161809,3859010485,12310,0,3,0],
-  botSide0: [3934514830,3507290232,16935,5,0,0],
-  botPerks: [1146773300,280297306,12285,3,1,0],
-  botFirstMatch: [1342008532,1662680329,13568,7,0,0],
-  fuzzSide1: [3741471131,1346644952,11119,0,0,0],
-  fuzzBlitz0: [3845200276,1348378564,11205,0,0,0],
-  fuzzBlitzPerks1: [1981958086,390394629,11451,1,0,0],
-  penTaker0: [1138174705,3835431875,7844,0,2,0],
-  penTaker1Low: [2999085029,1060990671,7943,0,2,0],
-  penTimeout1: [2139961345,3467281889,7671,0,1,0],
-  penKeeper1: [1772413223,4262640305,7590,1,0,0],
+  botSide0: [1161437,1792154742,17414,7,0,0],
+  botPerks: [1577361376,498864479,11857,3,1,0],
+  botFirstMatch: [1240918158,3269216505,12413,4,0,0],
+  fuzzSide1: [1130638555,3591809035,11246,0,0,0],
+  fuzzBlitz0: [1354131528,666997644,11344,0,0,0],
+  fuzzBlitzPerks1: [1702305564,1114339962,12008,2,0,0],
+  penTaker0: [994106238,1222347176,7292,0,0,0],
+  penTaker1Low: [3734662866,605254171,7669,0,1,0],
+  penTimeout1: [3569757527,3741561864,7641,0,1,0],
+  penKeeper1: [1335318122,3507486628,8018,1,0,0],
   ko1: [1048390301,643499515,3383,1,0,0],
   ko3: [3958102706,3078522871,5220,0,0,1],
   ko6: [1316568905,3483256939,5082,0,0,1],

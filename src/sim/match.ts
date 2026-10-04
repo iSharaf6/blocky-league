@@ -6080,10 +6080,14 @@ export class Match {
       c.kickCooldown = 0.45;
       c.stumbleT = Math.max(c.stumbleT, STUMBLE_LOST);
       this.poke(p, b.pos.x, b.pos.z);
-      // On the flank a poke often just knocks it into touch (the nearer the line, the likelier).
+      // A deliberate human standing tackle hooks the ball into his control. A successful input used to
+      // scatter it at random after saying WON, so the carrier could collect it back before our jab ended.
+      // Automatic pressure and AI pokes still sometimes knock it loose or into touch; slides remain clears.
+      const controlledWin = assisted && lunge && this.isHumanControlled(p);
+      // On the flank an automatic poke often just knocks it into touch (the nearer the line, the likelier).
       const wz = Math.abs(c.pos.z) - (HALF_W - WING_TOUCH);
-      const touch = wz > 0 && this.rng.chance(WING_POKE_TOUCH * clamp(wz / 5, 0.35, 1));
-      if (!touch && this.rng.chance((assisted ? ASSISTED_CLEAN : 0.35) + def * 0.3)) {
+      const touch = !controlledWin && wz > 0 && this.rng.chance(WING_POKE_TOUCH * clamp(wz / 5, 0.35, 1));
+      if (controlledWin || (!touch && this.rng.chance((assisted ? ASSISTED_CLEAN : 0.35) + def * 0.3))) {
         // Clean: the tackler comes away with it.
         p.kickCooldown = 0;
         b.vel.x = p.vel.x;

@@ -446,6 +446,20 @@ describe('haptics', () => {
     for (const k of ['goal', 'win', 'success', 'concede'] as const) expect(HAPTIC_FEEL[k].big).toBe(true);
     for (const k of ['tap', 'pass', 'shot', 'tackle', 'skill', 'camera', 'whistle'] as const) expect(HAPTIC_FEEL[k].big).toBe(false);
   });
+
+  it('button acknowledgements and action contacts never throttle each other', () => {
+    const g = new HapticGate();
+    expect(g.allow('button', 0)).toBe(true);
+    expect(g.allow('pass', 1)).toBe(true);
+    expect(g.allow('button', 20)).toBe(false);
+    expect(g.allow('button', 41)).toBe(true);
+    expect(g.allow('tackle', 42)).toBe(true);
+    expect(g.allow('button', 81)).toBe(true);
+    expect(g.allow('button', 121)).toBe(true);
+    expect(g.allow('pass', 142)).toBe(true);
+    expect(new HapticGate().allow('button', 0, 'light')).toBe(false);
+    expect(new HapticGate().allow('button', 0, 'off')).toBe(false);
+  });
 });
 
 describe('whole matches, played like a person on a phone', () => {

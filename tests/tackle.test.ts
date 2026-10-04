@@ -99,6 +99,31 @@ function play(m: Match, p: Player, frames: number, input: (i: number) => Pad) {
 const tap = (i: number) => pad(0, 0, { shoot: i < 4 });
 
 describe('TACKLE: tap', () => {
+  it('a won deliberate standing tackle gives the controlled player possession, including by the touchline', () => {
+    for (const z of [0, HALF_W - 0.7, -HALF_W + 0.7]) {
+      let won = 0;
+      for (let seed = 0; seed < 40; seed++) {
+        const { m, p, c } = duel(10400 + seed, 2, -1, -1);
+        p.pos.z = c.pos.z = z;
+        m.ball.pos.z = c.footZ();
+        m.updateBallPath();
+        // Real input: the same touch TACKLE press that would otherwise say WON then scatter it.
+        m.step(DT, pad(0, 0, { shoot: true }));
+        if (!m.drainEvents().some((e) => e.type === 'tackle' && e.by === p.idx && e.won && !e.slide)) continue;
+        won++;
+        expect(m.ball.owner).toBe(p.idx);
+        expect(m.active).toBe(p.idx);
+        expect(m.ball.lastTouch).toBe(p.idx);
+        for (let frame = 0; frame < 12; frame++) {
+          m.step(DT, EMPTY_PAD);
+          m.drainEvents();
+          expect(m.ball.owner).not.toBe(c.idx);
+        }
+      }
+      expect(won).toBeGreaterThanOrEqual(30);
+    }
+  });
+
   it('within 3 m, from the front: a standing tackle there and then that wins it most of the time and rarely fouls', () => {
     let tried = 0;
     let won = 0;

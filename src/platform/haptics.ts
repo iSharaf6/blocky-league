@@ -8,7 +8,10 @@
  * A single transient tap is easy to miss with a thumb on the glass, so the match's contacts are short CONTINUOUS
  * buzzes (40 to 120 ms: HapticFeel.buzzMs) under the tap, and the big moments are patterns of their own
  * (HapticFeel.pattern, played whole by the plugin):
- * - in a match (hapticForEvent, from the match session): his own pass (a firm tap) and shot (a 70 ms buzz), a timed or
+ * - in a match: every touch action button gives a short acknowledgement as it goes down (ui/touch.ts), even when
+ *   the action cannot complete. Held PRESS / KEEPER / charged shots buzz once, rather than once a frame. The separate
+ *   button lane never suppresses the later contact (hapticForEvent, from the match session): his own pass (a firm tap)
+ *   and shot (a 70 ms buzz), a timed or
  *   perfect finish (a crisp tap and a short buzz), a tackle his man wins or loses (a 90 ms thud), a skill move that
  *   beats a man (a tap; a PERFECT a buzz too), a save by his keeper (a 110 ms slap), the woodwork ('post': a sharp
  *   crack that rings on), a goal for his side ('goal': 0.6 s of rumble rising through four thumps into a heavy double),
@@ -22,7 +25,8 @@
  * VIBRATION (Settings > Controls, the app only): OFF, LIGHT (only the big moments: goals, wins, level ups, purchases and
  * rewards; HapticFeel.big) or FULL (the default). Never annoying (HapticGate): at most one tap every GAP_MS (a stronger one
  * may cut in), at most one heavy every HEAVY_GAP_MS, a longer gap between two of the same kind, no more than MAX_PER_S a
- * second; nothing while the app is hidden or an ad is up (setHapticsQuiet), nothing for a match the player isn't in.
+ * second for contacts, with discrete button acknowledgements on their own short debounce; nothing while the app is
+ * hidden or an ad is up (setHapticsQuiet), nothing for a match the player isn't in.
  */
 import type { Match } from '../sim/match';
 import type { MatchEvent, Side } from '../sim/types';
@@ -32,7 +36,7 @@ export type HapticLevel = 'off' | 'light' | 'full';
 export const HAPTIC_LEVELS: readonly HapticLevel[] = ['off', 'light', 'full'];
 
 export type HapticKind =
-  | 'tap' | 'camera' | 'pass' | 'shot' | 'finish' | 'whistle' | 'skill' | 'perfect' | 'tackle' | 'save' | 'post' | 'reveal'
+  | 'tap' | 'button' | 'camera' | 'pass' | 'shot' | 'finish' | 'whistle' | 'skill' | 'perfect' | 'tackle' | 'save' | 'post' | 'reveal'
   | 'concede' | 'goal' | 'win' | 'success'
   /** HYPE (sim/hype.ts): his side's SUPER SHOT struck (a heavy double); a live goal done (game/funLayer.ts). */
   | 'super' | 'bounty'
@@ -69,6 +73,7 @@ export interface HapticFeel {
 
 export const HAPTIC_FEEL: Readonly<Record<HapticKind, HapticFeel>> = {
   tap: { style: 'selection', intensity: 1, gap: 60, rank: 0, big: false },
+  button: { style: 'light', intensity: 0.8, buzzMs: 40, gap: 40, rank: 0, big: false },
   camera: { style: 'light', intensity: 0.8, gap: 200, rank: 0, big: false },
   pass: { style: 'light', intensity: 0.85, gap: 140, rank: 0, big: false },
   shot: { style: 'medium', intensity: 1, buzzMs: 70, gap: 140, rank: 1, big: false },
@@ -89,7 +94,7 @@ export const HAPTIC_FEEL: Readonly<Record<HapticKind, HapticFeel>> = {
   sub: { style: 'medium', intensity: 0.8, pattern: 'sub', gap: 500, rank: 1, big: false },
 };
 
-/** Any two taps at least GAP_MS apart (unless the second ranks higher), heavy ones HEAVY_GAP_MS, and MAX_PER_S a second. */
+/** Contacts at least GAP_MS apart (unless the second ranks higher), heavy ones HEAVY_GAP_MS, and MAX_PER_S a second. */
 export const GAP_MS = 80;
 export const HEAVY_GAP_MS = 600;
 export const MAX_PER_S = 6;
@@ -109,6 +114,13 @@ export class HapticGate {
     const f = HAPTIC_FEEL[kind];
     if (level === 'off' || (level === 'light' && !f.big)) return false;
     if (now - (this.lastOf.get(kind) ?? -1e9) < f.gap) return false;
+    // Touch acknowledgements are discrete pointer-downs, already bounded by their own short debounce. They neither
+    // consume the contact budget nor lose to the last contact: pressing PASS after a tackle must still feel pressed,
+    // and the actual pass that transfers possession a frame later must still land.
+    if (kind === 'button') {
+      this.lastOf.set(kind, now);
+      return true;
+    }
     if (now - this.last < GAP_MS && f.rank <= this.lastRank) return false;
     if (heavy(f) && now - this.lastHeavy < HEAVY_GAP_MS) return false;
     while (this.recent.length && now - this.recent[0] >= 1000) this.recent.shift();
@@ -245,8 +257,8 @@ const UI_TICK = 'button, [role="button"], [role="tab"], .btn, .tile, summary, se
 
 /**
  * Menus: a tick as a control is pressed (the owner couldn't feel the app "in full": only the green buttons used to
- * tick). Every button, tab and tile, on the press itself; never the match's own touch controls (the match's events are
- * felt instead: a pass, a shot), and the gate keeps a flurry of taps from buzzing. One listener on the document, for
+ * tick). Every button, tab and tile, on the press itself; the match's touch controls acknowledge their own accepted
+ * pointer-downs (ui/touch.ts) and keep their stronger contact feedback too. One listener on the document, for
  * the life of the page (main.ts).
  */
 export function installUiHaptics(doc: Document): void {

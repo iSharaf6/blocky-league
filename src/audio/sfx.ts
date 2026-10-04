@@ -14,7 +14,7 @@ import { MENU, SONGS, STINGS, WIN_FINAL, midiHz, type Song, type StingId, type T
  *
  * THE CROWD SINGS AT EVERY GROUND (the owner: "crowd chants non existent"; a level-0 ground used to never sing).
  * A small ground is a few fans, loud and passionate: a drum, a trumpet, claps and shouts; a big one is many voices.
- * Every 15 to 30 s (tick) one of CHANT_KINDS: thirteen chants (see chant()), each a football rhythm with claps and a
+ * Every 15 to 30 s (tick) one of CHANT_KINDS: seventeen chants (see chant()), each a football rhythm with claps and a
  * drum. The owner again: "have more chants but make it obvious that it is chants because it kind of isnt". So the
  * voices are WORDS now, not a pad: every syllable has its own vowel through the choir's formants, the vowel MOVES
  * inside the syllable where the word does ("o-LE", "hEY", "OH"), consonants are closures and bursts in front of it,
@@ -82,6 +82,7 @@ export type Stand = 0 | 1;
 /** The chants (Sfx.chant says what each is). The first five are the originals; ids are used by the dev panel and tests. */
 export const CHANT_KINDS = [
   'claps', 'ohs', 'name', 'drum', 'horn', 'ole', 'comeon', 'hey', 'callname', 'stomp', 'lala', 'letsgo', 'whoa',
+  'allez', 'herewego', 'standup', 'weare',
 ] as const;
 export type ChantKind = (typeof CHANT_KINDS)[number];
 export type Outcome = 'win' | 'draw' | 'loss';
@@ -169,6 +170,10 @@ export function chantCaption(kind: ChantKind, words: readonly string[]): string 
     case 'stomp': return 'BOOM BOOM CLAP! OH!';
     case 'lala': return 'LA LA LA LA, HEY!';
     case 'letsgo': return `LET'S GO ${first}! (CLAP CLAP)`;
+    case 'allez': return `ALLEZ ALLEZ ${first}! (DRUMS)`;
+    case 'herewego': return 'HERE WE GO! HERE WE GO! (CLAP CLAP)';
+    case 'standup': return `STAND UP FOR ${first}! (CLAP CLAP)`;
+    case 'weare': return `WE ARE ${name}! OH OH!`;
     default: return 'OOOOOH, HEY!';
   }
 }
@@ -233,6 +238,8 @@ export class Sfx {
   private lastOoh = -9;
   /** The chant the crowd sings next whatever the gap (after a goal: theirs, louder), and the stand singing it. */
   private forced: { kind: ChantKind; stand: Stand; anthem: boolean } | null = null;
+  /** Each scoring end cycles its own celebration songs instead of repeating one anthem after every goal. */
+  private goalSongs: [number, number] = [0, 0];
   /** Seconds to the away section's answer (Infinity: none due), to the next lone shout. */
   private answerT = Infinity;
   private shoutT = 5;
@@ -728,6 +735,7 @@ export class Sfx {
     this.shoutT = 2 + Math.random() * 3;
     this.answerT = Infinity;
     this.forced = null;
+    this.goalSongs = [0, 0];
     this.lastChant = null;
     this.applyStadium();
   }
@@ -813,7 +821,7 @@ export class Sfx {
   }
 
   /**
-   * A chant from `stand` (one at a time per stand; a home one is sometimes answered by the away section). Thirteen
+   * A chant from `stand` (one at a time per stand; a home one is sometimes answered by the away section). Seventeen
    * of them, each a football rhythm with words the screen can caption (chantCaption):
    * - claps: clap clap, clap-clap-clap, clap-clap-clap-clap, and the club's name shouted; twice;
    * - ohs: a sung "oh oh oh" line and its answer (an anthem after a goal: louder, longer, more voices);
@@ -828,6 +836,10 @@ export class Sfx {
    * - lala: "la la la la" down and back up, and a "HEY!";
    * - letsgo: "LET'S GO" and the club's name, clap clap;
    * - whoa: a long rising "oooooh" over a drum roll, and the "HEY!" it breaks into.
+   * - allez: "ALLEZ ALLEZ" and the club, a rolling terrace march with two claps;
+   * - herewego: a quick "HERE WE GO", three times, climbing into the last shout;
+   * - standup: one end calls "STAND UP FOR", the other answers the club name;
+   * - weare: "WE ARE" the club, then a long answering "OH OH" over the drum.
    * At a small ground a lone drummer bangs along to most of them. `kind` omitted: picked for the ground, never the
    * same twice running. The beds duck under it, and onChant gets its words.
    */
@@ -855,6 +867,10 @@ export class Sfx {
       case 'stomp': end = this.chantStomp(t, level, stand, voices); break;
       case 'lala': end = this.chantLaLa(t, level, stand, voices); break;
       case 'letsgo': end = this.chantLetsGo(t, level, stand, voices); break;
+      case 'allez': end = this.chantAllez(t, level, stand, voices); break;
+      case 'herewego': end = this.chantHereWeGo(t, level, stand, voices); break;
+      case 'standup': end = this.chantStandUp(t, level, stand, voices); break;
+      case 'weare': end = this.chantWeAre(t, level, stand, voices); break;
       default: end = this.chantWhoa(t, level, stand, voices); break;
     }
     if (choir) choir.busy = end;
@@ -1307,7 +1323,8 @@ export class Sfx {
       if (away) this.groanAt(t + 0.35, 0.8, 0);
       // Then the scorers' fans sing (once the roar has had its moment).
       if (side !== undefined) {
-        this.forced = { kind: away ? 'name' : 'ohs', stand: side, anthem: !away };
+        const songs = side === 0 ? Sfx.HOME_GOAL_SONGS : Sfx.AWAY_GOAL_SONGS;
+        this.forced = { kind: songs[this.goalSongs[side]++ % songs.length], stand: side, anthem: !away };
         this.chantT = 6;
         // (Whatever they were singing is drowned by the roar: the song after it never waits on it.)
         const ch = this.choirs[side];
@@ -1555,7 +1572,9 @@ export class Sfx {
   // ------------------------------------------------------------------ the crowd: chants and reactions
 
   /** What the away section answers a home chant with. */
-  private static readonly AWAY_ANSWERS: readonly ChantKind[] = ['name', 'claps', 'ole', 'comeon'];
+  private static readonly AWAY_ANSWERS: readonly ChantKind[] = ['name', 'claps', 'ole', 'comeon', 'allez', 'weare'];
+  private static readonly HOME_GOAL_SONGS: readonly ChantKind[] = ['ohs', 'allez', 'weare', 'herewego'];
+  private static readonly AWAY_GOAL_SONGS: readonly ChantKind[] = ['name', 'comeon', 'letsgo', 'weare'];
   /** "Oh oh oh": [beat, beats long, MIDI] (G3 A3 G3 E3 G3 C3, then the answer down to C, an anthem's third line up). */
   private static readonly OH_LINES: readonly (readonly (readonly [number, number, number])[])[] = [
     [[0, 1.5, 55], [1.5, 0.5, 57], [2, 1, 55], [3, 1, 52], [4, 1, 55], [5, 2.6, 48]],
@@ -1618,6 +1637,10 @@ export class Sfx {
     w[10] = 0.7 + size * 0.3;
     w[11] = 0.9;
     w[12] = 0.6;
+    w[13] = 1.1;
+    w[14] = 1;
+    w[15] = 0.7 + size * 0.5;
+    w[16] = 0.8 + size * 0.3;
     const kinds = CHANT_KINDS;
     let sum = 0;
     for (let i = 0; i < kinds.length; i++) if (kinds[i] !== this.lastChant) sum += w[i];
@@ -1973,6 +1996,74 @@ export class Sfx {
       for (const x of [4, 4.5]) this.clap(r0 + x * b, 1.1 * k, bus);
     }
     return t + 16.5 * b;
+  }
+
+  /** A rolling "AL LEZ, AL LEZ" march, landing on the club name; the second line a tone higher. */
+  private chantAllez(t: number, k: number, stand: Stand, voices: number): number {
+    const bus = this.standBus(stand);
+    const b = 0.36;
+    for (let r = 0; r < 2; r++) {
+      const r0 = t + r * 10 * b;
+      const up = r * 2;
+      const notes: SungNote[] = [
+        [0, 0.7 * b, 57 + up, 'a'], [b, 1.25 * b, 60 + up, 'e', 'l'],
+        [2.8 * b, 0.7 * b, 59 + up, 'a'], [3.8 * b, 1.2 * b, 62 + up, 'e', 'l'],
+      ];
+      this.wordNotes(this.words[stand][0], 5.3 * b, 0.48 * b, 60 + up, notes);
+      this.sing(r0, notes, voices, k, stand);
+      for (const x of [0, 2.8, 5.3]) this.drum(r0 + x * b, 0.8 * k, bus);
+      for (const x of [8, 9]) this.clap(r0 + x * b, k, bus);
+    }
+    return t + 20 * b;
+  }
+
+  /** A quick "HERE WE GO" three times, with an extra clap and higher last shout. */
+  private chantHereWeGo(t: number, k: number, stand: Stand, voices: number): number {
+    const bus = this.standBus(stand);
+    const b = 0.34;
+    for (let r = 0; r < 3; r++) {
+      const r0 = t + r * 5.5 * b;
+      const notes: SungNote[] = [
+        [0, 0.65 * b, 59, 'i', 'h'], [b, 0.65 * b, 57, 'i', 'w'],
+        [2 * b, 1.25 * b, r === 2 ? 64 : 60, 'ow', 'g'],
+      ];
+      this.sing(r0, notes, voices, k, stand);
+      this.drum(r0, 0.85 * k, bus);
+      for (const x of [3.7, 4.3]) this.clap(r0 + x * b, k, bus);
+    }
+    return t + 16.5 * b;
+  }
+
+  /** One end calls "STAND UP FOR", the other answers the club name; clap clap. */
+  private chantStandUp(t: number, k: number, stand: Stand, voices: number): number {
+    const [a, z] = this.callEnds(stand);
+    for (let r = 0; r < 2; r++) {
+      const r0 = t + r * 3.4;
+      this.sing(r0, [[0, 0.32, 57, 'a', 's'], [0.43, 0.32, 60, 'u'], [0.85, 0.38, 59, 'o', 'f']], voices, k, a);
+      const answer: SungNote[] = [];
+      this.wordNotes(this.words[stand][0], 0, 0.27, 62, answer);
+      this.sing(r0 + 1.5, answer, voices, 1.05 * k, z);
+      this.drum(r0, 0.8 * k, this.standBus(a));
+      this.drum(r0 + 1.5, 0.8 * k, this.standBus(z));
+      for (const x of [2.7, 3.05]) this.clap(r0 + x, k, this.standBus(stand));
+    }
+    return t + 6.8;
+  }
+
+  /** "WE ARE" the club, then a drawn-out "OH OH"; the club answers from both ends on the last line. */
+  private chantWeAre(t: number, k: number, stand: Stand, voices: number): number {
+    const bus = this.standBus(stand);
+    for (let r = 0; r < 2; r++) {
+      const r0 = t + r * 4;
+      const notes: SungNote[] = [[0, 0.33, 57, 'i', 'w'], [0.4, 0.4, 59, 'a']];
+      let at = 0.95;
+      for (const word of this.words[stand]) at = this.wordNotes(word, at, 0.17, r ? 62 : 60, notes) + 0.06;
+      notes.push([2.35, 0.5, 59, 'ow'], [2.95, 0.75, 55, 'ow']);
+      this.sing(r0, notes, voices, k, stand);
+      for (const x of [0, 0.8, 2.35, 2.95]) this.drum(r0 + x, 0.8 * k, bus);
+      this.clap(r0 + 3.75, k, bus);
+    }
+    return t + 8;
   }
 
   /** A long rising "oooooh" over a quickening drum, breaking into "HEY!" and three claps. */

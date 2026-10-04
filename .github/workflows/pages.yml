@@ -38,6 +38,7 @@ jobs:
           tests/coreControls.test.ts tests/skillMoves.test.ts tests/setPieceAim.test.ts
           tests/straightRun.test.ts tests/economyV3.test.ts tests/glory.test.ts tests/crest.test.ts
           tests/presentation.test.ts tests/hapticsBridge.test.ts tests/celebrationCamera.test.ts
+          tests/matchTransitions.test.ts tests/matchInterludes.test.ts tests/stallPress.test.ts
       - name: Type-check and package the web game
         run: npm run build:web
         env:

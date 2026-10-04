@@ -1410,7 +1410,9 @@ function menuMusic(): void {
 
 // Tabbed away, or the portal's frame lost focus (a click outside the game): the match pauses itself.
 const autoPause = (): void => {
-  if (session && !session.paused && !menus.open) session.requestPause();
+  // A full-screen half-time ad can blur the webview before its menu is mounted. The match is already at a
+  // break: do not replace it with a hidden pause that survives the SECOND HALF action.
+  if (session && !session.paused && !menus.open && session.match.phase !== 'halftime' && session.match.phase !== 'fulltime') session.requestPause();
 };
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) autoPause();

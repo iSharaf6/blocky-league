@@ -19,9 +19,11 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * matches: netConfig's `hype`; and added time by the Laws, earned and announced on the board, sim/match.ts STOP_BASE_S.
  * 6: the core controls' rules, the same on both machines: the protected kick-off (Match.koGuard), the keeper who is his
  * human's with the ball and comes out on KEEPER (the pad's SKILL bit with the ball not ours: no new bit on the wire),
- * the aerial lock, the standing tackle's new odds and PRESS's helper, AUTO SPRINT's lower threshold and flat-out push.)
+ * the aerial lock, the standing tackle's new odds and PRESS's helper, AUTO SPRINT's lower threshold and flat-out push.
+ * 7: stationary carriers are read after a short grace and their automatic shield can be overcome; a won deliberate
+ * standing tackle takes possession consistently. Both peers must use these challenge and possession rules.)
  */
-export const NET_VERSION = 6;
+export const NET_VERSION = 7;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides

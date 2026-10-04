@@ -59,6 +59,8 @@ export const PROTECT_T = 0.6;
 export const SHIELD_R = 1.6;
 /** A shielding carrier's tackles succeed this much as often (from the far side of his body). */
 const SHIELD_TACKLE = 0.4;
+/** No ground gained for this long: the AI closes down a time-wasting human and begins reading his shield. */
+export const STALL_S = 3;
 /** Just after a successful skill, tackles on him succeed this much as often. */
 const PROTECT_TACKLE = 0.15;
 /** For RECEIVE_GUARD_T s after he takes the ball, tackles on him succeed RECEIVE_GUARD as often. */
@@ -473,7 +475,14 @@ export function carrierGuard(m: Match, tackler: Player, c: Player): number {
     const tx = tackler.pos.x - c.pos.x;
     const tz = tackler.pos.z - c.pos.z;
     const cover = -(bx * tx + bz * tz) / Math.max(1e-3, Math.hypot(bx, bz) * Math.hypot(tx, tz));
-    k *= 1 - (1 - SHIELD_TACKLE) * clamp((cover + 0.3) / 0.8, 0, 1);
+    // Neutral-stick shielding is automatic, not a permanent safe haven. A presser who has watched the
+    // same stationary carrier for STALL_S gets round that shield over the next STALL_S seconds. His
+    // body still blocks a tackle from behind (tryTackle's geometry), and a timed SKILL still beats it.
+    const brain = m.brains[tackler.side];
+    const stale = c.speed() < LINE_PACE && brain.stallBy === c.idx
+      ? clamp((m.clock - brain.stallSince - STALL_S) / STALL_S, 0, 1) : 0;
+    const shield = SHIELD_TACKLE + (1 - SHIELD_TACKLE) * stale;
+    k *= 1 - (1 - shield) * clamp((cover + 0.3) / 0.8, 0, 1);
   }
   return k;
 }

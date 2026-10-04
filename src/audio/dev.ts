@@ -5,7 +5,7 @@
  *   __blaudio.unlock()           build the audio context (a click in the page does it too)
  *   __blaudio.cue(name)          fire one cue now: a song (menu halftime win draw loss), a sting (kickoff goal trophy
  *                                promotion), a chant (claps ohs name drum horn ole comeon hey callname stomp lala
- *                                letsgo whoa), a reaction (roarHome roarAway ooh
+ *                                letsgo whoa allez herewego standup weare), a reaction (roarHome roarAway ooh
  *                                groan applause whistles boo ole surge fulltimeWin fulltimeDraw), a hook (superShot
  *                                objective coins finalOn finalOff), or stop
  *   __blaudio.toHalftime()       end the first half now (the match on screen; __bl.step(n) to run it on)

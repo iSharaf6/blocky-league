@@ -307,8 +307,8 @@ describe('chants that are obviously chants', () => {
     vi.useRealTimers();
   });
 
-  it('there are at least ten, each with its own short caption: plain capitals, the claps and drums in brackets', () => {
-    expect(CHANT_KINDS.length).toBeGreaterThanOrEqual(10);
+  it('there are at least seventeen, each with its own short caption: plain capitals, the claps and drums in brackets', () => {
+    expect(CHANT_KINDS.length).toBeGreaterThanOrEqual(17);
     expect(new Set(CHANT_KINDS).size).toBe(CHANT_KINDS.length);
     const words = chantWords('Cube City');
     expect(words).toEqual(['CUBE', 'CITY']);
@@ -317,6 +317,10 @@ describe('chants that are obviously chants', () => {
     expect(chantCaption('ole', words)).toBe('OLE, OLE OLE OLE!');
     expect(chantCaption('name', words)).toBe('CUBE CITY! (CLAP CLAP CLAP)');
     expect(chantCaption('callname', words)).toBe('CUBE! (CLAP CLAP CLAP) CITY!');
+    expect(chantCaption('allez', words)).toBe('ALLEZ ALLEZ CUBE! (DRUMS)');
+    expect(chantCaption('herewego', words)).toBe('HERE WE GO! HERE WE GO! (CLAP CLAP)');
+    expect(chantCaption('standup', words)).toBe('STAND UP FOR CUBE! (CLAP CLAP)');
+    expect(chantCaption('weare', words)).toBe('WE ARE CUBE CITY! OH OH!');
     for (const name of ['Cube City', 'Foxhollow Athletic', 'Supercalifragilistic Wanderers', '', 'Rovers']) {
       const w = chantWords(name);
       expect(w.length).toBeGreaterThan(0);
@@ -367,6 +371,44 @@ describe('chants that are obviously chants', () => {
       expect(said[1].caption).toBe('MOSSVALE ROVERS! (CLAP CLAP CLAP)');
       expect(said[1].stand).toBe(1);
     }
+  });
+
+  it('each scoring end sings a different celebration song after repeated goals, waiting for the roar first', () => {
+    const s = new Sfx();
+    s.unlock();
+    s.setClubNames('Cube City', 'Mossvale Rovers');
+    s.setStadium(3, 0.8);
+    s.setAmbienceActive(true);
+    // No random songs or away replies between the deliberately staged goals.
+    s.setChantGate(false);
+    const said: { kind: ChantKind; stand: number }[] = [];
+    s.onChant = (c) => said.push(c);
+    for (const stand of [0, 1] as const) {
+      const kinds: ChantKind[] = [];
+      for (let goal = 0; goal < 4; goal++) {
+        audio.ctx.clock += 30;
+        const start = audio.ctx.clock;
+        s.goal(stand);
+        const before = said.length;
+        audio.ctx.clock = start + 2;
+        s.tick(2);
+        expect(said).toHaveLength(before);
+        audio.ctx.clock = start + 6.1;
+        s.tick(4.1);
+        expect(said).toHaveLength(before + 1);
+        expect(said.at(-1)?.stand).toBe(stand);
+        kinds.push(said.at(-1)!.kind);
+      }
+      expect(new Set(kinds).size).toBe(4);
+      expect(kinds[0]).toBe(stand === 0 ? 'ohs' : 'name');
+    }
+    // Starting a new ground/match puts the first-goal song back at its opening anthem.
+    s.setStadium(3, 0.8);
+    audio.ctx.clock += 30;
+    s.goal(0);
+    audio.ctx.clock += 6.1;
+    s.tick(6.1);
+    expect(said.at(-1)?.kind).toBe('ohs');
   });
 
   it('nothing is sung or said with the crowd off, and the menus never hear of a chant', () => {

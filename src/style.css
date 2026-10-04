@@ -3733,7 +3733,7 @@ button.mc-pl:active {
 
 /* Bookings under the score bug push the widgets that hang below it down a row. */
 .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 78px); }
-.hud:has(.sb-cards:not(:empty)) .hud-replay { top: max(96px, calc(env(safe-area-inset-top) + 86px)); }
+.hud:has(.sb-cards:not(:empty)) .hud-replay:not(.skip-only) { top: max(96px, calc(env(safe-area-inset-top) + 86px)); }
 
 @media (max-width: 720px), (max-height: 480px) {
   .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 70px); }
@@ -4325,8 +4325,8 @@ button.mc-pl:active {
   .hud:has(.sb-cards:not(:empty)) .hud-tip,
   .hud:has(.sb-cards:not(:empty)) .hud-hint { top: calc(max(12px, env(safe-area-inset-top)) + 190px); }
   .hud-tip { max-width: calc(100vw - 24px); }
-  .hud-replay,
-  .hud:has(.sb-cards:not(:empty)) .hud-replay { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
+  .hud-replay:not(.skip-only),
+  .hud:has(.sb-cards:not(:empty)) .hud-replay:not(.skip-only) { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
   .so-track,
   .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
 }

@@ -11,6 +11,8 @@ import type { ScenarioSpec } from '../src/sim/types';
  * in his own half, so standing still on the ball there ran the clock down untouched (all 22 men stationary for 67 s
  * in a soak). Now a human carrier who gains no ground for STALL_S is closed down: the presser goes in, the cover with
  * him; before that the block holds its screen, and it never swarms him.
+ * The outcome matters too: repeatedly showing a failed tackle still let an untouched carrier waste half a
+ * minute. After the grace the presser reads that stationary carrier and his automatic shield, so it wins the ball.
  */
 
 /** The human's centre-mid on the ball at his formation spot in his own half, everyone else in shape, against `away`. */
@@ -31,6 +33,46 @@ function nearestAI(m: Match, carrier: number): number {
 }
 
 describe('a human carrier standing on the ball in his own half', () => {
+  for (const away of [0, 4, 6, 8]) {
+    it(`${PRESET_CLUBS[away].short} actually dispossesses an unattended carrier instead of repeating harmless challenges`, () => {
+      let won = 0;
+      for (let seed = 1; seed <= 12; seed++) {
+        const { m, carrier } = standOff(away, seed);
+        let ballWon = false;
+        for (let i = 0; i < 20 * 60 && m.ball.owner === carrier && m.phase === 'play'; i++) {
+          m.step(DT, EMPTY_PAD);
+          for (const e of m.drainEvents()) {
+            if (e.type === 'tackle' && e.won && m.players[e.by].side === 1) ballWon = true;
+          }
+        }
+        expect(m.ball.owner, `seed ${seed} keeps possession without any input`).not.toBe(carrier);
+        if (ballWon) won++;
+      }
+      // A whistle on a failed challenge is not the successful defensive counterplay we need.
+      expect(won).toBeGreaterThanOrEqual(10);
+    });
+  }
+
+  it('a timed SKILL still counters the committed challenge on a stationary carrier', () => {
+    const { m, carrier } = standOff(4, 2);
+    let warned = false;
+    for (let frame = 0; frame < 8 * 60 && m.ball.owner === carrier; frame++) {
+      m.step(DT, EMPTY_PAD);
+      const events = m.drainEvents();
+      if (frame * DT < STALL_S || !events.some((e) => e.type === 'skillTell' && e.on === carrier)) continue;
+      warned = true;
+      m.step(DT, { ...EMPTY_PAD, skill: true });
+      expect(m.drainEvents().some((e) => e.type === 'skillMove' && e.player === carrier && e.grade === 'perfect')).toBe(true);
+      for (let next = 0; next < 15; next++) {
+        m.step(DT, EMPTY_PAD);
+        m.drainEvents();
+        expect(m.ball.owner).toBe(carrier);
+      }
+      break;
+    }
+    expect(warned).toBe(true);
+  });
+
   for (const [away, style] of [[0, 'park-bus'], [4, 'counter'], [8, 'park-bus']] as const) {
     it(`is closed down by a ${style} side (${PRESET_CLUBS[away].short}) once he gains no ground for ${STALL_S} s, without a swarm`, () => {
       const { m, carrier } = standOff(away, 7 + away);

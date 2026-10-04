@@ -23,6 +23,7 @@ import {
 import { MatchView } from '../render/matchView';
 import { cssHex } from '../render/palette';
 import { SubScene } from '../render/subScene';
+import { MatchTunnel } from '../render/matchTunnel';
 import { SKILL_SLOW_RATE, SKILL_SLOW_S } from '../render/juice';
 import { actionKey } from '../core/input';
 import { deliveryShape, FK_AUTO_POWER } from '../sim/setPiece';
@@ -68,6 +69,7 @@ import {
   LINEUP_INTRO_FROM, LINEUP_S, MOTM_S, SUB_MAX_SHOWN, SUB_S, applyLineup, applyMotm, lineupOrder, lineupShot, motmShot, motmSpot, newSubStage, subBeatS,
   subStage,
 } from './showcase';
+import { INTERLUDE_SECONDS, MatchInterlude, applyInterlude, interludeOrder, interludeShot, type MatchInterludeKind } from './matchInterludes';
 import { MatchTally, type PlayerRating } from './ratings';
 import { FunPresenter } from './funPresent';
 import type { FunSummary } from './funLayer';
@@ -320,6 +322,7 @@ export const PRESENTATION = {
   foulBeatS: FOUL_BEAT_S, noReplayAtS: NO_REPLAY_AT, theirGoalAtS: THEIR_GOAL_AT, goalSkipGraceS: GOAL_SKIP_GRACE,
   // The staged shots (game/showcase.ts), each skipped by a tap: the line-up, one substitution, the man of the match.
   lineupS: LINEUP_S, subS: SUB_S, motmS: MOTM_S,
+  tunnelS: INTERLUDE_SECONDS.halftime, returnS: INTERLUDE_SECONDS.return, sportsmanshipS: INTERLUDE_SECONDS.sportsmanship,
 } as const;
 
 /** A staged shot can be skipped from this long in (s): the tap that started the match never skips it. */
@@ -600,6 +603,9 @@ export class MatchSession {
   private lineupRow: number[] = [];
   private motm: { idx: number; x: number; z: number; t: number; lost: boolean } | null = null;
   private motmDone = false;
+  private interlude: MatchInterlude | null = null;
+  private matchTunnel: MatchTunnel | null = null;
+  private sportsmanshipDone = false;
   private sceneShot: SceneShot = { px: 0, py: 20, pz: 40, tx: 0, ty: 0, tz: 0, fov: 30 };
   private sceneKeep: number[] = [];
   private sceneClear = 0;
@@ -652,6 +658,11 @@ export class MatchSession {
     world.scene.add(this.fxKit.group);
     this.subScene.group.position.y = PITCH_Y;
     world.scene.add(this.subScene.group);
+    if (!this.demo && !opt.humanSides && !this.moment && this.match.cfg.humanSide >= 0) {
+      this.matchTunnel = new MatchTunnel(opt.kits[0].shirt, opt.kits[1].shirt);
+      this.matchTunnel.group.position.y = PITCH_Y;
+      world.scene.add(this.matchTunnel.group);
+    }
     this.wearing = this.match.players.map((p) => p.def);
     this.warmFx();
     this.fxKit.onCue = fxCue;
@@ -957,6 +968,83 @@ export class MatchSession {
     this.view.apply(this.prev, this.cur, 1, this.time, 0);
   }
 
+  /** Dressing-room departures / return, then the post-match greeting. Local presentation, with no sim changes. */
+  private startMatchInterlude(kind: MatchInterludeKind): boolean {
+    const m = this.match;
+    if (this.driver || this.demo || this.moment || !this.hud || m.cfg.humanSide < 0 || this.interlude || this.subCut) return false;
+    if ((kind === 'halftime' && m.phase !== 'halftime') || (kind === 'return' && m.phase !== 'kickoff') ||
+      (kind === 'sportsmanship' && (m.phase !== 'fulltime' || !!m.shootout))) return false;
+    const cast = (side: Side) => interludeOrder(m.teamPlayers(side).filter((p) => !isSentOff(p)).map((p) => p.idx), this.captainIdx(side));
+    const scene = new MatchInterlude(kind, cast(0), cast(1));
+    if (!scene.actors.length) return false;
+    this.interlude = scene;
+    this.sceneKeep = scene.actors;
+    this.sceneClear = 11;
+    this.view.celeb.end();
+    this.view.frameHook = (f) => applyInterlude(f, scene, this.time);
+    this.matchTunnel?.show(scene.tunnel);
+    interludeShot(scene, this.sceneShot, this.view.headTop);
+    this.cam.setMode('scene');
+    this.cam.cut();
+    this.view.setMarkerVisible(false);
+    this.present?.hideChant();
+    const [home, away] = m.teams;
+    const kit = this.opt.kits[m.cfg.humanSide as Side];
+    const human = m.teams[m.cfg.humanSide as Side];
+    const tag = kind === 'halftime' ? 'HALF TIME' : kind === 'return' ? 'SECOND HALF' : 'FULL TIME';
+    const title = kind === 'halftime' ? 'INTO THE TUNNEL' : kind === 'return' ? 'BACK FOR THE SECOND HALF' : 'RESPECT AT THE WHISTLE';
+    const line = `${home.short} ${m.score[0]} : ${m.score[1]} ${away.short}${kind === 'halftime' ? '   TIME FOR THE TEAM TALK' : kind === 'return' ? '   A FRESH HALF' : '   FOOTBALL FIRST'}`;
+    this.present?.showPlate(tag, title, line, crestSvg(human.name, human.short, kit, 3), cssHex(kit.shirt));
+    this.hud.hideIntro();
+    this.hud.setSkippable(true);
+    this.clearLatch();
+    this.acc = 0;
+    this.view.apply(this.prev, this.cur, 1, this.time, 0);
+    if (kind === 'sportsmanship') sfx.applause(0.6);
+    return true;
+  }
+
+  private stepMatchInterlude(dt: number): void {
+    const scene = this.interlude!;
+    const c = this.input.read();
+    const btn = c.pass || c.shoot || c.through || c.skill || c.power || c.sprint;
+    const press = (btn && !this.prevButtons) || this.anyPress;
+    this.prevButtons = btn;
+    this.acc = 0;
+    const done = scene.tick(dt, press);
+    if (!done && scene.takeGreeting()) sfx.highFive();
+    interludeShot(scene, this.sceneShot, this.view.headTop);
+    this.view.apply(this.prev, this.cur, 1, this.time, dt);
+    if (done) this.endMatchInterlude(btn);
+  }
+
+  private endMatchInterlude(held: boolean): void {
+    const scene = this.interlude;
+    if (!scene) return;
+    this.interlude = null;
+    this.matchTunnel?.show(false);
+    this.view.frameHook = null;
+    this.sceneKeep = [];
+    this.sceneClear = 0;
+    this.present?.hidePlate();
+    this.hud?.setSkippable(false);
+    this.view.setBallHidden(false);
+    this.cam.setMode('broadcast');
+    this.cam.cut();
+    this.eatButtons = this.eatButtons || held;
+    this.clearLatch();
+    this.acc = 0;
+    this.view.apply(this.prev, this.cur, 1, this.time, 0);
+    if (scene.kind === 'halftime') {
+      this.halftimeFired = true;
+      this.onHalftime?.();
+    } else if (scene.kind === 'return') {
+      this.resetView();
+      this.view.setMarkerVisible(this.match.cfg.humanSide >= 0);
+      this.hud?.show('SECOND HALF', '', 'small', 1.2);
+    } else this.flow(0); // The man of the match follows the greeting; its callback stays exactly once.
+  }
+
   /**
    * MAN OF THE MATCH, between the final whistle's beat and the result screen: true while his close-up runs (a tap
    * ends it). Never online (the two screens finish together), in a moment, after a shootout (the winners' pile-up is
@@ -1008,6 +1096,10 @@ export class MatchSession {
 
   /** The staged shot's lens this frame (the line-up and a change move theirs as they step). */
   private updateScene(): void {
+    if (this.interlude) {
+      interludeShot(this.interlude, this.sceneShot, this.view.headTop);
+      return;
+    }
     const mo = this.motm;
     if (mo) motmShot(clamp(mo.t / MOTM_S, 0, 1), mo.x, mo.z, this.view.headTop, this.sceneShot);
   }
@@ -1024,10 +1116,11 @@ export class MatchSession {
   };
 
   /** Dev (window.__bl.session): what the staged shots are doing now. */
-  get staging(): { lineup: number; sub: string; subsQueued: number; motm: number; plate: string; chant: string } {
+  get staging(): { lineup: number; sub: string; subsQueued: number; motm: number; interlude: string; plate: string; chant: string } {
     return {
       lineup: +this.lineupLeft.toFixed(2), sub: this.present?.subShown ?? '', subsQueued: this.subQueue.length,
       motm: this.motm ? this.motm.idx : -1, plate: this.present?.plateShown ?? '', chant: this.present?.chantShown ?? '',
+      interlude: this.interlude?.kind ?? '',
     };
   }
 
@@ -1188,6 +1281,14 @@ export class MatchSession {
   continueSecondHalf(): void {
     // The AI managers (both in AI-vs-AI, never the human's) freshen up tired legs at the break.
     const m = this.match;
+    if (m.phase !== 'halftime') return;
+    // A native ad or an app interruption can pause the session while the half-time screen is opening. The
+    // second-half action resumes that same session, as well as the simulation, and consumes the menu tap.
+    this.resume();
+    this.input.reset();
+    this.clearLatch();
+    this.anyPress = false;
+    this.eatButtons = true;
     for (const side of [0, 1] as Side[]) {
       if (side === m.cfg.humanSide) continue;
       const before = m.teamPlayers(side).map((p) => p.def);
@@ -1199,7 +1300,7 @@ export class MatchSession {
     this.match.continueSecondHalf();
     this.resetView();
     this.halftimeFired = false;
-    this.hud?.show('SECOND HALF', '', 'small', 1.6);
+    if (!this.startMatchInterlude('return')) this.hud?.show('SECOND HALF', '', 'small', 1.6);
   }
 
   /** The pad for the next sim step: the controls as they are now, plus any press latched since the last step. */
@@ -1212,8 +1313,8 @@ export class MatchSession {
     // swallowed (with anything latched off it) until every button has been let go.
     if (this.eatButtons) {
       this.clearLatch();
-      if (c.pass || c.shoot || c.through) {
-        return { mx: w.x, mz: w.z, sprint: c.sprint, pass: false, shoot: false, through: false, digital: this.input.lastDevice === 'keyboard', power: false,
+      if (c.pass || c.shoot || c.through || c.skill || c.power) {
+        return { mx: w.x, mz: w.z, sprint: c.sprint, pass: false, shoot: false, through: false, digital: this.input.lastDevice === 'keyboard', power: false, skill: false,
           autoSprint: this.autoSprint() };
       }
       this.eatButtons = false;
@@ -1315,7 +1416,7 @@ export class MatchSession {
 
     // (A press only carries over to the next live step: nothing latched while the sim isn't stepping.)
     const briefing = this.moment !== null && this.moment.briefT > 0;
-    if (this.paused || this.introLeft > 0 || this.replay || briefing || this.subCut) this.clearLatch();
+    if (this.paused || this.introLeft > 0 || this.replay || briefing || this.subCut || this.interlude) this.clearLatch();
     let held = false;
     if (this.paused) {
       // Frozen: live play, a replay or the pre-match fly-in all wait for the pause menu.
@@ -1357,6 +1458,8 @@ export class MatchSession {
       this.view.apply(this.prev, this.cur, 1, this.time, dt);
     } else if (this.holdFirst) {
       this.firstMatchHold(dt);
+    } else if (this.interlude) {
+      this.stepMatchInterlude(dt);
     } else if (this.subCut) {
       this.stepSubCut(dt);
     } else if (this.replay) {
@@ -1702,9 +1805,13 @@ export class MatchSession {
       return;
     }
     if (m.phase === 'halftime' && !this.halftimeFired && m.phaseT > HALFTIME_HOLD_S) {
-      this.halftimeFired = true;
-      if (this.demo) m.continueSecondHalf();
-      else this.onHalftime?.();
+      if (this.demo) {
+        this.halftimeFired = true;
+        m.continueSecondHalf();
+      } else if (!this.interlude && !this.startMatchInterlude('halftime')) {
+        this.halftimeFired = true;
+        this.onHalftime?.();
+      }
     }
     if (m.phase === 'shootout' && !this.so && this.hud) this.startShootoutView();
     if (m.phase === 'fulltime' && !this.finishFired && m.phaseT > (m.shootout ? SHOOTOUT_HOLD_S : FULLTIME_HOLD_S)) {
@@ -1712,6 +1819,11 @@ export class MatchSession {
         this.finishFired = true;
         return;
       }
+      if (!this.sportsmanshipDone) {
+        this.sportsmanshipDone = true;
+        if (this.startMatchInterlude('sportsmanship')) return;
+      }
+      if (this.interlude) return;
       // The man of the match first (a tap moves on), then the result screen.
       if (this.motmBeat(dt)) return;
       this.finishFired = true;
@@ -2239,6 +2351,10 @@ export class MatchSession {
       this.replay = null;
       this.replayDone = true;
       this.hud?.setReplay(false);
+      // A thumb still down from skipping or watching the replay cannot also take the next kick-off.
+      this.eatButtons = true;
+      this.clearLatch();
+      this.anyPress = false;
       this.cam.setMode('broadcast');
       // Out of the replay with the same quick flash cut; the clip ends with it.
       this.flash.play(0xfbfbf4, 0.7, 0.18);
@@ -3101,7 +3217,7 @@ export class MatchSession {
     const f = this.view.frame;
     // The ball waiting on the free-kick spot is only clutter by the booked player's boots (or right in front
     // of the lens): the close-up leaves it out.
-    this.view.setBallHidden(cam.mode === 'card');
+    this.view.setBallHidden(cam.mode === 'card' || !!this.interlude);
     if (!low) {
       this.view.clearFades();
       return;
@@ -3273,7 +3389,7 @@ export class MatchSession {
     hud.update(dt, this.view.frame);
     // The over-the-shoulder set-piece camera needs the whole lower screen for the taker: no radar / chip.
     hud.setLive(
-      !this.replay && this.cam.mode !== 'celebrate' && !this.cam.behindActive &&
+      !this.replay && !this.interlude && this.cam.mode !== 'scene' && this.cam.mode !== 'celebrate' && !this.cam.behindActive &&
       m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0 && !this.holdFirst &&
       !(this.moment !== null && this.moment.briefT > 0),
     );
@@ -3401,7 +3517,7 @@ export class MatchSession {
     const m = this.match;
     const cam = this.cam;
     const ph = m.phase;
-    const live = !this.paused && !this.driver && !this.replay && this.introLeft <= 0 && !this.holdFirst;
+    const live = !this.paused && !this.driver && !this.replay && !this.interlude && this.introLeft <= 0 && !this.holdFirst;
     const shown = live && cam.mode === 'broadcast' && !cam.behindActive && !this.cineHud &&
       (ph === 'play' || ph === 'out' || ph === 'restart' || ph === 'kickoff');
     const ready = live && this.cardT <= 0 && cam.mode !== 'card' && !this.foulPresentation.waiting;
@@ -3738,6 +3854,9 @@ export class MatchSession {
     if (sfx.onChant === this.onChant) sfx.onChant = null;
     this.view.frameHook = null;
     this.subScene.dispose();
+    this.matchTunnel?.dispose();
+    this.matchTunnel = null;
+    this.interlude = null;
     this.present?.dispose();
     this.present = null;
     this.hud?.dispose();

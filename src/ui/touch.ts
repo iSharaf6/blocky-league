@@ -1,4 +1,5 @@
 import type { Input } from '../core/input';
+import { buzz } from '../platform/haptics';
 import { pixelIcon } from './pixelIcons';
 
 export type TouchContext = 'attack' | 'defend' | 'setpiece' | 'delivery';
@@ -171,17 +172,23 @@ export class TouchControls {
 
     // The bolt button (blitz only, see setBlitz): a press, latched for a few frames; release waits for the finger and the latch.
     const pw = this.root.querySelector<HTMLButtonElement>('.tb-power')!;
-    const powerUp = () => {
+    let powerId: number | null = null;
+    const powerUp = (e?: PointerEvent) => {
+      if (e && e.pointerId !== powerId) return;
+      powerId = null;
       this.powerHeld = false;
       if (this.powerTimer) return;
       t.power = false;
       pw.classList.remove('down');
     };
     pw.addEventListener('pointerdown', (e) => {
+      if (this.powerHeld) return;
       pw.setPointerCapture(e.pointerId);
+      powerId = e.pointerId;
       this.powerHeld = true;
       t.power = true;
       pw.classList.add('down');
+      buzz('button');
       this.onPower?.();
       input.lastDevice = 'touch';
       window.clearTimeout(this.powerTimer);
@@ -201,15 +208,23 @@ export class TouchControls {
       const own = b.dataset.k as DomKey;
       // (What this press sends: fixed at the press, see SENDS. KEEPER is the pad's SKILL with the ball not ours.)
       let sent: BtnKey = own === 'keeper' ? 'skill' : own;
-      const up = () => {
+      let heldId: number | null = null;
+      const up = (e?: PointerEvent) => {
+        if (e && e.pointerId !== heldId) return;
+        heldId = null;
         t[sent] = false;
         b.classList.remove('down');
       };
       b.addEventListener('pointerdown', (e) => {
+        if (b.classList.contains('down')) return;
         b.setPointerCapture(e.pointerId);
+        heldId = e.pointerId;
         sent = own === 'keeper' ? 'skill' : SENDS[this.ctx][own] ?? own;
         t[sent] = true;
         b.classList.add('down');
+        // A button press feels registered even if it is out of tackle reach, a skill has no target, or a charge is
+        // still winding up. Contact haptics remain separate, so a successful action can give its stronger response.
+        buzz('button');
         this.onPress?.(sent);
         input.lastDevice = 'touch';
         e.preventDefault();
@@ -228,6 +243,7 @@ export class TouchControls {
           if (!pass || !r || e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
           t.pass = true;
           pass.classList.add('down');
+          buzz('button');
           this.onPress?.('pass');
           this.fakeTimer = window.setTimeout(() => {
             this.fakeTimer = 0;
@@ -244,6 +260,7 @@ export class TouchControls {
     skip.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       input.lastDevice = 'touch';
+      buzz('button');
       t.pass = true;
       window.clearTimeout(this.skipTimer);
       this.skipTimer = window.setTimeout(() => {
