@@ -8,6 +8,7 @@ import { BEAR_DRUM, DRAGON_BREATH, GOAL_SHOWS, KICKOFF_SHOWS, ROBOT_SPARK, WIN_S
 import { FX, type Cell } from './kitDesigns';
 import { GRASS_A, GRASS_B, cssHex, shade } from './palette';
 import { BoxBuilder, VoxelGrid, meshVoxels, voxelMaterial } from './voxel';
+import { signatureMonth, signatureNetColour } from './signatureStyle';
 
 /**
  * STADIUM STYLE (meta/shop.ts sells it, core/save.ts DECOR_IDS): decorative layers over your home ground, built on
@@ -195,7 +196,8 @@ export function mowColor(id: string, x: number, z: number, k = 1): number {
 }
 
 /** A net's strand colour at (x, y, z) (local to the goal: z across the mouth, y up) for nets style `id`. */
-export function netColor(id: string, shirt: number, shirt2: number, _x: number, y: number, z: number, w = 7.32): number {
+export function netColor(id: string, shirt: number, shirt2: number, x: number, y: number, z: number, w = 7.32): number {
+  if (id.startsWith('netpass')) return signatureNetColour(id, x, y, z);
   if (id === 'netclub') return Math.floor((z + w) / (w / 8)) % 2 ? shirt : shirt2;
   if (id === 'netrainbow') return RAINBOW[Math.max(0, Math.min(5, Math.floor(((z + w / 2) / w) * 6)))];
   if (id === 'netglow') return y > w * 0.18 ? 0xff3cf0 : 0x3cf7ff;
@@ -286,7 +288,7 @@ export function flagTexture(shirt: number, shirt2: number, short: string, crest?
 }
 
 /** A canvas net strand tile (alpha): squares (thicker strands than the stock net, so colours read) or honeycomb. */
-export function netAlpha(hex: boolean): THREE.CanvasTexture {
+export function netAlpha(hex: boolean, diamond = false): THREE.CanvasTexture {
   // A honeycomb tile is 3r across and sqrt(3) r tall (flat-topped hexagons repeat on that period).
   const w = 64;
   const r = w / 3;
@@ -300,7 +302,12 @@ export function netAlpha(hex: boolean): THREE.CanvasTexture {
   g.strokeStyle = '#fff';
   g.fillStyle = '#fff';
   g.lineWidth = 3;
-  if (hex) {
+  if (diamond) {
+    for (let x = -w; x <= w * 2; x += w / 4) {
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x + w, h); g.stroke();
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x - w, h); g.stroke();
+    }
+  } else if (hex) {
     for (let col = -1; col <= 3; col++) {
       for (let row = -1; row <= 2; row++) {
         const cx = col * 1.5 * r;
@@ -898,8 +905,8 @@ export class StadiumDecor {
   // ------------------------------------------------------------------ nets
 
   private buildNets(id: string): void {
-    const glow = id === 'netglow';
-    const alpha = netAlpha(id === 'nethex');
+    const glow = id === 'netglow' || signatureMonth(id) >= 0;
+    const alpha = netAlpha(id === 'nethex', id.startsWith('netpass'));
     this.texs.push(alpha);
     alpha.repeat.set(1, 1);
     const { shirt, shirt2 } = this.style;

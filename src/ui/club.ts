@@ -302,9 +302,12 @@ function formationButtons(cur: FormationId, action: string): string {
 /** KIT or CREST: which editor the right pane shows (the preview makes that one the bigger). */
 type KitMode = 'kit' | 'crest';
 
-function previewHtml(kit: Kit, name: string, short: string, crest?: CrestDesign, mode: KitMode = 'kit'): string {
+export function clubPreviewHtml(kit: Kit, name: string, short: string, crest?: CrestDesign, mode: KitMode = 'kit'): string {
   const badge = crest ? crestDesignSvg(crest, short.length === 3 ? short : '', name, 6) : '';
-  return `<div class="ck-pvrow ${mode}">${badge}${shirtArt(kit, 12)}</div><b>${esc(name || 'YOUR CLUB')}</b><span>${esc(short.length === 3 ? short : '???')}</span>`;
+  return `<div class="ck-pvrow ${mode}${crest ? '' : ' kit-only'}">
+    ${badge ? `<div class="ck-art ck-crest" role="img" aria-label="${esc(name || 'Your club')} crest">${badge}</div>` : ''}
+    <div class="ck-art ck-shirt" role="img" aria-label="${esc(name || 'Your club')} kit">${shirtArt(kit, 12)}</div>
+  </div><b class="ck-name">${esc(name || 'YOUR CLUB')}</b><span class="ck-short">${esc(short.length === 3 ? short : '???')}</span>`;
 }
 
 function modeTabs(mode: KitMode): string {
@@ -355,7 +358,7 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
   const shown = () => sanitizeName(d.name) || (nameProblem(d.name) === 'blocked' ? '' : cleanName(d.name));
   const update = () => {
     const pv = scr.panel.querySelector('.mc-preview');
-    if (pv) pv.innerHTML = previewHtml(d.kit, shown(), d.short, ced.crest, mode);
+    if (pv) pv.innerHTML = clubPreviewHtml(d.kit, shown(), d.short, ced.crest, mode);
     const btn = scr.panel.querySelector<HTMLButtonElement>('[data-a=create]');
     if (btn) btn.disabled = !valid();
     markName(scr.panel, scr.panel.querySelector('[data-in=name]'), d.name, suggestSeed);
@@ -368,7 +371,7 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
       `${topBar('BACK', 'NEW CLUB', 'FOUND YOUR TEAM', app.save.coins)}
       <div class="mc-body ck-body">
         <div class="pane ck-id">
-          <div class="mc-preview">${previewHtml(d.kit, shown(), d.short, ced.crest, mode)}</div>
+          <div class="mc-preview">${clubPreviewHtml(d.kit, shown(), d.short, ced.crest, mode)}</div>
           <div class="mc-fields">
             <label class="mc-field"><span>CLUB NAME</span><input data-in="name" maxlength="18" value="${esc(d.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
             <label class="mc-field mc-short"><span>SHORT</span><input data-in="short" maxlength="3" value="${esc(d.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
@@ -700,7 +703,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
 
   const kitHtml = () => `<div class="mc-body ck-body">
       <div class="pane ck-id">
-        <div class="mc-preview">${previewHtml(club.kit, club.name, club.short, ced.crest, kitMode)}</div>
+        <div class="mc-preview">${clubPreviewHtml(club.kit, club.name, club.short, ced.crest, kitMode)}</div>
         <div class="mc-fields">
           <label class="mc-field"><span>CLUB NAME</span><input data-in="cname" maxlength="18" value="${esc(club.name)}" autocomplete="off" spellcheck="false" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
           <label class="mc-field mc-short"><span>SHORT</span><input data-in="cshort" maxlength="3" value="${esc(club.short)}" autocomplete="off" spellcheck="false" autocapitalize="characters" enterkeyhint="done"><em class="mc-why" aria-live="polite"></em></label>
@@ -1034,7 +1037,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           setMyCrest(club);
           app.persist();
           const kp = scr.panel.querySelector('.mc-preview');
-          if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short, ced.crest, kitMode);
+          if (kp) kp.innerHTML = clubPreviewHtml(club.kit, club.name, club.short, ced.crest, kitMode);
           const nm = scr.panel.querySelector('.mc-clubname');
           if (nm) nm.textContent = club.name.toUpperCase();
         },
@@ -1048,7 +1051,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           setMyCrest(club);
           app.persist();
           const kp = scr.panel.querySelector('.mc-preview');
-          if (kp) kp.innerHTML = previewHtml(club.kit, club.name, club.short, ced.crest, kitMode);
+          if (kp) kp.innerHTML = clubPreviewHtml(club.kit, club.name, club.short, ced.crest, kitMode);
         },
       },
     );

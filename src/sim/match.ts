@@ -18,6 +18,7 @@ import {
   HUMAN_SLIDE_REACH, HUMAN_SLIDE_T, humanSlideFoul, MISS_COOLDOWN, MISS_PACE, missCue,
 } from './dribble';
 import { fakeShot, humanSkill, SkillState, skillGoal, skillTells } from './skills';
+import { wetPatches, weatherStep, type WeatherKind, type WetPatch } from './weather';
 import { coachStep, type CoachState } from './coach';
 import { hypeStep, superLaunch, superLive, SUPER_REACH } from './hype';
 import {
@@ -61,6 +62,8 @@ export interface MatchConfig {
   sideDifficulty?: [number, number];
   /** 'classic' (default) or 'blitz' (power-up pickups; see PowerUpKind). */
   mode?: MatchMode;
+  /** Match weather, agreed by online peers; only marked wet patches affect hard sprint reversals. */
+  weather?: WeatherKind;
   /** The player's very first match: the kick-off waits for a button, the AI eases off in the first minute. */
   firstMatch?: boolean;
   /**
@@ -966,6 +969,7 @@ const SO_HUB = { x: 0, z: HALF_W * 0.3 };
 export class Match {
   readonly rng: Rng;
   readonly ball = new Ball();
+  readonly wetPatches: WetPatch[];
   readonly players: Player[] = [];
   readonly slots: [Slot[], Slot[]];
   readonly brains: [TeamBrain, TeamBrain] = [makeBrain(), makeBrain()];
@@ -1213,6 +1217,7 @@ export class Match {
     const hs = cfg.humanSides;
     this.h = this.ctl[this.viewSide];
     this.rng = new Rng(cfg.seed ?? 12345);
+    this.wetPatches = wetPatches(cfg.weather, cfg.seed ?? 12345);
     this.foulScale = 1.2 * clamp(Math.pow(FATIGUE_REF_HALF / Math.max(30, cfg.halfLength), 1.3), 0.4, 1.8);
     this.teams = [cfg.home, cfg.away];
     this.offside = cfg.offside ?? true;
@@ -1870,6 +1875,7 @@ export class Match {
     }
     this.keepPads(pads);
 
+    weatherStep(this, dt);
     this.resolveOrders(dt);
     const frozen = this.phase === 'kickoff' || this.phase === 'restart';
     // A human's kick-off on its way to his man: over once one of his has it, it is struck again or its time is up.

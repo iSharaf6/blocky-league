@@ -4,20 +4,20 @@
  * - Cosmetics: goal celebrations and ball looks (the level ladder's items: bought with coins OR earned free at
  *   their level, whichever comes first), goal explosion themes and sprint trails (coins only). Owned, equipped
  *   into Settings, drawn in every match (render/cosmetics.ts, game/matchSession.ts).
- * - SCOUT PACKS: earned-only Scout Tokens open a random player card for MY CLUB (meta/career.ts ClubState, the club
+ * - SCOUT PACKS: earned-only Scout Tickets open a random player card for MY CLUB (meta/career.ts ClubState, the club
  *   PLAY NOW and CAREER field), with the odds on show. A card signs into the squad (squad limit and all) or is sold on.
  *
  * Where coins come from: playing (matches, challenges, the daily gift), rewarded ads on the web portals (FREE
  * COINS below: a few a day) and, in the iOS and Android apps only, store purchases (platform/iap.ts). Cosmetics
  * are looks, and ONLINE friendlies use the preset clubs, so nothing bought here wins a match against a friend.
- * Coins and gems never buy Scout Tokens or random cards; every pack's odds are still always on show.
+ * Coins and gems never buy Scout Tickets or random cards; every pack's odds are still always on show.
  * Everything persists in SaveData.shop and SaveData.iap (core/save.ts normalizeShop / normalizeIap) and Settings.
  */
 import { Rng, hashString } from '../core/rng';
 import {
   BALL_SKIN_IDS, BALL_SKIN_LEVEL, BALL_SKIN_NAMES, CELEBRATION_IDS, CELEBRATION_LEVEL, CELEBRATION_NAMES, DECOR_IDS, DECOR_SLOT_OF, GOAL_FX_IDS, KIT_IDS,
   LOOK_IDS, LOOK_SLOT_OF, PASS_IDS, TRAIL_IDS, levelOf, normalizeIap, normalizeShop,
-  type DecorId, type DecorSlot, type IapState, type LookId, type LookSlot, type PassId, type SaveData, type ShopState,
+  type DecorId, type DecorSlot, type IapState, type LookId, type LookSlot, type PassId, type PassDecorId, type SaveData, type ShopState,
 } from '../core/save';
 import { SEASON_THEMES } from './season';
 import { FORMATIONS } from '../sim/formations';
@@ -41,19 +41,19 @@ export interface ShopItem {
   slot?: LookSlot | DecorSlot;
   /** Shown name (no hyphens: the pixel font draws them badly). */
   name: string;
-  /** Coins; 0 = everyone has it from the start. */
+  /** Coins; 0 = a starter unless `pass` is true (signature items require a permanent grant). */
   price: number;
   /** The level that earns it free (the unlock ladder: celebrations and balls); undefined = coins only. */
   level?: number;
   /** One line for the showcase. */
   blurb: string;
-  /** A Club Pass look: earned on its month's pass track only, never sold for coins (core/save.ts PASS_IDS). */
+  /** A signature item: earned through its Club Pass or bought in a past-theme gem collection; never sold for coins. */
   pass?: true;
 }
 
 /**
- * Prices, tuned to what a match pays (main.ts standardReward: a win on Normal ~170-210, a draw ~90, a loss ~50,
- * x1.1 a win in a row up to x2) plus the daily gift (100-400) and challenges (100-220 each). The ladder (docs/ECONOMY.md):
+ * Ordinary prices stay accessible: a Normal quick win pays 110 + 12 per goal (up to three); draws 60, losses 35,
+ * with the same capped streak boost, daily gifts (100-400) and challenges (100-220 each). The ladder (docs/ECONOMY.md):
  * COMMON something new every two to four matches early on (250-450); RARE and EPIC a few days to a week of play
  * (500-2800); LEGENDARY a few weeks for a free player (4500-7500), the looks to aim at and the reason a coin pack is
  * ever worth it. Club Pass looks are never on sale for coins.
@@ -183,7 +183,7 @@ const LOOKS: { readonly [k in Exclude<LookId, PassId>]: Look } = {
 };
 
 /** STADIUM STYLE (render/stadiumStyle.ts): your home ground dressed up, every home match. */
-const DECOR: { readonly [k in DecorId]: Look } = {
+const DECOR: { readonly [k in Exclude<DecorId, PassDecorId>]: Look } = {
   mowchecks: { name: 'Mown Checks', price: 300, blurb: 'The lawn mown in a big chessboard.' },
   mowdiag: { name: 'Diagonal Stripes', price: 450, blurb: 'Sharp diagonal mowing stripes.' },
   mowcircle: { name: 'Mown Circles', price: 800, blurb: 'Rings mown out from the centre spot.' },
@@ -250,7 +250,7 @@ const PASS_BLURB: { readonly [k in 'goalfx' | 'trail']: readonly string[] } = {
 const passLook = (cat: 'goalfx' | 'trail' | 'kit' | 'look', m: number): Look => ({
   name: cat === 'look' ? PASS_LOOK[m].name : SEASON_THEMES[m].name,
   price: 0,
-  blurb: `Club Pass only: ${cat === 'kit' ? PASS_KIT_BLURB[m] : cat === 'look' ? PASS_LOOK[m].blurb : PASS_BLURB[cat][m]}`,
+  blurb: `Signature collection: ${cat === 'kit' ? PASS_KIT_BLURB[m] : cat === 'look' ? PASS_LOOK[m].blurb : PASS_BLURB[cat][m]}`,
 });
 const isPass = (id: string): id is PassId => (PASS_IDS as readonly string[]).includes(id);
 
@@ -276,14 +276,25 @@ const ITEMS: readonly ShopItem[] = [
   ...bySlot(LOOK_ORDER)(LOOK_IDS.map((id): ShopItem => ({
     cat: 'look', id, slot: LOOK_SLOT_OF[id], ...(isPass(id) ? { ...passLook('look', PASS_IDS.indexOf(id)), pass: true as const } : LOOKS[id]),
   }))),
-  ...bySlot(DECOR_ORDER)(DECOR_IDS.map((id): ShopItem => ({ cat: 'decor', id, slot: DECOR_SLOT_OF[id], ...DECOR[id] }))),
+  ...bySlot(DECOR_ORDER)(DECOR_IDS.map((id): ShopItem => {
+    const signature = /^(net|kick)pass(\d{2})$/.exec(id);
+    if (signature) {
+      const theme = SEASON_THEMES[Number(signature[2]) - 1].name;
+      return { cat: 'decor', id, slot: DECOR_SLOT_OF[id], price: 0, pass: true,
+        name: `${theme} ${signature[1] === 'net' ? 'Signature Nets' : 'Star Ceremony'}`,
+        blurb: signature[1] === 'net' ? 'Signature collection: luminous diamond weave in the theme colours, around both goals.'
+          : 'Signature collection: a constellation assembles over the stand at walkout, scoring and victory. Yours for good.' };
+    }
+    return { cat: 'decor', id, slot: DECOR_SLOT_OF[id], ...DECOR[id as Exclude<DecorId, PassDecorId>] };
+  })),
 ].map((it) => (it.price === 0 ? { ...it, level: undefined } : it));
 
 /** The Club Pass looks of season `id` ("2026-10"): its goal explosion, trail, premium kit and player look. */
-export function seasonPassItems(id: string): { goalfx: ShopItem; trail: ShopItem; kit: ShopItem; look: ShopItem } {
+export function seasonPassItems(id: string): { goalfx: ShopItem; trail: ShopItem; kit: ShopItem; look: ShopItem; nets: ShopItem; entrance: ShopItem } {
   const m = Math.max(0, Math.min(11, (Number(id.slice(5, 7)) || 1) - 1));
   return {
     goalfx: shopItem('goalfx', PASS_IDS[m])!, trail: shopItem('trail', PASS_IDS[m])!, kit: shopItem('kit', PASS_IDS[m])!, look: shopItem('look', PASS_IDS[m])!,
+    nets: shopItem('decor', `net${PASS_IDS[m]}`)!, entrance: shopItem('decor', `kick${PASS_IDS[m]}`)!,
   };
 }
 
@@ -736,19 +747,19 @@ export function claimFreeAd(save: Pick<SaveData, 'iap' | 'coins'>, day: string):
 export type PackKind = 'scout' | 'elite';
 
 /**
- * What each pack costs in Scout Tokens (core/save.ts ShopState.tokens). Tokens are earned only, one for every daily
+ * What each pack costs in Scout Tickets (the legacy storage field is core/save.ts ShopState.tokens). Earned only, one for every daily
  * challenge done, and never sold: coins (which the app's store sells) can't buy a random card. Apple and PEGI
  * treat paid random items as loot boxes (age ratings, and bans for minors in some countries): this keeps the game
- * 4+ and fair for kids, while the free daily pack and the transfer market's chosen signings stay as they were.
+ * random cards separate from paid currency, while the free daily pack and the transfer market's chosen signings stay as they were.
  */
 export const PACK_TOKENS: { readonly [k in PackKind]: number } = { scout: 1, elite: 3 };
 
-/** Scout Tokens in hand. */
+/** Scout Tickets in hand; the internal field/function name stays stable for older saves. */
 export function scoutTokens(save: Pick<SaveData, 'shop'>): number {
   return shopOf(save).tokens;
 }
 
-/** Add earned Scout Tokens (a daily challenge done); the new count. */
+/** Add earned Scout Tickets (a daily challenge done); the new count. */
 export function earnTokens(save: Pick<SaveData, 'shop'>, n: number): number {
   const shop = shopOf(save);
   shop.tokens = Math.min(999, shop.tokens + Math.max(0, Math.floor(Number.isFinite(n) ? n : 0)));
@@ -824,7 +835,7 @@ export function rollPack(kind: PackKind, base: number, seed: number, avoid: Iter
 export type PackResult = { ok: true; card: PackCard; price: number; free: boolean } | { ok: false; reason: 'no-club' | 'no-tokens' | 'free-used'; short: number };
 
 /**
- * Open a pack for `club`: its Scout Tokens (PACK_TOKENS, or nothing for the day's free scout pack) are spent,
+ * Open a pack for `club`: its Scout Tickets (PACK_TOKENS, or nothing for the day's free scout pack) are spent,
  * never below zero; `price` is the card's coin value (packPrice at the club's rating), and the card is drawn from the save's own pack count (so a reload draws
  * the same card again: no rerolling). The card is not signed yet: see signCard / sellCard.
  */

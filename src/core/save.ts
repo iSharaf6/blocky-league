@@ -11,6 +11,7 @@ import { normalizeKeyMap, normalizePadMap, type KeyMap, type PadMap } from './in
 import type { HapticLevel } from '../platform/haptics';
 import { normalizeOnboarding, type OnboardingState } from './onboarding';
 import { Rng, hashString } from './rng';
+import { isWeather, type WeatherKind } from '../sim/weather';
 
 export type { AssistLevel };
 
@@ -28,7 +29,7 @@ export interface Settings {
   halfMinutes: number;
   autoSwitch: boolean;
   timeOfDay: TimeOfDay | 'random';
-  weather: 'clear' | 'rain' | 'snow' | 'random';
+  weather: WeatherKind | 'random';
   /** Broadcast commentary ticker in matches (default on). Text only: the spoken voice was removed (old saves' commentaryVoice is dropped on load). */
   commentary: boolean;
   /** Match camera distance (default 'normal'; older saves lack it). */
@@ -150,7 +151,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (!Number.isInteger(s.difficulty) || s.difficulty < 0 || s.difficulty > 3) s.difficulty = base.difficulty;
   if (typeof s.halfMinutes !== 'number' || !Number.isFinite(s.halfMinutes) || s.halfMinutes < 0.5 || s.halfMinutes > 10) s.halfMinutes = base.halfMinutes;
   if (!['day', 'sunset', 'night', 'random'].includes(s.timeOfDay)) s.timeOfDay = base.timeOfDay;
-  if (!['clear', 'rain', 'snow', 'random'].includes(s.weather)) s.weather = base.weather;
+  if (s.weather !== 'random' && !isWeather(s.weather)) s.weather = base.weather;
   if (!CAM_ZOOMS.includes(s.camZoom as CamZoom)) s.camZoom = 'normal';
   if (s.lastMode !== 'classic' && s.lastMode !== 'blitz') s.lastMode = 'classic';
   // The spoken commentary is gone: an old save's switch for it is dropped.
@@ -915,6 +916,10 @@ export const LOOK_SLOT_OF: { readonly [k in LookId]: LookSlot } = {
 export const DECOR_SLOTS = ['pitch', 'net', 'flags', 'seats', 'tifo', 'kickoff', 'lights', 'mascot'] as const;
 export type DecorSlot = (typeof DECOR_SLOTS)[number];
 /** Saved and owned: never rename or drop one. */
+/** Signature Club Pass stadium pieces share the month's permanent identity, separate from ordinary coin decor. */
+export type PassDecorId = `net${PassId}` | `kick${PassId}`;
+export const PASS_NET_IDS = PASS_IDS.map((id) => `net${id}` as const);
+export const PASS_ENTRY_IDS = PASS_IDS.map((id) => `kick${id}` as const);
 export const DECOR_IDS = [
   'mowchecks', 'mowdiag', 'mowcircle', 'mowcrest',
   'netclub', 'nethex', 'netrainbow', 'netglow',
@@ -924,6 +929,7 @@ export const DECOR_IDS = [
   'kickconfetti', 'kickfire', 'kickpyro',
   'lightclub', 'lightshow',
   'mascotbear', 'mascotrobot', 'mascotdragon',
+  ...PASS_NET_IDS, ...PASS_ENTRY_IDS,
 ] as const;
 export type DecorId = (typeof DECOR_IDS)[number];
 export const DECOR_SLOT_OF: { readonly [k in DecorId]: DecorSlot } = {
@@ -935,6 +941,8 @@ export const DECOR_SLOT_OF: { readonly [k in DecorId]: DecorSlot } = {
   kickconfetti: 'kickoff', kickfire: 'kickoff', kickpyro: 'kickoff',
   lightclub: 'lights', lightshow: 'lights',
   mascotbear: 'mascot', mascotrobot: 'mascot', mascotdragon: 'mascot',
+  ...(Object.fromEntries(PASS_NET_IDS.map((id) => [id, 'net'])) as { [id in `net${PassId}`]: 'net' }),
+  ...(Object.fromEntries(PASS_ENTRY_IDS.map((id) => [id, 'kickoff'])) as { [id in `kick${PassId}`]: 'kickoff' }),
 };
 
 /** A slot map as stored by any build made whole: only known ids, each in its own slot. */

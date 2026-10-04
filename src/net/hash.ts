@@ -1,5 +1,6 @@
 import { hypeMeters } from '../sim/hype';
 import type { Match } from '../sim/match';
+import { wetWeather } from '../sim/weather';
 
 /**
  * A 32-bit hash of the simulation state for lockstep desync detection (src/net/lockstep.ts) and for the
@@ -97,5 +98,11 @@ export function stateHash(m: Match): number {
   for (const c of m.coach) if (c) h.word(0x434f4143).str(c.plan).str(c.cover).str(c.want);
   // FLAIR (sim/skills.ts): each human side's pips (a different gauge is a different move at the next press).
   for (const side of [0, 1] as const) if (m.human[side]) h.word(0x464c4152).num(m.ctl[side].skill.flair);
+  // Wet surfaces are gameplay: a skid cooldown changes the next hard cut before it changes position.
+  // No tag in dry weather preserves all existing dry-match identity baselines.
+  if (wetWeather(m.cfg.weather)) {
+    h.word(0x574554).str(m.cfg.weather);
+    for (const p of m.players) h.num(p.wetSlipT);
+  }
   return h.value();
 }

@@ -18,7 +18,7 @@
  * - Every item is bought with coins earned by playing (meta/shop.ts): no gems and no money needed.
  * Pure rules, no DOM.
  */
-import { DECOR_IDS, DECOR_SLOT_OF, type DecorId, type DecorSlot, type SaveData } from '../core/save';
+import { DECOR_IDS, DECOR_SLOT_OF, PASS_NET_IDS, PASS_ENTRY_IDS, type DecorId, type DecorSlot, type SaveData } from '../core/save';
 import { builtLevel, type GroundState, type PartId } from './ground';
 import { equippedSlots } from './shop';
 
@@ -50,6 +50,8 @@ export const DECOR_BONUS: { readonly [k in DecorId]: AtmoBonus } = {
   kickconfetti: { crowd: 3 }, kickfire: { crowd: 6 }, kickpyro: { crowd: 10, chants: 1 },
   lightclub: { income: 2 }, lightshow: { income: 4 },
   mascotbear: { show: 20, chants: 1 }, mascotrobot: { show: 35, chants: 1 }, mascotdragon: { show: 60, chants: 2 },
+  // Premium signatures are a visual identity. The ordinary coin pieces already reach every atmosphere cap.
+  ...(Object.fromEntries([...PASS_NET_IDS, ...PASS_ENTRY_IDS].map((id) => [id, {}])) as { [id in (typeof PASS_NET_IDS)[number] | (typeof PASS_ENTRY_IDS)[number]]: AtmoBonus }),
 };
 
 /** What the built parts of the ground add (on top of what each part does itself: meta/ground.ts). */

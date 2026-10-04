@@ -13,6 +13,7 @@ import { Mascot, cornerFlagGeometry, crestLawnGeometry, flagTexture, mascotKind,
 import { crestFor, type CrestDesign } from '../core/crest';
 import { BoxBuilder, voxelMaterial } from '../render/voxel';
 import type { Kit, PlayerDef } from '../sim/types';
+import { signatureMonth } from '../render/signatureStyle';
 
 /**
  * The SHOP's showcase (ui/shop.ts): the selected item, live, on a grass block, drawn by the match's own code.
@@ -73,8 +74,9 @@ interface Rig {
   ts: TrailState;
   acc: number;
   burstAt: number;
+  ceremonyAt: number;
 }
-const makeRig = (): Rig => ({ fx: new Effects(520), kit: new FxKit(), ts: new TrailState(), acc: 0, burstAt: -1 });
+const makeRig = (): Rig => ({ fx: new Effects(520), kit: new FxKit(), ts: new TrailState(), acc: 0, burstAt: -1, ceremonyAt: -1 });
 
 /** Seconds each move's loop lasts on the stage. */
 const LOOP: { readonly [k: string]: number } = { classic: 3, knee: 3.8, shush: 3.6, plane: 4, robot: 3, backflip: 3.4, pile: 4.4 };
@@ -362,6 +364,7 @@ export class ShopStage {
     r.ts.reset();
     r.acc = 0;
     r.burstAt = -1;
+    r.ceremonyAt = -1;
   }
 
   private showRig(r: Rig, on: boolean): void {
@@ -551,7 +554,7 @@ export class ShopStage {
   /** Daylight, or the floodlights (a dark sky behind, the kit glow on): the light show and neon nets need the dark. */
   private lightFor(show: StageShow): void {
     const w = this.cur;
-    const dark = this.nightOn || (show.cat === 'decor' && (decorSlot(show.id) === 'lights' || show.id === 'netglow')) || ((show.cat === 'bundle' || show.cat === 'tryon') && !!w.decor.lights && this.nightOn);
+    const dark = this.nightOn || (show.cat === 'decor' && (decorSlot(show.id) === 'lights' || show.id === 'netglow' || show.id.startsWith('netpass'))) || ((show.cat === 'bundle' || show.cat === 'tryon') && !!w.decor.lights && this.nightOn);
     this.hemi.intensity = dark ? 0.55 : 1.4;
     this.sun.intensity = dark ? 1.1 : 2.6;
     this.fill.intensity = dark ? 1.3 : 0.9;
@@ -599,7 +602,7 @@ export class ShopStage {
     const edge = big ? BIG : SMALL;
     // Nets: the goal's net panels in the style (the match's own colours and strand tile).
     if (decor.net) {
-      const alpha = netAlpha(decor.net === 'nethex');
+      const alpha = netAlpha(decor.net === 'nethex', decor.net.startsWith('netpass'));
       alpha.repeat.set(5, 5);
       P.free.push(alpha);
       const geo = new THREE.BufferGeometry();
@@ -623,7 +626,7 @@ export class ShopStage {
       geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
       const mat = new THREE.MeshBasicMaterial({
         vertexColors: true, alphaMap: alpha, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-        blending: decor.net === 'netglow' ? THREE.AdditiveBlending : THREE.NormalBlending,
+        blending: decor.net === 'netglow' || signatureMonth(decor.net) >= 0 ? THREE.AdditiveBlending : THREE.NormalBlending,
       });
       P.free.push(geo, mat);
       P.net = new THREE.Mesh(geo, mat);
@@ -852,7 +855,7 @@ export class ShopStage {
     } else if (kind === 'lineup') {
       this.poseLineup(t, dt);
       if ((cat === 'bundle' || cat === 'tryon') && w.goalfx !== 'club') this.shoot(t, dt, w.goalfx, 1);
-      else if ((cat === 'bundle' || cat === 'tryon') && w.decor.kickoff) this.kickoffLoop(t, dt, w.decor.kickoff);
+      if ((cat === 'bundle' || cat === 'tryon') && w.decor.kickoff) this.kickoffLoop(t, dt, w.decor.kickoff);
     } else if (kind === 'decor') {
       const slot = decorSlot(id);
       if (slot === 'pitch' || slot === 'kickoff' || slot === 'lights') this.poseLineup(t, dt);
@@ -916,8 +919,8 @@ export class ShopStage {
     if (!show) return;
     const cycle = show.dur + 1.6;
     const n = Math.floor(t / cycle);
-    if (dt > 0 && n !== R.burstAt && t % cycle >= 0.3) {
-      R.burstAt = n;
+    if (dt > 0 && n !== R.ceremonyAt && t % cycle >= 0.3) {
+      R.ceremonyAt = n;
       R.kit.play(show.run, show.dur, 0, 0, 0, 1, 0, show.k, [this.club.kit.shirt, this.club.kit.shirt2, 0xffd23a, WHITE]);
     }
   }

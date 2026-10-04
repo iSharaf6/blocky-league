@@ -38,7 +38,7 @@ Prices are set in the store consoles. The shop shows the store's own price strin
 | `bl.gems.2000` | Consumable | 2,000 + 50% bonus = **3,000** gems | US$19.99 | BEST VALUE |
 | `bl.starter` | Non-consumable | 2,000 coins, 150 gems and the Gold ball. Buyable once; the shop hides it once owned | US$1.99 | none |
 | `bl.noads` | Non-consumable | No interstitial ads between matches. Rewarded ads you choose to watch stay | US$3.99 | none |
-| `bl.pass` | Consumable | The Club Pass for the month it is bought in: about 5,560 coins, 150 gems and that month's player look, trail, premium kit and goal explosion on the pass track (meta/pass.ts). The store refuses a second buy in the same month. It can also be bought in the game for 600 gems | US$3.99 | none |
+| `bl.pass` | Consumable | The current month's Club Pass: 5,560 coins, 150 gems and a six-piece identity. Star Ceremony unlocks immediately; look, trail, kit, goal explosion and diamond nets are earned through tiers 5/10/15/20/25. The store refuses a second buy in the month. Also available for 600 earned or purchased gems | US$3.99 | none |
 | `bl.doubler` | Non-consumable | Coin Doubler: every match pays double coins, for good | US$4.99 | none |
 | `bl.pro` | Non-consumable | PRO bundle: NO ADS, the Coin Doubler and 600 gems (US$13.97 bought one by one). Buyable once; the shop shows it only while neither NO ADS nor the Coin Doubler is owned | US$9.99 | none |
 
@@ -65,11 +65,13 @@ itch and the plain website have no `CdvPurchase`, so they are `none` too.
 
 ## 2. The economy
 
-**This section is a summary; docs/ECONOMY.md (v3) is the design.**
+**This section is a summary; docs/ECONOMY.md (v4) is the design. Store product IDs and prices are unchanged.**
 
-**Where coins come from today.** A Normal win pays about 170 to 210 coins, a draw about 90, a loss about 50 (x1.1 per win in a row, up to x2). Daily challenges pay 100 to 220 each, the daily gift 100 to 400, weekly objectives 300 to 400 each. On the portals a rewarded ad adds 75 (5 a day, so 375 a day at most). Gems swap for coins at 14 to 22 coins a gem.
+**Where coins come from today.** A Normal quick-match base fee is 110 for a win, 60 for a draw and 35 for a loss, plus 12 per goal up to three. A two-goal win pays 134; both a three-goal and twenty-goal win pay 146 before the existing streak, atmosphere, grade and Coin Doubler bonuses. Difficulty factors are 0.8/1/1.25/1.45. Daily challenges still pay 100 to 220 each, the daily gift 100 to 400, weekly objectives 300 to 400 each. On portals a rewarded ad adds 75 (5 a day). Gems swap for coins at 14 to 22 coins a gem. Existing wallets and coin prices are preserved.
 
-**What coins buy.** Looks cost 250 to 7,500 (the whole catalogue is about 187,000), the ground about 35,600, plus players and training. Scout packs cost Scout Tokens, which are earned only: neither coins, gems nor money buy a random card. Some looks are also free at a level, so nobody has to buy.
+**What coins buy.** Ordinary looks cost 250 to 7,500 (the coin catalogue is about 187,000), the ground about 35,600, plus players and training. Scout packs cost earned-only Scout Tickets: neither coins, gems nor money buy a random card. Some looks are also free at a level.
+
+**What gems add.** SIGNATURES offers guaranteed, permanent six-piece club identities with actual live previews and a single EQUIP ALL SIX action. Past themes cost 600 gems, minus 100 per already owned piece; the confirmation shows the exact missing items and price. Kits, captain looks, trails, goal shows, luminous diamond nets and animated constellation ceremonies are cosmetic, with no player stat or economic bonuses. Earned gems buy identical collections. The current theme is earned through its Club Pass; past themes stay available without a countdown. Existing purchases and pass rewards are preserved, and legacy receipts backfill new ceremony/net entitlements without replaying coin or gem payouts (`tests/signatureEconomy.test.ts`).
 
 **The packs against that:**
 
@@ -85,7 +87,7 @@ The rate improves with every step (a test enforces it), and even the biggest pac
 
 **The Starter Pack is deliberately generous:** 2,000 coins, 150 gems and a Gold ball that costs 2,500 in the shop (it is also free at level 12) for US$1.99. It is a one-time first-purchase hook, offered once after the first win with no timer. **The PRO bundle** is the anchor: NO ADS (US$3.99), the Coin Doubler (US$4.99) and 600 gems (US$4.99) for US$9.99, about 28% less than one by one; the shop works that out from the catalogue (`proWorthUsd`) and hides the bundle once either part is owned.
 
-**Scout packs use earned-only tokens.** SCOUT costs one Scout Token and ELITE costs three, with odds shown before opening (SCOUT 62/28/8/2 percent common/rare/epic/legend, ELITE 0/55/35/10). Tokens come from completed daily challenges and calendar day 5; one SCOUT pack is also free each day. Coins, gems, rewarded ads and store purchases never grant tokens or pay for a random card (`PACK_TOKENS`, `openPack`, `tests/economyV3.test.ts`).
+**Scout packs use earned-only tickets.** SCOUT costs one Scout Ticket and ELITE costs three, with odds shown before opening (SCOUT 62/28/8/2 percent common/rare/epic/legend, ELITE 0/55/35/10). Tickets come from completed daily challenges and calendar day 5; one SCOUT pack is also free daily. The internal `shop.tokens` field stays unchanged for save compatibility. Coins, gems, rewarded ads and store purchases never grant tickets or pay for a random card (`PACK_TOKENS`, `openPack`, `tests/economyV3.test.ts`).
 
 The Scouting Network sells a stated minimum prospect potential per intake, earned gems can buy every tier, and online friendlies use preset clubs. A paid deal refresh discloses the exact next item and its discounted coin price before charging gems (`nextDeal`). Store questionnaires should describe these implemented mechanics accurately; the final classification belongs to the store review process.
 

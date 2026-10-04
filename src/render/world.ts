@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { WeatherKind } from '../sim/weather';
 import { SKY_BOTTOM, SKY_TOP, cssHex } from './palette';
 
 export type Quality = 'low' | 'medium' | 'high';
@@ -269,12 +270,12 @@ export class World {
     this.resize();
   }
 
-  setTimeOfDay(t: TimeOfDay, weather: 'clear' | 'rain' | 'snow' = 'clear'): void {
+  setTimeOfDay(t: TimeOfDay, weather: WeatherKind = 'clear'): void {
     this.time = t;
     const base = LOOKS[t];
     // Overcast skies for rain / snow: flatter light, greyer sky, closer fog.
-    const grey = weather === 'rain' ? 0x8e99a6 : 0xdfe6ec;
-    const k = weather === 'clear' ? 0 : weather === 'rain' ? 0.62 : 0.5;
+    const grey = weather === 'rain' || weather === 'drizzle' ? 0x8e99a6 : 0xdfe6ec;
+    const k = { clear: 0, overcast: 0.38, drizzle: 0.52, rain: 0.62, snow: 0.5, blizzard: 0.72 }[weather];
     const L: Look = {
       ...base,
       skyTop: mixHex(base.skyTop, grey, k),
@@ -285,8 +286,8 @@ export class World {
       hemi: base.hemi * (1 + k * 0.25),
     };
     const fog = this.scene.fog as THREE.Fog;
-    fog.near = weather === 'clear' ? 190 : 110;
-    fog.far = weather === 'clear' ? 520 : 380;
+    fog.near = weather === 'clear' || weather === 'overcast' ? 190 : weather === 'blizzard' ? 80 : 110;
+    fog.far = weather === 'clear' || weather === 'overcast' ? 520 : weather === 'blizzard' ? 280 : 380;
     const g = this.skyCanvas.getContext('2d')!;
     const grad = g.createLinearGradient(0, 0, 0, 256);
     grad.addColorStop(0, cssHex(L.skyTop));

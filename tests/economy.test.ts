@@ -99,11 +99,13 @@ describe("today's deal", () => {
 });
 
 describe('the Club Pass', () => {
-  it('bought mid-month, it hands over every tier already reached; ~5,500 coins and four looks in all', () => {
+  it('bought mid-month, it hands over every tier already reached; ~5,500 coins and six signature pieces in all', () => {
     const totals = passTotals('2026-10');
     expect(totals.coins).toBeGreaterThanOrEqual(5500);
-    // The month's player look (tier 5), sprint trail (10), premium kit (15) and goal explosion (20).
-    expect(totals.items.map((i) => `${i.cat}:${i.id}`)).toEqual(['look:pass10', 'trail:pass10', 'kit:pass10', 'goalfx:pass10']);
+    // Welcome ceremony, player look, trail, kit, goal explosion, and tier-25 nets. Old coin payouts stay intact.
+    expect(totals.items.map((i) => `${i.cat}:${i.id}`)).toEqual([
+      'decor:kickpass10', 'look:pass10', 'trail:pass10', 'kit:pass10', 'goalfx:pass10', 'decor:netpass10',
+    ]);
     const s = rich(0);
     const season = seasonOf(s, OCT);
     season.xp = tierXp(12);
@@ -130,7 +132,7 @@ describe('the Club Pass', () => {
     rollSeason(season, NOV);
     expect(season.pass).toBe(false);
     expect(season.passClaimed).toEqual([]);
-    expect(season.carryItems.sort()).toEqual(['goalfx:pass10', 'kit:pass10', 'look:pass10', 'trail:pass10']);
+    expect(season.carryItems.sort()).toEqual(['decor:kickpass10', 'goalfx:pass10', 'kit:pass10', 'look:pass10', 'trail:pass10']);
     expect(season.carry!.coins).toBeGreaterThan(0);
     expect(claimCarryItems(s).sort()).toEqual(['goalfx:pass10', 'kit:pass10', 'look:pass10', 'trail:pass10']);
     expect(owns(s, 'goalfx', 'pass10')).toBe(true);

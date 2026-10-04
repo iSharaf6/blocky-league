@@ -1,22 +1,26 @@
 /**
  * The Club Pass (docs/ECONOMY.md): a second track on the monthly season (meta/season.ts), sold in the app's store
  * ('bl.pass', platform/iap.ts) for the month it is bought in, or bought with gems (buyPassWithGems). About 5,500
- * coins and 150 gems over the 30 tiers plus that month's own player look, sprint trail, premium kit and goal
- * explosion, looks no one can buy with coins. Buying it late hands over every tier already reached; nothing reached
+ * coins and 150 gems over the 30 tiers plus that month's six-piece identity: player look, sprint trail, premium kit,
+ * goal explosion, diamond nets and a welcome star ceremony. None are sold for coins; past themes are permanent gem
+ * collections. Buying it late hands over every tier already reached; nothing reached
  * is ever lost (a month's unclaimed pass coins, gems and looks carry into the next). It is looks, coins and gems
  * only: nothing on the pitch, nothing random.
  */
 import type { SaveData } from '../core/save';
 import { GEM_PRICES, PASS_GEMS, SEASON_GEMS, addGems, gems, grantGemsOnce, spendGems, sumGems, type GemBuyResult } from './gems';
-import { PASS_BIG_COINS, SEASON_TIERS, passReward, rollSeason, seasonOf, seasonTier, unclaimedPassTiers } from './season';
-import { grantItem, itemKey, shopItem, type ShopItem } from './shop';
+import { SEASON_TIERS, passReward, rollSeason, seasonOf, seasonTier, unclaimedPassTiers } from './season';
+import { equipItem, grantItem, itemKey, owns, seasonPassItems, shopItem, shopOf, type ShopItem } from './shop';
+import { SEASON_THEMES, passItemId } from './season';
 
 /** Turn the pass on for the season running at `now` (a purchase). False if it was already on. */
-export function activatePass(save: Pick<SaveData, 'season'>, now: Date = new Date()): boolean {
+export function activatePass(save: Pick<SaveData, 'season'> & Partial<Pick<SaveData, 'shop'>>, now: Date = new Date()): boolean {
   const s = seasonOf(save, now);
   rollSeason(s, now);
   if (s.pass) return false;
   s.pass = true;
+  // The ceremony is a permanent welcome reward, available straight away rather than after a dozen matches.
+  if (save.shop || 'settings' in save) grantItem(save, 'decor', `kick${passItemId(s.id)}`);
   return true;
 }
 
@@ -31,7 +35,7 @@ export function passActive(save: Pick<SaveData, 'season'>, now: Date = new Date(
  * The Club Pass for gems instead of money (GEM_PRICES.clubPass): the same pass, for the season running at `now`.
  * Gems are earned by playing, so a keen free player can earn the pass and its looks too.
  */
-export function buyPassWithGems(save: Pick<SaveData, 'season' | 'gems'>, now: Date = new Date()): GemBuyResult {
+export function buyPassWithGems(save: Pick<SaveData, 'season' | 'gems'> & Partial<Pick<SaveData, 'shop'>>, now: Date = new Date()): GemBuyResult {
   if (passActive(save, now)) return { ok: false, reason: 'maxed', short: 0 };
   const price = GEM_PRICES.clubPass;
   if (!spendGems(save, price, 'clubPass')) return { ok: false, reason: 'no-gems', short: price - gems(save) };
@@ -44,7 +48,7 @@ export function buyPassWithGems(save: Pick<SaveData, 'season' | 'gems'>, now: Da
  * (PASS_GEMS). Paid once per tier CLAIMED, whichever way it was claimed (one tier, CLAIM ALL), plus what a past
  * season's reached tiers never paid. Returns the gems paid now (0 nearly always): call it after any claim.
  */
-export function syncSeasonGems(save: Pick<SaveData, 'season' | 'gems'>): number {
+export function syncSeasonGems(save: Pick<SaveData, 'season' | 'gems'> & Partial<Pick<SaveData, 'shop'>>): number {
   const s = seasonOf(save);
   let paid = 0;
   for (const t of s.claimed) {
@@ -61,6 +65,7 @@ export function syncSeasonGems(save: Pick<SaveData, 'season' | 'gems'>): number 
     paid += carry;
   }
   delete s.carryGems;
+  if (save.shop || 'settings' in save) syncSignatureEntitlements(save as Pick<SaveData, 'season' | 'shop' | 'gems'>);
   return paid;
 }
 
@@ -82,7 +87,7 @@ export function passTotals(id: string): { coins: number; gems: number; items: Sh
 }
 
 /** The pass tiers worth calling out on the track (the looks and the big coin prizes). */
-export const PASS_HIGHLIGHTS = [5, 10, 15, 20, 25, 30].filter((t) => t === 10 || t === 20 || PASS_BIG_COINS[t]);
+export const PASS_HIGHLIGHTS = [1, 5, 10, 15, 20, 25, 30];
 
 /**
  * Claim pass tier t: its look is handed over now, its coins are returned for the caller to pay (as the free
@@ -104,7 +109,7 @@ export function claimCarryItems(save: Pick<SaveData, 'season' | 'shop'>): string
   const out: string[] = [];
   for (const key of s.carryItems) {
     const [cat, id] = key.split(':');
-    if ((cat === 'goalfx' || cat === 'trail' || cat === 'kit' || cat === 'look') && grantItem(save, cat, id)) out.push(key);
+    if ((cat === 'goalfx' || cat === 'trail' || cat === 'kit' || cat === 'look' || cat === 'decor') && grantItem(save, cat, id)) out.push(key);
   }
   s.carryItems = [];
   return out;
@@ -112,7 +117,7 @@ export function claimCarryItems(save: Pick<SaveData, 'season' | 'shop'>): string
 
 /** Claim every reached pass tier and any carried looks at once. */
 export function claimAllPass(save: Pick<SaveData, 'season' | 'shop'>): { coins: number; items: string[] } {
-  const items = claimCarryItems(save);
+  const items = [...syncSignatureEntitlements(save), ...claimCarryItems(save)];
   let coins = 0;
   for (const t of unclaimedPassTiers(seasonOf(save))) {
     const got = claimPassTier(save, t);
@@ -120,4 +125,58 @@ export function claimAllPass(save: Pick<SaveData, 'season' | 'shop'>): { coins: 
     items.push(...got.items);
   }
   return { coins, items };
+}
+
+/** Add new signature rewards to existing paid/earned passes, without replaying a coin or gem payout. */
+export function syncSignatureEntitlements(save: Pick<SaveData, 'season' | 'shop'> & Partial<Pick<SaveData, 'gems'>>): string[] {
+  const out: string[] = [];
+  const grant = (id: string) => { if (grantItem(save, 'decor', id)) out.push(`decor:${id}`); };
+  const s = seasonOf(save);
+  if (s.pass) {
+    grant(`kick${passItemId(s.id)}`);
+    if (s.passClaimed.includes(25)) grant(`net${passItemId(s.id)}`);
+  }
+  for (const key of [...shopOf(save).owned]) {
+    const m = /^(?:kit|look|trail|goalfx):(pass\d{2})$/.exec(key);
+    if (m) grant(`kick${m[1]}`);
+  }
+  // Old passes that already reached tier 28 have a durable gem receipt even after their season rolled over.
+  for (const key of save.gems?.claimed ?? []) {
+    const m = /^season:(\d{4}-\d{2}):p28$/.exec(key);
+    if (m) { grant(`kick${passItemId(m[1])}`); grant(`net${passItemId(m[1])}`); }
+  }
+  return out;
+}
+
+/** A guaranteed six-piece identity, never a random pack and never purchasable with coins. */
+export const SIGNATURE_SET_GEMS = GEM_PRICES.signatureCollection;
+export interface SignatureSet { id: string; name: string; colour: string; items: ShopItem[] }
+export function signatureSets(): SignatureSet[] {
+  return SEASON_THEMES.map((theme, m) => ({ id: `pass${String(m + 1).padStart(2, '0')}`, name: theme.name, colour: theme.color,
+    items: Object.values(seasonPassItems(`2000-${String(m + 1).padStart(2, '0')}`)) }));
+}
+export function signatureSet(id: string): SignatureSet | undefined { return signatureSets().find((s) => s.id === id); }
+export function signatureMissing(save: Pick<SaveData, 'shop' | 'progress'>, set: SignatureSet): ShopItem[] {
+  return set.items.filter((it) => !owns(save, it.cat, it.id));
+}
+export function signaturePrice(save: Pick<SaveData, 'shop' | 'progress'>, set: SignatureSet): number {
+  return Math.ceil(SIGNATURE_SET_GEMS * signatureMissing(save, set).length / set.items.length);
+}
+/** The current month belongs to its Club Pass; other themed identities are permanent, with no rotating countdown. */
+export function buySignatureSet(save: Pick<SaveData, 'season' | 'shop' | 'progress' | 'gems'>, id: string, now: Date = new Date()): GemBuyResult & { items?: ShopItem[] } {
+  const set = signatureSet(id);
+  if (!set || id === passItemId(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)) return { ok: false, reason: 'unknown', short: 0 };
+  const items = signatureMissing(save, set);
+  if (!items.length) return { ok: false, reason: 'maxed', short: 0 };
+  const price = signaturePrice(save, set);
+  if (!spendGems(save, price, `signature:${id}`)) return { ok: false, reason: 'no-gems', short: price - gems(save) };
+  for (const it of items) grantItem(save, it.cat, it.id);
+  return { ok: true, price, gems: gems(save), items };
+}
+/** Apply the complete identity together, preserving unrelated crest, ball, club progress and match strength. */
+export function equipSignatureSet(save: Pick<SaveData, 'shop' | 'progress' | 'settings'>, id: string): boolean {
+  const set = signatureSet(id);
+  if (!set || signatureMissing(save, set).length) return false;
+  for (const it of set.items) equipItem(save, it.cat, it.id);
+  return true;
 }

@@ -93,6 +93,12 @@ interface HypeState {
 
 const STATES = new WeakMap<Match, HypeState>();
 
+/** Local match recovery preserves the meter and the pass chain without drawing from the match RNG. */
+export function savedHype(m: Match): HypeState | null { return STATES.get(m) ?? null; }
+export function restoreHype(m: Match, state: HypeState | null): void {
+  if (state) STATES.set(m, state); else STATES.delete(m);
+}
+
 function stateOf(m: Match): HypeState {
   let s = STATES.get(m);
   if (!s) {

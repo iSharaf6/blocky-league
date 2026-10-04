@@ -275,6 +275,8 @@ export class Player {
   wrongFootT = 0;
   protectT = 0;
   shieldT = 0;
+  /** Seconds before another hard sprint reversal on a visible wet patch can skid (sim/weather.ts). */
+  wetSlipT = 0;
   /**
    * An AI defender's challenge on the human's carrier, telegraphed (skills.ts): seconds left of the wind-up before
    * he goes in (a slide when tellSlide, else a committed standing tackle). The human's SKILL meanwhile is a PERFECT.

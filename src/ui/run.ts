@@ -422,6 +422,9 @@ function playRound(app: AppContext, onBack: () => void): void {
     return s.active && s.inMatch && s.seed === seed && s.round === round ? s : null;
   };
   let step: RunStep | null = null;
+  let banked = false;
+  let bankedCoins = 0;
+  let bonusXp = 0;
   const xpAtStart = app.save.progress.xp;
   st.inMatch = true;
   app.persist();
@@ -453,12 +456,20 @@ function playRound(app: AppContext, onBack: () => void): void {
       const label = step.cleared ? 'INVINCIBLE!' : step.won ? `ROUND ${step.round} WON` : 'RUN OVER';
       return { coins: step.coins, label };
     },
-    onDone: (_r, earned) => {
+    onBanked: (_r, earned) => {
+      if (!step) return;
       const s = runState(app);
-      if (step) s.coins += earned;
+      if (s.seed !== seed) return;
+      // Main banks before the result screen opens. A later rewarded double supplies the new cumulative total.
+      s.coins += Math.max(0, earned - bankedCoins);
+      bankedCoins = Math.max(bankedCoins, earned);
+      if (banked) return;
+      banked = true;
       // XP BOOST: the match's own XP (what main.ts added after this function's milestone XP) and 20% again.
       const matchXp = app.save.progress.xp - xpAtStart - (step?.milestone?.xp ?? 0);
-      const bonusXp = step ? runXpBonus(app.save, matchXp) : 0;
+      bonusXp = runXpBonus(app.save, matchXp);
+    },
+    onDone: () => {
       app.persist();
       returnToRun(app, onBack, { step, bonusXp });
     },
@@ -469,6 +480,14 @@ function playRound(app: AppContext, onBack: () => void): void {
     },
   };
   app.startMatch(req);
+}
+
+/** Rebuild only the pending round's callbacks; opening the run hub would otherwise treat it as abandoned. */
+export function resumeRunRequest(app: AppContext): MatchRequest | null {
+  if (!runState(app).active || !runState(app).inMatch) return null;
+  let req: MatchRequest | null = null;
+  playRound({ ...app, startMatch: r => { req = r; } }, app.mainMenu);
+  return req;
 }
 
 // ------------------------------------------------------------------ style (only what the meta panel doesn't have)

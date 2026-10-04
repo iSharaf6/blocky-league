@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { stateHash } from '../src/net/hash';
 import { OnlineLink, type PeerInfo } from '../src/net/link';
-import { cleanControls, NET_VERSION } from '../src/net/setup';
+import { cleanControls, netConfig as agreedConfig, NET_VERSION } from '../src/net/setup';
 import type { NetData, Transport } from '../src/net/transport';
 import { BALL_R, DT, HALF_L } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import type { KickOrder } from '../src/sim/player';
 import type { Side } from '../src/sim/types';
+import { WEATHER_KINDS } from '../src/sim/weather';
 import { netConfig } from './netHarness';
 import { testSetup } from './netSim';
 
@@ -123,6 +124,18 @@ describe('online physics compatibility', () => {
     tx.receive({ t: 'hello', v: NET_VERSION, app: '1.0.0', me: me(6) });
     expect(link.error).toBeNull();
     expect(link.canStart).toBe(true);
+  });
+
+  it.each(WEATHER_KINDS)('preserves agreed %s weather from lobby to gameplay on both machines', (weather) => {
+    const tx = new TestTransport();
+    const link = new OnlineLink(tx, 'guest', me(6), '1.0.0');
+    tx.receive({ t: 'hello', v: NET_VERSION, app: '1.0.0', me: me(5) });
+    tx.receive({ t: 'rules', rules: { weather } });
+    expect(link.rules.weather).toBe(weather);
+    tx.receive({ t: 'start', setup: { ...testSetup(), weather } });
+    expect(link.setup?.weather).toBe(weather);
+    expect(agreedConfig(link.setup!, 0).weather).toBe(weather);
+    expect(agreedConfig(link.setup!, 1).weather).toBe(weather);
   });
 
   it('refuses the old pre-rebound physics build', () => {

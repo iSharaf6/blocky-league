@@ -142,7 +142,7 @@ export interface NewsItem {
   kind: NewsKind;
   /** About your own business (answers to your offers, offers for your players, your deals, your wage bill). */
   own: boolean;
-  /** Read: set for everything once the market screen has been opened (see markNewsSeen / marketUnread). */
+  /** Read: set when the NEWS list is opened (see markNewsSeen / marketUnread). */
   seen?: boolean;
   /** The club's story, not a transfer (derby talk, cup runs, milestones, farewells: meta/story.ts). */
   story?: boolean;
@@ -348,7 +348,7 @@ export function pushNews(state: CareerState, text: string, kind: NewsKind, own =
 
 const fmtN = (n: number) => n.toLocaleString('en-US');
 
-/** Everything read (the market screen opened): nothing counts as unread any more. */
+/** Everything read when the NEWS list is opened: nothing counts as unread any more. */
 export function markNewsSeen(state: CareerState): void {
   for (const n of state.tm.news) if (!n.seen) n.seen = true;
 }

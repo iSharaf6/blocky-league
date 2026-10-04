@@ -2210,6 +2210,7 @@ kbd {
 
 .gift-days li {
   display: grid;
+  min-width: 0;
   justify-items: center;
   gap: 2px;
   background: #fff;
@@ -2233,6 +2234,24 @@ kbd {
   border-color: var(--ink);
   background: var(--yellow);
   transform: translateY(-4px);
+}
+
+.gift-panel .gift-days .gd-tok {
+  max-width: 100%;
+  font: 400 10px / 1.25 var(--round);
+  font-style: normal;
+  text-align: center;
+  white-space: normal;
+}
+
+.gift-panel .reward {
+  flex-wrap: wrap;
+}
+
+.gift-panel .reward .rw-tok {
+  margin-left: 0;
+  font: 400 14px / 1.25 var(--round);
+  color: var(--go-d);
 }
 
 @media (max-height: 560px), (max-width: 720px) {

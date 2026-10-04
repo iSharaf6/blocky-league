@@ -4,31 +4,49 @@
 .ck-mode { gap: 5px; }
 .ck-mode button { min-height: 36px; padding: 4px 2px 3px; font-size: 13px; }
 
-/* The preview: the crest beside the shirt, the one being edited the bigger. */
+/* Independent art slots keep the fixed-cell shirt from shrinking its flex box while its pixels overflow the crest.
+   The one being edited gets more width, and both scale to the actual free space, including short landscape phones. */
 .ck-pvrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  align-self: stretch;
+  justify-self: stretch;
+  gap: clamp(6px, 2vw, 16px);
+  min-width: 0;
   min-height: 0;
 }
-
-.ck-pvrow .crest-svg {
+.ck-pvrow.crest { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); }
+.ck-pvrow.kit-only { grid-template-columns: minmax(0, 1fr); }
+.ck-art {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  container-type: size;
+  overflow: hidden;
+}
+.shell .ck-id .mc-preview {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  align-content: stretch;
+  justify-items: center;
+  min-width: 0;
+}
+.shell .ck-id .mc-preview .ck-pvrow .crest-svg {
   width: auto;
-  height: clamp(44px, 17vh, 86px);
+  max-width: 100%;
+  height: min(86px, calc(100cqh - 4px), calc(100cqw * 15 / 13));
   filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.22));
 }
-
-.ck-pvrow.crest .crest-svg { height: clamp(60px, 26vh, 124px); }
-.shell .ck-id .mc-preview .ck-pvrow.crest .shirt { --px: clamp(4px, 1.5vh, 7px) !important; }
-
-/* The preview box gives up height when a name is turned down (the line and the chip under the fields): the crest and
-   the shirt shrink with it instead of being cut off. */
-.shell .ck-id .mc-preview { container-type: size; }
-.shell .ck-id .mc-preview .ck-pvrow .crest-svg { height: min(clamp(44px, 17vh, 86px), 100cqh - 74px); }
-.shell .ck-id .mc-preview .ck-pvrow.crest .crest-svg { height: min(clamp(60px, 26vh, 124px), 100cqh - 74px); }
-.shell .ck-id .mc-preview .ck-pvrow .shirt { --px: min(clamp(6px, 2.4vh, 12px), (100cqh - 74px) / 11) !important; }
-.shell .ck-id .mc-preview .ck-pvrow.crest .shirt { --px: min(clamp(4px, 1.5vh, 7px), (100cqh - 74px) / 11) !important; }
+.shell .ck-id .mc-preview .ck-pvrow.crest .crest-svg {
+  height: min(124px, calc(100cqh - 4px), calc(100cqw * 15 / 13));
+}
+.shell .ck-id .mc-preview .ck-pvrow .shirt {
+  --px: min(12px, calc(100cqw / 12), calc((100cqh - 4px) / 11)) !important;
+}
+.shell .ck-id .mc-preview .ck-pvrow.crest .shirt {
+  --px: min(7px, calc(100cqw / 12), calc((100cqh - 4px) / 11)) !important;
+}
+.shell .ck-id .mc-preview .ck-name { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 
 .crx-ed {
   display: grid;

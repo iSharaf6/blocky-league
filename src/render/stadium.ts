@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { GoalNet } from './goalNet';
+import { snowyWeather, type WeatherKind } from '../sim/weather';
 import { clamp, smoothstep } from '../core/math';
 import { Rng } from '../core/rng';
 import { LOGO_ROWS, MARK_ROWS, drawRows } from '../core/calynxArt';
@@ -521,7 +523,7 @@ export class Stadium {
       frame.castShadow = true;
       frame.receiveShadow = true;
       this.pitch.add(frame);
-      const net = new GoalNet(s);
+      const net = new GoalNet(s, getNetTexture(), NET_CELL);
       this.nets.push(net);
       this.pitch.add(net.mesh);
     }
@@ -529,7 +531,7 @@ export class Stadium {
 
   punchNet(x: number, y: number, z: number, speed: number): void {
     const net = this.nets[x > 0 ? 1 : 0];
-    net.punch(y, z, Math.min(speed / 20, 1.4));
+    net.punch(x, y, z, Math.min(speed / 20, 1.4));
   }
 
   // ------------------------------------------------------------------ ad boards
@@ -1892,9 +1894,16 @@ export class Stadium {
     this.scoreTex.needsUpdate = true;
   }
 
-  /** Snow settles on the lawn over ~30 s (and stays); rain / clear leave it green. */
-  setWeather(kind: 'clear' | 'rain' | 'snow'): void {
-    this.snowing = kind === 'snow';
+  /** Snow is settled at kick-off, then builds gently; heavy snow starts with deeper cover. */
+  setWeather(kind: WeatherKind): void {
+    this.snowing = snowyWeather(kind);
+    if (this.snowing) {
+      this.snowT = Math.max(this.snowT, kind === 'blizzard' ? 24 : 12);
+      const k = smoothstep(0, 30, this.snowT);
+      this.snowPitch.value = 0.45 * k;
+      this.snowLine.value = 0.15 * k;
+      this.snowOuter.value = 0.75 * k;
+    }
     if (!this.snowing) {
       this.snowT = 0;
       this.snowPitch.value = 0;
@@ -2168,93 +2177,4 @@ function getNetTexture(): THREE.CanvasTexture {
   netTexture.minFilter = THREE.LinearMipmapLinearFilter;
   netTexture.anisotropy = 8;
   return netTexture;
-}
-
-/** Box-shaped net: textured panels whose vertices bulge when the ball hits them. */
-class GoalNet {
-  readonly mesh: THREE.Mesh;
-  private base: Float32Array;
-  private normal: Float32Array;
-  private pos: THREE.BufferAttribute;
-  private impacts: { y: number; z: number; amp: number; t: number }[] = [];
-
-  constructor(readonly sign: number) {
-    const verts: number[] = [];
-    const norms: number[] = [];
-    const uvs: number[] = [];
-    const idx: number[] = [];
-    const gx = sign * HALF_L;
-    const bx = gx + sign * GOAL_DEPTH;
-    const cell = NET_CELL; // metres between strands (a texture tile holds 4)
-    const panel = (
-      w: number, h: number, nu: number, nv: number,
-      at: (u: number, v: number) => [number, number, number],
-      n: [number, number, number],
-    ) => {
-      const start = verts.length / 3;
-      for (let j = 0; j <= nv; j++) {
-        for (let i = 0; i <= nu; i++) {
-          const p = at(i / nu, j / nv);
-          verts.push(p[0], p[1], p[2]);
-          norms.push(n[0], n[1], n[2]);
-          uvs.push(((i / nu) * w) / (cell * 4), ((j / nv) * h) / (cell * 4));
-        }
-      }
-      for (let j = 0; j < nv; j++) {
-        for (let i = 0; i < nu; i++) {
-          const a = start + j * (nu + 1) + i;
-          idx.push(a, a + 1, a + nu + 2, a, a + nu + 2, a + nu + 1);
-        }
-      }
-    };
-    // A little slack: the back net bellies out low in the middle and the roof sags between the bars.
-    const belly = (u: number, v: number) => 0.09 * Math.sin(Math.PI * u) * Math.sin(Math.PI * Math.min(1, v * 1.15));
-    const sag = (u: number, v: number) => 0.14 * Math.sin(Math.PI * u) * Math.sin(Math.PI * v);
-    panel(GOAL_W, GOAL_H, 16, 8, (u, v) => [bx + sign * belly(u, v), v * GOAL_H, -GOAL_W / 2 + u * GOAL_W], [sign, 0, 0]);
-    panel(GOAL_DEPTH, GOAL_W, 6, 16, (u, v) => [gx + sign * u * GOAL_DEPTH, GOAL_H - sag(u, v), -GOAL_W / 2 + v * GOAL_W], [0, 1, 0]);
-    for (const zs of [-1, 1]) {
-      panel(GOAL_DEPTH, GOAL_H, 6, 8, (u, v) => [gx + sign * u * GOAL_DEPTH, v * GOAL_H, (zs * GOAL_W) / 2], [0, 0, zs]);
-    }
-    const geo = new THREE.BufferGeometry();
-    this.base = new Float32Array(verts);
-    this.normal = new Float32Array(norms);
-    this.pos = new THREE.BufferAttribute(new Float32Array(verts), 3);
-    geo.setAttribute('position', this.pos);
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    geo.setIndex(idx);
-    // Unlit so the strands read as bright string, not grey bars; blended (not alpha-tested) so the fine mesh
-    // fades to a light haze with distance instead of breaking up.
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xf6f6ee, alphaMap: getNetTexture(), transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    });
-    this.mesh = new THREE.Mesh(geo, mat);
-  }
-
-  punch(y: number, z: number, amp: number): void {
-    this.impacts.push({ y, z, amp, t: 0 });
-    if (this.impacts.length > 3) this.impacts.shift();
-  }
-
-  update(dt: number): void {
-    if (this.impacts.length === 0) return;
-    for (const im of this.impacts) im.t += dt;
-    this.impacts = this.impacts.filter((im) => im.t < 1.6);
-    const p = this.pos.array as Float32Array;
-    const b = this.base;
-    const n = this.normal;
-    for (let i = 0; i < b.length; i += 3) {
-      let off = 0;
-      for (const im of this.impacts) {
-        const dy = b[i + 1] - im.y;
-        const dz = b[i + 2] - im.z;
-        const fall = Math.exp(-(dy * dy + dz * dz) / 0.9);
-        off += im.amp * 0.55 * fall * Math.exp(-im.t * 3.2) * Math.cos(im.t * 16);
-      }
-      p[i] = b[i] + n[i] * off;
-      p[i + 1] = b[i + 1] + n[i + 1] * off * 0.4;
-      p[i + 2] = b[i + 2] + n[i + 2] * off;
-    }
-    this.pos.needsUpdate = true;
-  }
 }

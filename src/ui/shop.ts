@@ -41,7 +41,8 @@ import {
 } from '../meta/gems';
 import { AD_CAPS, adsLeft, claimDailyGems, useAd } from '../meta/loops';
 import { syncNetwork } from '../meta/premium';
-import { buyPassWithGems, passActive, passTotals } from '../meta/pass';
+import { buyPassWithGems, buySignatureSet, equipSignatureSet, passActive, passTotals, signatureMissing, signaturePrice, signatureSet, signatureSets, syncSignatureEntitlements } from '../meta/pass';
+import { openBadges } from './badges';
 import type { GroundState } from '../meta/ground';
 import { confirmGems, gemArt, gemPrice } from './gemUi';
 import { seasonDaysLeft, seasonOf, seasonTheme } from '../meta/season';
@@ -60,7 +61,7 @@ import { sep } from './text';
 import './shop.css';
 import './store.css';
 
-export type ShopTab = 'featured' | ShopCat | 'players' | 'coins';
+export type ShopTab = 'featured' | 'signature' | ShopCat | 'players' | 'coins';
 
 const isCat = (t: ShopTab): t is ShopCat => (SHOP_CATS as readonly string[]).includes(t);
 
@@ -148,6 +149,7 @@ export interface ShopOpts {
 type RailTab = ShopTab | 'goals';
 const RAIL: readonly { tab: RailTab; label: string; icon: string; group: number }[] = [
   { tab: 'featured', label: 'FEATURED', icon: 'star', group: 0 },
+  { tab: 'signature', label: 'SIGNATURES', icon: 'crown', group: 0 },
   { tab: 'kit', label: 'KITS', icon: 'shirt', group: 1 },
   { tab: 'look', label: 'PLAYERS', icon: 'crown', group: 1 },
   { tab: 'ball', label: 'BALLS', icon: 'ball', group: 1 },
@@ -289,6 +291,9 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   const scr = mountMeta(app, 'sh-screen shell');
   const save = app.save;
   shopOf(save);
+  if (syncSignatureEntitlements(save).length) app.persist();
+  let signaturePick = `pass${seasonOf(save).id.slice(5, 7)}`;
+  let signaturePiece = -1;
   let tab: ShopTab = tab0 === 'coins' && !coinsTab() ? 'featured' : tab0;
   if (isGoals(tab)) lastGoals = tab as ShopCat;
   open = true;
@@ -416,7 +421,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
             <li><b>+${fmt(totals.gems)}</b>GEMS</li>
             <li><b>${totals.items.length}</b>PASS LOOKS</li>
           </ul>
-          <small class="sh-pc-note">A KIT, A LOOK, A TRAIL AND A GOAL FX</small>
+          <small class="sh-pc-note">A COMPLETE IDENTITY: KIT, LOOK, TRAIL, GOAL FX, NETS AND STAR CEREMONY. THE CEREMONY UNLOCKS NOW</small>
+          <button class="btn btn-white" data-a="signaturepick" data-id="pass${season.id.slice(5, 7)}">PREVIEW ALL SIX</button>
           ${passOn ? '<em class="sh-tag own sh-pc-on">ON THIS MONTH</em>' : `
             ${pass ? `<button class="btn btn-yellow btn-lg sh-pc-buy" data-a="iap" data-id="${esc(pass.id)}" ${off} aria-label="Get the Club Pass, ${esc(pass.price)}"><small>GET IT</small><b>${label(pass)}</b></button>` : ''}
             <button class="btn btn-white sh-pc-gems" data-a="passgems" ${off} aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${pass ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>`}
@@ -428,7 +434,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       // The gem packs (the app), the free daily gems (an ad, where there are ads), and where gems come from in play.
       const earn = `<p class="sh-earn"><b>FREE BY PLAYING</b>BOARD GOALS +${GEM_REWARDS.boardObjective}${sep()}CUPS +${GEM_REWARDS.cup}${sep()}WEEKLY +${GEM_REWARDS.weekly}${sep()}DAILY GIFT${sep()}SEASON TIERS</p>`;
       main = `${packs.length ? `<div class="sh-iaps n5">${packs.map(pack).join('')}</div>` : ''}
-        <div class="sh-offers n1">${ads.portal !== 'none' ? gemAdHtml() : ''}${earn}</div>`;
+        <div class="sh-offers n1"><p class="sh-earn"><b>GEMS GIVE YOUR CLUB AN IDENTITY</b>Guaranteed signature collections, the Club Pass, and useful shortcuts. Earn them playing or buy a top-up.<button class="btn btn-blue" data-a="signaturepick">PREVIEW SIGNATURE COLLECTIONS</button></p>${ads.portal !== 'none' ? gemAdHtml() : ''}${earn}</div>`;
     } else if (sec === 'coins') {
       const extra = [
         ads.portal !== 'none' ? freeHtml(false) : '',
@@ -457,7 +463,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       <div class="sh-storemain s-${sec}">${main}</div>
       <div class="sh-foot">
         ${iap.storefront ? `<button class="btn btn-white sh-restore" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE'}</button>` : ''}
-        <p class="sh-fine">${iap.storefront && !iap.available ? '<b>STORE NOT READY YET.</b> ' : ''}No cash value. Gems and coins never buy anything random. Nothing you buy changes a match.</p>
+        <p class="sh-fine">${iap.storefront && !iap.available ? '<b>STORE NOT READY YET.</b> ' : ''}No cash value. Gems and coins never buy anything random. Signature items are cosmetic. Online friendlies use preset teams.</p>
       </div>`;
   };
 
@@ -628,10 +634,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     }
     if (s === 'owned') return `<div class="sh-btns"><button class="btn btn-go btn-lg sh-act" data-a="equip">${isSlotCat(it.cat) ? 'WEAR IT' : 'EQUIP'}</button></div>`;
     if (s === 'pass') {
-      return `<div class="sh-btns">${iap.storefront
-        ? '<button class="btn btn-blue btn-lg sh-act" data-a="tab" data-v="coins">SEE THE CLUB PASS</button>'
-        : `<button class="btn btn-blue btn-lg sh-act" data-a="tab" data-v="coins">CLUB PASS ${gemPrice(GEM_PRICES.clubPass)}</button>`}</div>
-        ${line('EARNED IN THIS MONTH\'S CLUB PASS', 'pass')}`;
+      const collectionId = /pass\d{2}$/.exec(it.id)?.[0] ?? `pass${seasonOf(save).id.slice(5, 7)}`;
+      const current = collectionId === `pass${seasonOf(save).id.slice(5, 7)}`;
+      return `<div class="sh-btns"><button class="btn btn-blue btn-lg sh-act" data-a="signaturepick" data-id="${esc(collectionId)}">PREVIEW COLLECTION</button></div>
+        ${line(current ? 'EARNED THROUGH THIS MONTH\'S CLUB PASS' : 'PERMANENT GEM COLLECTION. EARNED GEMS WORK TOO', 'pass')}`;
     }
     const price = priceOf(it);
     const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s> ` : '';
@@ -738,8 +744,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   /** The items a category lists: Club Pass looks of this month (to earn) and any earned; past months' stay out. */
   const listOf = (cat: ShopCat): ShopItem[] => {
     const mine = seasonPassItems(seasonOf(save).id);
-    const passId = (cat === 'goalfx' || cat === 'trail' || cat === 'kit' || cat === 'look') ? mine[cat].id : '';
-    return shopItems(cat).filter((x) => !x.pass || x.id === passId || owns(save, x.cat, x.id));
+    const passIds = cat === 'decor' ? [mine.nets.id, mine.entrance.id] : (cat === 'goalfx' || cat === 'trail' || cat === 'kit' || cat === 'look') ? [mine[cat].id] : [];
+    return shopItems(cat).filter((x) => !x.pass || passIds.includes(x.id) || owns(save, x.cat, x.id));
   };
 
   /** A looks tab: slot chips (players, stadium), the tiles (the only thing that scrolls), the stage and BUY. */
@@ -864,6 +870,23 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       </section>`;
   };
 
+  /** Every collection shows its actual six pieces, a shared live preview, and the exact owned-item discount. */
+  const signatureHtml = (): string => {
+    const set = signatureSet(signaturePick) ?? signatureSets()[0];
+    const missing = signatureMissing(save, set);
+    const price = signaturePrice(save, set);
+    const current = set.id === `pass${seasonOf(save).id.slice(5, 7)}`;
+    const tiles = signatureSets().map((s) => `<button class="sh-signature-tile ${s.id === set.id ? 'sel' : ''}" style="--signature:${s.colour}" data-a="signaturepick" data-id="${s.id}" aria-pressed="${s.id === set.id}"><b>${esc(s.name.toUpperCase())}</b><small>${6 - signatureMissing(save, s).length} OF 6 OWNED</small></button>`).join('');
+    const action = !missing.length ? '<button class="btn btn-go btn-lg" data-a="signaturewear">EQUIP ALL SIX</button>'
+      : current ? `<button class="btn btn-blue btn-lg" data-a="${passActive(save) ? 'signatureseason' : 'passgems'}">${passActive(save) ? 'CLAIM THE REST IN SEASON' : `CLUB PASS ${gemPrice(GEM_PRICES.clubPass)}`}</button>`
+      : `<button class="btn btn-blue btn-lg" data-a="signaturebuy">${missing.length < 6 ? 'COMPLETE' : 'BUY AND EQUIP'} ${gemPrice(price)}</button>`;
+    return `<div class="sh-content split sh-cat sh-signature"><section class="pane sh-list"><div class="pane-h"><b>SIGNATURE COLLECTIONS</b></div><div class="sh-signature-grid pane-scroll" data-scroll-key="sh-signatures">${tiles}</div></section>
+      <section class="sh-detail"><div class="sh-stage ${stage.ok ? '' : 'flat'}" style="--sb:${set.colour}">${stage.ok ? '<canvas class="sh-3d" aria-hidden="true"></canvas>' : pixelIcon('crown', '#ffd23a', 5)}</div>
+      <div class="sh-info"><div class="sh-id"><small class="sh-kind">GEM IDENTITY COLLECTION${sep()}PERMANENT</small><h3 class="sh-name">${esc(set.name.toUpperCase())}</h3><p class="sh-blurb">Your own match spectacle, from the captain's look to the walkout and both goals. Choose a piece to see it move. Cosmetic only.</p></div>
+      <div class="sh-signature-pieces"><button class="${signaturePiece < 0 ? 'on' : ''}" data-a="signaturepart" data-i="-1">FULL CLUB</button>${set.items.map((it, i) => `<button class="${signaturePiece === i ? 'on' : ''}" data-a="signaturepart" data-i="${i}" aria-pressed="${signaturePiece === i}">${esc(it.name)}${owns(save, it.cat, it.id) ? ' OWNED' : ''}</button>`).join('')}</div>
+      <small>${current ? 'THIS MONTH\'S CLUB PASS. CEREMONY NOW; THE REST ON ITS TIERS.' : `${missing.length < 6 ? `${6 - missing.length} ALREADY OWNED. YOU ONLY PAY FOR ${missing.length} MISSING PIECES.` : 'ALL SIX GUARANTEED. NO RANDOM REWARD. ALWAYS AVAILABLE.'}`} EARNED GEMS WORK TOO.</small><div class="sh-actrow">${action}</div></div></section></div>`;
+  };
+
   // ---- players (scout packs + the market)
 
   const playersHtml = (): string => {
@@ -889,12 +912,12 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       const poor = !free && tokens < cost;
       const name = free ? 'FREE DAILY PACK' : PACKS[k].name;
       const lo = RARITY_OVR[k === 'elite' ? 'rare' : 'common'][0];
-      return `<button class="sh-pack p-${free ? 'free' : k} ${poor ? 'poor' : ''}" data-a="pack" data-k="${k}" data-free="${free ? 1 : 0}" aria-label="${name}, ${free ? 'free' : `${cost} scout ${cost === 1 ? 'token' : 'tokens'}`}">
+      return `<button class="sh-pack p-${free ? 'free' : k} ${poor ? 'poor' : ''}" data-a="pack" data-k="${k}" data-free="${free ? 1 : 0}" aria-label="${name}, ${free ? 'free' : `${cost} scout ${cost === 1 ? 'ticket' : 'tickets'}`}">
           <span class="sh-cardback" aria-hidden="true"><i></i></span>
           <b>${name}</b>
           <small>${free ? 'ONE A DAY' : `OVR ${Math.max(30, rating + lo)} TO ${Math.min(95, rating + 16)}`}</small>
           ${odds(k)}
-          <em class="sh-tag price ${poor ? 'poor' : 'buy'}">${free ? 'FREE' : `${cost} ${cost === 1 ? 'TOKEN' : 'TOKENS'}`}</em>
+          <em class="sh-tag price ${poor ? 'poor' : 'buy'}">${free ? 'FREE' : `${cost} ${cost === 1 ? 'TICKET' : 'TICKETS'}`}</em>
         </button>`;
     };
     // One bar for the club (its numbers, SQUAD and the MARKET), the packs side by side, one line of fine print.
@@ -902,7 +925,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         <section class="sh-club">
           ${shirtArt(club.kit, 3)}
           <div class="sh-clubtxt"><b>${esc(club.name)}</b><span>OVR ${rating}${sep()}<em class="${full ? 'full' : ''}">${full ? 'SQUAD FULL' : `SQUAD ${club.squad.length}/${SQUAD_MAX}`}</em>${sep()}WAGES ${fmt(wages)}</span></div>
-          <span class="sh-tokens" aria-label="${tokens} scout ${tokens === 1 ? 'token' : 'tokens'}"><b>${tokens}</b>${tokens === 1 ? 'TOKEN' : 'TOKENS'}</span>
+          <span class="sh-tokens" aria-label="${tokens} scout ${tokens === 1 ? 'ticket' : 'tickets'}"><b>${tokens}</b>${tokens === 1 ? 'TICKET' : 'TICKETS'}</span>
           <button class="btn btn-white" data-a="squad">SQUAD</button>
           <button class="btn btn-blue" data-a="market">MARKET</button>
         </section>
@@ -911,7 +934,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
           ${pack('scout', false)}
           ${pack('elite', false)}
         </div>
-        <p class="mc-hint sh-fine">Tokens come from daily challenges, never from coins. Odds are on every pack.</p>
+        <p class="mc-hint sh-fine">Scout tickets are earned from daily challenges and gifts. 1 opens a Scout Pack; 3 open an Elite Pack. Coins and gems never buy tickets. Odds are shown.</p>
       </div>`;
   };
 
@@ -1079,6 +1102,22 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
 
   /** Put the right show on the stage for the tab, the pick and TRY IT ON. */
   const stageFor = () => {
+    if (tab === 'signature') {
+      const set = signatureSet(signaturePick);
+      if (!set) return;
+      const it = set.items[signaturePiece];
+      if (it) { stage.set({ cat: it.cat, id: it.id }); return; }
+      const w = wearOf();
+      for (const item of set.items) {
+        if (item.cat === 'kit') w.kit = item.id;
+        else if (item.cat === 'goalfx') w.goalfx = item.id;
+        else if (item.cat === 'look' && item.slot) w.looks = { ...w.looks, [item.slot]: item.id };
+        else if (item.cat === 'decor' && item.slot) w.decor = { ...w.decor, [item.slot]: item.id };
+      }
+      stage.setTryOn(w);
+      stage.set({ cat: 'tryon', id: `signature:${set.id}` });
+      return;
+    }
     // (The night view goes off where there is no NIGHT button to turn it off again.)
     const shown = shownItem();
     if (stage.night && !(tab === 'featured' && feat.kind === 'set') && !(shown && nighty(shown))) stage.setNight(false);
@@ -1134,7 +1173,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   const draw = () => {
     lastTab = tab;
     lastFeat = feat;
-    const body = tab === 'players' ? playersHtml() : tab === 'coins' ? coinsHtml() : tab === 'featured' ? featuredHtml() : catHtml(tab);
+    const body = tab === 'players' ? playersHtml() : tab === 'coins' ? coinsHtml() : tab === 'featured' ? featuredHtml() : tab === 'signature' ? signatureHtml() : catHtml(tab);
     keepScrolls(scr.panel);
     scr.render(
       `${topBar(backLabel, 'SHOP', iap.storefront ? 'EARN COINS AND GEMS PLAYING OR TOP UP' : 'COINS AND GEMS COME FROM PLAYING', shownCoins)}
@@ -1237,6 +1276,35 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
 
   // (Esc: mountMeta sends it to BACK, which waits while a pack reveal is up.)
   const handlers = {
+    signaturepick: (el: HTMLElement) => {
+      const id = el.dataset.id;
+      if (id && signatureSet(id)) signaturePick = id;
+      tab = 'signature'; signaturePiece = -1;
+      stageFor(); draw();
+    },
+    signaturepart: (el: HTMLElement) => {
+      signaturePiece = Number(el.dataset.i ?? -1);
+      stageFor(); draw();
+    },
+    signatureseason: () => openBadges(app, () => openShop(app, { tab: 'signature', onBack: back, backLabel }), 'season'),
+    signaturewear: () => {
+      if (!equipSignatureSet(save, signaturePick)) return;
+      app.persist(); rewear(); stageFor(); draw(); buzz('success'); say('ALL SIX EQUIPPED', 'good');
+    },
+    signaturebuy: () => {
+      const set = signatureSet(signaturePick);
+      if (!set) return;
+      const price = signaturePrice(save, set);
+      if (price <= 0) return;
+      const missing = signatureMissing(save, set);
+      confirmGems(scr.root, { title: `OWN ${set.name.toUpperCase()}?`, text: `${missing.length} GUARANTEED PIECES: ${missing.map((it) => it.name).join(', ')}. OWNED FOR GOOD. EQUIPPED TOGETHER`, price, have: gems(save), yes: 'BUY AND EQUIP', getGems: getGems(), free: 'GEMS EARNED BY PLAYING BUY THE SAME COLLECTION',
+        onYes: () => {
+          if (signaturePrice(save, set) !== price) { draw(); say('YOUR COLLECTION CHANGED. CHECK ITS NEW PRICE', 'info'); return; }
+          const r = buySignatureSet(save, set.id);
+          if (!r.ok) return;
+          equipSignatureSet(save, set.id); app.persist(); rewear(); stageFor(); draw(); sfx.powerup(); buzz('success'); say(`${set.name.toUpperCase()} IS YOURS. ALL SIX ON!`, 'good');
+        } });
+    },
     // (A pack being opened has to be signed or sold first: its card is paid for.)
     back: () => {
       if (!sheet) back();
@@ -1406,7 +1474,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       const before = save.coins;
       const r = openPack(save, clubOf(), kind, today(), free);
       if (!r.ok) {
-        if (r.reason === 'no-tokens') say(`${r.short} MORE SCOUT ${r.short === 1 ? 'TOKEN' : 'TOKENS'} NEEDED. DAILY CHALLENGES EARN THEM`, 'bad');
+        if (r.reason === 'no-tokens') say(`${r.short} MORE SCOUT ${r.short === 1 ? 'TICKET' : 'TICKETS'} NEEDED. DAILY CHALLENGES EARN THEM`, 'bad');
         else if (r.reason === 'free-used') say('TODAY\'S FREE PACK IS OPENED. BACK TOMORROW', 'info');
         return;
       }

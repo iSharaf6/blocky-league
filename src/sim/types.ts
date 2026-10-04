@@ -158,6 +158,7 @@ export type MatchEvent =
   | { type: 'tackleCue'; by: number; cue: TackleCue }
   | { type: 'bounce'; speed: number }
   | { type: 'net'; x: number; y: number; z: number; speed: number }
+  | { type: 'slip'; player: number }
   | { type: 'ooh' }
   | { type: 'control'; player: number }
   | { type: 'halftime' }

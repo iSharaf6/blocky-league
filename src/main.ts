@@ -26,7 +26,7 @@ import { atmosphereOf, chantRate, withCrowd, withIncome, type Atmosphere } from 
 import { GEM_PRICES, GEM_REWARDS, addGems, gems, rewardGems, spendGems } from './meta/gems';
 import { CALENDAR, adsLeft, advanceWeekly, calendarNext, calendarToday, claimSweep, useAd, weeklyFor, weeklyObjectives } from './meta/loops';
 import { payoutText, syncAchievementGems } from './meta/gemSources';
-import { syncSeasonGems } from './meta/pass';
+import { syncSeasonGems, syncSignatureEntitlements } from './meta/pass';
 import { ads } from './platform/ads';
 import { adFree, coinDoubler, iap, PRODUCT_NOADS, PRODUCT_STARTER } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
@@ -63,6 +63,10 @@ import { canStart, gateNow, gateWhy, onGateChange } from './platform/online';
 import { connectOpen, markHub, openConnect } from './ui/connect';
 import { buzz, installUiHaptics, setHapticsLevel, setHapticsQuiet } from './platform/haptics';
 import { inNativeApp } from './platform/native';
+import type { WeatherKind } from './render/weather';
+import { MatchRecoveryStore, RECOVERY_INTERVAL_S, recoveryRequest, recoveryRoute, type PendingMatch } from './game/matchRecovery';
+import { rebuildRecoveryRequest, recoveryContext } from './game/matchRecoveryRequest';
+import { standardCoinReward } from './meta/matchEconomy';
 import { maybeAskForReview } from './platform/review';
 
 /** A brief studio entrance on the standalone site; portals only wait for actual loading. */
@@ -85,9 +89,31 @@ let session: MatchSession | null = null;
 let demo: MatchSession | null = null;
 /** The main menu (or a screen off it) is up, as opposed to the title screen or a match. */
 let atMenu = false;
+const matchRecovery = new MatchRecoveryStore({
+  getItem: k => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v), removeItem: k => localStorage.removeItem(k),
+});
+let ongoing: { session: MatchSession; request: MatchRequest; tally: Tally; recordPlayed: number; progressXp: number; context: string } | null = null;
+let recoveryT = 0;
+
+function clearMatchRecovery(): void { ongoing = null; matchRecovery.clear(); }
+
+function checkpointMatch(force = false): void {
+  const o = ongoing;
+  if (!o || session !== o.session || o.session.driver) return;
+  if (save.record.played !== o.recordPlayed || save.progress.xp !== o.progressXp) { clearMatchRecovery(); return; }
+  if (!force && recoveryT < RECOVERY_INTERVAL_S) return;
+  recoveryT = 0;
+  try {
+    const runtime = o.session.checkpoint();
+    if (!runtime) return;
+    matchRecovery.write({ version: 1, savedAt: new Date().toISOString(), recordPlayed: o.recordPlayed, progressXp: o.progressXp,
+      context: o.context, route: recoveryRoute(o.request), request: recoveryRequest(o.request), options: o.session.opt, runtime, tally: { ...o.tally } });
+  } catch { /* Recovery storage is optional; a quota or unavailable store must never freeze a match. */ }
+}
 
 function persist(): void {
   writeSave(save);
+  if (ongoing && (save.record.played !== ongoing.recordPlayed || save.progress.xp !== ongoing.progressXp)) clearMatchRecovery();
   // (Game Center, in the app: anything a save moved goes up once the burst settles. A no-op elsewhere.)
   queueGameCenterSync(save);
 }
@@ -409,7 +435,9 @@ function mainInfo(): MainInfo {
   try {
     // Gems (economy v3): any season tier's gems still owed are paid here, then the balance beside the coins. (The
     // career's gems are paid on the road itself, where it says so: ui/career.ts.)
-    if (syncSeasonGems(save) > 0) persist();
+    const newSignature = syncSignatureEntitlements(save);
+    const gemsPaid = syncSeasonGems(save);
+    if (gemsPaid > 0 || newSignature.length) persist();
     info.gems = gems(save);
     // This week's objectives, under today's challenges.
     const wk = weeklyFor(save, localDay());
@@ -841,9 +869,7 @@ export function standardReward(r: MatchResult, difficulty: number): { coins: num
   const hs: Side = r.humanSide === 1 ? 1 : 0;
   const my = r.score[hs];
   const their = r.score[hs === 0 ? 1 : 0];
-  const mult = [0.8, 1, 1.35, 1.7][difficulty] ?? 1;
-  const base = my > their ? 150 : my === their ? 70 : 30;
-  return { coins: Math.round((base + my * 20) * mult), label: my > their ? 'WIN BONUS' : 'MATCH FEE' };
+  return standardCoinReward(my, their, difficulty);
 }
 
 /** Quick Match. `mode` preselects CLASSIC / BLITZ (the BLITZ tile); otherwise the last one played. */
@@ -887,11 +913,11 @@ function pickTime(): TimeOfDay {
   return r < 0.5 ? 'day' : r < 0.75 ? 'sunset' : 'night';
 }
 
-function pickWeather(): 'clear' | 'rain' | 'snow' {
+function pickWeather(): WeatherKind {
   const w = save.settings.weather;
   if (w !== 'random') return w;
   const r = Math.random();
-  return r < 0.72 ? 'clear' : r < 0.9 ? 'rain' : 'snow';
+  return r < 0.52 ? 'clear' : r < 0.7 ? 'overcast' : r < 0.8 ? 'drizzle' : r < 0.9 ? 'rain' : r < 0.98 ? 'snow' : 'blizzard';
 }
 
 function recordResult(r: MatchResult): void {
@@ -944,10 +970,10 @@ function clipOf(s: MatchSession): ClipSource | undefined {
   return { clip: () => api.lastClip?.() ?? null, poster: () => api.lastPoster?.() ?? null };
 }
 
-async function startMatch(req: MatchRequest): Promise<void> {
+async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<void> {
   // The online rule: only exhibition (QUICK MATCH, the first match, the basics) kicks off without a connection.
   // Reached from a screen that was open when the connection went: back to the hub, and the match starts on RETRY.
-  if (!canStart(req.kind)) {
+  if (!recovered && !canStart(req.kind)) {
     mainMenu();
     connectPanel(() => void startMatch(req));
     return;
@@ -958,13 +984,14 @@ async function startMatch(req: MatchRequest): Promise<void> {
   const basics = req.kind === 'basics';
   // Portal interstitial only at a natural break before a new kick-off: never the first thing this visit, never
   // in or right after the basics, never before the first real match.
-  if (finishedThisVisit > 0 && !basics && !req.firstMatch && played() > 0) await ads.midgame(req.scenario ? 'moment' : 'match');
+  if (!recovered && finishedThisVisit > 0 && !basics && !req.firstMatch && played() > 0) await ads.midgame(req.scenario ? 'moment' : 'match');
+  if (!recovered) clearMatchRecovery();
   demo?.dispose();
   demo = null;
   const { humanSide } = req;
   // COSMETICS 2.0 (meta/style.ts): your side in its premium kit and player looks (any clash is fixed on the other
   // side), and at home your ground in its stadium style. Looks only: nothing here changes play.
-  const kits = styleMatch(save, req.kits, [req.home, req.away], humanSide);
+  const kits = recovered?.options.kits ?? styleMatch(save, req.kits, [req.home, req.away], humanSide);
   const decor = humanSide === 0 ? decorOf(save, req.kits[0], req.home.short, req.home.name) : null;
   // CLUB ATMOSPHERE (meta/atmosphere.ts): at a home match, what the stadium style worn and the ground as built are
   // worth: a fuller ground, more chants, matchday income and the mascot's half time show. The meta only: nothing
@@ -1022,7 +1049,10 @@ async function startMatch(req: MatchRequest): Promise<void> {
     goldenFirst: req.goldenFirst,
     startPower: req.startPower,
     sideDifficulty: req.sideDifficulty,
+    ...(recovered?.options ?? {}),
+    ...(recovered ? { skipIntro: true } : {}),
   });
+  if (recovered) session.restoreCheckpoint(recovered.runtime);
   applyControls(session.match, basics ? CONTROL_DEFAULTS : controlsOf(save.settings));
   // (The session set the ground's crowd; a better atmosphere makes the home crowd sing more often.)
   if (atmo) sfx.setChantRate(chantRate(atmo));
@@ -1050,6 +1080,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
   }
   // Count what the human does (headers, long-range goals, tackles, skills, pickups) for XP and the daily challenges.
   const tally = newTally();
+  if (recovered) Object.assign(tally, recovered.tally);
   const hs: Side = humanSide === 1 ? 1 : 0;
   const lesson = Trainer.lesson;
   // LIVE GOALS (game/funLayer.ts): today's challenges, with this match counted in, move on the HUD as they happen
@@ -1149,7 +1180,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
     };
     // The app's half-time ad (platform/ads.ts APP_AD_GAP_MS), then the half-time screen. Never in the basics, a
     // moment, the tutorial or a new player's first match.
-    if (!basics && !req.scenario && !req.firstMatch && save.seenTutorial && played() > 0) void ads.midgame('halftime').then(show, show);
+    if (!recovered && !basics && !req.scenario && !req.firstMatch && save.seenTutorial && played() > 0) void ads.midgame('halftime').then(show, show);
     else show();
   };
   /** The half time show was announced (the half-time screen is redrawn from its sub-screens). */
@@ -1157,6 +1188,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
   /** The replay of a lost decider was offered (once per match: economy v3). */
   let replayAsked = false;
   s.onFinish = (r) => {
+    checkpointMatch(true);
     ads.gameplayStop();
     // A LOST DECIDER (a cup tie, a final, a title or promotion decider: req.decider): one chance to play it again,
     // BEFORE anything is recorded or paid. Gems (a shown price, one tap) or a rewarded ad once a day; NO THANKS takes
@@ -1342,6 +1374,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
       goals: scored, assists: summary.assists, passes: summary.passes, tackles: tally.tacklesWon, cleanSheet: their === 0,
       skills: tally.skills, saves: r.match.stats.saves?.[hs] ?? 0,
     }, p.xp - xpFrom);
+    req.onBanked?.(r, earned);
     persist();
     // Full time: the result goes to the cloud now (offline it waits on the device and goes up when the connection is back).
     syncSoon();
@@ -1360,6 +1393,7 @@ async function startMatch(req: MatchRequest): Promise<void> {
           doubled = true;
           save.coins += reward.coins;
           earned += reward.coins;
+          req.onBanked?.(r, earned);
           persist();
         }
         return ok;
@@ -1379,12 +1413,37 @@ async function startMatch(req: MatchRequest): Promise<void> {
       } : undefined,
     }, r.ratings, {
       stars, xpFrom, xpTo: p.xp, streak: p.streak, mult,
-      done: [...done.map((x) => ({ text: `${x.challenge.text} +1 TOKEN`, coins: x.challenge.coins })), ...sweepLine, ...weeklyLines, ...skillLine, ...liveLine, ...showLine, ...levelLine],
+      done: [...done.map((x) => ({ text: `${x.challenge.text} +1 SCOUT TICKET`, coins: x.challenge.coins })), ...sweepLine, ...weeklyLines, ...skillLine, ...liveLine, ...showLine, ...levelLine],
       owned: shopOf(save).owned,
     }, { tierUps, tryEasy, clip: clipOf(s), noAds: firstEver, shopReach: reach ? { name: reach.name, kind: CAT_LABEL[reach.cat] } : undefined,
       showtime: fun && show ? { grade: fun.grade, score: fun.style, best: show.before?.grade ?? null, newBest: show.newBest, bonus: gradeK } : undefined });
   };
   window.addEventListener('keydown', pauseKey);
+  ongoing = { session: s, request: req, tally, recordPlayed: recovered?.recordPlayed ?? save.record.played, progressXp: recovered?.progressXp ?? save.progress.xp,
+    context: recovered?.context ?? recoveryContext(app, recoveryRoute(req)) };
+  checkpointMatch(true);
+  if (recovered) {
+    if (s.match.phase === 'halftime') s.onHalftime?.();
+    else if (s.match.phase !== 'fulltime') s.requestPause();
+  }
+}
+
+/** Rebuild the pending competition's callbacks without opening a hub that could mark its match abandoned. */
+function tryResumeMatch(): boolean {
+  const pending = matchRecovery.read(save.record.played, save.progress.xp);
+  if (!pending) return false;
+  const req = rebuildRecoveryRequest(app, pending, standardReward);
+  if (!req) {
+    matchRecovery.clear();
+    return false;
+  }
+  // Saved setup wins over later preferences, while the fresh callbacks settle the original pending fixture.
+  void startMatch(req, pending).catch(() => {
+    endMatch();
+    mainMenu();
+    menus.toast('THE UNFINISHED MATCH COULD NOT BE RESTORED');
+  });
+  return true;
 }
 
 function pauseKey(e: KeyboardEvent): void {
@@ -1393,6 +1452,7 @@ function pauseKey(e: KeyboardEvent): void {
 }
 
 function endMatch(): void {
+  clearMatchRecovery();
   window.removeEventListener('keydown', pauseKey);
   session?.dispose();
   session = null;
@@ -1415,9 +1475,10 @@ const autoPause = (): void => {
   if (session && !session.paused && !menus.open && session.match.phase !== 'halftime' && session.match.phase !== 'fulltime') session.requestPause();
 };
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) autoPause();
+  if (document.hidden) { checkpointMatch(true); autoPause(); }
 });
-window.addEventListener('blur', autoPause);
+window.addEventListener('blur', () => { checkpointMatch(true); autoPause(); });
+window.addEventListener('pagehide', () => checkpointMatch(true));
 window.addEventListener('resize', () => {
   world.resize();
   canvasRect = canvas.getBoundingClientRect();
@@ -1500,6 +1561,8 @@ function frame(now: number): void {
   shown?.update(dt);
   basicsWatch(dt);
   syncControlsUi(session);
+  recoveryT += dt;
+  checkpointMatch();
   // A new match: every shader up front, not one hitch per first goal, effect or marker mid-play.
   if (shown && shown !== warmed) {
     warmed = shown;
@@ -1591,6 +1654,7 @@ async function boot(): Promise<void> {
   });
   const params = new URLSearchParams(location.search);
   if (import.meta.env.DEV && params.has('quick')) {
+    if (tryResumeMatch()) return;
     const home = makeTeam(PRESET_CLUBS[save.clubIdx]);
     const away = makeTeam(PRESET_CLUBS[save.opponentIdx]);
     startMatch({
@@ -1607,6 +1671,7 @@ async function boot(): Promise<void> {
   menus.title(() => {
     sfx.unlock();
     applySettings();
+    if (tryResumeMatch()) return;
     // Portal builds, first visit: TAP TO PLAY is the one click to gameplay (the first basics drill).
     if (straightToBasics(onboarding(), played(), PORTAL)) startBasics(0);
     else mainMenu();

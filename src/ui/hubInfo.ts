@@ -12,7 +12,7 @@ import { PRESET_CLUBS, makeTeam } from '../meta/data';
 import { boardView } from '../meta/board';
 import { COMP_NAMES } from '../meta/comps';
 import { nextGoal, type NextGoal, type UnlockHint } from '../meta/goal';
-import { marketUnread } from '../meta/market';
+import { marketUnread, windowInfo } from '../meta/market';
 import { badgePending, nextBadgeGoal } from '../meta/mastery';
 import { passActive } from '../meta/pass';
 import { SEASON_TIERS, seasonDaysLeft, seasonOf, seasonProgress, seasonTheme } from '../meta/season';
@@ -176,6 +176,20 @@ export function transfersNews(career: CareerState | null): number {
   } catch {
     return 0;
   }
+}
+
+/** The transfer calendar advances with league results, never device time or a visit to the store. */
+export function transfersTiming(career: CareerState | null): { window: string; updated: string; next: string; note: string } | null {
+  const season = career?.season;
+  if (!season || !career?.club) return null;
+  const week = season.matchday;
+  const over = !!career.summary || week >= MATCHDAYS;
+  return {
+    window: over ? 'WINDOW CLOSED UNTIL NEXT SEASON' : windowInfo(week).label.replace(/\bMATCHES\b/g, 'LEAGUE MATCHDAYS').replace(/\bMATCH\b/g, 'LEAGUE MATCHDAY'),
+    updated: week > 0 ? `UPDATED AFTER MATCHDAY ${Math.min(week, MATCHDAYS)}` : 'SEASON OPENING MARKET',
+    next: over || week >= MATCHDAYS - 1 ? 'NEXT REFRESH AT THE START OF NEXT SEASON' : `NEXT REFRESH AFTER LEAGUE MATCHDAY ${week + 1}`,
+    note: 'League matchdays refresh players and answer offers. Cup and quick matches keep the same market.',
+  };
 }
 
 /**

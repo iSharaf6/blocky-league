@@ -80,6 +80,12 @@ interface JudgeState {
 
 const STATES = new WeakMap<Match, JudgeState>();
 
+/** The challenge's elapsed time and verdict belong to the unfinished match too. */
+export function savedScenario(m: Match): JudgeState | null { return STATES.get(m) ?? null; }
+export function restoreScenario(m: Match, state: JudgeState | null): void {
+  if (state) STATES.set(m, state); else STATES.delete(m);
+}
+
 /** A pad with something on it: the stick pushed, or any button. */
 function padUsed(p: Pad): boolean {
   return Math.hypot(p.mx, p.mz) > 0.3 || p.pass || p.shoot || p.through || p.sprint || !!p.power || !!p.skill;

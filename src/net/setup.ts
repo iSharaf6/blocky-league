@@ -1,4 +1,5 @@
 import type { ControlSettings } from '../core/save';
+import type { WeatherKind } from '../sim/weather';
 import { contrastAwayKit } from '../game/kitContrast';
 import { grassSafeKit, makeTeam, PRESET_CLUBS, resolveKitClash } from '../meta/data';
 import type { Match, MatchConfig } from '../sim/match';
@@ -21,9 +22,10 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * human's with the ball and comes out on KEEPER (the pad's SKILL bit with the ball not ours: no new bit on the wire),
  * the aerial lock, the standing tackle's new odds and PRESS's helper, AUTO SPRINT's lower threshold and flat-out push.
  * 7: stationary carriers are read after a short grace and their automatic shield can be overcome; a won deliberate
- * standing tackle takes possession consistently. Both peers must use these challenge and possession rules.)
+ * standing tackle takes possession consistently. Both peers must use these challenge and possession rules.
+ * 8: agreed weather and deterministic wet-patch skids on hard sprint cuts; clear-weather physics are unchanged.)
  */
-export const NET_VERSION = 7;
+export const NET_VERSION = 8;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides
@@ -41,7 +43,7 @@ export interface MatchSetup {
   mode: MatchMode;
   halfMinutes: number;
   timeOfDay: 'day' | 'sunset' | 'night';
-  weather: 'clear' | 'rain' | 'snow';
+  weather: WeatherKind;
   /** Level at full time: a penalty shootout (true) or a draw. */
   knockout?: boolean;
   /** Each side's controls (index = side). */
@@ -107,6 +109,7 @@ export function netConfig(s: MatchSetup, localSide: Side, teams = netTeams(s)): 
     humanSides: [true, true],
     seed: s.seed,
     mode: s.mode,
+    weather: s.weather,
     knockout: !!s.knockout,
     // HYPE and the SUPER SHOT (sim/hype.ts): classic matches, the same rule on both machines (NET_VERSION 5).
     hype: s.mode !== 'blitz',

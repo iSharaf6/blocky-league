@@ -59,6 +59,8 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * after the three-second grace in every press zone, the stationary automatic shield fades under continued pressure,
  * and a won deliberate standing tackle gives control rather than randomly knocking the ball loose. All six AI-only
  * rows and the three human knockout rows retain their exact prior hashes, steps, scores and shootout flags.
+ * Revision 2026-10-05 (NET_VERSION 8) agrees match weather and adds deterministic wet-patch sprint skids. All these
+ * dry-weather baseline rows retain their exact hashes, steps, scores and shootout flags; wet peers are tested separately.
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2017188631,352340912,19086,0,1,0],

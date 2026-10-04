@@ -495,3 +495,8 @@
 @media (max-width: 760px) {
   :root.ts-large .hub-tile .ht-t { font-size: 16px; letter-spacing: 0.5px; }
 }
+
+/* Weather has distinct light/heavy options; wrap them so every choice remains reachable on a phone. */
+.panel.qm.shell .qm-seg[data-o="wx"] { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.panel.qm.shell .qm-seg[data-o="wx"] button { font-size: 11px; }
+.panel.qm.shell .qm-weather-note { grid-column: 1 / -1; color: var(--ink-2); font: 400 11px / 1.15 var(--round); }

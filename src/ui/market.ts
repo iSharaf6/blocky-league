@@ -12,7 +12,7 @@ import { BOTTOM_DIVISION, KEY_STATS, ROLES, SQUAD_MAX, STAT_SHORT, newSeason, re
 import { canAfford, forYouSort, transferBudget, upgradeOf, type TransferBudget } from '../meta/forYou';
 import {
   MORALE_DIP, RESALE_STARTS, SCOUT_COST, SHORTLIST_MAX, YOUNG_AGE,
-  acceptCounter, acceptOffer, bidFor, canBid, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, newsStrip,
+  acceptCounter, acceptOffer, bidFor, canBid, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, marketUnread, newsStrip,
   placeBid, playerAge, playerPotential, playerValue, rejectOffer, resaleCap, saleFor, scoutListing, shortlisted, sortListings, toggleShortlist,
   townOf, unlistPlayer, wageOf, withdrawBid, type Listing, type MarketFail, type MetaPlayer, type NewsItem,
 } from '../meta/market';
@@ -23,6 +23,7 @@ import { PaneScroll, revealInPane } from './panes';
 import { pixelIcon } from './pixelIcons';
 import { faceHtml, hydrateFaces } from './preview';
 import { sep } from './text';
+import { transfersTiming } from './hubInfo';
 import './market.css';
 
 export type MarketTab = 'buy' | 'sell' | 'shortlist';
@@ -85,9 +86,8 @@ export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
   }
   // Answers to last week's offers land here too (refunds settle straight into the wallet).
   refreshMarket(st, app.save);
-  // What you had not read yet keeps a NEW tag on this visit; opening the screen clears the hub's unread badge.
+  // Keep unread answers until the player actually opens NEWS, rather than clearing them just by browsing players.
   const fresh = new Set<NewsItem>(st.tm.news.filter((n) => n.own && !n.seen));
-  markNewsSeen(st);
   app.persist();
   if (opts.tab) memo.tab = opts.tab;
   marketScreen(app, st, st.club, back, backLabel, fresh);
@@ -97,6 +97,19 @@ export function openMarket(app: AppContext, opts: MarketOpts = {}): void {
 
 /** The shared fact divider (ui/text.ts): an element, never a middle-dot glyph the pixel font can't draw. */
 const dot = sep();
+
+/** Dated, escaped cards keep your own deals separate from league gossip without hiding the actual news text. */
+export function marketNewsHtml(items: readonly NewsItem[], fresh: ReadonlySet<NewsItem> = new Set()): string {
+  if (!items.length) return '<li class="mk-newsitem info"><p>No transfer news yet. New reports arrive after league matchdays.</p></li>';
+  return items.map((n) => {
+    const category = n.story ? 'CLUB STORY' : n.own ? 'YOUR CLUB' : 'LEAGUE';
+    const date = `${n.season > 0 ? `SEASON ${n.season}` : 'CLUB NEWS'} / ${n.week > 0 ? `AFTER MATCHDAY ${n.week}` : 'PRE SEASON'}`;
+    return `<li class="mk-newsitem ${n.kind}${n.own ? ' own' : ''}">
+      <div class="mk-newsmeta"><b>${category}</b><span>${date}</span>${fresh.has(n) ? tag('new', 'NEW') : ''}</div>
+      <p>${esc(n.text)}</p>
+    </li>`;
+  }).join('');
+}
 
 function stars(n: number): string {
   let s = `<span class="mk-stars" aria-label="${n} of 5">`;
@@ -171,7 +184,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
   const subHtml = () => {
     const s = marketSummary(st);
     const w = s.window;
-    return `<b class="mk-win ${w.open ? 'open' : 'shut'}" title="${esc(w.label)}"><i>WINDOW </i>${w.open ? 'OPEN' : 'SHUT'}</b>${dot}<span class="${
+    return `<b class="mk-win ${w.open ? 'open' : 'shut'}" title="${esc(transfersTiming(st)?.window ?? w.label)}"><i>WINDOW </i>${w.open ? 'OPEN' : 'SHUT'}</b>${dot}<span class="${
       s.squad >= SQUAD_MAX ? 'mk-full' : ''
     }">SQUAD ${s.squad}/${SQUAD_MAX}${s.pending ? ` +${s.pending}` : ''}</span>${dot}<span class="mk-wage${s.drain > 0 ? ' over' : ''}">WAGES ${fmt(s.wages)}/${fmt(s.budget)}</span>`;
   };
@@ -244,10 +257,10 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
       deal = `<p class="mk-deal counter"><b>THEY WANT ${fmt(bid.counter)}</b><span>YOU OFFERED ${fmt(bid.amount)}</span></p>`;
       act = `<button class="btn btn-white" data-a="withdraw" data-id="${esc(bid.id)}">DECLINE</button><button class="btn btn-go mk-go" data-a="accept" data-id="${esc(bid.id)}">ACCEPT ${fmt(bid.counter)}</button>`;
     } else if (bid) {
-      deal = `<p class="mk-deal"><b>OFFER SENT ${fmt(bid.amount)}</b><span>ANSWER AFTER YOUR NEXT MATCH</span></p>`;
+      deal = `<p class="mk-deal"><b>OFFER SENT ${fmt(bid.amount)}</b><span>ANSWER AFTER THE NEXT LEAGUE MATCHDAY</span></p>`;
       act = `${starBtn}<button class="btn btn-white mk-go" data-a="withdraw" data-id="${esc(bid.id)}">WITHDRAW</button>`;
     } else if (!w.open) {
-      deal = `<p class="mk-deal shut"><b>WINDOW SHUT</b><span>${esc(w.label.replace(/^WINDOW /, ''))}</span></p>`;
+      deal = `<p class="mk-deal shut"><b>WINDOW SHUT</b><span>${esc((transfersTiming(st)?.window ?? w.label).replace(/^WINDOW /, ''))}</span></p>`;
       act = `${starBtn}<button class="btn btn-go mk-go" disabled>WINDOW SHUT</button>`;
     } else {
       const cur = pct.get(l.id) ?? 100;
@@ -271,7 +284,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
 
   /** The one hint line under the offer slider. */
   const hintFor = (l: Listing, cur: number): string =>
-    !l.club && cur >= 100 ? 'HE SIGNS AT ONCE' : l.hot && cur < 100 ? 'RIVALS ARE IN: A LOW OFFER MAY LOSE HIM' : 'THEY ANSWER AFTER YOUR NEXT MATCH';
+    !l.club && cur >= 100 ? 'HE SIGNS AT ONCE' : l.hot && cur < 100 ? 'RIVALS ARE IN: A LOW OFFER MAY LOSE HIM' : 'THEY ANSWER AFTER THE NEXT LEAGUE MATCHDAY';
 
   const playerDetail = (p: PlayerDef): string => {
     const id = esc(p.id);
@@ -299,7 +312,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
           ? sale.offers.length
             ? `LISTED: ${MORALE_DIP} DOWN IN MATCHES`
             : w.open
-              ? 'OFFERS COME AFTER EACH MATCH'
+              ? 'OFFERS COME AFTER LEAGUE MATCHDAYS'
               : 'NO OFFERS WHILE THE WINDOW IS SHUT'
           : `A LISTED PLAYER PLAYS ${MORALE_DIP} DOWN`;
     return `<div class="mk-dh">${faceHtml(p, club.kit, 'md')}<div class="mk-did"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<em>${starter ? 'STARTER' : 'BENCH'}${dot}${contractOf(p)} YR LEFT</em>${sale ? tag('bid', 'LISTED') : ''}</span></div>${bigOvr(overall(p))}</div>
@@ -332,11 +345,11 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
     sheetEl = null;
   };
   onMetaClose(closeSheet);
-  const openSheet = (html: string, on: Handlers) => {
+  const openSheet = (html: string, on: Handlers, cls = '') => {
     closeSheet();
     const el = document.createElement('div');
     el.className = 'mk-modal';
-    el.innerHTML = `<div class="mk-sheet" role="dialog" aria-modal="true">${html}</div>`;
+    el.innerHTML = `<div class="mk-sheet${cls ? ` ${cls}` : ''}" role="dialog" aria-modal="true">${html}</div>`;
     el.addEventListener('pointerdown', (e) => {
       if ((e.target as Element).closest('button:not(:disabled)')) sfx.click();
     });
@@ -374,22 +387,26 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
   };
 
   const openNews = () => {
-    const w = marketSummary(st).window;
+    const timing = transfersTiming(st)!;
     const items = newsStrip(st, 8, fresh);
+    markNewsSeen(st);
+    app.persist();
     newsBadge = 0;
     draw();
     openSheet(
-      `<header class="mk-newsh"><b>NEWS</b><button class="btn btn-white" data-a="close">DONE</button></header>
-      <ul class="mk-newsl"><li class="info">${esc(w.label)}</li>${items
-        .map((n) => `<li class="${n.kind}${n.own ? ' own' : ''}">${fresh.has(n) ? tag('new', 'NEW') : ''}${esc(n.text)}</li>`)
-        .join('')}</ul>`,
+      `<header class="mk-newsh"><b>TRANSFER NEWS</b><button class="btn btn-white" data-a="close">DONE</button></header>
+      <div class="mk-newscalendar"><b>${esc(timing.window)}</b><span>${esc(timing.next)}</span><small>${esc(timing.note)}</small></div>
+      <ul class="mk-newsl">${marketNewsHtml(items, fresh)}</ul>`,
       { close: closeSheet },
+      'mk-news-sheet',
     );
   };
 
   // ---- actions
 
   const done = (msg: string, kind: 'good' | 'bad' | 'info' = 'good') => {
+    for (const n of st.tm.news) if (n.own && !n.seen) fresh.add(n);
+    newsBadge = marketUnread(st);
     app.persist();
     draw();
     scr.toast(msg, kind);
@@ -491,7 +508,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
         say(r);
         return;
       }
-      done('LISTED: OFFERS AFTER EACH MATCH', 'info');
+      done('LISTED: OFFERS AFTER LEAGUE MATCHDAYS', 'info');
     },
     unlist: (el) => {
       const r = unlistPlayer(st, el.dataset.id ?? '');
@@ -596,19 +613,20 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
       const id = pick(list.map((l) => l.id));
       rows = list.map((l) => listingRow(l, l.id === id, budget)).join('');
       const l = list.find((x) => x.id === id);
-      detail = l ? listingDetail(l) : emptyPane('NOBODY HERE', 'NEW NAMES AFTER EVERY MATCH');
-      if (!list.length) empty = emptyPane('NOBODY HERE', 'NEW NAMES AFTER EVERY MATCH');
+      detail = l ? listingDetail(l) : emptyPane('NOBODY HERE', 'NEW NAMES AFTER LEAGUE MATCHDAYS');
+      if (!list.length) empty = emptyPane('NOBODY HERE', 'NEW NAMES AFTER LEAGUE MATCHDAYS');
     }
     const s = marketSummary(st);
     const warn = s.drain > 0 ? `<p class="mk-warn" role="status">OVER THE WAGE BUDGET${dot}&minus;${fmt(s.drain)} A MATCH</p>` : '';
     const head = tab === 'shortlist' ? `<div class="pane-h">WATCHING ${st.tm.shortlist.length}/${SHORTLIST_MAX}</div>` : chipsHtml();
     const n = st.tm.shortlist.length;
     const tabs: [MarketTab, string][] = [['buy', 'BUY'], ['sell', 'SELL'], ['shortlist', `SHORTLIST${n ? ` ${n}` : ''}`]];
+    const timing = transfersTiming(st)!;
     const body =
       tab === 'shortlist' && !n
         ? `<div class="mc-body mk-off">${emptyPane('NOBODY ON YOUR SHORTLIST', 'TAP THE STAR ON A PLAYER TO WATCH HIM')}<button class="btn btn-go" data-a="findplayers">FIND PLAYERS</button></div>`
         : `<div class="mc-body mk-body">
-          <section class="pane mk-listpane">${warn}${head}<div class="pane-scroll mk-list" data-scroll-key="${listKey()}">${empty || rows}</div></section>
+          <section class="pane mk-listpane">${warn}${head}<div class="pane-scroll mk-list" data-scroll-key="${listKey()}">${empty || rows}</div><p class="mk-update" title="${esc(timing.note)}">${esc(timing.next)}</p></section>
           <section class="pane mk-detail">${detail}</section>
         </div>`;
     // Lists keep their place through every re-render (and per tab for the session).

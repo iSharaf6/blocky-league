@@ -11,7 +11,7 @@
  *   of reached, unclaimed tiers move to `carry` (one CLAIM on the next season's screen) and the reached
  *   5th-tier titles are archived in `titles`.
  * - The Club Pass (meta/pass.ts) adds a second track to the same tiers for the month it is bought in: more coins
- *   and that month's own goal explosion and sprint trail. Buying it late hands over every tier already reached.
+ *   and that month's six-piece identity. The star ceremony unlocks immediately; buying late unlocks reached tiers.
  * - Economy v3: free tiers 10, 20 and 30 also pay a few gems, and six pass tiers pay more (meta/gems.ts SEASON_GEMS,
  *   PASS_GEMS); they are paid once per tier claimed (meta/pass.ts syncSeasonGems).
  * Nothing on the pitch can be bought: the pass is looks, coins and gems.
@@ -68,7 +68,7 @@ export function normalizeSeason(raw: unknown, now: Date = new Date()): SeasonSta
     ? [...new Set(r.passClaimed.filter((x) => Number.isInteger(x) && x >= 1 && x <= SEASON_TIERS))].sort((a, b) => a - b)
     : [];
   const carryItems = Array.isArray(r.carryItems)
-    ? [...new Set(r.carryItems.filter((k): k is string => typeof k === 'string' && /^(goalfx|trail|kit|look):pass\d{2}$/.test(k)))]
+    ? [...new Set(r.carryItems.filter((k): k is string => typeof k === 'string' && /^(?:(?:goalfx|trail|kit|look):pass\d{2}|decor:(?:net|kick)pass\d{2})$/.test(k)))]
     : [];
   // Progress under an id we can't read belongs to no season we know: start this one afresh (titles and carry stay).
   // (Kept only when there is something to carry: a season with none reads as it always did.)
@@ -165,8 +165,8 @@ export function seasonReward(t: number, id: string): { coins: number; title?: st
 /** Coins on pass tiers 25 and 30 (5, 10, 15 and 20 are the month's own looks). */
 export const PASS_BIG_COINS: { readonly [t: number]: number } = { 25: 700, 30: 1800 };
 
-/** The pass tiers that hand over the month's own looks: its player look, sprint trail, premium kit and goal explosion. */
-export const PASS_ITEM_TIERS: { readonly [t: number]: 'look' | 'trail' | 'kit' | 'goalfx' } = { 5: 'look', 10: 'trail', 15: 'kit', 20: 'goalfx' };
+/** Six identity pieces: welcome ceremony, player look, trail, kit, goal explosion and tier-25 diamond nets. */
+export const PASS_ITEM_TIERS: { readonly [t: number]: 'look' | 'trail' | 'kit' | 'goalfx' | 'decor' } = { 1: 'decor', 5: 'look', 10: 'trail', 15: 'kit', 20: 'goalfx', 25: 'decor' };
 
 /** The Club Pass look id of season `id` (core/save.ts PASS_IDS: 'pass10' in October). */
 export function passItemId(id: string): string {
@@ -174,13 +174,13 @@ export function passItemId(id: string): string {
 }
 
 /**
- * What pass tier t (1..30) of season `id` pays, on top of the free track: coins, or one of the month's own looks
- * (PASS_ITEM_TIERS: its player look at 5, sprint trail at 10, premium kit at 15, goal explosion at 20). About 5,500
- * coins and four looks money can't buy any other way over a season (docs/ECONOMY.md).
+ * What pass tier t pays: the same 5,560 coins as older builds and six signature pieces. Tier 1's ceremony is also
+ * the immediate welcome gift (granting twice is harmless); tiers 1 and 25 retain their old coin reward too.
  */
-export function passReward(t: number, id: string): { coins: number; item?: { cat: 'goalfx' | 'trail' | 'kit' | 'look'; id: string } } {
+export function passReward(t: number, id: string): { coins: number; item?: { cat: 'goalfx' | 'trail' | 'kit' | 'look' | 'decor'; id: string } } {
   const cat = PASS_ITEM_TIERS[t];
-  if (cat) return { coins: 0, item: { cat, id: passItemId(id) } };
+  if (cat) return { coins: t === 1 ? 60 : t === 25 ? PASS_BIG_COINS[t] : 0,
+    item: { cat, id: cat === 'decor' ? `${t === 1 ? 'kick' : 'net'}${passItemId(id)}` : passItemId(id) } };
   const big = PASS_BIG_COINS[t];
   if (big) return { coins: big };
   return { coins: Math.round((50 + 5 * t) / 10) * 10 };
@@ -228,6 +228,12 @@ export function rollSeason(s: SeasonState, now: Date = new Date()): boolean {
     gems += PASS_GEMS[t] ?? 0;
     const key = rw.item ? `${rw.item.cat}:${rw.item.id}` : '';
     if (key && !s.carryItems.includes(key)) s.carryItems.push(key);
+  }
+  // New signature pieces also belong to old passes whose tier receipts predate those pieces. Preserve the
+  // welcome reward even at zero XP, and the tier-25 nets even if that tier was already claimed in an older build.
+  if (s.pass) {
+    const ids = [`decor:kick${passItemId(s.id)}`, ...(reached >= 25 ? [`decor:net${passItemId(s.id)}`] : [])];
+    for (const key of ids) if (!s.carryItems.includes(key)) s.carryItems.push(key);
   }
   if (coins > 0) s.carry = { id: s.id, coins: (s.carry?.coins ?? 0) + coins };
   // (Their gems too: nothing reached is lost. meta/pass.ts syncSeasonGems pays them.)

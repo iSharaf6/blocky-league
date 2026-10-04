@@ -2,6 +2,7 @@ import { DEFAULT_DELAY, Lockstep } from './lockstep';
 import { cleanControls, clubIdx, NET_HALVES, NET_VERSION, netSeed, type MatchSetup, type NetControls } from './setup';
 import type { NetData, Transport } from './transport';
 import type { MatchMode } from '../sim/types';
+import { isWeather, type WeatherKind } from '../sim/weather';
 
 /**
  * The online lobby over a connected transport: who's who, the host's rules, both players' clubs and READY, the
@@ -22,7 +23,7 @@ export interface Rules {
   mode: MatchMode;
   halfMinutes: number;
   timeOfDay: 'day' | 'sunset' | 'night';
-  weather: 'clear' | 'rain' | 'snow';
+  weather: WeatherKind;
   /** Level at full time: penalties (true) or a draw. */
   knockout: boolean;
 }
@@ -240,7 +241,7 @@ function cleanRules(r: Partial<Rules> | undefined): Rules {
     mode: r?.mode === 'blitz' ? 'blitz' : 'classic',
     halfMinutes: (NET_HALVES as readonly number[]).includes(r?.halfMinutes ?? -1) ? r!.halfMinutes! : DEFAULT_RULES.halfMinutes,
     timeOfDay: r?.timeOfDay === 'sunset' || r?.timeOfDay === 'night' ? r.timeOfDay : 'day',
-    weather: r?.weather === 'rain' || r?.weather === 'snow' ? r.weather : 'clear',
+    weather: isWeather(r?.weather) ? r.weather : 'clear',
     knockout: r?.knockout === true,
   };
 }

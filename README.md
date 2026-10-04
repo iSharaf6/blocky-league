@@ -10,6 +10,7 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 - **Learn the basics:** a first visit starts with three short staged drills (pass in a 2 v 1, an open shot, a cross to a runner), one prompt at a time, replayed until done (no fail state). Then the first match; the player's first goal unlocks Career, Moments, Club Run and Blitz. On a portal build, TAP TO PLAY goes straight into the first drill.
 - Quick Match against the AI with 11 hand-made clubs and 4 difficulty levels (Easy to Legend), 1.5 to 4 minute halves.
 - **Play Now** goes straight to kick-off. The first match waits for input while the AI eases into the game.
+- **Continue your match:** leaving the app saves the minute, ball, players, substitutions and competition. Reopening offers the paused match at the same attack; periodic checkpoints also protect against an unexpected shutdown. Online matches are excluded, and results cannot be paid twice.
 - A hidden ease (`src/core/dda.ts`) softens the AI for the first two matches and after three defeats in a row (career, or quick match at one difficulty, which also suggests Easy). It is described honestly in `docs/PUBLISHING.md`.
 - Instant assisted passing, one-twos, power shots, through balls, lobs and crosses, headers and buffered first-time finishes, player switching, pressing,
   standing and slide tackles, automatic sprinting and contextual skill moves. On touch, pushing the stick sprints; a lighter push jogs.
@@ -20,7 +21,7 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 - Short, skippable match scenes: both teams head into the dressing-room tunnel at half time, return for the second half, and greet and applaud one another at the final whistle.
 - Goal celebrations, TV-style instant replays, Man of the Match and player ratings, and a text commentary ticker (no spoken commentary).
 - Goal clips: where the browser can record the canvas, SAVE CLIP and SHARE on the full-time screen and the pause menu.
-- Day, sunset and floodlit night matches, rain and voxel snow, in front of an animated voxel crowd.
+- Day, sunset and floodlit night matches with clear skies, overcast, drizzle, rain, snow or blizzard. Snow settles from kickoff; marked rain puddles can cause a short skid on a sharp sprint turn. Net ripples follow the struck panel with seams fixed to the goal frame.
 - Seventeen crowd chant patterns with visible chant captions and rotating post-goal songs. In the iOS app, FULL vibration acknowledges every gameplay action button as it is pressed, alongside stronger contact feedback.
 
 **Modes**
@@ -31,6 +32,8 @@ Chunky voxel football for the browser. It's 11-a-side and arcade-paced, in a Cro
 - **Badges and season**: mastery badges on five skill tracks and a free monthly season track (from the level badge's unlock ladder).
 - **Unlocks**: view the level requirements for ball skins, celebrations and Legend difficulty from the main menu's level badge.
 - **Daily gift** with a seven-day calendar that keeps your place when you miss a day.
+- **Club identity:** coins buy ordinary cosmetics, gems buy guaranteed six-piece signature collections, and earned Scout Tickets open player scouting packs. The Club Pass adds a permanent themed stadium ceremony immediately, then a player look, trail, kit, goal effect and diamond nets through its tiers. Past themes remain available for gems, with a discount for pieces already owned; these identities change appearance only.
+- **Transfer window:** league matchdays refresh listings. Transfer news uses dated cards with unread notices that clear when the News tab is opened.
 
 **Tech**
 - Every sound is synthesised live with WebAudio, so there are no audio files.

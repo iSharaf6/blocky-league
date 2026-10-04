@@ -19,7 +19,7 @@ import {
   PASS_BIG_COINS, SEASON_TIERS, claimCarry, claimSeasonTier, passReward, rollSeason, seasonOf, seasonDaysLeft, seasonName,
   seasonProgress, seasonReward, seasonTheme, seasonTier, type SeasonState,
 } from '../meta/season';
-import { buyPassWithGems, claimAllPass, claimCarryItems, claimPassTier, passTotals, syncSeasonGems } from '../meta/pass';
+import { buyPassWithGems, claimAllPass, claimCarryItems, claimPassTier, passTotals, syncSeasonGems, syncSignatureEntitlements } from '../meta/pass';
 import { GEM_PRICES, PASS_GEMS, SEASON_GEMS, gems } from '../meta/gems';
 import { confirmGems, gemArt, gemPrice } from './gemUi';
 import { gameCenterReady, showGameCenterAchievements, showGameCenterLeaderboards } from '../platform/gameCenter';
@@ -99,8 +99,9 @@ export function openBadges(app: AppContext, onBack: () => void, tab: BadgesTab =
 
 function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesTab, fresh = false): void {
   // The season's gems (free tiers 10, 20 and 30; six pass tiers): paid once per tier claimed, here after any claim.
+  const newSignature = syncSignatureEntitlements(app.save);
   const gemsPaid = syncSeasonGems(app.save);
-  if (gemsPaid > 0) app.persist();
+  if (gemsPaid > 0 || newSignature.length) app.persist();
   const pending = badgePending(app.save);
   const m = mastery(app);
   const s = season(app);
@@ -126,6 +127,7 @@ function render(app: AppContext, scr: MetaScreen, back: () => void, tab: BadgesT
     ${body}`,
     {
       back,
+      passPreview: () => openShop(app, { tab: 'signature', onBack: () => openBadges(app, back, 'season'), backLabel: 'SEASON' }),
       gc: () => void showGameCenterAchievements(),
       gcBoards: () => void showGameCenterLeaderboards(),
       tab: (el) => {
@@ -357,7 +359,8 @@ function passOfferHtml(app: AppContext): string {
       <span class="bd-po-ic" aria-hidden="true">${pixelIcon('crown', '#ffd23a', 3)}</span>
       <b class="bd-po-name">CLUB PASS</b>
       <ul class="bd-po-facts"><li><b>+${fmt(totals.coins)}</b>COINS</li><li><b class="bd-po-gems">+${fmt(totals.gems)}</b>GEMS</li><li><b>${totals.items.length}</b>LOOKS</li></ul>
-      <small class="bd-po-note">REACHED TIERS UNLOCK AT ONCE</small>
+      <small class="bd-po-note">STAR CEREMONY NOW. SIX PIECES FOR YOUR WHOLE CLUB. REACHED TIERS UNLOCK AT ONCE</small>
+      <button class="btn btn-white" data-a="passPreview">PREVIEW COLLECTION</button>
       ${price ? `<button class="btn btn-yellow bd-po-buy" data-a="passBuy" aria-label="Get the Club Pass, ${esc(price)}"><small>GET IT</small><b>${esc(price)}</b></button>` : ''}
       <button class="btn btn-white bd-po-gembuy" data-a="passGems" aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${price ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>
     </aside>`;
@@ -369,11 +372,12 @@ function passOfferHtml(app: AppContext): string {
  */
 
 /** How each Club Pass look reads on the pass track (its tile word, its spoken name, its icon). */
-const PASS_KIND: { readonly [k in 'goalfx' | 'trail' | 'kit' | 'look']: { short: string; long: string; icon: 'bolt' | 'star' | 'shirt' | 'crown' } } = {
+const PASS_KIND: { readonly [k in 'goalfx' | 'trail' | 'kit' | 'look' | 'decor']: { short: string; long: string; icon: 'bolt' | 'star' | 'shirt' | 'crown' } } = {
   trail: { short: 'TRAIL', long: 'sprint trail', icon: 'bolt' },
   goalfx: { short: 'GOAL FX', long: 'goal explosion', icon: 'star' },
   kit: { short: 'KIT', long: 'premium kit', icon: 'shirt' },
   look: { short: 'LOOK', long: 'player look', icon: 'crown' },
+  decor: { short: 'STADIUM', long: 'signature stadium piece', icon: 'star' },
 };
 
 function trackHtml(app: AppContext, withPass: boolean): string {
@@ -403,11 +407,11 @@ function trackHtml(app: AppContext, withPass: boolean): string {
     const pr = passReward(t, s.id);
     const pGot = s.passClaimed.includes(t);
     const pReady = s.pass && !pGot && t <= reached;
-    const kind = pr.item ? PASS_KIND[pr.item.cat] : null;
-    const what = pr.item && kind ? `the ${th.name} ${kind.long}` : `${pr.coins} coins${pGems ? ` and ${pGems} gems` : ''}`;
+    const kind = pr.item ? pr.item.cat === 'decor' ? { ...PASS_KIND.decor, short: t === 1 ? 'CEREMONY' : 'NETS', long: t === 1 ? 'star ceremony' : 'signature nets' } : PASS_KIND[pr.item.cat] : null;
+    const what = pr.item && kind ? `the ${th.name} ${kind.long}${pr.coins ? ` and ${pr.coins} coins` : ''}${pGems ? ` and ${pGems} gems` : ''}` : `${pr.coins} coins${pGems ? ` and ${pGems} gems` : ''}`;
     const pLabel = `Club Pass tier ${t}: ${what}${pGot ? ', claimed' : pReady ? ', ready to claim' : s.pass ? '' : ', with the pass'}`;
     const prize = pr.item
-      ? `<span class="bd-coins bd-item">${kind!.short}</span>`
+      ? `<span class="bd-coins bd-item">${kind!.short}${pr.coins ? `<small>+${pr.coins} COINS</small>` : ''}</span>`
       : `<span class="bd-coins">${pGot ? maskIcon('tick', '#238a3b', 1.6) : `<i class="bd-coin"></i>${pr.coins}`}</span>`;
     cells.push(`<button class="bd-tile ptile ${pGot ? 'got' : pReady ? 'ready' : 'lock'} ${pr.item || PASS_BIG_COINS[t] ? 'big' : ''}" data-a="ptier" data-t="${t}" aria-label="${esc(pLabel)}">
         ${pr.item ? `<span class="bd-star">${pixelIcon(kind!.icon, pGot ? '#26262e' : '#ffd23a', 1.4)}</span>` : ''}

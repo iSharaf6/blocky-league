@@ -385,7 +385,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
     const staffBtn = staffOpen
       ? `<button class="btn btn-white" data-a="staff" aria-label="Staff${reports ? `, ${reports} scout ${reports === 1 ? 'report' : 'reports'} in` : ''}">${pixelIcon('duo', 'currentColor', 1.5)}<span>STAFF</span>${reports ? `<b class="mc-badge">${reports}</b>` : ''}</button>`
       : `<button class="btn btn-white locked" data-a="stafflocked" aria-label="Staff: opens after a few matches">${pixelIcon('lock', 'currentColor', 1.5)}<span>STAFF</span></button>`;
-    // Market news the club made itself and nobody has read (openMarket marks them seen, so a visit clears it).
+    // Club news nobody has read: the badge clears when the NEWS list is opened.
     const unread = marketUnread(st);
     const quick = (a: string, icon: string, label: string, extra = '', aria = '') =>
       `<button class="btn btn-white" data-a="${a}"${aria ? ` aria-label="${aria}"` : ''}>${pixelIcon(icon, 'currentColor', 1.5)}<span>${label}</span>${extra}</button>`;

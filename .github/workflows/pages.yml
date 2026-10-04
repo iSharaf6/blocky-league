@@ -39,6 +39,8 @@ jobs:
           tests/straightRun.test.ts tests/economyV3.test.ts tests/glory.test.ts tests/crest.test.ts
           tests/presentation.test.ts tests/hapticsBridge.test.ts tests/celebrationCamera.test.ts
           tests/matchTransitions.test.ts tests/matchInterludes.test.ts tests/stallPress.test.ts
+          tests/matchRecovery.test.ts tests/weather.test.ts tests/goalNet.test.ts
+          tests/signatureEconomy.test.ts tests/marketPresentation.test.ts
       - name: Type-check and package the web game
         run: npm run build:web
         env:

@@ -1,4 +1,5 @@
 import { sfx } from '../audio/sfx';
+import { WEATHER_KINDS } from '../sim/weather';
 import { logoSvg } from './gameLogo';
 import {
   ASSIST_LEVELS, CAM_ZOOMS, controlsOf, levelOf, levelTitle, type AssistLevel, type Challenge, type ControlSettings, type SaveData, BALL_SKIN_IDS,
@@ -684,7 +685,7 @@ export class Menus {
     const giftExtra = gf?.gems ? `<i class="hg-gem">${gemArt(1.6)}${gf.gems}</i>` : '';
     const tm = info?.tomorrow;
     const tomorrow = !gf && tm
-      ? `<span class="hub-tomorrow" aria-label="Tomorrow's gift: ${tm.coins} coins${tm.gems ? ` and ${tm.gems} gems` : ''}${tm.tokens ? ' and a scout token' : ''}"><small>TOMORROW</small><b>+${tm.coins}</b>${tm.gems ? `<i>${gemArt(1.4)}${tm.gems}</i>` : ''}</span>`
+      ? `<span class="hub-tomorrow" aria-label="Tomorrow's gift: ${tm.coins} coins${tm.gems ? ` and ${tm.gems} gems` : ''}${tm.tokens ? ' and a scout ticket' : ''}"><small>TOMORROW</small><b>+${tm.coins}</b>${tm.gems ? `<i>${gemArt(1.4)}${tm.gems}</i>` : ''}</span>`
       : '';
     const top = `<header class="hub-top">
         ${lvChip}
@@ -846,7 +847,7 @@ export class Menus {
               <div class="qm-row"><label>HALF</label><div class="seg qm-seg" data-o="len"></div></div>
               <button class="qm-more" data-a="more" aria-expanded="${mem.qmMore}"></button>
               <div class="qm-row qm-x"><label>KICK OFF</label><div class="seg qm-seg" data-o="tod"></div></div>
-              <div class="qm-row qm-x"><label>WEATHER</label><div class="seg qm-seg" data-o="wx"></div></div>
+              <div class="qm-row qm-x"><label>WEATHER</label><div class="seg qm-seg" data-o="wx"></div><small class="qm-weather-note" aria-live="polite" hidden></small></div>
             </div>
           </div>
           <div class="mc-actions">
@@ -921,13 +922,17 @@ export class Menus {
     // MORE: the kick-off time and the weather, folded; the row says what they are set to.
     const tods = ['day', 'sunset', 'night', 'random'] as const;
     const todLabels = ['DAY', 'SUNSET', 'NIGHT', 'RANDOM'];
-    const wxs = ['clear', 'rain', 'snow', 'random'] as const;
-    const wxLabels = ['CLEAR', 'RAIN', 'SNOW', 'RANDOM'];
+    const wxs = [...WEATHER_KINDS, 'random'] as const;
+    const wxLabels = ['CLEAR', 'OVERCAST', 'DRIZZLE', 'RAIN', 'SNOW', 'BLIZZARD', 'RANDOM'];
     const tod = () => Math.max(0, tods.indexOf(save.settings.timeOfDay));
     const wx = () => Math.max(0, wxs.indexOf(save.settings.weather));
     const opts = $(d, '.qm-opts');
     const more = $<HTMLButtonElement>(d, '[data-a=more]');
+    const wxNote = $(d, '.qm-weather-note');
     function drawMore(): void {
+      const weather = wxs[wx()];
+      wxNote.hidden = weather !== 'rain' && weather !== 'drizzle';
+      wxNote.textContent = wxNote.hidden ? '' : 'Puddles: ease off before sharp sprint turns.';
       more.innerHTML = mem.qmMore
         ? '<b>LESS</b><small></small><i></i>'
         : `<b>MORE</b><small>${todLabels[tod()]}${sep()}${wxLabels[wx()]}</small><i></i>`;
@@ -2430,14 +2435,14 @@ export class Menus {
 
   /**
    * The 7-day login calendar (meta/loops.ts CALENDAR, passed in as `cal`): each day's coins, with gems or a Scout
-   * Token on some. It counts the days claimed, never days in a row: MISS A DAY, KEEP YOUR PLACE.
+   * Ticket on some. It counts the days claimed, never days in a row: MISS A DAY, KEEP YOUR PLACE.
    */
   gift(
     amount: number, streak: number, canDouble: boolean, h: { claim: (double: boolean) => Promise<boolean>; back: () => void },
     cal?: readonly { coins: number; gems: number; tokens: number }[],
   ): void {
     const dayOf = (i: number) => cal?.[i] ?? { coins: 100 + 50 * i, gems: 0, tokens: 0 };
-    const extra = (d: { gems: number; tokens: number }) => `${d.gems ? `<em class="gd-gem">${gemArt(1.6)}${d.gems}</em>` : ''}${d.tokens ? '<em class="gd-tok">+1 TOKEN</em>' : ''}`;
+    const extra = (d: { gems: number; tokens: number }) => `${d.gems ? `<em class="gd-gem">${gemArt(1.6)}${d.gems}</em>` : ''}${d.tokens ? '<em class="gd-tok">+1 SCOUT TICKET</em>' : ''}`;
     const days = Array.from({ length: 7 }, (_, i) => {
       const d = dayOf(i);
       const state = i < streak - 1 ? 'got' : i === streak - 1 ? 'today' : '';
@@ -2450,8 +2455,8 @@ export class Menus {
         <div class="panel narrow gift-panel">
           <h2>DAILY GIFT</h2>
           <ul class="gift-days">${days}</ul>
-          <div class="reward"><i></i><span>+${amount}</span>${today.gems ? `<span class="rw-gem">${gemArt(3)}+${today.gems}</span>` : ''}${today.tokens ? '<span class="rw-tok">+1 TOKEN</span>' : ''}<em>DAY ${streak} OF 7</em></div>
-          <p class="gift-note">TOMORROW +${next.coins}${next.gems ? ` AND ${next.gems} GEMS` : ''}${next.tokens ? ' AND A SCOUT TOKEN' : ''}${sep()}MISS A DAY, KEEP YOUR PLACE</p>
+          <div class="reward"><i></i><span>+${amount}</span>${today.gems ? `<span class="rw-gem">${gemArt(3)}+${today.gems}</span>` : ''}${today.tokens ? '<span class="rw-tok">+1 SCOUT TICKET</span>' : ''}<em>DAY ${streak} OF 7</em></div>
+          <p class="gift-note">TOMORROW +${next.coins}${next.gems ? ` AND ${next.gems} GEMS` : ''}${next.tokens ? ' AND A SCOUT TICKET' : ''}${sep()}MISS A DAY, KEEP YOUR PLACE</p>
           <div class="btn-row">
             ${canDouble ? `<button class="btn btn-white" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× GIFT</button>` : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>

@@ -1,6 +1,7 @@
 import { GOAL_H, GOAL_W, HALF_L, HALF_W } from '../../sim/constants';
 import { DIE, EMIT, F, FX_FIRE, FxKit, rand as r, type Show, type ShowFn } from './kit';
 import { SH } from './shapes';
+import { SIGNATURE_PALETTES } from '../signatureStyle';
 
 /**
  * STADIUM STYLE shows (render/stadiumStyle.ts plays them on the match's effects kit): the walkout at kick-off, the
@@ -336,11 +337,41 @@ export interface StadiumShowDef {
   k: number;
 }
 
+/** Signature ceremonies build a suspended arch one star at a time, then shed drifting jewels over the stand. */
+function signatureCeremony(month: number, stage = false, goal = false): ShowFn {
+  const pal = SIGNATURE_PALETTES[month];
+  return (K, s, a, b) => {
+    for (let i = 0; i < 13; i++) {
+      if (!hit(a, b, 0.04 + i * 0.075)) continue;
+      const at = i / 12 * Math.PI;
+      const span = stage ? 6 : goal ? 11 / s.k : 22 / s.k;
+      const u = stage ? EDGE : goal ? -(END - HALF_L) / s.k : Math.cos(at) * span;
+      const w = stage || goal ? Math.cos(at) * span : (FAR - 5) / s.k;
+      const y = stage ? 3.4 + Math.sin(at) * 4 : ((goal ? 4 : s.bw + 5) + Math.sin(at) * 6) / s.k;
+      const star = K.add(SH.star, u, y, w, 0, 0.3, stage ? 0 : -0.15, stage ? 0.65 : 0.8, 1.85, pal[i % pal.length]);
+      star.f |= F.FACE | F.POP | F.TWINK | F.KEEP;
+      for (let n = 0; n < 4; n++) {
+        const jewel = K.add(SH.gem, u, y, w, r(-0.5, 0.5), r(-0.6, -0.2), goal || stage ? 0 : -0.3,
+          stage ? 0.2 : 0.3, 1.25, pal[(i + n) % pal.length]);
+        jewel.delay = 0.65 + n * 0.07;
+        jewel.f |= F.FACE | F.TWINK;
+      }
+    }
+    if (hit(a, b, 0.05)) K.cue('whoosh');
+    if (hit(a, b, 0.94)) K.cue('pop');
+  };
+}
+function signatureShows(stage = false, goal = false): { [id: string]: StadiumShowDef } {
+  return Object.fromEntries(SIGNATURE_PALETTES.map((_, month) => [`kickpass${String(month + 1).padStart(2, '0')}`,
+    { dur: 2.4, run: signatureCeremony(month, stage, goal), k: stage ? 0.3 : 1 }]));
+}
+
 /** The kick-off walkout shows by STADIUM STYLE id (core/save.ts DECOR_IDS, slot 'kickoff'). */
 export const KICKOFF_SHOWS: { readonly [id: string]: StadiumShowDef } = {
   kickconfetti: { dur: 1.2, run: kickConfetti, k: 1.6 },
   kickfire: { dur: 2.4, run: kickFireworks, k: 1.6 },
   kickpyro: { dur: 2.4, run: kickPyro, k: 1.6 },
+  ...signatureShows(),
 };
 
 /** What the same item does at the goal when you score (played at the goal line, facing out of the goal). */
@@ -348,12 +379,14 @@ export const GOAL_SHOWS: { readonly [id: string]: StadiumShowDef } = {
   kickconfetti: { dur: 1.1, run: goalConfetti, k: 1.5 },
   kickfire: { dur: 1.6, run: goalFireworks, k: 1.5 },
   kickpyro: { dur: 2.2, run: goalRing, k: 1 },
+  ...signatureShows(false, true),
 };
 
 /** ...and at full time when you have won (a walkout's frame again). */
 export const WIN_SHOWS: { readonly [id: string]: StadiumShowDef } = {
   kickfire: { dur: 2, run: winFireworks, k: 1.6 },
   kickpyro: { dur: 2.6, run: winPyro, k: 1.6 },
+  ...signatureShows(),
 };
 
 /** The walkouts as the shop's stage plays them: along the back edge of its block, behind the line-up. */
@@ -361,6 +394,7 @@ export const STAGE_SHOWS: { readonly [id: string]: StadiumShowDef } = {
   kickconfetti: { dur: 1.2, run: stageConfetti, k: 0.3 },
   kickfire: { dur: 2, run: stageFireworks, k: 0.3 },
   kickpyro: { dur: 2.2, run: stagePyro, k: 0.3 },
+  ...signatureShows(true),
 };
 
 export const DRAGON_BREATH: StadiumShowDef = { dur: 0.8, run: dragonBreath, k: 1 };

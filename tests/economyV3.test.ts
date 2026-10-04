@@ -413,8 +413,8 @@ describe('invariant: no purchase is random', () => {
 // ------------------------------------------------------------------ atmosphere: what stadium style and mascots do
 
 describe('club atmosphere', () => {
-  it('every stadium style item does something, and says exactly what on its card', () => {
-    for (const id of DECOR_IDS) {
+  it('every coin-purchased stadium style item adds its stated atmosphere benefit', () => {
+    for (const id of DECOR_IDS.filter((id) => !shopItems('decor').find((it) => it.id === id)?.pass)) {
       const b = DECOR_BONUS[id];
       expect((b.income ?? 0) + (b.crowd ?? 0) + (b.chants ?? 0) + (b.show ?? 0), id).toBeGreaterThan(0);
       const parts = decorBonusParts(id);

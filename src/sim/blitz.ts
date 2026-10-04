@@ -130,6 +130,12 @@ export interface BlitzState {
 
 const STATES = new WeakMap<Match, BlitzState>();
 
+/** Recovery must retain spawn timing and active powers, never generate another first-spawn draw. */
+export function savedBlitz(m: Match): BlitzState | null { return STATES.get(m) ?? null; }
+export function restoreBlitz(m: Match, state: BlitzState | null): void {
+  if (state) STATES.set(m, state); else STATES.delete(m);
+}
+
 function timers(v = 0): Timers {
   return { turbo: v, mega: v, freeze: v, magnet: v, shield: v, golden: v };
 }

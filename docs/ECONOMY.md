@@ -1,9 +1,16 @@
-# Blocky League economy v3 (October 2026)
+# Blocky League economy v4 (October 2026)
 
 How the game earns money while staying fun and fair, and what it copied from the games that do this best.
 
 The free game is the whole game: no energy, no paywalls, no pay-to-win. Players pay because they want something,
 never because they're blocked.
+
+**v4: currency with a purpose.** Coins fund ordinary looks, players and club development. Gems buy guaranteed
+signature identities, the Club Pass and useful shortcuts. **SCOUT TICKETS** are earned pack keys, with the existing
+`shop.tokens` storage retained so no tickets disappear. Ordinary coin prices, already owned goods, challenge/gift
+rewards and the pass's existing coin/gem payouts are preserved. Quick-match fees reward the result, with a modest
+three-goal bonus cap instead of unlimited score farming. See `tests/signatureEconomy.test.ts` for save round trips,
+old pass receipts, exact prices, duplicate purchase guards and the free-gem route.
 
 **What v3 changed** (the owner: "i want it ethically to drive players to spend money ... im not happy with game
 economy atm", "mascots and shit feel useless why would i want that, like make them useful", "i want people to be
@@ -21,16 +28,17 @@ incentivsed to keep coming back"):
 
 ## Currencies at a glance
 
-| | COINS | GEMS | SCOUT TOKENS |
+| | COINS | GEMS | SCOUT TICKETS |
 |---|---|---|---|
 | What it is | The soft currency | The premium currency | The key to random scout packs |
 | From play | Every match, challenges, the calendar, weekly objectives, prizes, the season track | Board objectives, legacy levels, cups, titles, levels, achievements, the calendar, weekly objectives, the daily sweep, season tiers | One per daily challenge done, one on calendar day 5 |
 | From ads (optional) | FREE COINS 75 (5 a day), double a match, double the gift | 3 once a day | Never |
 | From money | Never directly (gems swap for coins) | Gem packs, the Starter Pack, the PRO bundle | Never |
-| Buys | Looks, sets, players, the ground, training | Time skips, a replay, the Scouting Network, the Club Pass, coins | Scout packs (the only random thing in the game) |
+| Buys | Ordinary looks, sets, players, the ground, training | Permanent signature collections, time skips, a replay, the Scouting Network, the Club Pass, coins | Scout packs (the only random thing in the game) |
 | Code | `SaveData.coins`, meta/shop.ts | `SaveData.gems`, meta/gems.ts | `SaveData.shop.tokens`, meta/shop.ts |
 
-A new save starts with 500 coins, 50 gems (the welcome gift: one replay's worth) and 2 Scout Tokens.
+A new save starts with 500 coins, 50 gems (the welcome gift: one replay's worth) and 2 Scout Tickets.
+One ticket opens a Scout Pack; three open an Elite Pack. Existing tickets are relabelled, never converted or removed.
 
 ## Gems: where they come from (meta/gems.ts `GEM_REWARDS`, meta/loops.ts, meta/gemSources.ts)
 
@@ -68,6 +76,7 @@ confirm sheet (ui/gemUi.ts `confirmGems`) that shows the price, the wallet and t
 | A new deal today, with the exact next item and discounted coin price shown before charging | 15 | $0.15 | A rewarded ad once a day; the deal changes by itself daily |
 | Scouting Network 1, 2, 3 | 200, 500, 1,000 | $2, $5, $10 | Gems earned by playing; the academy brings prospects every season without it |
 | Club Pass (this month) | 600 | $3.99 in the store is cheaper | Gems earned by playing; the free track pays every tier anyway |
+| Permanent signature collection (past theme) | 600 for six pieces; 100 for each missing piece | Guaranteed identity, never a pack | Earned gems buy exactly the same collection |
 | Coins | 50 for 700, 150 for 2,400, 400 for 7,500, 1,000 for 22,000 | 14 to 22 coins a gem | Play |
 | Cover a coin shortfall | 1 gem per 14 coins short | | Play |
 
@@ -108,7 +117,7 @@ itself can't be replayed. A match that isn't a decider is never offered.
 | A featured shelf that changes on a fixed day | Fortnite and Rocket League item shops | **This week** on FEATURED: a set and four looks, new every Monday, everything also on sale in its tab |
 | Try before you buy | Fortnite locker preview, Clash Royale emote preview | **TRY IT ON**: your whole team in the look, with your ball, lawn and goal explosion |
 | Opt-in rewarded ads at natural moments, capped | Crossy Road, Subway Surfers, Dream League Soccer | FREE COINS (5 a day), double coins at full time, double the daily gift |
-| Free random rewards that can't be bought | Brawl Stars' Starr Drops (after it removed paid loot boxes) | **Scout Tokens**: packs cost earned-only tokens |
+| Free random rewards that can't be bought | Brawl Stars' Starr Drops (after it removed paid loot boxes) | **Scout Tickets**: packs cost earned-only tickets |
 | No ads for buyers, rewarded ads still optional | Voodoo hybrid-casual games | NO ADS ($3.99) stops interstitials only |
 | Social status | Every big game | Game Center achievements and leaderboards (goals, wins, best streak, best season) |
 
@@ -124,23 +133,21 @@ facts are below.
 3. **Show it off:** the look is drawn in every match, the rarity badge in the shop, titles in the menu, achievements
    and leaderboards in Game Center.
 4. **Come back:** the 7-day calendar (it counts up whatever the gaps: gems on days 3 and 7), three daily challenges
-   (each also a Scout Token, and 3 gems for all three), three weekly objectives (coins and 10 gems each), today's
+   (each also a Scout Ticket, and 3 gems for all three), three weekly objectives (coins and 10 gems each), today's
    deal, the free daily gems, the monthly season and its pass, and the build that opens after your next match.
 
 ## Pacing: what a player has, and is offered, on day 1, day 7 and day 30
 
-Estimates from the reward tables (a Normal win pays about 210 coins, a draw 90, a loss 30, win streaks multiply wins
-up to x2; tests/economyV3.test.ts pins the gem numbers). KEEN is about 6 matches a day, every day, with the
+Coin totals vary with results, difficulty, streaks, career prizes and optional ads; they are not a promised daily
+income. Quick-match base fees are listed below; tests/economyV3.test.ts pins the gem numbers. KEEN is about 6 matches a day, every day, with the
 challenges, the calendar and the optional ads; CASUAL is 2 or 3 matches, four days a week, no ads.
 
 | | Day 1 | Day 7 | Day 30 |
 |---|---|---|---|
-| Coins earned so far, keen | about 1,700 (plus the 500 to start) | about 20,000 | about 85,000 |
-| Coins earned so far, casual | about 900 | about 3,500 | about 15,000 |
 | Gems earned so far, keen | about 70 (50 welcome, levels, the first win, the sweep) | about 200 | about 650 |
 | Gems earned so far, casual | about 60 | about 100 | about 250 |
 | What coins have bought (keen) | 3 or 4 COMMON looks, or the Retro set's first parts | A RARE or EPIC look a day; an EPIC set; the main and family stands | The effects and balls catalogue, or most of the ground and two LEGENDARY looks |
-| What gems can do (keen) | One replay, or two finished builds | The first Scouting Network (200), or a few replays and builds | The Club Pass (600) OR the first two Scouting Networks (700): not both. This is where a pack is worth it |
+| What gems can do (keen) | One replay, or two finished builds | The first Scouting Network (200), or a few replays and builds | One signature identity (600), the Club Pass (600), or saving toward the first two Scouting Networks (700) |
 | What the game offers | The welcome gift; after the first win, the Starter Pack once ($1.99: 2,000 coins, 150 gems, the Gold ball), no timer | FIRST BUY X2 on every gem pack; the Club Pass ($3.99 or 600 gems) with its value on the card; the PRO bundle ($9.99) | The next Scouting Network; LEGENDARY sets a few gems short; next month's pass |
 | Why come back tomorrow | Calendar day 2, three new challenges, the free pack, today's deal | Day 7 of the calendar (20 gems), the week's objectives, the stand that opens after the next match | A new season and its pass, the board's objectives, legacy levels that never run out |
 
@@ -148,12 +155,12 @@ A payer's first dollar: $0.99 is 200 gems the first time (100 after), which is f
 Network, or about 2,800 coins: an EPIC look outright. $4.99 the first time is 1,200 gems: the Club Pass and the first
 two Scouting Networks.
 
-**Coin faucets** (unchanged from v2 unless marked NEW):
+**Coin faucets** (ordinary rewards retained; quick-match fee pacing revised in v4):
 
 | Faucet | Coins | Notes |
 |---|---|---|
-| A match | Win about 210 on Normal, draw 90, loss 30; x1.1 a win in a row up to x2 | The Coin Doubler doubles it; a rewarded ad doubles it once |
-| Daily challenges | 100 to 220 each, three a day | Each also a Scout Token |
+| Quick match | Normal base: win 110, draw 60, loss 35, plus 12 per goal up to three | Difficulty factors 0.8, 1, 1.25, 1.45. Existing win streak, atmosphere, grade and Coin Doubler multipliers still apply; a rewarded ad doubles it once |
+| Daily challenges | 100 to 220 each, three a day | Each also a Scout Ticket |
 | Login calendar | 100 up to 400 a day, 1,750 a round | A rewarded ad doubles the coins |
 | Weekly objectives (NEW) | 300 to 400 each, three a week | With 10 gems each |
 | FREE COINS | 75 an ad, 5 a day | Optional |
@@ -163,11 +170,12 @@ two Scouting Networks.
 | Gems | 14 to 22 coins a gem | Currency packs convert to coins here; the one-time Starter Pack also includes 2,000 coins |
 
 **Coin sinks:** the looks catalogue (about 187,000), the ground (about 35,600), players in the transfer market,
-training, and what the career adds (staff, facilities). A keen free player still owns everything eventually (about
-two months for the catalogue): the fairness line holds, and tests/economy.test.ts and tests/economyV3.test.ts pin it.
+training, and what the career adds (staff, facilities). Ordinary prices remain unchanged and every signature set
+also accepts earned gems. Tests/economy.test.ts and tests/economyV3.test.ts pin the existing catalogue and rewards.
 
-A keen free player (about 6 matches, the challenges, the gift and the free ads) banks roughly **2,500 to 3,500
-coins a day**. A Normal win pays about 210, a draw 90, a loss 30, and win streaks multiply wins up to ×2.
+A Normal quick win with two goals pays **134 base coins**, a 0–0 draw 60, and a scoreless completed loss 35.
+Three goals reach the win cap of 146; twenty goals pay the same base fee. Win streaks still multiply wins up to ×2.
+Losses always pay, play is never limited by energy, and already earned currency is never reduced.
 
 | Tier | Price | For a free player |
 |---|---|---|
@@ -175,11 +183,11 @@ coins a day**. A Normal win pays about 210, a draw 90, a loss 30, and win streak
 | RARE | 500 to 900 | A day |
 | EPIC | 1,000 to 2,800 | A few days |
 | LEGENDARY | 4,500 to 7,500 (Supernova, Diamond Rain, Meteor Strike, Black Hole, Lightning and Comet Tail trails, Diamond and Planet balls; the Galaxy, Gold Pinstripe, Glow In The Dark and Gold Foil kits; the Crown and Light Up Boots; the Pyro Show and Dragon Mascot) | One to three days each, **88,800 for them all**: weeks |
-| CLUB PASS | Not for coins | Only on that month's pass track |
+| SIGNATURE | Not for coins | Current month's Club Pass; past themes always available for gems, including earned gems |
 
 The effects, balls and celebrations cost about 86,000 coins, about a month of keen free play; Cosmetics 2.0 adds
 about 100,900 more (kits 36,550, player looks 33,250, stadium style 31,100), so the whole catalogue is about 187,000:
-about two months for a keen free player, less with the sets at 40% off. A free player can own it all eventually,
+with progress depending on play and purchases, less with the sets at 40% off. A free player can own it all eventually,
 which is the fairness line; every category has looks of 450 or less for the first session. A payer gets there in
 days. Every ball is also free at its level (the Planet at 27, the Diamond at 30).
 
@@ -357,7 +365,7 @@ dollar). Nothing costs more than $19.99 (`MAX_PRICE_USD`, a test enforces it): n
 | 2,000 gems (+50%), BEST VALUE | `bl.gems.2000` | Consumable | $19.99 | 3,000; 6,000 on the first buy |
 | Starter Pack | `bl.starter` | Non-consumable | $1.99 once | 2,000 coins, 150 gems and the Gold ball. Offered once after the first win, no timer |
 | NO ADS | `bl.noads` | Non-consumable | $3.99 once | No interstitials. Rewarded ads stay, by choice |
-| **Club Pass** | `bl.pass` | Consumable | $3.99 a month, or 600 gems | About 5,560 coins and 150 gems plus that month's player look, trail, premium kit and goal explosion |
+| **Club Pass** | `bl.pass` | Consumable | $3.99 a month, or 600 gems | 5,560 coins and 150 gems plus a six-piece identity: welcome ceremony, player look, trail, kit, goal explosion and diamond nets |
 | **Coin Doubler** | `bl.doubler` | Non-consumable | $4.99 once | Every match pays double coins, for good |
 | **PRO bundle** | `bl.pro` | Non-consumable | $9.99 once | NO ADS, the Coin Doubler and 600 gems: $13.97 one by one, so 28% off. Shown only while neither part is owned |
 
@@ -371,9 +379,10 @@ tab still swaps gems earned by playing.
 
 - It is the same 30 tiers as the free season, about 30 matches a month, so it's finishable at about 4 days of play a
   week. Supercell found 85% of players never finished a pass that was too long.
-- The pass track pays 60 to 200 coins a tier, plus 700 at tier 25 and 1,800 at 30 (5,560 in all). Four tiers are the
-  month's own looks (`PASS_ITEM_TIERS`): tier 5 its player look, tier 10 its sprint trail, tier 15 its premium kit and
-  tier 20 its goal explosion. Each month its own, themed to the month, never a colourway: a snow tornado, a snowflake
+- The pass retains 5,560 coins and 150 gems, and now earns six identity pieces. Its **Star Ceremony is granted
+  immediately on activation**, including zero-XP purchases. Tier 1 retains its 60 coins. The remaining pieces are
+  earned through tiers: player look at 5, trail at 10, kit at 15, goal explosion at 20 and **Signature Nets at 25**
+  alongside that tier's existing 700 coins. Tier 30 retains 1,800 coins. The existing themes include a snow tornado, a snowflake
   knit kit and a bobble hat in January; a mud splat, a mud splattered kit and mud stompers in February; flowers, a
   blossom kit and a flower crown in March; rain clouds, a raindrop kit and rainbow shades in April; a trophy, a white
   and gold trophy kit and a trophy armband in May; a big wave, beach stripes and surf shades in June; a grinning sun, a
@@ -385,15 +394,35 @@ tab still swaps gems earned by playing.
   month and unclaimed looks stay claimable. Nothing reached is lost.
 - It is a consumable store product, so it can be bought again each month. The store refuses a second buy in the same
   month.
-- **Its value is on the card** (the STORE tab and the SEASON screen): +5,560 coins, +150 gems, 4 looks, the days
+- **Its value is on the card** (the STORE tab and the SEASON screen): +5,560 coins, +150 gems, 6 pieces, the days
   left. Six pass tiers pay gems (3, 8, 13, 18, 23 and 28: `PASS_GEMS`), a quarter of what the pass costs in gems.
 - **It can be bought with gems** (600, `GEM_PRICES.clubPass`), in every build. Gems are earned by playing, so a keen
   free player can earn the pass and its looks in about six weeks; the store's $3.99 is the cheaper way for a payer.
 
+## Signature collections: lasting club identity
+
+The shop's SIGNATURES tab previews the complete club and each of its six actual pieces. A full-club preview shows
+the equipped strip, captain's look, goal show, nets and ceremony together; individual previews also show the trail.
+EQUIP ALL SIX applies their existing match settings together. The club crest, ball, ground, roster and match stats
+remain yours. Nets use a luminous diamond weave in the collection palette on both goals. The ceremony builds a
+suspended constellation star by star and sheds jewels over the stand at walkout, scoring and a victory. It stays
+clear of the playing surface and uses the existing pooled FX/disposal lifecycle.
+
+Past monthly themes are **always available**, at 600 gems for all six pieces, reduced by 100 gems for each piece
+already owned. The confirmation lists the exact missing items and charge. All bought pieces are granted and equipped
+immediately and permanently; duplicate purchases charge nothing. The current theme is earned through the monthly
+Club Pass instead. Owned pieces survive the month ending, and there is no countdown or random draw for past collections.
+Earned and purchased gems buy identical collections. Signature pieces add no player stats or economic bonuses.
+
+Existing passes receive missing welcome ceremonies from their ownership receipts. An already claimed tier 25 receives
+the new nets, including during rollover; durable past tier-28 gem receipts also restore both new pieces. Coins and
+gems are never paid again by this migration. New decor IDs, ownership and equipped slots survive export/import, and
+unclaimed identity pieces carry forward like the existing pass rewards.
+
 ## Ethics: kids play this
 
 - **No paid random rewards.**
-  - Packs cost Scout Tokens, earned only (one per daily challenge done, calendar day 5, plus the free daily pack) and
+  - Packs cost Scout Tickets, earned only (one per daily challenge done, calendar day 5, plus the free daily pack) and
     never sold. Neither money, gems nor coins can buy a random card.
   - Every gem sink is a stated outcome. The Scouting Network is a guarantee ("every intake has a 5 star prospect"),
     never a chance; a test runs the academy against it.
@@ -405,7 +434,7 @@ tab still swaps gems earned by playing.
 - **Honest sets and shelves.** A set's price is its missing parts at a fixed 40% off, shown against what they cost
   alone; every part is on sale on its own; the FEATURED shelf changes on Mondays and shows no countdown.
 - **No fake scarcity.** The deal rotates daily and every look comes round again. The welcome offer has no timer and
-  says it stays in the shop. Club Pass looks return when their month's theme comes round.
+  says it stays in the shop. Past signature themes stay available for gems and their monthly Club Pass returns annually.
 - **Absence is never punished.** The login calendar counts the days you claim it, not days in a row, so a missed day
   costs nothing. A week's objectives last the whole week; a missed week owes nothing. PEGI now rates "punishing
   absence".
@@ -423,7 +452,7 @@ tab still swaps gems earned by playing.
   clubs, so nothing bought ever meets another player.
 - **Kid-safe ads.** Every request is child-directed, family-rated, never personalised, with no tracking prompt
   (src/platform/adConfig.ts).
-- **One currency for money.** Gems are the only currency sold. Scout Tokens can't be bought. The shop shows the
+- **One currency for money.** Gems are the only currency sold. Scout Tickets can't be bought. The shop shows the
   store's real price string, and what every pack hands over in full (the first-buy doubling included).
 
 ### Why no banner ads, and no offerwall

@@ -1,4 +1,5 @@
 import type { SaveData } from './core/save';
+import type { WeatherKind } from './sim/weather';
 import type { MatchResult } from './game/matchSession';
 import type { StadiumParts } from './render/stadium';
 import type { TimeOfDay } from './render/world';
@@ -50,7 +51,7 @@ export interface MatchRequest {
   /** ROAD TO GLORY home matches: your ground as built, part by part (meta/ground.ts); overrides the level's look. */
   ground?: StadiumParts;
   /** Weather; omitted = the player's setting. */
-  weather?: 'clear' | 'rain' | 'snow';
+  weather?: WeatherKind;
   /** Cup tie: level at full time goes to a penalty shootout. */
   knockout?: boolean;
   /** 'classic' (default) or 'blitz' power-up mode. */
@@ -75,6 +76,8 @@ export interface MatchRequest {
   basicsStep?: number;
   /** Compute the coins for this result (called once at full time). */
   reward: (r: MatchResult) => Reward;
+  /** Bank mode bookkeeping before saving the result; called again with the cumulative amount after a rewarded double. */
+  onBanked?: (r: MatchResult, coinsEarned: number) => void;
   /** Label for the full-time continue button. */
   nextLabel?: string;
   /** Offer REMATCH on the full-time screen (quick matches): the same request again, intro skipped. */

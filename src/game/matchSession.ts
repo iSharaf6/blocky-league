@@ -36,9 +36,10 @@ import { CutFlash } from '../render/transition';
 import { PITCH_Y, Stadium, stadiumFill, type StadiumParts } from '../render/stadium';
 import { StadiumDecor } from '../render/stadiumStyle';
 import { Weather, type WeatherKind } from '../render/weather';
+import { wetWeather } from '../sim/weather';
 import type { DecorStyle } from '../meta/style';
 import type { TimeOfDay, World } from '../render/world';
-import { BALL_R, DT, HALF_L, HALF_W, PEN_SPOT } from '../sim/constants';
+import { BALL_R, DT, GOAL_DEPTH, HALF_L, HALF_W, PEN_SPOT } from '../sim/constants';
 import { EMPTY_PAD, Match, SHOOT_BAR, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, PlayerDef, PowerUpKind, RestartKind, ScenarioSpec, Side } from '../sim/types';
@@ -71,6 +72,8 @@ import {
 } from './showcase';
 import { INTERLUDE_SECONDS, MatchInterlude, applyInterlude, interludeOrder, interludeShot, type MatchInterludeKind } from './matchInterludes';
 import { MatchTally, type PlayerRating } from './ratings';
+import { encodeState, decodeState, type StateGraph } from './stateCodec';
+import { recoveredMatch, savedHype, restoreHype, savedBlitz, restoreBlitz, savedScenario, restoreScenario } from './matchRecovery';
 import { FunPresenter } from './funPresent';
 import type { FunSummary } from './funLayer';
 import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
@@ -1208,8 +1211,8 @@ export class MatchSession {
     // Sunset: the footballers keep only ~8% of the orange light's tint, so a white kit stays white.
     if (tod === 'sunset') setCharacterWhiteBalance(world.sun.color, world.sun.intensity, world.hemi.color, world.hemi.intensity);
     else setCharacterWhiteBalance();
-    this.weather.set(wx, world.quality);
-    sfx.setRain(wx === 'rain');
+    this.weather.set(wx, world.quality, this.match.cfg.seed ?? 12345);
+    sfx.setRain(wetWeather(wx));
   }
 
   /** Broadcast camera distance, live (Settings changed mid-match): the camera cuts to the new framing. */
@@ -1254,6 +1257,73 @@ export class MatchSession {
   resume(): void {
     this.paused = false;
     sfx.setAmbienceActive(!this.demo);
+  }
+
+  /** The football and its earned match progress, kept separately from transient cameras and GPU objects. */
+  checkpoint(): StateGraph | null {
+    if (this.demo || this.driver || this.match.cfg.humanSide < 0) return null;
+    return encodeState({
+      match: this.match, hype: savedHype(this.match), blitz: savedBlitz(this.match), scenario: savedScenario(this.match),
+      tally: this.tally, fun: this.fun?.tracker ?? null,
+      presentation: { time: this.time, lastPasser: this.lastPasser, subQueue: this.subQueue, moment: this.moment },
+    });
+  }
+
+  /** Resume the actual attack. Keep the live match/tracker identities used by the HUD and its event callbacks. */
+  restoreCheckpoint(graph: StateGraph): void {
+    recoveredMatch(graph); // Fully validate a detached graph before mutating the running session.
+    const state = decodeState<{
+      hype: ReturnType<typeof savedHype>; blitz: ReturnType<typeof savedBlitz>; scenario: ReturnType<typeof savedScenario>;
+      presentation: { time: number; lastPasser: [number, number]; subQueue: SubBeat[]; moment: MatchSession['moment'] };
+    }>(graph, { Match: this.match, MatchTally: this.tally, FunTracker: this.fun?.tracker });
+    restoreHype(this.match, state.hype);
+    restoreBlitz(this.match, state.blitz);
+    restoreScenario(this.match, state.scenario);
+    this.time = state.presentation.time;
+    this.lastPasser = state.presentation.lastPasser;
+    this.subQueue = state.presentation.subQueue;
+    this.moment = state.presentation.moment;
+    // A verdict timer can pass below zero on the frame that calls onFinish. Its saved outcome still needs
+    // settlement after reopening; negative also means "not finished yet" in an active challenge.
+    if (this.moment?.outcome && this.match.phase === 'fulltime' && this.moment.endT < 0) this.moment.endT = 0;
+    // Tactics can change the team while paused, before the next sim step accounts for the substitution.
+    // Preserve each predecessor's rating once, while discarding old sound/celebration events.
+    for (const e of this.match.drainEvents()) {
+      if (e.type !== 'sub') continue;
+      const on = this.match.teamPlayers(e.side)[e.slot];
+      if (!on) continue;
+      this.tally.sub(on.idx, e.off, e.side, on.isKeeper, on.role === 'DF');
+      if (this.lastPasser[e.side] === on.idx) this.lastPasser[e.side] = -1;
+    }
+    this.wearing = this.match.players.map(p => p.def);
+    for (const p of this.match.players) this.view.replacePlayer(p.idx, p.def, this.opt.kits[p.side]);
+    this.lineupLeft = this.introLeft = 0;
+    this.holdFirst = false;
+    this.view.frameHook = null;
+    this.view.celeb.end();
+    this.sceneKeep = [];
+    this.sceneClear = 0;
+    this.interlude = null;
+    this.matchTunnel?.show(false);
+    this.replay = null;
+    this.replayWanted = false; // A past replay buffer is presentation; it cannot replay a saved goal again.
+    this.replayDone = this.match.phase === 'goal';
+    this.celebDue = -1;
+    this.halftimeFired = this.match.phase === 'halftime';
+    this.finishFired = false;
+    this.sportsmanshipDone = this.match.phase === 'fulltime';
+    this.motmDone = this.match.phase === 'fulltime';
+    this.hud?.hideIntro();
+    this.hud?.setReplay(false);
+    this.hud?.setSkippable(false);
+    this.present?.hidePlate();
+    this.input.reset();
+    this.clearLatch();
+    this.anyPress = this.prevButtons = false;
+    this.eatButtons = true;
+    this.acc = 0;
+    this.cam.setMode('broadcast');
+    this.resetView();
   }
 
   /** Make a substitution (human manager). Returns false if not allowed. */
@@ -1698,7 +1768,7 @@ export class MatchSession {
     this.view.setShadowBudget(this.world.quality === 'high' ? null : this.world.quality === 'medium' ? 6 : 0);
     this.world.focusShadows(this.cam.focusX, this.cam.focusZ);
     this.stadium.updateGlare(this.world.camera);
-    if (this.weather.kind === 'rain' && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ, 22, 15, 90, this.world.camera.position);
+    if (wetWeather(this.weather.kind) && !this.paused) this.effects.rain(dt, this.cam.focusX, this.cam.focusZ, 22, 15, this.weather.kind === 'drizzle' ? 40 : 90, this.world.camera.position);
     this.view.faceCamera(this.world.camera);
     this.view.updateReferee(presentationPaused ? 0 : dt, this.time, !this.replay);
     this.stadium.update(dt, this.time);
@@ -2496,7 +2566,7 @@ export class MatchSession {
             this.effects.burst(gx - Math.sign(gx) * 2, 0.3, m.ball.pos.z, cols, 50, 9, 2);
             this.effects.confetti(gx * 0.7, 0, cols, 320, 60);
           }
-          this.stadium.punchNet(gx, Math.max(0.6, Math.min(2, m.ball.pos.y)), m.ball.pos.z, 24);
+          this.stadium.punchNet(gx + Math.sign(gx) * GOAL_DEPTH, Math.max(0.6, Math.min(2, m.ball.pos.y)), m.ball.pos.z, 24);
           this.stadium.flashBurst(golden ? 90 : 60);
           if (golden) this.effects.burst(gx - Math.sign(gx) * 3, 2.4, m.ball.pos.z, [0xffd23a, 0xfff0b0, 0xffb300], 70, 11, 3);
           this.cam.shakePx(SHAKE_PX.goal);
@@ -2649,6 +2719,12 @@ export class MatchSession {
             const b = m.ball.pos;
             this.effects.grass(b.x, b.z, impactBits(e.speed, -1, 0.9, 14).n, Math.min(1, e.speed / 12));
           }
+          break;
+        }
+        case 'slip': {
+          const p = m.players[e.player];
+          this.effects.sparks(p.pos.x, 0.12, p.pos.z, [0xd3edf5, 0x88a9b7], 8, 2.3, 0.38, 0.12);
+          if (e.player === this.activeBefore || m.isHumanControlled(p)) this.hud?.toastMsg('WET GRASS: EASE OFF BEFORE SHARP TURNS', 2);
           break;
         }
         case 'net':
@@ -3827,6 +3903,7 @@ export class MatchSession {
   dispose(): void {
     this.foulPresentation.clear();
     this.world.scene.remove(this.stadium.group, this.view.group, this.effects.mesh, this.weather.group);
+    this.weather.dispose();
     if (!this.demo) document.body.classList.remove('night');
     // The night fill is shared by every footballer drawn (menu kit previews too): off until a match sets it.
     setCharacterFill(0);

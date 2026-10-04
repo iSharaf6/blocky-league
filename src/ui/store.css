@@ -16,6 +16,31 @@
 .sh-storemain .sh-iaps { grid-area: auto; padding-top: 12px; }
 .sh-storemain .sh-offers { grid-area: auto; align-content: start; }
 .sh-storemain.s-offers, .sh-storemain.s-club { grid-template-rows: auto; align-content: start; }
+.sh-storemain.s-gems { grid-template-rows: auto auto; overflow-y: auto; padding-bottom: 5px; }
+.sh-passcard, .bd-passoffer { justify-content: flex-start; overflow-y: auto; }
+.sh-passcard > *, .bd-passoffer > * { flex-shrink: 0; }
+.sh-passcard > .btn, .bd-passoffer > .btn { width: 100%; }
+.sh-earn .btn { margin-top: 8px; width: 100%; }
+.sh-signature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-content: start; padding: 8px; }
+.sh-signature-tile { min-width: 0; min-height: 66px; display: grid; align-content: center; gap: 5px; padding: 9px; text-align: left; color: #fff; background: var(--ink); border: 3px solid var(--signature); cursor: pointer; }
+.sh-signature-tile b { font: 400 15px / 1.15 var(--round); }
+.sh-signature-tile small { font: 700 9px / 1.2 var(--px); color: var(--signature); }
+.sh-signature-tile.sel { box-shadow: 0 0 0 2px var(--yellow); }
+.sh-signature-tile:focus-visible, .sh-signature-pieces button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
+.sh-signature .sh-detail { display: grid; grid-template-rows: minmax(90px, 1fr) minmax(0, 1.25fr); min-height: 0; }
+.sh-signature .sh-info { overflow-y: auto; min-height: 0; padding-right: 6px; }
+.sh-signature .sh-info > small { font: 700 10px / 1.5 var(--px); }
+.sh-signature-pieces { display: flex; flex-wrap: wrap; gap: 4px; }
+.sh-signature-pieces button { border: 2px solid var(--ink); background: #fff; color: var(--ink); font: 700 10px / 1.2 var(--px); padding: 6px; cursor: pointer; }
+.sh-signature-pieces button.on { background: var(--yellow); }
+.bd-item small { display: block; font-size: 8px; margin-top: 4px; }
+@media (max-height: 450px) {
+  .sh-signature-grid { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .sh-signature-tile { min-height: 50px; padding: 6px; }
+  .sh-signature .sh-name { font-size: 20px; }
+  .sh-signature .sh-blurb { font-size: 11px; }
+  .sh-signature .sh-detail { grid-template-rows: minmax(70px, 0.8fr) minmax(0, 1.4fr); }
+}
 .sh-iaps.n5 { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .sh-iaps.n5 .sh-ribbon { font-size: 8px; letter-spacing: 0; padding: 4px 4px 3px; }
 
