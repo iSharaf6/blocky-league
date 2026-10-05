@@ -59,10 +59,10 @@
   .hub-screen .hub-top { gap: 6px; }
   .hub-screen .hub-progress { flex-basis: 206px; max-width: 206px; gap: 6px; }
   .hub-screen .hub-progress .hub-lv { flex-basis: 140px; max-width: 140px; }
-  .hub-screen .hub-progress .hub-gift { max-width: 60px; padding: 0 3px; gap: 3px; font-size: calc(13px * var(--ts)); }
+  .hub-screen .hub-progress .hub-gift { max-width: 60px; padding: 0 3px; gap: 3px; font-size: calc(12px * var(--ts)); }
   .hub-screen .hub-progress .hub-gift .picon { width: 12px; height: 12px; }
-  .hub-screen .hub-progress .hub-tomorrow { width: 60px; padding: 0 4px; display: grid; justify-items: center; align-content: center; gap: 2px; font-size: calc(13px * var(--ts)); }
-  .hub-screen .hub-progress .hub-tomorrow small { font-size: calc(7px * var(--ts)); letter-spacing: 0; }
+  .hub-screen .hub-progress .hub-tomorrow { width: 60px; padding: 0 3px; display: grid; justify-items: center; align-content: center; gap: 2px; font-size: calc(13px * var(--ts)); }
+  .hub-screen .hub-progress .hub-tomorrow small { font-family: var(--round); font-size: calc(7px * var(--ts)); letter-spacing: 0; }
   .hub-screen .hub-progress :is(.hg-w, .hg-gem, .hub-tomorrow i, .hl-next) { display: none; }
   .hub-screen .hub-acts { gap: 5px; }
   .hub-screen .hub-acts .hub-acct { width: 76px; padding: 4px; font-size: calc(12px * var(--ts)); }
