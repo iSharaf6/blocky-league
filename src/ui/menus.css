@@ -6,53 +6,175 @@
  * the older card rules in style.css without !important.
  */
 
-/* The hub's status strip has its own space. The previous non-shrinking action strip could squeeze the level
-   badge down to zero on a phone, especially with LARGE text, gems and REMOVE ADS all present. Keep the level
-   with its gift and let whole strips, then their controls, wrap within the safe-area width. */
-.hub-screen .hub-top { flex-wrap: wrap; gap: 8px 12px; }
+/* One status row on landscape phones. The level is a chip, not a growing banner. Queries use the hub's
+   safe-area width (a notched 852px phone can have only 734px here), rather than the viewport width. */
+.hub { container-type: inline-size; container-name: hub; }
+.hub-screen .hub-top { flex-wrap: nowrap; gap: 8px; }
 .hub-screen .hub-progress {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
-  flex: 1 1 280px; min-width: min(100%, calc(280px * var(--ts))); max-width: 440px;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
+  flex: 0 1 268px; min-width: 0; max-width: 268px;
 }
 .hub-screen .hub-progress .hub-lv {
-  flex: 1 1 170px; min-width: min(100%, calc(146px * var(--ts))); max-width: none;
-  min-height: calc(44px * var(--ts));
+  flex: 0 1 180px; min-width: 44px; max-width: 180px; height: 44px; min-height: 44px;
 }
-.hub-screen .hub-lv .hl-txt { flex: 1 1 0; padding: 6px 9px; }
+.hub-screen .hub-lv .hl-n { min-width: 34px; padding: 4px 6px; font-size: calc(18px * var(--ts)); }
+.hub-screen .hub-lv .hl-n small { font-size: calc(8px * var(--ts)); }
+.hub-screen .hub-lv .hl-txt { flex: 1 1 0; padding: 5px 7px; }
+.hub-screen .hub-lv .hl-txt > b { font-size: calc(12px * var(--ts)); }
 .hub-screen .hub-lv .hl-bar { width: 100%; min-width: 0; }
+.hub-screen .hub-lv .hl-next { display: none; }
 .hub-screen .hub-progress .hub-gift {
-  flex: none; display: inline-flex; align-items: center; gap: 5px;
-  min-height: 44px; height: calc(44px * var(--ts)); padding: 0 9px;
+  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-height: 44px; height: 44px; padding: 0 8px;
   font: 400 calc(15px * var(--ts)) / 1 var(--round); letter-spacing: 0.5px;
   box-shadow: 0 4px 0 var(--d), 0 6px 0 rgba(38, 38, 46, 0.2);
 }
+.hub-screen .hub-progress .hub-tomorrow { flex: none; height: 44px; }
 .hub-screen .hub-acts {
-  flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: wrap; gap: 8px;
+  flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: nowrap; gap: 8px;
 }
-.hub-screen .hub-acts > * { flex-shrink: 0; }
+.hub-screen .hub-acts > * { flex-shrink: 0; min-width: 0; }
 .hub-screen .hub-acts .hub-acct {
   display: grid; justify-items: center; align-content: center; gap: 3px;
-  min-width: 112px; min-height: 44px; height: auto; padding: 5px 9px;
+  max-width: 160px; min-height: 44px; height: 44px; padding: 5px 9px;
 }
-.hub-screen .hub-acct b { max-width: 12em; overflow: hidden; text-overflow: ellipsis; font: inherit; white-space: nowrap; }
+.hub-screen .hub-acct b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font: inherit; white-space: nowrap; }
 .hub-screen .hub-acct small { font: 400 calc(10px * var(--ts)) / 1.1 var(--round); color: var(--ink-2); letter-spacing: 0.5px; }
-.hub-screen .hub-acts :is(.hub-ico, .hub-coins, .hub-gems, .hub-noads) { min-height: 44px; }
-.hub-screen .hub-acts .hub-ico { min-width: 44px; }
+.hub-screen .hub-acts :is(.hub-ico, .hub-coins, .hub-gems, .hub-noads) { min-height: 44px; height: 44px; }
+.hub-screen .hub-acts .hub-ico { min-width: 44px; width: 44px; }
+.hub-screen .hub-acts .coins.hub-coins { max-width: 170px; }
+.hub-screen .hub-acts .gems.hub-gems { max-width: 104px; }
+.hub-screen .hub-acts :is(.hub-coins, .hub-gems) > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-screen .hub-acts :is(.hub-coins i, .hub-coins .shop-tag, .hub-gems .gem) { flex-shrink: 0; }
+.hub-screen :is(.ha-short, .ha-mini, .hn-short, .hf-short) { display: none; }
+.hub-screen .hub-foot .hub-mini, .hub-screen .hub-daily { min-height: 44px; }
+.hub-screen .hub-hero > * { flex-shrink: 0; }
+.hub-screen .hh-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hub-screen .hh-meta { flex: 0 1 auto; }
+.hub-screen .hub-daily.done { grid-template-columns: auto minmax(0, 1fr); }
+.hub-screen .hub-daily .hd-next { display: block; font: 400 calc(9px * var(--ts)) / 1.1 var(--round); color: var(--cream-2); }
 
-@media (max-width: 900px) {
-  .hub-screen .hub-progress .hg-w { display: none; }
-  .hub-screen .hub-acts .hub-noads { font-size: calc(13px * var(--ts)); }
-  /* Small destinations can wrap their names rather than starving challenges of their column. */
-  .hub-screen .hub-foot.with-invite { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(110px, 1.4fr); }
-  .hub-screen .hub-mini { justify-content: center; min-width: 0; gap: 5px; padding: 4px 6px; white-space: normal; }
-  .hub-screen .hub-mini b { font-size: calc(13px * var(--ts)); text-align: center; line-height: 1.15; }
-  .hub-screen .hub-daily { min-height: 38px; }
+/* This baseline also works on iOS 15, before container-query support. */
+@media (max-width: 1200px), (max-height: 520px) {
+  .hub-screen .hub-top { gap: 6px; }
+  .hub-screen .hub-progress { flex-basis: 206px; max-width: 206px; gap: 6px; }
+  .hub-screen .hub-progress .hub-lv { flex-basis: 140px; max-width: 140px; }
+  .hub-screen .hub-progress .hub-gift { max-width: 60px; padding: 0 3px; gap: 3px; font-size: calc(13px * var(--ts)); }
+  .hub-screen .hub-progress .hub-gift .picon { width: 12px; height: 12px; }
+  .hub-screen .hub-progress .hub-tomorrow { width: 60px; padding: 0 4px; display: grid; justify-items: center; align-content: center; gap: 2px; font-size: calc(13px * var(--ts)); }
+  .hub-screen .hub-progress .hub-tomorrow small { font-size: calc(7px * var(--ts)); letter-spacing: 0; }
+  .hub-screen .hub-progress :is(.hg-w, .hg-gem, .hub-tomorrow i, .hl-next) { display: none; }
+  .hub-screen .hub-acts { gap: 5px; }
+  .hub-screen .hub-acts .hub-acct { width: 76px; padding: 4px; font-size: calc(12px * var(--ts)); }
+  .hub-screen .hub-acct small { font-size: calc(8px * var(--ts)); letter-spacing: 0; }
+  .hub-screen .hub-acts .hub-noads { width: 76px; padding: 0 4px; justify-content: center; font-size: calc(12px * var(--ts)); letter-spacing: 0.3px; }
+  .hub-screen .hub-noads :is(.picon, .hn-p, .hn-full), .hub-screen .ha-full, .hub-screen .hf-full { display: none; }
+  .hub-screen :is(.ha-short, .hn-short, .hf-short) { display: inline; }
+  .hub-screen .hub-acts .gems.hub-gems { max-width: 80px; gap: 4px; padding: 0 5px; font-size: calc(15px * var(--ts)); }
+  .hub-screen .hub-acts .coins.hub-coins { max-width: 140px; gap: 5px; padding: 0 5px; font-size: calc(15px * var(--ts)); }
+  .hub-screen .hub-coins i { width: 16px; height: 16px; }
+  .hub-screen .hub-coins .shop-tag { padding: 4px 5px; font-size: calc(13px * var(--ts)); }
+  /* QUICK and INVITE remain complete tap targets; Daily owns the remaining width. */
+  .hub-screen .hub-foot.with-invite { grid-template-columns: auto auto auto minmax(0, 1fr); }
+  .hub-screen .hub-mini { justify-content: center; min-width: 44px; gap: 5px; padding: 4px; }
+  .hub-screen .hub-mini b { font-size: calc(12px * var(--ts)); letter-spacing: 0.5px; line-height: 1.1; }
+  .hub-screen .hub-mini .picon { width: 16px; }
+  .hub-screen .hub-daily { grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; padding: 0 6px; }
+  .hub-screen .hub-daily .hd-bar { display: none; }
+  .hub-screen .hub-daily :is(.hd-h b, .hd-h em, .hd-text, .hd-coins) { font-size: calc(11px * var(--ts)); }
+  .hub-screen .hub-daily .hd-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.1; }
 }
-@media (max-width: 480px) {
-  .hub-screen .hub-progress { max-width: none; }
-  .hub-screen .hub-acts { flex: 1 1 100%; justify-content: flex-start; }
-  .hub-screen .hub-foot.with-invite { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .hub-screen .hub-foot.with-invite .hub-daily-wrap { grid-column: 1 / -1; }
+/* iOS 15 uses conservative viewport thresholds. Newer Safari uses the actual safe-area width below. */
+@supports not (container-type: inline-size) {
+  @media (orientation: landscape) and (max-width: 800px) {
+    .hub-screen .hub-progress { flex-basis: 110px; max-width: 110px; }
+    .hub-screen .hub-progress .hub-lv { position: relative; flex: none; width: 44px; max-width: 44px; }
+    .hub-screen .hub-lv .hl-n { width: 44px; padding-bottom: 8px; }
+    .hub-screen .hub-lv .hl-txt { position: absolute; inset: auto 4px 3px; padding: 0; }
+    .hub-screen .hub-lv .hl-txt > :not(.hl-bar) { display: none; }
+    .hub-screen .hub-lv .hl-bar { height: 3px; background: var(--yellow-d); }
+    .hub-screen .hub-acts .hub-acct { width: 56px; }
+    .hub-screen .hub-acct .ha-short { display: none; }
+    .hub-screen .hub-acct .ha-mini { display: inline; }
+    .hub-screen .hub-acct small { display: none; }
+    .hub-screen .hub-acts .hub-noads { width: 44px; }
+    .hub-screen .hub-noads .hn-short { display: none; }
+    .hub-screen .hub-noads .picon { display: inline-block; width: 20px; height: 20px; }
+    .hub-screen .hub-hero.road:not(.cup) .hh-meta { display: none; }
+    .hub-screen .hh-head { justify-content: center; }
+  }
+  @media (orientation: landscape) and (max-width: 660px) {
+    .hub-screen .hub-progress { flex-basis: 104px; max-width: 104px; }
+    .hub-screen .hub-progress :is(.hub-gift, .hub-tomorrow) { width: 54px; max-width: 54px; }
+    .hub-screen .hub-progress .hub-gift .picon { display: none; }
+    .hub-screen .hub-acts .gems.hub-gems { max-width: 76px; font-size: calc(14px * var(--ts)); }
+    .hub-screen .hub-acts .coins.hub-coins { max-width: 136px; font-size: calc(14px * var(--ts)); }
+  }
+}
+@media (orientation: landscape) {
+  @container hub (max-width: 680px) {
+    .hub-screen .hub-progress { flex-basis: 110px; max-width: 110px; }
+    .hub-screen .hub-progress .hub-lv { position: relative; flex: none; width: 44px; max-width: 44px; }
+    .hub-screen .hub-lv .hl-n { width: 44px; padding-bottom: 8px; }
+    .hub-screen .hub-lv .hl-txt { position: absolute; inset: auto 4px 3px; padding: 0; }
+    .hub-screen .hub-lv .hl-txt > :not(.hl-bar) { display: none; }
+    .hub-screen .hub-lv .hl-bar { height: 3px; background: var(--yellow-d); }
+    .hub-screen .hub-acts .hub-acct { width: 56px; }
+    .hub-screen .hub-acct .ha-short { display: none; }
+    .hub-screen .hub-acct .ha-mini { display: inline; }
+    .hub-screen .hub-acct small { display: none; }
+    .hub-screen .hub-acts .hub-noads { width: 44px; }
+    .hub-screen .hub-noads .hn-short { display: none; }
+    .hub-screen .hub-noads .picon { display: inline-block; width: 20px; height: 20px; }
+    .hub-screen .hub-hero.road:not(.cup) .hh-meta { display: none; }
+    .hub-screen .hh-head { justify-content: center; }
+  }
+  @container hub (max-width: 600px) {
+    .hub-screen .hub-progress { flex-basis: 104px; max-width: 104px; }
+    .hub-screen .hub-progress :is(.hub-gift, .hub-tomorrow) { width: 54px; max-width: 54px; }
+    .hub-screen .hub-progress .hub-gift .picon { display: none; }
+    .hub-screen .hub-acts .gems.hub-gems { max-width: 76px; font-size: calc(14px * var(--ts)); }
+    .hub-screen .hub-acts .coins.hub-coins { max-width: 136px; font-size: calc(14px * var(--ts)); }
+  }
+}
+/* Short phones get deliberate fixture sizes. Flex shrink must never cut through a matchday or objective. */
+@media (orientation: landscape) and (max-height: 450px) {
+  .hub-screen .hub-hero { padding: 4px 8px 6px; gap: 2px; }
+  .hub-screen .hh-head { gap: 4px; }
+  .hub-screen .hh-title { font-size: calc(18px * var(--ts)); letter-spacing: 0.5px; }
+  .hub-screen .hh-meta { max-width: 42%; padding: 3px 4px; font-size: calc(9px * var(--ts)); letter-spacing: 0.2px; }
+  .hub-screen .hh-fix { gap: 8px; }
+  .hub-screen .hh-side { gap: 1px; }
+  .hub-screen .hh-side .crest-svg { width: calc(24px * var(--ts)); }
+  .hub-screen .hh-side b { font-size: calc(16px * var(--ts)); letter-spacing: 0.5px; }
+  .hub-screen .hh-side small { font-size: calc(10px * var(--ts)); letter-spacing: 0.5px; }
+  .hub-screen .hh-sub { font-size: calc(10px * var(--ts)); letter-spacing: 0.3px; }
+  .hub-screen .hh-obj { gap: 3px; }
+  .hub-screen .hh-pip { padding: 2px 3px; gap: 3px; font-size: calc(9px * var(--ts)); letter-spacing: 0; }
+  .hub-screen .hh-pip u { width: 10px; height: 10px; }
+  .hub-screen .hh-play { min-height: 44px; height: 44px; padding: 5px 8px; font-size: calc(20px * var(--ts)); }
+  .hub-screen .hub-goal { min-height: 44px; }
+}
+@media (orientation: landscape) and (max-height: 365px) {
+  .hub-screen .hh-side .crest-svg { width: 20px; }
+  .hub-screen .hh-side b { font-size: calc(14px * var(--ts)); }
+  .hub-screen .hh-vs .picon { width: 14px; margin-bottom: 1px; }
+  .hub-screen :is(.hh-side small, .hh-obj) { display: none; }
+  .hub-screen .hh-title { font-size: calc(16px * var(--ts)); }
+  .hub-screen .hh-play { font-size: calc(18px * var(--ts)); }
+  .hub-screen .hub-hero:is(.create, .now) .hh-art .picon { width: calc(28px * var(--ts)); }
+  .hub-screen .hh-big { font-size: calc(14px * var(--ts)); }
+  .hub-screen .hub-hero.create .hh-sub { display: none; }
+}
+@media (orientation: landscape) and (max-height: 380px) {
+  .hub-screen .hub-tile.t-season .ht-ic { display: none; }
+}
+/* Portrait web keeps its established scrolling stack; only landscape has the one-row contract. */
+@media (max-aspect-ratio: 1/1) {
+  .hub-screen .hub-top, .hub-screen .hub-acts { flex-wrap: wrap; }
+  .hub-screen .hub-acts { flex-basis: 100%; justify-content: flex-start; }
+  .hub-screen .hub-foot.with-invite { grid-template-columns: 1fr 1fr; }
+  .hub-screen .hub-foot .hub-daily-wrap { grid-column: 1 / -1; }
 }
 
 /* ---------------------------------------------------------------- shared */

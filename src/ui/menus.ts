@@ -637,7 +637,7 @@ export class Menus {
       const i = list.findIndex((_, k) => !dl.claimed[k]);
       const next = i >= 0
         ? `<span class="hd-text">${list[i].text}</span><span class="hd-bar"><i style="width:${pct(list[i], i)}%"></i></span><em class="hd-coins">+${list[i].coins}</em>`
-        : '<span class="hd-text">ALL DONE. NEW ONES TOMORROW</span>';
+        : '<span class="hd-text"><span>ALL DONE</span><small class="hd-next">MORE TOMORROW</small></span>';
       const rows = list.map((c, k) => {
         const p = Math.min(c.goal, dl.progress[k] ?? 0);
         const ok = !!dl.claimed[k];
@@ -653,16 +653,16 @@ export class Menus {
         }).join('')}`
         : '';
       daily = `<div class="hub-daily-wrap">
-          <button class="hub-daily ${dl.fresh ? 'fresh' : ''}" data-a="daily" aria-expanded="false" aria-controls="hub-dl" aria-label="Daily challenges, ${done} of 3 done${wk ? '. Weekly objectives' : ''}">
+          <button class="hub-daily ${i < 0 ? 'done' : ''} ${dl.fresh ? 'fresh' : ''}" data-a="daily" aria-expanded="false" aria-controls="hub-dl" aria-label="Daily challenges, ${done} of 3 done${i < 0 ? '. New ones tomorrow' : ''}${wk ? '. Weekly objectives' : ''}">
             <span class="hd-h"><b>DAILY</b><em>${done}/3</em></span>${next}
           </button>
           <ul class="hub-dl" id="hub-dl" hidden>${rows}${wkRows}</ul>
         </div>`;
     }
     const foot = `<div class="hub-foot${h.invite ? ' with-invite' : ''}">
-        <button class="hub-mini t-quick" data-a="quick">${pixelIcon('ball', '#26262e', 3)}<b>QUICK MATCH</b></button>
+        <button class="hub-mini t-quick" data-a="quick" aria-label="Quick match">${pixelIcon('ball', '#26262e', 3)}<b><span class="hf-full">QUICK MATCH</span><span class="hf-short" aria-hidden="true">QUICK</span></b></button>
         ${h.events ? `<button class="hub-mini t-events" data-a="events">${pixelIcon('bolt', '#ffd23a', 3)}<b>EVENTS</b></button>` : ''}
-        ${h.invite ? `<button class="hub-mini t-invite" data-a="invite" aria-label="Invite friends"><b>INVITE FRIENDS</b></button>` : ''}
+        ${h.invite ? `<button class="hub-mini t-invite" data-a="invite" aria-label="Invite friends">${pixelIcon('duo', '#26262e', 3)}<b><span class="hf-full">INVITE FRIENDS</span><span class="hf-short" aria-hidden="true">INVITE</span></b></button>` : ''}
         ${daily}
       </div>`;
 
@@ -697,8 +697,8 @@ export class Menus {
           ${h.gift && info?.gift ? `<button class="btn btn-yellow hub-gift" data-a="gift" aria-label="Daily gift, ${info.gift.amount} coins${info.gift.gems ? ` and ${info.gift.gems} gems` : ''}">${pixelIcon('gift', '#26262e', 2, 'inl')}<span class="hg-w">GIFT</span><b>+${info.gift.amount}</b>${giftExtra}</button>` : tomorrow}
         </div>
         <div class="hub-acts">
-          ${h.account ? `<button class="btn btn-white hub-acct" data-a="account" aria-label="Account and cloud saves. Google or Apple sign-in"><b>${info?.account ? escHtml(info.account.toUpperCase()) : 'SAVE PROGRESS'}</b><small>GOOGLE / APPLE</small></button>` : ''}
-          ${h.removeAds && info?.noAds ? `<button class="btn btn-red hub-noads" data-a="noads" aria-label="Remove ads, ${escHtml(info.noAds.price)}">${pixelIcon('film', '#fff', 2, 'inl')}<span>REMOVE ADS</span><b class="hn-p">${escHtml(info.noAds.price)}</b></button>` : ''}
+          ${h.account ? `<button class="btn btn-white hub-acct" data-a="account" aria-label="Account and cloud saves. Google or Apple sign-in"><b class="ha-full">${info?.account ? escHtml(info.account.toUpperCase()) : 'SAVE PROGRESS'}</b><b class="ha-short" aria-hidden="true">${info?.account ? 'ACCOUNT' : 'SAVE'}</b><b class="ha-mini" aria-hidden="true">${info?.account ? 'CLOUD' : 'SAVE'}</b><small>GOOGLE / APPLE</small></button>` : ''}
+          ${h.removeAds && info?.noAds ? `<button class="btn btn-red hub-noads" data-a="noads" aria-label="Remove ads, ${escHtml(info.noAds.price)}">${pixelIcon('film', '#fff', 2, 'inl')}<span class="hn-full">REMOVE ADS</span><span class="hn-short" aria-hidden="true">AD FREE</span><b class="hn-p">${escHtml(info.noAds.price)}</b></button>` : ''}
           ${gemChip}
           ${wallet}
           <button class="hub-ico" data-a="howto" aria-label="How to play"><b>?</b></button>
