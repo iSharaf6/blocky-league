@@ -1,8 +1,42 @@
-# TestFlight build 3 upload — 6 October 2026
+# TestFlight build 4 — 6 October 2026
+
+Version **1.0 (4)** was accepted by App Store Connect app **6819288055** and installed successfully on EZY
+(iPhone 15). Apple processing and the external TestFlight review submission are being completed. This is a beta,
+not a public App Store release. The existing **Blocky League Playtest** link is
+<https://testflight.apple.com/join/ChfvkUXC>; external access requires Apple's beta approval.
+
+Build 4 replaces the two-row phone header with a compact level/reward area and a single row of account,
+currency, help and settings controls. Labels shorten at narrow safe-area widths without reducing the 44px tap
+targets. Fixture text has explicit short-screen sizes, and completed Daily challenges no longer reserve empty
+progress/reward columns. The Journey crown hides on short screens so its tier and Club Pass stay visible.
+The iOS 15 media-query fallback is preserved. All gameplay/account/replay features from build 3 remain included.
+
+The final focused menu/settings/input/device-budget check passed **78 tests in five files**, with typecheck and
+all five release builds passing. A source/font geometry audit covers **14 landscape iPhone/iPad sizes** and the
+three text settings, including the supplied iPhone 15 safe-area width. It checks normal balances, maximum daily
+gifts, completed Daily text and cup fixtures. These are static calculations, not rendered visual checks or a
+claim that every device has been visually tested; see [HUB_LAYOUT.md](HUB_LAYOUT.md).
+
+Source/ZIP fingerprints for all five release packages match
+`be75c58c5aeb6edad43d12f2fdc4c7c435d7f40b77d3bc64ac3d7bd222cd65a4`.
+All 33 native game files match the signed archive and App Store IPA. Version, signatures, Apple sign-in/Game
+Center entitlements, provisioning and the UserDefaults `CA92.1` privacy declaration passed validation. Apple
+accepted the same non-blocking vendor SDK missing-symbol warnings recorded for builds 2 and 3.
+
+The final source is backed up on `release/ios-app` at `29ef639`; the build 4 fallback tag is
+`testflight-build-4-2026-10-06`. Signed archive, IPA, all five release ZIPs/manifests, layout audit and verification
+logs are preserved in the ignored `release/testflight/1.0-4/` directory. The IPA SHA-256 is
+`b9d9323c168d6207fd0d7b31e5562b9c69fcc260264a3639f2a9703071e67cee`.
+
+Google remains disabled pending the consent-policy approval and provider credentials described in
+[AUTH_SETUP.md](AUTH_SETUP.md). Native Apple is configured but actual account sign-in still needs device
+verification. Game Center definitions, paid purchase products and production ad units remain console setup work.
+
+## Superseded TestFlight build 3 — 6 October 2026
 
 Version **1.0 (3)** was successfully uploaded to App Store Connect app **6819288055**. Apple finished processing
-build `8477cb6c-da10-4d1d-ba44-ecd4ae32695b`; it was submitted for external TestFlight review and now shows
-**Waiting for Review**. The archive
+build `8477cb6c-da10-4d1d-ba44-ecd4ae32695b`; it was submitted for external TestFlight review, then withdrawn
+to replace its two-row header with build 4. The archive
 contains all 33 native game assets from the verified iOS bundle, including the developer portrait. Source and ZIP
 fingerprints for all five release packages passed. Build 3 was also installed successfully on EZY (iPhone 15).
 An empty external **Blocky League Playtest** group was created, build 3 was added, and updated beta review notes

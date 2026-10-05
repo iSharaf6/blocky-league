@@ -8,20 +8,24 @@ Apple is enabled, while Google setup and console achievements are still in progr
 - **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (gem packs,
   Starter Pack, NO ADS, Club Pass, Coin Doubler, PRO bundle). The design is docs/ECONOMY.md (economy v3).
 - **Game Center:** 21 achievements.
-- **Uploaded build:** version **1.0**, build **3**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
+- **Uploaded build:** version **1.0**, build **4**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
 
 ## Current TestFlight build — 6 October 2026
 
-App Store Connect app ID: `6819288055`. Version **1.0 (3)** has a compiled, signed archive with all 33 native game
-assets verified against the iOS bundle. Source/ZIP fingerprints for all five release packages passed. Apple
-accepted its upload and completed processing; it is installed on the owner's iPhone 15 and now **Waiting for Review**
-for external TestFlight testing in **Blocky League Playtest**. It adds the protected level/daily-gift layout, Settings account/invite navigation,
+App Store Connect app ID: `6819288055`. Version **1.0 (4)** has a compiled, signed archive with all 33 native game
+assets verified against the iOS bundle and App Store IPA. Source/ZIP fingerprints for all five release packages
+passed. Apple accepted its upload; it is installed on the owner's iPhone 15. Processing and external beta review
+submission are being completed for **Blocky League Playtest**. Its compact single-row phone header replaces
+build 3's wrapping layout, fixes fixture/Daily clipping and preserves Settings account/invite navigation,
 the blocky developer About page, live provider readiness and smoother offside replay presentation.
+
+Build 3's external review was withdrawn so the corrected build 4 can replace it. The existing external playtest
+link is <https://testflight.apple.com/join/ChfvkUXC>; it requires Apple's beta approval before testers can join.
 
 Version **1.0 (2)** was successfully uploaded using normal App Store Connect distribution and finished processing
 to **Ready to Submit** for external beta review. The beta description and reviewer contact were saved in
 TestFlight; build 2 was not submitted for beta review. Build 2 includes the AI/cinematics/player-stats baseline
-from `6a01153`, as does uploaded build 3. Current details are in [RELEASE_STATUS.md](RELEASE_STATUS.md).
+from `6a01153`, as do uploaded builds 3 and 4. Current details are in [RELEASE_STATUS.md](RELEASE_STATUS.md).
 
 The beta uses Google test ad units. Supabase now accepts native Apple sign-in for `com.calynx.blockyleague`, with
 manual linking and the exact native/web redirects configured. An actual device sign-in still needs verification.
