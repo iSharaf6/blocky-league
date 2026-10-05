@@ -2,23 +2,32 @@
 
 Everything App Store Connect asks for, ready to paste, and the order to do it in. The app uses the dedicated iOS web
 build in a Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape play, optional accounts/cloud saves,
-and no peer-to-peer online matches. Google/Apple provider activation and console achievements require the setup
-in docs/AUTH_SETUP.md and the Game Center section below; adding code does not configure those consoles.
+and no peer-to-peer online matches. Current provider configuration is recorded in docs/AUTH_SETUP.md; native
+Apple is enabled, while Google setup and console achievements are still in progress.
 
 - **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (gem packs,
   Starter Pack, NO ADS, Club Pass, Coin Doubler, PRO bundle). The design is docs/ECONOMY.md (economy v3).
 - **Game Center:** 21 achievements.
-- **Build:** version **1.0**, build **2**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
+- **Uploaded build:** version **1.0**, build **3**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
 
 ## Current TestFlight build — 6 October 2026
 
-App Store Connect app ID: `6819288055`. Version **1.0 (2)** was successfully uploaded using normal App Store
-Connect distribution, so the build is eligible for external TestFlight review after processing. The beta description
-and reviewer contact were saved in TestFlight. Current review/testing status is recorded in [RELEASE_STATUS.md](RELEASE_STATUS.md).
+App Store Connect app ID: `6819288055`. Version **1.0 (3)** has a compiled, signed archive with all 33 native game
+assets verified against the iOS bundle. Source/ZIP fingerprints for all five release packages passed. Apple
+accepted its upload and began processing; it is also installed on the owner's iPhone 15. It adds the protected level/daily-gift layout, Settings account/invite navigation,
+the blocky developer About page, live provider readiness and smoother offside replay presentation.
 
-This beta uses Google test ad units. Google/Apple cloud sign-in providers, Game Center definitions and native
-purchase product configuration remain pending; guest gameplay and local saving are available. These services
-need console setup before release. This upload is not a public App Store submission.
+Version **1.0 (2)** was successfully uploaded using normal App Store Connect distribution and finished processing
+to **Ready to Submit** for external beta review. The beta description and reviewer contact were saved in
+TestFlight; external beta review has not been submitted. Build 2 includes the AI/cinematics/player-stats baseline
+from `6a01153`, as does uploaded build 3. Current details are in [RELEASE_STATUS.md](RELEASE_STATUS.md).
+
+The beta uses Google test ad units. Supabase now accepts native Apple sign-in for `com.calynx.blockyleague`, with
+manual linking and the exact native/web redirects configured. An actual device sign-in still needs verification.
+Google remains disabled while its OAuth setup is underway. Browser Apple sign-in stays off until a Services ID
+and OAuth secret are configured and its public build flag is enabled. Game Center definitions and native purchase
+product configuration remain pending; guest gameplay and local saving are available. No public App Store version
+has been submitted.
 
 ## How the app makes money
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PF } from '../game/replay';
 import { HALF_W } from '../sim/constants';
+import { PITCH_Y } from './stadium';
 
 /** The man who committed it (the opponents' ring red, brighter) and the man it was done to (the HUD's gold). */
 const MARK_RED = 0xff4338;
@@ -76,8 +77,10 @@ export class IncidentMarks {
     this.who[0] = attacker;
     this.who[1] = defender;
     this.pulse = false;
-    this.line.position.set(lineX, 0.045, 0);
-    this.band.position.set(lineX + dir * (BAND_W / 2 + LINE_W / 2), 0.04, 0);
+    // MatchView's group is at world height zero; the grass itself is raised by PITCH_Y. Depth bias cannot
+    // reliably reveal a stripe buried underneath it, especially as a replay changes camera angle.
+    this.line.position.set(lineX, PITCH_Y + 0.045, 0);
+    this.band.position.set(lineX + dir * (BAND_W / 2 + LINE_W / 2), PITCH_Y + 0.04, 0);
     this.line.visible = this.band.visible = true;
     this.group.visible = true;
   }
@@ -92,7 +95,7 @@ export class IncidentMarks {
       const on = Number.isInteger(i) && i >= 0 && i < 22;
       ring.visible = on;
       if (!on) continue;
-      ring.position.set(f[i * PF], 0.05, f[i * PF + 1]);
+      ring.position.set(f[i * PF], PITCH_Y + 0.05, f[i * PF + 1]);
       ring.scale.setScalar(k);
     }
   }

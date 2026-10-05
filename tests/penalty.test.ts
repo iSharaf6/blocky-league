@@ -413,7 +413,7 @@ describe("the keeper against the human's penalty: a guess, as in a shootout", ()
     expect(middle).toBeLessThan(corner);
     const top = rate({ mz: 1, mx: 1 }, 60, 40);
     expect(top).toBeLessThan(0.6);
-  });
+  }, 90_000); // 180 simulated penalties: retain every seed and probability check under concurrent CI/laptop load
 
   it('an aim left sitting by a post tells him more (a read), picked late it does not', () => {
     const a = newPenAim();

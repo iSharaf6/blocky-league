@@ -30,6 +30,9 @@ export async function shareInvite(code?: string | null): Promise<ShareResult> {
     await navigator.clipboard.writeText(`${message.text}\n${message.url}`);
     return 'copied';
   } catch (err) {
-    return err instanceof DOMException && err.name === 'AbortError' ? 'canceled' : 'unavailable';
+    // Capacitor iOS reports dismissal as "Share canceled"; web sharing uses AbortError.
+    const canceled = err instanceof DOMException && err.name === 'AbortError'
+      || err instanceof Error && /^Share cancel(?:ed|led)$/i.test(err.message);
+    return canceled ? 'canceled' : 'unavailable';
   }
 }

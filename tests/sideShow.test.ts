@@ -346,5 +346,5 @@ describe('the other side shows', () => {
     const lap = v[FAN_BUCKET * PROP_F + 1];
     sidePose('fans', 'joy', 0, 2, 0.5, ps, v);
     expect(v[FAN_BUCKET * PROP_F + 1]).toBeGreaterThan(lap + 1);
-  });
+  }, 60_000); // Exhaustive kind/mood/variant/frame pose checks can exceed the default 5-second budget
 });

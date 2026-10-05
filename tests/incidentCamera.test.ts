@@ -5,6 +5,8 @@ import { FRAME_LEN, PF } from '../src/game/replay';
 import { CameraRig, type CamFocus } from '../src/render/cameraRig';
 import { Footballer, PSTATE, type PoseInput } from '../src/render/characters';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
+import { MatchSession } from '../src/game/matchSession';
+import type { IncidentReplay } from '../src/game/incidentReplay';
 
 describe('incident replay framing', () => {
   for (const aspect of [16 / 9, 9 / 19.5, 4 / 3]) {
@@ -82,6 +84,47 @@ describe('incident replay framing', () => {
     const look = new THREE.Vector3(37, 0.9, -2).project(camera);
     expect(Math.hypot(look.x, look.y)).toBeLessThan(0.05);
   });
+
+  for (const aspect of [852 / 393, 4 / 3, 9 / 19.5]) {
+    it.each([
+      { attacker: [36, 4], defender: [32, -5], dir: 1 },
+      { attacker: [-36, -4], defender: [-32, 5], dir: -1 },
+      { attacker: [46, 27], defender: [24, -27], dir: 1 },
+      { attacker: [-46, -27], defender: [-24, 27], dir: -1 },
+    ])('fits the actual offside release participants in its stable inspection shot at aspect ' + aspect + ': %j', ({ attacker, defender, dir }) => {
+      const camera = new THREE.PerspectiveCamera(24, aspect, 0.5, 900);
+      const cam = new CameraRig(camera);
+      const frame = new Float32Array(FRAME_LEN);
+      frame[9 * PF] = attacker[0]; frame[9 * PF + 1] = attacker[1];
+      frame[13 * PF] = defender[0]; frame[13 * PF + 1] = defender[1];
+      cam.players = frame;
+      cam.replayKind = 'incident';
+      cam.setMode('replay');
+      const marks = { offside: vi.fn() };
+      const session = Object.assign(Object.create(MatchSession.prototype), {
+        match: { players: Array.from({ length: 22 }, (_, i) => ({ side: i < 11 ? 0 : 1 })), attackDir: () => dir },
+        view: { headTop: 1.94, incidentMarks: marks }, cam, flash: { play: vi.fn() },
+      }) as { showOffsideLine(clip: IncidentReplay): void };
+      session.showOffsideLine({ frames: [frame], releaseIdx: 0,
+        offside: { lineX: defender[0], attacker: 9, defender: 13 } } as IncidentReplay);
+      expect(marks.offside).toHaveBeenCalledWith(defender[0], dir, 9, 13);
+      const focus: CamFocus = { bx: 12 * dir, by: 0.2, bz: 0, bvx: 0, bvz: 0,
+        ax: attacker[0], az: attacker[1], attack: dir, tall: 1.94 };
+      cam.update(1 / 60, focus, 0);
+      camera.updateMatrixWorld();
+      for (const [x, z] of [attacker, defender]) for (const y of [0, 1.94]) {
+        const ndc = new THREE.Vector3(x, y, z).project(camera);
+        expect(Math.abs(ndc.x)).toBeLessThan(0.9);
+        expect(Math.abs(ndc.y)).toBeLessThan(0.9);
+        expect(ndc.z).toBeGreaterThan(-1);
+        expect(ndc.z).toBeLessThan(1);
+      }
+      const position = camera.position.clone(), quaternion = camera.quaternion.clone();
+      for (let i = 0; i < 30; i++) cam.update(1 / 60, focus, i / 60);
+      expect(camera.position.distanceTo(position)).toBeLessThan(1e-8);
+      expect(camera.quaternion.angleTo(quaternion)).toBeLessThan(1e-6);
+    });
+  }
 });
 
 describe('incident replay badge', () => {

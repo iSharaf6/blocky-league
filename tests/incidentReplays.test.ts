@@ -10,7 +10,7 @@ import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 import { DT, HALF_L, HALF_W, PEN_SPOT } from '../src/sim/constants';
 import { EMPTY_PAD, Match, type Pad } from '../src/sim/match';
 import type { Player } from '../src/sim/player';
-import type { MatchEvent } from '../src/sim/types';
+import type { KickKind, MatchEvent } from '../src/sim/types';
 
 beforeEach(() => {
   vi.stubGlobal('window', new EventTarget());
@@ -56,12 +56,13 @@ function rig(m = newMatch()) {
   const view = {
     frameHook: null as ((f: Float32Array, dt: number) => void) | null,
     frame, headTop: 1.9, refState, ballGlide: { x: 0, y: 0, z: 0 },
-    apply: vi.fn((_prev: Float32Array, cur: Float32Array) => frame.set(cur)),
+    apply: vi.fn((_prev: Float32Array, cur: Float32Array, _alpha = 0, _time = 0, _dt = 0) => frame.set(cur)),
     tickFlashes: vi.fn(), flashPlayer: vi.fn(), refSignal: vi.fn(), refPoint: vi.fn(), clearFades: vi.fn(), pinPlayer: vi.fn(),
     setBallHidden: vi.fn(), setMarkerMode: vi.fn(), setMarkerVisible: vi.fn(), setTeamRings: vi.fn(), setTeamPips: vi.fn(),
     setShadowBudget: vi.fn(), faceCamera: vi.fn(), updateReferee: vi.fn(), setRival: vi.fn(), replacePlayer: vi.fn(),
     flashBall: vi.fn(), celeb: { active: false, begin: vi.fn(), end: vi.fn(), holdS: 0 },
     showCard: vi.fn((_color: string, x: number, z: number) => { refState.faceX = x; refState.faceZ = z; }),
+    incidentMarks: { offside: vi.fn(), foul: vi.fn(), clear: vi.fn(), update: vi.fn() },
   };
   const cam = {
     mode: 'broadcast', behindActive: false, holding: false, focusX: 0, focusZ: 0,
@@ -104,6 +105,7 @@ function rig(m = newMatch()) {
     recorded: number; time: number; cur: Float32Array; prev: Float32Array;
     replay: Float32Array[] | null; replayIncident: IncidentReplay | null; replayT: number;
     replayDone: boolean; anyPress: boolean; eatButtons: boolean; cardT: number; hitStopT: number;
+    incidentFroze: boolean; incidentFreezeT: number;
     handleEvents(events: MatchEvent[]): void; stepReplay(dt: number): void; buildPad(): Pad;
     incidentReplayHold(dt: number): boolean;
   };
@@ -165,10 +167,10 @@ function foulRig(card: 'none' | 'yellow' | 'red', penalty = false, advantage = f
   throw new Error(`Real slide fixture did not produce a ${card} foul`);
 }
 
-function offsideRig(mode?: 'demo' | 'driver' | 'moment', delayedTouchFrames = 0) {
+function offsideRig(mode?: 'demo' | 'driver' | 'moment', delayedTouchFrames = 0, kind: KickKind = 'pass') {
   const h = rig(newMatch(1));
   spreadPlayers(h.m);
-  const passer = h.m.players[6], attacker = h.m.players[9];
+  const passer = h.m.players[kind === 'keeper' ? 0 : 6], attacker = h.m.players[9];
   place(passer, HALF_L - 30, 0);
   passer.facing = 0;
   h.m.teamPlayers(1).forEach((p, i) => {
@@ -182,9 +184,10 @@ function offsideRig(mode?: 'demo' | 'driver' | 'moment', delayedTouchFrames = 0)
   h.m.ball.owner = passer.idx;
   h.m.ball.lastTouch = passer.idx;
   h.m.ball.lastTouchSide = passer.side;
+  h.m.ball.held = kind === 'keeper';
   h.m.updateBallPath();
   h.record(90);
-  h.m.order(passer, 'pass', attacker.pos.x - passer.pos.x, attacker.pos.z - passer.pos.z, 0.6, attacker.idx, false);
+  h.m.order(passer, kind, attacker.pos.x - passer.pos.x, attacker.pos.z - passer.pos.z, 0.6, attacker.idx, false);
   const events: MatchEvent[] = [];
   let releaseStamp: number | undefined;
   if (mode) {
@@ -549,6 +552,88 @@ describe('incident replays', () => {
     expect(t).toBeGreaterThan(releaseIdx / 60);
     h.state.stepReplay(DT);
     expect(h.state.replayT - t).toBeCloseTo(DT, 9);
+  });
+
+  it.each(['header', 'keeper'] as const)('shows the release line for an actual offside from a passing %s', kind => {
+    const h = offsideRig(undefined, 0, kind);
+    expect(h.events.some(e => e.type === 'kick' && e.kind === kind)).toBe(true);
+    const original = football(h.m);
+    openReplay(h);
+    const clip = h.state.replayIncident!;
+    expect(clip.offside?.attacker).toBe(h.attacker.idx);
+    expect(clip.releaseIdx).toBeGreaterThanOrEqual(0);
+    expect(clip.frames[clip.releaseIdx!][h.passer.idx * PF + 4]).toBe(kind === 'keeper' ? STATE_CODE.throw : STATE_CODE.kick);
+    finishReplay(h);
+    expect(football(h.m)).toBe(original);
+  });
+
+  it('retains the original release after the live ring rolls over, and holds its line even at the end of footage', () => {
+    const h = offsideRig(undefined, 720);
+    const original = football(h.m);
+    const restart = h.m.restart;
+    openReplay(h);
+    const clip = h.state.replayIncident!;
+    expect(clip.frames.length).toBeLessThanOrEqual(61);
+    expect(clip.releaseIdx).toBe(clip.frames.length - 1);
+    expect(clip.frames[clip.releaseIdx!][BALL_OFS + 9]).toBe(h.releaseStamp);
+    expect(clip.offside?.lineX).toBeCloseTo(HALF_L - 16, 0);
+    h.state.replayT = clip.releaseIdx! / 60;
+    for (let i = 0; i < 60; i++) h.state.stepReplay(DT);
+    expect(h.state.replay).not.toBeNull();
+    expect(h.view.incidentMarks.offside).toHaveBeenCalledTimes(1);
+    const [a, b] = h.view.apply.mock.lastCall!;
+    expect(a).toBe(clip.frames[clip.releaseIdx!]);
+    expect(b).toBe(a);
+    finishReplay(h);
+    expect(football(h.m)).toBe(original);
+    expect(h.m.restart).toBe(restart);
+  });
+
+  it.each([{ cadence: [1 / 30] }, { cadence: [1 / 60] }, { cadence: [1 / 120] }, { cadence: [0.011, 0.049, 0.022] }])('holds one exact release pose without rewinding at render cadence $cadence', ({ cadence }) => {
+    const h = offsideRig();
+    const original = football(h.m);
+    openReplay(h);
+    const clip = h.state.replayIncident!;
+    const release = clip.releaseIdx! / 60;
+    const begin = release - 0.023;
+    h.state.replayT = begin;
+    h.cam.cut.mockClear();
+    let elapsed = 0, n = 0, frozenFrames = 0;
+    while (elapsed < 1.65 - 1e-9) {
+      const dt = Math.min(cadence[n++ % cadence.length], 1.65 - elapsed);
+      const before = h.state.replayT;
+      h.state.stepReplay(dt);
+      elapsed += dt;
+      expect(h.state.replayT + 1e-9).toBeGreaterThanOrEqual(before);
+      if (h.state.incidentFreezeT > 0) {
+        frozenFrames++;
+        expect(h.state.replayT).toBeCloseTo(release, 9);
+        expect(h.cam.replayLens).not.toBeNull();
+        expect(h.view.incidentMarks.foul).not.toHaveBeenCalled();
+        const [a, b, alpha, drawTime, poseDt] = h.view.apply.mock.lastCall!;
+        expect(a).toBe(clip.frames[clip.releaseIdx!]);
+        expect(b).toBe(a);
+        expect(alpha).toBe(0);
+        expect(drawTime).toBe(a[BALL_OFS + 9]);
+        expect(poseDt).toBe(0);
+      }
+    }
+    expect(frozenFrames).toBeGreaterThan(10);
+    expect(h.state.replayT).toBeCloseTo(begin + elapsed - 1.5, 9);
+    expect(h.view.incidentMarks.offside).toHaveBeenCalledTimes(1);
+    expect(h.view.incidentMarks.foul).toHaveBeenCalledTimes(1);
+    expect(h.cam.cut).toHaveBeenCalledTimes(2);
+    expect(h.cam.replayLens).toBeNull();
+    expect(football(h.m)).toBe(original);
+    finishReplay(h);
+    expect(football(h.m)).toBe(original);
+  });
+
+  it('clears a live first-touch draw offset before replaying the recorded ball', () => {
+    const h = offsideRig();
+    Object.assign(h.view.ballGlide, { x: -1.2, y: 0.3, z: 0.4 });
+    openReplay(h);
+    expect(h.view.ballGlide).toEqual({ x: 0, y: 0, z: 0 });
   });
 
   it('uses the next actual pass as the witness for another offside instead of replaying an unrelated older release', () => {

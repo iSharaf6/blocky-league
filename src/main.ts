@@ -567,6 +567,9 @@ function mainMenu(): void {
   const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', {
     backup: inNativeApp() ? undefined : backup,
     removeAds: iap.storefront ? { price: info.noAds?.price ?? '', owned: adFree(save), buy: buyNoAds } : undefined,
+    account: cloudAvailable() ? () => openAccount({ save, persist, reload }, settings) : undefined,
+    invite: !PORTAL ? () => openAccount({ save, persist, reload }, settings, 'friend') : undefined,
+    about: () => menus.developerAbout(settings),
   });
   menus.main(save, {
     playNow: () => playNow(),

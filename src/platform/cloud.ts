@@ -4,9 +4,9 @@
  * scripts/release.mjs blanks them for the crazygames / poki / itch zips (portals forbid accounts of our own).
  * In a build without them everything here is a no-op and the game is fully local.
  *
- * Who signs in, and how, is src/platform/signin.ts: Game Center in the app, else a device account (both silent,
- * through edge functions that hand back a session: `adoptSession`); Google / GitHub / email / guest stay on the
- * web. What needs a connection is src/platform/online.ts.
+ * Players can choose native Apple, browser OAuth or Game Center / device backup. src/platform/signin.ts owns
+ * Game Center / device accounts through edge functions (`adoptSession`); automatic connection only runs in an
+ * accounts-required build. Optional accounts never block local gameplay. src/platform/online.ts owns that policy.
  *
  * Data: one row per user in `saves` (supabase/migrations), the save JSON as-is, under RLS. Each write names the
  * row's revision (`rev`) as this device last saw it: the server refuses a write from a stale copy ("stale_save"),
@@ -34,7 +34,7 @@ export interface CloudContext {
 
 export interface CloudUser {
   name: string;
-  /** 'google' | 'github' | 'email' | 'guest' (anonymous) | 'gamecenter' | 'device'. */
+  /** 'google' | 'apple' | 'github' | 'email' | 'guest' (anonymous) | 'gamecenter' | 'device'. */
   provider: string;
   email?: string;
   guest?: boolean;
@@ -68,6 +68,8 @@ interface Env {
   query?: string;
   /** VITE_ONLINE_ACCOUNTS: 'on' switches on the silent sign-in and the online rule (see accountsRequired). */
   online?: string;
+  /** Web Apple OAuth is opt-in only after a Services ID and OAuth secret are configured. Native Apple is separate. */
+  appleWeb?: string;
 }
 let envOverride: Env | null = null;
 
@@ -82,6 +84,7 @@ function env(): Env {
     query: typeof location === 'undefined' ? '' : location.search,
     // (The dev tab switch turns the whole feature on.)
     online: m.VITE_ONLINE_ACCOUNTS || (dev ? 'on' : undefined),
+    appleWeb: m.VITE_APPLE_WEB_AUTH,
   };
 }
 
@@ -256,6 +259,45 @@ export function cloudEndpoint(): { url: string; key: string } | null {
   if (!cloudAvailable()) return null;
   const e = env();
   return e.url && e.key ? { url: e.url.replace(/\/+$/, ''), key: e.key } : null;
+}
+
+/** An absent provider is unknown; false means it is explicitly unavailable on this platform. */
+export type AuthProviders = Readonly<Partial<Record<OAuthProvider, boolean>>>;
+let providers: AuthProviders | null = null;
+let providersLoading: Promise<AuthProviders | null> | null = null;
+
+/** Public provider readiness, without requesting a session or creating an account. */
+export function authProviders(): AuthProviders | null {
+  // The server can accept native Apple ID tokens while its web OAuth Services ID/secret is still absent.
+  // Do not advertise a web redirect simply because external.apple is enabled for the iPhone app.
+  if (!inNativeApp() && env().appleWeb !== 'on') return { ...providers, apple: false };
+  return providers;
+}
+
+/** Check each time the account panel opens: a provider enabled on the server needs no app update. */
+export function refreshAuthProviders(): Promise<AuthProviders | null> {
+  if (providersLoading) return providersLoading;
+  const ep = cloudEndpoint();
+  if (!ep || typeof fetch === 'undefined') return Promise.resolve(null);
+  providersLoading = (async () => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 4000);
+    try {
+      const response = await fetch(`${ep.url}/auth/v1/settings`, { headers: { apikey: ep.key }, signal: ctl.signal });
+      if (!response.ok) return authProviders();
+      const data = await response.json() as { external?: Record<string, unknown> };
+      // A malformed or offline response must not invent a disabled-provider policy.
+      if (!data.external || !['google', 'apple', 'github'].every((p) => typeof data.external?.[p] === 'boolean')) return authProviders();
+      providers = { google: data.external.google === true, apple: data.external.apple === true, github: data.external.github === true };
+      notify();
+      return authProviders();
+    } catch {
+      return authProviders();
+    } finally {
+      clearTimeout(timer);
+    }
+  })().finally(() => { providersLoading = null; });
+  return providersLoading;
 }
 
 export interface CloudStatus {
@@ -1143,11 +1185,15 @@ async function signInWithNativeApple(c: CloudClient): Promise<boolean> {
   }
 }
 
-/** Send the browser to Google / GitHub; the session arrives on the way back (cloudBoot handles it). */
+/** Native Apple uses an identity token; other providers return through the browser's PKCE flow. */
 export async function signInWith(provider: OAuthProvider): Promise<boolean> {
   const c = await getClient();
   if (!c) {
     toast(NOT_SET_UP, 'bad');
+    return false;
+  }
+  if (authProviders()?.[provider] === false) {
+    toast(`${PROVIDER_LABEL[provider]} sign-in is not available yet. Your progress stays on this device`, 'info');
     return false;
   }
   const native = inNativeApp();
@@ -1209,6 +1255,10 @@ export async function signInAsGuest(): Promise<boolean> {
 export async function upgradeGuest(provider: OAuthProvider): Promise<boolean> {
   const c = await getClient();
   if (!c || !session) return false;
+  if (authProviders()?.[provider] === false) {
+    toast(`${PROVIDER_LABEL[provider]} sign-in is not available yet. Your progress stays on this device`, 'info');
+    return false;
+  }
   const native = inNativeApp();
   // Native Apple signs into its durable Apple account; the same save comparison protects either existing club.
   if (native && provider === 'apple') return signInWithNativeApple(c);
@@ -1439,6 +1489,8 @@ export function _resetForTests(): void {
   listenersOn = false;
   subs.clear();
   nativeCodes.clear();
+  providers = null;
+  providersLoading = null;
 }
 
 export function _debugState(): { dirty: boolean; timer: boolean; holding: boolean; paused: boolean; signedIn: boolean; unsettled: boolean } {

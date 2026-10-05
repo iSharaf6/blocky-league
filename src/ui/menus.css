@@ -6,6 +6,55 @@
  * the older card rules in style.css without !important.
  */
 
+/* The hub's status strip has its own space. The previous non-shrinking action strip could squeeze the level
+   badge down to zero on a phone, especially with LARGE text, gems and REMOVE ADS all present. Keep the level
+   with its gift and let whole strips, then their controls, wrap within the safe-area width. */
+.hub-screen .hub-top { flex-wrap: wrap; gap: 8px 12px; }
+.hub-screen .hub-progress {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  flex: 1 1 280px; min-width: min(100%, calc(280px * var(--ts))); max-width: 440px;
+}
+.hub-screen .hub-progress .hub-lv {
+  flex: 1 1 170px; min-width: min(100%, calc(146px * var(--ts))); max-width: none;
+  min-height: calc(44px * var(--ts));
+}
+.hub-screen .hub-lv .hl-txt { flex: 1 1 0; padding: 6px 9px; }
+.hub-screen .hub-lv .hl-bar { width: 100%; min-width: 0; }
+.hub-screen .hub-progress .hub-gift {
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  min-height: 44px; height: calc(44px * var(--ts)); padding: 0 9px;
+  font: 400 calc(15px * var(--ts)) / 1 var(--round); letter-spacing: 0.5px;
+  box-shadow: 0 4px 0 var(--d), 0 6px 0 rgba(38, 38, 46, 0.2);
+}
+.hub-screen .hub-acts {
+  flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: wrap; gap: 8px;
+}
+.hub-screen .hub-acts > * { flex-shrink: 0; }
+.hub-screen .hub-acts .hub-acct {
+  display: grid; justify-items: center; align-content: center; gap: 3px;
+  min-width: 112px; min-height: 44px; height: auto; padding: 5px 9px;
+}
+.hub-screen .hub-acct b { max-width: 12em; overflow: hidden; text-overflow: ellipsis; font: inherit; white-space: nowrap; }
+.hub-screen .hub-acct small { font: 400 calc(10px * var(--ts)) / 1.1 var(--round); color: var(--ink-2); letter-spacing: 0.5px; }
+.hub-screen .hub-acts :is(.hub-ico, .hub-coins, .hub-gems, .hub-noads) { min-height: 44px; }
+.hub-screen .hub-acts .hub-ico { min-width: 44px; }
+
+@media (max-width: 900px) {
+  .hub-screen .hub-progress .hg-w { display: none; }
+  .hub-screen .hub-acts .hub-noads { font-size: calc(13px * var(--ts)); }
+  /* Small destinations can wrap their names rather than starving challenges of their column. */
+  .hub-screen .hub-foot.with-invite { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(110px, 1.4fr); }
+  .hub-screen .hub-mini { justify-content: center; min-width: 0; gap: 5px; padding: 4px 6px; white-space: normal; }
+  .hub-screen .hub-mini b { font-size: calc(13px * var(--ts)); text-align: center; line-height: 1.15; }
+  .hub-screen .hub-daily { min-height: 38px; }
+}
+@media (max-width: 480px) {
+  .hub-screen .hub-progress { max-width: none; }
+  .hub-screen .hub-acts { flex: 1 1 100%; justify-content: flex-start; }
+  .hub-screen .hub-foot.with-invite { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .hub-screen .hub-foot.with-invite .hub-daily-wrap { grid-column: 1 / -1; }
+}
+
 /* ---------------------------------------------------------------- shared */
 
 .panel.mc.shell .mc-top-gap { display: block; min-width: 1px; }
@@ -173,6 +222,8 @@
 .panel.set-panel.shell .set-sw > span,
 .panel.set-panel.shell .set-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .panel.set-panel.shell .toggles button > b { flex: none; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.panel.set-panel.shell .set-pane[data-pane="more"] button[data-a] { display: grid; justify-items: start; align-content: center; gap: 4px; min-height: 50px; }
+.panel.set-panel.shell .set-pane[data-pane="more"] button[data-a] > :is(span, b) { max-width: 100%; white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.15; text-align: left; }
 
 /* A switch: the whole row toggles; its ON / OFF chip on the right (as the GENERAL rows). */
 .panel.set-panel.shell .set-sw {

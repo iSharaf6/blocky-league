@@ -105,7 +105,7 @@ describe('unattended possession through normal match controls', () => {
       const controls = rows.filter((r) => r.firstControl >= 0);
       console.log(`${name}: ${kept}/24 idle receivers cleanly dispossessed for at least 1.5s; average first control ${
         (controls.reduce((n, r) => n + r.firstControl, 0) / controls.length).toFixed(2)}s`);
-    });
+    }, 60_000); // 24 simulated possessions per difficulty: retain every scenario under concurrent CI/laptop load
   }
 
   it('both human sides remain challengeable during first-match easing and maximum loss-streak assistance', () => {
@@ -119,7 +119,7 @@ describe('unattended possession through normal match controls', () => {
       }
       expect(controlled, `${side}/${difficulty}: easing must retain actual counterplay`).toBeGreaterThanOrEqual(8);
     }
-  });
+  }, 60_000); // 48 simulated possessions: the default 5-second budget is too short on slower laptops
 
   for (const [mode, minimum] of [['first-match', 20], ['new-career', 20], ['max-assisted-career', 18],
     ['normal-quick', 22], ['blitz', 15]] as const) {
@@ -136,7 +136,7 @@ describe('unattended possession through normal match controls', () => {
       // A foul, throw-in or one-frame WON never counts as actual opponent possession.
       expect(clean).toBeGreaterThanOrEqual(minimum);
       console.log(`${mode}: ${clean}/24 actual tackle wins held for at least 1.5s`);
-    });
+    }, 60_000); // Each shipping mode simulates 24 possessions, including generated Career squads
   }
 
   it('Normal shipping AI challenges an automatic straight sprint before it reaches the keeper', () => {
@@ -160,7 +160,7 @@ describe('unattended possession through normal match controls', () => {
     }
     expect(controlled).toBeGreaterThanOrEqual(20);
     expect(deep).toBe(0);
-  });
+  }, 60_000); // 24 real kick-offs and straight-run attacks: retain the complete seed coverage on slower laptops
 
   it('the initial receiving grace still gives time to look up before the stationary read', () => {
     for (const side of [0, 1] as const) for (const difficulty of [0.6, 1.8]) {

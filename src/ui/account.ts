@@ -3,14 +3,13 @@
  * the logic and loads this file on demand; this file owns the DOM. Panels mount into #ui on top of whatever
  * screen is open and never block play: BACK (or Escape) always closes them.
  *
- * The iPhone / iPad app signs in by itself (Game Center, else this device: src/platform/signin.ts), so there the
- * panel has no sign-in buttons: it shows the account, SYNC NOW, the FRIEND CODE and DELETE ACCOUNT. The web game
- * also offers Google / GitHub / email.
+ * Accounts are optional. The native panel offers Apple / Google and Game Center / this device; the web panel also
+ * offers an email link. Both show cloud-save status, invitations and deletion after the player connects.
  */
 import './account.css';
 import { sfx } from '../audio/sfx';
 import {
-  PROVIDER_LABEL, cloudAvailable, cloudProfile, cloudStatus, cloudUser, deleteCloudSave, loadFromCloud, onCloudChange, signInAsGuest,
+  PROVIDER_LABEL, authProviders, cloudAvailable, cloudProfile, cloudStatus, cloudUser, deleteCloudSave, loadFromCloud, onCloudChange, refreshAuthProviders, signInAsGuest,
   signInWith, signInWithEmail, signOutCloud, syncNow, upgradeGuest, upgradeGuestEmail, type CloudContext, type CloudToastKind, type SaveSummary,
 } from '../platform/cloud';
 import { inNativeApp } from '../platform/native';
@@ -60,6 +59,7 @@ function mount(cls: string, panelCls: string): { root: HTMLDivElement; panel: HT
 type Mode = 'main' | 'email' | 'link-email' | 'confirm-load' | 'confirm-delete' | 'confirm-signout' | 'confirm-account' | 'friend';
 
 let activeAccount: HTMLDivElement | null = null;
+let retireAccount: (() => void) | null = null;
 
 const emailForm = (action: string, label: string, dis: string): string => `
   <div class="ac-field">
@@ -71,11 +71,16 @@ const emailForm = (action: string, label: string, dis: string): string => `
     </div>
   </div>`;
 
-const providerButtons = (prefix: string, dis: string): string => `
-  <div class="ac-providers">
-    <button class="btn btn-white" data-a="${prefix}google" ${dis}>SIGN IN WITH GOOGLE</button>
-    <button class="btn btn-ink" data-a="${prefix}apple" ${dis}><span aria-hidden="true"></span> SIGN IN WITH APPLE</button>
-  </div>`;
+const providerButtons = (prefix: string, dis: string): string => {
+  const providers = authProviders();
+  const unavailable = (['google', 'apple'] as const).filter((p) => providers?.[p] === false);
+  const note = unavailable.length ? `${unavailable.map((p) => PROVIDER_LABEL[p]).join(' and ')} sign-in ${unavailable.length > 1 ? 'are' : 'is'} not available yet. ${inNativeApp() ? 'Use Game Center or this device to back up your club.' : 'Use an email link or a device account to back up your club.'}` : '';
+  return `
+    <div class="ac-providers">
+      <button class="btn btn-white" data-a="${prefix}google" ${providers?.google === false ? 'disabled' : dis}>SIGN IN WITH GOOGLE</button>
+      <button class="btn btn-ink" data-a="${prefix}apple" ${providers?.apple === false ? 'disabled' : dis}><span aria-hidden="true"></span> SIGN IN WITH APPLE</button>
+    </div>${note ? `<p class="fine ac-note" role="status">${esc(note)}</p>` : ''}`;
+};
 
 const confirmBox = (cls: string, text: string, action: string, label: string, btn: string, dis: string): string => `
   <div class="ac-confirm ${cls}">
@@ -98,7 +103,7 @@ function unavailableHtml(): string {
 function signedOutHtml(mode: Mode, working: string): string {
   const dis = working ? 'disabled' : '';
   const busy = working ? `<div class="ac-status busy"><i></i><span>${esc(working)}...</span></div>` : '';
-  // The app signs in by itself (Game Center, else this device): one button to try again, nothing to type.
+  // Native identities are chosen by the player; opening this panel never creates an account.
   if (inNativeApp()) {
     return `
       <h2>PROTECT YOUR CLUB</h2>
@@ -241,7 +246,7 @@ function signedInHtml(mode: Mode, working: string, friend: FriendView): string {
 
 /** The panel behind the ACCOUNT button (cloud.ts `openAccount` loads this file and calls it). */
 export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial: 'main' | 'friend' = 'main'): void {
-  activeAccount?.remove();
+  retireAccount?.();
   const { root, panel } = mount('ac-account', 'narrow ac-panel');
   activeAccount = root;
   let mode: Mode = initial;
@@ -262,14 +267,32 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial
     }
   };
   const unsub = onCloudChange(render);
-  const close = (): void => {
+  if (cloudAvailable()) void refreshAuthProviders();
+  const retire = (): void => {
     if (closed) return;
     closed = true;
     unsub();
+    window.removeEventListener('keydown', onEscape, true);
     root.remove();
-    if (activeAccount === root) activeAccount = null;
+    if (activeAccount === root) {
+      activeAccount = null;
+      retireAccount = null;
+    }
+  };
+  const close = (): void => {
+    if (closed) return;
+    retire();
     onClose();
   };
+  const onEscape = (e: KeyboardEvent): void => {
+    if (closed || activeAccount !== root || e.repeat || (e.key !== 'Escape' && e.code !== 'Escape')) return;
+    // Capture also covers body focus. Do not let the same Escape reach a screen remounted by onClose.
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    close();
+  };
+  retireAccount = retire;
+  window.addEventListener('keydown', onEscape, true);
   /** Run an action with the buttons off; `stay` keeps the current view afterwards (else back to the main one). */
   const run = async (label: string, fn: () => Promise<unknown>, stay = false): Promise<void> => {
     if (working) return;
@@ -357,7 +380,9 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial
     switch (el.dataset.a) {
       case 'back': close(); break;
       case 'cancel': show('main'); break;
-      case 'connect': void run('Connecting', () => connect(true)); break;
+      case 'connect': void run('Connecting', async () => {
+        if (!(await connect(true))) cloudToast('Could not connect right now. Your club is still saved on this device', 'info');
+      }); break;
       case 'google': void run('Opening Google', () => signInWith('google')); break;
       case 'apple': void run('Opening Apple', () => signInWith('apple')); break;
       case 'github': void run('Opening GitHub', () => signInWith('github')); break;
@@ -388,8 +413,7 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial
     }
   });
   panel.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') close();
-    else if (e.key === 'Enter' && (e.target as Element).matches('input')) $<HTMLElement>(panel, '[data-a="sendlink"], [data-a="sendlinkemail"], [data-a="claim"]')?.click();
+    if (e.key === 'Enter' && (e.target as Element).matches('input')) $<HTMLElement>(panel, '[data-a="sendlink"], [data-a="sendlinkemail"], [data-a="claim"]')?.click();
   });
   if (initial === 'friend') openFriend();
   else render();

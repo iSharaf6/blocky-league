@@ -32,6 +32,7 @@ import type { ScenarioOutcome } from '../sim/scenario';
 import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef, type ScenarioSpec } from '../sim/types';
 import { suggestSubs, type SubPlan } from '../meta/squad';
 import { bindDragSwap } from './dragSwap';
+import { developerAboutHtml } from './developerAbout';
 
 export { pixelIcon };
 
@@ -691,10 +692,12 @@ export class Menus {
       ? `<span class="hub-tomorrow" aria-label="Tomorrow's gift: ${tm.coins} coins${tm.gems ? ` and ${tm.gems} gems` : ''}${tm.tokens ? ' and a scout ticket' : ''}"><small>TOMORROW</small><b>+${tm.coins}</b>${tm.gems ? `<i>${gemArt(1.4)}${tm.gems}</i>` : ''}</span>`
       : '';
     const top = `<header class="hub-top">
-        ${lvChip}
-        <div class="hub-acts">
+        <div class="hub-progress">
+          ${lvChip}
           ${h.gift && info?.gift ? `<button class="btn btn-yellow hub-gift" data-a="gift" aria-label="Daily gift, ${info.gift.amount} coins${info.gift.gems ? ` and ${info.gift.gems} gems` : ''}">${pixelIcon('gift', '#26262e', 2, 'inl')}<span class="hg-w">GIFT</span><b>+${info.gift.amount}</b>${giftExtra}</button>` : tomorrow}
-          ${h.account ? `<button class="btn btn-white hub-acct" data-a="account" aria-label="Account and cloud saves">${info?.account ? escHtml(info.account.toUpperCase()) : 'ACCOUNT'}</button>` : ''}
+        </div>
+        <div class="hub-acts">
+          ${h.account ? `<button class="btn btn-white hub-acct" data-a="account" aria-label="Account and cloud saves. Google or Apple sign-in"><b>${info?.account ? escHtml(info.account.toUpperCase()) : 'SAVE PROGRESS'}</b><small>GOOGLE / APPLE</small></button>` : ''}
           ${h.removeAds && info?.noAds ? `<button class="btn btn-red hub-noads" data-a="noads" aria-label="Remove ads, ${escHtml(info.noAds.price)}">${pixelIcon('film', '#fff', 2, 'inl')}<span>REMOVE ADS</span><b class="hn-p">${escHtml(info.noAds.price)}</b></button>` : ''}
           ${gemChip}
           ${wallet}
@@ -1880,6 +1883,14 @@ export class Menus {
     $(d, '[data-a=next]').addEventListener('click', h.next);
   }
 
+  developerAbout(onBack: () => void): void {
+    const d = this.mount(developerAboutHtml(), 'developer-about');
+    $(d, '[data-a=back]').addEventListener('click', onBack);
+    this.listenKey((e) => {
+      if (e.code === 'Escape') onBack();
+    });
+  }
+
   /**
    * Settings, one screen per tab (docs/UX.md): slim tabs, the rows two by two, each row one line (its name and its
    * value), and one hint line under them. GENERAL holds the most used first (sound, music, graphics, text size,
@@ -1895,6 +1906,9 @@ export class Menus {
     save: SaveData, onChange: () => void, onBack: () => void, tab: SettingsTab = 'general',
     opts: {
       backup?: () => void;
+      account?: () => void;
+      invite?: () => void;
+      about?: () => void;
       /** REMOVE ADS, in the header (the app): its price, whether it is owned, and the purchase (true once bought). */
       removeAds?: { price: string; owned: boolean; buy: () => Promise<boolean> };
     } = {},
@@ -1958,6 +1972,9 @@ export class Menus {
             <div class="set-pane set-grid toggles" data-pane="more" role="tabpanel">
               <button data-k="ballSkin"></button>
               <button data-k="celebration"></button>
+              ${opts.account ? '<button data-a="account" aria-label="Account and cloud saves"><span>SAVE PROGRESS</span><b class="link">GOOGLE / APPLE</b></button>' : ''}
+              ${opts.invite ? '<button data-a="invite" aria-label="Invite friends"><span>INVITE FRIENDS</span><b class="link">SHARE THE GAME</b></button>' : ''}
+              ${opts.about ? '<button data-a="about" aria-label="About the developer"><span>THE DEVELOPER</span><b class="link">MEET ISLAM</b></button>' : ''}
               ${opts.backup ? '<button data-a="backup" aria-label="Backup: export or import your save"><span>BACKUP</span><b class="link">EXPORT / IMPORT</b></button>' : ''}
               <button data-a="feedback" aria-label="Send feedback by email"><span>FEEDBACK</span><b class="link">EMAIL US</b></button>
             </div>
@@ -2286,6 +2303,14 @@ export class Menus {
       stopListening();
       opts.backup?.();
     });
+    for (const [action, go] of [['account', opts.account], ['invite', opts.invite], ['about', opts.about]] as const) {
+      d.querySelector(`[data-a=${action}]`)?.addEventListener('click', () => {
+        if (!go) return;
+        // Account and invitation panels mount outside Menus. Retire this screen's shortcuts before opening them.
+        this.close();
+        go();
+      });
+    }
     // REMOVE ADS: the store's own sheet confirms the purchase; once bought the row reads NO ADS: ON.
     const noAds = d.querySelector<HTMLButtonElement>('[data-a=noads]');
     noAds?.addEventListener('click', async () => {

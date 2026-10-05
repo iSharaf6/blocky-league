@@ -183,7 +183,7 @@ describe('team styles (round 13)', () => {
     expect(res.counter.fwdShare[0]).toBeGreaterThan(base.fwdShare[0] + 2);
     // ... and the possession side's fewer (it keeps the ball rather than forcing it forward).
     expect(res.possession.fwdShare[0]).toBeLessThan(base.fwdShare[0]);
-  }, 300_000);
+  }, 1_200_000); // 240 full matches: allow concurrent CI/laptop load without reducing the 48-seed style sample
 
   it('every preset club has a style that fits it, and styleFor gives generated clubs a fixed one', () => {
     for (const c of PRESET_CLUBS) {

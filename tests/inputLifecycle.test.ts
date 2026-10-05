@@ -3,6 +3,9 @@ import { Input, setBindings } from '../src/core/input';
 import { Menus } from '../src/ui/menus';
 import { TouchControls } from '../src/ui/touch';
 import { buzz } from '../src/platform/haptics';
+import { defaultSave } from '../src/core/save';
+import { openAccountPanel } from '../src/ui/account';
+import { _resetForTests as resetCloud, _setEnvForTests } from '../src/platform/cloud';
 
 vi.mock('../src/platform/haptics', async (original) => ({
   ...await original<typeof import('../src/platform/haptics')>(),
@@ -60,10 +63,12 @@ let win: EventTarget;
 let doc: EventTarget & { hidden: boolean };
 let root: Element;
 
-function key(code: string, repeat = false): void {
+function key(code: string, repeat = false, origin?: Element): Event {
   const e = new Event('keydown', { cancelable: true });
-  Object.assign(e, { code, repeat });
+  Object.assign(e, { code, key: code, repeat });
+  if (origin) Object.defineProperty(e, 'target', { value: origin });
   win.dispatchEvent(e);
+  return e;
 }
 
 function pointer(el: Element, type: string, pointerId = 1, clientX = 0, clientY = 0): void {
@@ -85,10 +90,14 @@ beforeEach(() => {
   vi.stubGlobal('window', win);
   vi.stubGlobal('document', doc);
   vi.stubGlobal('navigator', {});
+  resetCloud();
+  _setEnvForTests({});
   setBindings();
 });
 
 afterEach(() => {
+  resetCloud();
+  _setEnvForTests(null);
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -131,6 +140,86 @@ describe('embedded input and focus', () => {
 });
 
 describe('menu keyboard lifecycle', () => {
+  it('the developer screen returns by its back button and retires its Escape shortcut', () => {
+    const menus = new Menus();
+    const back = vi.fn(() => menus.close());
+    menus.developerAbout(back);
+    const screen = root.children.at(-1)!;
+    expect(screen.innerHTML).toContain('data-a="back"');
+    screen.querySelector('[data-a=back]').dispatchEvent(new Event('click'));
+    key('Escape');
+    expect(back).toHaveBeenCalledOnce();
+    expect(menus.open).toBe(false);
+  });
+
+  it('Settings > More opens About without carrying the settings Escape shortcut into it', () => {
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const menus = new Menus();
+    const settingsBack = vi.fn();
+    const destinationBack = vi.fn(() => menus.close());
+    const open = vi.fn(() => menus.developerAbout(destinationBack));
+    menus.settings(defaultSave(), vi.fn(), settingsBack, 'more', { about: open });
+    const screen = root.children.at(-1)!;
+    expect(screen.innerHTML).toContain('data-a="about"');
+    screen.querySelector('[data-a=about]').dispatchEvent(new Event('click'));
+    expect(open).toHaveBeenCalledOnce();
+    expect(screen.removed).toBe(true);
+    key('Escape');
+    expect(destinationBack).toHaveBeenCalledOnce();
+    expect(settingsBack).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['account', 'body'], ['account', 'button'], ['account', 'input'],
+    ['invite', 'body'], ['invite', 'button'], ['invite', 'input'],
+  ] as const)('Settings > More opens the real %s overlay; Escape from %s focus returns only to settings', (action, focus) => {
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const menus = new Menus();
+    const save = defaultSave();
+    const settingsBack = vi.fn(() => menus.close());
+    const ctx = { save, persist: vi.fn(), reload: vi.fn() };
+    const showSettings = (): void => menus.settings(save, vi.fn(), settingsBack, 'more', {
+      [action]: () => openAccountPanel(ctx, showSettings, action === 'invite' ? 'friend' : 'main'),
+    });
+    showSettings();
+    const settings = root.children.at(-1)!;
+    settings.querySelector(`[data-a=${action}]`).dispatchEvent(new Event('click'));
+    const overlay = root.children.at(-1)!;
+    expect(overlay.className).toContain('ac-account');
+    expect(overlay.querySelector('.panel').innerHTML).toContain(action === 'invite' ? 'INVITE FRIENDS' : 'ACCOUNT');
+    expect(settings.removed).toBe(true);
+    expect(menus.open).toBe(false);
+
+    const origin = new Element();
+    origin.tagName = focus.toUpperCase();
+    key('Escape', true, origin);
+    expect(overlay.removed).toBe(false);
+    expect(key('Escape', false, origin).defaultPrevented).toBe(true);
+    expect(overlay.removed).toBe(true);
+    expect(menus.open).toBe(true);
+    // onClose mounts settings synchronously; the original Escape must not reach its new shortcut.
+    expect(settingsBack).not.toHaveBeenCalled();
+    key('Escape');
+    expect(settingsBack).toHaveBeenCalledOnce();
+  });
+
+  it('replacing an account overlay retires its closure and leaves no Escape shortcut after closing', () => {
+    const ctx = { save: defaultSave(), persist: vi.fn(), reload: vi.fn() };
+    const firstBack = vi.fn();
+    const secondBack = vi.fn();
+    openAccountPanel(ctx, firstBack);
+    const first = root.children.at(-1)!;
+    openAccountPanel(ctx, secondBack, 'friend');
+    const second = root.children.at(-1)!;
+    expect(first.removed).toBe(true);
+    key('Escape');
+    expect(second.removed).toBe(true);
+    expect(secondBack).toHaveBeenCalledOnce();
+    expect(firstBack).not.toHaveBeenCalled();
+    expect(key('Escape').defaultPrevented).toBe(false);
+    expect(secondBack).toHaveBeenCalledOnce();
+  });
+
   it('retiring a pause screen removes its Escape handler before controls open', () => {
     const menus = new Menus();
     const resume = vi.fn();

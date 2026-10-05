@@ -82,6 +82,7 @@ import { FunPresenter } from './funPresent';
 import type { FunSummary } from './funLayer';
 import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, SENT_OFF_CODE, STATE_CODE, isSentOff, writeFrame } from './replay';
 import { IncidentReplays, type IncidentReplay, type IncidentStep } from './incidentReplay';
+import { advanceOffsideReplay } from './offsideReplay';
 
 export type { PlayerRating } from './ratings';
 
@@ -2614,6 +2615,8 @@ export class MatchSession {
     this.view.setBallHidden(false);
     // Historical positions must not be overwritten by the staged injury/card pose.
     this.view.frameHook = null;
+    // Live first-touch smoothing is unrelated to the historical ball recorded in this clip.
+    this.view.ballGlide.x = this.view.ballGlide.y = this.view.ballGlide.z = 0;
     this.cam.replayKind = 'incident';
     this.cam.replayActors = clip.actors;
     this.cam.replayShot = 'build';
@@ -2700,10 +2703,15 @@ export class MatchSession {
     const az = fr[o.attacker * PF + 1];
     const dz = o.defender >= 0 ? fr[o.defender * PF + 1] : az;
     const midZ = (az + dz) / 2;
-    const back = clamp(13 + Math.abs(az - dz) * 0.55, 13, 30);
+    const radius = Math.hypot(ax - o.lineX, az - dz, this.view.headTop) * 0.5 + 3;
+    const aspect = this.cam.camera?.aspect ?? 16 / 9;
+    const distance = Math.max(20, radius / (Math.tan(30 * Math.PI / 360) * Math.min(1, Math.max(0.2, aspect))) * 1.25);
     this.cam.replayActors = [o.attacker, o.defender].filter((i) => i >= 0);
-    this.cam.replayLens = { x: o.lineX, y: 7 + back * 0.32, z: Math.min(midZ + back, HALF_W + 12), fov: 30,
+    this.cam.replayLens = { x: o.lineX, y: 0.9 + distance * 0.66, z: midZ + distance * 0.74, fov: 30,
       look: { x: (o.lineX + ax) / 2, z: midZ } };
+    // An inspection shot is a new angle, not a dolly through the players and stands during the short hold.
+    this.cam.cut();
+    this.flash.play(0xfbfbf4, 0.28, 0.1);
   }
 
   /** An incident clip is over (played out or skipped): its marks, lens and dimming go with it. */
@@ -2767,24 +2775,33 @@ export class MatchSession {
     // Two shots like TV: the move in real-ish time, then the finish from the goal line in slow-mo: from
     // REPLAY_SLOW_FROM s before the goal, but never while the ball is still more than REPLAY_GOAL_NEAR m out
     // (a long-range strike is seen struck on the wide shot, then arriving on the goal-line one).
-    const at = frames[Math.min(frames.length - 1, Math.floor(idx))];
     const incident = this.replayIncident;
     const release = incident?.releaseIdx;
-    // An offside is judged on one frame: the picture stops on the pass with the line drawn, then runs on to the flag.
-    if (incident?.offside && release !== undefined && !this.incidentFroze && idx >= release) {
-      this.incidentFroze = true;
-      this.incidentFreezeT = OFFSIDE_FREEZE_S;
-      this.replayT = release / 60;
-      idx = release;
-      this.showOffsideLine(incident);
+    const offside = !!incident?.offside && release !== undefined;
+    let frozen = false;
+    let movingDt = dt;
+    if (offside) {
+      // Clamp before drawing: no frame past the pass is shown and then rewound. Fractional time at the release
+      // and hold boundaries is preserved, so 30/60/120 Hz and a delayed render get the same 1.5 s decision beat.
+      const next = advanceOffsideReplay(idx, dt, release, !!this.incidentFroze, this.incidentFreezeT ?? 0, OFFSIDE_FREEZE_S);
+      idx = next.frame;
+      this.replayT = idx / 60;
+      this.incidentFroze = next.froze;
+      this.incidentFreezeT = next.remaining;
+      frozen = next.frozen;
+      movingDt = next.moving;
+      if (next.entered) this.showOffsideLine(incident!);
+      if (next.resumed) {
+        // The line belongs to that exact release pose. Remove it only as footage moves again, then cut cleanly
+        // back to the wide shot; don't fly across the pitch while the clip is already running.
+        this.view.incidentMarks?.foul(incident!.offside!.attacker, incident!.offside!.defender);
+        this.cam.replayActors = incident!.actors;
+        this.cam.replayLens = null;
+        this.cam.cut();
+        this.flash.play(0xfbfbf4, 0.28, 0.1);
+      }
     }
-    const frozen = !!incident && this.incidentFreezeT > 0;
-    if (frozen && (this.incidentFreezeT -= dt) <= 0) {
-      // Back to the wide look for the run of the ball; the rings stay on the two men, the line was that frame's.
-      this.view.incidentMarks?.foul(incident.offside!.attacker, incident.offside!.defender);
-      this.cam.replayActors = incident.actors;
-      this.cam.replayLens = null;
-    }
+    const at = frames[Math.min(frames.length - 1, Math.floor(idx))];
     const reviewRelease = release !== undefined && !incident?.offside && idx >= release - 0.3 * 60 && idx <= release + 0.4 * 60;
     const finish = incident ? reviewRelease || (idx >= incident.slowFrom && idx <= incident.slowTo) : this.cam.replayShot === 'goal' || idx >= this.replayGoalIdx - 20 ||
       (idx >= this.replayGoalIdx - REPLAY_SLOW_FROM * 60 && !this.replayBallFar(at));
@@ -2794,7 +2811,7 @@ export class MatchSession {
     }
     const near = finish;
     const rate = frozen ? 0 : incident ? (near ? INCIDENT_SLOW_RATE : 1) : near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE;
-    this.replayT += dt * rate;
+    if (!offside) this.replayT += dt * rate;
     const lens = this.cam.replayLens;
     if (incident && lens && incident.fouler !== undefined) {
       // The foul lens tightens as the challenge comes in, and stays tight for the fall.
@@ -2806,7 +2823,7 @@ export class MatchSession {
     // Any input skips it: a button, any key, a tap on the picture or a touch button.
     const skip = (btn && !this.prevButtons) || this.anyPress;
     this.prevButtons = btn;
-    if (i >= frames.length - 1 || skip) {
+    if ((i >= frames.length - 1 && !frozen) || skip) {
       this.replay = null;
       this.replayIncident = null;
       if (!incident) this.replayDone = true;
@@ -2839,9 +2856,15 @@ export class MatchSession {
       }
       return;
     }
-    this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * rate);
+    // Both frames must be the release while held, including its discrete pose/ownership channels. Applying
+    // the next frame at alpha0 still selects its discrete data in MatchView, and can change the frozen pose.
+    const a = frames[Math.min(i, frames.length - 1)];
+    const b = frozen ? a : frames[Math.min(i + 1, frames.length - 1)];
+    const alpha = frozen ? 0 : idx - i;
+    const drawTime = offside ? a[BALL_OFS + 9] + (b[BALL_OFS + 9] - a[BALL_OFS + 9]) * alpha : this.time;
+    this.view.apply(a, b, alpha, drawTime, offside ? movingDt : dt * rate);
     if (incident) this.view.incidentMarks?.update(this.view.frame, this.time);
-    this.updateFrameFx(dt * rate);
+    this.updateFrameFx(offside ? movingDt : dt * rate);
   }
 
   /** Is the ball in this replay frame still more than REPLAY_GOAL_NEAR m from the goal it went into? */
@@ -3789,7 +3812,7 @@ export class MatchSession {
         this.view.dimAround((f[a] + f[v]) / 2, (f[a + 1] + f[v + 1]) / 2, FOUL_DIM_RADIUS, FOUL_DIM_ALPHA, clip.actors, lens.x, lens.z);
         return;
       }
-      if (this.replayIncident) for (const i of this.replayIncident.actors) keep.push(i);
+      if (this.replayIncident) for (const i of cam.replayActors) keep.push(i);
       // Replays keep the action (whoever is at the ball; both keepers, the scorer and the defender nearest
       // the ball, always) and, on the low goal-line angle, see through anyone else standing between the
       // lens and the ball (never below REPLAY_MIN_ALPHA).

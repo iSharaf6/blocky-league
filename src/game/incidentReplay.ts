@@ -112,7 +112,11 @@ export class IncidentReplays {
   private queue: IncidentReplay[] = [];
   private foul: PendingFoul | null = null;
   private penalty: PendingPenalty | null = null;
-  private offsidePass: { kickId: number; side: number; player: number; first: number } | null = null;
+  private offsidePass: {
+    kickId: number; side: number; player: number; release: number;
+    /** Keep the original release independently: a very delayed involvement can outlive the live ring buffer. */
+    lead: Float32Array[];
+  } | null = null;
 
   clear(): void {
     this.queue.length = 0;
@@ -202,12 +206,19 @@ export class IncidentReplays {
         this.foul = null;
         const pass = this.offsidePass;
         const watched = pass?.kickId === m.kickId && pass.side === e.side;
-        const lead = watched ? Math.max(LEAD_FRAMES, recorded - pass.first + 1) : LEAD_FRAMES;
+        const lead = watched ? Math.max(LEAD_FRAMES, recorded - pass.release + SHOT_LEAD_FRAMES + 1) : LEAD_FRAMES;
         const who = nameOf(m, e.player);
         const clip = this.capture('offside', 'OFFSIDE REPLAY', buffer, watched ? [e.player, pass.player] : [e.player], false, lead,
           who ? `OFFSIDE ${who}` : 'OFFSIDE');
         if (clip && watched) {
-          clip.releaseIdx = Math.max(0, clip.frames.length - 1 - (recorded - (pass.first + SHOT_LEAD_FRAMES)));
+          const release = clip.frames.length - 1 - (recorded - pass.release);
+          // Never label an unrelated newer frame as the pass. If the live buffer has rolled past it, show the
+          // retained build-up and stop on the original release; the involvement was already seen live.
+          if (release < 0) {
+            clip.frames = pass.lead.map(f => f.slice());
+            clip.actionIdx = clip.frames.length - 1;
+            clip.releaseIdx = clip.actionIdx;
+          } else clip.releaseIdx = release;
           clip.offside = offsideAt(clip.frames[clip.releaseIdx], m, e.side, e.player);
           // (The release is the decision: no slow motion at the flag as well.)
           clip.slowFrom = clip.slowTo = -1;
@@ -230,8 +241,13 @@ export class IncidentReplays {
 
       if (e.type === 'kick') {
         const passer = e.player === undefined ? null : m.players[e.player];
-        const eligible = e.kind === 'pass' || e.kind === 'through' || e.kind === 'lob';
-        this.offsidePass = eligible && passer ? { kickId: m.kickId, side: passer.side, player: passer.idx, first: recorded - SHOT_LEAD_FRAMES } : null;
+        // Passing headers and keeper distributions are also judged by the simulation. Skill knocks emit a
+        // cosmetic kick without changing kickId; they must not erase an actual pass's offside witness.
+        const eligible = e.kind === 'pass' || e.kind === 'through' || e.kind === 'lob' || e.kind === 'header' || e.kind === 'keeper';
+        if (m.kickId !== before.kickId) this.offsidePass = eligible && passer ? {
+          kickId: m.kickId, side: passer.side, player: passer.idx, release: recorded,
+          lead: buffer.snapshot(SHOT_LEAD_FRAMES + 1),
+        } : null;
       }
       if (e.type === 'kick' && e.kind === 'shot') {
         const r = before.restart;

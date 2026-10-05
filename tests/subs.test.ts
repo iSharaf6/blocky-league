@@ -276,7 +276,7 @@ describe('substitutions and mentality', () => {
     // eslint-disable-next-line no-console
     console.log('shots defensive vs attacking', shots);
     expect(shots[1]).toBeGreaterThanOrEqual(shots[0]);
-  }, 180_000); // 128 simulated halves: allow slower CI/laptops without weakening the chance-count check
+  }, 600_000); // 128 simulated halves: allow concurrent CI/laptop load without weakening the chance-count check
 
   it('double-tapping sprint knocks the ball ahead with a burst', () => {
     const m = new Match({

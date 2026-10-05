@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultSave } from '../src/core/save';
-import { _debugState, _resetForTests, _setClientForTests, _setEnvForTests, cloudBoot, cloudUser, completeNativeAuthUrl, flushNow, signInWith, upgradeGuest } from '../src/platform/cloud';
+import { _debugState, _resetForTests, _setClientForTests, _setEnvForTests, authProviders, cloudBoot, cloudUser, completeNativeAuthUrl, flushNow, refreshAuthProviders, signInWith, upgradeGuest } from '../src/platform/cloud';
 import { _resetNativeAuthForTests, authCallback, bootNativeAuth, NATIVE_AUTH_REDIRECT } from '../src/platform/nativeAuth';
 import { inviteMessage, PLAY_URL, shareInvite } from '../src/platform/invite';
 import { ENV, fakeBackend, fakeSession, makeCtx, stubDom, stubStorage } from './cloudFake';
@@ -146,5 +146,86 @@ describe('inviting a friend', () => {
   it('uses the iOS share sheet and includes the actual play link', async () => {
     expect(await shareInvite('ABC2345')).toBe('shared');
     expect(bridges.share).toHaveBeenCalledWith(expect.objectContaining({ url: PLAY_URL, text: expect.stringContaining('ABC2345') }));
+  });
+  it('treats dismissing the iOS sheet as cancellation', async () => {
+    bridges.share.mockRejectedValue(new Error('Share canceled'));
+    expect(await shareInvite()).toBe('canceled');
+  });
+});
+
+describe('live sign-in availability', () => {
+  it('keeps native-only Apple off in the browser, including before the provider check has completed', async () => {
+    Object.assign((globalThis as unknown as { window: object }).window, { Capacitor: { isNativePlatform: () => false } });
+    const be = fakeBackend(); be.signIn(fakeSession());
+    const oauth = vi.fn().mockResolvedValue({ error: null });
+    const link = vi.fn().mockResolvedValue({ error: null });
+    be.client.auth.signInWithOAuth = oauth;
+    be.client.auth.linkIdentity = link;
+    _setClientForTests(be.client);
+    await cloudBoot(makeCtx(defaultSave()));
+    expect(authProviders()).toEqual({ apple: false });
+    expect(await signInWith('apple')).toBe(false);
+    expect(await upgradeGuest('apple')).toBe(false);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ external: { google: true, apple: true, github: false } }))));
+    expect(await refreshAuthProviders()).toEqual({ google: true, apple: false, github: false });
+    expect(await signInWith('apple')).toBe(false);
+    expect(oauth).not.toHaveBeenCalled();
+    expect(link).not.toHaveBeenCalled();
+    expect(bridges.apple).not.toHaveBeenCalled();
+  });
+
+  it('enables web Apple OAuth only with the explicit web flag and an enabled provider', async () => {
+    Object.assign((globalThis as unknown as { window: object }).window, { Capacitor: { isNativePlatform: () => false } });
+    _setEnvForTests({ ...ENV, online: '', appleWeb: 'on' });
+    const be = fakeBackend();
+    const oauth = vi.fn().mockResolvedValue({ error: null });
+    be.client.auth.signInWithOAuth = oauth;
+    _setClientForTests(be.client);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ external: { google: true, apple: true, github: false } }))));
+    expect(await refreshAuthProviders()).toEqual({ google: true, apple: true, github: false });
+    expect(await signInWith('apple')).toBe(true);
+    expect(oauth).toHaveBeenCalledWith({ provider: 'apple', options: { redirectTo: '' } });
+    expect(bridges.apple).not.toHaveBeenCalled();
+    expect(bridges.open).not.toHaveBeenCalled();
+  });
+
+  it('does not open an unconfigured provider or create an account, then picks up server activation', async () => {
+    const be = fakeBackend(); be.signIn(fakeSession());
+    const oauth = vi.fn().mockResolvedValue({ data: { url: 'https://example.supabase.co/auth/v1/authorize?provider=google' }, error: null });
+    be.client.auth.signInWithOAuth = oauth;
+    _setClientForTests(be.client);
+    const local = defaultSave(); local.coins = 6543;
+    await cloudBoot(makeCtx(local));
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ external: { google: false, apple: false, github: false } })));
+    vi.stubGlobal('fetch', fetch);
+    expect(await refreshAuthProviders()).toEqual({ google: false, apple: false, github: false });
+    expect(fetch).toHaveBeenCalledWith(`${ENV.url}/auth/v1/settings`, expect.objectContaining({ headers: { apikey: ENV.key } }));
+    expect(await signInWith('apple')).toBe(false);
+    expect(await signInWith('google')).toBe(false);
+    expect(await upgradeGuest('google')).toBe(false);
+    expect(bridges.apple).not.toHaveBeenCalled();
+    expect(bridges.open).not.toHaveBeenCalled();
+    expect(oauth).not.toHaveBeenCalled();
+    expect(local.coins).toBe(6543);
+    fetch.mockResolvedValue(new Response(JSON.stringify({ external: { google: true, apple: true, github: false } })));
+    expect(await refreshAuthProviders()).toEqual({ google: true, apple: true, github: false });
+    expect(await signInWith('google')).toBe(true);
+    expect(bridges.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps availability unknown on malformed/offline settings and never invents enabled providers', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ external: { google: 'true' } })));
+    vi.stubGlobal('fetch', fetch);
+    expect(await refreshAuthProviders()).toBeNull();
+    expect(authProviders()).toBeNull();
+    fetch.mockRejectedValue(new Error('offline'));
+    expect(await refreshAuthProviders()).toBeNull();
+  });
+
+  it('does not request cloud settings from a portal build', async () => {
+    _setEnvForTests({ ...ENV, portal: 'poki' });
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    expect(await refreshAuthProviders()).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

@@ -8,22 +8,28 @@ The device always keeps its save. Native Game Center / device account creation o
 and publishable key: copy it to `.env.production` after a repository restore. GitHub Pages must receive the same two
 build values through its configured Actions secrets; the template contains no server or OAuth credentials.
 
-## Verified status — 5 October 2026
+## Verified status — 6 October 2026
 
-The existing project `kkumittamjteollyxszd` is `ACTIVE_HEALTHY`. Its public Auth settings returned HTTP 200 and:
-Google **disabled**, Apple **disabled**, GitHub **disabled**, Email **enabled**, anonymous sign-in **disabled**.
-No provider credentials were created or invented. The code and URL scheme are wired; Google/Apple sign-in cannot
-complete until the owner configures these providers. A native Game Center/device account uses the existing edge
-functions instead. Provider sign-in still needs a real-device check after console configuration.
+The existing project `kkumittamjteollyxszd` is `ACTIVE_HEALTHY`. Apple is now **enabled** for native Client ID
+`com.calynx.blockyleague`; manual identity linking is enabled. The Site URL is the published GitHub website, with
+the exact native callback and published website allowlisted as recorded below. Google remains **disabled** while
+OAuth configuration is underway in the dedicated Google project `blocky-league-510713`. GitHub remains disabled;
+email is enabled and anonymous sign-in disabled. No OAuth credentials are stored in the game or this document.
+
+The code and native URL scheme are wired. Native Apple still needs a real-device sign-in check before it is
+described as verified end to end. Browser Apple is separately disabled until its Services ID/OAuth secret setup
+and build opt-in are complete. A native Game Center/device account uses the existing edge functions independently
+of these providers. Build 3 is archived and signed but not uploaded yet; see [RELEASE_STATUS.md](RELEASE_STATUS.md).
 
 ## Redirects
 
-Supabase **Authentication > URL Configuration**:
+Verified Supabase **Authentication > URL Configuration**:
 
 - Site URL: `https://isharaf6.github.io/blocky-league/`
 - Additional redirect: `com.calynx.blockyleague://auth/callback` (exact, no broad wildcard needed).
-- Web redirects: `https://isharaf6.github.io/blocky-league/`; development `http://localhost:5173/` as needed.
-- Enable **Manual linking** if a guest, device or Game Center account will add Google/Apple through `linkIdentity`.
+- Web redirect: `https://isharaf6.github.io/blocky-league/`. Development `http://localhost:5173/` is optional and is
+  not part of this verification.
+- **Manual linking** is enabled so a guest, device or Game Center account can add Google through `linkIdentity`.
 
 The iOS custom scheme is registered in `ios/App/App/Info.plist`; Capacitor's existing SceneDelegate forwards links.
 The App plugin consumes both cold launch URLs and `appUrlOpen`. Google opens in the Capacitor Browser, returns a
@@ -65,6 +71,12 @@ Generate the real OAuth client secret and enter it in Supabase's Apple provider.
 then the native bundle ID, in Client IDs. Apple web OAuth secrets must be renewed every six months; the phone's
 native ID-token path is unaffected by that rotation. No Services ID, Team ID or signing key is invented in this repo.
 
+Only after that web configuration is complete, set the public build flag `VITE_APPLE_WEB_AUTH=on`. It defaults off:
+the browser account panel keeps Apple disabled even if Supabase reports Apple enabled for native ID-token login.
+Native iPhone/iPad Apple sign-in ignores this flag and uses the server provider state. The flag contains no secret;
+OAuth credentials remain exclusively in the provider console. Supply it to web deployment builds when enabling
+web Apple sign-in; portal builds still have no game accounts.
+
 ## Invitations
 
 INVITE FRIENDS is on the own-site/native hub and ACCOUNT panel. The share sheet includes the public playtest URL
@@ -75,6 +87,17 @@ sheet or copies the link. Rewards use the existing server rules: a new account's
 actual App Store URL is available; no App Store app ID has been invented.
 
 ## Validation
+
+Build 3 checks the public `/auth/v1/settings` endpoint whenever the account panel opens. A provider explicitly
+disabled by the server is labeled unavailable and cannot open a broken login. Enabling it is reflected when the
+panel next opens, without a new app build. Offline or malformed responses retain the last known status; they
+never create an account or change the local club. Game Center/device backup remains available independently of
+Google/Apple configuration. Canceling the native invitation sheet is treated as dismissal.
+
+The 6 October 2026 backend check found all six public game tables with RLS enabled and all four edge functions
+active. Empty requests to `device-login` and `gc-login` returned their expected `400 bad_request`, confirming
+the build's public key is accepted without creating users. Anonymous access to the saves endpoint was denied.
+The cloud/auth/sign-in/online regression suites passed all 94 tests after the build 3 changes.
 
 `tests/cloudAuth.test.ts` exercises exact callback validation, cold/warm app returns, one-use PKCE completion,
 existing local progress backup, two established clubs awaiting a choice, Apple nonce and name handling, cancellation,

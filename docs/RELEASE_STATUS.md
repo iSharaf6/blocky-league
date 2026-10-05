@@ -1,14 +1,62 @@
-# TestFlight upload — 6 October 2026
+# TestFlight build 3 upload — 6 October 2026
+
+Version **1.0 (3)** was successfully uploaded to App Store Connect app **6819288055**. Apple accepted the upload
+and is processing build `8477cb6c-da10-4d1d-ba44-ecd4ae32695b`. The archive
+contains all 33 native game assets from the verified iOS bundle, including the developer portrait. Source and ZIP
+fingerprints for all five release packages passed. Build 3 was also installed successfully on EZY (iPhone 15).
+An empty external **Blocky League Playtest** group was created, and updated beta review notes were saved.
+External beta review remains pending; this is not a public App Store release.
+
+Build 3 adds:
+
+- A protected level/daily-gift strip with wrapping phone layouts so the level badge keeps its space.
+- Settings > More links for account saves, Invite Friends and About the Developer. Account overlays retire
+  Settings shortcuts, handle Escape from body/buttons/inputs and return once without leaking listeners.
+- A built-in blocky portrait and About page for the developer, loaded when that page opens.
+- Provider readiness checks when Account opens, explicit unavailable-provider messaging, optional native Apple
+  sign-in and a separate opt-in flag for browser Apple OAuth. Local progress remains available offline.
+- Offside recaps that use the original pass release and smoothly hold/resume the decision frame, with raised
+  pitch marks and settled camera framing.
+
+The final combined menu/account/replay check passed all 244 checks across 12 files. Typecheck passed.
+The wider regression batch passed 1,880 checks with two intentional skips; five long fixtures exceeded their
+runtime deadlines without assertion failures. Their finite test budgets are being corrected and rechecked,
+preserving every seed, sample and assertion. The historical 1,796-check result below covers the earlier
+replay/clock update, not the complete build 3 source.
+
+Live Supabase configuration now enables Apple for native bundle `com.calynx.blockyleague`, enables manual identity
+linking, and sets the published GitHub website as Site URL with the website and exact native callback allowlisted.
+Google remains disabled; a dedicated Google project (`blocky-league-510713`) exists and its OAuth setup is underway.
+Native Apple still needs a real-device sign-in check. Browser Apple requires its separate Services ID/OAuth secret
+setup. No provider credentials or reviewer phone number are stored in this document.
+
+## Successfully uploaded TestFlight build 2 — 6 October 2026
 
 Version **1.0 (2)** was successfully uploaded to App Store Connect app **6819288055** using normal App Store
-Connect distribution. Apple's upload service accepted it and began processing. The beta description, no-sign-in
+Connect distribution. Apple's upload service accepted it and processing completed to **Ready to Submit** for
+external beta review. The beta description, no-sign-in
 review notes and owner-supplied reviewer contact were saved. An empty, manually distributed Internal QA group
 was created; no tester invitations were sent. External beta review has not been submitted yet.
 
 The signed archive includes the app's UserDefaults `CA92.1` privacy manifest. Archive, export and signature checks
 passed; all 32 native game files match the latest verified iOS bundle. Local archive and exported IPA backups are
 in the ignored `release/testflight/1.0-2/` directory. Apple accepted two non-blocking missing-symbol warnings for
-the GoogleMobileAds and UserMessagingPlatform SDKs. Game gameplay/source remains the replay/clock update below.
+the GoogleMobileAds and UserMessagingPlatform SDKs. Build 2 source is `cc6c68e`, tagged
+`testflight-build-2-2026-10-06`; its gameplay also includes `6a01153`, not only the replay/clock update below.
+
+## AI, cinematics and club information baseline included in builds 2 and 3
+
+Commit `6a01153` strengthens challenges against stationary, circling and straight-running carriers, keeps skill
+tells committed, locks out immediate possession theft after a successful challenge, improves keeper positioning
+and AI shot selection, and uses Normal difficulty in the lower Career divisions. Its limitations still include
+the AI's modest shot volume and no new passing patterns; the changes do not certify difficulty or enjoyment on
+every device.
+
+That baseline also adds post-contact foul footage, complete settled penalty replays, clearer foul/card
+presentation, an offside decision freeze, dejected conceding players, coin-toss/commentary/fan/dugout/keeper
+scenes, an early-bath scene and match-ball presentation. Club story cards expose player details and bids;
+season/all-time statistics include keeper numbers, and the halftime screen is rebuilt. These are already in the
+successfully uploaded build 2 and remain in uploaded build 3. Its deterministic network protocol is 11.
 
 ## Incident replays and live match clock — 5 October 2026
 
@@ -47,7 +95,8 @@ This is a development-signed Release build, not a TestFlight upload or App Store
 
 ## Validation and remaining console work
 
-Full regression coverage passed 1,796 checks across 121 files (two intentionally skipped). The four aggregate
+For the 5 October replay/clock update (`36dded7`), full regression coverage passed 1,796 checks across 121 files
+(two intentionally skipped). This historical result precedes `6a01153` and build 3. The four aggregate
 football-metrics checks ran separately; the remaining files were checked together and the enlarged team-style
 sample was rerun successfully. The original discipline density bands use independently measured prior live
 exposure, with additional raw-volume caps. The style check retains its original seeds and all margins, using
@@ -58,12 +107,14 @@ fingerprints and the native signed build passed. The installed process was verif
 Browser visual QA was blocked by the preview URL's browser safety restriction. Automated viewport/resource
 checks and one physical installation do not certify every device's appearance or subjective gameplay/audio feel.
 
-Google and Apple sign-in code is wired, but both providers remain disabled in the existing Supabase project.
-See [AUTH_SETUP.md](AUTH_SETUP.md) for exact provider and redirect settings. Guest/local play remains available.
+Google and Apple sign-in code is wired. Native Apple is now enabled in the existing Supabase project; Google
+setup remains in progress and browser Apple remains disabled pending its separate configuration.
+See [AUTH_SETUP.md](AUTH_SETUP.md) for provider and redirect settings. Guest/local play remains available.
 The 21 Game Center achievement definitions and artwork are ready in [APP_STORE.md](APP_STORE.md); configuring
 them and updating App Privacy in App Store Connect still require console setup. The owner's Apple account is now signed in.
 
-The source backup is on `release/ios-app`, tagged `incident-replays-verified-2026-10-05`. Earlier fallback tags remain,
+Source backups are on `release/ios-app`. The uploaded build 2 is tagged `testflight-build-2-2026-10-06`;
+the earlier replay/clock update is tagged `incident-replays-verified-2026-10-05`. Earlier fallback tags remain,
 including `evergreen-club-verified-2026-10-05` for the build before this replay/clock update.
 For a fresh checkout, copy the public-only `.env.production.example` to `.env.production`, run `npm ci`, then
 `npm run ios` and build the App scheme with the owner's normal Apple signing configuration.
