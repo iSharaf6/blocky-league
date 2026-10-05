@@ -1,4 +1,16 @@
-# Incident replays and live match clock — 5 October 2026
+# TestFlight upload — 6 October 2026
+
+Version **1.0 (2)** was successfully uploaded to App Store Connect app **6819288055** using normal App Store
+Connect distribution. Apple's upload service accepted it and began processing. The beta description, no-sign-in
+review notes and owner-supplied reviewer contact were saved. An empty, manually distributed Internal QA group
+was created; no tester invitations were sent. External beta review has not been submitted yet.
+
+The signed archive includes the app's UserDefaults `CA92.1` privacy manifest. Archive, export and signature checks
+passed; all 32 native game files match the latest verified iOS bundle. Local archive and exported IPA backups are
+in the ignored `release/testflight/1.0-2/` directory. Apple accepted two non-blocking missing-symbol warnings for
+the GoogleMobileAds and UserMessagingPlatform SDKs. Game gameplay/source remains the replay/clock update below.
+
+## Incident replays and live match clock — 5 October 2026
 
 This build was compiled, installed and launched on EZY (iPhone 15). It uses the dedicated `dist-ios` bundle,
 with the Apple sign-in and Game Center entitlements. All 32 copied native web assets match the signed app.
@@ -49,7 +61,7 @@ checks and one physical installation do not certify every device's appearance or
 Google and Apple sign-in code is wired, but both providers remain disabled in the existing Supabase project.
 See [AUTH_SETUP.md](AUTH_SETUP.md) for exact provider and redirect settings. Guest/local play remains available.
 The 21 Game Center achievement definitions and artwork are ready in [APP_STORE.md](APP_STORE.md); configuring
-them and updating App Privacy in App Store Connect still requires the owner's Apple login.
+them and updating App Privacy in App Store Connect still require console setup. The owner's Apple account is now signed in.
 
 The source backup is on `release/ios-app`, tagged `incident-replays-verified-2026-10-05`. Earlier fallback tags remain,
 including `evergreen-club-verified-2026-10-05` for the build before this replay/clock update.

@@ -8,7 +8,17 @@ in docs/AUTH_SETUP.md and the Game Center section below; adding code does not co
 - **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (gem packs,
   Starter Pack, NO ADS, Club Pass, Coin Doubler, PRO bundle). The design is docs/ECONOMY.md (economy v3).
 - **Game Center:** 21 achievements.
-- **Build:** version **1.0**, build **1**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
+- **Build:** version **1.0**, build **2**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
+
+## Current TestFlight build — 6 October 2026
+
+App Store Connect app ID: `6819288055`. Version **1.0 (2)** was successfully uploaded using normal App Store
+Connect distribution, so the build is eligible for external TestFlight review after processing. The beta description
+and reviewer contact were saved in TestFlight. Current review/testing status is recorded in [RELEASE_STATUS.md](RELEASE_STATUS.md).
+
+This beta uses Google test ad units. Google/Apple cloud sign-in providers, Game Center definitions and native
+purchase product configuration remain pending; guest gameplay and local saving are available. These services
+need console setup before release. This upload is not a public App Store submission.
 
 ## How the app makes money
 
@@ -63,7 +73,7 @@ COPPA). The switch is `ADMOB_KID_SAFE` in `src/platform/adConfig.ts`.
    3. Product, Archive.
    4. In the Organizer: Distribute App, App Store Connect, Upload.
 6. **App Store Connect** (<https://appstoreconnect.apple.com>), Apps, the + button, New App:
-   - Platform iOS, the name below, primary language English (Australia).
+   - Platform iOS, the name below, primary language English (U.S.). The current app record uses this locale.
    - Bundle ID `com.calynx.blockyleague`, SKU `blocky-league-ios`.
 
    Then:
@@ -163,6 +173,12 @@ soccer,football,voxel,skills,dribble,cup,penalty,shootout,goal,striker,career,ma
 | iPad 13" | `ipad-13/` (2752x2064): goal, blitz, fulltime |
 
 The app icon comes from the build (`ios-app-icon-1024.png`); App Store Connect takes no separate upload.
+
+## Native privacy manifest
+
+`ios/App/App/PrivacyInfo.xcprivacy` is included in the app resources. It declares the app's UserDefaults access
+with required reason `CA92.1` for the on-device paid receipt journal. This declaration is separate from the App
+Privacy questionnaire below; it does not assert that the app or its SDKs collect no data.
 
 ## App Privacy (the questionnaire)
 
@@ -282,7 +298,7 @@ the web and itch builds still expose their browser-specific features:
 
 ## Later updates
 
-- Bump the version (Xcode, App target, General: Version 1.0.1 or 1.1) and the Build number every upload.
+- Increment the Build number for every new upload. TestFlight iterations can keep marketing version 1.0; bump the marketing version for a new App Store release.
 - **More ad money, ethically:** a neutral age screen at first launch would let players 13 and over get standard
   (still untracked) ads while younger ones stay child-directed. That needs `ADMOB_KID_SAFE` per player, and the
   privacy page and the questionnaire updated to match.
