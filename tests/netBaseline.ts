@@ -26,6 +26,8 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
  * four human rows are still bit-identical; tests/net.test.ts identifies them. Drivers and exact assertions are unchanged.
  * The protocol-10 live-clock revision (2026-10-05c) re-recorded all nineteen rows: dead-ball preparations pause the
  * match clock and no longer inflate added time. Restart timers keep running. Drivers and exact assertions are unchanged.
+ * The protocol-11 revision (2026-10-05d: the AI's play against a human, and the keeper's near post) re-recorded
+ * eighteen rows; aiKo4 is bit-identical. Drivers and exact assertions are unchanged.
  */
 export type Row = [number, number, number, number, number, number];
 

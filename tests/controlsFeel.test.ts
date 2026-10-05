@@ -287,6 +287,9 @@ describe('SKILL: the RAINBOW FLICK does what a rainbow flick does', () => {
     if (perfect) {
       startTell(m, o, p, false, true);
       steps(m, 4, run);
+      // (Winding up a real challenge he turns to face the ball, and a man squared up in front is a NUTMEG: kept
+      // side-on here, as he was placed, because this is the flick's test.)
+      o.facing = Math.abs(lat) > 1 ? Math.PI : Math.PI / 2;
     }
     const evs = steps(m, 1, pad(1, 0, { skill: true, autoSprint: sprint }));
     const x0 = m.ball.pos.x;

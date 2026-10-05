@@ -714,7 +714,7 @@
   font: 400 13px/1.3 var(--round);
 }
 .mk-newscalendar b { font-weight: 400; color: var(--blue-d); }
-.mk-newscalendar small { font: 12px/1.4 system-ui, sans-serif; }
+.mk-newscalendar small { font: 400 13px/1.35 var(--round); letter-spacing: 0.3px; color: var(--ink-2); }
 
 .mk-newsh b {
   font: 700 18px var(--px);
@@ -744,21 +744,23 @@
 }
 
 .mk-newsl li {
-  padding: 10px 10px 9px;
+  padding: 8px 10px 9px;
   background: #fff;
-  border-left: 4px solid var(--cream-2);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--cream-2);
   min-width: 0;
   color: var(--ink);
 }
 
-.mk-newsl li.good { border-color: var(--go); }
-.mk-newsl li.bad { border-color: var(--red); }
+/* The kind of news is the chip (blue: a report, green: good for you, red: bad), never a stripe down the card. */
+.mk-newsl li.good .mk-newsmeta b { background: var(--go-d); }
+.mk-newsl li.bad .mk-newsmeta b { background: var(--red-d); }
 .mk-newsl li.own { color: var(--ink); }
 .mk-newsmeta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; margin-bottom: 5px; }
-.mk-newsmeta b { font: 400 11px/1.2 var(--round); letter-spacing: 0.5px; color: var(--blue-d); }
-.mk-newsmeta span { font: 10px/1.3 system-ui, sans-serif; color: var(--ink-2); }
+.mk-newsmeta b { padding: 3px 6px 2px; background: var(--blue-d); color: #fff; font: 400 11px/1.1 var(--round); letter-spacing: 0.5px; }
+.mk-newsmeta span { font: 400 12px/1.3 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
 .mk-newsmeta .mk-tag { margin-left: auto; }
-.mk-newsl p { margin: 0; font: 14px/1.45 system-ui, sans-serif; overflow-wrap: anywhere; }
+.mk-newsl p { margin: 0; font: 400 15px/1.35 var(--round); letter-spacing: 0.2px; overflow-wrap: anywhere; }
 
 /* ----- tall screens (iPad, desktop): the same panes, a little roomier ----- */
 

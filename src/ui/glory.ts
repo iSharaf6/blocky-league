@@ -20,7 +20,7 @@ import {
   FOCUSES, FOCUS_INFO, MENTOR_TRAIT_AFTER, PUPIL_MAX_AGE, TRAIT_INFO, XP_LEVEL, ageRate, ceilOf, focusOf, growthChart, mentorOf, mentorsFor,
   pupilOf, setFocus, setGroupFocus, setMentor, traitsOf, type FocusId, type GrowPlayer,
 } from '../meta/growth';
-import { contractOf, playerAge } from '../meta/market';
+import { contractOf, playerAge, wageOf } from '../meta/market';
 import { MORALE_HIGH, MORALE_LOW, expectsToPlay, isInjured, moraleOf } from '../meta/morale';
 import { buyNetwork, healNow } from '../meta/premium';
 import {
@@ -32,6 +32,7 @@ import { buzz } from '../platform/haptics';
 import { overall, type Kit, type PlayerDef, type Role } from '../sim/types';
 import { confirmGems, gemPrice } from './gemUi';
 import { pixelIcon } from './pixelIcons';
+import { keyStatsLine, playerCardHtml } from './playerCard';
 import { faceHtml, hydrateFaces } from './preview';
 import { sep } from './text';
 import './glory.css';
@@ -99,21 +100,36 @@ export function playEvents(app: AppContext, root: HTMLElement, st: CareerState, 
   /** The answer just given (the card shows what happened until OK). */
   let done: EventChoice | null = null;
   const kit: Kit | undefined = st.club?.kit;
-  const head = (c: EventCard) => {
-    const who = c.who[0] ? st.club?.squad.find((p) => p.id === c.who[0]) : undefined;
-    const face = who && kit ? `<span class="gl-face">${faceHtml(who, kit, 'md')}</span>` : '';
+  /** The players a card is about, still in the squad (the first one's face is in the header of the answer line). */
+  const peopleOf = (c: EventCard): PlayerDef[] =>
+    c.who.map((id) => st.club?.squad.find((p) => p.id === id)).filter((p): p is PlayerDef => !!p);
+  const head = (c: EventCard, face = true) => {
+    const who = face ? peopleOf(c)[0] : undefined;
+    const faceEl = who && kit ? `<span class="gl-face">${faceHtml(who, kit, 'md')}</span>` : '';
     const light = LIGHT_KINDS.includes(c.kind);
-    return `<header class="gl-top"><span class="gl-ic">${pixelIcon(c.icon, light ? '#26262e' : '#fff', 3)}</span><b class="gl-title">${esc(c.title)}</b>${face}</header>`;
+    return `<header class="gl-top"><span class="gl-ic">${pixelIcon(c.icon, light ? '#26262e' : '#fff', 3)}</span><b class="gl-title">${esc(c.title)}</b>${faceEl}</header>`;
+  };
+  /** A bid's offer: the sell answer says how much (and the card puts it beside his value). */
+  const offerOf = (c: EventCard): number | undefined => {
+    for (const ch of c.choices) for (const fx of ch.fx) if (fx.t === 'sell') return fx.coins;
+    return undefined;
   };
   const show = (c: EventCard) => {
     done = null;
     const coins = app.save.coins;
     const have = gems(app.save);
     wrap.setAttribute('aria-label', c.title);
-    wrap.innerHTML = `<div class="gl-card k-${c.kind}" style="--mc:${EVENT_COLOR[c.kind]}">
-        ${head(c)}
-        <p class="gl-text">${esc(c.text)}</p>
-        <div class="gl-choices n${c.choices.length}">${c.choices.map((ch, i) => choiceHtml(ch, i, coins, have)).join('')}</div>
+    // A card about a player or two shows them (ui/playerCard.ts): who he is, his stats, his season, his deal, before you answer.
+    const people = kit ? peopleOf(c).slice(0, 2) : [];
+    const offer = offerOf(c);
+    const who = people.length
+      ? `<div class="gl-who n${people.length}">${people.map((p, i) => playerCardHtml(st, p, kit!, { slim: people.length > 1, offer: i === 0 ? offer : undefined })).join('')}</div>`
+      : '';
+    const answers = `<p class="gl-text">${esc(c.text)}</p>
+        <div class="gl-choices n${c.choices.length}">${c.choices.map((ch, i) => choiceHtml(ch, i, coins, have)).join('')}</div>`;
+    wrap.innerHTML = `<div class="gl-card k-${c.kind} ${people.length ? 'has-who' : ''}" style="--mc:${EVENT_COLOR[c.kind]}">
+        ${head(c, !people.length)}
+        ${people.length ? `<div class="gl-body">${who}<div class="gl-main">${answers}</div></div>` : answers}
       </div>`;
     hydrateFaces(wrap);
     sfx.click();
@@ -464,7 +480,7 @@ function reportHtml(st: CareerState, coins: number, slot: ScoutSlot): string {
       const trait = traitsOf(f.player)[0];
       return `<div class="fv-row gl-find">
           <span class="mc-role r-${f.player.role}">${f.player.role}</span>
-          <span class="fv-t">${esc(f.player.name)}<small>${tag}${trait ? `${sep()}${TRAIT_INFO[trait].name}` : ''}</small></span>
+          <span class="fv-t">${esc(f.player.name)}<small>${tag}${trait ? `${sep()}${TRAIT_INFO[trait].name}` : ''}</small><small class="pc-keys">${keyStatsLine(f.player)}${sep()}WAGE ${fmt(wageOf(f.player))}</small></span>
           <b class="mc-ovr">${overall(f.player)}</b>
           <button class="btn btn-go fv-mini gl-sign ${why}" data-a="sign" data-i="${i}" aria-label="Sign ${esc(f.player.name)} for ${fmt(f.fee)} coins">SIGN ${coinChip(f.fee)}</button>
         </div>`;

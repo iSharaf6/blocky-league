@@ -75,6 +75,8 @@ export interface Settings {
   colorblind?: boolean;
   /** Quick subs: a card offers a tired player's change, made at the next stoppage (default on; game/quickSub.ts). */
   quickSubs?: boolean;
+  /** Side shows: the commentary cam and the other corner pictures in a match (default on; game/sideShow.ts). */
+  sideShows?: boolean;
   /** ROAD TO GLORY's "how it works" panel has been shown once (ui/career.ts; it stays one tap away on the hub). */
   roadIntroSeen?: boolean;
   /** Menu and HUD text size (Settings > TEXT SIZE; ui/textSize.ts). MEDIUM is the designed size; touch controls, pitch and camera never change. */
@@ -162,6 +164,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (s.stick !== 'floating' && s.stick !== 'fixed') s.stick = 'floating';
   if (typeof s.colorblind !== 'boolean') s.colorblind = false;
   if (typeof s.quickSubs !== 'boolean') s.quickSubs = true;
+  if (typeof s.sideShows !== 'boolean') s.sideShows = true;
   if (typeof s.roadIntroSeen !== 'boolean') s.roadIntroSeen = false;
   if (!TEXT_SIZES.includes(s.textSize as TextSize)) s.textSize = 'medium';
   if (s.ballSkin !== undefined && !(BALL_SKIN_IDS as readonly string[]).includes(s.ballSkin)) s.ballSkin = undefined;
@@ -614,8 +617,10 @@ export function levelOf(xp: number): { level: number; into: number; need: number
 
 /** Titles by level: the first one at level 1, the last from its level on. */
 export const LEVEL_TITLES: readonly { level: number; title: string }[] = [
-  { level: 1, title: 'Sunday Leaguer' },
-  { level: 3, title: 'Park Player' },
+  // No level title may read like a division (Park, District, Sunday, County, National ...): next to the club's real
+  // league on the hub it looked like the club's division was wrong.
+  { level: 1, title: 'Rookie' },
+  { level: 3, title: 'Local Talent' },
   { level: 5, title: 'Rising Star' },
   { level: 7, title: 'First Teamer' },
   { level: 10, title: 'Fan Favourite' },

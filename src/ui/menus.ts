@@ -415,6 +415,8 @@ export interface HalftimeMore {
   quitNote?: string;
   /** Walking off is a defeat: the button and the question say FORFEIT. */
   forfeit?: boolean;
+  /** The ratings so far, best first (the session's): the best player of the half has a line of his own. */
+  ratings?: { idx: number; name: string; side: number; rating: number; goals: number; assists: number }[];
 }
 
 /** A finished match's goal clip (the session's clip API, when the browser can record one). */
@@ -1081,6 +1083,33 @@ export class Menus {
     </div>`;
   }
 
+  /**
+   * Half time's four key numbers as two-sided bars: each side's share in its shirt colour, the numbers at the ends
+   * (possession, shots, on target, passes). Level at nothing is an even bar.
+   */
+  private halfStats(m: Match, kits: [Kit, Kit]): string {
+    const s = m.stats;
+    const total = s.possession[0] + s.possession[1] || 1;
+    const p0 = s.possession[0] + s.possession[1] ? Math.round((s.possession[0] / total) * 100) : 50;
+    const row = (label: string, a: number, b: number, pct = false) => {
+      const t = a + b;
+      const w = t > 0 ? (a / t) * 100 : 50;
+      const lead = a === b ? '' : a > b ? ' l' : ' r';
+      return `<div class="hs-row${lead}">
+        <span class="hs-k">${label}</span>
+        <b class="hs-n a">${a}${pct ? '%' : ''}</b>
+        <div class="hs-bar" role="img" aria-label="${label}: ${a}${pct ? '%' : ''} to ${b}${pct ? '%' : ''}"><i style="width:${w}%;background:${cssHex(kits[0].shirt)}"></i><i style="width:${100 - w}%;background:${cssHex(kits[1].shirt)}"></i></div>
+        <b class="hs-n b">${b}${pct ? '%' : ''}</b>
+      </div>`;
+    };
+    return `<div class="hs-card">
+      ${row('POSSESSION', p0, 100 - p0, true)}
+      ${row('SHOTS', s.shots[0], s.shots[1])}
+      ${row('ON TARGET', s.onTarget[0], s.onTarget[1])}
+      ${row('PASSES', s.passes[0], s.passes[1])}
+    </div>`;
+  }
+
   private scoreHeader(m: Match, kits: [Kit, Kit]): string {
     const scorers = (side: 0 | 1) =>
       m.goals.filter((g) => g.side === side).map((g) => `<li>${g.name}${g.own ? ' (OG)' : ''} ${g.minute}'</li>`).join('');
@@ -1373,32 +1402,56 @@ export class Menus {
   private static subbedOnce = false;
 
   /**
-   * Half time, one screen: the score over the stats (five by two). It offers what the pause menu offers (the owner:
-   * "i cant quit the game during half time ... theres no settings button ... or no controls button"): QUIT (FORFEIT
-   * where walking off is a defeat) top left, where BACK sits on every other screen; CONTROLS and SETTINGS top right;
-   * TACTICS & SUBS and the big SECOND HALF pinned at the bottom. QUIT asks first and says what it costs (`quitNote`).
+   * Half time, the full-time screen's sibling (the owner: "i'm not happy with the half time menu, looks weird asf and
+   * out of place"): the same shell and the same chunky blocks. The score with both crests and the scorers, the best
+   * player so far in a dark block (as man of the match is at full time), four key numbers as two-sided bars
+   * (possession, shots, on target, passes). One tidy row of quick actions at the bottom left, TACTICS & SUBS, CONTROLS,
+   * SETTINGS and QUIT (FORFEIT where walking off is a defeat), and the big SECOND HALF at the bottom right. QUIT asks
+   * first and says what it costs (`quitNote`).
    */
   halftime(m: Match, kits: [Kit, Kit], onContinue: () => void, onTactics?: () => void, more: HalftimeMore = {}): void {
     const quitWord = more.forfeit ? 'FORFEIT' : 'QUIT';
-    const gap = '<span class="mc-top-gap" aria-hidden="true"></span>';
-    const tools = [
-      more.howto ? '<button class="btn btn-white mc-back" data-a="howto">CONTROLS</button>' : '',
-      more.settings ? '<button class="btn btn-white mc-back" data-a="settings">SETTINGS</button>' : '',
+    const quick = [
+      onTactics ? '<button class="btn btn-blue" data-a="tactics">TACTICS &amp; SUBS</button>' : '',
+      more.howto ? '<button class="btn btn-white" data-a="howto">CONTROLS</button>' : '',
+      more.settings ? '<button class="btn btn-white" data-a="settings">SETTINGS</button>' : '',
+      more.quit ? `<button class="btn btn-red hf-quit" data-a="quit">${quitWord}</button>` : '',
     ].join('');
+    const best = more.ratings?.[0];
+    const def = best ? m.players[best.idx]?.def : undefined;
+    const bestKit = best ? kits[best.side === 1 ? 1 : 0] : undefined;
+    const bestLine = best
+      ? [m.teams[best.side === 1 ? 1 : 0].short, best.goals ? `${best.goals} ${best.goals > 1 ? 'GOALS' : 'GOAL'}` : '', best.assists ? `${best.assists} ${best.assists > 1 ? 'ASSISTS' : 'ASSIST'}` : ''].filter(Boolean).join(sep())
+      : '';
+    const bestHtml = best && def && bestKit
+      ? `<div class="ft-motm ht-best" style="--k:${cssHex(bestKit.shirt)}">${faceHtml(def, bestKit)}<span>BEST PLAYER</span><b>${escHtml(best.name)}<small>${bestLine}</small></b><em>${best.rating.toFixed(1)}</em></div>`
+      : '';
+    // Then two more of yours (as full time lists them), if the best player is not yours or there are more.
+    const hs = m.cfg.humanSide;
+    const face = (r: { idx: number; side: number }, cls = '') => {
+      const pd = m.players[r.idx]?.def;
+      const pk = kits[r.side === 1 ? 1 : 0];
+      return pd && pk ? faceHtml(pd, pk, cls) : '';
+    };
+    const next = hs === 0 || hs === 1 ? (more.ratings ?? []).filter((r) => r.side === hs && r !== best).slice(0, 2) : [];
+    const nextHtml = next.length
+      ? `<ul class="ratings">${next.map((r) => `<li>${face(r, 'sm')}<span>${escHtml(r.name)}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>`
+      : '';
     const d = this.mount(`
       <div class="panel-wrap dim shell">
-        <div class="panel mc shell ht-panel">
-          <header class="mc-top hf-top">
-            ${more.quit ? `<button class="btn btn-red mc-back hf-quit" data-a="quit">${quitWord}</button>` : gap}
-            <div class="mc-title"><h2>HALF TIME</h2></div>
-            ${tools ? `<div class="hf-tools">${tools}</div>` : gap}
-          </header>
-          <div class="mc-body ht-body">
-            ${this.scoreHeader(m, kits)}
-            ${this.statsTable(m, kits)}
+        <div class="panel mc shell ft-panel ht-panel">
+          ${shellTop('<span class="verdict half">HALF TIME</span>', 'FIRST HALF', '', '').replace('class="mc-top"', 'class="mc-top hf-top"')}
+          <div class="mc-body ft-body ht-body">
+            <div class="pane ft-match">
+              ${this.scoreHeader(m, kits)}
+              ${bestHtml}${nextHtml}
+            </div>
+            <div class="pane ht-stats">
+              ${this.halfStats(m, kits)}
+            </div>
           </div>
           <div class="mc-actions hf-actions">
-            ${onTactics ? '<button class="btn btn-blue" data-a="tactics">TACTICS &amp; SUBS</button>' : ''}
+            <div class="hf-quick">${quick}</div>
             <button class="btn btn-go btn-lg" data-a="go">SECOND HALF</button>
           </div>
           <div class="quit-ask hf-ask" hidden>
@@ -1410,7 +1463,9 @@ export class Menus {
           </div>
         </div>
       </div>`, 'ht');
+    hydrateFaces(d);
     const title = $(d, '.mc-title h2');
+    const titleHtml = title.innerHTML;
     const ask = $(d, '.hf-ask');
     const parts = [$(d, '.ht-body'), $(d, '.hf-actions')];
     const top = $(d, '.hf-top');
@@ -1421,7 +1476,8 @@ export class Menus {
       // (The header's buttons keep their places, unseen: the title stays centred.)
       top.classList.toggle('asking', on);
       ask.hidden = !on;
-      title.textContent = on ? (more.forfeit ? 'FORFEIT MATCH?' : 'QUIT MATCH?') : 'HALF TIME';
+      if (on) title.textContent = more.forfeit ? 'FORFEIT MATCH?' : 'QUIT MATCH?';
+      else title.innerHTML = titleHtml;
       $<HTMLButtonElement>(d, on ? '[data-a=stay]' : '[data-a=go]').focus();
     };
     const go = () => {
@@ -1889,6 +1945,7 @@ export class Menus {
               <button data-k="commentary"></button>
               <button data-k="colorblind"></button>
               <button data-k="quickSubs"></button>
+              <button data-k="sideShows"></button>
             </div>
             <div class="set-pane set-grid ctl-grid" data-pane="controls" role="tabpanel">
               ${rows.map(ctlRow).join('')}
@@ -2143,7 +2200,7 @@ export class Menus {
 
     const labels: Record<string, string> = {
       sfx: 'SOUND FX', crowd: 'CROWD', music: 'MUSIC', commentary: 'COMMENTARY', colorblind: 'COLOUR BLIND', quality: 'GRAPHICS',
-      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION', quickSubs: 'QUICK SUBS', textSize: 'TEXT SIZE', vibration: 'VIBRATION',
+      camZoom: 'CAMERA', ballSkin: 'BALL', celebration: 'CELEBRATION', quickSubs: 'QUICK SUBS', sideShows: 'EXTRA SCENES', textSize: 'TEXT SIZE', vibration: 'VIBRATION',
     };
     const VIB: HapticLevel[] = ['off', 'light', 'full'];
     const draw = () => {
@@ -2177,7 +2234,7 @@ export class Menus {
           b.innerHTML = `<span>${labels[k]}</span><b class="${lv === 'off' ? 'off' : ''}">${lv.toUpperCase()}</b>`;
           return;
         }
-        const on = k === 'colorblind' ? v === true : k === 'quickSubs' ? v !== false : v;
+        const on = k === 'colorblind' ? v === true : k === 'quickSubs' || k === 'sideShows' ? v !== false : v;
         const val = k === 'quality' ? String(v).toUpperCase() : k === 'camZoom' ? (s.camZoom ?? 'normal').toUpperCase() : on ? 'ON' : 'OFF';
         b.innerHTML = `<span>${labels[k]}</span><b class="${on === false ? 'off' : ''}">${val}</b>`;
         if (k !== 'quality' && k !== 'camZoom') b.setAttribute('aria-pressed', String(!!on));
@@ -2208,6 +2265,7 @@ export class Menus {
         } else if (k === 'colorblind') s.colorblind = !s.colorblind;
         else if (k === 'textSize') s.textSize = nextTextSize(s.textSize);
         else if (k === 'quickSubs') s.quickSubs = s.quickSubs === false;
+        else if (k === 'sideShows') s.sideShows = s.sideShows === false;
         else if (k === 'vibration') s.vibration = VIB[(VIB.indexOf(controlsOf(s).vibration) + 1) % VIB.length];
         else (s as unknown as Record<string, boolean>)[k] = !s[k];
         draw();

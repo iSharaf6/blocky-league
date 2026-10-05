@@ -14,6 +14,7 @@ import { Ball, groundPassSpeed, type BallHit } from './ball';
 import { blitzClear, blitzGoal, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, megaHands } from './blitz';
 import {
   AssistState, autoRun, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAIN, PRESS_GAP, PRESS_LEAD, pressSteal,
+  TOLD_CLEAN, TOLD_REACH,
   standingFoulChance, standingTackleChance, STAND_REACH, STALL_S, tackleClosing, vsHuman, HUMAN_SLIDE_BOOST, HUMAN_SLIDE_MIN,
   HUMAN_SLIDE_REACH, HUMAN_SLIDE_T, humanSlideFoul, MISS_COOLDOWN, MISS_PACE, missCue,
 } from './dribble';
@@ -214,6 +215,8 @@ const HUMAN_KEEPER_BONUS = 0.01;
 const HUMAN_KEEPER_SLOPE = 0.01;
 /** Standing tackles are won a little less often than they used to be (more attacks reach the box). */
 const TACKLE_WIN = 0.85;
+/** A man who has just lost the ball to a tackle, the human's to the AI or the AI's to the human, can't tackle for this long (s). */
+const LOST_LOCK = 0.8;
 /** A standing tackle's jab of the boot lasts this long (s), the foot planted to this share of his pace (see poke). */
 const POKE_T = 0.25;
 const POKE_PLANT = 0.5;
@@ -5995,15 +5998,16 @@ export class Match {
    * longer lunge (STAND_REACH), its own success (standingTackleChance: high from the front or side, lower
    * from behind) and foul (standingFoulChance: rare from the front) odds, a lighter penalty for missing.
    * Tackles on the human's carrier go through carrierGuard (difficulty, his dribbling, shielding, a skill's
-   * protection window).
+   * protection window). `told` (0: not one): the challenge a tell led into, at the human's man, which comes off
+   * `told` of the time whatever the dice above say (dribble.ts toldTackleChance: a tell is a promise).
    */
-  tryTackle(p: Player, c: Player, aggression: number, assisted = false, lunge = true): void {
+  tryTackle(p: Player, c: Player, aggression: number, assisted = false, lunge = true, told = 0): void {
     if (p.tackleCooldown > 0 || p.state !== 'move' || p.sentOff || c.sentOff) return;
     p.tackleCooldown = 0.55;
     const b = this.ball;
     // (Never out of a keeper's hands.)
     if (b.owner !== c.idx || b.held) return;
-    if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) > (assisted ? STAND_REACH : 1.15)) return;
+    if (dist2(p.footX(), p.footZ(), b.pos.x, b.pos.z) > (assisted ? STAND_REACH : told > 0 ? TOLD_REACH : 1.15)) return;
     if (this.cfg.mode === 'blitz' && blitzTackle(this, p, c)) return;
     const def = p.stat.defending / 100;
     const drib = c.stat.dribbling / 100;
@@ -6042,12 +6046,23 @@ export class Match {
     chance *= carrierGuard(this, p, c);
     // (Dynamic difficulty: the AI's tackle on the human's carrier is that much less sure.)
     if (this.isHumanControlled(c) && !idleBall) chance *= 1 - DDA_TACKLE * this.assistEase(p.side);
+    // (Out of a tell he ignored: the promised challenge, with its own odds and the ease already in them.)
+    if (told > 0 && !assisted) chance = told;
     if (this.rng.chance(chance)) {
       this.stats.tackles[p.side]++;
       this.events.push({ type: 'tackle', by: p.idx, won: true, slide: false });
       if (assisted && this.isHumanControlled(p)) this.events.push({ type: 'tackleCue', by: p.idx, cue: 'won' });
       c.kickCooldown = 0.45;
       c.stumbleT = Math.max(c.stumbleT, STUMBLE_LOST);
+      // The human's man who has just had it taken off him is beaten for a moment, as an AI man he beats is
+      // (beatDefender's 0.6 s): he can't jab it straight back off the winner's first touch. (Two in five of the AI's
+      // spells against the casual bot ended within a second, to the man it had just tackled.)
+      // (And the AI man the human has just robbed, the same: with the ball in his reach he would go straight back in
+      // for it, ai.ts inReach, before the winner had taken a touch.)
+      if (this.isHumanControlled(c) !== this.isHumanControlled(p)) {
+        c.tackleCooldown = Math.max(c.tackleCooldown, LOST_LOCK);
+        c.robbedT = LOST_LOCK;
+      }
       this.poke(p, b.pos.x, b.pos.z);
       // A deliberate human standing tackle hooks the ball into his control. A successful input used to
       // scatter it at random after saying WON, so the carrier could collect it back before our jab ended.
@@ -6056,7 +6071,7 @@ export class Match {
       // On the flank an automatic poke often just knocks it into touch (the nearer the line, the likelier).
       const wz = Math.abs(c.pos.z) - (HALF_W - WING_TOUCH);
       const touch = !controlledWin && wz > 0 && this.rng.chance(WING_POKE_TOUCH * clamp(wz / 5, 0.35, 1));
-      if (controlledWin || (!touch && this.rng.chance((assisted ? ASSISTED_CLEAN : 0.35) + def * 0.3))) {
+      if (controlledWin || (!touch && this.rng.chance(told > 0 ? TOLD_CLEAN : (assisted ? ASSISTED_CLEAN : 0.35) + def * 0.3))) {
         // Clean: the tackler comes away with it.
         p.kickCooldown = 0;
         b.vel.x = p.vel.x;
@@ -6069,8 +6084,12 @@ export class Match {
       const dz = b.pos.z - c.pos.z;
       const dl = Math.hypot(dx, dz) || 1;
       const sp = 3 + this.rng.next() * 4;
-      b.vel.x = ((dx / dl) * 0.5 + Math.cos(p.facing) * 0.5) * sp + this.rng.gauss();
-      b.vel.z = ((dz / dl) * 0.5 + Math.sin(p.facing) * 0.5) * sp + this.rng.gauss();
+      // (The promised challenge that doesn't come away with it knocks it on THROUGH him, the way the lunge was going:
+      // half of it used to go the way the ball lay off his foot, which is his run, and a sprinting carrier ran on to
+      // his own lost ball.)
+      const own = told > 0 ? 0 : 0.5;
+      b.vel.x = ((dx / dl) * own + Math.cos(p.facing) * (1 - own)) * sp + this.rng.gauss();
+      b.vel.z = ((dz / dl) * own + Math.sin(p.facing) * (1 - own)) * sp + this.rng.gauss();
       if (touch) {
         b.vel.z = Math.sign(c.pos.z) * (7 + this.rng.next() * 4);
         b.vel.x *= 0.5;

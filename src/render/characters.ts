@@ -471,6 +471,9 @@ function buildHead(look: Look, hairLook?: string): THREE.BufferGeometry {
   return meshVoxels(g, { scale: VU, pivot: [H / 2 + OX, 0, H / 2 + OZ] });
 }
 
+/** A conceding player slower than this (m/s) is standing with it: bent double, or the keeper on his knees. */
+const DEJECTED_STILL = 0.9;
+
 export interface PoseInput {
   state: number; // PSTATE code
   stateT: number;
@@ -490,9 +493,11 @@ export interface PoseInput {
   look: number;
   /** Smoothed turn rate, rad/s (+ = turning left). */
   turn: number;
+  /** Sent off (drawn as `dejected`): he keeps his hands on his head; a side that has just conceded does not. */
+  sentOff?: boolean;
   /** Referee signal: right arm raised. */
   signal?: boolean;
-  /** Which signal: 0 arm raised (free kick / offside), 1 advantage (both arms forward), 2 card held high. */
+  /** Which signal: 0 arm raised (free kick / offside), 1 advantage (both arms forward), 2 card held high, 3 pointing to the spot. */
   signalKind?: number;
   /**
    * Seconds since the last pose (drives the cross-fades; 0 = a cut: the new pose is shown as it is). When
@@ -585,6 +590,17 @@ function isAction(key: number): boolean {
   // (A header while running is the move state's sub-pose 1; a skill move reads from its first frame too.)
   return state === PSTATE.kick || state === PSTATE.slide || state === PSTATE.dive || state === PSTATE.skill ||
     ((state === PSTATE.move || state === PSTATE.stand) && (key & 31) === 1);
+}
+
+/** A footballer's posable parts (Footballer.rig): the hip pivot, the torso on it, and the head, arms and legs. */
+export interface FootballerRig {
+  body: THREE.Object3D;
+  torso: THREE.Object3D;
+  head: THREE.Object3D;
+  armL: THREE.Object3D;
+  armR: THREE.Object3D;
+  legL: THREE.Object3D;
+  legR: THREE.Object3D;
 }
 
 export class Footballer {
@@ -818,7 +834,7 @@ export class Footballer {
       const st = Math.round(p.celebrate);
       // The iconic styles (CELEB.knee and up) own their locomotion: one key whatever the speed.
       sub = st >= CELEB.knee ? Math.min(31, 1 + st) : p.speed < 1.2 ? 1 + Math.max(0, st) : 0;
-    }
+    } else if (p.state === PSTATE.dejected) sub = p.sentOff ? 3 : p.speed < DEJECTED_STILL ? (p.keeper ? 2 : 1) : 0;
     if (p.signal) sub = 8 + (p.signalKind ?? 0);
     return p.state * 32 + sub;
   }
@@ -1104,11 +1120,46 @@ export class Footballer {
       }
       case PSTATE.dejected: {
         this.locomotion(p, time, dt, ph, run, swing);
-        // Hands on head.
-        head.rotation.z = -0.25;
-        torso.rotation.z = -0.08;
-        aL.rotation.set(-0.95, 0, 2.55);
-        aR.rotation.set(0.95, 0, 2.55);
+        // Beaten, and it shows from the stands: the head drops and the arms stay DOWN (hands on the head put both
+        // arms in the air, which at this size read as cheering the goal he had just conceded).
+        if (p.sentOff) {
+          // Sent off: hands on his head, as he always was (nobody mistakes the man walking off for a celebration).
+          head.rotation.z = -0.25;
+          torso.rotation.z = -0.08;
+          aL.rotation.set(-0.95, 0, 2.55);
+          aR.rotation.set(0.95, 0, 2.55);
+          break;
+        }
+        const still = p.speed < DEJECTED_STILL;
+        head.rotation.z = -0.5;
+        if (p.keeper && still) {
+          // On his knees, slapping the turf.
+          const slap = Math.max(0, Math.sin(time * 6.5));
+          body.position.y = HIP_Y * 0.5;
+          lL.rotation.set(0.1, 0, -1.4);
+          lR.rotation.set(-0.1, 0, -1.4);
+          torso.rotation.z = -0.55 - slap * 0.12;
+          aL.rotation.set(-0.3, 0, 0.75);
+          aR.rotation.set(0.3, 0, 0.75 + slap * 0.75);
+          break;
+        }
+        const kind = this.group.id % 3;
+        if (still && kind === 0) {
+          // Bent double, hands on his knees.
+          torso.rotation.z = -0.8;
+          aL.rotation.set(-0.12, 0, 0.62);
+          aR.rotation.set(0.12, 0, 0.62);
+        } else if (kind === 1) {
+          // Hands on hips, elbows out, staring at the grass.
+          torso.rotation.z = -0.2;
+          aL.rotation.set(-0.62, 0, -0.3);
+          aR.rotation.set(0.62, 0, -0.3);
+        } else {
+          // Shoulders slumped, arms hanging.
+          torso.rotation.z = -0.3;
+          aL.rotation.set(-0.06, 0, 0.16);
+          aR.rotation.set(0.06, 0, 0.16);
+        }
         break;
       }
       default:
@@ -1130,6 +1181,12 @@ export class Footballer {
         aL.rotation.set(-0.15, 0, 1.2);
         torso.rotation.z = 0.06;
         head.rotation.z = 0.12;
+      } else if (kind === 3) {
+        // Penalty: one arm straight out at the spot (he has turned to face it), the other at his side.
+        aR.rotation.set(0.05, 0, 1.5);
+        aL.rotation.set(-0.1, 0, 0);
+        torso.rotation.z = -0.06;
+        head.rotation.z = 0;
       } else {
         aR.rotation.set(0.2, 0, 3.0);
         head.rotation.z = 0.1;
@@ -1572,6 +1629,14 @@ export class Footballer {
    */
   get headAnchor(): THREE.Object3D {
     return this.head;
+  }
+
+  /**
+   * His posable parts, for a staged side show that poses him itself and never calls pose() (render/sideStage.ts: the
+   * commentators at their desk, a fan in his seat). Ask once and keep it: a new object each time.
+   */
+  get rig(): FootballerRig {
+    return { body: this.body, torso: this.torso, head: this.head, armL: this.armL, armR: this.armR, legL: this.legL, legR: this.legR };
   }
 
   /** He wears his own headgear look (the captain): a roaming copy would only double it. */

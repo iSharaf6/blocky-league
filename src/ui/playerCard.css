@@ -1,0 +1,156 @@
+/*
+ * The player card (ui/playerCard.ts): the same chunky blocks as the transfer market's detail card: ink borders, cream
+ * cells, the pixel font on the numbers, Lilita on the words. Small enough to sit beside a story card's answers on a
+ * phone in landscape (852x393 and 667x375) without anything scrolling.
+ */
+
+.pc {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  min-width: 0;
+  padding: 8px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--cream-2);
+  color: var(--ink);
+}
+
+.pc-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.pc-face { flex: none; display: grid; }
+.pc-face .face { --fs: 44px; }
+
+.pc-id { display: grid; gap: 3px; min-width: 0; }
+
+.pc-id b {
+  font: 400 18px/1.05 var(--round);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pc-id > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font: 400 12px var(--round);
+  letter-spacing: 0.5px;
+}
+
+.pc-id .mc-role { font-size: 12px; padding: 3px 4px 2px; min-width: 26px; }
+.pc-id em { min-width: 0; font-style: normal; color: var(--ink-2); white-space: nowrap; }
+.pc-id em.hurt { color: var(--red-d); }
+
+.pc-ovr {
+  display: grid;
+  justify-items: center;
+  min-width: 50px;
+  padding: 3px 6px 3px;
+  background: var(--ink);
+  color: var(--yellow);
+}
+
+.pc-ovr small { font: 400 10px/1.1 var(--round); letter-spacing: 1px; color: var(--cream); }
+.pc-ovr b { font: 700 22px/1.05 var(--px); }
+.pc-ovr i { font: 400 10px/1.2 var(--round); font-style: normal; letter-spacing: 0.5px; color: var(--cream); white-space: nowrap; }
+
+/* Key stats: the number over a bar. */
+.pc-bars {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.pc-bar {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: space-between;
+  align-items: baseline;
+  row-gap: 2px;
+  padding: 2px 5px 4px;
+  background: var(--cream);
+}
+
+.pc-bar small { font: 400 11px var(--round); letter-spacing: 1px; color: var(--ink-2); }
+.pc-bar b { font: 700 13px var(--px); }
+.pc-bar > i { grid-column: 1 / -1; display: block; height: 5px; background: var(--cream-2); }
+.pc-bar > i i { display: block; height: 100%; background: var(--blue); }
+
+.pc-cap {
+  margin: 1px 0 -2px;
+  font: 400 10px/1 var(--px);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+}
+
+.pc-cells {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.pc-cells.offer { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.pc-cell {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 1px;
+  min-width: 0;
+  padding: 3px 2px 2px;
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.pc-cell small {
+  max-width: 100%;
+  font: 400 10px/1.1 var(--round);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.pc-cell b {
+  max-width: 100%;
+  font: 700 13px/1.2 var(--px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pc-cell.word b { font: 400 13px/1.2 var(--round); letter-spacing: 0.5px; }
+.pc-cell.word .m0 { color: var(--red-d); }
+.pc-cell.word .m2 { color: var(--go-d); }
+.pc-cell.avg b { color: var(--blue-d); }
+.pc-cell.bid { background: var(--yellow); }
+.pc-cell.bid small { color: var(--ink); }
+.pc-cell.bid b { font-size: 15px; }
+.pc-cell.up b { color: var(--go-d); }
+.pc-cell.down b { color: var(--red-d); }
+
+/* Two cards stacked beside the answers: the slim card is all head, key stats and this season. */
+.pc.slim { gap: 4px; padding: 6px 8px; }
+.pc.slim .pc-face .face { --fs: 36px; }
+.pc.slim .pc-id b { font-size: 16px; }
+.pc.slim .pc-ovr b { font-size: 18px; }
+.pc.slim .pc-bar { padding: 1px 5px 3px; }
+.pc.slim .pc-cap { display: none; }
+
+@media (max-height: 380px) {
+  .pc { gap: 4px; padding: 6px 8px; }
+  .pc-face .face { --fs: 38px; }
+  .pc-id b { font-size: 16px; }
+  .pc-ovr b { font-size: 19px; }
+  .pc-bar { padding: 1px 5px 3px; }
+  .pc-cell { padding: 2px 2px 1px; }
+}
+
+/* A list row's second caption: the key stats, big enough to read on a phone. */
+.fv-row .fv-t small.pc-keys { font: 400 11px/1.15 var(--round); letter-spacing: 0.5px; color: var(--blue-d); }

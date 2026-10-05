@@ -66,6 +66,14 @@ Every chore gets a one-tap helper:
   injured out)
 - player development: ALL DEFENDERS (one training focus for a whole position) and AUTO MENTOR (MY CLUB > TRAIN > GROW)
 - decisions: event cards come one at a time with two or three answers, each saying what it does; never a spreadsheet
+- decisions about a player: his card is on the screen where you decide (ui/playerCard.ts): face, age, position, OVR and
+  potential, key stats as bars, this season's apps, goals, assists and average, wage, years, value and morale. A bid
+  shows the offer beside his value. A list row of a signing (scout finds, the academy) carries his key stats and wage.
+- the squad's numbers: MY CLUB > STATS has the leaders (top scorer, assists, appearances, best average), a SEASON / ALL
+  TIME switch, and each player's apps, starts, minutes, goals, assists, rating, cards and man of the match (keepers:
+  clean sheets, saves, goals conceded, penalties saved). meta/stats.ts keeps them on the players.
+- half time is full time's sibling (the same shell): the score, the best player, four two-sided bars, one row of quick
+  actions, one big SECOND HALF
 - the ground: the best part to build next starts selected (MY CLUB > STADIUM), so BUILD is one tap
 
 ## 6. Less to read

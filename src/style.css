@@ -1289,6 +1289,14 @@ kbd {
 }
 .hud-banner.on.against .bn-title i { color: #ffb4ae; }
 .hud-banner.small .bn-title { font-size: clamp(38px, 7vw, 90px); }
+/* A foul's decision ("FOUL" / "PENALTY!" and its reason line): the lower third, clear of the radar, so the man on the
+   floor in the middle of the picture is not behind the words. */
+.hud-banner.foul {
+  align-content: end;
+  bottom: max(24%, calc(env(safe-area-inset-bottom) + 84px));
+  gap: 8px;
+}
+.hud-banner.small.foul .bn-title { font-size: clamp(34px, 6vw, 72px); }
 .hud-banner.card .bn-title i { color: var(--yellow); }
 .hud-banner.card.red .bn-title i { color: var(--red); }
 /* Cards: a compact plate (title + who) in the top ~20% of the screen: the top band beside the score bug in
@@ -1788,6 +1796,24 @@ kbd {
   background: rgba(38, 38, 46, 0.85);
   padding: 6px 9px 5px;
   box-shadow: 0 3px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* An incident clip's one line ("FOUL BY 5 CINDER"): the event flag's ink on yellow, under the badge, off the players. */
+.hud-replay .rp-cap {
+  justify-self: start;
+  font: 400 20px / 1 var(--round);
+  font-style: normal;
+  letter-spacing: 1px;
+  color: var(--ink);
+  background: var(--yellow);
+  padding: 7px 11px 6px;
+  box-shadow: 0 4px 0 var(--yellow-d), 0 7px 0 rgba(0, 0, 0, 0.2);
+  white-space: nowrap;
+}
+
+.hud-replay .rp-cap:empty,
+.hud-replay.skip-only .rp-cap {
+  display: none;
 }
 
 @keyframes blink {

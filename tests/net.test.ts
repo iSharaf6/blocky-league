@@ -70,27 +70,33 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * preparations preserve match time, paused breaks no longer inflate the board, and first-match AI penalties use
  * a finite preparation timer. AI missed challenges commit fewer discretionary fouls over the extra live play.
  * All existing drivers and exact six-value comparisons are unchanged.
+ * Revision 2026-10-05d (NET_VERSION 11) re-recorded eighteen rows for the AI's play against a human (a tell's
+ * challenge is a real one, any man in reach goes for the ball, a carrier going nowhere is read, the man just robbed
+ * is locked out for a moment, the AI works it into the box) and for the keeper who holds his near post against a man
+ * by the byline, which is every keeper's and so moves the AI-only rows too. aiKo4 is bit-identical; aiKo1 and aiKo7
+ * keep their end hash, steps, score and shootout flag (only the fold of the mid-match hashes moved). Drivers and exact
+ * six-value comparisons are unchanged.
  */
 const BEFORE: Record<string, Row> = {
-  aiClassic: [1692730077,2540761702,22259,1,2,0],
-  aiBlitz: [3113786036,1120146861,13152,0,1,0],
-  aiStyles: [2160647663,2886317730,13987,0,4,0],
-  botSide0: [2052503412,2118997874,18098,4,0,0],
-  botPerks: [207450297,2195394920,13042,5,1,0],
-  botFirstMatch: [2900774663,2213792568,12764,4,0,0],
-  fuzzSide1: [4059192742,1936973199,12399,0,0,0],
-  fuzzBlitz0: [2741706569,3366962741,12723,0,0,0],
-  fuzzBlitzPerks1: [125249555,242276922,12575,4,0,0],
-  penTaker0: [1974713450,1241394489,8709,0,2,0],
-  penTaker1Low: [2061481544,2756380985,9049,1,1,0],
-  penTimeout1: [3120581617,3984946339,9106,3,1,0],
-  penKeeper1: [974526092,1593215134,8371,1,0,0],
-  ko1: [1234737633,3356200760,3797,2,0,0],
-  ko3: [2125811347,3746667378,6665,0,0,1],
-  ko6: [1788754189,4091486236,4931,0,0,1],
-  aiKo1: [4226903564,3132780472,5523,0,0,1],
+  aiClassic: [2274576712,2001976599,22281,1,3,0],
+  aiBlitz: [3498904181,3872199542,13237,0,1,0],
+  aiStyles: [2368260632,1524789925,13987,0,4,0],
+  botSide0: [1194897642,1934951311,16504,2,0,0],
+  botPerks: [3765213911,457160814,12639,3,1,0],
+  botFirstMatch: [1867531205,2633510178,13597,4,0,0],
+  fuzzSide1: [2286900221,4090236419,12761,2,0,0],
+  fuzzBlitz0: [2322646181,2825716380,12128,0,0,0],
+  fuzzBlitzPerks1: [2457570559,1657355575,12516,3,0,0],
+  penTaker0: [230134424,1679243620,8561,0,1,0],
+  penTaker1Low: [4215701377,3891728656,8382,2,1,0],
+  penTimeout1: [1847486781,1849496566,8516,0,1,0],
+  penKeeper1: [2775677013,937631817,8082,1,0,0],
+  ko1: [3373257372,3758036654,5327,0,0,1],
+  ko3: [1835714631,298038049,5204,0,0,1],
+  ko6: [1820804025,1225392963,4945,0,0,1],
+  aiKo1: [4226903564,1665530653,5523,0,0,1],
   aiKo4: [3747054070,2960515602,4095,0,1,0],
-  aiKo7: [444176009,1009795327,5463,0,0,1],
+  aiKo7: [444176009,4154892212,5463,0,0,1],
 };
 
 describe('single-player stays bit-identical', () => {

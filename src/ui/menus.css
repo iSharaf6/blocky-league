@@ -317,23 +317,38 @@
 .panel.mc.shell .st-row span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
 .panel.mc.shell .st-bar { height: 10px; }
 
-/* Half time: the score over the stats, five by two. */
-.panel.ht-panel.shell .ht-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: auto; align-content: safe center; gap: 14px; }
-.panel.ht-panel.shell .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(5, auto); grid-auto-flow: column; column-gap: 14px; row-gap: 5px; }
-.panel.ht-panel.shell .stats .st-row:nth-child(n + 6) { border-left: 3px solid var(--cream-2); padding-left: 12px; }
+/* Half time, full time's sibling: the same two panes (the match on the left, the numbers on the right), the same dark
+   block for the best player, the quick actions in one row bottom left and the big SECOND HALF bottom right. */
+.panel.ht-panel.shell .ft-body { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; }
+.panel.ht-panel.shell .ft-match { gap: 10px; }
+.panel.ht-panel.shell .ft-match .final { flex: none; }
+.panel.ht-panel.shell .ht-best { flex: none; }
+.panel.ht-panel.shell .ft-match .ratings { flex: none; gap: 4px; margin: 0; }
+.panel.mc.shell .mc-title h2 .verdict.half { color: var(--blue-d); }
+.panel.ht-panel.shell .hf-top.asking .mc-title span { display: none; }
 
-/* Half time's header: QUIT (FORFEIT) where BACK sits, CONTROLS and SETTINGS on the right; the question that QUIT asks
-   takes the body's place (one screen, nothing scrolls). */
-.panel.ht-panel.shell .hf-top .btn { min-height: 40px; padding: 8px 12px 6px; font-size: 13px; letter-spacing: 1px; white-space: nowrap; }
-.panel.ht-panel.shell .hf-tools { display: flex; gap: 8px; justify-content: flex-end; }
-.panel.ht-panel.shell .hf-top.asking .btn { visibility: hidden; }
-/* (The title in the middle of the screen, whatever the two sides weigh.) */
-.panel.ht-panel.shell > .hf-top { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
-.panel.ht-panel.shell .hf-top > :first-child { justify-self: start; }
-.panel.ht-panel.shell .hf-top > :last-child { justify-self: end; }
-/* (SECOND HALF is the thing to do next: the biggest and brightest button on the screen.) */
-.panel.ht-panel.shell .hf-actions .btn-blue { min-height: 44px; padding: 9px 16px 7px; font-size: 14px; letter-spacing: 1px; }
-.panel.ht-panel.shell .hf-actions .btn-lg { min-width: 280px; min-height: 54px; font-size: 22px; letter-spacing: 2px; }
+/* The four key numbers as two-sided bars: the label on top, each side's number at its end of the bar. */
+.panel.ht-panel.shell .ht-stats { min-height: 0; }
+.hs-card {
+  flex: 1 1 auto; min-height: 0; display: grid; align-content: space-evenly; gap: 6px; padding: 8px 12px 10px;
+  background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2);
+}
+.hs-row { display: grid; grid-template-columns: 58px minmax(0, 1fr) 58px; grid-template-areas: 'k k k' 'a bar b'; align-items: center; row-gap: 3px; column-gap: 8px; }
+.hs-k { grid-area: k; text-align: center; font: 400 11px / 1 var(--px); letter-spacing: 1px; color: var(--ink-2); }
+.hs-n { font: 700 20px / 1 var(--px); color: var(--ink-2); }
+.hs-n.a { grid-area: a; text-align: left; }
+.hs-n.b { grid-area: b; text-align: right; }
+.hs-row.l .hs-n.a, .hs-row.r .hs-n.b, .hs-row:not(.l):not(.r) .hs-n { color: var(--ink); }
+.hs-bar { grid-area: bar; display: flex; height: 18px; background: var(--cream-2); border: 3px solid var(--ink); }
+.hs-bar i { display: block; flex: none; height: 100%; }
+.hs-bar i:first-child { border-right: 3px solid var(--ink); }
+
+/* The bottom row: four quick actions together on the left, SECOND HALF (the thing to do next: the biggest and
+   brightest button on the screen) on the right. The question QUIT asks takes the body's place (one screen). */
+.panel.ht-panel.shell .hf-actions { justify-content: flex-end; gap: 10px; }
+.panel.ht-panel.shell .hf-quick { display: flex; align-items: center; gap: 8px; margin-right: auto; min-width: 0; }
+.panel.ht-panel.shell .hf-quick .btn { min-height: 44px; padding: 9px 12px 7px; font-size: 13px; letter-spacing: 1px; white-space: nowrap; }
+.panel.ht-panel.shell .hf-actions .btn-lg { flex: none; min-width: 240px; min-height: 54px; font-size: 22px; letter-spacing: 2px; }
 .panel.ht-panel.shell .hf-ask { flex: 1 1 auto; min-height: 0; display: grid; align-content: center; justify-items: center; gap: 18px; }
 .panel.ht-panel.shell .hf-ask[hidden],
 .panel.ht-panel.shell .ht-body[hidden],
@@ -347,9 +362,18 @@
 #ui:has(> .screen.ht) > .menu-toast { top: calc(max(6px, env(safe-area-inset-top)) + 50px); bottom: auto; }
 
 @media (max-width: 720px) {
-  .panel.ht-panel.shell .hf-top .btn { padding: 8px 9px 6px; font-size: 12px; letter-spacing: 0.5px; }
-  .panel.ht-panel.shell .hf-tools { gap: 6px; }
-  .panel.ht-panel.shell .hf-actions .btn-lg { min-width: 230px; font-size: 20px; }
+  .panel.ht-panel.shell .hf-actions { gap: 6px; }
+  .panel.ht-panel.shell .hf-quick { gap: 5px; }
+  .panel.ht-panel.shell .hf-quick { gap: 4px; }
+  .panel.ht-panel.shell .hf-quick .btn { padding: 9px 7px 7px; font-size: 12px; letter-spacing: 0; }
+  .panel.ht-panel.shell .hf-actions .btn-lg { min-width: 0; padding-left: 12px; padding-right: 12px; font-size: 17px; letter-spacing: 1px; }
+  .hs-row { grid-template-columns: 46px minmax(0, 1fr) 46px; }
+  .hs-n { font-size: 17px; }
+}
+
+@media (max-height: 380px) {
+  .hs-card { gap: 4px; padding: 6px 10px 8px; }
+  .hs-bar { height: 16px; }
 }
 
 /* Full time: the match on the left (the score, then man of the match and the stats in a list), what you earned on

@@ -14,10 +14,12 @@ import { boardView, confidenceWord, seasonResults } from '../meta/board';
 import { COMP_FINISH, COMP_NAMES, CONT_FINAL_AFTER, CONT_GROUP_AFTER, CONT_SF_AFTER, compClub, fixtureWinner, groupTable, type Competition, type CompFixture } from '../meta/comps';
 import { LEGACY_PERKS, canStartAsLegend, legacyLevel, nextPerk } from '../meta/legacy';
 import { CHEMISTRY_NAMES, MORALE_NAMES, captainOf, chemistry, prospectCeiling, seasonTopScorer, type LifePlayer, type MatchFacts } from '../meta/life';
+import type { MatchStat } from '../meta/stats';
 import { seasonHeadlines } from '../meta/events';
 import { partnerships, squadMorale, teamMood } from '../meta/morale';
 import { headlinesHtml, soonHtml, storyHtml } from './glory';
-import { playerAge, playerPotential } from '../meta/market';
+import { playerAge, playerPotential, wageOf } from '../meta/market';
+import { keyStatsLine } from './playerCard';
 import { takeMoment, type StoryMoment } from '../meta/story';
 import type { MatchResult } from '../game/matchSession';
 import { buzz } from '../platform/haptics';
@@ -81,7 +83,7 @@ function academySection(st: CareerState): string {
   const rows = ps
     .map((p, i) => `<div class="fv-row fv-prospect">
         <span class="mc-role r-${p.role}">${p.role}</span>
-        <span class="fv-t">${esc(p.name)}<small>AGE ${playerAge(p)}${sep()}UP TO ${prospectCeiling(p)}</small></span>
+        <span class="fv-t">${esc(p.name)}<small>AGE ${playerAge(p)}${sep()}UP TO ${prospectCeiling(p)}</small><small class="pc-keys">${keyStatsLine(p)}${sep()}WAGE ${fmt(wageOf(p))}</small></span>
         ${stars(playerPotential(p))}
         <b class="mc-ovr">${overall(p)}</b>
         <button class="btn btn-go fv-mini" data-a="promote" data-i="${i}" ${full ? 'disabled' : ''} aria-label="Promote ${esc(p.name)}">PROMOTE</button>
@@ -354,5 +356,33 @@ export function matchFacts(r: MatchResult, hs: Side, xi: readonly { id: string; 
     const id = byName.get(g.name);
     if (id) scorers.push(id);
   }
-  return { played: [...played], scorers, my: r.score[hs], their: r.score[hs === 0 ? 1 : 0], vs };
+  return { played: [...played], scorers, my: r.score[hs], their: r.score[hs === 0 ? 1 : 0], vs, stats: matchStats(r, hs, new Set(xi.map((p) => p.id)), byName, played) };
+}
+
+/**
+ * What each of our players did (meta/stats.ts): minutes, assists, his rating, cards, a keeper's saves and goals against,
+ * from the full-time ratings (game/ratings.ts). Undefined without ratings: the record book then counts appearances only.
+ */
+function matchStats(r: MatchResult, hs: Side, started: ReadonlySet<string>, byName: ReadonlyMap<string, string>, played: ReadonlySet<string>): MatchStat[] | undefined {
+  const rows = r.ratings;
+  if (!rows?.length) return undefined;
+  // The ratings come best first, both sides: the very first is the man of the match.
+  const motm = rows[0].side === hs ? rows[0].name : '';
+  const out: MatchStat[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (row.side !== hs) continue;
+    const id = byName.get(row.name);
+    if (!id || !played.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    const mins = Math.max(1, Math.round((row.off ?? 90) - (row.on ?? 0)));
+    const conceded = row.conceded ?? 0;
+    out.push({
+      id, started: started.has(id), mins, goals: row.goals, assists: row.assists, rating: row.rating,
+      yellow: row.yellow ?? 0, red: row.red ?? 0, motm: row.name === motm,
+      saves: row.keeper ? row.saves ?? 0 : 0, conceded: row.keeper ? conceded : 0, pens: row.pensSaved ?? 0,
+      clean: !!row.keeper && conceded === 0 && mins >= 60,
+    });
+  }
+  return out;
 }

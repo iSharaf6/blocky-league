@@ -88,6 +88,14 @@ const HUMAN_LIFT = 0.8;
  * too often, finishing.test.ts.)
  */
 const HUMAN_AT_GOAL_MARGIN = 0.8;
+/**
+ * The acute angle: how square to the goal he is (the shot's run towards the goal line over its length: 1 from straight
+ * in front, 0 along the byline). Under ACUTE_FROM the assist's aim leaves the far corner, by ACUTE_FULL it is the
+ * middle of the goal and the miss is as wide as it gets. (Measured against a set keeper, the stick left alone or at
+ * goal: 2 m off the byline and 3.3 m outside the post went in 80% of the time, 3 m off it 48%.)
+ */
+const ACUTE_FROM = 0.42;
+const ACUTE_FULL = 0.16;
 const HUMAN_AUTO_LEVEL = 0.4;
 /**
  * The human's open-play strike isn't punished for a tap: it leaves the foot with at least HUMAN_TAP_PACE of
@@ -677,7 +685,8 @@ function aiFinish(m: Match, p: Player, header = false): number {
   if (m.human[p.side]) return header ? AI_HEADER_FINISH : HUMAN_SIDE_FINISH;
   // (Against the human his strike is as it was, HUMAN_SIDE_FINISH: the steadier AI_FINISH is AI v AI's. Dynamic
   // difficulty: an AI shooter at the human's goal is that much wilder, MatchConfig.assist.)
-  const foot = m.anyHuman ? HUMAN_SIDE_FINISH : AI_FINISH;
+  // (By its difficulty: dribble.ts vsHuman.finish. EASY is HUMAN_SIDE_FINISH still.)
+  const foot = m.anyHuman ? vsHuman(m.aiSkill(p.side)).finish : AI_FINISH;
   return (header ? AI_HEADER_FINISH : foot) * (1 + DDA_FINISH * m.assistEase(p.side));
 }
 
@@ -1487,6 +1496,12 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
     // HUMAN_AUTO_LEVEL m is it either.)
     if (flip && (!assist || Math.abs(gapR - gapL) < HUMAN_AUTO_LEVEL)) dir = -dir;
     aimZ = dir * (human ? hw - 0.35 - m.rng.next() * spread : hw - AI_POST_AIM - m.rng.next() * 0.5);
+    // (From an acute angle the shot assist doesn't thread the far corner for him: ACUTE_FROM. The nearer the byline he
+    // is, the nearer the middle of what he can see of the goal it goes, which is where the keeper stands.)
+    if (assist) {
+      const sight = Math.abs(gx - b.x) / Math.max(1, dist2(b.x, b.z, gx, aimZ));
+      aimZ *= clamp((sight - ACUTE_FULL) / (ACUTE_FROM - ACUTE_FULL), 0, 1);
+    }
     // (A header is placed less fine than a strike: round 13, headers were 55-65% of the AI's goals, 63% of those from
     // inside 6 m going in and 26% from 6-9 m. HEADER_AIM of the way to the post.)
     if (header) aimZ *= human ? HUMAN_HEADER_AIM : HEADER_AIM;
@@ -1502,7 +1517,11 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
     ? (human ? HUMAN_HEADER_COMPOSURE : HEADER_COMPOSURE) * far * (sp ? SET_PIECE_HEADER * (m.setPieceDriven ? DRIVEN_HEADER : 1) : 1) * (contested ? HEADER_CONTEST : 1)
     : 1;
   // Coming in at an angle the same miss in the air lands further along the goal line (1 / cos).
-  const obl = Math.pow(clamp(Math.abs(gx - b.x) / d, 0.45, 1), 0.8);
+  // (The human's open-play strike from an acute angle: the model stopped at 0.45, a ball struck 27 degrees off the
+  // goal line, so a shot from 2 m off the byline was no harder to place than one from the corner of the box. For him
+  // it goes on down to ACUTE_FULL. 2026-10-05, the owner: "im also in very tough angles and im able to easily get a shot".)
+  const acute = human && !header && !finesse && !setPiece;
+  const obl = Math.pow(clamp(Math.abs(gx - b.x) / d, acute ? ACUTE_FULL : 0.45, 1), acute ? 1 : 0.8);
   // The body shape (weak foot, off balance: open play only) and a timed-finish tap scale the error.
   const shape = header || setPiece ? null : strikeShape(m, p, Math.atan2(aimZ - b.z, gx - b.x));
   const fin = clamp(order.finish ?? 1, 0.2, 3);

@@ -43,7 +43,7 @@ _(149 chars)_
 >
 > - Pull off roulettes, rainbow flicks and stepovers
 > - Smash screamers, whip in crosses and bang in volleys
-> - **Road to Glory:** build your own club and climb from Sunday League to the top
+> - **Road to Glory:** build your own club and climb from Park League to the top
 > - **Blocky Cup:** knockout ties and tense penalty shootouts
 > - **Club Run:** seven matches, one life, a new perk after every win
 > - **Moments:** quick challenges to earn three stars

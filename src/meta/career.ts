@@ -34,6 +34,7 @@ import {
   academyIntake, applyRetirements, captainOf, decideRetirements, defaultAcademy, matchLift, readAcademy, readFarewells, recordMatch, syncRecordSigning,
   type AcademyState, type Farewell, type LifePlayer, type MatchFacts,
 } from './life';
+import { readLine, readSeasonLine } from './stats';
 import { LEGACY_POINTS, START_BONUS, addLegacy, archiveClub, defaultLegacy, hasPerk, readLegacy, type LegacyState } from './legacy';
 import {
   addForm, addMoment, beforeMatchBeats, cupHeadline, defaultStory, derbyResult, matchHeadline, isDerby, placeRival, readStory, seasonStartBeats, storyNews, storyTag,
@@ -1208,15 +1209,21 @@ export function rivalRating(r: LeagueClub): number {
 
 // ------------------------------------------------------------------ match economy
 
-/** Division -> DIFFICULTIES index: 6,5 easy / 4,3 normal / 2 hard / 1 legend. */
+/**
+ * Division -> DIFFICULTIES index: 8 to 3 normal / 2 hard / 1 legend. (2026-10-05, the owner, four matches into a career
+ * in the bottom division: "i keep scoring on him 15+ goals, but he never scored one on me". The bottom four divisions
+ * were EASY, where the AI's sides play a level and a half under his own AI team-mates and hardly challenge him. A
+ * division's difficulty is its rivals' ratings (DIVISION_LEVEL: 34 at the bottom); the AI's brain is NORMAL from the
+ * first league match. A new save's first matches and a losing run are eased as before: core/dda.ts.)
+ */
 export function matchDifficulty(division: number): number {
   const d = clampDivision(division);
-  return d >= 5 ? 0 : d >= 3 ? 1 : d === 2 ? 2 : 3;
+  return d >= 3 ? 1 : d === 2 ? 2 : 3;
 }
 
 /**
  * The ground a league rival plays at (0 park pitch .. STADIUM_MAX full bowl), for away matches: bigger in
- * higher divisions (Sunday League 0 .. Elite League 5), and the division's stronger sides a size up.
+ * higher divisions (Sunday League 0 .. Elite League 5; the Park and District Leagues start at 0 too), and the division's stronger sides a size up.
  */
 export function rivalStadiumLevel(division: number, rival: Pick<LeagueClub, 'level'>): number {
   const d = clampDivision(division);
@@ -1443,6 +1450,11 @@ function readPlayer(v: unknown): PlayerDef | null {
   if (isNum(v.goals)) lp.goals = int(v.goals, 0, 1e6, 0);
   if (isNum(v.joined)) lp.joined = int(v.joined, 0, 1e6, 0);
   if (v.academy === true) lp.academy = true;
+  // What he has done for the club (meta/stats.ts): an older save has none, and every number reads as zero.
+  const tot = readLine(v.tot);
+  if (tot) lp.tot = tot;
+  const ssn = readSeasonLine(v.ssn);
+  if (ssn) lp.ssn = ssn;
   // The long game (growth.ts): potential, XP, focus, traits, a mentor, the chart, morale, an injury.
   readGrow(v, p);
   return p;

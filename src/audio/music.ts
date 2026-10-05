@@ -15,7 +15,7 @@
  */
 
 export type TrackId = 'menu' | 'halftime' | 'win' | 'draw' | 'loss';
-export type StingId = 'kickoff' | 'goal' | 'trophy' | 'promotion';
+export type StingId = 'kickoff' | 'goal' | 'trophy' | 'promotion' | 'studio';
 
 export interface Track {
   bpm: number;
@@ -282,6 +282,24 @@ export const STINGS: Record<StingId, Track> = {
     drums: 'c---k-k-k---k---',
     brass: [[0, 1], [4, 8]],
     brassLevel: 0.05,
+  },
+  /** The cut to the commentary box for a big goal (game/sideShow.ts): a quick TV ident, four notes up and a brass stab. */
+  studio: {
+    bpm: 168,
+    steps: 12,
+    roots: [48, 43],
+    bass: [0, R, R, R, 0, R, R, R],
+    bassLevel: 0.2,
+    bassLen: 2,
+    arp: [R],
+    arpLevel: 0,
+    lead: [67, 72, 76, 79, 84, H, H, H, R, R, R, R],
+    leadType: 'square',
+    leadLevel: 0.045,
+    drums: 'k-h-c-------',
+    drumLevel: 0.8,
+    brass: [[4, 4]],
+    brassLevel: 0.04,
   },
   trophy: TROPHY,
   promotion: { ...TROPHY, bpm: 128, brassLevel: 0.04, drums: 'k---k---k---k---k---k-rrc-------' },

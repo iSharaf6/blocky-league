@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { Hud } from '../src/ui/hud';
 import { FRAME_LEN, PF } from '../src/game/replay';
 import { CameraRig, type CamFocus } from '../src/render/cameraRig';
+import { Footballer, PSTATE, type PoseInput } from '../src/render/characters';
+import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
 
 describe('incident replay framing', () => {
   for (const aspect of [16 / 9, 9 / 19.5, 4 / 3]) {
@@ -49,11 +51,43 @@ describe('incident replay framing', () => {
     expect(camera.position.toArray().every(Number.isFinite)).toBe(true);
     expect(camera.quaternion.toArray().every(Number.isFinite)).toBe(true);
   });
+
+  it.each([16 / 9, 852 / 393])('films a foul from its own lens, tight on the two men, whatever the loose ball does (aspect %s)', (aspect) => {
+    const camera = new THREE.PerspectiveCamera(24, aspect, 0.5, 900);
+    const rig = new CameraRig(camera);
+    const frame = new Float32Array(FRAME_LEN);
+    frame[PF] = 40; frame[PF + 1] = 3;
+    frame[2 * PF] = 41; frame[2 * PF + 1] = 3.4;
+    rig.players = frame;
+    rig.replayKind = 'incident';
+    rig.replayActors = [1, 2];
+    rig.replayLens = { x: 40.5, y: 4.4, z: 13.7, fov: 25 };
+    rig.setMode('replay');
+    // The ball has run 20 m away: the wide fit would pull right back to keep it, the foul lens stays on the contact.
+    rig.update(1 / 60, { bx: 20, by: 0.2, bz: -10, bvx: 0, bvz: 0, ax: 40, az: 3, attack: 1, tall: 1.94 }, 0);
+    camera.updateMatrixWorld();
+    expect(camera.position.x).toBeCloseTo(40.5, 3);
+    expect(camera.position.z).toBeCloseTo(13.7, 3);
+    expect(camera.fov).toBeCloseTo(25, 3);
+    for (const [x, y, z] of [[40, 0, 3], [40, 1.94, 3], [41, 0, 3.4], [41, 1.94, 3.4]]) {
+      const ndc = new THREE.Vector3(x, y, z).project(camera);
+      expect(Math.abs(ndc.x)).toBeLessThan(0.5);
+      expect(Math.abs(ndc.y)).toBeLessThan(0.7);
+    }
+    // An offside line's lens holds a fixed look instead.
+    rig.replayLens = { x: 36, y: 12, z: 16, fov: 30, look: { x: 37, z: -2 } };
+    rig.cut();
+    rig.update(1 / 60, { bx: 20, by: 0.2, bz: -10, bvx: 0, bvz: 0, ax: 40, az: 3, attack: 1, tall: 1.94 }, 0);
+    camera.updateMatrixWorld();
+    const look = new THREE.Vector3(37, 0.9, -2).project(camera);
+    expect(Math.hypot(look.x, look.y)).toBeLessThan(0.05);
+  });
 });
 
 describe('incident replay badge', () => {
   it('shows the incident as plain text and resets it for the next goal replay', () => {
     const badge = { textContent: '' };
+    const caption = { textContent: '' };
     const replayClasses = new Set<string>(['skip-only']);
     const rootClasses = new Set<string>();
     const classes = (values: Set<string>) => ({
@@ -61,22 +95,63 @@ describe('incident replay badge', () => {
       toggle: (v: string, on: boolean) => { if (on) values.add(v); else values.delete(v); },
     });
     const hud = Object.assign(Object.create(Hud.prototype), {
-      replay: { classList: classes(replayClasses), querySelector: () => badge },
+      replay: { classList: classes(replayClasses), querySelector: (q: string) => (q === 'b' ? badge : caption) },
       root: { classList: classes(rootClasses) }, hideLine: vi.fn(),
       banner: { classList: { remove: vi.fn() } }, bannerTimer: 2,
     }) as Hud;
-    hud.setReplay(true, 'RED CARD REPLAY');
+    hud.setReplay(true, 'RED CARD REPLAY', 'FOUL BY 5 CINDER');
     expect(badge.textContent).toBe('RED CARD REPLAY');
+    expect(caption.textContent).toBe('FOUL BY 5 CINDER');
     expect(replayClasses.has('skip-only')).toBe(false);
     expect(rootClasses.has('replaying')).toBe(true);
     expect((hud as unknown as { bannerTimer: number }).bannerTimer).toBe(0);
     hud.setReplay(false);
     expect(badge.textContent).toBe('REPLAY');
+    expect(caption.textContent).toBe('');
     expect(rootClasses.has('replaying')).toBe(false);
     hud.setReplay(true, '<img src=x onerror=alert(1)>');
     expect(badge.textContent).toBe('<img src=x onerror=alert(1)>');
     hud.setReplay(false);
     hud.setReplay(true);
     expect(badge.textContent).toBe('REPLAY');
+  });
+});
+
+describe('the side that concedes looks beaten', () => {
+  const pose = (over: Partial<PoseInput>): PoseInput => ({ state: PSTATE.dejected, stateT: 1, speed: 0, runPhase: 0.2, kickT: 0,
+    kickLeg: 1, lean: 0, diveDir: 0, headerT: 0, celebrate: 0, y: 0, keeper: false, hasBall: false, look: 0, turn: 0, dt: 0, ...over });
+  const limbs = (f: Footballer) => f as unknown as {
+    armL: { rotation: { z: number } }; armR: { rotation: { z: number } }; head: { rotation: { z: number } }; body: { position: { y: number } };
+  };
+
+  it('never raises a dejected player\'s arms, standing or walking, and drops his head', () => {
+    const team = makeTeam(PRESET_CLUBS[0]);
+    // (Several men: the three outfield variants are spread across them.)
+    for (const def of team.players.slice(1, 8)) {
+      const f = new Footballer(def, team.kit, false);
+      for (const speed of [0, 3.3]) {
+        f.pose(pose({ speed }), 1.3);
+        // An arm above the horizontal (1.57) is an arm in the air: the old hands-on-head pose had both at 2.55.
+        expect(limbs(f).armL.rotation.z).toBeLessThan(1);
+        expect(limbs(f).armR.rotation.z).toBeLessThan(1);
+        expect(limbs(f).head.rotation.z).toBeLessThan(-0.3);
+      }
+      f.dispose();
+    }
+  });
+
+  it('puts a beaten keeper on his knees, and keeps hands on head for a man sent off only', () => {
+    const team = makeTeam(PRESET_CLUBS[0]);
+    const keeper = new Footballer(team.players[0], team.kit, true);
+    keeper.pose(pose({ keeper: true, speed: 3 }), 1.3);
+    const walking = limbs(keeper).body.position.y;
+    keeper.pose(pose({ keeper: true, speed: 0 }), 1.3);
+    expect(limbs(keeper).body.position.y).toBeLessThan(walking * 0.7);
+    expect(limbs(keeper).armR.rotation.z).toBeLessThan(1.6);
+    keeper.dispose();
+    const off = new Footballer(team.players[5], team.kit, false);
+    off.pose(pose({ sentOff: true }), 1.3);
+    expect(limbs(off).armL.rotation.z).toBeGreaterThan(2);
+    off.dispose();
   });
 });

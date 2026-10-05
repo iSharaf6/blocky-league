@@ -37,6 +37,7 @@ import {
   PHYSIO_CUT, PHYSIO_RISK, REGIONS, SCOUT_SLOTS, commercialIncome, payStaff, staffLevel, tickScouts, unseenReports,
 } from './staff';
 import { addMoment, isDerby, storyTag } from './story';
+import { simStats } from './stats';
 
 const grow = (p: PlayerDef) => p as GrowPlayer;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -316,7 +317,9 @@ export function simMatch(state: CareerState, wallet: Wallet): SimResult | null {
       }
     }
   }
-  afterMatch(state, { played: xi.map((p) => p.id), scorers: scorers.map((p) => p.id), my, their, vs: nm.rival.name });
+  // Who else played, the assists, the cards and the ratings (a seeded stream of its own: the score and scorers above stay as they were).
+  const made = simStats(club.squad, scorers.map((p) => p.id), my, their, new Rng(hashString(`${season.seed}|simstats|${nm.md}`)));
+  afterMatch(state, { played: made.played, scorers: scorers.map((p) => p.id), my, their, vs: nm.rival.name, stats: made.stats });
   const coins = Math.round(groundBonus(state, matchReward(division, stadium, my, their), nm.userHome, division).coins * SIM_PAY);
   wallet.coins += coins;
   return { my, their, coins, rival: nm.rival, scorers: scorers.map((p) => p.name) };

@@ -20,6 +20,7 @@ import { buzz } from '../platform/haptics';
 import { overall, type Kit, type PlayerDef, type Role } from '../sim/types';
 import { careerState, closeMeta, esc, failText, fmt, mountMeta, onMetaClose, openClub, ovrBadge, roleBadge, topBar, type Handlers, type InputHandlers } from './club';
 import { PaneScroll, revealInPane } from './panes';
+import { seasonStripHtml } from './playerCard';
 import { pixelIcon } from './pixelIcons';
 import { faceHtml, hydrateFaces } from './preview';
 import { sep } from './text';
@@ -319,6 +320,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
       <div class="mk-dbody pane-scroll" data-scroll-key="mk-d-${id}">
         ${keyStats(p)}
         <div class="mk-facts">${fact('AGE', age)}${fact('WAGE', fmt(wageOf(p)))}${fact('VALUE', fmt(playerValue(p)))}${fact('POT', age > YOUNG_AGE ? 'PEAKED' : stars(playerPotential(p)), age > YOUNG_AGE)}</div>
+        ${seasonStripHtml(st, p)}
         ${offers}
         <p class="mk-hint">${hint}</p>
       </div>

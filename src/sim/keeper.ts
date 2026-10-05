@@ -514,7 +514,11 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
     if (c.side !== k.side) {
       const cd = dist2(c.pos.x, c.pos.z, gx, 0);
       const kd = dist2(k.pos.x, k.pos.z, c.pos.x, c.pos.z);
-      if (cd < 15 && Math.abs(c.pos.z) < BOX_W / 2 - 2 && kd < 9 && nobodyCovering(m, k, c)) {
+      // (Not at a man with no sight of goal: one by the byline, RUSH_SQUARE, is shown the near post, not chased. He
+      // used to run out past his post at him, 4 m wide of his goal, and anything rolled across it went in: from 2 m
+      // off the byline the human's shot beat a "set" keeper four times in five. Within RUSH_SMOTHER m he still dives in.)
+      const square = Math.abs(c.pos.x - gx) / Math.max(1, cd);
+      if (cd < 15 && Math.abs(c.pos.z) < BOX_W / 2 - 2 && kd < 9 && (square > RUSH_SQUARE || kd < RUSH_SMOTHER) && nobodyCovering(m, k, c)) {
         moveTo(k, c.pos.x - ad * 0.8, c.pos.z, true);
         return;
       }
@@ -533,6 +537,12 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   // Keep the near post covered: from a tight angle he hugs it (and leaves the far post to his dive).
   const tight = clamp((Math.atan2(Math.abs(dz), Math.abs(dx)) - 0.45) / 0.6, 0, 1);
   tz = clamp(tz + bz * 0.04 + Math.sign(bz) * tight * NEAR_POST_SHADE, -GOAL_W / 2 + 0.45, GOAL_W / 2 - 0.45);
+  // (A ball in open play by the byline, close in: he stands ON the near post, POST_STAND m inside it, his body
+  // across everything that man can see of the goal. Shading towards it left a gap a shot went through.)
+  if (m.phase === 'play') {
+    const post = clamp((POST_SQUARE - Math.abs(dx) / dd) / 0.08, 0, 1) * clamp((POST_R - dd) / 3, 0, 1);
+    tz += (Math.sign(bz) * (GOAL_W / 2 - POST_STAND) - tz) * post;
+  }
   // A corner (the ball dead out wide by the byline): he takes the middle of his goal a step off the
   // line, shaded a touch to the near side, rather than hugging the near post (in open play, with a
   // cut-back or a shot on, the near post is still his).
@@ -545,6 +555,14 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
   moveTo(k, tx, tz, false);
   k.faceTarget = Math.atan2(bz - k.pos.z, bx - k.pos.x);
 }
+
+/** The 1v1 rush is for a carrier this square to goal (his run to the goal line over his distance to its middle), or this near (m). */
+const RUSH_SQUARE = 0.5;
+/** ... and the ball less square than this (same measure), within POST_R m of the middle of his goal, he stands on his near post. */
+const POST_SQUARE = 0.36;
+const POST_R = 13;
+const POST_STAND = 0.45;
+const RUSH_SMOTHER = 2.5;
 
 /**
  * The human's manual keeper (KEEPER held: Match.keeperOutHeld), with the ball not theirs to shoot yet (shot reading and

@@ -85,7 +85,7 @@ function sessionFor(m: Match) {
     frameHook: null as ((f: Float32Array, dt: number) => void) | null,
     frame, headTop: 1.9, refState, ballGlide: { x: 0, y: 0, z: 0 },
     apply: vi.fn((_prev: Float32Array, cur: Float32Array) => frame.set(cur)),
-    tickFlashes: vi.fn(), flashPlayer: vi.fn(), refSignal: vi.fn(), clearFades: vi.fn(), pinPlayer: vi.fn(),
+    tickFlashes: vi.fn(), flashPlayer: vi.fn(), refSignal: vi.fn(), refPoint: vi.fn(), clearFades: vi.fn(), pinPlayer: vi.fn(),
     setBallHidden: vi.fn(), setMarkerMode: vi.fn(), setTeamRings: vi.fn(), setTeamPips: vi.fn(),
     setShadowBudget: vi.fn(), faceCamera: vi.fn(), updateReferee: vi.fn(),
     setRival: vi.fn(), replacePlayer: vi.fn(),
@@ -102,7 +102,7 @@ function sessionFor(m: Match) {
   const session = Object.create(MatchSession.prototype) as MatchSession;
   Object.assign(session, {
     match: m, foulPresentation: beat, hud, view, cam, demo: false, paused: false, driver: null,
-    opt: { kits: [m.teams[0].kit, m.teams[1].kit] }, tally: { sub: vi.fn() }, lastPasser: [-1, -1],
+    opt: { kits: [m.teams[0].kit, m.teams[1].kit] }, tally: { sub: vi.fn(), observe: vi.fn() }, lastPasser: [-1, -1],
     wearing: m.players.map((p) => p.def), subQueue: [], subCut: null,
     subScene, subSt: newSubStage(), sceneShot: { px: 0, py: 20, pz: 40, tx: 0, ty: 0, tz: 0, fov: 30 }, sceneKeep: [], sceneClear: 0,
     input: { reset: vi.fn(), read: () => ({ sx: 0, sy: 0, sprint: false, pass: false, shoot: false, through: false }), lastDevice: 'keyboard' },
@@ -123,12 +123,15 @@ function sessionFor(m: Match) {
   return { session, beat, hud, view, cam, subScene, events };
 }
 
+/** Rendered 0.1 s frames in the foul beat: one more than this is past it. */
+const BEAT_TICKS = Math.round(FOUL_BEAT_S / 0.1);
+
 describe('the tackle has time to read before the referee decision', () => {
   it('gives a yellow-card victim a comic rendered reaction that never changes the foul, injury or restart', () => {
     const { m, on, events } = realFoul(false);
     const h = sessionFor(m);
     h.events(events);
-    for (let i = 0; i < 6; i++) h.session.update(0.1);
+    for (let i = 0; i <= BEAT_TICKS; i++) h.session.update(0.1);
     expect(h.cam.mode).toBe('card');
     expect(h.view.frameHook).not.toBeNull();
     const original = JSON.stringify(m);
@@ -149,13 +152,13 @@ describe('the tackle has time to read before the referee decision', () => {
     const red = realFoul(true);
     const serious = sessionFor(red.m);
     serious.events(red.events);
-    for (let i = 0; i < 6; i++) serious.session.update(0.1);
+    for (let i = 0; i <= BEAT_TICKS; i++) serious.session.update(0.1);
     expect(serious.cam.mode).toBe('card');
     expect(serious.view.frameHook).toBeNull();
     const yellow = realFoul(false);
     const comic = sessionFor(yellow.m);
     comic.events(yellow.events);
-    for (let i = 0; i < 6; i++) comic.session.update(0.1);
+    for (let i = 0; i <= BEAT_TICKS; i++) comic.session.update(0.1);
     expect(comic.view.frameHook).not.toBeNull();
     expect(comic.session.substitute(yellow.on.side, yellow.on.slot, yellow.m.bench[yellow.on.side].findIndex((p) => p.role !== 'GK'))).toBe(true);
     comic.session.update(0.001);
@@ -173,11 +176,12 @@ describe('the tackle has time to read before the referee decision', () => {
     expect(h.view.flashPlayer).toHaveBeenCalledWith(on.idx, expect.any(Number));
     expect(h.hud.card).toHaveBeenCalledWith(by.side, second ? 'red' : 'yellow', by.idx);
     expect(h.view.showCard).not.toHaveBeenCalled();
-    expect(h.hud.show).not.toHaveBeenCalled();
+    // The decision is named at the whistle, with its reason; the card waits for the beat.
+    expect(h.hud.show.mock.calls).toEqual([['FOUL', expect.stringContaining(` BY ${by.def.number} `), 'small foul', expect.any(Number)]]);
     expect(h.beat.impact(m.phase, m.restart)).toBe(true);
     const clock = m.clock;
     const phaseT = m.phaseT;
-    for (let i = 0; i < 5; i++) h.session.update(0.1);
+    for (let i = 0; i < BEAT_TICKS - 1; i++) h.session.update(0.1);
     h.session.update(0.09);
     expect(m.clock).toBe(clock); // The foul's decision advances while the stopped match clock waits.
     expect(m.phaseT).toBeGreaterThan(phaseT);
@@ -213,7 +217,7 @@ describe('the tackle has time to read before the referee decision', () => {
     expect(h.view.showCard).not.toHaveBeenCalled();
     expect(h.view.updateReferee.mock.calls.every(([dt]) => dt === 0)).toBe(true);
     h.session.resume();
-    for (let i = 0; i < 4; i++) h.session.update(0.1);
+    for (let i = 0; i < BEAT_TICKS - 2; i++) h.session.update(0.1);
     expect(h.view.showCard).not.toHaveBeenCalled();
     h.session.update(0.1);
     expect(h.view.showCard).toHaveBeenCalledTimes(1);
@@ -224,9 +228,12 @@ describe('the tackle has time to read before the referee decision', () => {
     expect(events.some((e) => e.type === 'restart' && e.kind === 'penalty')).toBe(true);
     const h = sessionFor(m);
     h.events(events);
-    expect(h.hud.show).not.toHaveBeenCalled();
-    for (let i = 0; i < 6; i++) h.session.update(0.1);
-    expect(h.hud.show.mock.calls.some(([title]) => title === 'PENALTY!')).toBe(true);
+    // "PENALTY!" and its reason at the whistle, the referee pointing to the spot; the card only after the beat.
+    expect(h.hud.show.mock.calls.map(([title]) => title)).toEqual(['PENALTY!']);
+    expect(h.view.refPoint).toHaveBeenCalledWith(expect.any(Number), m.restart!.x, m.restart!.z);
+    expect(h.view.showCard).not.toHaveBeenCalled();
+    for (let i = 0; i <= BEAT_TICKS; i++) h.session.update(0.1);
+    expect(h.hud.show.mock.calls.map(([title]) => title)).toEqual(['PENALTY!', 'YELLOW CARD']);
     expect(h.view.showCard).toHaveBeenCalledTimes(1);
     expect(m.phase === 'out' || m.phase === 'restart').toBe(true);
     expect(m.stats.shots[0]).toBe(0);
@@ -250,7 +257,7 @@ describe('the tackle has time to read before the referee decision', () => {
     expect(h.view.showCard).not.toHaveBeenCalled();
     expect(h.view.updateReferee.mock.calls.every(([dt]) => dt === 0)).toBe(true);
     paused = false;
-    for (let i = 0; i < 6; i++) h.session.update(0.1);
+    for (let i = 0; i <= BEAT_TICKS; i++) h.session.update(0.1);
     expect(h.view.showCard).toHaveBeenCalledTimes(1);
     expect(h.cam.mode).toBe('card');
     const cardClock = m.clock;
@@ -277,7 +284,7 @@ describe('the tackle has time to read before the referee decision', () => {
     expect(h.session.substitute(by.side, by.slot, bench)).toBe(true);
     expect(by.def.id).not.toBe(id);
     h.session.resume();
-    for (let i = 0; i < 5; i++) h.session.update(0.1);
+    for (let i = 0; i < BEAT_TICKS - 1; i++) h.session.update(0.1);
     expect(h.hud.show).toHaveBeenCalledWith('YELLOW CARD', name, expect.any(String), expect.any(Number));
     expect(h.view.showCard.mock.calls[0][4]).toBe(false);
     expect(h.view.pinPlayer).not.toHaveBeenCalled();
@@ -291,7 +298,7 @@ describe('the tackle has time to read before the referee decision', () => {
     const { m, events } = realFoul(false);
     const h = sessionFor(m);
     h.events(events);
-    for (let i = 0; i < 6; i++) h.session.update(0.1);
+    for (let i = 0; i <= BEAT_TICKS; i++) h.session.update(0.1);
     expect(h.cam.mode).toBe('card');
     m.restart = { ...m.restart!, x: m.restart!.x + 1 };
     h.session.update(0.001);
@@ -304,7 +311,7 @@ describe('the tackle has time to read before the referee decision', () => {
     const { m, by, events } = realFoul(false);
     const h = sessionFor(m);
     h.events(events);
-    for (let i = 0; i < 6; i++) h.session.update(0.1);
+    for (let i = 0; i <= BEAT_TICKS; i++) h.session.update(0.1);
     expect(h.cam.mode).toBe('card');
     h.session.requestPause();
     expect(h.session.substitute(by.side, by.slot, m.bench[by.side].findIndex((p) => p.role !== 'GK'))).toBe(true);
@@ -318,7 +325,7 @@ describe('the tackle has time to read before the referee decision', () => {
     const beat = new FoulPresentation();
     const restart = freeKick();
     beat.contact(0);
-    beat.tick(0.4);
+    beat.tick(FOUL_BEAT_S - 0.2);
     beat.queueBooking(booking(restart));
     expect(beat.queueRestart(verdict(), restart)).toBe(true);
     beat.tick(0.19);

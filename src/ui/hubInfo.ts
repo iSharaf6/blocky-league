@@ -33,7 +33,7 @@ export interface CaptainCard {
   club: string;
   short: string;
   ovr: number;
-  /** MY CLUB's division ("SUNDAY LEAGUE"); absent for a Quick Match club. */
+  /** MY CLUB's division ("PARK LEAGUE" at the bottom); absent for a Quick Match club. */
   division?: string;
   own: boolean;
 }

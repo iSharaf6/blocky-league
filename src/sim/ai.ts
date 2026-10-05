@@ -2,9 +2,12 @@ import { angleDiff, clamp, dist2, pointSegDist } from '../core/math';
 import { interceptRisk, laneRisk, passSpeed, shotBlockers, shotQuality, THROUGH_MAX_INTERCEPT, throughSpeed } from './actions';
 import { headerAtGoal, throughLead } from './actions';
 import { ACCEL, BOX_DEPTH, BOX_W, DDA_PRESS, GOAL_W, HALF_L, HALF_W, TEMPO, WALL_DIST } from './constants';
-import { LINE_ENGAGE_R, LINE_PACE, LINE_PRESS, LINE_REACH, LINE_TACKLE, readsHuman, STALL_S, straightRead, takeOnVsHuman, vsHuman } from './dribble';
+import {
+  carrierRead, dwellRead, LINE_ENGAGE_R, LINE_PACE, LINE_PRESS, LINE_REACH, LINE_TACKLE, readsHuman, STALL_S, takeOnVsHuman,
+  toldTackleChance, TOLD_REACH, vsHuman,
+} from './dribble';
 export { STALL_S } from './dribble';
-import { DUEL_TACKLE, startTell, telegraphs, tellReady, TELL_DUEL, TELL_PRESS, TELL_REACH, TOLD_TACKLE } from './skills';
+import { startTell, telegraphs, tellReady, TELL_DUEL, TELL_PRESS, TELL_REACH } from './skills';
 import { clearOfPenalty, freeKickWall, inOwnBox, isDirectFreeKick, updateKeeper } from './keeper';
 import { FIRST_MATCH_PRESS, type Match } from './match';
 import type { Player } from './player';
@@ -486,7 +489,8 @@ function pickPresser(m: Match, side: Side, brain: TeamBrain, c: Player): void {
   // Watch him in every press zone, including inside our half. A short-circuited screen check used to leave
   // stationary carriers there without a stall clock, so the duel's soft challenge could repeat indefinitely.
   const stalling = humanStalling(m, brain, c);
-  brain.screen = cN > st.pressFrom && !inOwnBox(m, side, c.pos.x, c.pos.z) && !stalling;
+  // (Nor for a man going nowhere with it, dribble.ts dwellRead: turning on the spot is closed down wherever he is.)
+  brain.screen = cN > st.pressFrom && !inOwnBox(m, side, c.pos.x, c.pos.z) && !stalling && dwellRead(m, c) <= 0;
   let engaged: Player | null;
   // The human holding PRESS (Match.pressHelp) asks for the ball back now: no screen, and the nearest team-mate comes
   // to press the carrier with him (the one after covers). (Never an AI side: its press is the style's.)
@@ -1043,7 +1047,8 @@ function attackTarget(m: Match, p: Player, brain: TeamBrain, c: Player): { x: nu
 function defend(m: Match, p: Player, brain: TeamBrain, c: Player, dt: number): void {
   const ball = m.ball.pos;
   if (brain.presser === p.idx) {
-    if (brain.screen) {
+    // (A screen holds off a man who is taking it somewhere; one within reach of him, or going nowhere, is challenged.)
+    if (brain.screen && !inReach(m, p, c)) {
       const s = screenSpot(m, p, c);
       moveTo(p, s.x, s.z, 0.6, ball);
       return;
@@ -1051,7 +1056,17 @@ function defend(m: Match, p: Player, brain: TeamBrain, c: Player, dt: number): v
     press(m, p, c, dt, brain);
     return;
   }
+  // The human's ball inside his reach: he doesn't stand and watch it go by because another man is "the presser".
+  if (inReach(m, p, c)) {
+    press(m, p, c, dt, brain, true);
+    return;
+  }
   if (brain.cover === p.idx) {
+    // A man going nowhere with it (dribble.ts dwellRead) is doubled up on: the cover comes to him from the other side.
+    if (m.ball.owner === c.idx && dwellRead(m, c) >= DOUBLE_UP && p.state === 'move') {
+      press(m, p, c, dt, brain, true);
+      return;
+    }
     if (m.ball.owner === c.idx) chaseSlide(m, p, c, dt);
     if (p.state !== 'move') return;
     const s = coverSpot(m, p, c);
@@ -1077,7 +1092,7 @@ function zonalSpot(m: Match, p: Player, x: number, z: number): { x: number; z: n
   // shape and he runs into it, LINE_ENGAGE_R.)
   const o = m.ball.owner >= 0 ? m.players[m.ball.owner] : null;
   const human = !!o && m.isHumanControlled(o);
-  return keepOff(m, p, x, z, human ? ENGAGE_R_HUMAN - (ENGAGE_R_HUMAN - LINE_ENGAGE_R) * straightRead(m, o) : ENGAGE_R, true);
+  return keepOff(m, p, x, z, human ? ENGAGE_R_HUMAN - (ENGAGE_R_HUMAN - LINE_ENGAGE_R) * carrierRead(m, o) : ENGAGE_R, true);
 }
 
 /**
@@ -1207,7 +1222,31 @@ function markSpot(m: Match, p: Player, brain: TeamBrain): { x: number; z: number
   return { x: tx, z: tz, u: running ? 0.85 : 0.55 };
 }
 
-function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): void {
+/**
+ * The human's carrier with the ball inside `p`'s reach (the owner, 2026-10-05: "the tackle only sort of happens when
+ * the player is directly facing the ball, but when he's to the side close he doesn't take it at all"): any man of the
+ * block within REACH_JOIN m of the ball goes for it as the presser would (press: a tell from in front of him or beside
+ * him, a poke at an exposed touch, untold from behind), and stays on it until his challenge is done. One who is
+ * clearly behind a man running away from him lets him go: he can't catch him, and a lunge from
+ * there is a foul.
+ */
+function inReach(m: Match, p: Player, c: Player): boolean {
+  if (!m.isHumanControlled(c) || m.ball.owner !== c.idx || m.ball.held || p.state !== 'move' || m.phase !== 'play') return false;
+  if (p.tellT > 0 || p.commitT > 0) return true;
+  if (p.slowT > 0 || p.wrongFootT > 0) return false;
+  const b = m.ball.pos;
+  const d = dist2(p.pos.x, p.pos.z, b.x, b.z);
+  if (d > REACH_JOIN) return false;
+  const tx = p.pos.x - c.pos.x;
+  const tz = p.pos.z - c.pos.z;
+  const tl = Math.hypot(tx, tz) || 1;
+  const sp = c.speed();
+  // (Behind his run, and he is running: gone.)
+  return !(sp > 4 && (c.vel.x * tx + c.vel.z * tz) / (sp * tl) < -0.6);
+}
+const REACH_JOIN = 2.4;
+
+function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain, joined = false): void {
   const ad = m.attackDir(p.side);
   const gx = -ad * HALF_L;
   const ux = gx - c.pos.x;
@@ -1228,7 +1267,9 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   const stalled = humanCarrier && c.speed() < LINE_PACE && brain.stallBy === c.idx && m.clock - brain.stallSince >= STALL_S;
   const pad = m.ctl[c.side].prev;
   const unattended = stalled && Math.hypot(pad.mx, pad.mz) < 0.25 && !pad.skill && !pad.shoot && !pad.pass && !pad.through;
-  const read = humanCarrier ? Math.max(straightRead(m, c), stalled ? (unattended ? 1 : vsHuman(skill).line) : 0) : 0;
+  const read = humanCarrier ? Math.max(carrierRead(m, c), stalled ? (unattended ? 1 : vsHuman(skill).line) : 0) : 0;
+  // (Going nowhere, dribble.ts dwellRead: the presser stands on him, and takes the side the ball is turning to.)
+  const dwell = humanCarrier ? dwellRead(m, c) : 0;
   const guarded = humanCarrier && c.protectT > 0;
   // A stationary carrier leaves the ball on one side of his body. Walk around to that side before challenging;
   // repeatedly charging goal-side through his back only produces missed tackles and free kicks.
@@ -1265,9 +1306,12 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     const told = humanCarrier && telegraphs(m, p, c);
     // (And taking a man on brings one most of the time: TELL_DUEL a second more while a tell may go up, eased like
     // the press for a new player.)
-    const duel = told && tellReady(m, c) ? TELL_DUEL * ease * (1 - DDA_PRESS * m.assistEase(p.side)) : 0;
+    const ready = told && tellReady(m, c);
+    const duel = ready ? TELL_DUEL * ease * (1 - DDA_PRESS * m.assistEase(p.side)) : 0;
     // (Beyond a standing tackle's 2.7 m only the duel's own tell starts.)
-    const press = d < 2.7 ? rate * (told ? TELL_PRESS : 1) : 0;
+    // (Every told challenge is a real one now, dribble.ts toldTackleChance, so every one of them waits its turn: one
+    // tell at a time and TELL_GAP s between two, whoever shows it. From behind him they come untold, as they did.)
+    const press = d < 2.7 && (!told || ready) ? rate * (told ? TELL_PRESS : 1) : 0;
     // (No draw when nothing can start: past 2.7 m with no duel open, the dice are left alone.)
     if (press + duel > 0 && m.rng.chance((press + duel) * dt)) {
       // (Which of the two it was: the duel's share of the chance.)
@@ -1286,6 +1330,21 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
     (humanCarrier ? HUMAN_JOCKEY_ROOM + DDA_ROOM * m.assistEase(p.side) : 0);
   let jx = b.x + c.vel.x * 0.28 + (ux / ul) * gap;
   let jz = b.z + c.vel.z * 0.28 + (uz / ul) * gap;
+  if (dwell > 0 && !commit && !stalled) {
+    // He is going nowhere: no need to stay goal-side of a man who isn't running at goal. Stand DWELL_GAP m off the
+    // ball on the side it is being turned to (where it will be DWELL_LEAD s on), so the turn brings it to him.
+    // (The second man, `joined`, takes the side it is coming from: the two of them close the circle.)
+    const m2 = m.ball.vel;
+    const lead = joined ? -DWELL_LEAD : DWELL_LEAD;
+    const lx = b.x + m2.x * lead;
+    const lz = b.z + m2.z * lead;
+    const ox = lx - c.pos.x;
+    const oz = lz - c.pos.z;
+    const ol = Math.hypot(ox, oz) || 1;
+    const g = gap + (DWELL_GAP - gap) * dwell;
+    jx += (lx + (ox / ol) * g - jx) * dwell;
+    jz += (lz + (oz / ol) * g - jz) * dwell;
+  }
   if (stalled && !guarded) {
     if (around) {
       const turn = angleDiff(pressAngle, ballAngle);
@@ -1303,15 +1362,15 @@ function press(m: Match, p: Player, c: Player, dt: number, brain: TeamBrain): vo
   p.sprint = d > 2.6 || commit || p.tellT > 0;
   const aggression = 0.62 + skill * 0.09;
   const footD = dist2(p.footX(), p.footZ(), b.x, b.z);
-  if (commit && hasBall && p.tackleCooldown <= 0 && footD < 1.15) {
-    // (Going in out of a tell, skills.ts, the man ignored it: the tackle is the surer for it.)
-    // (A duel's tell barks more than it bites, DUEL_TACKLE, at a man who is dribbling; at one he has READ, running
-    // straight on into it, it is a tackle and a sure one: up to LINE_TACKLE.)
-    const told = p.toldT > 0 ? (p.tellDuel ? DUEL_TACKLE : TOLD_TACKLE) : 1;
-    m.tryTackle(p, c, aggression * (told + (LINE_TACKLE - told) * read));
+  // (Out of a tell, skills.ts, the challenge is the promised one: a lunge's reach and its own odds, dribble.ts
+  // toldTackleChance. The man ignored the warning, or answered it too early or too late.)
+  const promised = humanCarrier && p.toldT > 0;
+  if (commit && hasBall && p.tackleCooldown <= 0 && footD < (promised ? TOLD_REACH : 1.15)) {
+    // (An untold one, from behind him: the usual dice, surer at a man he has READ, up to LINE_TACKLE.)
+    m.tryTackle(p, c, aggression * (1 + (LINE_TACKLE - 1) * read), false, true, promised ? toldTackleChance(m, p, c, read) : 0);
     p.commitT = 0;
     p.jockeyT = 0;
-  } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded && p.tellT <= 0 && !(p.toldT > 0 && p.tellDuel) &&
+  } else if (hasBall && p.tackleCooldown <= 0 && p.slowT <= 0 && footD < 0.95 && !guarded && p.tellT <= 0 &&
     dist2(b.x, b.z, c.pos.x, c.pos.z) > (humanCarrier ? HUMAN_POKE_EXPOSED : 0.95)) {
     // Poke it away when the carrier's touch takes it too far from his feet.
     m.tryTackle(p, c, aggression * 1.25);
@@ -1375,6 +1434,11 @@ export function pressVsHuman(skill: number): number {
 }
 /** Extra jockeying room (m) the presser gives the human's dribbler (and DDA_ROOM more at full dynamic difficulty)... */
 const HUMAN_JOCKEY_ROOM = 0.25;
+/** A man going nowhere (dribble.ts dwellRead) is stood on at DWELL_GAP m, on the side his ball will be DWELL_LEAD s on. */
+const DWELL_GAP = 1.2;
+const DWELL_LEAD = 0.3;
+/** ... and from this much of the read the cover leaves his lane to double up on him. */
+const DOUBLE_UP = 0.5;
 const HIGH_PRESS_TIGHT = 0.35;
 const DDA_ROOM = 0.6;
 /** A marker holds this close (m) to the man the human's ball is on its way to, on his own side of him (markSpot). */
@@ -1627,12 +1691,23 @@ const AI_CLEAR_SIGHT = 0.17;
 const THREAD_OFFSETS = [0, -3.5, 3.5, -7, 7];
 /**
  * The AI's attacking intent against the HUMAN (round 12: at NORMAL the scripted human had 75% of the ball and the AI 2.3
- * shots a match; a competent player was never in danger): from nothing at EASY to full at NORMAL and above, it looks
+ * shots a match; a competent player was never in danger): from a quarter at EASY to full at NORMAL and above, it looks
  * for the shot sooner (AI_INTENT_SHOT more on a sight of goal, the long-shot cost cut), rates the forward ball and the
  * through ball higher (AI_INTENT_FORWARD, AI_INTENT_THROUGH) and makes more runs in behind (AI_INTENT_RUNS).
  * AI v AI (no human side) is untouched.
  */
-const AI_INTENT_FROM = 0.6;
+/**
+ * ... but not from anywhere (2026-10-05, the owner: "he never scored one on me"). Keen on a shot, the AI was hitting
+ * two in three of its shots against him from beyond 24 m (none in 38 went in over ten matches; in his career's bottom
+ * division it had 0.4 shots a match from inside 16 m). A shot from beyond AI_WORK_IT_FROM m costs AI_WORK_IT a metre
+ * (times intentVsHuman): with the ball 28 m out it carries it on or finds the man in the box, as a person would.
+ */
+/** The human's man with this much (s) of his lock-out left is BEATEN_PRESSURE of the pressure he looks (carrierAI). */
+const BEATEN_LOCK = 0.2;
+const BEATEN_PRESSURE = 0.2;
+const AI_WORK_IT_FROM = 21;
+const AI_WORK_IT = 0.02;
+const AI_INTENT_FROM = 0.2;
 const AI_INTENT_FULL = 1.8;
 const AI_INTENT_SHOT = 0.6;
 const AI_INTENT_FORWARD = 0.35;
@@ -1673,7 +1748,11 @@ function carrierAI(m: Match, p: Player, dt: number): void {
   const skill = m.aiSkill(side);
   const brain = m.brains[side];
   const near = nearestOpp(m, side, p.pos.x, p.pos.z);
-  const pressure = Math.pow(clamp((3.6 - near.d) / 2.4, 0, 1), 1.5);
+  // (The human's man he has just taken it off is beaten for a moment, Player.robbedT: no pressure at all.
+  // Counting him, the winner of a tackle by his own box hacked it out for a corner or a throw with nobody on him: one
+  // in four of the AI's spells against the casual bot ended that way.)
+  const beaten = !!near.o && m.isHumanControlled(near.o) && near.o.robbedT > BEATEN_LOCK;
+  const pressure = Math.pow(clamp((3.6 - near.d) / 2.4, 0, 1), 1.5) * (beaten ? BEATEN_PRESSURE : 1);
 
   p.aiT -= dt;
   const firstTouch = p.ballT < 0.05 && p.aiT <= -dt * 0.5;
@@ -1724,7 +1803,9 @@ function carrierAI(m: Match, p: Player, dt: number): void {
     // (A clean sight of goal from the edge of the box, 15-22 m out, is the one to hit.)
     const bonus = blockers < 0.5 ? (dg < 15 ? 0.035 : dg < 22 ? AI_CLEAR_SIGHT : dg < 28 ? 0.035 : 0.015) : 0;
     const keen = 1 + AI_INTENT_SHOT * intent;
-    const s0 = early(q * 2 + (bonus + (inBox ? AI_BOX_SHOT : 0)) * keen - (dg > 22 ? AI_LONG_SHOT_COST / keen : 0), 0.05);
+    // (Against the human it works the ball into the box rather than hitting it from anywhere: AI_WORK_IT.)
+    const far = Math.max(0, dg - AI_WORK_IT_FROM) * AI_WORK_IT * intent;
+    const s0 = early(q * 2 + (bonus + (inBox ? AI_BOX_SHOT : 0)) * keen - (dg > 22 ? AI_LONG_SHOT_COST / keen : 0) - far, 0.05);
     const s = s0 > 0 ? s0 * st.shoot : s0;
     // (Harder from further out, but short of flat out: see actions.AI_STRIKE_LIFT.)
     const power = clamp(0.55 + dg / 50, 0.6, 0.94);

@@ -191,9 +191,10 @@ describe('SKILL: the PERFECT window', () => {
     expect(telegraphs(m, o, p)).toBe(true);
     startTell(m, o, p, false);
     if (frames >= 0) {
-      steps(m, frames, pad(1, 0), evs);
-      // (Late: kept from going in meanwhile, so the ball is still there to skill.)
+      // (Late: kept from going in meanwhile, so the ball is still there to skill. From the start of the wait: the
+      // promised challenge, dribble.ts toldTackleChance, takes it within a few frames of the tell going down.)
       if (frames * DT > tellTime(m.aiSkill(1))) o.tackleCooldown = 5;
+      steps(m, frames, pad(1, 0), evs);
       steps(m, 1, pad(0, 1, { skill: true }), evs);
     } else steps(m, 3, pad(0, 1, { skill: true }), evs);
     steps(m, 2, pad(1, 0), evs);
@@ -225,7 +226,8 @@ describe('SKILL: the PERFECT window', () => {
     expect(early.moves.length).toBe(1);
     expect(early.moves[0]).not.toMatchObject({ grade: 'perfect' });
     const t = tellTime(1.8);
-    const late = counter(41, Math.round((t + PERFECT_GRACE) / DT) + 6);
+    // (After the whole window, the tell and NORMAL's grace: with the man kept from going in, nothing ends it sooner.)
+    const late = counter(41, Math.round((t + perfectGrace(1.8)) / DT) + 6);
     expect(late.moves.length).toBe(1);
     expect(late.moves[0]).not.toMatchObject({ grade: 'perfect' });
     expect(late.o.wrongFootT).toBeLessThan(PERFECT_BEAT_MIN);
@@ -465,7 +467,11 @@ describe('SKILL: whole matches against the scripted human', () => {
     expect(spam.skillPerfectPct).toBeLessThan(react.skillPerfectPct);
     // No runaway: goal difference within a goal a match of not using it at all.
     expect(spam.gf - spam.ga).toBeLessThan(off.gf - off.ga + 1);
-    expect(react.gf - react.ga).toBeLessThan(off.gf - off.ga + 1.2);
+    // (2026-10-05: a tell is a promise now, so never answering one costs the ball most of the time, where it used to
+    // cost nothing: 9.8 balls lost to tackles a match against 3.0. Answering is worth more than it was, by design:
+    // up to +2.25 goals of difference over these four short matches, from within +1.2. Mashing is still worth nothing.)
+    expect(react.gf - react.ga).toBeGreaterThanOrEqual(off.gf - off.ga);
+    expect(react.gf - react.ga).toBeLessThan(off.gf - off.ga + 2.6);
   }, 900_000);
 });
 
@@ -481,7 +487,9 @@ describe('SKILL: every press pays (2026-10-04)', () => {
     expect(st.move?.charged).toBe(true);
     expect(skillFlair(m, 0)).toBeGreaterThan(FLAIR_MAX - 1 - 0.01);
     expect(skillFlair(m, 0)).toBeLessThan(FLAIR_MAX - 1 + 0.05);
-    // Back at one a FLAIR_REGEN_S.
+    // Back at one a FLAIR_REGEN_S. (Nobody may take it off him meanwhile: this long on one straight line he is READ,
+    // and the challenge that brings is a real one now.)
+    for (const o of m.teamPlayers(1)) o.tackleCooldown = 99;
     steps(m, Math.round(FLAIR_REGEN_S / DT), pad(1, 0));
     expect(skillFlair(m, 0)).toBeGreaterThan(FLAIR_MAX - 0.05);
     // No pips: the move still plays, uncharged.

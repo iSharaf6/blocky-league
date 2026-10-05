@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Input, setBindings } from '../src/core/input';
 import { FoulPresentation } from '../src/game/foulPresentation';
-import { IncidentReplays, type IncidentReplay } from '../src/game/incidentReplay';
+import { DEAD_HOLD_S, IncidentReplays, type IncidentReplay } from '../src/game/incidentReplay';
 import { MatchSession } from '../src/game/matchSession';
 import { MatchTally } from '../src/game/ratings';
 import { BALL_OFS, FRAME_LEN, PF, ReplayBuffer, STATE_CODE, writeFrame } from '../src/game/replay';
@@ -57,7 +57,7 @@ function rig(m = newMatch()) {
     frameHook: null as ((f: Float32Array, dt: number) => void) | null,
     frame, headTop: 1.9, refState, ballGlide: { x: 0, y: 0, z: 0 },
     apply: vi.fn((_prev: Float32Array, cur: Float32Array) => frame.set(cur)),
-    tickFlashes: vi.fn(), flashPlayer: vi.fn(), refSignal: vi.fn(), clearFades: vi.fn(), pinPlayer: vi.fn(),
+    tickFlashes: vi.fn(), flashPlayer: vi.fn(), refSignal: vi.fn(), refPoint: vi.fn(), clearFades: vi.fn(), pinPlayer: vi.fn(),
     setBallHidden: vi.fn(), setMarkerMode: vi.fn(), setMarkerVisible: vi.fn(), setTeamRings: vi.fn(), setTeamPips: vi.fn(),
     setShadowBudget: vi.fn(), faceCamera: vi.fn(), updateReferee: vi.fn(), setRival: vi.fn(), replacePlayer: vi.fn(),
     flashBall: vi.fn(), celeb: { active: false, begin: vi.fn(), end: vi.fn(), holdS: 0 },
@@ -70,6 +70,7 @@ function rig(m = newMatch()) {
     cardLens: () => ({ x: -20, z: 12 }),
     setMode: vi.fn((mode: string) => { cam.mode = mode; }),
     replayKind: 'goal', replayShot: 'build', replayGoalSign: 1, replayActors: [] as number[],
+    replayLens: null as { x: number; y: number; z: number; fov: number } | null,
   };
   const session = Object.assign(Object.create(MatchSession.prototype), {
     match: m, input, buffer, incidentReplays: incidentReplay, hud, view, cam, demo: false, driver: null, paused: false,
@@ -155,6 +156,8 @@ function foulRig(card: 'none' | 'yellow' | 'red', penalty = false, advantage = f
     h.record();
     const events: MatchEvent[] = [];
     for (let i = 0; i < 60 && !events.some(e => e.type === 'foul'); i++) events.push(...h.step());
+    // A whistled foul plays on through its dead-ball beat (the fall is live and on tape) before the recap holds it.
+    if (!advantage) for (let i = 0; i < 90 && !h.incidentReplay.waiting(m); i++) events.push(...h.step());
     const got = events.find(e => e.type === 'card');
     if (events.some(e => e.type === 'foul') &&
       (card === 'none' ? !got : got?.type === 'card' && got.color === card)) return { ...h, on, by, events };
@@ -245,6 +248,8 @@ function shootoutRig(how: 'goal' | 'saved' | 'wide') {
       .shootoutKick(taker, { z: how === 'wide' ? 8 : how === 'goal' ? 2.8 : 0, h: 1, power: 0.7, placed: true });
     const events: MatchEvent[] = [];
     for (let i = 0; i < 300 && !events.some(e => e.type === 'shootoutKick'); i++) events.push(...h.step());
+    // The judged kick is seen to its end (net, gloves, crowd) before its recap holds the result.
+    for (let i = 0; i < 90 && !h.incidentReplay.waiting(m); i++) events.push(...h.step());
     if (m.shootout!.last?.how === how) return { ...h, events, taker };
   }
   throw new Error(`Actual penalty flight did not produce ${how}`);
@@ -340,7 +345,8 @@ describe('incident replays', () => {
     const h = foulRig('none', false, true);
     expect(h.m.phase).toBe('play');
     expect(h.events.some(e => e.type === 'restart')).toBe(false);
-    expect(h.incidentReplay.pending).toBe(1);
+    // (Its clip is cut once the aftermath is on tape, not on the contact frame.)
+    expect(h.incidentReplay.pending).toBe(0);
     expect(h.incidentReplay.waiting(h.m)).toBe(false);
     expect(h.incidentReplay.take(h.m)).toBeNull();
     // Keep the exposed ball away from both sides while the referee actually waits for advantage.
@@ -358,9 +364,11 @@ describe('incident replays', () => {
     expect(h.m.restart?.x).toBeGreaterThan(17);
     openReplay(h);
     // The action comes from the contact at x=20, before the ball was moved for the advantage wait.
-    const contact = h.state.replay!.at(-1)!;
+    const clip = h.state.replayIncident!;
+    const contact = h.state.replay![clip.actionIdx];
     expect(contact[BALL_OFS]).toBeGreaterThan(17);
     expect(contact[h.on.idx * PF]).toBeGreaterThan(17);
+    expect(h.state.replay!.length - 1 - clip.actionIdx).toBeGreaterThanOrEqual(48);
     finishReplay(h);
     expect(h.incidentReplay.pending).toBe(0);
   });
@@ -520,12 +528,27 @@ describe('incident replays', () => {
     expect(frames.at(-1)![BALL_OFS + 9] - release![BALL_OFS + 9]).toBeGreaterThan(4.4);
     const releaseIdx = h.state.replayIncident!.releaseIdx!;
     expect(frames[releaseIdx][BALL_OFS + 9]).toBe(h.releaseStamp);
+    // The line is the sim's own, read off the release frame: the second-last defender, 16 m from his goal line.
+    const line = h.state.replayIncident!.offside!;
+    expect(line.attacker).toBe(h.attacker.idx);
+    expect([13, 14]).toContain(line.defender);
+    expect(line.lineX).toBeCloseTo(frames[releaseIdx][line.defender * PF], 4);
+    expect(Math.abs(line.lineX - (HALF_L - 16))).toBeLessThan(1);
+    expect(frames[releaseIdx][h.attacker.idx * PF]).toBeGreaterThan(line.lineX);
+    expect(h.state.replayIncident!.caption).toMatch(/^OFFSIDE \d+ /);
+    // The picture stops on the pass with the lens brought in line with the line, then runs on at match speed.
     h.state.replayT = releaseIdx / 60;
     h.state.stepReplay(DT);
-    expect(h.state.replayT - releaseIdx / 60).toBeCloseTo(DT * 0.5, 9);
-    h.state.replayT = (releaseIdx + 40) / 60;
+    expect(h.state.replayT).toBe(releaseIdx / 60);
+    expect(h.cam.replayLens?.x).toBeCloseTo(line.lineX, 3);
+    for (let i = 0; i < 60; i++) h.state.stepReplay(DT);
+    expect(h.state.replayT).toBe(releaseIdx / 60);
+    for (let i = 0; i < 40; i++) h.state.stepReplay(DT);
+    expect(h.cam.replayLens).toBeNull();
+    const t = h.state.replayT;
+    expect(t).toBeGreaterThan(releaseIdx / 60);
     h.state.stepReplay(DT);
-    expect(h.state.replayT - (releaseIdx + 40) / 60).toBeCloseTo(DT * 0.85, 9);
+    expect(h.state.replayT - t).toBeCloseTo(DT, 9);
   });
 
   it('uses the next actual pass as the witness for another offside instead of replaying an unrelated older release', () => {
@@ -554,5 +577,94 @@ describe('incident replays', () => {
     const frames = h.state.replay!;
     expect(frames.some(f => f[BALL_OFS + 9] === releaseStamp)).toBe(true);
     expect(frames.some(f => f[BALL_OFS + 9] === olderStamp)).toBe(false);
+  });
+
+  it.each([['none', false], ['yellow', false], ['red', false], ['none', true], ['yellow', true]] as const)(
+    'keeps the contact inside a %s foul clip (penalty %s): 1.5 s before it, 0.8 s after it, slowed through it', (card, penalty) => {
+      const h = foulRig(card, penalty);
+      // The whistle went at once: the match ran on through its dead-ball beat, then held just short of the restart.
+      expect(h.m.phase).toBe('out');
+      expect(h.m.phaseT).toBeGreaterThanOrEqual(DEAD_HOLD_S);
+      expect(h.hud.show).toHaveBeenCalledWith(penalty ? 'PENALTY!' : 'FOUL',
+        expect.stringMatching(new RegExp(`^TRIPPED BY ${h.by.def.number} `)), 'small foul', expect.any(Number));
+      if (penalty) expect(h.view.refPoint).toHaveBeenCalledWith(expect.any(Number), h.m.restart!.x, h.m.restart!.z);
+      openReplay(h);
+      const clip = h.state.replayIncident!;
+      const frames = h.state.replay!;
+      if (penalty) expect(clip.label).toContain('PENALTY');
+      expect(clip.caption).toBe(`FOUL BY ${h.by.def.number} ${h.by.def.name.toUpperCase()}`);
+      expect([clip.fouler, clip.victim]).toEqual([h.by.idx, h.on.idx]);
+      const contact = clip.actionIdx;
+      expect(contact).toBeGreaterThanOrEqual(90);
+      expect(frames.length - 1 - contact).toBeGreaterThanOrEqual(48);
+      // The contact frame itself: the victim goes down on it, having been on his feet the frame before...
+      expect(frames[contact][h.on.idx * PF + 4]).toBe(STATE_CODE.fallen);
+      expect(frames[contact - 1][h.on.idx * PF + 4]).not.toBe(STATE_CODE.fallen);
+      // ...and he is seen on the floor for the whole of the tail, the slide still in the picture at the contact.
+      expect(frames[contact + 40][h.on.idx * PF + 4]).toBe(STATE_CODE.fallen);
+      expect(frames[contact - 1][h.by.idx * PF + 4]).toBe(STATE_CODE.slide);
+      expect(clip.slowFrom).toBeLessThan(contact);
+      expect(clip.slowTo).toBeGreaterThan(contact);
+      // Played through: slow motion covers the contact, and the clip does not end before it.
+      let sawContact = false;
+      let slowAtContact = false;
+      for (let i = 0; h.state.replay && i < 900; i++) {
+        const before = h.state.replayT;
+        h.state.stepReplay(DT);
+        if (Math.floor(before * 60) === contact) {
+          sawContact = true;
+          slowAtContact = h.state.replayT - before < DT * 0.6;
+        }
+      }
+      expect(sawContact).toBe(true);
+      expect(slowAtContact).toBe(true);
+      expect(h.state.replay).toBeNull();
+      expect(h.cam.replayLens).toBeNull();
+    });
+
+  it('shows a foul live in order: the banner at the whistle, then the card, then the replay, then the same restart', () => {
+    const h = foulRig('yellow', true);
+    const restart = h.m.restart!;
+    const shows = () => h.hud.show.mock.calls.map(c => c[0] as string);
+    expect(shows()).toEqual(['PENALTY!']);
+    expect(h.view.showCard).not.toHaveBeenCalled();
+    // The decision stands alone for its beat: no card over it yet, and no replay.
+    for (let i = 0; i < 20; i++) h.session.update(DT);
+    expect(h.view.showCard).not.toHaveBeenCalled();
+    expect(h.state.replay).toBeNull();
+    for (let i = 0; !h.view.showCard.mock.calls.length && i < 120; i++) h.session.update(DT);
+    expect(shows()).toEqual(['PENALTY!', 'YELLOW CARD']);
+    expect(h.state.replay).toBeNull();
+    openReplay(h);
+    expect(h.hud.setReplay).toHaveBeenLastCalledWith(true, expect.stringContaining('PENALTY'), expect.stringMatching(/^FOUL BY /));
+    finishReplay(h);
+    expect(h.m.restart).toBe(restart);
+    expect(h.m.phase).toBe('out');
+    // No second "PENALTY!" replaced the card or the reason line along the way.
+    expect(shows()).toEqual(['PENALTY!', 'YELLOW CARD']);
+  });
+
+  it('replays a missed in-match penalty only once the ball is dead, from the run-up to the miss', () => {
+    const h = penaltyRig('wide');
+    const clip = h.state.replayIncident!;
+    const frames = h.state.replay!;
+    // Out of play and dead: the hold comes at the end of the dead-ball beat, not as the ball crosses the line.
+    expect(h.m.phase).toBe('out');
+    expect(h.m.phaseT).toBeGreaterThanOrEqual(DEAD_HOLD_S);
+    const strike = frames.findIndex(f => f[h.taker * PF + 4] === STATE_CODE.kick);
+    expect(strike).toBeGreaterThanOrEqual(60);
+    expect(clip.actionIdx).toBeGreaterThan(strike);
+    expect(frames.length - 1 - clip.actionIdx).toBeGreaterThanOrEqual(30);
+    expect(clip.caption).toContain('MISSED');
+    finishReplay(h);
+    // The live ball is kept out of the picture for the last frames before the restart places it.
+    expect((h.session as unknown as { ballOutHidden: boolean }).ballOutHidden).toBe(true);
+  });
+
+  it('holds a saved in-match penalty in the gloves before its replay', () => {
+    const h = penaltyRig('saved');
+    const clip = h.state.replayIncident!;
+    expect(h.state.replay!.length - 1 - clip.actionIdx).toBeGreaterThanOrEqual(30);
+    expect(clip.caption).toMatch(/^SAVED BY \d+ /);
   });
 });

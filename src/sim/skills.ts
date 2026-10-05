@@ -130,8 +130,11 @@ export function perfectGrace(skill: number): number {
  * warning, and without the extra challenges a player who never touches SKILL would keep the ball noticeably more.
  */
 export const TELL_PRESS = 1.8;
-/** ... and the tackle a tell led into (Player.toldT, while it's committed) comes off this much more often. */
-export const TOLD_TACKLE = 1;
+/**
+ * ... and the tackle a tell led into (Player.toldT, while it's committed) is the promised one: its odds are
+ * dribble.ts toldTackleChance (vsHuman.told by difficulty), not the standing tackle's dice. (2026-10-05, the owner:
+ * "when the skill timing thing pops up, they don't tackle the player ... it defeats the purpose of the skill thing".)
+ */
 /**
  * The duel (the owner's favourite: "make it much more frequent"): a man in front of the human's dribbler, within
  * TELL_REACH m, winds up a told challenge at TELL_DUEL a second on top of his usual press, so taking a man on almost
@@ -141,13 +144,14 @@ export const TOLD_TACKLE = 1;
  */
 export const TELL_REACH = 3.8;
 export const TELL_DUEL = 2.4;
-export const TELL_GAP = 0.9;
+export const TELL_GAP = 1.2;
 /**
- * A duel's tell barks more than it bites: ignored, its tackle comes off this much as often as a usual one. The
- * duel is there for the SKILL counter (a PERFECT is the payoff); a player who never presses SKILL mustn't lose the
- * ball every time he takes a man on, so it's no poke after the lunge either (ai.ts press).
+ * (A duel's tell used to bark more than it bit: ignored, its tackle came off 0.08 as often as a usual one, about one
+ * time in thirty on NORMAL and one in eighty on EASY, so a player who never pressed SKILL kept the ball through
+ * nearly all of them. Every tell is a real challenge now, and so every told challenge, the duel's or the press's,
+ * waits its turn: one at a time and TELL_GAP s, 0.9 before, from the start of one to the next: ai.ts press.)
+ * The duel waits DUEL_SETTLE s after he takes the ball.
  */
-export const DUEL_TACKLE = 0.08;
 export const DUEL_SETTLE = 0.6;
 /** Dribbled past (watchPast): a man within PAST_AHEAD m goal-side and PAST_SIDE m of the line, beaten within PAST_T s. */
 const PAST_AHEAD = 3;
@@ -155,14 +159,20 @@ const PAST_SIDE = 1.6;
 const PAST_T = 1.2;
 /** A challenge from further behind him than this (cos of the angle off his facing, negated) is out of view: untold. */
 const OUT_OF_VIEW = 0.35;
-/** A telegraphed challenge is called off with the carrier further away than this (m). */
-const TELL_BREAK = 4.2;
+/**
+ * A telegraphed challenge is called off with the carrier further away than this (m). (It was 4.2, inside the reach a
+ * tell on a READ carrier starts from, TELL_REACH + LINE_REACH: such a tell went up and was called off on the next
+ * step, a "!" with no challenge behind it, and the next man had to wait out TELL_GAP for his.)
+ */
+const TELL_BREAK = 6.4;
 /**
  * When the tell is up he goes in with a lunge at the ball, at TELL_LUNGE m/s at least, committed for COMMIT_T s (ai.ts
  * press's commit): the time the tell gives the carrier, the lunge takes back.
  */
 const TELL_LUNGE = 8;
 const COMMIT_T = 0.55;
+/** ... aimed where the ball will be when he arrives, up to this far (s) ahead of it. */
+const LUNGE_LEAD = 0.4;
 /** PERFECT: the man who bit is planted and stumbling this long (s), and the dribbler protected, with a burst after the move. */
 export const PERFECT_BEAT_MIN = 0.8;
 export const PERFECT_BEAT_MAX = 1.0;
@@ -529,8 +539,12 @@ export function skillTells(m: Match, dt: number): void {
       m.startSlide(o);
     } else {
       o.commitT = COMMIT_T;
-      const lx = b.pos.x + b.vel.x * 0.1 - o.pos.x;
-      const lz = b.pos.z + b.vel.z * 0.1 - o.pos.z;
+      // The lunge goes where the ball will be when he gets there (it was 0.1 s on, whatever the gap: a man beside a
+      // sprinting carrier lunged at where the ball had been, and never got a foot near it).
+      const gap = dist2(o.pos.x, o.pos.z, b.pos.x, b.pos.z);
+      const lead = clamp(gap / Math.max(o.speed(), TELL_LUNGE), 0.08, LUNGE_LEAD);
+      const lx = b.pos.x + c.vel.x * lead - o.pos.x;
+      const lz = b.pos.z + c.vel.z * lead - o.pos.z;
       const ll = Math.hypot(lx, lz) || 1;
       const sp = Math.max(o.speed(), TELL_LUNGE);
       o.vel.x = (lx / ll) * sp;

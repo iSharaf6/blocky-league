@@ -336,6 +336,7 @@ function applySettings(): void {
     (session as { setBallSkin?: (id?: string) => void }).setBallSkin?.(equippedSkin());
     (session as { setCelebration?: (id?: string) => void }).setCelebration?.(equippedCelebration());
     session.setQuickSubs(s.quickSubs !== false);
+    session.setSideShows(s.sideShows !== false);
   }
   persist();
 }
@@ -1050,6 +1051,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     decor,
     colorblind: !!save.settings.colorblind,
     quickSubs: save.settings.quickSubs !== false,
+    sideShows: save.settings.sideShows !== false,
     assist,
     startScore: req.startScore,
     keeperBoost: req.keeperBoost,
@@ -1175,6 +1177,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
       quit: quitMatch,
       quitNote,
       forfeit,
+      ratings: s.ratings(),
     });
     // The mascot's HALF TIME SHOW (a home match with a mascot on the touchline): its coins are paid with the match at
     // full time, and said here.

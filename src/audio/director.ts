@@ -6,6 +6,7 @@
  * - The kick-off sting at the first kick-off and the second half's (never after a goal: the goal had its own).
  * - HALF TIME: the crowd stops singing and chats; the half-time track once the screen is coming up; it fades out
  *   into the second half. (The full-time music comes with the result screen: main.ts calls sfx.result.)
+ * - A SUBSTITUTION's touchline scene: the half-time loop under it (subScene, from the session), every time.
  * - The crowd: olés on a passing move (from the OLE_FROM'th pass in a row), whistles when the other side keeps the
  *   ball against the player (AI_HOLD_S), whistles and boos at a foul on their man, applause for a tackle won by a
  *   slide or by the player, a groan when the player misses a sitter, nerves late on when it's level or one behind,
@@ -27,6 +28,15 @@ export type DirectorSink = Pick<
 /** The half-time track starts this far into the break (the session puts the screen up at 1 s), fades out over HT_FADE_S. */
 export const HT_MUSIC_AT = 0.8;
 export const HT_FADE_S = 1.6;
+/**
+ * THE SUBSTITUTION'S MUSIC (the owner: "the music of the substitution was so nice"): the half-time loop under the
+ * touchline scene. It used to be heard only by accident, as the loop's tail under changes made at the break; the
+ * walk back out (3 s) then came between them and it had faded before the scene. Now every substitution scene has it:
+ * from its top in a match, carried straight on from the break for changes made there, out over SUB_FADE_S after.
+ */
+export const SUB_FADE_S = 1.2;
+/** Changes made at the break: the loop waits at most this long (s) for their scene (the walk back out is 3 s). */
+export const SUB_WAIT_S = 8;
 /** The other side keeping the ball this long (s) gets the player's fans whistling, at most every WHISTLE_GAP_S. */
 export const AI_HOLD_S = 10;
 const WHISTLE_GAP_S = 16;
@@ -58,6 +68,9 @@ export class MatchAudio {
   private kickoffs = 0;
   private afterHalf = false;
   private htOn = false;
+  /** A substitution scene is on; seconds the half-time loop will still wait for one (changes made at the break). */
+  private subOn = false;
+  private subWait = 0;
   private ftDone = false;
   /** The passing move: whose, how many passes completed, a pass in the air. */
   private chainSide = -1;
@@ -83,6 +96,8 @@ export class MatchAudio {
     this.kickoffs = 0;
     this.afterHalf = false;
     this.htOn = false;
+    this.subOn = false;
+    this.subWait = 0;
     this.ftDone = false;
     this.resetChain();
     this.aiHold = 0;
@@ -206,8 +221,23 @@ export class MatchAudio {
     this.out.fullTimeCrowd(w as -1 | 0 | 1);
   }
 
-  /** Once a frame (dt 0 while paused), after the session's own crowd calls. */
-  frame(dt: number, m: Match): void {
+  /**
+   * A substitution's touchline scene starts (true) or ends (false; the session, startSubCut / endSubCut): its music is
+   * the half-time loop. Already playing (changes made at the break) it simply carries on; it fades when the scene ends.
+   */
+  subScene(on: boolean): void {
+    if (!this.m || this.subOn === on) return;
+    this.subOn = on;
+    this.subWait = 0;
+    if (on) this.out.playTrack('halftime');
+    else if (!this.htOn) this.out.stopMusic(SUB_FADE_S);
+  }
+
+  /**
+   * Once a frame (dt 0 while paused), after the session's own crowd calls. `subsWaiting`: changes are queued for
+   * their touchline scene (the session's subQueue), so the half-time loop is kept for it.
+   */
+  frame(dt: number, m: Match, subsWaiting = false): void {
     if (m !== this.m) return;
     this.t += dt;
     const ph = m.phase;
@@ -223,9 +253,20 @@ export class MatchAudio {
     }
     if (this.htOn) {
       this.htOn = false;
-      this.out.stopMusic(HT_FADE_S);
+      // Changes made at the break are shown at the kick-off: the loop carries on to their scene (and through it).
+      if (this.subOn) this.subWait = 0;
+      else if (subsWaiting) this.subWait = SUB_WAIT_S;
+      else this.out.stopMusic(HT_FADE_S);
       this.out.setNerves(0);
       this.out.setChantGate(true);
+    }
+    if (this.subWait > 0 && !this.subOn) {
+      // (Their scene never came, or the queue was dropped: the loop goes as it always did.)
+      this.subWait = subsWaiting ? this.subWait - dt : 0;
+      if (this.subWait <= 0) {
+        this.subWait = 0;
+        this.out.stopMusic(HT_FADE_S);
+      }
     }
     // (A kick-off the session drained some other way: never a sting later in open play.)
     if (this.kickoffs === 0 && ph === 'play') this.kickoffs = 1;
@@ -262,16 +303,21 @@ export class MatchAudio {
   /** The match is over and gone (the session's dispose): a half-time track still up goes; the crowd's state resets. */
   end(m: Match): void {
     if (m !== this.m) return;
-    if (this.htOn) this.out.stopMusic(0.5);
+    if (this.htOn || this.subOn || this.subWait > 0) this.out.stopMusic(0.5);
     this.htOn = false;
+    this.subOn = false;
+    this.subWait = 0;
     this.out.setNerves(0);
     this.out.setChantGate(true);
     this.m = null;
   }
 
   /** The state, for the dev panel and tests. */
-  get state(): { active: boolean; kickoffs: number; halftimeMusic: boolean; chain: number; aiHold: number } {
-    return { active: this.m !== null, kickoffs: this.kickoffs, halftimeMusic: this.htOn, chain: this.chain, aiHold: +this.aiHold.toFixed(2) };
+  get state(): { active: boolean; kickoffs: number; halftimeMusic: boolean; subMusic: boolean; chain: number; aiHold: number } {
+    return {
+      active: this.m !== null, kickoffs: this.kickoffs, halftimeMusic: this.htOn, subMusic: this.subOn || this.subWait > 0, chain: this.chain,
+      aiHold: +this.aiHold.toFixed(2),
+    };
   }
 
   private resetChain(): void {

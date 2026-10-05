@@ -310,7 +310,7 @@ describe('quick subs', () => {
     Object.assign(session, {
       match: m, quick: card, cam, hud, paused: false, driver: null, replay: null, introLeft: 0, holdFirst: false, cineHud: false,
       cardT: 0, foulPresentation: { waiting: false }, moment: null,
-      view: { replacePlayer: vi.fn() }, tally: { sub: vi.fn() }, lastPasser: [-1, -1], opt: { kits: [m.teams[0].kit, m.teams[1].kit] },
+      view: { replacePlayer: vi.fn() }, tally: { sub: vi.fn(), observe: vi.fn() }, lastPasser: [-1, -1], opt: { kits: [m.teams[0].kit, m.teams[1].kit] },
     });
     const tick = () => (session as unknown as { updateQuickSub(dt: number): void }).updateQuickSub(DT);
     tick();

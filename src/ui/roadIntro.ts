@@ -12,7 +12,7 @@ import './career.css';
 
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 
-/** "SUNDAY LEAGUE" as it reads inside a sentence: "Sunday League". */
+/** "PARK LEAGUE" as it reads inside a sentence: "Park League". */
 const title = (s: string): string => s.toLowerCase().replace(/(^|\s)([a-z])/g, (_m, a: string, b: string) => a + b.toUpperCase());
 
 /** The divisions top to bottom as a staircase (the bottom step, where you start, sits lowest and furthest left). */

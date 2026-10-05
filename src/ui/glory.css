@@ -110,9 +110,36 @@
 .gl-done.t-bad .gl-hint { background: var(--red-d); }
 .panel .gl-ok, .gl-ok { min-width: 160px; min-height: 46px; }
 
+/* ----- a card about a player: the player card on the left (ui/playerCard.ts), the story and the answers on the right ----- */
+
+.gl-card.has-who { width: min(780px, 100%); }
+.gl-body { display: grid; grid-template-columns: minmax(250px, 0.82fr) minmax(0, 1.18fr); gap: 12px; align-items: start; min-height: 0; }
+.gl-who { display: grid; gap: 8px; min-width: 0; }
+.gl-main { display: grid; gap: 8px; min-width: 0; align-content: start; }
+.has-who .gl-choices, .has-who .gl-choices.n2 { grid-template-columns: minmax(0, 1fr); gap: 7px; }
+
+.panel .has-who .btn.gl-choice, .has-who .btn.gl-choice {
+  min-height: 56px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "label cost" "hint cost";
+  justify-items: start;
+  align-content: center;
+  column-gap: 8px;
+  row-gap: 3px;
+  padding: 6px 10px 6px;
+  text-align: left;
+}
+
+.has-who .gl-choice b { grid-area: label; font-size: 16px; }
+.has-who .gl-choice small { grid-area: hint; font-size: 12px; line-height: 1.15; }
+.has-who .gl-choice .gl-cost { grid-area: cost; align-self: center; justify-self: end; }
+
 @media (max-width: 560px) {
   .gl-choices, .gl-choices.n2 { grid-template-columns: minmax(0, 1fr); }
   .btn.gl-choice { min-height: 52px; }
+  /* A narrow portrait window: the card on top, the answers under it; the card scrolls rather than the page. */
+  .gl-card.has-who { overflow-y: auto; }
+  .gl-body { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-height: 380px) {
@@ -121,6 +148,10 @@
   .gl-title { font-size: 19px; }
   .gl-text { font-size: 14px; }
   .btn.gl-choice { min-height: 66px; }
+  .gl-who { gap: 6px; }
+  .gl-main { gap: 6px; }
+  .panel .has-who .btn.gl-choice, .has-who .btn.gl-choice { min-height: 50px; padding-top: 4px; padding-bottom: 4px; }
+  .has-who .gl-choice b { font-size: 15px; }
 }
 
 /* ----- THE STORY and COMING UP ----- */

@@ -64,6 +64,18 @@ export interface BotOptions {
    * knock-on, no SKILL), and SHOOT the moment he is in their box. Without it he defends as the bot always does.
    */
   straight?: boolean;
+  /**
+   * The owner (2026-10-05): "i can keep spinning around ina circle with a joy stick and no one will ever get the ball
+   * from me". With the ball: the stick pushed all the way and turned through a full circle every `circle` seconds
+   * (0: off), and nothing else (no pass, no shot, no SKILL). Without it he defends as the bot always does.
+   */
+  circle?: number;
+  /**
+   * The owner (2026-10-05): "when the skill timing thing pops up, they don't tackle the player". With the ball: he
+   * runs AT the nearest defender between him and their goal (the goal itself with nobody in his way), never presses
+   * SKILL, never passes, and shoots once he is in their box. Every tell is ignored.
+   */
+  takeOn?: boolean;
 }
 
 /** How a carry of the bot's ended (BotTally.runEnds). */
@@ -205,7 +217,7 @@ export class HumanBot {
   constructor(seed: number, opts: BotOptions = {}) {
     this.s = (Math.imul(seed + 17, 2654435761) >>> 0) || 1;
     this.sk = (Math.imul(seed + 71, 2246822519) >>> 0) || 1;
-    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, skills: 'off', sprint: 'button', casual: false, straight: false, ...opts };
+    this.o = { cuts: true, tackles: true, press: true, knockOns: true, wing: false, skills: 'off', sprint: 'button', casual: false, straight: false, circle: 0, takeOn: false, ...opts };
   }
 
   private skRnd(): number {
@@ -425,9 +437,67 @@ export class HumanBot {
     }
   }
 
+  /** BotOptions.circle: the stick turned through a full circle every `circle` s, pushed all the way; nothing else. */
+  private circleAttack(): void {
+    const a = (this.ownT / this.o.circle) * Math.PI * 2;
+    this.stick.x = Math.cos(a);
+    this.stick.z = Math.sin(a);
+    this.sprintHeld = true;
+    this.plan = null;
+  }
+
+  /** BotOptions.takeOn: the stick at the nearest defender in his way (else their goal), SHOOT in their box; nothing else. */
+  private takeOnAttack(m: Match, c: Player): void {
+    const ad = m.attackDir(HS);
+    let tx = ad * HALF_L;
+    let tz = 0;
+    let bd = 14;
+    for (const o of m.teamPlayers(1)) {
+      if (o.isKeeper || o.sentOff) continue;
+      const ahead = (o.pos.x - c.pos.x) * ad;
+      const d = Math.hypot(o.pos.x - c.pos.x, o.pos.z - c.pos.z);
+      // (A man he has reached is behind him the next moment: on to the next one, or the goal.)
+      if (ahead < 1.2 || d >= bd || Math.abs(o.pos.z - c.pos.z) > 8) continue;
+      bd = d;
+      tx = o.pos.x;
+      tz = o.pos.z;
+    }
+    const dx = tx - c.pos.x;
+    const dz = tz - c.pos.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    this.stick.x = dx / dl;
+    this.stick.z = dz / dl;
+    this.sprintHeld = true;
+    const pl = this.plan;
+    if (pl && pl.kind === 'shoot') {
+      pl.t += DT;
+      if (pl.t >= pl.hold + 0.2) this.plan = null;
+      return;
+    }
+    this.plan = null;
+    if (Math.abs(ad * HALF_L - c.pos.x) < BOX_DEPTH && Math.abs(c.pos.z) < BOX_W / 2 && this.ownT > 0.1) {
+      const gl = Math.hypot(ad * HALF_L - c.pos.x, c.pos.z) || 1;
+      this.stick.x = (ad * HALF_L - c.pos.x) / gl;
+      this.stick.z = -c.pos.z / gl;
+      const hold = 0.3;
+      this.plan = { kind: 'shoot', t: 0, hold, x: this.stick.x, z: this.stick.z };
+      this.down.shoot = Math.round(hold / DT);
+      this.gap.shoot = 0;
+      this.tally.shots++;
+    }
+  }
+
   private attack(m: Match, c: Player): void {
     if (this.o.straight) {
       this.straightAttack(m, c);
+      return;
+    }
+    if (this.o.circle > 0) {
+      this.circleAttack();
+      return;
+    }
+    if (this.o.takeOn) {
+      this.takeOnAttack(m, c);
       return;
     }
     const ad = m.attackDir(HS);

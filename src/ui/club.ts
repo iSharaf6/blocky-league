@@ -7,7 +7,7 @@ import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
 import { Rng } from '../core/rng';
 import {
-  KEY_STATS, PATTERNS, SQUAD_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_STEP,
+  BOTTOM_DIVISION, DIVISION_NAMES, KEY_STATS, PATTERNS, SQUAD_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_STEP,
   buildPart, clubRating, createClub, keeperColor, lineupIssues, migrateCareer, newClubLevel, randomKit,
   sanitizeName, sanitizeShort, setFormation, swapPlayers, trainPlayer, trainingCost, trainingDiscount,
   type CareerState, type ClubState, type TxFail,
@@ -26,6 +26,7 @@ import { BENCH_SIZE, autoLineupFit, trainBest } from '../meta/squad';
 import { assignMentors } from '../meta/events';
 import { isInjured, rotate, rotateSuggestion, talkWait, teamTalk } from '../meta/morale';
 import { isOpen } from '../meta/week';
+import { defaultStatsUi, statsHandlers, statsTab } from './squadStats';
 import { defaultStaffUi, growHandlers, growHtml, moodBadge, moodWord, seeReport, staffHandlers, staffTab } from './glory';
 import { buzz } from '../platform/haptics';
 import { localDay } from '../core/day';
@@ -386,7 +387,7 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
         </div>
       </div>
       <div class="mc-actions">
-        <span class="grow mc-note">16 PLAYERS${sep()}SUNDAY LEAGUE</span>
+        <span class="grow mc-note">16 PLAYERS${sep()}${DIVISION_NAMES[BOTTOM_DIVISION]}</span>
         <button class="btn btn-go" data-a="create" ${valid() ? '' : 'disabled'}>CREATE CLUB</button>
       </div>`,
       {
@@ -458,7 +459,7 @@ export function clubCreate(app: AppContext, onDone: () => void, onBack: () => vo
 // ------------------------------------------------------------------ club hub
 
 /** 'market' opens the transfer market screen (ui/market.ts) with BACK returning to the club hub. */
-export type ClubTab = 'squad' | 'train' | 'staff' | 'kit' | 'stadium' | 'market';
+export type ClubTab = 'squad' | 'stats' | 'train' | 'staff' | 'kit' | 'stadium' | 'market';
 
 export interface ClubOpts {
   tab?: ClubTab;
@@ -496,7 +497,7 @@ export function openClub(app: AppContext, opts: ClubOpts = {}): void {
   clubHub(app, st, st.club, opts.tab ?? lastTab, back, backLabel);
 }
 
-const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['train', 'TRAIN'], ['staff', 'STAFF'], ['market', 'MARKET'], ['kit', 'KIT'], ['stadium', 'STADIUM']];
+const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['stats', 'STATS'], ['train', 'TRAIN'], ['staff', 'STAFF'], ['market', 'MARKET'], ['kit', 'KIT'], ['stadium', 'STADIUM']];
 
 function lastName(name: string): string {
   const parts = name.split(' ');
@@ -520,6 +521,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
   lastTab = tab;
   let trainMode = lastTrainMode;
   const staffUi = defaultStaffUi(st);
+  const statsUi = defaultStatsUi(club);
   let sel = -1;
   let trainIdx = Math.max(0, club.squad.findIndex((p) => p.id === lastTrainId));
   /** Squad indices just swapped (they pop once). */
@@ -570,10 +572,14 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     // At most one hint, and only until it has been done once (docs/UX.md section 6).
     const hint =
       sel >= 0
-        ? `<b class="sq-hint sel">${esc(lastName(club.squad[sel].name).toUpperCase())}: PICK WHO TO SWAP</b>`
+        ? `<b class="sq-hint sel">${esc(lastName(club.squad[sel].name).toUpperCase())}: SWAP WITH</b>`
         : issues.length
           ? `<b class="sq-hint warn">${issues.length} OUT OF POSITION</b>`
           : swappedOnce ? '' : '<b class="sq-hint">TAP OR DRAG TO SWAP</b>';
+    // A picked player's numbers: his apps, goals and assists are one tap away (the STATS tab, ui/squadStats.ts).
+    const infoBtn = sel >= 0
+      ? `<button class="btn gl-help" data-a="info" aria-label="${esc(club.squad[sel].name)}: appearances, goals and assists">STATS</button>`
+      : '';
     // The one-tap helpers beside AUTO PICK (meta/morale.ts): ROTATE when there is a swap worth making (an injured
     // starter, a man who wants a game), TEAM TALK every third matchday.
     const swapPick = isOpen(st, 'rotate') ? rotateSuggestion(st) : null;
@@ -590,7 +596,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           ${pitchHtml(new Set(issues))}
         </div>
         <div class="pane sq-benchpane">
-          <div class="pane-h"><span class="sq-ph">BENCH</span><span class="grow">${hint}</span>${rotateBtn}${talkBtn}<button class="btn btn-yellow sq-auto ${issues.length ? 'pulse' : ''}" data-a="autopick">AUTO PICK</button></div>
+          <div class="pane-h"><span class="sq-ph">BENCH</span><span class="grow">${hint}</span>${infoBtn}${rotateBtn}${talkBtn}<button class="btn btn-yellow sq-auto ${issues.length ? 'pulse' : ''}" data-a="autopick">AUTO PICK</button></div>
           <div class="pane-scroll sq-list" data-scroll-key="sq-bench">
             <div class="sq-grid">${bench.map((p, j) => chip(p, 11 + j)).join('')}</div>
             ${reserves.length ? `<div class="sq-sub">RESERVES</div><div class="sq-grid">${reserves.map((p, j) => chip(p, 11 + BENCH_SIZE + j)).join('')}</div>` : ''}
@@ -834,7 +840,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
 
   const draw = () => {
     if (tab === 'stadium') takeOpened();
-    const body = tab === 'squad' ? squadHtml() : tab === 'train' ? trainHtml() : tab === 'staff' ? staffTab(app, st, staffUi) : tab === 'kit' ? kitHtml() : stadiumHtml();
+    const body = tab === 'squad' ? squadHtml() : tab === 'stats' ? statsTab(st, club, statsUi) : tab === 'train' ? trainHtml() : tab === 'staff' ? staffTab(app, st, staffUi) : tab === 'kit' ? kitHtml() : stadiumHtml();
     const tabs = TABS.filter(([k]) => k !== 'staff' || isOpen(st, 'staff'));
     scr.render(
       `${topBar(backLabel, 'MY CLUB', sub(), app.save.coins)}
@@ -845,6 +851,18 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
         // The long game's taps (ui/glory.ts): the STAFF tab, and the GROW card of the player picked on TRAIN.
         ...staffHandlers(app, st, staffUi, draw, scr.toast, () => scr.root),
         ...growHandlers(app, st, club, () => club.squad[trainIdx], draw, scr.toast, () => scr.root),
+        // The STATS tab (ui/squadStats.ts), and STATS on a picked player of the SQUAD tab.
+        ...statsHandlers(statsUi, draw, () => scr.root),
+        info: () => {
+          const p = sel >= 0 ? club.squad[sel] : undefined;
+          if (!p) return;
+          Object.assign(statsUi, defaultStatsUi(club, p.id));
+          tab = 'stats';
+          lastTab = 'stats';
+          sel = -1;
+          draw();
+          revealInPane(scr.panel.querySelector('.ss-row.sel'), 'center');
+        },
         tmode: (el) => {
           trainMode = el.dataset.v === 'grow' ? 'grow' : 'stats';
           lastTrainMode = trainMode;

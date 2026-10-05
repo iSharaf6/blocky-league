@@ -46,7 +46,9 @@ function runIdle(m: Match, spec: ScenarioSpec, maxS: number, pad: Pad = EMPTY_PA
 /** The scripted human (tests/humanBot.ts) plays the moment; he also presses POWER once his side holds a cube. */
 function playMoment(mo: Moment, seed: number): { outcome: ScenarioOutcome | null; steps: number; score: [number, number] } {
   const m = matchFor(mo, seed);
-  const bot = new HumanBot(seed);
+  // (A decent player answers the tells: 2026-10-05, a tell is a promise, and a bot that never presses SKILL now loses
+  // the ball to every one of them. skills.ts, dribble.ts toldTackleChance.)
+  const bot = new HumanBot(seed, { skills: 'react' });
   let outcome: ScenarioOutcome | null = null;
   let steps = 0;
   let pressed = false;

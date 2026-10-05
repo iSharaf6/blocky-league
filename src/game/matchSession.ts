@@ -22,6 +22,7 @@ import {
 } from '../render/juice';
 import { MatchView } from '../render/matchView';
 import { cssHex } from '../render/palette';
+import { SideStage } from '../render/sideStage';
 import { SubScene } from '../render/subScene';
 import { MatchTunnel } from '../render/matchTunnel';
 import { MatchAward } from '../render/matchAward';
@@ -63,7 +64,7 @@ import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { captainOf } from '../meta/style';
 import { playFocus } from './camFocus';
 import { ClipRecorder, clipSupported, type Clip } from './clip';
-import { FOUL_BEAT_S, FoulPresentation, type BookingShot } from './foulPresentation';
+import { FOUL_BEAT_LIVE_S, FOUL_BEAT_S, FoulPresentation, type BookingShot } from './foulPresentation';
 import { GHOST_MAX_PTS, flyGhost, freeKickGhost, ghostBlocked, lobLaunch, penaltyGhost, type GhostLaunch, type GhostWall } from './ghostArc';
 import { contrastAwayKit } from './kitContrast';
 import { QuickSubs, quickSubsAllowed } from './quickSub';
@@ -71,6 +72,7 @@ import {
   LINEUP_INTRO_FROM, LINEUP_S, MOTM_S, SUB_MAX_SHOWN, SUB_S, applyLineup, applyMotm, applyMotmMates, lineupOrder, lineupShot, motmShot, motmSpot, newSubStage, subBeatS,
   subStage,
 } from './showcase';
+import { SideShow, type SideFacts } from './sideShow';
 import { INTERLUDE_SECONDS, MatchInterlude, applyInterlude, interludeOrder, interludeShot, type MatchInterludeKind } from './matchInterludes';
 import { applyBookingAct } from './bookingAct';
 import { MatchTally, type PlayerRating } from './ratings';
@@ -78,7 +80,7 @@ import { encodeState, decodeState, type StateGraph } from './stateCodec';
 import { recoveredMatch, savedHype, restoreHype, savedBlitz, restoreBlitz, savedScenario, restoreScenario } from './matchRecovery';
 import { FunPresenter } from './funPresent';
 import type { FunSummary } from './funLayer';
-import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, STATE_CODE, isSentOff, writeFrame } from './replay';
+import { BALL_OFS, FRAME_LEN, LUNGE_S, PF, ReplayBuffer, SENT_OFF_CODE, STATE_CODE, isSentOff, writeFrame } from './replay';
 import { IncidentReplays, type IncidentReplay, type IncidentStep } from './incidentReplay';
 
 export type { PlayerRating } from './ratings';
@@ -118,6 +120,8 @@ export interface SessionOptions extends MatchConfig {
   reducedMotion?: boolean;
   /** Settings > QUICK SUBS (default on): the card that offers a tired player's change (game/quickSub.ts). */
   quickSubs?: boolean;
+  /** Settings > SIDE SHOWS (default on): the commentary cam and the other corner pictures (game/sideShow.ts). */
+  sideShows?: boolean;
 }
 
 /**
@@ -203,6 +207,27 @@ const REPLAY_SLOW_RATE = 0.5;
 const REPLAY_SLOW_FROM = 1.2;
 /** The decision/result gets a brief beat before its recap; a referee's card holds longer. */
 const INCIDENT_BEAT_S = 0.65;
+/** A foul or a taken penalty has already played out live for the dead-ball beat when its hold begins: a short one. */
+const INCIDENT_SEEN_BEAT_S = 0.3;
+/** Incident clips run at match speed and slow to this through the moment that matters (IncidentReplay.slowFrom / slowTo). */
+const INCIDENT_SLOW_RATE = 0.5;
+/** The offside replay stops on the pass for this long, the line drawn and the lens brought in line with it. */
+const OFFSIDE_FREEZE_S = 1.5;
+/** The foul banner ("FOUL" / "PENALTY!" and its reason line) stays up this long unless a card or the replay takes over. */
+const FOUL_BANNER_S = 1.9;
+/** A foul recalled more than this long after the contact (an advantage that ran on) is no longer announced as one. */
+const FOUL_NOTE_S = 6;
+/**
+ * A foul clip's lens: this far from the contact and this high, picked side-on with the fewest bodies in the way
+ * (MatchSession.foulLens), opening at FOUL_FOV_WIDE and tightening to FOUL_FOV_TIGHT for the contact.
+ */
+const FOUL_LENS_DIST = 10.5;
+const FOUL_LENS_H = 4.4;
+const FOUL_FOV_WIDE = 34;
+const FOUL_FOV_TIGHT = 25;
+/** ...and everyone else within this many metres of the two men is dimmed to this opacity. */
+const FOUL_DIM_RADIUS = 6;
+const FOUL_DIM_ALPHA = 0.22;
 const HALFTIME_HOLD_S = 1.4;
 /** The match camera's key and gamepad button (VIEW / BACK, standard mapping), when no action is bound to them. */
 const CAM_KEY = 'KeyV';
@@ -420,6 +445,13 @@ export class MatchSession {
   private incidentReplays: IncidentReplays | null = null;
   private replayIncident: IncidentReplay | null = null;
   private incidentHoldT = 0;
+  /** An offside clip's stop on the pass: seconds left of it, and whether this clip has had it. */
+  private incidentFreezeT = 0;
+  private incidentFroze = false;
+  /** The foul waiting to be named at its whistle: who it favours, the reason line, when the contact was. */
+  private foulNote: { side: Side; penalty: boolean; reason: string; at: number; shown: boolean } | null = null;
+  /** A missed penalty's recap ended with the ball already out: it stays out of the picture until the restart places it. */
+  private ballOutHidden = false;
   private replayGoalIdx = 0;
   private replayDone = false;
   /** Every ordinary local goal gets a replay; scenarios, demos, online play and recovered goals do not. */
@@ -614,6 +646,13 @@ export class MatchSession {
   private subQueue: SubBeat[] = [];
   private subCut: { list: SubBeat[]; i: number; t: number; per: number; age: number; met: boolean } | null = null;
   private readonly subSt = newSubStage();
+  /** SIDE SHOWS (game/sideShow.ts): the commentary cam and the other corner pictures. Null where they never play. */
+  sideShow: SideShow | null = null;
+  private sideStage: SideStage | null = null;
+  private readonly sideFacts: SideFacts = {
+    dt: 0, time: 0, m: null as unknown as Match, goalReplay: false, replayHit: false, incident: false, busy: false, intro: false, interlude: '',
+    goalSkipped: false,
+  };
   private lineupLeft = 0;
   private lineupAge = 0;
   private lineupRow: number[] = [];
@@ -747,6 +786,7 @@ export class MatchSession {
       this.hud.root.appendChild(this.actionPop.root);
       this.present = new PresentHud();
       this.hud.root.appendChild(this.present.root);
+      this.initSideShow();
       // The crowd's chants, captioned as they start (src/audio/sfx.ts).
       sfx.onChant = this.onChant;
       if (opt.humanSide === 0 || opt.humanSide === 1) {
@@ -904,7 +944,7 @@ export class MatchSession {
       this.subQueue.length = 0;
       return false;
     }
-    if (this.replay || this.incidents().waiting(m) || this.hitStopT > 1e-4 || this.cardT > 0 || this.foulPresentation.waiting) return false;
+    if (this.replay || this.incidents().waiting(m) || this.incidents().settling(m) || this.hitStopT > 1e-4 || this.cardT > 0 || this.foulPresentation.waiting) return false;
     if (this.cam.mode !== 'broadcast' || this.cam.behindActive) return false;
     if (m.phase !== 'out' && m.phase !== 'restart' && m.phase !== 'kickoff') return false;
     // (A penalty keeps its tension: the change is shown at the stoppage after.)
@@ -924,6 +964,8 @@ export class MatchSession {
     this.cam.setMode('scene');
     this.hud?.setSkippable(true);
     this.clearLatch();
+    // The substitution's music (audio/director.ts): every scene, in a match and for changes made at the break.
+    matchAudio.subScene(true);
     this.beginSubBeat();
   }
 
@@ -982,6 +1024,7 @@ export class MatchSession {
   private endSubCut(held: boolean): void {
     this.subCut = null;
     this.subScene.end();
+    matchAudio.subScene(false);
     this.view.frameHook = null;
     this.sceneKeep = [];
     this.sceneClear = 0;
@@ -993,6 +1036,48 @@ export class MatchSession {
     this.clearLatch();
     this.acc = 0;
     this.view.apply(this.prev, this.cur, 1, this.time, 0);
+  }
+
+  /**
+   * SIDE SHOWS (game/sideShow.ts): a match of your own against the AI only (never the demo, a moment, the basics or
+   * two humans on one screen; online it is left out too). Presentation: a failure here never stops the match.
+   */
+  private initSideShow(): void {
+    const opt = this.opt;
+    if (!this.hud || opt.demo || opt.humanSides || opt.scenario || opt.sideShows === false || typeof document === 'undefined') return;
+    if (opt.humanSide !== 0 && opt.humanSide !== 1) return;
+    try {
+      this.sideStage = new SideStage(this.world, this.hud.root, { timeOfDay: opt.timeOfDay ?? 'day', ballSkin: opt.ballSkin, fanKit: opt.kits[opt.humanSide] });
+      this.sideShow = new SideShow(this.sideStage, {
+        enabled: true, kits: opt.kits, humanSide: opt.humanSide, knockout: !!opt.knockout, captain: (side) => this.captainIdx(side),
+      });
+    } catch {
+      this.sideStage?.dispose();
+      this.sideStage = null;
+      this.sideShow = null;
+    }
+  }
+
+  /** What the side shows need to know this frame (one object, filled in place), and their step. */
+  private sideShowFrame(dt: number): void {
+    const ss = this.sideShow;
+    if (!ss || this.driver) return;
+    const m = this.match;
+    const f = this.sideFacts;
+    const goalReplay = !!this.replay && !this.replayIncident;
+    f.dt = this.paused ? 0 : dt;
+    f.time = this.time;
+    f.m = m;
+    f.goalReplay = goalReplay;
+    f.replayHit = goalReplay && this.replayT * 60 >= this.replayGoalIdx;
+    f.incident = (!!this.replay && !goalReplay) || this.incidents().waiting(m);
+    // (A set piece's own view from behind the taker counts: nothing sits over the goal he is aiming at.)
+    f.busy = this.lineupLeft > 0 || !!this.subCut || !!this.interlude || (!!this.motm && !this.motmDone) || this.cardT > 0 || this.cam.mode === 'card' ||
+      !!this.holdFirst || !!this.so || this.cam.behindActive;
+    f.intro = this.introLeft > 0;
+    f.interlude = this.interlude?.kind ?? '';
+    f.goalSkipped = this.replayDone;
+    ss.frame(f);
   }
 
   /** Dressing-room departures / return, then the post-match greeting. Local presentation, with no sim changes. */
@@ -1301,6 +1386,11 @@ export class MatchSession {
     if (this.quick) this.quick.qs.enabled = on;
   }
 
+  /** Settings > SIDE SHOWS changed mid-match: off takes down whatever is up, and nothing more plays. */
+  setSideShows(on: boolean): void {
+    this.sideShow?.setEnabled(on);
+  }
+
   requestPause(): void {
     if (this.demo || this.paused) return;
     this.paused = true;
@@ -1361,11 +1451,18 @@ export class MatchSession {
     this.sceneKeep = [];
     this.sceneClear = 0;
     this.interlude = null;
+    this.sideShow?.reset();
     this.matchTunnel?.show(false);
     this.replay = null;
     this.replayIncident = null;
     this.incidentHoldT = 0;
     this.incidents().clear();
+    this.foulNote = null;
+    this.ballOutHidden = false;
+    this.view.incidentMarks?.clear();
+    this.cam.replayLens = null;
+    this.incidentFreezeT = 0;
+    this.incidentFroze = false;
     this.cam.replayKind = 'goal';
     this.cam.replayActors = [];
     this.matchAward?.end();
@@ -1649,6 +1746,7 @@ export class MatchSession {
         const evs = m.drainEvents();
         this.handleEvents(evs);
         matchAudio.events(evs, m);
+        this.sideShow?.events(evs, m);
         this.fun?.after(evs);
         if (this.moment) this.judgeMoment();
         for (let i = 0; i < 22; i++) if (this.lunge[i] >= 0 && (this.lunge[i] += DT) >= LUNGE_S) this.lunge[i] = -1;
@@ -1688,7 +1786,7 @@ export class MatchSession {
     if (!presentationPaused) {
       const decision = this.foulPresentation.take(m.phase, m.restart);
       if (decision?.booking) this.showBooking(decision.booking);
-      if (decision?.verdict) this.showRestart(decision.verdict.kind);
+      if (decision?.verdict) this.showRestart(decision.verdict.kind, true);
     }
 
     // Camera: the live-play focus (ball, controlled player, possession lean, set piece; see camFocus), with
@@ -1854,6 +1952,7 @@ export class MatchSession {
     this.updateHud(dt);
     this.fun?.frame(this.paused ? 0 : dt);
     this.updateQuickSub(dt);
+    this.sideShowFrame(dt);
     // Online: the man the other player controls gets his own ring.
     if (this.driver) {
       const hs = m.cfg.humanSide;
@@ -1894,7 +1993,7 @@ export class MatchSession {
       return;
     }
     // A pending incident must finish before substitutions, tunnel scenes or the result screen advance.
-    if (this.incidents().waiting(m)) return;
+    if (this.incidents().waiting(m) || this.incidents().settling(m)) return;
     if (m.phase === 'goal') {
       if (this.demo) {
         if (m.phaseT > Math.max(3.2, this.view.celeb.holdS)) {
@@ -1932,7 +2031,10 @@ export class MatchSession {
         // (the party plays on under it).
         if (m.phaseT > at) this.finishMoment();
       } else if (m.phaseT > at && !this.replayDone) {
-        if (this.replayWanted) this.startReplay();
+        // (A big goal: the commentary box has the screen for a moment first. game/sideShow.ts)
+        if (this.replayWanted) {
+          if (!this.sideShow?.holdsReplay(m)) this.startReplay();
+        }
         else this.replayDone = true;
       } else if (this.replayDone) {
         this.replayDone = false;
@@ -2472,9 +2574,23 @@ export class MatchSession {
     this.tickBooking(dt);
     const decision = this.foulPresentation.take(this.match.phase, this.match.restart);
     if (decision?.booking) this.showBooking(decision.booking);
-    if (decision?.verdict) this.showRestart(decision.verdict.kind);
+    if (decision?.verdict) this.showRestart(decision.verdict.kind, true);
     this.view.apply(this.prev, this.cur, 1, this.time, dt);
-    if (this.foulPresentation.waiting || this.cardT > 0 || this.incidentHoldT < INCIDENT_BEAT_S) return;
+    // A fresh tap moves it on: past the card close-up to the replay (which the next tap skips). A thumb already
+    // down when play stopped is not one, and nothing is skipped before the decision has been up for a moment.
+    const c = this.input.read();
+    const btn = c.pass || c.shoot || c.through || c.sprint || c.skill || !!(c as { power?: boolean }).power;
+    const first = this.incidentHoldT <= dt;
+    const tap = !first && this.incidentHoldT > 0.4 && ((btn && !this.prevButtons) || this.anyPress);
+    this.prevButtons = btn;
+    this.anyPress = false;
+    if (tap && this.cardT > 0 && !this.foulPresentation.waiting) {
+      this.cardT = 1e-6;
+      this.tickBooking(1);
+    }
+    // (A foul or a taken penalty was watched live up to the hold; an offside flag gets its full beat.)
+    const seen = this.incidents().next?.kind !== 'offside';
+    if (this.foulPresentation.waiting || this.cardT > 0 || this.incidentHoldT < (seen ? INCIDENT_SEEN_BEAT_S : INCIDENT_BEAT_S)) return;
     const clip = this.incidents().take(this.match);
     if (clip) this.startIncidentReplay(clip);
   }
@@ -2501,12 +2617,102 @@ export class MatchSession {
     this.cam.replayKind = 'incident';
     this.cam.replayActors = clip.actors;
     this.cam.replayShot = 'build';
+    // A foul gets its own lens (side-on, clear of the crowd, tightening on the contact) and a ring under each man.
+    const foul = clip.fouler !== undefined && clip.victim !== undefined;
+    this.cam.replayLens = foul ? this.foulLens(clip) : null;
+    if (foul) this.view.incidentMarks?.foul(clip.fouler!, clip.victim!);
+    else this.view.incidentMarks?.clear();
+    this.incidentFreezeT = 0;
+    this.incidentFroze = false;
+    this.skillHud?.clear();
     this.cam.setMode('replay');
     this.flash.play(0xfbfbf4, 0.7, 0.2);
     this.view.apply(clip.frames[0], clip.frames[1], 0, this.time, 0);
     this.hud?.setSkippable(false);
-    this.hud?.setReplay(true, clip.label);
+    this.hud?.setReplay(true, clip.label, clip.caption);
     this.view.setMarkerVisible(false);
+  }
+
+  /**
+   * Where a foul clip is filmed from: a fixed lens FOUL_LENS_DIST from the contact, on whichever bearing looks
+   * across the challenge (two men end-on hide the contact) with the fewest other bodies between it and the pair,
+   * inside the boards; ties go to the main stand's side. Read off the recorded contact frame only.
+   */
+  private foulLens(clip: IncidentReplay): { x: number; y: number; z: number; fov: number } {
+    const fr = clip.frames[clip.actionIdx];
+    const a = clip.fouler! * PF;
+    const v = clip.victim! * PF;
+    const cx = (fr[a] + fr[v]) / 2;
+    const cz = (fr[a + 1] + fr[v + 1]) / 2;
+    const pre = clip.frames[Math.max(0, clip.actionIdx - 12)];
+    let ux = fr[v] - fr[a];
+    let uz = fr[v + 1] - fr[a + 1];
+    if (Math.hypot(ux, uz) < 0.5) {
+      // (On top of each other at the contact: the way the man brought down was running.)
+      ux = fr[v] - pre[v];
+      uz = fr[v + 1] - pre[v + 1];
+    }
+    const ul = Math.hypot(ux, uz) || 1;
+    ux /= ul;
+    uz /= ul;
+    let bx = cx;
+    let bz = cz + FOUL_LENS_DIST;
+    let best = Infinity;
+    for (let k = 0; k < 12; k++) {
+      const ang = (k / 12) * Math.PI * 2;
+      const dx = Math.cos(ang);
+      const dz = Math.sin(ang);
+      const x = cx + dx * FOUL_LENS_DIST;
+      const z = cz + dz * FOUL_LENS_DIST;
+      let score = Math.abs(dx * ux + dz * uz) * 2 + (dz < 0 ? 0.4 : 0);
+      if (Math.abs(x) > HALF_L + 1 || Math.abs(z) > HALF_W + 4) score += 6;
+      for (let i = 0; i < 22; i++) {
+        if (i === clip.fouler || i === clip.victim || fr[i * PF + 4] === SENT_OFF_CODE) continue;
+        const px = fr[i * PF] - cx;
+        const pz = fr[i * PF + 1] - cz;
+        const along = px * dx + pz * dz;
+        if (along < 0.4 || along > FOUL_LENS_DIST) continue;
+        const off = Math.abs(px * dz - pz * dx);
+        if (off < 1.1) score += 1 + 3 * (1 - off / 1.1);
+      }
+      if (score < best) {
+        best = score;
+        bx = x;
+        bz = z;
+      }
+    }
+    return { x: bx, y: FOUL_LENS_H, z: bz, fov: FOUL_FOV_WIDE };
+  }
+
+  /**
+   * The offside replay's stop on the pass: the line drawn across the pitch where the sim judged it (level with the
+   * second-last defender, the ball or halfway), the attacker and that defender ringed, and the lens brought round
+   * in line with the line from the main stand's side, so he is seen beyond it rather than guessed at an angle.
+   */
+  private showOffsideLine(clip: IncidentReplay): void {
+    const o = clip.offside;
+    if (!o || clip.releaseIdx === undefined) return;
+    const m = this.match;
+    const fr = clip.frames[clip.releaseIdx];
+    const side = m.players[o.attacker]?.side ?? 0;
+    this.view.incidentMarks?.offside(o.lineX, m.attackDir(side), o.attacker, o.defender);
+    const ax = fr[o.attacker * PF];
+    const az = fr[o.attacker * PF + 1];
+    const dz = o.defender >= 0 ? fr[o.defender * PF + 1] : az;
+    const midZ = (az + dz) / 2;
+    const back = clamp(13 + Math.abs(az - dz) * 0.55, 13, 30);
+    this.cam.replayActors = [o.attacker, o.defender].filter((i) => i >= 0);
+    this.cam.replayLens = { x: o.lineX, y: 7 + back * 0.32, z: Math.min(midZ + back, HALF_W + 12), fov: 30,
+      look: { x: (o.lineX + ax) / 2, z: midZ } };
+  }
+
+  /** An incident clip is over (played out or skipped): its marks, lens and dimming go with it. */
+  private endIncidentLook(): void {
+    this.view.incidentMarks?.clear();
+    this.cam.replayLens = null;
+    this.incidentFreezeT = 0;
+    this.incidentFroze = false;
+    this.view.clearFades();
   }
 
   private startReplay(): void {
@@ -2557,22 +2763,43 @@ export class MatchSession {
 
   private stepReplay(dt: number): void {
     const frames = this.replay!;
-    const idx = this.replayT * 60;
+    let idx = this.replayT * 60;
     // Two shots like TV: the move in real-ish time, then the finish from the goal line in slow-mo: from
     // REPLAY_SLOW_FROM s before the goal, but never while the ball is still more than REPLAY_GOAL_NEAR m out
     // (a long-range strike is seen struck on the wide shot, then arriving on the goal-line one).
     const at = frames[Math.min(frames.length - 1, Math.floor(idx))];
     const incident = this.replayIncident;
     const release = incident?.releaseIdx;
-    const reviewRelease = release !== undefined && idx >= release - 0.3 * 60 && idx <= release + 0.4 * 60;
-    const finish = incident ? reviewRelease || idx >= incident.actionIdx - 0.65 * 60 : this.cam.replayShot === 'goal' || idx >= this.replayGoalIdx - 20 ||
+    // An offside is judged on one frame: the picture stops on the pass with the line drawn, then runs on to the flag.
+    if (incident?.offside && release !== undefined && !this.incidentFroze && idx >= release) {
+      this.incidentFroze = true;
+      this.incidentFreezeT = OFFSIDE_FREEZE_S;
+      this.replayT = release / 60;
+      idx = release;
+      this.showOffsideLine(incident);
+    }
+    const frozen = !!incident && this.incidentFreezeT > 0;
+    if (frozen && (this.incidentFreezeT -= dt) <= 0) {
+      // Back to the wide look for the run of the ball; the rings stay on the two men, the line was that frame's.
+      this.view.incidentMarks?.foul(incident.offside!.attacker, incident.offside!.defender);
+      this.cam.replayActors = incident.actors;
+      this.cam.replayLens = null;
+    }
+    const reviewRelease = release !== undefined && !incident?.offside && idx >= release - 0.3 * 60 && idx <= release + 0.4 * 60;
+    const finish = incident ? reviewRelease || (idx >= incident.slowFrom && idx <= incident.slowTo) : this.cam.replayShot === 'goal' || idx >= this.replayGoalIdx - 20 ||
       (idx >= this.replayGoalIdx - REPLAY_SLOW_FROM * 60 && !this.replayBallFar(at));
     if (!incident && finish && this.cam.replayShot === 'build') {
       this.cam.replayShot = 'goal';
       this.cam.cut();
     }
     const near = finish;
-    this.replayT += dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE);
+    const rate = frozen ? 0 : incident ? (near ? INCIDENT_SLOW_RATE : 1) : near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE;
+    this.replayT += dt * rate;
+    const lens = this.cam.replayLens;
+    if (incident && lens && incident.fouler !== undefined) {
+      // The foul lens tightens as the challenge comes in, and stays tight for the fall.
+      lens.fov += ((idx >= incident.slowFrom - 15 ? FOUL_FOV_TIGHT : FOUL_FOV_WIDE) - lens.fov) * Math.min(1, dt * 4);
+    }
     const i = Math.floor(idx);
     const c = this.input.read();
     const btn = c.pass || c.shoot || c.through || c.sprint || c.skill || !!(c as { power?: boolean }).power;
@@ -2583,6 +2810,11 @@ export class MatchSession {
       this.replay = null;
       this.replayIncident = null;
       if (!incident) this.replayDone = true;
+      else {
+        this.endIncidentLook();
+        // A missed penalty is already out: the live ball does not fly on for the last frames before the restart.
+        this.ballOutHidden = incident.kind === 'penalty-result' && this.match.phase === 'out';
+      }
       this.hud?.setReplay(false);
       // A thumb still down from skipping or watching the replay cannot also take the next kick-off.
       this.eatButtons = true;
@@ -2607,8 +2839,9 @@ export class MatchSession {
       }
       return;
     }
-    this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE));
-    this.updateFrameFx(dt * (near ? REPLAY_SLOW_RATE : REPLAY_BUILD_RATE));
+    this.view.apply(frames[i], frames[i + 1], idx - i, this.time, dt * rate);
+    if (incident) this.view.incidentMarks?.update(this.view.frame, this.time);
+    this.updateFrameFx(dt * rate);
   }
 
   /** Is the ball in this replay frame still more than REPLAY_GOAL_NEAR m from the goal it went into? */
@@ -2621,6 +2854,8 @@ export class MatchSession {
     const m = this.match;
     const hs = m.cfg.humanSide;
     for (const e of events) {
+      // The club's record book (game/ratings.ts observe): the minute of a change, cards, a keeper's goals against, penalties saved.
+      this.tally.observe(e, m);
       // Haptics (platform/haptics.ts): his pass and shot, a tackle won or lost, a skill that beat a man, a goal, the
       // woodwork, the whistle; throttled there.
       const hk = hs === 0 || hs === 1 ? hapticForEvent(e, m, hs, this.ownerBefore, this.activeBefore) : null;
@@ -2908,6 +3143,8 @@ export class MatchSession {
           sfx.ooh();
           break;
         case 'restart':
+          // (Whistled back after an advantage that never came: the foul is named now, with its reason.)
+          if ((e.kind === 'freekick' || e.kind === 'penalty') && this.foulNote?.side === e.side) this.announceFoul();
           if (!this.foulPresentation.queueRestart(e, m.restart)) this.showRestart(e.kind);
           break;
         case 'setpiece':
@@ -2957,6 +3194,8 @@ export class MatchSession {
             x = this.foulAt.x + ux * 1.3;
             z = this.foulAt.z + uz * 1.3;
           }
+          // The decision is named before its card: a foul only now whistled (back from advantage) gets its banner first.
+          if (!live) this.announceFoul();
           const close = !live && !this.demo && !this.replay && this.cam.mode === 'broadcast';
           const shot: BookingShot = { player: p.idx, playerId: p.def.id, name: p.def.name,
             color: red ? 'red' : 'yellow', second, x, z, close, restart: m.restart };
@@ -2967,10 +3206,10 @@ export class MatchSession {
         case 'foul': {
           const on = m.players[e.on];
           const by = m.players[e.by];
-          this.foulPresentation.contact(on.side);
           // The contact: a thump and a grunt (the sim blows the whistle), the man brought down flashing white; a
-          // slide that connects holds the picture and shakes it.
-          const slide = by.state === 'slide';
+          // slide that connects holds the picture and shakes it. (Read off the frame before as well: a second
+          // yellow has already sent him off by the time this event is handled.)
+          const slide = by.state === 'slide' || this.prev[e.by * PF + 4] === STATE_CODE.slide;
           sfx.tackleHit(slide);
           this.view.flashPlayer(e.on, PLAYER_FLASH_FRAMES);
           if (slide) {
@@ -2980,8 +3219,16 @@ export class MatchSession {
           this.foulOn = e.on;
           this.foulAt = { x: on.pos.x, z: on.pos.z };
           this.foulBy = { x: by.pos.x, z: by.pos.z };
-          this.view.refSignal(1.2);
-          if (!e.penalty) this.hud?.toastMsg('FOUL!', 1.2);
+          // What happened and who did it, in one line under the decision.
+          this.foulNote = { side: on.side, penalty: e.penalty, at: this.time, shown: false,
+            reason: `${slide ? 'TRIPPED' : 'CLIPPED'} BY ${by.def.number} ${by.def.name.toUpperCase()}` };
+          if (m.phase !== 'play') this.announceFoul();
+          else {
+            // Held for advantage: play goes on, with only the flag until the referee decides.
+            this.foulPresentation.contact(on.side, FOUL_BEAT_LIVE_S);
+            this.view.refSignal(1.2);
+            this.hud?.toastMsg('FOUL!', 1.2);
+          }
           break;
         }
         case 'halftime':
@@ -3034,10 +3281,12 @@ export class MatchSession {
           // Newer sim events (typed loosely so this compiles whichever sim version it meets).
           const t = (e as { type: string }).type;
           if (t === 'offside') {
+            this.foulNote = null;
             this.foulPresentation.clear();
             this.hud?.toastMsg('OFFSIDE', 1.4);
             this.view.refSignal(1.4, 'arm');
           } else if (t === 'advantage') {
+            this.foulNote = null;
             this.foulPresentation.clear();
             this.hud?.toastMsg('ADVANTAGE', 1.4);
             this.view.refSignal(1.6, 'advantage');
@@ -3367,9 +3616,29 @@ export class MatchSession {
     bz.updateSideGlow(f, PF, k, time);
   }
 
-  private showRestart(kind: RestartKind): void {
+  /** `announced`: a foul's own free kick / penalty, already named with its reason at the whistle (announceFoul). */
+  private showRestart(kind: RestartKind, announced = false): void {
     if (kind !== 'kickoff') this.hud?.toastMsg(RESTART_LABEL[kind], 1.2);
-    if (kind === 'penalty') this.hud?.show('PENALTY!', '', 'small', 1.8);
+    if (kind === 'penalty' && !announced) this.hud?.show('PENALTY!', '', 'small', 1.8);
+  }
+
+  /**
+   * The whistle for a foul: the decision is named at once ("FOUL" / "PENALTY!") with its reason line, the referee
+   * signalling (pointing to the spot for a penalty), and the beat starts that any card waits for. A skill call
+   * still on screen ("SKINNED HIM") makes way for it. Presentation only.
+   */
+  private announceFoul(): void {
+    const n = this.foulNote;
+    if (!n || n.shown || this.time - n.at > FOUL_NOTE_S) return;
+    n.shown = true;
+    // (Where no recap holds the match for it, the beat is the sim's own dead-ball one: FOUL_BEAT_LIVE_S.)
+    const held = !this.demo && !this.driver && !this.moment;
+    this.foulPresentation.contact(n.side, held ? FOUL_BEAT_S : FOUL_BEAT_LIVE_S);
+    this.skillHud?.clear();
+    this.hud?.show(n.penalty ? 'PENALTY!' : 'FOUL', n.reason, 'small foul', FOUL_BANNER_S);
+    const r = this.match.restart;
+    if (n.penalty && r?.kind === 'penalty') this.view.refPoint((held ? FOUL_BEAT_S : FOUL_BEAT_LIVE_S) + 0.5, r.x, r.z);
+    else this.view.refSignal(1.2);
   }
 
   private showBooking(shot: BookingShot): void {
@@ -3478,7 +3747,8 @@ export class MatchSession {
     const f = this.view.frame;
     // The ball waiting on the free-kick spot is only clutter by the booked player's boots (or right in front
     // of the lens): the close-up leaves it out.
-    this.view.setBallHidden(cam.mode === 'card' || !!this.interlude || !!this.motm);
+    if (this.ballOutHidden && this.match.phase !== 'out') this.ballOutHidden = false;
+    this.view.setBallHidden(cam.mode === 'card' || !!this.interlude || !!this.motm || this.ballOutHidden);
     if (!low) {
       this.view.clearFades();
       return;
@@ -3511,6 +3781,14 @@ export class MatchSession {
     } else if (scene) for (const i of this.sceneKeep) keep.push(i);
     else if (cam.mode === 'penalty' && m.shootout) keep.push(m.shootout.taker);
     else if (cam.mode === 'replay') {
+      const clip = this.replayIncident;
+      if (clip && clip.fouler !== undefined && clip.victim !== undefined) {
+        // A foul in a crowd: the two men stay solid and the bodies round them dim, so the contact is the picture.
+        const a = clip.fouler * PF;
+        const v = clip.victim * PF;
+        this.view.dimAround((f[a] + f[v]) / 2, (f[a + 1] + f[v + 1]) / 2, FOUL_DIM_RADIUS, FOUL_DIM_ALPHA, clip.actors, lens.x, lens.z);
+        return;
+      }
       if (this.replayIncident) for (const i of this.replayIncident.actors) keep.push(i);
       // Replays keep the action (whoever is at the ball; both keepers, the scorer and the defender nearest
       // the ball, always) and, on the low goal-line angle, see through anyone else standing between the
@@ -3596,7 +3874,7 @@ export class MatchSession {
     }
     sfx.setEnds(left, right);
     sfx.tick(this.paused ? 0 : dt);
-    matchAudio.frame(this.paused ? 0 : dt, m);
+    matchAudio.frame(this.paused ? 0 : dt, m, (this.subQueue?.length ?? 0) > 0);
   }
 
   private updateHud(dt: number): void {
@@ -4118,6 +4396,10 @@ export class MatchSession {
     if (sfx.onChant === this.onChant) sfx.onChant = null;
     this.view.frameHook = null;
     this.subScene.dispose();
+    this.sideShow?.reset();
+    this.sideShow = null;
+    this.sideStage?.dispose();
+    this.sideStage = null;
     this.matchTunnel?.dispose();
     this.matchTunnel = null;
     this.matchAward?.dispose();

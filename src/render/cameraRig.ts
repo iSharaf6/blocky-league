@@ -260,6 +260,12 @@ export class CameraRig {
   /** Incident footage stays with the challenge / flagged runner rather than cutting to the goal mouth. */
   replayKind: 'goal' | 'incident' = 'goal';
   replayActors: readonly number[] = [];
+  /**
+   * An incident clip's own lens (null: the wide fit of the ball and everyone involved). A fixed position picked by
+   * the session for a clear look (side-on to a foul, in line with an offside line), panning with the men involved
+   * or held on `look`, and as tight as `fov` says: the session narrows it through the contact.
+   */
+  replayLens: { x: number; y: number; z: number; fov: number; look?: { x: number; z: number } } | null = null;
   replayAngle = 0;
   /** Which goal (+1 / -1) the replayed goal went into. */
   replayGoalSign = 1;
@@ -1042,6 +1048,22 @@ export class CameraRig {
           pz = tz + distance * 0.74;
           rate = 5;
           glide = true;
+          const lens = this.replayLens;
+          if (lens) {
+            let n = 0, sx = 0, sz = 0;
+            for (const actor of this.replayActors) {
+              if (!Number.isInteger(actor) || actor < 0 || actor >= 22) continue;
+              const x = this.players?.[actor * PF], z = this.players?.[actor * PF + 1];
+              if (typeof x !== 'number' || typeof z !== 'number' || !Number.isFinite(x) || !Number.isFinite(z)) continue;
+              sx += x; sz += z; n++;
+            }
+            // The men themselves, not the ball: a loose ball rolling away must not drag the contact out of frame.
+            if (lens.look) { tx = lens.look.x; tz = lens.look.z; } else if (n) { tx = sx / n; tz = sz / n; }
+            ty = 0.9;
+            px = lens.x; py = lens.y; pz = lens.z;
+            fov = lens.fov;
+            rate = 7;
+          }
         } else if (this.replayShot === 'goal') {
           // Low three-quarter angle from beside the six-yard box, across the goal mouth from where the ball
           // crossed the line: the finish is seen through the mouth (never through side netting or from inside

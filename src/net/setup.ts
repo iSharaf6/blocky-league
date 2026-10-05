@@ -29,9 +29,14 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * 10: match and possession clocks pause at dead balls and resume on the restart strike. Paused stoppages no longer
  * inflate added time; the one-minute minimum and live-chance endings remain. First-match AI penalties use a finite
  * phaseT preparation window rather than waiting on the paused match clock. AI foul odds ease from 0.8 to 0.66
- * without reducing challenge frequency or clean-tackle success, preserving tempo over the extra live play.)
+ * without reducing challenge frequency or clean-tackle success, preserving tempo over the extra live play.
+ * 11: the AI against a human's carrier: the challenge a tell led into is a real one (dribble.ts toldTackleChance), any
+ * man with the ball in his reach goes for it, a carrier going nowhere is read and doubled up on, a spin is no skill
+ * cut; the man just robbed is locked out for a moment either way; the AI works the ball into the box and finishes by
+ * its level; the human's shot assist no longer threads acute angles; and every keeper holds his near post against a
+ * man by the byline instead of running out past it, which moves AI v AI matches too.)
  */
-export const NET_VERSION = 10;
+export const NET_VERSION = 11;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides

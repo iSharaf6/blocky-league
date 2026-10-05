@@ -18,6 +18,7 @@ import { has } from './ground';
 import { LEGACY_POINTS, LEGEND_APPS, LEGEND_GOALS, addLegacy, hasPerk, induct, milestoneOnce } from './legacy';
 import { playerAge, playerPotential, pinMeta, type MetaPlayer } from './market';
 import { addMoment, storyNews, type FormMark } from './story';
+import { applyMatchStat, blankStat, type MatchStat, type SeasonLine, type StatLine } from './stats';
 // The long game (runtime cycles: only ever used inside functions).
 import { SCOUT_NETWORKS } from './gems';
 import { teamMood, togetherness } from './morale';
@@ -33,6 +34,9 @@ export interface LifePlayer extends MetaPlayer {
   joined?: number;
   /** Came through your youth academy. */
   academy?: boolean;
+  /** Every season at the club, and the season being played (meta/stats.ts; missing on an old save: zeros). */
+  tot?: StatLine;
+  ssn?: SeasonLine;
 }
 
 export interface AcademyState {
@@ -65,6 +69,11 @@ export interface MatchFacts {
   their: number;
   /** Who it was against (for the record book). */
   vs: string;
+  /**
+   * What each of them did (minutes, assists, rating, cards, a keeper's saves: meta/stats.ts), by squad id. Without it
+   * (a caller that only knows who played) a player gets an appearance with no rating.
+   */
+  stats?: MatchStat[];
 }
 
 export type Mood = 0 | 1 | 2;
@@ -187,10 +196,16 @@ export function recordMatch(state: CareerState, f: MatchFacts): void {
   const season = state.season;
   if (!club || !season) return;
   const byId = new Map(club.squad.map((p) => [p.id, life(p)]));
+  const detail = new Map((f.stats ?? []).map((s) => [s.id, s]));
   for (const id of new Set(f.played)) {
     const p = byId.get(id);
     if (!p) continue;
     p.apps = (p.apps ?? 0) + 1;
+    // His line in the books: the numbers the match gave him, goals as counted below (one source for both).
+    const idx = club.squad.indexOf(p);
+    const ms = { ...(detail.get(id) ?? blankStat(id, idx >= 0 && idx < 11, idx >= 0 && idx < 11 ? 90 : 20)) };
+    ms.goals = f.scorers.filter((x) => x === id).length;
+    applyMatchStat(p, ms, season.number);
     for (const n of APP_MILESTONES) if (p.apps === n) milestone(state, p, 'a', n);
   }
   for (const id of f.scorers) {

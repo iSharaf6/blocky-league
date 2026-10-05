@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MatchAudio, type DirectorSink } from '../src/audio/director';
+import { MatchAudio, SUB_FADE_S, SUB_WAIT_S, type DirectorSink } from '../src/audio/director';
 import { Sfx, chantSyllables } from '../src/audio/sfx';
 import type { Match } from '../src/sim/match';
 import type { MatchEvent } from '../src/sim/types';
@@ -292,6 +292,82 @@ describe('the match director', () => {
     expect(named('fullTimeCrowd')).toEqual([['fullTimeCrowd', 0]]);
     d.end(m);
     expect(d.state.active).toBe(false);
+  });
+
+  /**
+   * The owner: "the music of the substitution was so nice, not sure where that went?" It was the half-time loop's
+   * tail under changes made at the break; the walk back out then came between them. Every scene has it now.
+   */
+  it('a substitution scene in a match plays the half-time loop, once, and fades it when the scene ends', () => {
+    const { sink, named } = recorder();
+    const d = new MatchAudio(sink);
+    const m = fakeMatch();
+    d.begin(m);
+    Object.assign(m, { phase: 'restart', half: 1 });
+    d.frame(1 / 60, m, true);
+    expect(named('playTrack')).toHaveLength(0);
+    d.subScene(true);
+    d.subScene(true);
+    expect(named('playTrack')).toEqual([['playTrack', 'halftime']]);
+    expect(d.state.subMusic).toBe(true);
+    for (let i = 0; i < 150; i++) d.frame(1 / 60, m);
+    expect(named('stopMusic')).toHaveLength(0);
+    d.subScene(false);
+    d.subScene(false);
+    expect(named('stopMusic')).toEqual([['stopMusic', SUB_FADE_S]]);
+    expect(d.state.subMusic).toBe(false);
+    // The next change gets it again.
+    d.subScene(true);
+    expect(named('playTrack')).toHaveLength(2);
+  });
+
+  it('changes made at half time: the loop carries on over the walk back out and through their scene, then fades', () => {
+    const { sink, named } = recorder();
+    const d = new MatchAudio(sink);
+    const m = fakeMatch();
+    d.begin(m);
+    Object.assign(m, { phase: 'halftime', phaseT: 1 });
+    d.frame(1 / 60, m);
+    expect(named('playTrack')).toEqual([['playTrack', 'halftime']]);
+    // SECOND HALF with two changes queued: three seconds of the teams coming back out, and no fade.
+    Object.assign(m, { phase: 'kickoff', phaseT: 0, half: 2 });
+    for (let i = 0; i < 180; i++) d.frame(1 / 60, m, true);
+    expect(named('stopMusic')).toHaveLength(0);
+    expect(named('setChantGate').at(-1)).toEqual(['setChantGate', true]);
+    d.subScene(true);
+    for (let i = 0; i < 300; i++) d.frame(1 / 60, m, false);
+    expect(named('stopMusic')).toHaveLength(0);
+    d.subScene(false);
+    expect(named('stopMusic')).toEqual([['stopMusic', SUB_FADE_S]]);
+  });
+
+  it('a queued change whose scene never comes does not leave the loop on, and the session ending stops it', () => {
+    const run = (waiting: (i: number) => boolean): { stops: number; d: MatchAudio; m: Match; named: (n: string) => Call[] } => {
+      const { sink, named } = recorder();
+      const d = new MatchAudio(sink);
+      const m = fakeMatch();
+      d.begin(m);
+      Object.assign(m, { phase: 'halftime', phaseT: 1 });
+      d.frame(1 / 60, m);
+      Object.assign(m, { phase: 'kickoff', phaseT: 0, half: 2 });
+      for (let i = 0; i < Math.ceil((SUB_WAIT_S + 1) * 60); i++) d.frame(1 / 60, m, waiting(i));
+      return { stops: named('stopMusic').length, d, m, named };
+    };
+    // Never shown: out after SUB_WAIT_S. Dropped (full time took the queue): out at once. Nothing queued: as before.
+    expect(run(() => true).stops).toBe(1);
+    expect(run((i) => i < 30).stops).toBe(1);
+    expect(run(() => false).stops).toBe(1);
+    const { sink, named } = recorder();
+    const d = new MatchAudio(sink);
+    const m = fakeMatch();
+    d.begin(m);
+    d.subScene(true);
+    d.end(m);
+    expect(named('stopMusic')).toHaveLength(1);
+    expect(d.state.subMusic).toBe(false);
+    // (No match begun, the menu's demo: nothing.)
+    d.subScene(true);
+    expect(named('playTrack')).toHaveLength(1);
   });
 
   it('olés a passing move from the fourth pass, groans at a sitter missed, whistles the AI keeping the ball, gets nervous late', () => {

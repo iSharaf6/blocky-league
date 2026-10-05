@@ -24,7 +24,7 @@ interface DevSession {
 }
 
 const SONGS: readonly TrackId[] = ['menu', 'halftime', 'win', 'draw', 'loss'];
-const STING_IDS: readonly StingId[] = ['kickoff', 'goal', 'trophy', 'promotion'];
+const STING_IDS: readonly StingId[] = ['kickoff', 'goal', 'trophy', 'promotion', 'studio'];
 const CHANTS: readonly ChantKind[] = CHANT_KINDS;
 
 function session(): DevSession | null {

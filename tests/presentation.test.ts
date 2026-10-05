@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { matchAudio } from '../src/audio/director';
 import { CHANT_KINDS, Sfx, chantCaption, chantWords, type ChantKind } from '../src/audio/sfx';
 import { MatchSession, PRESENTATION } from '../src/game/matchSession';
 import { PF, STATE_CODE } from '../src/game/replay';
@@ -101,6 +102,28 @@ describe('the substitution on the touchline', () => {
     expect(subQueue).toHaveLength(2);
     expect(subQueue[0]).toMatchObject({ off: first, on: second });
     expect(subQueue[1]).toMatchObject({ off: second, on: third });
+  });
+
+  it('the scene asks for its music as it starts and lets it go when it ends (the owner: "the music of the substitution")', () => {
+    const m = new Match({ home: makeTeam(PRESET_CLUBS[0]), away: makeTeam(PRESET_CLUBS[1]), halfLength: 150, difficulty: 1.8, humanSide: 0, seed: 27 });
+    const cue = vi.spyOn(matchAudio, 'subScene').mockImplementation(() => {});
+    const man = m.teamPlayers(0)[9];
+    const session = Object.assign(Object.create(MatchSession.prototype), {
+      match: m, opt: { kits: [m.teams[0].kit, m.teams[1].kit] }, time: 0, acc: 0, prev: null, cur: null, eatButtons: false,
+      subQueue: [{ side: 0, off: man.def, on: m.bench[0][0], idx: man.idx, keeper: false }], subCut: null, subSt: newSubStage(),
+      sceneShot: { px: 0, py: 0, pz: 0, tx: 0, ty: 0, tz: 0, fov: 30 }, sceneKeep: [], sceneClear: 0,
+      latch: { pass: false, shoot: false, through: false, power: false, skill: false },
+      view: { frameHook: null, headTop: 1.8, apply: vi.fn() }, cam: { setMode: vi.fn(), cut: vi.fn() },
+      subScene: { begin: vi.fn(), update: vi.fn(), end: vi.fn() },
+    }) as unknown as { startSubCut(): void; endSubCut(held: boolean): void; subCut: unknown; subQueue: unknown[] };
+    session.startSubCut();
+    expect(session.subCut).not.toBeNull();
+    expect(session.subQueue).toHaveLength(0);
+    expect(cue.mock.calls).toEqual([[true]]);
+    session.endSubCut(false);
+    expect(session.subCut).toBeNull();
+    expect(cue.mock.calls).toEqual([[true], [false]]);
+    cue.mockRestore();
   });
 
   it('the man coming off jogs to the line, they meet palms, the new man runs on and the old one goes to the bench', () => {

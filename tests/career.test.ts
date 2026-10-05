@@ -465,7 +465,8 @@ describe('training, stadium and match economy', () => {
   });
 
   it('maps divisions to difficulty, stadium to crowd, and results to coins', () => {
-    expect([6, 5, 4, 3, 2, 1].map(matchDifficulty)).toEqual([0, 0, 1, 1, 2, 3]);
+    // (The bottom divisions are NORMAL, not EASY: the rivals' ratings are the division's difficulty.)
+    expect([8, 7, 6, 5, 4, 3, 2, 1].map(matchDifficulty)).toEqual([1, 1, 1, 1, 1, 1, 2, 3]);
     expect(matchAttendance(0)).toBeCloseTo(0.35);
     expect(matchAttendance(5)).toBe(0.95);
     expect(matchCoins(6, 0, 2, 1)).toBe(120 + 30);

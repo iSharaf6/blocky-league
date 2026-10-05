@@ -130,7 +130,7 @@ describe('the straight run: the challenge', () => {
     return evs.some((e) => e.type === 'tackle' && e.by === o.idx && e.won);
   };
 
-  it('run straight on into a told challenge and it wins the ball most of the time; turn away and it is the bark it was', () => {
+  it('run straight on into a told challenge and it wins the ball; drifting off his line does not get him out of it', () => {
     const N = 60;
     let straight = 0;
     let turned = 0;
@@ -140,9 +140,12 @@ describe('the straight run: the challenge', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`NORMAL, a duel's told challenge on a read runner: won the ball ${straight}/${N} run straight into, ${turned}/${N} turned away from`);
-    expect(straight).toBeGreaterThan(N * 0.4);
-    expect(turned).toBeLessThan(N * 0.15);
-    expect(straight).toBeGreaterThan(turned * 3);
+    // (2026-10-05, the owner: "when the skill timing thing pops up, they don't tackle the player". A tell is a promise:
+    // it was 40%+ run straight into and under 15% for a man who simply leant 60 degrees off his line, which made the
+    // duel a bark. The read man loses it nearly every time; steering away without a cut or SKILL loses it most times.)
+    expect(straight).toBeGreaterThan(N * 0.8);
+    expect(turned).toBeGreaterThan(N * 0.5);
+    expect(straight).toBeGreaterThanOrEqual(turned);
   }, 240_000);
 
   it('HARD wins it nearly every time; EASY stays lenient', () => {
@@ -155,8 +158,12 @@ describe('the straight run: the challenge', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`a duel's told challenge on a read runner: won the ball HARD ${hard}/${N}, EASY ${easy}/${N}`);
-    expect(hard).toBeGreaterThan(N * 0.6);
-    expect(easy).toBeLessThan(N * 0.4);
+    // (EASY was under 40%: lenient, and close to nothing against a man who is not read. It is more forgiving than
+    // HARD still, but a man running one straight line into a told challenge loses it more often than not.)
+    expect(hard).toBeGreaterThan(N * 0.8);
+    expect(easy).toBeGreaterThan(N * 0.45);
+    expect(easy).toBeLessThan(N * 0.85);
+    expect(easy).toBeLessThan(hard);
   }, 240_000);
 });
 

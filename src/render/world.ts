@@ -445,13 +445,21 @@ export class World {
     }
   }
 
+  /**
+   * A second picture drawn over the frame (render/sideStage.ts: the commentary cam in its corner). `full`: it covers
+   * the whole frame, so the match is not drawn under it (unless a poster frame is wanted this frame: afterRender).
+   */
+  overlay: { readonly full: boolean; draw(r: THREE.WebGLRenderer): void } | null = null;
+
   render(): void {
-    this.renderer.render(this.scene, this.camera);
+    const o = this.overlay;
     const f = this.afterRender;
+    if (!o?.full || f) this.renderer.render(this.scene, this.camera);
     if (f) {
       this.afterRender = null;
       f();
     }
+    o?.draw(this.renderer);
   }
 
   private afterRender: (() => void) | null = null;

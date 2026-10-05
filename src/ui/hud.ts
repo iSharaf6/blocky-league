@@ -195,7 +195,7 @@ export class Hud {
       <div class="hud-tip"></div>
       <div class="hud-cm" role="status" aria-live="polite"><b class="cm-tag"></b><span class="cm-text"></span></div>
       <div class="hud-chip"><span class="chip-num"></span><span class="chip-name"></span><div class="chip-stam"><div></div></div></div>
-      <div class="hud-replay"><b>REPLAY</b><span class="rp-key">PRESS ANY BUTTON TO SKIP</span><span class="rp-tap">TAP TO SKIP</span></div>
+      <div class="hud-replay"><b>REPLAY</b><em class="rp-cap"></em><span class="rp-key">PRESS ANY BUTTON TO SKIP</span><span class="rp-tap">TAP TO SKIP</span></div>
       <canvas class="hud-radar" width="240" height="150" aria-hidden="true"></canvas>`;
     this.score = this.root.querySelector('.sb-score')!;
     this.clock = this.root.querySelector('.sb-clock')!;
@@ -1306,10 +1306,13 @@ export class Hud {
     if (this.replay.classList.contains('skip-only') !== on) this.replay.classList.toggle('skip-only', on);
   }
 
-  setReplay(on: boolean, label = 'REPLAY'): void {
+  /** `caption`: an incident clip's one line under the badge ("FOUL BY 5 CINDER"); none on a goal replay. */
+  setReplay(on: boolean, label = 'REPLAY', caption = ''): void {
     this.replay.classList.remove('skip-only');
     const badge = this.replay.querySelector('b');
     if (badge) badge.textContent = on ? label : 'REPLAY';
+    const cap = this.replay.querySelector('.rp-cap');
+    if (cap) cap.textContent = on ? caption : '';
     this.replay.classList.toggle('on', on);
     this.root.classList.toggle('replaying', on);
     // A decision/result has its own replay badge; its earlier announcement must not cover the footage.

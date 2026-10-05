@@ -1,8 +1,17 @@
 import type { Phase, Restart } from '../sim/match';
 import type { MatchEvent, Side } from '../sim/types';
 
-/** Let the tackle and fall read in the wide shot before the referee's decision. */
-export const FOUL_BEAT_S = 0.6;
+/**
+ * From the contact: the fall, the whistle and the banner naming the decision read in the wide shot for this long
+ * before any card close-up takes the picture.
+ */
+export const FOUL_BEAT_S = 1.0;
+/**
+ * The same beat where nothing holds the match for the decision (online, a Football Moment, the menu's demo, or a
+ * foul still being played on for advantage): no longer than the sim's own dead-ball beat, so the card is up before
+ * the free kick can be taken.
+ */
+export const FOUL_BEAT_LIVE_S = 0.6;
 
 export interface BookingShot {
   player: number;
@@ -27,10 +36,10 @@ export class FoulPresentation {
 
   get waiting(): boolean { return this.left > 1e-4; }
 
-  contact(side: Side): void {
+  contact(side: Side, beat = FOUL_BEAT_S): void {
     this.clear();
     this.side = side;
-    this.left = FOUL_BEAT_S;
+    this.left = beat;
   }
 
   /** Called on unpaused rendered frames, before new sim events can start a beat. */

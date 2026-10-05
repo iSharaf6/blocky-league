@@ -1,0 +1,103 @@
+/* SIDE SHOWS (game/sideShow.ts, ui/sideFrame.ts): the commentary cam and the other corner pictures.
+   The corner under the camera and pause buttons, top right: the score bug and the REPLAY tag are top left, the minimap
+   and the touch controls own the bottom. The chant caption steps down under it while it is up. The picture itself is
+   drawn on the canvas behind this box (render/sideStage.ts), so the box only carries the border and the tag. */
+.hud > .side-cam {
+  --side-w: clamp(180px, 23vw, 320px);
+  position: absolute;
+  top: calc(max(12px, env(safe-area-inset-top)) + 52px);
+  right: max(12px, env(safe-area-inset-right));
+  width: var(--side-w);
+  aspect-ratio: 16 / 9;
+  pointer-events: none;
+  visibility: hidden;
+  box-shadow: inset 0 0 0 3px var(--cream), 0 0 0 2px var(--ink), 0 6px 0 rgba(0, 0, 0, 0.35);
+}
+
+.hud > .side-cam.on {
+  visibility: visible;
+}
+
+/* The quick-sub card has that corner while it is offered: the picture waits. */
+.hud:has(.hud-qsub.card-on) > .side-cam.on:not(.full) {
+  visibility: hidden;
+}
+
+.hud:has(> .side-cam.on:not(.full)) .pz-chant {
+  top: calc(max(12px, env(safe-area-inset-top)) + 52px + clamp(180px, 23vw, 320px) * 0.5625 + 12px);
+}
+
+.side-cam .sc-plate {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: grid;
+  justify-items: start;
+}
+
+.side-cam .sc-tag {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px 4px 7px;
+  background: var(--ink);
+  color: var(--cream);
+  font: 700 10px / 1 var(--px);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+/* The live lamp: a drawn square, not a character. */
+.side-cam .sc-tag i {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--red);
+  animation: blink 1s steps(2) infinite;
+}
+
+.side-cam .sc-line {
+  display: none;
+}
+
+/* A big goal: the commentary box has the whole screen, with its headline bottom left like the other scenes' plates. */
+.hud > .side-cam.full {
+  inset: 0;
+  width: auto;
+  aspect-ratio: auto;
+  box-shadow: none;
+}
+
+/* (The match's own HUD waits behind it, like the other full-screen scenes; the skip line stays.) */
+.hud:has(> .side-cam.on.full) > :not(.side-cam):not(.hud-replay) {
+  visibility: hidden;
+  opacity: 0 !important;
+}
+
+.side-cam.full .sc-plate {
+  left: max(18px, env(safe-area-inset-left));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 34px);
+  gap: 6px;
+  padding: 9px 16px 8px 12px;
+  background: rgba(38, 38, 46, 0.92);
+  border-left: 8px solid var(--sc, var(--yellow));
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.3);
+}
+
+.side-cam.full .sc-tag {
+  padding: 0;
+  background: none;
+  color: var(--yellow);
+  font-size: 12px;
+}
+
+.side-cam.full.lined .sc-line {
+  display: block;
+  color: var(--cream);
+  font: 400 28px / 1 var(--round);
+  letter-spacing: 0.5px;
+}
+
+@media (min-width: 1000px) {
+  .side-cam .sc-tag { font-size: 12px; }
+}

@@ -283,15 +283,20 @@ export class Player {
    */
   tellT = 0;
   tellSlide = false;
-  /** That tell came from the duel (skills.ts TELL_DUEL): its tackle, if he ignores it, is a soft one (DUEL_TACKLE). */
+  /** That tell came from the duel (skills.ts TELL_DUEL). Its tackle is as real as any other told one. */
   tellDuel = false;
-  /** Seconds left of the committed challenge a tell led into (its tackle is the surer for it: skills.ts TOLD_TACKLE). */
+  /** Seconds left of the committed challenge a tell led into (the promised one: dribble.ts toldTackleChance). */
   toldT = 0;
   /**
    * Off balance, seconds left: bumped off the ball or riding a challenge, beaten to a 50/50, just back on
    * his feet. A shot or a first touch taken meanwhile is rougher (it doesn't slow his running).
    */
   stumbleT = 0;
+  /**
+   * Robbed: seconds left of the moment after a tackle took the ball off him, the human's man by the AI or the AI's
+   * by the human (Match.tryTackle's LOST_LOCK). He is no pressure on the man who took it (ai.ts carrierAI).
+   */
+  robbedT = 0;
   /**
    * The current 'kick' state's moment of contact (s after it started): KICK_WINDUP, a little longer for a
    * human's open-play shot (the timed-finish window) and for a plant step. kickT is paced so the swing
@@ -406,6 +411,7 @@ export class Player {
     this.protectT = Math.max(0, this.protectT - dt);
     this.shieldT = Math.max(0, this.shieldT - dt);
     this.stumbleT = Math.max(0, this.stumbleT - dt);
+    this.robbedT = this.robbedT > 0 ? Math.max(0, this.robbedT - dt) : 0;
     this.touchT = Math.max(0, this.touchT - dt);
 
     switch (this.state) {

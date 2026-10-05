@@ -1,6 +1,6 @@
 import { bindings, keyLabel, padLabel, type Input } from '../core/input';
 import { QS_SHOW_S, type QuickSubs } from '../game/quickSub';
-import type { PlayerDef } from '../sim/types';
+import { overall, type PlayerDef } from '../sim/types';
 import { surname } from './commentary';
 
 /**
@@ -215,7 +215,8 @@ export class QuickSubCard {
       this.go.setAttribute('aria-label', queued ? `Undo: keep ${shortName(o.off)} on` : `Sub ${shortName(o.off)} off for ${shortName(o.on)} at the next stoppage`);
       this.row(this.offRow, o.off);
       this.row(this.onRow, o.on);
-      this.onRow.querySelector('.qs-role')!.textContent = o.on.role;
+      // (His job and his OVR: who is coming on is a decision, and the number is what he is worth.)
+      this.onRow.querySelector('.qs-role')!.textContent = `${o.on.role} ${overall(o.on)}`;
       this.offRow.classList.toggle('booked', q.match.booked.has(o.idx));
       this.stamPct = -1;
     }

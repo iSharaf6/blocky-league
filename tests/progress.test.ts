@@ -58,9 +58,10 @@ describe('XP and levels', () => {
     expect(matchXp(summary({ conceded: 0 }))).toBe(matchXp(summary({ conceded: 3 })));
   });
 
-  it('titles climb from Sunday Leaguer to Blocky Legend', () => {
-    expect(levelTitle(1)).toBe('Sunday Leaguer');
-    expect(levelTitle(2)).toBe('Sunday Leaguer');
+  it('titles climb from Rookie to Blocky Legend, and none reads like a division name', () => {
+    expect(levelTitle(1)).toBe('Rookie');
+    expect(levelTitle(2)).toBe('Rookie');
+    for (const e of LEVEL_TITLES) expect(e.title).not.toMatch(/sunday|park|district|county|national|league|championship|elite/i);
     expect(levelTitle(5)).toBe('Rising Star');
     expect(levelTitle(30)).toBe('Blocky Legend');
     expect(levelTitle(99)).toBe('Blocky Legend');

@@ -172,7 +172,7 @@ export function canStartAsLegend(state: CareerState): boolean {
 
 /**
  * Start a new club as a legend: the current club goes into the Hall of Fame with its trophies, and the road starts
- * again in the Sunday League with a club you name. Legacy points, perks, legends, coins and cosmetics stay. Returns
+ * again in the Park League with a club you name. Legacy points, perks, legends, coins and cosmetics stay. Returns
  * false (and changes nothing) when it isn't open yet. The caller (career.ts) resets the rest of the career.
  */
 export function archiveClub(state: CareerState): boolean {

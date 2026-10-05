@@ -1,5 +1,5 @@
 import { angleDiff, clamp, dist2 } from '../core/math';
-import { TEMPO } from './constants';
+import { DDA_TACKLE, TEMPO } from './constants';
 import type { Match, Pad } from './match';
 import type { Player } from './player';
 import type { Side } from './types';
@@ -117,6 +117,40 @@ export const LINE_ENGAGE_R = 2.5;
 export const LINE_REACH = 2;
 export const LINE_GAP = 0.6;
 
+/**
+ * Going nowhere (the owner, 2026-10-05: "i can keep spinning around ina circle with a joy stick and no one will ever
+ * get the ball from me"). A man who has the ball and isn't taking it anywhere is as easy to time as one who never
+ * changes his line: turning on the spot, shuffling it about, running a small circle (the stick busy; a man standing
+ * on it with the stick left alone is the stall rule's, STALL_S). His position is followed by a spot
+ * that trails him DWELL_TAU s behind (AssistState.ax, az); while he is within DWELL_R m of it (a run at any pace
+ * leaves it behind, a circle or a shuffle doesn't) the dwell's clock runs (AssistState.dwell), and from DWELL_FROM s
+ * to DWELL_FULL s of it he is READ exactly as a straight runner is (dwellRead: the nearest man closes him down, a
+ * second comes to double up, and their challenges go in for real: ai.ts). Taking it somewhere runs the clock down
+ * twice as fast as it ran up.
+ */
+export const DWELL_TAU = 0.9;
+export const DWELL_R = 2.6;
+export const DWELL_FROM = 1.0;
+export const DWELL_FULL = 2.0;
+/**
+ * ... and a spin is not a skill: a cut that turns the same way as the last one within SPIN_T s (the stick going round
+ * and round) fools nobody and protects nothing, nor does any cut by a man who is going nowhere (dwellRead). It used
+ * to wrong-foot the presser every CUT_COOL s and renew the PROTECT_T window each time: a carrier nobody could touch.
+ */
+export const SPIN_T = 1.5;
+/**
+ * A tell is a promise (the owner, 2026-10-05: "when the skill timing thing pops up, they don't tackle the player ...
+ * it defeats the purpose of the skill thing"). The challenge a tell led into is decided by what the player did with
+ * the warning, not by the usual dice: answered in time (a PERFECT, skills.ts) it never arrives; ignored, it takes the
+ * ball vsHuman.told of the time (toldTackleChance), from in front of him or beside him alike, with a lunge's reach
+ * (TOLD_REACH m off the boot, against a standing poke's 1.15) and the ball taken cleanly TOLD_CLEAN of the time.
+ * His very first minute it is FIRST_MATCH_TOLD as sure. A man the AI has READ (carrierRead) loses it TOLD_READ of the time.
+ */
+export const TOLD_REACH = 1.5;
+export const TOLD_READ = 0.95;
+export const TOLD_CLEAN = 0.9;
+export const FIRST_MATCH_TOLD = 0.6;
+
 /** Double-tap SPRINT with the ball: the second press within this (s) knocks it on. */
 export const KNOCK_TAP = 0.35;
 /**
@@ -185,6 +219,12 @@ export class AssistState {
   lineA = 0;
   /** Match.clock when the line's clock last ran (a gap: he lost it and has it back, so the line starts again). */
   lineAt = 0;
+  /** Going nowhere (DWELL_R): the spot trailing his carrier, and the seconds he has stayed by it with the ball. */
+  ax = 0;
+  az = 0;
+  dwell = 0;
+  /** The way his last skill cut turned (+1 / -1; 0: none yet): SPIN_T. */
+  cutTurn = 0;
   /** TACKLE: the press being played out (tap / hold; `born`: Match.clock when pressed), and when the last one was. */
   tackle: { t: number; held: boolean; target: number; player: number; born: number } | null = null;
   lastPress = -9;
@@ -218,10 +258,33 @@ export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt
     st.carrier = p.idx;
     st.hist.length = 0;
     st.line = 0;
+    st.dwell = 0;
+    st.cutTurn = 0;
+    st.ax = p.pos.x;
+    st.az = p.pos.z;
   }
   if (p.state !== 'move') return;
   // ---- The straight line (straightRead): the clock runs while the stick holds its line at a run.
-  if (m.clock - st.lineAt > 0.2 || m.clock < st.lineAt) st.line = 0;
+  if (m.clock - st.lineAt > 0.2 || m.clock < st.lineAt) {
+    // (He lost it and has it back: the line and the dwell start again from where he is.)
+    st.line = 0;
+    st.dwell = 0;
+    st.ax = p.pos.x;
+    st.az = p.pos.z;
+  }
+  // ---- Going nowhere (dwellRead): the spot trails him, the clock runs while he stays by it.
+  if (!Number.isFinite(st.ax + st.az + st.dwell)) {
+    st.ax = p.pos.x;
+    st.az = p.pos.z;
+    st.dwell = 0;
+  }
+  const follow = Math.min(1, dt / DWELL_TAU);
+  st.ax += (p.pos.x - st.ax) * follow;
+  st.az += (p.pos.z - st.az) * follow;
+  // (Only while he is working the stick: a man standing on it with the stick left alone is looking up, and has the
+  // STALL_S s the stall rule gives him, ai.ts humanStalling. The clock holds meanwhile.)
+  if (dist2(p.pos.x, p.pos.z, st.ax, st.az) >= DWELL_R) st.dwell = Math.max(0, st.dwell - 2 * dt);
+  else if (stickLen > 0.25) st.dwell = Math.min(DWELL_FULL + 1, st.dwell + dt);
   st.lineAt = m.clock;
   if (stickLen > 0.5 && p.speed() > LINE_PACE) {
     const a = Math.atan2(pad.mz, pad.mx);
@@ -240,15 +303,25 @@ export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt
   if (stickLen > 0.5) {
     const a = Math.atan2(pad.mz, pad.mx);
     let swing = 0;
-    for (const s of h) swing = Math.max(swing, Math.abs(angleDiff(s.a, a)));
+    let turn = 0;
+    for (const s of h) {
+      const d = angleDiff(s.a, a);
+      if (Math.abs(d) > swing) {
+        swing = Math.abs(d);
+        turn = Math.sign(d);
+      }
+    }
     h.push({ a, t: st.t });
     const sp = p.speed();
     const offRun = sp > 0.5 ? Math.abs(angleDiff(Math.atan2(p.vel.z, p.vel.x), a)) : 0;
     if (!busy && swing > CUT_SWING && offRun > CUT_OFF_RUN && sp > 1.5 && st.t - st.lastCut > CUT_COOL) {
+      // (Round and round the same way, or on the spot: a spin, not a cut. SPIN_T.)
+      const spin = (turn !== 0 && turn === st.cutTurn && st.t - st.lastCut < SPIN_T) || dwellRead(m, p) > 0;
       st.lastCut = st.t;
+      st.cutTurn = turn;
       h.length = 0;
       h.push({ a, t: st.t });
-      skillCut(m, p);
+      skillCut(m, p, spin);
     }
   }
   if (busy) return;
@@ -272,11 +345,12 @@ export function humanDribble(m: Match, p: Player, pad: Pad, stickLen: number, dt
 }
 
 /** A skill cut: the burst turn, the 'skill', and any committed defender near enough wrong-footed. */
-function skillCut(m: Match, p: Player): void {
+function skillCut(m: Match, p: Player, spin = false): void {
   p.cutT = CUT_T;
   let near = false;
   let beat = false;
   for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
+    if (spin) break;
     if (o.isKeeper || o.sentOff || o.wrongFootT > 0) continue;
     if (o.state !== 'move' && o.state !== 'slide') continue;
     const dx = p.pos.x - o.pos.x;
@@ -289,8 +363,9 @@ function skillCut(m: Match, p: Player): void {
     // challenge, skills.ts, is set, not yet going: the SKILL button is the answer to that. A duel's tell, skills.ts
     // TELL_DUEL, is a man squaring up to go in: a cut on it catches him leaning, like the SKILL button.)
     const closing = (o.vel.x * dx + o.vel.z * dz) / Math.max(0.1, d);
-    const committed = (o.tellT > 0 && o.tellDuel) ||
-      (o.tellT <= 0 && (o.commitT > 0 || o.state === 'slide' || closing > 2 || (o.tackleCooldown <= 0 && d < 1.8)));
+    // (Every told challenge is a real one now, toldTackleChance, and a man winding one up is leaning into it whichever
+    // kind it is: the cut catches him as it caught a duel's.)
+    const committed = o.tellT > 0 || o.commitT > 0 || o.state === 'slide' || closing > 2 || (o.tackleCooldown <= 0 && d < 1.8);
     const edge = (p.stat.dribbling - o.stat.defending) / 100;
     const shift = vsHuman(m.aiSkill(o.side)).cut;
     const pWin = committed ? clamp(0.72 + edge * 0.9 + shift, 0.45, 0.92) : clamp(0.3 + edge * 0.6 + shift, 0.12, 0.5);
@@ -305,6 +380,7 @@ function skillCut(m: Match, p: Player): void {
     m.ctl[p.side].skill.chain(m, p, 'cut');
   }
   const st = m.ctl[p.side].assist;
+  if (spin) return;
   if (near && st.t - st.lastSkill > SKILL_GAP) {
     st.lastSkill = st.t;
     m.events.push({ type: 'skill', player: p.idx });
@@ -455,6 +531,36 @@ export function straightRead(m: Match, c: Player): number {
   return clamp((st.line - LINE_FROM) / (LINE_FULL - LINE_FROM), 0, 1) * vsHuman(m.aiSkill(c.side === 0 ? 1 : 0)).line;
 }
 
+/**
+ * How well the AI reads a human carrier `c` who is going nowhere (0..1): how long he has stayed by one spot with the
+ * ball (DWELL_FROM to DWELL_FULL s), times the AI's vsHuman.line. 0 for anyone else, and for a man on the move.
+ */
+export function dwellRead(m: Match, c: Player): number {
+  if (!m.isHumanControlled(c)) return 0;
+  const st = m.ctl[c.side].assist;
+  if (st.carrier !== c.idx || m.ball.owner !== c.idx || !(st.dwell > DWELL_FROM)) return 0;
+  return clamp((st.dwell - DWELL_FROM) / (DWELL_FULL - DWELL_FROM), 0, 1) * vsHuman(m.aiSkill(c.side === 0 ? 1 : 0)).line;
+}
+
+/** The AI's read of the human's carrier, whichever it is: a straight line, or going nowhere. */
+export function carrierRead(m: Match, c: Player): number {
+  return Math.max(straightRead(m, c), dwellRead(m, c));
+}
+
+/**
+ * The odds that `tackler`'s told challenge takes the ball off the human's carrier `c` (Match.tryTackle's `told`):
+ * vsHuman.told by difficulty, not the standing tackle's dice (see TOLD_REACH). A skill that has just beaten a man
+ * still protects him (PROTECT_TACKLE), and a move he is in the middle of leaves the ball off his foot.
+ */
+export function toldTackleChance(m: Match, tackler: Player, c: Player, read = 0): number {
+  const eased = vsHuman(m.aiSkill(tackler.side)).told * (m.firstMatchEase() ? FIRST_MATCH_TOLD : 1) * (1 - DDA_TACKLE * m.assistEase(tackler.side));
+  // (A man who is READ, `read`: one straight line, going nowhere, or standing on it unattended, is taken nearly every
+  // time, whatever the ease: TOLD_READ. He has told the defender exactly where the ball will be.)
+  const k = eased + (TOLD_READ - eased) * clamp(read, 0, 1) ** 2;
+  if (c.protectT > 0) return k * PROTECT_TACKLE;
+  return Math.min(0.97, k * m.ctl[c.side].skill.exposure(c.idx));
+}
+
 // ------------------------------------------------------------------ tackles on the human's carrier
 
 /**
@@ -527,6 +633,17 @@ export interface VsHuman {
    * real, a block that holds). Lenient on EASY, all of it from NORMAL up.
    */
   line: number;
+  /**
+   * How often the challenge a tell led into takes the ball off a man who ignored it or mistimed his answer
+   * (toldTackleChance): forgiving on EASY, most of the time from NORMAL up. Never near zero: a tell is a promise.
+   */
+  told: number;
+  /**
+   * Its strike with the foot at the human's goal: the finishing error against the base model's (actions.ts aiFinish).
+   * It was 0.8 at every level (AI v AI: 0.45), so even a clear sight of goal was dragged wide two times in three and
+   * the human's keeper had nothing to do; from NORMAL up a striker left unpressed in range now hits the target.
+   */
+  finish: number;
 }
 
 /** The menu's difficulty levels (MatchConfig.difficulty), and vsHuman's value at each (linear between). */
@@ -545,11 +662,13 @@ const VS_HUMAN: Record<keyof VsHuman, number[]> = {
   cut: [0.12, -0.1, -0.3, -0.4],
   takeOn: [0.7, 2.45, 2.6, 2.9],
   beaten: [0.4, 1.0, 1.05, 1.15],
-  auto: [0.8, 0.26, 0.24, 0.2],
-  read: [0.3, 10.5, 12, 15],
+  auto: [0.6, 0.26, 0.24, 0.2],
+  read: [3, 10.5, 12, 15],
   tight: [0, 0.64, 0.68, 0.75],
   shotHelp: [1, 1, 0.5, 0],
   line: [0.6, 1, 1, 1],
+  told: [0.55, 0.85, 0.9, 0.94],
+  finish: [0.75, 0.45, 0.45, 0.45],
 };
 /** The human's man this near (m) an AI carrier: the carrier keeps it tighter (vsHuman.tight). */
 const TIGHT_R = 3.5;
@@ -562,7 +681,7 @@ export function vsHuman(skill: number): VsHuman {
   const at = (k: keyof VsHuman) => VS_HUMAN[k][i] + (VS_HUMAN[k][i + 1] - VS_HUMAN[k][i]) * f;
   return {
     press: at('press'), tackle: at('tackle'), resist: at('resist'), cut: at('cut'), takeOn: at('takeOn'), beaten: at('beaten'), auto: at('auto'),
-    read: at('read'), tight: at('tight'), shotHelp: at('shotHelp'), line: at('line'),
+    read: at('read'), tight: at('tight'), shotHelp: at('shotHelp'), line: at('line'), told: at('told'), finish: at('finish'),
   };
 }
 

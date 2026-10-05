@@ -10,6 +10,7 @@ import {
   type PoseInput,
 } from './characters';
 import type { StyledKit } from './kitDesigns';
+import { IncidentMarks } from './incidentMarks';
 import { headgearGeometry, isHeadgear } from './looks';
 import { BALL_FLASH_S, ballFlashScale } from './juice';
 import { FLOODLIGHT_TOWERS } from './stadium';
@@ -21,8 +22,8 @@ import { BoxBuilder } from './voxel';
  */
 export type MarkerMode = 'full' | 'ring' | 'off';
 
-/** Referee signals: arm raised (foul / offside), advantage (both arms forward), a card held high. */
-export type RefSignal = 'arm' | 'advantage' | 'card';
+/** Referee signals: arm raised (foul / offside), advantage (both arms forward), a card held high, pointing to the penalty spot. */
+export type RefSignal = 'arm' | 'advantage' | 'card' | 'spot';
 
 export const CARD_YELLOW = 0xffd43b;
 export const CARD_RED = 0xe03131;
@@ -634,6 +635,7 @@ export class MatchView {
       pose.y = f[o + 2];
       // Sent off: the sim parks him beside his dugout; he just stands there, hands on head.
       pose.state = f[o + 4] === SENT_OFF_CODE ? PSTATE.dejected : f[o + 4];
+      pose.sentOff = f[o + 4] === SENT_OFF_CODE;
       pose.stateT = f[o + 5];
       pose.runPhase = f[o + 6];
       pose.speed = f[o + 7];
@@ -921,7 +923,7 @@ export class MatchView {
     pose.keeper = false; pose.hasBall = false; pose.turn = 0; pose.dt = dt;
     pose.look = -wrapAngle(Math.atan2(bz - r.z, bx - r.x) - r.facing);
     pose.signal = r.signal > 0;
-    pose.signalKind = r.kind === 'advantage' ? 1 : r.kind === 'card' ? 2 : 0;
+    pose.signalKind = r.kind === 'advantage' ? 1 : r.kind === 'card' ? 2 : r.kind === 'spot' ? 3 : 0;
     this.referee.pose(pose, time);
     pose.signal = false;
     pose.signalKind = 0;
@@ -935,6 +937,16 @@ export class MatchView {
     if (this.ref.kind === 'card' && this.ref.signal > 0 && kind !== 'card') return;
     this.ref.signal = seconds;
     this.ref.kind = kind;
+  }
+
+  /** A penalty: he stops, turns to the spot (x, z) and points at it for `seconds` (a card still outranks it). */
+  refPoint(seconds: number, x: number, z: number): void {
+    const r = this.ref;
+    if (r.kind === 'card' && r.signal > 0) return;
+    this.refSignal(seconds, 'spot');
+    r.hold = seconds;
+    r.faceX = x;
+    r.faceZ = z;
   }
 
   /**
@@ -1061,6 +1073,45 @@ export class MatchView {
       }
       set(fb, alpha > 0 ? alpha + (1 - alpha) * k : k < 0.5 ? 0 : 1);
     }
+  }
+
+  /**
+   * A replay's close look at two men in a crowd: everyone but `keep` standing within `radius` of (cx, cz) is
+   * dimmed to `alpha`, back to solid over the next 2 m, so the contact is not lost among the bodies round it.
+   * Anyone standing between the lens (lx, lz) and the pair, or right in front of the lens, is taken out of the
+   * picture altogether: a see-through body filling the foreground hides the contact as well as a solid one.
+   */
+  dimAround(cx: number, cz: number, radius: number, alpha: number, keep: readonly number[], lx = cx, lz = cz): void {
+    const f = this.frame;
+    const sx = cx - lx;
+    const sz = cz - lz;
+    const sl = Math.hypot(sx, sz);
+    for (let i = 0; i < 22; i++) {
+      const fb = this.players[i];
+      if (keep.includes(i)) {
+        if (fb.opacity < 1) fb.setOpacity(1);
+        continue;
+      }
+      const x = f[i * PF];
+      const z = f[i * PF + 1];
+      if (sl > 1) {
+        const along = ((x - lx) * sx + (z - lz) * sz) / sl;
+        const off = Math.abs((x - lx) * sz - (z - lz) * sx) / sl;
+        if (along > -1 && along < sl - 0.6 && off < 0.9 + (1 - along / sl) * 1.6) {
+          fb.setOpacity(0);
+          continue;
+        }
+      }
+      const d = Math.hypot(x - cx, z - cz);
+      fb.setOpacity(d <= radius ? alpha : Math.min(1, alpha + ((1 - alpha) * (d - radius)) / 2));
+    }
+  }
+
+  private marks: IncidentMarks | null = null;
+
+  /** What an incident replay draws on the lawn (rings under the two men, the offside line); made on first use. */
+  get incidentMarks(): IncidentMarks {
+    return this.marks ??= new IncidentMarks(this.group);
   }
 
   /** Everyone solid again (the low camera has cut away). */
@@ -1609,6 +1660,8 @@ export class MatchView {
   }
 
   dispose(): void {
+    this.marks?.dispose();
+    this.marks = null;
     this.group.removeFromParent();
   }
 }

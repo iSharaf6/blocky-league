@@ -524,8 +524,8 @@ function contractCard(state: CareerState): EventCard | null {
   const loyal = hasTrait(p, 'loyal');
   const bonus = round10(wageOf(p) * (loyal ? 2 : hasTrait(p, 'ambitious') ? 6 : 4));
   return card(state, 'contract', 'CONTRACT TALKS', `${last(p.name)}'s contract runs out this summer. ${loyal ? 'He wants to stay.' : 'His agent wants an answer.'}`, [p.id], [
-    { label: 'NEW 3 YEAR DEAL', hint: 'HE STAYS, AND HE IS HAPPY', coins: bonus, say: `${p.name} signed a new three year deal`, tone: 'good', fx: [{ t: 'renew', who: p.id, years: 3 }, { t: 'morale', who: p.id, d: 8 }] },
-    { label: 'ONE MORE YEAR', hint: 'A SHORT DEAL', coins: round10(bonus * 0.4), say: `${p.name} signed for one more year`, tone: 'info', fx: [{ t: 'renew', who: p.id, years: 1 }, { t: 'morale', who: p.id, d: hasTrait(p, 'ambitious') ? -4 : 2 }] },
+    { label: 'NEW 3 YEAR DEAL', hint: 'HE STAYS 3 YEARS, MORALE UP', coins: bonus, say: `${p.name} signed a new three year deal`, tone: 'good', fx: [{ t: 'renew', who: p.id, years: 3 }, { t: 'morale', who: p.id, d: 8 }] },
+    { label: 'ONE MORE YEAR', hint: 'HE STAYS 1 YEAR, THEN TALKS AGAIN', coins: round10(bonus * 0.4), say: `${p.name} signed for one more year`, tone: 'info', fx: [{ t: 'renew', who: p.id, years: 1 }, { t: 'morale', who: p.id, d: hasTrait(p, 'ambitious') ? -4 : 2 }] },
     loyal
       ? { label: 'NO NEW DEAL', hint: 'LOYAL: HE STAYS A YEAR ANYWAY', say: `${p.name} stayed on without a new deal`, tone: 'info', fx: [{ t: 'renew', who: p.id, years: 1 }, { t: 'morale', who: p.id, d: -3 }] }
       : { label: 'LET IT RUN OUT', hint: 'HE LEAVES IN THE SUMMER', say: `${p.name} will leave when his contract runs out`, tone: 'bad', fx: [{ t: 'leave', who: p.id }, { t: 'morale', who: p.id, d: -6 }] },
@@ -557,14 +557,14 @@ function bidCard(state: CareerState, rng: Rng, again?: { who: string; coins: num
   const amb = hasTrait(p, 'ambitious');
   const loyal = hasTrait(p, 'loyal');
   const keep: EventChoice = amb
-    ? { label: 'NOT FOR SALE', hint: 'HE WANTED THE MOVE', say: `You turned down ${fmt(coins)} from ${to} for ${p.name}. He is not pleased`, tone: 'info', fx: [{ t: 'morale', who: p.id, d: -10 }] }
-    : { label: 'NOT FOR SALE', hint: loyal ? 'HE IS GLAD TO STAY' : 'THE FANS LOVE IT', say: `You turned down ${fmt(coins)} from ${to} for ${p.name}`, tone: 'good', fx: [{ t: 'morale', who: p.id, d: loyal ? 6 : 2 }, { t: 'morale', who: 'xi', d: 1 }] };
+    ? { label: 'NOT FOR SALE', hint: 'HE STAYS, BUT HE WANTED THE MOVE', say: `You turned down ${fmt(coins)} from ${to} for ${p.name}. He is not pleased`, tone: 'info', fx: [{ t: 'morale', who: p.id, d: -10 }] }
+    : { label: 'NOT FOR SALE', hint: loyal ? 'HE STAYS, AND IS GLAD TO' : 'HE STAYS, THE FANS LOVE IT', say: `You turned down ${fmt(coins)} from ${to} for ${p.name}`, tone: 'good', fx: [{ t: 'morale', who: p.id, d: loyal ? 6 : 2 }, { t: 'morale', who: 'xi', d: 1 }] };
   const choices: EventChoice[] = [
-    { label: `SELL FOR ${fmt(coins)}`, hint: 'COINS NOW, A HOLE IN THE TEAM', say: `${p.name} was sold to ${to} for ${fmt(coins)}`, tone: 'info', fx: [{ t: 'sell', who: p.id, coins, to }, { t: 'morale', who: 'xi', d: -2 }] },
+    { label: `SELL FOR ${fmt(coins)}`, hint: 'HE LEAVES NOW, SQUAD MORALE DOWN', say: `${p.name} was sold to ${to} for ${fmt(coins)}`, tone: 'info', fx: [{ t: 'sell', who: p.id, coins, to }, { t: 'morale', who: 'xi', d: -2 }] },
     keep,
   ];
   if (!again) {
-    choices.push({ label: 'ASK FOR MORE', hint: 'THEY MAY COME BACK WITH 20% MORE', say: `You asked ${to} for more for ${p.name}`, tone: 'info', fx: [{ t: 'rebid', who: p.id, coins: round10(coins * 1.2), to }] });
+    choices.push({ label: 'ASK FOR MORE', hint: 'HE STAYS FOR NOW, THEY MAY OFFER 20% MORE', say: `You asked ${to} for more for ${p.name}`, tone: 'info', fx: [{ t: 'rebid', who: p.id, coins: round10(coins * 1.2), to }] });
   }
   return card(state, 'bid', again ? 'THEY ARE BACK' : 'A BID FOR YOUR STAR', `${to} offer ${fmt(coins)} coins for ${last(p.name)}.`, [p.id], choices);
 }

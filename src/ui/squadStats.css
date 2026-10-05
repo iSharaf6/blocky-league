@@ -1,0 +1,278 @@
+/*
+ * The STATS tab of MY CLUB (ui/squadStats.ts): the leaders and the squad list on the left, the picked player's season
+ * and career numbers on the right. Same blocks as TRAIN (squad.css): ink borders, cream cells, the pixel font on the
+ * numbers. Only the list scrolls.
+ */
+
+.ss-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.ss-seg { margin-left: auto; min-width: 150px; }
+.ss-seg button { min-height: 28px; padding: 4px 6px 3px; font-size: 12px; }
+
+/* The leaders: four chips, a tap picks the player. */
+.ss-leaders {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.ss-lead {
+  appearance: none;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 1px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 4px 6px 4px;
+  text-align: left;
+  background: #fff;
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--cream-2);
+  cursor: pointer;
+}
+
+.ss-lead.sel { background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
+
+.ss-lead small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font: 400 10px/1 var(--px);
+  letter-spacing: 0.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ss-lead small svg { flex: none; }
+
+.ss-lead b {
+  max-width: 100%;
+  font: 400 15px/1.1 var(--round);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-lead em {
+  font: 700 12px/1.1 var(--px);
+  font-style: normal;
+  color: var(--blue-d);
+}
+
+.ss-none {
+  flex: none;
+  margin: 0;
+  padding: 10px 8px 8px;
+  text-align: center;
+  background: var(--cream);
+  font: 400 12px/1 var(--px);
+  letter-spacing: 1px;
+  color: var(--ink-2);
+}
+
+/* The list. */
+.ss-head, .ss-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 38px 38px 38px 40px;
+  align-items: center;
+  gap: 4px;
+}
+
+.ss-head {
+  flex: none;
+  padding: 0 15px 0 8px;
+  margin-bottom: -3px;
+}
+
+.ss-head b {
+  font: 400 10px/1 var(--px);
+  letter-spacing: 0.5px;
+  text-align: right;
+  color: var(--ink-2);
+}
+
+.ss-list { display: grid; align-content: start; gap: 5px; padding: 2px 4px 6px 2px; }
+
+.ss-row {
+  appearance: none;
+  width: 100%;
+  min-height: 38px;
+  padding: 3px 8px 3px 3px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--cream-2);
+  font: 400 15px var(--round);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ss-row .sq-role {
+  display: grid;
+  place-items: center;
+  height: 26px;
+  background: var(--role);
+  color: #fff;
+  font-size: 12px;
+}
+
+.ss-row.sel { background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
+
+.ss-nm {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-hurt {
+  flex: none;
+  padding: 2px 4px 1px;
+  background: var(--red);
+  color: #fff;
+  font: 400 10px/1 var(--round);
+  font-style: normal;
+  letter-spacing: 0.5px;
+}
+
+.ss-row b {
+  font: 700 13px/1 var(--px);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ss-row b i { margin-left: 2px; font: 400 9px/1 var(--px); font-style: normal; color: var(--ink-2); }
+.ss-row b.avg { color: var(--blue-d); }
+
+/* The picked player. */
+.ss-detail {
+  gap: 7px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--cream-2);
+  overflow: hidden;
+}
+
+.ss-id {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.ss-face { display: grid; }
+.ss-face .face { --fs: 42px; }
+.ss-who { display: grid; gap: 3px; min-width: 0; }
+
+.ss-who b {
+  font: 400 18px/1.1 var(--round);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-who > span { display: flex; align-items: center; gap: 6px; font: 400 12px var(--round); letter-spacing: 0.5px; }
+.ss-who .mc-role { font-size: 12px; padding: 3px 4px 2px; min-width: 26px; }
+.ss-who em { font-style: normal; color: var(--ink-2); white-space: nowrap; }
+
+.ss-ovr {
+  display: grid;
+  justify-items: center;
+  min-width: 50px;
+  padding: 3px 6px;
+  background: var(--ink);
+  color: var(--yellow);
+}
+
+.ss-ovr small { font: 400 10px/1.1 var(--round); letter-spacing: 1px; color: var(--cream); }
+.ss-ovr b { font: 700 22px/1.05 var(--px); }
+.ss-ovr i { font: 400 10px/1.2 var(--round); font-style: normal; color: var(--cream); white-space: nowrap; }
+
+/* Season and career, in two blocks (keepers get their own numbers in the second). */
+.ss-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+.ss-tbl { display: grid; align-content: start; gap: 2px; min-width: 0; }
+
+.ss-th, .ss-tr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px 44px;
+  align-items: center;
+  gap: 4px;
+}
+
+.ss-th span {
+  font: 400 11px/1 var(--round);
+  letter-spacing: 0.5px;
+  text-align: right;
+  color: var(--ink-2);
+}
+
+.ss-tr {
+  min-height: 22px;
+  padding: 0 4px;
+  background: var(--cream);
+}
+
+.ss-tr span {
+  min-width: 0;
+  font: 400 12px/1.1 var(--round);
+  letter-spacing: 0.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ss-tr b { font: 700 12px/1.2 var(--px); text-align: right; white-space: nowrap; }
+.ss-tr:nth-child(even) { background: transparent; }
+
+.ss-tr .sh { display: none; }
+.ss-tr i { font-style: normal; }
+
+@media (max-width: 720px) {
+  .ss-tr .lg { display: none; }
+  .ss-tr .sh { display: inline; }
+  .ss-head, .ss-row { grid-template-columns: 28px minmax(0, 1fr) 32px 32px 32px 34px; gap: 3px; }
+  .ss-lead { padding: 4px 5px; }
+  .ss-lead b { font-size: 13px; }
+  .ss-lead small { font-size: 9px; letter-spacing: 0; }
+  .ss-lead small svg { display: none; }
+  .ss-lead em { font-size: 10px; }
+  .ss-seg { min-width: 130px; }
+  .ss-th, .ss-tr { grid-template-columns: minmax(0, 1fr) 36px 36px; }
+  .ss-th span { font-size: 10px; }
+  .ss-grid { gap: 6px; }
+  .ss-tr span { font-size: 11px; }
+}
+
+@media (max-height: 380px) {
+  .ss-detail { gap: 5px; padding: 6px 8px; }
+  .ss-tr { min-height: 20px; }
+  .ss-lead { min-height: 46px; }
+}
+
+@media (min-height: 561px) {
+  .ss-tr { min-height: 26px; }
+  .ss-row { min-height: 42px; }
+}
+
+/* SQUAD tab: a picked player's STATS button needs the room on a narrow phone, so the swap hint steps aside. */
+@media (max-width: 720px) {
+  .sq-benchpane .pane-h .sq-hint.sel { display: none; }
+}
