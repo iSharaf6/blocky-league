@@ -14,8 +14,8 @@ Apple is enabled, while Google setup and console achievements are still in progr
 
 App Store Connect app ID: `6819288055`. Version **1.0 (4)** has a compiled, signed archive with all 33 native game
 assets verified against the iOS bundle and App Store IPA. Source/ZIP fingerprints for all five release packages
-passed. Apple accepted its upload; it is installed on the owner's iPhone 15. Processing and external beta review
-submission are being completed for **Blocky League Playtest**. Its compact single-row phone header replaces
+passed. Apple accepted its upload and completed processing; it is installed on the owner's iPhone 15 and
+**Waiting for Review** for external testing in **Blocky League Playtest**. Its compact single-row phone header replaces
 build 3's wrapping layout, fixes fixture/Daily clipping and preserves Settings account/invite navigation,
 the blocky developer About page, live provider readiness and smoother offside replay presentation.
 
@@ -57,8 +57,9 @@ COPPA). The switch is `ADMOB_KID_SAFE` in `src/platform/adConfig.ts`.
 
 ## What only you can do, in order
 
-1. **Merge the release branch into main** (PR from `release/ios-app`). GitHub Pages then publishes the support and
-   privacy pages below. Check both links open before you submit.
+1. **Main is merged and pushed.** The latest web game, support and privacy pages were published by GitHub Pages;
+   all 1,311 selected regression tests and the deployment passed. Check the support/privacy links below before
+   a public App Store submission.
 2. **Join the Apple Developer Program:** <https://developer.apple.com/programs/enroll/> with your Apple ID (two-factor
    on). US$99 a year (A$149 in Australia). As an individual the App Store shows your legal name as the seller; to
    show **Calynx**, enrol as an organisation (needs a registered business and a free D-U-N-S number).

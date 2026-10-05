@@ -1,7 +1,9 @@
 # TestFlight build 4 — 6 October 2026
 
 Version **1.0 (4)** was accepted by App Store Connect app **6819288055** and installed successfully on EZY
-(iPhone 15). Apple processing and the external TestFlight review submission are being completed. This is a beta,
+(iPhone 15). Apple finished processing build `15caa129-b3d8-45f8-b4cd-9ad59c451a58`; its external TestFlight
+submission is **Waiting for Review**. Build 4 is the only build in the external group; the superseded build 3
+was removed from that group. Automatic notifications are off and no invitations were sent. This is a beta,
 not a public App Store release. The existing **Blocky League Playtest** link is
 <https://testflight.apple.com/join/ChfvkUXC>; external access requires Apple's beta approval.
 
@@ -27,6 +29,12 @@ The final source is backed up on `release/ios-app` at `29ef639`; the build 4 fal
 `testflight-build-4-2026-10-06`. Signed archive, IPA, all five release ZIPs/manifests, layout audit and verification
 logs are preserved in the ignored `release/testflight/1.0-4/` directory. The IPA SHA-256 is
 `b9d9323c168d6207fd0d7b31e5562b9c69fcc260264a3639f2a9703071e67cee`.
+
+The release was fast-forwarded into GitHub `main` at `857b415`. The
+[GitHub checks and Pages deployment](https://github.com/iSharaf6/blocky-league/actions/runs/37329972749)
+passed: **1,311 tests across 64 files**, web type-check/packaging, and publication. GitHub Actions contains only
+the existing public Supabase URL/publishable-key build configuration. The subsequent review-status documentation
+update changes no game source or shipped assets.
 
 Google remains disabled pending the consent-policy approval and provider credentials described in
 [AUTH_SETUP.md](AUTH_SETUP.md). Native Apple is configured but actual account sign-in still needs device
