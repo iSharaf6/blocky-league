@@ -13,13 +13,15 @@ build values through its configured Actions secrets; the template contains no se
 The existing project `kkumittamjteollyxszd` is `ACTIVE_HEALTHY`. Apple is now **enabled** for native Client ID
 `com.calynx.blockyleague`; manual identity linking is enabled. The Site URL is the published GitHub website, with
 the exact native callback and published website allowlisted as recorded below. Google remains **disabled** while
-OAuth configuration is underway in the dedicated Google project `blocky-league-510713`. GitHub remains disabled;
+the consent-app form in dedicated Google project `blocky-league-510713` awaits the owner's approval of Google's
+API Services User Data Policy. OAuth client creation and credential entry remain pending. GitHub remains disabled;
 email is enabled and anonymous sign-in disabled. No OAuth credentials are stored in the game or this document.
 
 The code and native URL scheme are wired. Native Apple still needs a real-device sign-in check before it is
 described as verified end to end. Browser Apple is separately disabled until its Services ID/OAuth secret setup
 and build opt-in are complete. A native Game Center/device account uses the existing edge functions independently
-of these providers. Build 3 is archived and signed but not uploaded yet; see [RELEASE_STATUS.md](RELEASE_STATUS.md).
+of these providers. Build 3 is uploaded and **Waiting for Review** for external TestFlight testing;
+see [RELEASE_STATUS.md](RELEASE_STATUS.md).
 
 ## Redirects
 

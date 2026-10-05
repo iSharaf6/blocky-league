@@ -1,11 +1,13 @@
 # TestFlight build 3 upload — 6 October 2026
 
-Version **1.0 (3)** was successfully uploaded to App Store Connect app **6819288055**. Apple accepted the upload
-and is processing build `8477cb6c-da10-4d1d-ba44-ecd4ae32695b`. The archive
+Version **1.0 (3)** was successfully uploaded to App Store Connect app **6819288055**. Apple finished processing
+build `8477cb6c-da10-4d1d-ba44-ecd4ae32695b`; it was submitted for external TestFlight review and now shows
+**Waiting for Review**. The archive
 contains all 33 native game assets from the verified iOS bundle, including the developer portrait. Source and ZIP
 fingerprints for all five release packages passed. Build 3 was also installed successfully on EZY (iPhone 15).
-An empty external **Blocky League Playtest** group was created, and updated beta review notes were saved.
-External beta review remains pending; this is not a public App Store release.
+An empty external **Blocky League Playtest** group was created, build 3 was added, and updated beta review notes
+were saved. Automatic tester notifications are off and no invitations were sent. Apple approval remains pending;
+this is not a public App Store release.
 
 Build 3 adds:
 
@@ -19,14 +21,22 @@ Build 3 adds:
   pitch marks and settled camera framing.
 
 The final combined menu/account/replay check passed all 244 checks across 12 files. Typecheck passed.
-The wider regression batch passed 1,880 checks with two intentional skips; five long fixtures exceeded their
-runtime deadlines without assertion failures. Their finite test budgets are being corrected and rechecked,
-preserving every seed, sample and assertion. The historical 1,796-check result below covers the earlier
-replay/clock update, not the complete build 3 source.
+The wider regression scope passed **1,885 checks across 125 files**, with two intentional skips, across the main
+batch and targeted rechecks. Five long fixtures initially exceeded runtime deadlines without assertion failures;
+the heavy fixtures now use finite budgets while preserving every seed, sample and assertion. All 72 checks in
+those five files passed, including the final 12-check idle-possession rerun. The four aggregate metrics fixtures
+were excluded from this presentation/account change's current scope. The historical 1,796-check result below
+covers the earlier replay/clock update, not the complete build 3 source.
+
+Verified signed archive and App Store IPA backups, options, manifests and validation logs are preserved locally
+in the ignored `release/testflight/1.0-3/` directory (approximately 26 MB). The source is backed up on
+`release/ios-app`; build 3's release tag is `testflight-build-3-2026-10-06`.
 
 Live Supabase configuration now enables Apple for native bundle `com.calynx.blockyleague`, enables manual identity
 linking, and sets the published GitHub website as Site URL with the website and exact native callback allowlisted.
-Google remains disabled; a dedicated Google project (`blocky-league-510713`) exists and its OAuth setup is underway.
+Google remains disabled; a dedicated Google project (`blocky-league-510713`) exists. Its consent-app setup is
+prepared and awaits the owner's approval of Google's API Services User Data Policy before saving. OAuth client
+creation and provider credential entry are still pending; no secret was created, read or stored in the source.
 Native Apple still needs a real-device sign-in check. Browser Apple requires its separate Services ID/OAuth secret
 setup. No provider credentials or reviewer phone number are stored in this document.
 
