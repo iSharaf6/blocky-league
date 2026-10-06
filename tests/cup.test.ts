@@ -202,12 +202,12 @@ describe('results and prizes', () => {
 
   it('a tie pays the usual match fee, plus the prize when you go through', () => {
     const won = { round: 0, won: true, trophy: false, coins: cupPrize(0, true, 6) };
-    expect(cupTieReward(6, 2, 2, 1, won)).toEqual({ coins: matchCoins(6, 2, 2, 1) + won.coins, label: 'QF WIN BONUS' });
+    expect(cupTieReward(6, 2, 2, 1, won)).toEqual({ coins: matchCoins(6, 2, 2, 1) + won.coins, fixedCoins: won.coins, label: 'QF WIN BONUS' });
     expect(cupTieReward(6, 0, 1, 1, { ...won, round: 2, trophy: true, coins: cupPrize(2, true, 6) }).label).toBe('CUP WINNERS!');
     const out = { round: 1, won: false, trophy: false, coins: 0 };
     expect(cupTieReward(4, 0, 0, 2, out)).toEqual({ coins: matchCoins(4, 0, 0, 2), label: 'KNOCKED OUT' });
     // A stale tie: the match fee only.
-    expect(cupTieReward(6, 0, 1, 0, null)).toEqual({ coins: matchCoins(6, 0, 1, 0), label: 'CUP TIE' });
+    expect(cupTieReward(6, 0, 1, 0, null)).toEqual({ coins: 0, label: 'CUP TIE' });
   });
 
   it('a winning run banks every round prize in the cup, and the trophy', () => {

@@ -138,9 +138,9 @@ export const STAFF: readonly StaffDef[] = [
   {
     role: 'commercial', name: 'COMMERCIAL MANAGER', icon: 'coin',
     levels: [
-      { fee: 500, wage: 14, does: '+40 A HOME MATCH, SPONSORS +25%' },
-      { fee: 1500, wage: 32, does: '+80 A HOME MATCH, SPONSORS +50%', needs: 'screen' },
-      { fee: 3500, wage: 64, does: '+130 A HOME MATCH, SPONSORS +75%', needs: 'store' },
+      { fee: 400, wage: 10, does: '+40 A HOME MATCH, SPONSORS +25%' },
+      { fee: 1000, wage: 24, does: '+90 A HOME MATCH, SPONSORS +50%', needs: 'screen' },
+      { fee: 2000, wage: 40, does: '+170 A HOME MATCH, SPONSORS +75%', needs: 'store' },
     ],
   },
 ];
@@ -149,7 +149,7 @@ export const STAFF: readonly StaffDef[] = [
 export const PHYSIO_CUT = [0, 1, 1, 2] as const;
 export const PHYSIO_RISK = [1, 1, 0.75, 0.5] as const;
 /** The commercial manager: coins at every home match, and what sponsor deals are multiplied by, by level. */
-export const COMMERCIAL_HOME = [0, 40, 80, 130] as const;
+export const COMMERCIAL_HOME = [0, 40, 90, 170] as const;
 export const COMMERCIAL_SPONSOR = [1, 1.25, 1.5, 1.75] as const;
 /** The academy director: overall points on every prospect, stars on every prospect, extra prospects, by level. */
 export const DIRECTOR_OVR = [0, 2, 2, 2] as const;

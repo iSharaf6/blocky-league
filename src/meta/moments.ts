@@ -5,7 +5,7 @@
  *
  * The situations themselves are ScenarioSpecs (src/sim/types.ts) applied and judged by src/sim/scenario.ts;
  * this file is data plus the small rules the MOMENTS screen (src/ui/moments.ts) and the tests read: the
- * order, the unlock ladder (a moment opens once the previous one has a star), the XP a star pays, and the
+ * order, the unlock ladder (a moment opens once the previous one has a star), the XP per new star pays, and the
  * star rule in words.
  *
  * Coordinates are in the human's attacking frame (+x towards the goal you shoot at; see scenario.ts).
@@ -23,7 +23,7 @@ export interface Moment {
   brief: string;
   /** The card's pixel icon, by name (ui/pixelIcons.ts: ball, cross, run, flag, clock, shield, crown, bolt, swap). */
   icon: string;
-  /** What a star pays, in words ("+25 XP a star"). */
+  /** What a star pays, in words ("+25 XP per new star"). */
   xpNote: string;
   /**
    * Controls reminder for the pre-play card (action names as HOW TO PLAY uses them; the key in brackets as a
@@ -41,7 +41,7 @@ export interface Moment {
   spec: FullScenarioSpec;
 }
 
-/** XP a star pays (core/save.ts momentXp: 30 a try plus this a star; moments pay no coins). */
+/** XP each newly earned star pays; repeat stars never pay again. */
 export const MOMENT_XP_PER_STAR = 25;
 
 const HS: Side = 0;
@@ -69,7 +69,7 @@ export const MOMENTS: Moment[] = [
     title: 'FIRST TOUCH',
     brief: 'Take the pass and score from ten metres. 20 seconds.',
     icon: 'ball',
-    xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
+    xpNote: `+${MOMENT_XP_PER_STAR} XP per new star`,
     tip: 'The ball rolls to your striker. Let it come, aim at a corner and SHOOT ({shoot}). {Tap} SHOOT again as the foot meets the ball for a perfect finish.',
     difficulty: 0,
     next: 'cross-finish',
@@ -98,7 +98,7 @@ export const MOMENTS: Moment[] = [
     title: 'CROSS & SCORE',
     brief: 'Your winger has it. Cross for the runner and score. 25 seconds.',
     icon: 'cross',
-    xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
+    xpNote: `+${MOMENT_XP_PER_STAR} XP per new star`,
     tip: 'Aim at the box, hold THROUGH ({through}) and let go to cross. You take the striker as it comes in: SHOOT ({shoot}) to head at goal.',
     difficulty: 0,
     next: 'one-on-one',
@@ -126,7 +126,7 @@ export const MOMENTS: Moment[] = [
     title: 'ONE ON ONE',
     brief: 'Through on goal from 25 metres, two defenders on your heels. 15 seconds.',
     icon: 'run',
-    xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
+    xpNote: `+${MOMENT_XP_PER_STAR} XP per new star`,
     tip: 'SPRINT ({sprint}) at goal and shoot before they catch you. Aim across the keeper and SHOOT ({shoot}), or hold SHOOT and {tap} THROUGH ({through}) to chip him.',
     difficulty: 1,
     next: 'corner-kick',
@@ -154,7 +154,7 @@ export const MOMENTS: Moment[] = [
     title: 'CORNER KICK',
     brief: 'Score from a corner. 30 seconds of play (the wait for the kick is free).',
     icon: 'flag',
-    xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
+    xpNote: `+${MOMENT_XP_PER_STAR} XP per new star`,
     tip: 'Hold THROUGH ({through}) to whip it in, or SHOOT ({shoot}) for a driven cross. As it drops, SHOOT to head at goal, or move to bring it down.',
     difficulty: 1,
     next: 'two-down',
@@ -178,7 +178,7 @@ export const MOMENTS: Moment[] = [
     title: 'TWO DOWN',
     brief: 'Two goals behind, a minute to play, the ball at your feet. Draw or better.',
     icon: 'clock',
-    xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
+    xpNote: `+${MOMENT_XP_PER_STAR} XP per new star`,
     tip: 'Move it fast: PASS ({pass}) to the ringed teammate, THROUGH ({through}) for a runner, SHOOT ({shoot}) near the box. Win the kick-off back after you score. A draw is one star, a win two.',
     difficulty: 0,
     next: 'hold-the-fort',
@@ -209,7 +209,7 @@ export const MOMENTS: Moment[] = [
     title: 'HOLD THE FORT',
     brief: 'One up, one man down, they are coming. Keep them out for 45 seconds.',
     icon: 'shield',
-    xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
+    xpNote: `+${MOMENT_XP_PER_STAR} XP per new star`,
     tip: 'Hold PRESS ({through}) to stay goal-side, {tap} TACKLE ({shoot}) when you are close, SWITCH ({pass}) to the nearest defender. Win it and keep it for more stars.',
     difficulty: 2,
     next: 'giant-killing',
@@ -240,7 +240,7 @@ export const MOMENTS: Moment[] = [
     title: 'GIANT KILLING',
     brief: 'Duckworth Albion against Northwick Wanderers, Hard. Be in front after 90 seconds.',
     icon: 'crown',
-    xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
+    xpNote: `+${MOMENT_XP_PER_STAR} XP per new star`,
     tip: 'Their players are faster and sharper: keep it simple, PASS ({pass}) early, shoot when the lane is clear. A win is one star; a clean sheet or two clear goals makes two; both, three.',
     // Duckworth (54) against Northwick (88): the widest gap the scripted bot still wins now and then on Hard.
     home: 2,
@@ -266,7 +266,7 @@ export const MOMENTS: Moment[] = [
     title: 'BLITZ MEGA',
     brief: 'Grab the MEGA cube and score with the rocket. 40 seconds.',
     icon: 'bolt',
-    xpNote: `+${MOMENT_XP_PER_STAR} XP a star`,
+    xpNote: `+${MOMENT_XP_PER_STAR} XP per new star`,
     tip: 'Run over the cube, {tap} POWER ({power}) to arm it, wait a second for the ball to glow, then SHOOT ({shoot}) from range: a mega shot cannot be saved from inside twelve metres.',
     difficulty: 1,
     next: null,

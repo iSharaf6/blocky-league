@@ -272,6 +272,8 @@ export interface PendingPack {
   /** The club rating the card was drawn against, and what the pack cost (the resale cap reads it). */
   base: number;
   price: number;
+  /** Resale credit on a newly opened scout card. Missing on legacy pending cards, which keep their old value. */
+  scoutResale?: number;
 }
 
 /** A shop blob as stored by any build (or none) made whole: unknown entries dropped, numbers sane. */
@@ -299,7 +301,11 @@ function normalizePending(raw: unknown): PendingPack | null {
   const p = raw as Partial<PendingPack>;
   if (p.kind !== 'scout' && p.kind !== 'elite') return null;
   if (typeof p.seed !== 'number' || !Number.isFinite(p.seed) || typeof p.base !== 'number' || !Number.isFinite(p.base)) return null;
-  return { kind: p.kind, seed: p.seed >>> 0, base: Math.max(0, Math.min(99, Math.round(p.base))), price: num(p.price) };
+  return {
+    kind: p.kind, seed: p.seed >>> 0, base: Math.max(0, Math.min(99, Math.round(p.base))), price: num(p.price),
+    ...(typeof p.scoutResale === 'number' && Number.isFinite(p.scoutResale) && p.scoutResale > 0
+      ? { scoutResale: Math.min(250, Math.max(1, Math.floor(p.scoutResale))) } : {}),
+  };
 }
 
 /**
@@ -514,9 +520,19 @@ export function recordMoment(d: Pick<SaveData, 'moments'>, id: string, stars: nu
   return true;
 }
 
-/** XP for one attempt at a moment: 30 for the try, 25 a star (no coins: moments pay in XP only). */
+/** Total XP entitlement for a moment: 30 for its first try, 25 per best star. */
 export function momentXp(stars: number): number {
   return 30 + 25 * Math.max(0, Math.min(3, Math.floor(stars)));
+}
+
+/** Bank only a moment's first attempt and new best stars. Existing results are already paid. */
+export function claimMomentXp(d: Pick<SaveData, 'moments'>, id: string, stars: number): number {
+  if (!id || !Number.isFinite(stars)) return 0;
+  const before = d.moments?.[id];
+  const best = Math.max(0, Math.min(3, Math.floor(stars)));
+  const xp = before === undefined ? momentXp(best) : Math.max(0, momentXp(best) - momentXp(before));
+  recordMoment(d, id, best);
+  return xp;
 }
 
 /** Stars collected over every moment (for the menu tile). */
@@ -743,7 +759,10 @@ export function dailyChallenges(day: string): [Challenge, Challenge, Challenge] 
 
 /** Today's daily state: rolled over (progress cleared, marked fresh) when the stored one is for another day. */
 export function dailyFor(p: Progress, day: string): DailyState {
-  if (p.daily.day !== day) p.daily = { day, progress: [0, 0, 0], claimed: [false, false, false], fresh: true };
+  // Keep the latest period intact when a clock/timezone moves backwards; only a later day resets rewards.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day) && (!/^\d{4}-\d{2}-\d{2}$/.test(p.daily.day) || p.daily.day < day)) {
+    p.daily = { day, progress: [0, 0, 0], claimed: [false, false, false], fresh: true };
+  }
   return p.daily;
 }
 

@@ -29,7 +29,7 @@ import {
 import { randomClubSeed } from './data';
 import { addTrait, autoMentors, canMentor, gainXp, hasTrait, mentorOf, pupilOf, setMentor, type GrowPlayer, type TraitId, TRAITS } from './growth';
 import { captainOf, type LifePlayer } from './life';
-import { contractOf, listPlayer, playerAge, playerValue, pushNews, saleFor, townOf, wageOf, windowOpen } from './market';
+import { contractOf, listPlayer, playerAge, playerValue, pushNews, resaleCap, saleFor, townOf, wageOf, windowOpen } from './market';
 import { addMorale, expectsToPlay, isInjured, moraleOf } from './morale';
 import { sponsorMult } from './staff';
 import { addMoment, isDerby, storyTag } from './story';
@@ -253,9 +253,29 @@ function dropRecoveredInjuries(state: CareerState): void {
   ev.queue = ev.queue.filter((c) => c.kind !== 'injury' || state.club?.squad.some((p) => c.who.includes(p.id) && isInjured(p)));
 }
 
+/** Saved narrative bids follow the same resale limits as the transfer market, including cards already waiting. */
+function refreshBidPrices(state: CareerState): void {
+  for (const c of state.events.queue) {
+    if (c.kind !== 'bid') continue;
+    for (const choice of c.choices) for (const fx of choice.fx) {
+      if (fx.t !== 'sell' && fx.t !== 'rebid') continue;
+      const p = state.club?.squad.find((q) => q.id === fx.who);
+      const cap = p ? resaleCap(state, p) : null;
+      if (!p || cap === null || fx.coins <= cap) continue;
+      fx.coins = cap;
+      if (fx.t === 'sell') {
+        choice.label = `SELL FOR ${fmt(cap)}`;
+        choice.say = `${p.name} was sold to ${fx.to} for ${fmt(cap)}`;
+        c.text = `${fx.to} offer ${fmt(cap)} coins for ${last(p.name)}.`;
+      } else choice.hint = 'THEY MAY RETURN WITH THEIR BEST OFFER';
+    }
+  }
+}
+
 /** The oldest card waiting for an answer, after discarding obsolete injury offers, or null. */
 export function pendingEvent(state: CareerState): EventCard | null {
   dropRecoveredInjuries(state);
+  refreshBidPrices(state);
   return state.events?.queue[0] ?? null;
 }
 
@@ -313,10 +333,11 @@ function applyFx(state: CareerState, wallet: Wallet, fx: Fx): void {
       const idx = club.squad.findIndex((q) => q.id === fx.who);
       if (idx < 0 || !canSell(state, fx.who).ok) break;
       const p = club.squad[idx];
+      const coins = Math.min(fx.coins, resaleCap(state, p) ?? fx.coins);
       removeFromSquad(club, idx);
       state.tm.sales = state.tm.sales.filter((s) => s.playerId !== p.id);
-      wallet.coins += fx.coins;
-      pushNews(state, `${p.name} sold to ${fx.to} for ${fmt(fx.coins)}`, 'good', true);
+      wallet.coins += coins;
+      pushNews(state, `${p.name} sold to ${fx.to} for ${fmt(coins)}`, 'good', true);
       break;
     }
     case 'renew':
@@ -370,6 +391,7 @@ export function resolveEvent(
   // A card can have waited while the player healed naturally, was treated on his GROW card, or left the squad.
   // Revalidate before either wallet is touched, including when the stale card is already on screen.
   dropRecoveredInjuries(state);
+  refreshBidPrices(state);
   const ev = state.events;
   const c = ev.queue.find((x) => x.id === cardId);
   const choice = c?.choices[idx];
@@ -553,6 +575,8 @@ function bidCard(state: CareerState, rng: Rng, again?: { who: string; coins: num
     to = randomClubSeed(rng, 60).name;
   }
   if (!p || !canSell(state, p.id).ok || coins <= 0) return null;
+  const cap = resaleCap(state, p);
+  if (cap !== null) coins = Math.min(coins, cap);
   mark(state, 'bid');
   const amb = hasTrait(p, 'ambitious');
   const loyal = hasTrait(p, 'loyal');
@@ -563,8 +587,8 @@ function bidCard(state: CareerState, rng: Rng, again?: { who: string; coins: num
     { label: `SELL FOR ${fmt(coins)}`, hint: 'HE LEAVES NOW, SQUAD MORALE DOWN', say: `${p.name} was sold to ${to} for ${fmt(coins)}`, tone: 'info', fx: [{ t: 'sell', who: p.id, coins, to }, { t: 'morale', who: 'xi', d: -2 }] },
     keep,
   ];
-  if (!again) {
-    choices.push({ label: 'ASK FOR MORE', hint: 'HE STAYS FOR NOW, THEY MAY OFFER 20% MORE', say: `You asked ${to} for more for ${p.name}`, tone: 'info', fx: [{ t: 'rebid', who: p.id, coins: round10(coins * 1.2), to }] });
+  if (!again && (cap === null || cap > coins)) {
+    choices.push({ label: 'ASK FOR MORE', hint: 'HE STAYS FOR NOW, THEY MAY OFFER 20% MORE', say: `You asked ${to} for more for ${p.name}`, tone: 'info', fx: [{ t: 'rebid', who: p.id, coins: Math.min(round10(coins * 1.2), cap ?? Infinity), to }] });
   }
   return card(state, 'bid', again ? 'THEY ARE BACK' : 'A BID FOR YOUR STAR', `${to} offer ${fmt(coins)} coins for ${last(p.name)}.`, [p.id], choices);
 }
@@ -727,14 +751,14 @@ export function rollEvents(state: CareerState, res: { my: number; their: number 
  * (met: confidence and coins, with a moment; out of time: confidence drops, nothing worse), promised starts are kept
  * or broken, the fans' mood wears off at home. `started`: the squad ids who started.
  */
-export function tickEvents(state: CareerState, wallet: Wallet, res: { my: number; their: number; home: boolean; derby: boolean }, started: ReadonlySet<string>): void {
+export function tickEvents(state: CareerState, wallet: Wallet, res: { my: number; their: number; home: boolean; derby: boolean; forfeit?: boolean }, started: ReadonlySet<string>): void {
   const ev = state.events;
   const club = state.club;
   if (!club) return;
-  const won = res.my > res.their;
+  const won = !res.forfeit && res.my > res.their;
   const sp = ev.sponsor;
   if (sp) {
-    const pay = sp.pay === 'match' || won ? sp.amount : 0;
+    const pay = !res.forfeit && (sp.pay === 'match' || won) ? sp.amount : 0;
     wallet.coins += pay;
     sp.paid += pay;
     sp.left--;
@@ -780,9 +804,10 @@ export function tickEvents(state: CareerState, wallet: Wallet, res: { my: number
 }
 
 /** Any match of yours is over (league or cup): the vow you made to the press is settled, the team talk is spent. */
-export function afterAnyMatch(state: CareerState, won: boolean): void {
+export function afterAnyMatch(state: CareerState, won: boolean, forfeit = false): void {
   const ev = state.events;
-  ev.played = Math.min(1e6, ev.played + 1);
+  won = !forfeit && won;
+  if (!forfeit) ev.played = Math.min(1e6, ev.played + 1);
   ev.talk = false;
   if (ev.vow) {
     state.board.confidence = clamp(state.board.confidence + (won ? ev.vow.win : -ev.vow.lose), 0, 100);

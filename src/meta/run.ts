@@ -340,7 +340,8 @@ export function runMatchConfig(state: RunState, simLevel: number): RunMatchConfi
 /** Coins a run match pays (before main.ts's win-streak multiplier). */
 export function runMatchCoins(round: number, difficulty: number, won: boolean, goals: number): number {
   const mult = RUN_DIFF_MULT[Math.max(0, Math.min(3, difficulty))];
-  const base = won ? 60 + 20 * round + 10 * goals : 25 + 5 * goals;
+  const scored = Math.min(3, nat(goals));
+  const base = won ? 60 + 20 * round + 10 * scored : 25 + 5 * scored;
   return Math.round((base * mult) / 5) * 5;
 }
 

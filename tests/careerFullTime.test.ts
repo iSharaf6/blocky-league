@@ -4,6 +4,7 @@ import { defaultSave } from '../src/core/save';
 import type { MatchResult } from '../src/game/matchSession';
 import { BOTTOM_DIVISION, createClub, cupDue, matchCoins, migrateCareer, newSeason, resolveMatchday, userFixture, YOU } from '../src/meta/career';
 import { CUP_AFTER, cupPrize, userTie } from '../src/meta/cup';
+import { drawWorld } from '../src/meta/comps';
 import { KIT_COLORS } from '../src/meta/data';
 import type { Match } from '../src/sim/match';
 import type { Kit } from '../src/sim/types';
@@ -74,11 +75,12 @@ describe('career match at full time', () => {
     const reward = req.reward(r);
     expect(cup.ties[ut.idx].winner).toBe(cup.user);
     expect(cup.round).toBe(1);
-    expect(reward).toEqual({ coins: matchCoins(st.season!.division, st.stadium, 1, 1) + cupPrize(0, true, st.season!.division), label: 'QF WIN BONUS' });
-    // The league did not move; a second full time for the same request changes nothing and pays the fee only.
+    expect(reward).toEqual({ coins: matchCoins(st.season!.division, st.stadium, 1, 1) + cupPrize(0, true, st.season!.division), fixedCoins: cupPrize(0, true, st.season!.division), label: 'QF WIN BONUS' });
+    // The league did not move; a second full time for the same request changes nothing and pays nothing.
     expect(st.season!.matchday).toBe(CUP_AFTER[0]);
     const again = req.reward({ ...r, score: [0, 3], winner: hs === 0 ? 1 : 0 } as MatchResult);
     expect(again.label).toBe('CUP TIE');
+    expect(again.coins).toBe(0);
     expect(cup.status).toBe('active');
     expect(cup.round).toBe(1);
     // Next up is the league again.
@@ -93,8 +95,24 @@ describe('career match at full time', () => {
     const f = userFixture(st.season!, md)!;
     const score: [number, number] = f.home === YOU ? [1, 0] : [0, 1];
     req.reward({ score, humanSide: 0, match: {} as Match } as MatchResult);
-    req.reward({ score: [0, 5], humanSide: 0, match: {} as Match } as MatchResult);
+    expect(req.reward({ score: [0, 5], humanSide: 0, match: {} as Match } as MatchResult).coins).toBe(0);
     expect(st.season!.matchday).toBe(md + 1);
     expect([f.hg, f.ag]).toEqual(score);
+  });
+
+  it('a repeated World Cup semi-final result cannot settle the final due on the same matchday', () => {
+    const { app, st, started } = rig();
+    st.season!.world = drawWorld(st.season!.seed, st.club!);
+    playMatchday(app, st);
+    const req = started()!;
+    const score: [number, number] = req.humanSide === 0 ? [2, 0] : [0, 2];
+    const r = { score, humanSide: req.humanSide, winner: req.humanSide, match: {} as Match } as MatchResult;
+    const first = req.reward(r);
+    expect(first.fixedCoins).toBe(600);
+    const final = st.season!.world.fixtures.find((f) => f.stage === 'final')!;
+    expect(final.hg).toBeNull();
+    expect(req.reward(r).coins).toBe(0);
+    expect(final.hg).toBeNull();
+    expect(st.season!.world.status).toBe('active');
   });
 });

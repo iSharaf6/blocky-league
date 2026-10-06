@@ -49,6 +49,8 @@ jobs:
           tests/mainMenu.test.ts tests/achievements.test.ts
           tests/quickSubCard.test.ts tests/referrals.test.ts tests/accountReferrals.test.ts tests/cloudSync.test.ts
           tests/shop.test.ts tests/uiCopy.test.ts
+          tests/economy.test.ts tests/economyBalance.test.ts tests/scoutResale.test.ts tests/run.test.ts tests/careerEconomy.test.ts tests/rewardClock.test.ts
+          tests/careerFullTime.test.ts tests/cup.test.ts tests/forever.test.ts
       - name: Type-check and package the web game
         run: npm run build:web
         env:

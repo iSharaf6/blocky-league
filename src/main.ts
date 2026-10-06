@@ -15,16 +15,16 @@ import {
 import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock,
-  type SaveData, momentStarsTotal, momentXp, recordMoment } from './core/save';
-import { SKILL_GOAL_COINS, adoptPortalStore, challengeCounts, recordShowtime, showtimeMode, type ChallengeKind } from './core/save';
+  type SaveData, momentStarsTotal, claimMomentXp } from './core/save';
+import { adoptPortalStore, challengeCounts, recordShowtime, showtimeMode, type ChallengeKind } from './core/save';
 import { GRADE_BONUS, type BountyKind, type DailyLive } from './game/funLayer';
 import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
 import { CAT_LABEL, DEFAULT_ID, earnTokens, equippedId, iapOf, inReach, newInShop, shopItem, shopOf, type ShopCat, type ShopItem } from './meta/shop';
 import { decorOf, styleMatch } from './meta/style';
-import { atmosphereOf, chantRate, withCrowd, withIncome, type Atmosphere } from './meta/atmosphere';
-import { GEM_PRICES, GEM_REWARDS, addGems, gems, rewardGems, spendGems } from './meta/gems';
-import { CALENDAR, adsLeft, advanceWeekly, calendarNext, calendarToday, claimSweep, useAd, weeklyFor, weeklyObjectives } from './meta/loops';
+import { atmosphereOf, chantRate, withCrowd, type Atmosphere } from './meta/atmosphere';
+import { GEM_PRICES, GEM_REWARDS, gems, rewardGems, spendGems } from './meta/gems';
+import { CALENDAR, adsLeft, advanceWeekly, calendarNext, calendarToday, claimCalendar, claimSweep, useAd, weeklyFor, weeklyObjectives } from './meta/loops';
 import { payoutText, syncAchievementGems } from './meta/gemSources';
 import { syncSeasonGems, syncSignatureEntitlements } from './meta/pass';
 import { ads } from './platform/ads';
@@ -57,7 +57,7 @@ import { BASICS } from './meta/moments';
 import { recordMatchMeta, wornTitle, wornTitleDetails, type MasteryMatch } from './meta/mastery';
 import { runTileText } from './meta/run';
 import type { ClipSource } from './ui/menus';
-import { accountsRequired, cloudAvailable, cloudBoot, cloudUser, openAccount, syncSoon } from './platform/cloud';
+import { accountsRequired, cloudAvailable, cloudBoot, cloudSession, cloudUser, openAccount, syncSoon } from './platform/cloud';
 import { gameCenterSignInOnce, queueGameCenterSync, syncGameCenter } from './platform/gameCenter';
 import { canStart, gateNow, gateWhy, onGateChange } from './platform/online';
 import { connectOpen, markHub, openConnect } from './ui/connect';
@@ -66,7 +66,7 @@ import { inNativeApp } from './platform/native';
 import type { WeatherKind } from './render/weather';
 import { MatchRecoveryStore, RECOVERY_INTERVAL_S, recoveryRequest, recoveryRoute, type PendingMatch } from './game/matchRecovery';
 import { rebuildRecoveryRequest, recoveryContext } from './game/matchRecoveryRequest';
-import { standardCoinReward } from './meta/matchEconomy';
+import { standardCoinReward, skillGoalCoins, MAX_REWARDED_SKILL_GOALS, matchCoinPayout } from './meta/matchEconomy';
 import { maybeAskForReview } from './platform/review';
 
 /** A brief studio entrance on the standalone site; portals only wait for actual loading. */
@@ -82,6 +82,13 @@ setDeviceSource(() => input.lastDevice);
 const menus = new Menus();
 menus.clipActions = { save: saveClip, share: shareClip };
 const save = loadSave();
+let saveGeneration = 0;
+/** An ad must pay the save/account that requested it, even though reload replaces contents in place. */
+function rewardSaveGuard(): () => boolean {
+  const generation = saveGeneration;
+  const account = cloudSession()?.userId;
+  return () => generation === saveGeneration && account === cloudSession()?.userId;
+}
 /** A portal build (CrazyGames / Poki; in dev, ?portal=): a first visit goes straight from TAP TO PLAY to the first drill. */
 const PORTAL = import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki'
   || (import.meta.env.DEV && new URLSearchParams(location.search).has('portal'));
@@ -137,6 +144,7 @@ iap.onGrant((g) => {
  * the menu redrawn if one is up (a match in progress carries on and sees the new save at full time).
  */
 function reload(d: SaveData): void {
+  saveGeneration++;
   const n = PRESET_CLUBS.length;
   const idx = (i: number, dflt: number) => (Number.isInteger(i) && i >= 0 && i < n ? i : dflt);
   for (const k of Object.keys(save)) delete (save as unknown as Record<string, unknown>)[k];
@@ -443,7 +451,7 @@ function mainInfo(): MainInfo {
     info.gems = gems(save);
     // This week's objectives, under today's challenges.
     const wk = weeklyFor(save, localDay());
-    info.weekly = { list: weeklyObjectives(localDay()), progress: wk.progress, claimed: wk.claimed, gems: GEM_REWARDS.weekly };
+    info.weekly = { list: weeklyObjectives(wk.week), progress: wk.progress, claimed: wk.claimed, gems: GEM_REWARDS.weekly };
   } catch {
     // (Retention bookkeeping never breaks the menu.)
   }
@@ -578,16 +586,15 @@ function mainMenu(): void {
     gift: () => {
       const g = giftToday();
       if (!g) return mainMenu();
+      const sameSave = rewardSaveGuard();
+      const giftDay = localDay();
       menus.gift(g.amount, g.streak, ads.rewardedAvailable, {
         claim: async (double) => {
-          let amount = g.amount;
-          if (double && (await ads.rewarded())) amount *= 2;
+          if (!sameSave()) return false;
+          const doubled = double && (await ads.rewarded());
+          if (!sameSave()) return false;
           const before = save.coins;
-          save.coins += amount;
-          // The calendar's gems and Scout Token (never doubled: the ad doubles the coins only).
-          if (g.gems) addGems(save, g.gems, 'calendar');
-          if (g.tokens) earnTokens(save, g.tokens);
-          save.gift = { last: localDay(), streak: g.streak };
+          if (!claimCalendar(save, giftDay, g.streak, doubled)) return false;
           persist();
           giftReach = inReach(save, before, save.coins);
           return true;
@@ -1130,6 +1137,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
   const quitNote = req.quitNote ?? "This match won't count and you won't earn any coins.";
   const forfeit = !basics && /defeat/i.test(quitNote);
   const quitMatch = (): void => {
+    if (forfeit) save.progress.streak = 0;
     menus.close();
     endMatch();
     menuMusic();
@@ -1272,8 +1280,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
       const o = r.scenarioOutcome;
       const p = save.progress;
       const xpFrom = p.xp;
-      p.xp += momentXp(o.stars);
-      recordMoment(save, req.scenario.id, o.stars);
+      p.xp += claimMomentXp(save, req.scenario.id, o.stars);
       noteGoals(onboarding(), 'moment', Math.max(0, r.score[hs] - (req.scenario.score?.[hs] ?? 0)));
       retention(null, p.xp - xpFrom);
       persist();
@@ -1309,13 +1316,14 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     const mult = won ? streakMult(p.streak) : 1;
     const paid = req.reward(r);
     // CLUB ATMOSPHERE at a home match: the matchday income on top of what the match pays (capped: meta/atmosphere.ts).
-    const base = atmo && atmo.income > 0 && paid.coins > 0 ? { coins: withIncome(paid.coins, atmo), label: `${paid.label}${sep()}+${atmo.income}% ATMOSPHERE` } : paid;
+    const rewardLabel = atmo && atmo.income > 0 && paid.coins > 0 ? `${paid.label}${sep()}+${atmo.income}% ATMOSPHERE` : paid.label;
     // The Coin Doubler (a store purchase) doubles what the match itself pays (not challenges or ads).
     const doubler = coinDoubler(save);
     // SHOWTIME (game/funLayer.ts): an S adds 10% to the match's coins, an A 5%.
     const fun = r.fun;
     const gradeK = fun ? GRADE_BONUS[fun.grade] : 0;
-    const reward = { coins: Math.round(base.coins * mult * (1 + gradeK) * (doubler ? 2 : 1)), label: doubler && base.coins > 0 ? `${base.label} X2` : base.label };
+    const payout = matchCoinPayout(paid, { streak: won ? p.streak : 0, atmosphere: atmo?.income ?? 0, gradeBonus: gradeK, doubler });
+    const reward = { coins: payout.coins, adBonus: payout.adBonus, label: doubler && payout.matchCoins > 0 ? `${rewardLabel}${sep()}MATCH FEE X2` : rewardLabel };
     const summary: MatchSummary = {
       won, drawn, goals: my, conceded: their,
       assists: (r.ratings ?? []).filter((x) => x.side === hs).reduce((n, x) => n + x.assists, 0),
@@ -1350,8 +1358,9 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     const sweepLine = sweep ? [{ text: `ALL 3 DAILY CHALLENGES +${sweep} GEMS`, coins: 0 }] : [];
     const levelLine = levelsUp ? [{ text: `LEVEL UP +${levelsUp * GEM_REWARDS.levelUp} GEMS`, coins: 0 }] : [];
     // SKILL GOALs pay a little on top (shown with the challenges done on the full-time screen).
-    const skillCoins = tally.skillGoals * SKILL_GOAL_COINS;
-    const skillLine = tally.skillGoals ? [{ text: tally.skillGoals > 1 ? `${tally.skillGoals} SKILL GOALS` : 'SKILL GOAL', coins: skillCoins }] : [];
+    const skillCoins = skillGoalCoins(tally.skillGoals);
+    const rewardedSkillGoals = Math.min(MAX_REWARDED_SKILL_GOALS, tally.skillGoals);
+    const skillLine = rewardedSkillGoals ? [{ text: rewardedSkillGoals > 1 ? `${rewardedSkillGoals} SKILL GOALS` : 'SKILL GOAL', coins: skillCoins }] : [];
     // LIVE GOALS: their coins, like the challenges' (never doubled).
     const liveCoins = fun?.coins ?? 0;
     const liveLine = fun && fun.done ? [{ text: fun.done > 1 ? `${fun.done} LIVE GOALS` : 'LIVE GOAL', coins: liveCoins }] : [];
@@ -1392,24 +1401,28 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     // Full time: the result goes to the cloud now (offline it waits on the device and goes up when the connection is back).
     syncSoon();
     let doubled = false;
+    let doubling = false;
+    const sameRewardSave = rewardSaveGuard();
     // A happy moment: after a win, Apple's own rating prompt (the app only, rarely: platform/review.ts).
     if (won) window.setTimeout(() => void maybeAskForReview(save), 2500);
     // The full-time music with the screen (src/audio/sfx.ts result): a cup tie's brass is bigger, and a final's
     // (a knockout at a full neutral ground) opens with the trophy fanfare.
     sfx.result(outcome, req.knockout ? (req.attendance >= 1 ? 2 : 1) : 0);
-    menus.fulltime(r.match, kits, humanSide, reward, ads.rewardedAvailable && reward.coins > 0, {
+    menus.fulltime(r.match, kits, humanSide, reward, ads.rewardedAvailable && payout.adBonus > 0, {
       nextLabel: req.nextLabel,
       double: async () => {
-        if (doubled) return false;
-        const ok = await ads.rewarded();
-        if (ok) {
+        if (doubled || doubling || !sameRewardSave()) return false;
+        doubling = true;
+        try {
+          const ok = await ads.rewarded();
+          if (!ok || !sameRewardSave()) return false;
           doubled = true;
-          save.coins += reward.coins;
-          earned += reward.coins;
+          save.coins += payout.adBonus;
+          earned += payout.adBonus;
           req.onBanked?.(r, earned);
           persist();
-        }
-        return ok;
+          return true;
+        } finally { doubling = false; }
       },
       next: () => {
         menus.close();

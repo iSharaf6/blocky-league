@@ -272,7 +272,7 @@ export function decideRetirements(state: CareerState): Farewell[] {
  * The new season: the retired leave (a farewell each, legends into the Hall of Fame), and the squad is kept playable:
  * at least SQUAD_MIN players and two keepers, from the academy first (youngsters straight up) and then free youth.
  */
-export function applyRetirements(state: CareerState, leaving: readonly Farewell[]): void {
+export function applyRetirements(state: CareerState, leaving: readonly Farewell[], minimumKeepers: 1 | 2 = 2): void {
   const club = state.club;
   if (!club) return;
   const season = state.season?.number ?? 0;
@@ -293,16 +293,16 @@ export function applyRetirements(state: CareerState, leaving: readonly Farewell[
     const names = legends.length === 1 ? legends[0] : `${legends.slice(0, -1).join(', ')} AND ${legends[legends.length - 1]}`;
     addMoment(state, { kind: 'farewell', icon: 'star', title: 'HALL OF FAME', text: `${names} ${legends.length === 1 ? 'RETIRES A CLUB LEGEND' : 'RETIRE AS CLUB LEGENDS'}` });
   }
-  fillSquad(state);
+  fillSquad(state, minimumKeepers);
 }
 
-/** Top the squad up to SQUAD_MIN with two keepers: best academy prospects first, then generated youngsters. */
-export function fillSquad(state: CareerState): void {
+/** Keep the squad playable. Played seasons include a spare keeper; walk-off-only years do not mint resale depth. */
+export function fillSquad(state: CareerState, minimumKeepers: 1 | 2 = 2): void {
   const club = state.club;
   if (!club) return;
   const gks = () => club.squad.filter((p) => p.role === 'GK').length;
-  for (let guard = 0; guard < 30 && (club.squad.length < SQUAD_MIN || gks() < 2) && club.squad.length < SQUAD_MAX; guard++) {
-    const needGk = gks() < 2;
+  for (let guard = 0; guard < 30 && (club.squad.length < SQUAD_MIN || gks() < minimumKeepers) && club.squad.length < SQUAD_MAX; guard++) {
+    const needGk = gks() < minimumKeepers;
     const pool = state.academy.prospects;
     let idx = pool.findIndex((p) => (needGk ? p.role === 'GK' : true));
     if (idx >= 0 && !needGk) idx = bestProspectIndex(state);

@@ -145,7 +145,7 @@ function detailHtml(app: AppContext, mo: Moment): string {
         ${rules.map((r, i) => `<li class="${got > i ? 'got' : ''}">${starsHtml(i + 1, false)}<span>${esc(r.charAt(0).toUpperCase() + r.slice(1))}</span></li>`).join('')}
       </ul>
       <p class="mo-tip"><b>HOW</b> ${esc(fillKeys(coachText(mo.tip, currentDevice())))}</p>
-      <div class="mo-best">${got ? `BEST ${starsHtml(got)}` : 'NOT PLAYED YET'}${sep()}+${momentXp(0)} XP A TRY${sep()}${esc(mo.xpNote)}</div>
+      <div class="mo-best">${got ? `BEST ${starsHtml(got)}` : 'NO STARS YET'}${sep()}+${momentXp(0)} XP FIRST TRY${sep()}${esc(mo.xpNote)}</div>
     </div>
     <div class="mc-actions"><button class="btn btn-go btn-lg mo-play pulse" data-a="play">PLAY</button></div>`;
 }

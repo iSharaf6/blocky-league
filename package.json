@@ -17,7 +17,8 @@
     "build:ios": "tsc --noEmit && node scripts/release.mjs ios",
     "build:all": "tsc --noEmit && node scripts/release.mjs web crazygames poki itch",
     "submission": "node scripts/submission.mjs",
-    "ios": "npm run build:ios && npx cap sync ios"
+    "ios": "npm run build:ios && npx cap sync ios",
+    "economy:model": "node scripts/economy-run.mjs"
   },
   "dependencies": {
     "@capacitor-community/admob": "^8.1.0",

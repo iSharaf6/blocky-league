@@ -76,8 +76,10 @@ export interface MetaPlayer extends PlayerDef {
   paid?: number;
   /** Season number you signed him in (the resale cap lasts that season). */
   boughtSeason?: number;
-  /** League starts for you since you signed him (market signings only). */
+  /** Completed league starts for you since signing (market signings and scouts). */
   starts?: number;
+  /** New scout's maximum resale credit until RESALE_STARTS completed league starts; survives season changes. */
+  scoutResale?: number;
 }
 
 export interface Listing {
@@ -285,9 +287,18 @@ export function playerValue(p: PlayerDef): number {
   return round10(playerPrice(p) * ageFactor(playerAge(p)) * (1 + 0.08 * (contractOf(p) - 1)));
 }
 
-/** What a quick sale pays right now (45% of value); AI offers on a listed player run 70-95%. */
+/** New scout resale credit stays bounded until he has actually started six completed league matches. */
+export function scoutResaleCap(p: PlayerDef): number | null {
+  const m = p as MetaPlayer;
+  return Number.isFinite(m.scoutResale) && m.scoutResale! > 0 && (m.starts ?? 0) < RESALE_STARTS
+    ? Math.floor(m.scoutResale!) : null;
+}
+
+/** What a quick sale pays right now (45% of value), bounded by a new scout's temporary resale credit. */
 export function quickSaleValue(p: PlayerDef): number {
-  return round10(playerValue(p) * QUICK_SALE);
+  const value = round10(playerValue(p) * QUICK_SALE);
+  const cap = scoutResaleCap(p);
+  return cap === null ? value : Math.min(value, cap);
 }
 
 export function bidRange(l: Pick<Listing, 'asking'>): [number, number] {
@@ -467,21 +478,30 @@ export function applyWageDrain(state: CareerState, wallet: Wallet): number {
 
 /**
  * The most an AI club offers for a player you signed this season: RESALE_CAP × what you paid, until he has made
- * RESALE_STARTS league starts for you or a season has passed. null when no cap applies.
+ * RESALE_STARTS league starts for you or a season has passed. New scouts retain their rarity credit cap across
+ * seasons until they have made RESALE_STARTS completed league starts. null when no cap applies.
  */
 export function resaleCap(state: CareerState, p: PlayerDef): number | null {
   const m = p as MetaPlayer;
+  const scout = scoutResaleCap(p);
+  if (scout !== null) return scout;
   if (typeof m.paid !== 'number' || !(m.paid > 0) || typeof m.boughtSeason !== 'number') return null;
   if ((state.season?.number ?? 0) !== m.boughtSeason) return null;
   if ((m.starts ?? 0) >= RESALE_STARTS) return null;
   return round10(m.paid * RESALE_CAP);
 }
 
-/** After a matchday: one more start for every market signing in the XI (lifts his resale cap at RESALE_STARTS). */
+/** A stored offer and its payout use the same current resale cap. */
+export function resaleOfferAmount(state: CareerState, p: PlayerDef, amount: number): number {
+  const cap = resaleCap(state, p);
+  return cap === null ? amount : Math.min(amount, cap);
+}
+
+/** After a completed league match: one more start for each market or scout signing in the XI. */
 export function recordStarts(club: ClubState): void {
   for (const p of club.squad.slice(0, 11)) {
     const m = p as MetaPlayer;
-    if (typeof m.boughtSeason === 'number') m.starts = (m.starts ?? 0) + 1;
+    if (typeof m.boughtSeason === 'number' || typeof m.scoutResale === 'number') m.starts = (m.starts ?? 0) + 1;
   }
 }
 
@@ -603,6 +623,8 @@ function signListing(state: CareerState, listing: Listing, paid: number): MetaPl
     contract: listing.contract,
   });
   // What you paid and when: his resale value stays near it this season (resaleCap).
+  // A real market purchase is no longer a free scout draw, even if he once belonged to your scouts.
+  delete p.scoutResale;
   p.paid = paid;
   p.boughtSeason = state.season?.number ?? 0;
   p.starts = 0;
@@ -821,14 +843,15 @@ export function acceptOffer(state: CareerState, wallet: Wallet, playerId: string
   if (!check.ok) return fail(check.reason);
   const idx = club.squad.findIndex((x) => x.id === playerId);
   const p = club.squad[idx];
+  const amount = resaleOfferAmount(state, p, offer.amount);
   removeFromSquad(club, idx);
   const moved = pinMeta({ ...clonePlayer(p), id: `${buyer.id}-t${state.tm.nextId++}`, number: freeNumber(rivalSquad(buyer), p.role) });
   (buyer.in ??= []).push(moved);
   buyer.rating = rivalRating(buyer);
   state.tm.sales = state.tm.sales.filter((s) => s !== sale);
-  wallet.coins += offer.amount;
-  pushNews(state, `${p.name} sold to ${townOf(buyer.name)} for ${fmtN(offer.amount)}`, 'good', true);
-  return { ok: true, delta: offer.amount, player: p };
+  wallet.coins += amount;
+  pushNews(state, `${p.name} sold to ${townOf(buyer.name)} for ${fmtN(amount)}`, 'good', true);
+  return { ok: true, delta: amount, player: p };
 }
 
 export function rejectOffer(state: CareerState, playerId: string, offerId: string): MarketResult {

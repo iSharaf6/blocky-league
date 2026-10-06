@@ -13,7 +13,7 @@ import { canAfford, forYouSort, transferBudget, upgradeOf, type TransferBudget }
 import {
   MORALE_DIP, RESALE_STARTS, SCOUT_COST, SHORTLIST_MAX, YOUNG_AGE,
   acceptCounter, acceptOffer, bidFor, canBid, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, marketUnread, newsStrip,
-  placeBid, playerAge, playerPotential, playerValue, rejectOffer, resaleCap, saleFor, scoutListing, shortlisted, sortListings, toggleShortlist,
+  placeBid, playerAge, playerPotential, playerValue, rejectOffer, resaleCap, resaleOfferAmount, saleFor, scoutListing, shortlisted, sortListings, toggleShortlist,
   townOf, unlistPlayer, wageOf, withdrawBid, type Listing, type MarketFail, type MetaPlayer, type NewsItem,
 } from '../meta/market';
 import { buzz } from '../platform/haptics';
@@ -299,7 +299,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
     const offers = sale?.offers.length
       ? `<div class="mk-offers">${sale.offers
           .map(
-            (o) => `<div class="mk-offer"><b>${esc(townOf(o.clubName).toUpperCase())}</b><span>${fmt(o.amount)}</span>
+            (o) => `<div class="mk-offer"><b>${esc(townOf(o.clubName).toUpperCase())}</b><span>${fmt(resaleOfferAmount(st, p, o.amount))}</span>
             <button class="btn btn-white" data-a="refuse" data-id="${id}" data-o="${esc(o.id)}">NO</button>
             <button class="btn btn-go" data-a="take" data-id="${id}" data-o="${esc(o.id)}">ACCEPT</button></div>`,
           )

@@ -3,6 +3,7 @@
  * Everything persists in SaveData.career as a versioned CareerState; coins live in the shared wallet (SaveData.coins).
  */
 import { Rng, hashString } from '../core/rng';
+import type { Reward } from '../app';
 import { safeName, safeShort } from '../core/names';
 import { defaultCrest, normalizeCrest, setMyCrest, type CrestDesign } from '../core/crest';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
@@ -601,7 +602,13 @@ export function returnFixtures(firstHalf: readonly Fixture[], half: number): Fix
   return firstHalf.map((f) => ({ md: f.md + half, home: f.away, away: f.home, hg: null, ag: null }));
 }
 
+/** A completed league fixture, including a manager simulation, earns the next season's intake. */
+function playedSeason(state: CareerState): boolean {
+  return !!state.season?.fixtures.some((f) => (f.home === YOU || f.away === YOU) && !f.forfeit && f.hg !== null && f.ag !== null);
+}
+
 export function newSeason(state: CareerState, division: number, number: number): SeasonState {
+  const earnedIntake = playedSeason(state);
   const div = clampDivision(division);
   const seed = hashString(`${state.seed}|season|${number}|${div}`);
   const rng = new Rng(seed);
@@ -644,8 +651,8 @@ export function newSeason(state: CareerState, division: number, number: number):
   clearMarket(state);
   refreshMarket(state);
   if (state.club) {
-    // The academy opens from the club's second season (the first is for finding your feet).
-    if (number > 1) academyIntake(state);
+    // An all-walk-off season cannot print fresh prospects to sell. Normal losses and manager simulations count.
+    if (number > 1 && earnedIntake) academyIntake(state);
     setObjectives(state);
     seasonStartBeats(state);
   }
@@ -713,11 +720,11 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
   if (cupRoundDue(season.cup, season.matchday) >= 0 || compsDue(state)) return false;
   const f = userFixture(season, md);
   if (!f || f.hg !== null) return false;
-  f.hg = Math.max(0, Math.round(hg));
-  f.ag = Math.max(0, Math.round(ag));
+  f.hg = forfeit ? (f.home === YOU ? 0 : 3) : Math.max(0, Math.round(hg));
+  f.ag = forfeit ? (f.home === YOU ? 3 : 0) : Math.max(0, Math.round(ag));
   if (forfeit) f.forfeit = true;
   simulateMatchday(state, md);
-  recordStarts(state.club);
+  if (!forfeit) recordStarts(state.club);
   season.matchday++;
   // Out of the cup: its later rounds are still played, as the calendar reaches them.
   if (season.cup) syncCup(season.cup, season.matchday, clubRater(state));
@@ -733,9 +740,9 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
   if (derby) derbyResult(state, my, their);
   buildWeek(state);
   // The week at the club (meta/week.ts): the staff are paid, the squad trains, injuries, mentors, morale, the
-  // scouts, the sponsor, promises. A walk-off is a result like any other here.
-  afterAnyMatch(state, my > their);
-  weekTick(state, wallet, { my, their, home, derby });
+  // scouts, the sponsor, promises. A walk-off advances the calendar but earns no participation rewards.
+  afterAnyMatch(state, my > their, forfeit);
+  weekTick(state, wallet, { my, their, home, derby, forfeit });
   if (season.matchday >= MATCHDAYS) finishSeason(state, wallet);
   else {
     checkBoard(state);
@@ -743,7 +750,7 @@ export function resolveMatchday(state: CareerState, wallet: Wallet, md: number, 
     const next = nextMatch(state);
     beforeMatchBeats(state, next);
     // What the week brought: at most one new card to answer (meta/events.ts).
-    rollEvents(state, { my, their }, next);
+    if (!forfeit) rollEvents(state, { my, their }, next);
   }
   return true;
 }
@@ -788,14 +795,15 @@ export function compsDue(state: CareerState): { comp: Competition; idx: number }
  * knockout, `pens` its shootout. The prize comes back in the outcome (compTieReward pays it with the match). Null when
  * nothing is due (a stale request can't play a fixture twice).
  */
-export function resolveCompTie(state: CareerState, my: number, their: number, won: boolean, pens: [number, number] | null = null): CompOutcome | null {
+export function resolveCompTie(state: CareerState, my: number, their: number, won: boolean, pens: [number, number] | null = null, forfeit = false): CompOutcome | null {
   const season = state.season;
   const due = compsDue(state);
   if (!season || !due || cupRoundDue(season.cup, season.matchday) >= 0) return null;
+  if (forfeit) { my = 0; their = 3; won = false; pens = null; }
   const out = recordComp(due.comp, season.matchday, clubRater(state), my, their, won, pens);
   if (!out) return null;
   addForm(state, my, their, my === their && out.stage !== 'group' ? out.won : undefined);
-  afterAnyMatch(state, out.won);
+  afterAnyMatch(state, out.won, forfeit);
   if (out.stage !== 'group' || out.trophy) cupHeadline(state, COMP_NAMES[out.kind].toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()), STAGE_NAMES[out.stage], out.won, out.trophy);
   if (out.trophy) {
     due.comp.celebrated = true;
@@ -811,29 +819,31 @@ export function resolveCompTie(state: CareerState, my: number, their: number, wo
 }
 
 /** What a Continental / World Club Cup fixture pays at full time: the match fee plus the stage's prize. */
-export function compTieReward(division: number, stadium: number, my: number, their: number, out: CompOutcome | null): { coins: number; label: string } {
+export function compTieReward(division: number, stadium: number, my: number, their: number, out: CompOutcome | null): Reward {
   const fee = matchCoins(division, stadium, my, their);
-  if (!out) return { coins: fee, label: 'CUP FIXTURE' };
+  if (!out) return { coins: 0, label: 'CUP FIXTURE' };
   const name = out.kind === 'world' ? 'WORLD' : 'CONTINENTAL';
   const label = out.trophy ? `${name} WINNERS!` : out.won ? `${out.stage === 'group' ? 'GROUP' : out.stage === 'sf' ? 'SF' : 'FINAL'} WIN BONUS` : out.stage === 'group' ? 'GROUP MATCH' : 'KNOCKED OUT';
-  return { coins: fee + out.coins, label };
+  return { coins: fee + out.coins, ...(out.coins > 0 ? { fixedCoins: out.coins } : {}), label };
 }
 
 /**
  * The ground and legacy on top of a match's pay (your stadium's own level is already in it): the BIG SCREEN's
  * sponsors and the legacy gate perk (+5% each), and the MEGASTORE's shirt sales at a home match.
  */
-export function groundBonus(state: CareerState, r: { coins: number; label: string }, home: boolean, division: number): { coins: number; label: string } {
+export function groundBonus(state: CareerState, r: Reward, home: boolean, division: number): Reward {
+  if (r.coins <= 0) return r;
   let mult = 0;
   if (has(state.ground, 'screen')) mult += SCREEN_BONUS;
   if (hasPerk(state.legacy, 'gate')) mult += 0.05;
-  let coins = Math.round(r.coins * (1 + mult));
+  let fixedCoins = Math.min(r.coins, Math.max(0, r.fixedCoins ?? 0));
+  const fee = Math.round((r.coins - fixedCoins) * (1 + mult));
   let label = r.label;
   if (home && has(state.ground, 'store')) {
-    coins += megastoreCoins(division);
+    fixedCoins += megastoreCoins(division);
     label = `${label}${sep()}MEGASTORE`;
   }
-  return { coins, label };
+  return { coins: fee + fixedCoins, ...(fixedCoins > 0 ? { fixedCoins } : {}), label };
 }
 
 /**
@@ -885,15 +895,16 @@ export function cupDue(state: CareerState): number {
  * comes back in the outcome, for the full-time reward to pay with the match (cupTieReward). Null (and nothing
  * changes) when no tie is due: a stale request can't play a tie twice.
  */
-export function resolveCupTie(state: CareerState, my: number, their: number, won: boolean, pens: [number, number] | null = null): TieOutcome | null {
+export function resolveCupTie(state: CareerState, my: number, their: number, won: boolean, pens: [number, number] | null = null, forfeit = false): TieOutcome | null {
   const season = state.season;
   if (!season?.cup || !state.club || cupDue(state) < 0) return null;
+  if (forfeit) { my = 0; their = 3; won = false; pens = null; }
   // (No market week passes and no wages drain: those go by league matchdays. Nor do cup starts lift a signing's
   // resale cap: that counts league starts, market.ts RESALE_STARTS.)
   const out = recordCupTie(season.cup, season.division, season.matchday, clubRater(state), my, their, won, pens);
   if (out) {
     addForm(state, my, their, my === their ? out.won : undefined);
-    afterAnyMatch(state, out.won);
+    afterAnyMatch(state, out.won, forfeit);
     cupHeadline(state, 'Blocky Cup', ROUND_NAMES[out.round], out.won, out.trophy);
     checkBoard(state);
     rollPress(state);
@@ -1027,12 +1038,13 @@ export function startNextSeason(state: CareerState): SeasonState | null {
   const s = state.summary;
   if (!s) return null;
   const club = state.club;
+  const minimumKeepers = playedSeason(state) ? 2 : 1;
   if (club) {
     // A year passes: the young grow into their potential, the old fade, contracts tick down; the retired say goodbye.
     ageSquad(club);
     // The summer (meta/week.ts): contracts that ran out without a new deal, knocks healed, old promises forgotten.
-    seasonTurn(state);
-    applyRetirements(state, s.retiring ?? []);
+    seasonTurn(state, minimumKeepers);
+    applyRetirements(state, s.retiring ?? [], minimumKeepers);
     // A new captain is news (the most games for you).
     const cap = captainOf(club) as LifePlayer | undefined;
     if (cap && (cap.apps ?? 0) >= 10 && !state.legacy.milestones.includes(`${state.legacy.gen}:captain:${cap.id}`)) {
@@ -1251,7 +1263,7 @@ export function payTable(division: number, stadium: number): { win: number; draw
 export function matchCoins(division: number, stadium: number, my: number, their: number): number {
   const win = 120 + 40 * (Math.max(0, ORIGINAL_BOTTOM - clampDivision(division)));
   const base = my > their ? win : my === their ? Math.round(win * 0.45) : Math.round(win * 0.2);
-  return Math.round((base + 15 * Math.max(0, my)) * (1 + 0.1 * clamp(stadium, 0, STADIUM_MAX)));
+  return Math.round((base + 15 * Math.min(3, Math.max(0, my))) * (1 + 0.1 * clamp(stadium, 0, STADIUM_MAX)));
 }
 
 export function matchReward(division: number, stadium: number, my: number, their: number): { coins: number; label: string } {
@@ -1263,13 +1275,13 @@ export function matchReward(division: number, stadium: number, my: number, their
 
 /**
  * What a BLOCKY CUP tie pays at full time: the usual match fee (as a league match: result, goals, your ground's
- * gate) plus the round's prize when you go through (`outcome` from resolveCupTie; null = a stale tie, fee only).
+ * gate) plus the round's prize when you go through (`outcome` from resolveCupTie; null = an unpaid stale tie).
  */
-export function cupTieReward(division: number, stadium: number, my: number, their: number, outcome: TieOutcome | null): { coins: number; label: string } {
+export function cupTieReward(division: number, stadium: number, my: number, their: number, outcome: TieOutcome | null): Reward {
   const fee = matchCoins(division, stadium, my, their);
-  if (!outcome) return { coins: fee, label: 'CUP TIE' };
+  if (!outcome) return { coins: 0, label: 'CUP TIE' };
   const label = outcome.trophy ? 'CUP WINNERS!' : outcome.won ? `${ROUND_SHORT[outcome.round]} WIN BONUS` : 'KNOCKED OUT';
-  return { coins: fee + outcome.coins, label };
+  return { coins: fee + outcome.coins, ...(outcome.coins > 0 ? { fixedCoins: outcome.coins } : {}), label };
 }
 
 // ------------------------------------------------------------------ transfers
@@ -1422,7 +1434,7 @@ function readPlayer(v: unknown): PlayerDef | null {
     stats[k] = clamp(Math.round(s), 1, STAT_CAP);
   }
   const look = isObj(v.look) ? v.look : {};
-  const p: PlayerDef & { age?: number; potential?: number; contract?: number; paid?: number; boughtSeason?: number; starts?: number } = {
+  const p: PlayerDef & { age?: number; potential?: number; contract?: number; paid?: number; boughtSeason?: number; starts?: number; scoutResale?: number } = {
     id: v.id,
     name: v.name.slice(0, 24),
     number: int(v.number, 0, 99, 0),
@@ -1444,6 +1456,7 @@ function readPlayer(v: unknown): PlayerDef | null {
   if (isNum(v.paid)) p.paid = int(v.paid, 0, 1e9, 0);
   if (isNum(v.boughtSeason)) p.boughtSeason = int(v.boughtSeason, 0, 1e6, 0);
   if (isNum(v.starts)) p.starts = int(v.starts, 0, 1e6, 0);
+  if (isNum(v.scoutResale) && v.scoutResale > 0) p.scoutResale = int(v.scoutResale, 1, 250, 75);
   // His life at the club (life.ts): games, goals, the season he joined, an academy graduate.
   const lp = p as LifePlayer;
   if (isNum(v.apps)) lp.apps = int(v.apps, 0, 1e6, 0);

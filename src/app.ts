@@ -9,6 +9,8 @@ import type { Menus } from './ui/menus';
 /** What a result screen shows for coins earned. */
 export interface Reward {
   coins: number;
+  /** Included in coins: prizes and club sales paid once, never multiplied or doubled by a rewarded ad. */
+  fixedCoins?: number;
   label: string;
 }
 

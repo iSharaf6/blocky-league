@@ -141,9 +141,9 @@ export interface IapProduct {
   sellable: boolean;
 }
 
-/** The catalogue's own price ("$3.99"): the US price set in the store consoles, shown until the store gives its own. */
+/** Explicitly label the US catalogue estimate until the store supplies its localized price. */
 export function cataloguePrice(e: Pick<IapEntry, 'usd'>): string {
-  return `$${e.usd.toFixed(2)}`;
+  return `US$${e.usd.toFixed(2)}`;
 }
 
 /** What a delivered purchase changed. */

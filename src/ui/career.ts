@@ -9,7 +9,7 @@ import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
 import {
   BOTTOM_DIVISION, CLUBS_PER_DIVISION, DIVISION_NAMES, MATCHDAYS, STADIUM_MAX, STADIUM_NAMES, TOP_DIVISION, YOU,
-  afterMatch, clubRating, compTieReward, cupClubs, cupDue, cupTieReward, finishSeason, forfeitScore, groundBonus, leagueClubs, leagueTable,
+  afterMatch, clubRating, compsDue, compTieReward, cupClubs, cupDue, cupTieReward, finishSeason, forfeitScore, groundBonus, leagueClubs, leagueTable,
   matchAttendance, matchDifficulty, matchReward, newSeason, nextMatch, payTable, refreshMarket, resolveCompTie, resolveCupTie, resolveMatchday,
   rivalStadiumLevel, startAsLegend, startNextSeason,
   type CareerState, type Fixture, type LeagueClub, type NextMatch, type SeasonState, type TableRow,
@@ -597,7 +597,7 @@ export function playMatchday(app: AppContext, st: CareerState): void {
       const my = userHome ? r.score[0] : r.score[1];
       const their = userHome ? r.score[1] : r.score[0];
       if (ok) recordFacts(cur, r, userHome ? 0 : 1, xi, rival.name);
-      return groundBonus(cur, matchReward(division, stadium, my, their), userHome, division);
+      return ok ? groundBonus(cur, matchReward(division, stadium, my, their), userHome, division) : { coins: 0, label: 'MATCH ALREADY SETTLED' };
     },
     nextLabel: 'BACK TO THE ROAD',
     onDone: (r) => {
@@ -689,7 +689,7 @@ function playCupTie(app: AppContext, st: CareerState, nm: NextMatch): void {
     quitNote: "Walking off counts as a 3:0 defeat: you're out of the cup.",
     onQuit: () => {
       const cur = current();
-      if (cur && resolveCupTie(cur, 0, 3, false)) {
+      if (cur && resolveCupTie(cur, 0, 3, false, null, true)) {
         cur.notice = `You walked off against ${rival.name}: out of the Blocky Cup. The league goes on.`;
       }
       app.persist();
@@ -728,10 +728,11 @@ function playCompTie(app: AppContext, st: CareerState, nm: NextMatch): void {
   const them: Side = userHome ? 1 : 0;
   const xi = kickOffXi(st);
   const kind = nm.competition;
+  const fixtureIndex = compsDue(st)?.idx;
   let outcome: CompOutcome | null = null;
   const current = (): CareerState | null => {
     const cur = careerState(app);
-    return cur.season?.number === seasonNo && nextMatch(cur)?.competition === kind ? cur : null;
+    return cur.season?.number === seasonNo && nextMatch(cur)?.competition === kind && compsDue(cur)?.idx === fixtureIndex ? cur : null;
   };
   st.notice = null;
   closeMeta();
@@ -781,7 +782,7 @@ function playCompTie(app: AppContext, st: CareerState, nm: NextMatch): void {
     quitNote: knockout ? "Walking off counts as a 3:0 defeat: you're out." : 'Walking off counts as a 3:0 defeat in the group.',
     onQuit: () => {
       const cur = current();
-      if (cur && resolveCompTie(cur, 0, 3, false)) cur.notice = `You walked off against ${rival.name}: a 3:0 defeat in the ${COMP_NAMES[kind as 'continental' | 'world'].toLowerCase()}.`;
+      if (cur && resolveCompTie(cur, 0, 3, false, null, true)) cur.notice = `You walked off against ${rival.name}: a 3:0 defeat in the ${COMP_NAMES[kind as 'continental' | 'world'].toLowerCase()}.`;
       app.persist();
       returnToCareer(app);
     },

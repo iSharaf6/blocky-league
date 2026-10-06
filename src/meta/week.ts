@@ -165,6 +165,7 @@ export interface WeekResult {
   their: number;
   home: boolean;
   derby: boolean;
+  forfeit?: boolean;
 }
 
 /**
@@ -179,19 +180,19 @@ export function weekTick(state: CareerState, wallet: Wallet, res: WeekResult): v
   if (!club || !season) return;
   const ev = state.events;
   ev.clock = Math.min(1e7, ev.clock + 1);
-  const started = new Set(club.squad.slice(0, 11).map((p) => p.id));
+  const started = new Set(res.forfeit ? [] : club.squad.slice(0, 11).map((p) => p.id));
   payStaff(state, wallet);
-  if (res.home) wallet.coins += commercialIncome(state);
-  for (const p of club.squad) if (!isInjured(p)) gainXp(state, p, XP_TRAIN);
+  if (res.home && !res.forfeit) wallet.coins += commercialIncome(state);
+  if (!res.forfeit) for (const p of club.squad) if (!isInjured(p)) gainXp(state, p, XP_TRAIN);
   healWeek(state);
-  rollInjury(state);
-  for (const m of tickMentors(club)) {
+  if (!res.forfeit) rollInjury(state);
+  for (const m of res.forfeit ? [] : tickMentors(club)) {
     const what = TRAIT_INFO[m.trait].name;
     addMoment(state, { kind: 'academy', icon: 'duo', title: 'LESSON LEARNED', text: `${m.kid.name.toUpperCase()} IS NOW A ${what}, THANKS TO ${m.vet.name.toUpperCase()}` });
     addTimeline(state, `${m.kid.name} learned from ${m.vet.name}: now a ${what.toLowerCase()}`, 'duo', 'good', true);
   }
   weekMorale(state, res.my, res.their);
-  for (const r of tickScouts(state)) {
+  for (const r of res.forfeit ? [] : tickScouts(state)) {
     const where = REGIONS[r.region].name;
     pushNews(state, `Scout report: ${plural(r.finds.length, 'player', 'players')} found in ${where.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}`, 'good', true, true);
     addMoment(state, { kind: 'academy', icon: 'scout', title: 'SCOUT REPORT', text: `${plural(r.finds.length, 'PLAYER', 'PLAYERS')} FOUND IN ${where}. SEE THEM IN MY CLUB, STAFF` });
@@ -228,7 +229,7 @@ export function matchXp(state: CareerState, f: MatchFacts, started: ReadonlySet<
  * leave, knocks heal, and what was promised for last season is forgotten. The squad is topped up afterwards by the
  * retirements' own fill (life.ts), so it is always playable.
  */
-export function seasonTurn(state: CareerState): void {
+export function seasonTurn(state: CareerState, minimumKeepers: 1 | 2 = 2): void {
   const club = state.club;
   if (!club) return;
   for (const p of [...club.squad]) {
@@ -252,7 +253,7 @@ export function seasonTurn(state: CareerState): void {
   ev.rebid = null;
   ev.rivalFire = 0;
   ev.talk = false;
-  fillSquad(state);
+  fillSquad(state, minimumKeepers);
 }
 
 /** The new season has started (career.ts startNextSeason, after the draw): a point on everyone's growth chart. */

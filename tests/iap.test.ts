@@ -5,6 +5,7 @@ import { selectJourney } from '../src/meta/season';
 import { buyPassWithGems } from '../src/meta/pass';
 import { WELCOME_GEMS, gems } from '../src/meta/gems';
 import { owns, FREE_AD_COINS, FREE_AD_DAILY_CAP, claimFreeAd, freeAdsLeft } from '../src/meta/shop';
+import { gemPackBadge } from '../src/ui/storeOffers';
 import type { PurchaseRejection } from '../src/platform/purchaseEvents';
 import { Ads } from '../src/platform/ads';
 import { isSmall, normalizeCloud } from '../src/platform/cloud';
@@ -82,6 +83,23 @@ describe('catalogue and economy', () => {
     // Children play this: no pack above the ceiling.
     expect(MAX_PRICE_USD).toBe(19.99);
     for (const e of CATALOGUE) expect(e.usd, e.id).toBeLessThanOrEqual(MAX_PRICE_USD);
+  });
+
+  it('keeps pack labels truthful when first-buy bonuses are mixed', async () => {
+    const { iap } = await devStore();
+    const before = iap.products().find((p) => p.id === 'bl.gems.2000')!;
+    expect(gemPackBadge(before)).toBe('FIRST BUY X2');
+    iap.deliver('bl.gems.2000', 'largest-first-buy', false);
+    const largest = iap.products().find((p) => p.id === 'bl.gems.2000')!;
+    const small = iap.products().find((p) => p.id === 'bl.gems.100')!;
+    // A fresh small pack now has a better actual rate than the largest repeat purchase.
+    expect(small.gems * FIRST_BUY_MULT / entryOf(small.id)!.usd).toBeGreaterThan(largest.gems / entryOf(largest.id)!.usd);
+    expect(gemPackBadge(largest)).toBe('LARGEST PACK');
+    expect(gemPackBadge(small)).toBe('FIRST BUY X2');
+    iap.deliver('bl.gems.500', 'middle-first-buy', false);
+    const middle = iap.products().find((p) => p.id === 'bl.gems.500')!;
+    expect(gemPackBadge(middle)).toBe('BONUS GEMS');
+    expect(gemPackBadge(middle)).not.toContain('POPULAR');
   });
 
   it('the PRO bundle is NO ADS, the Coin Doubler and 600 gems for less than they cost one by one, bought once', async () => {
@@ -511,6 +529,23 @@ describe('free coins from rewarded ads', () => {
     expect(freeAdsLeft(save, '2026-10-03')).toBe(4);
   });
 
+  it('does not reset rewarded-coin caps by alternating older dates, including after reloading', () => {
+    const save = defaultSave();
+    for (let i = 0; i < FREE_AD_DAILY_CAP; i++) claimFreeAd(save, '2026-10-03');
+    const earned = save.coins;
+    for (const day of ['2026-10-02', '2026-10-03', '2026-09-30', '']) {
+      expect(freeAdsLeft(save, day)).toBe(0);
+      expect(claimFreeAd(save, day)).toEqual({ ok: false, reason: 'cap' });
+      expect(save.coins).toBe(earned);
+      expect(save.iap!.freeAds).toEqual({ day: '2026-10-03', count: FREE_AD_DAILY_CAP });
+    }
+    const reloaded = importSave(JSON.parse(JSON.stringify(save)))!;
+    expect(claimFreeAd(reloaded, '2026-10-02').ok).toBe(false);
+    expect(claimFreeAd(reloaded, '2026-10-04')).toMatchObject({ ok: true, coins: earned + FREE_AD_COINS });
+    expect(claimFreeAd(reloaded, '2026-10-03').ok).toBe(false);
+    expect(freeAdsLeft(reloaded, '2026-10-04')).toBe(FREE_AD_DAILY_CAP - 1);
+  });
+
   it('count by the local calendar day, whatever the hour', () => {
     const late = new Date(2026, 9, 2, 23, 59);
     const early = new Date(2026, 9, 3, 0, 1);
@@ -595,7 +630,8 @@ describe('the shelf in the app', () => {
     const shelf = iap.shelf();
     expect(shelf.map((p) => p.id)).toEqual(CATALOGUE.map((e) => e.id));
     expect(shelf.every((p) => !p.sellable)).toBe(true);
-    expect(shelf.find((p) => p.id === PRODUCT_NOADS)!.price).toBe('$3.99');
+    expect(shelf.find((p) => p.id === PRODUCT_NOADS)!.price).toBe('US$3.99');
+    expect(shelf.every((p) => p.price.startsWith('US$'))).toBe(true);
     expect(shelf.find((p) => p.id === PRODUCT_PASS)!.price).toBe(cataloguePrice(entryOf(PRODUCT_PASS)!));
     expect(iap.canSell(PRODUCT_PASS)).toBe(false);
     expect(await iap.buy(PRODUCT_NOADS)).toBe('failed');
@@ -627,12 +663,25 @@ describe('the shelf in the app', () => {
     expect(iap.available).toBe(true);
     const pass = iap.shelf().find((p) => p.id === PRODUCT_PASS)!;
     expect(pass.sellable).toBe(false);
-    expect(pass.price).toBe('$3.99');
+    expect(pass.price).toBe('US$3.99');
     expect(iap.canSell(PRODUCT_PASS)).toBe(false);
     const noAds = iap.shelf().find((p) => p.id === PRODUCT_NOADS)!;
     expect(noAds.sellable).toBe(true);
     expect(noAds.price).toBe('EUR 3.99');
     expect(iap.shelf()).toHaveLength(CATALOGUE.length);
+  });
+
+  it.each(['A$5.99', '$3.99', '3,99\u00a0€'])('keeps the live Ad Free price %s exactly as supplied by the native store', async (price) => {
+    const cdv = fakeCdv();
+    const get = cdv.store.get;
+    cdv.store.get = (id: string) => {
+      const product = get(id);
+      return id === PRODUCT_NOADS ? { ...product, pricing: { price } } : product;
+    };
+    const { iap } = await nativeStore(cdv);
+    const noAds = iap.shelf().find((p) => p.id === PRODUCT_NOADS)!;
+    expect(noAds.sellable).toBe(true);
+    expect(noAds.price).toBe(price);
   });
 });
 

@@ -11,7 +11,7 @@
  * Pure rules and state, no DOM. The state is SaveData.loops (made whole by normalizeLoops); the calendar keeps
  * using SaveData.gift (the daily gift it grew out of).
  */
-import type { MatchSummary, SaveData } from '../core/save';
+import { normalizeShop, type MatchSummary, type SaveData } from '../core/save';
 import { hashString } from '../core/rng';
 import { GEM_REWARDS, addGems } from './gems';
 
@@ -115,9 +115,30 @@ export const CALENDAR: readonly CalendarDay[] = [
  */
 export function calendarToday(save: Pick<SaveData, 'gift'>, day: string): { step: number; reward: CalendarDay } | null {
   const g = save.gift;
-  if (g?.last === day) return null;
+  // A rewind must not turn yesterday into a new claim. The stored date is a local high-water mark.
+  if (!DAY.test(day) || (g && DAY.test(g.last) && g.last >= day)) return null;
   const step = g ? (Math.max(1, Math.min(7, Math.floor(g.streak) || 1)) % 7) + 1 : 1;
   return { step, reward: CALENDAR[step - 1] };
+}
+
+/** Revalidate after any ad/async UI, then pay all parts together. Re-entry and stale cards pay nothing. */
+export function claimCalendar(
+  save: Pick<SaveData, 'coins' | 'gems' | 'shop' | 'gift'>,
+  day: string,
+  expectedStep: number,
+  doubleCoins = false,
+): (CalendarDay & { step: number }) | null {
+  const today = calendarToday(save, day);
+  if (!today || today.step !== expectedStep) return null;
+  const reward = { ...today.reward, coins: today.reward.coins * (doubleCoins ? 2 : 1), step: today.step };
+  save.coins += reward.coins;
+  if (reward.gems) addGems(save, reward.gems, 'calendar');
+  if (reward.tokens) {
+    save.shop = normalizeShop(save.shop);
+    save.shop.tokens = Math.min(999, save.shop.tokens + reward.tokens);
+  }
+  save.gift = { last: day, streak: today.step };
+  return reward;
 }
 
 /** The day after the last one claimed (what "tomorrow" pays, for the hub's line), 1..7. */
@@ -137,7 +158,7 @@ export function claimSweep(save: LoopSave & Pick<SaveData, 'gems' | 'progress'>,
   const d = save.progress.daily;
   if (d.day !== day || !d.claimed.every(Boolean)) return 0;
   const l = loopsOf(save);
-  if (l.sweep === day) return 0;
+  if (!DAY.test(day) || l.sweep >= day) return 0;
   l.sweep = day;
   addGems(save, GEM_REWARDS.dailySweep, 'dailySweep');
   return GEM_REWARDS.dailySweep;
@@ -192,7 +213,7 @@ export function weeklyObjectives(day: string): [Weekly, Weekly, Weekly] {
 export function weeklyFor(save: LoopSave, day: string): WeeklyState {
   const l = loopsOf(save);
   const week = weekStart(day);
-  if (l.weekly.week !== week) l.weekly = { week, progress: [0, 0, 0], claimed: [false, false, false] };
+  if (l.weekly.week < week) l.weekly = { week, progress: [0, 0, 0], claimed: [false, false, false] };
   return l.weekly;
 }
 
@@ -225,7 +246,7 @@ export function advanceWeekly(save: LoopSave & Pick<SaveData, 'gems'>, day: stri
   const w = weeklyFor(save, day);
   const counts = weeklyCounts(s, dailiesDone);
   const done: WeeklyDone[] = [];
-  weeklyObjectives(day).forEach((o, i) => {
+  weeklyObjectives(w.week).forEach((o, i) => {
     w.progress[i] = Math.min(o.goal, w.progress[i] + counts[o.kind]);
     if (w.progress[i] >= o.goal && !w.claimed[i]) {
       w.claimed[i] = true;
@@ -241,6 +262,7 @@ export function advanceWeekly(save: LoopSave & Pick<SaveData, 'gems'>, day: stri
 /** Ads of this kind still open today. */
 export function adsLeft(save: LoopSave, place: AdPlace, day: string): number {
   const a = loopsOf(save).ads;
+  if (!DAY.test(day) || a.day > day) return 0;
   return a.day === day ? Math.max(0, AD_CAPS[place] - a[place]) : AD_CAPS[place];
 }
 

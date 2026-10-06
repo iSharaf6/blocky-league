@@ -32,7 +32,7 @@ import {
 import { ads } from '../platform/ads';
 import { buzz } from '../platform/haptics';
 import {
-  CATALOGUE, FIRST_BUY_MULT, PRODUCT_DOUBLER, PRODUCT_NOADS, PRODUCT_PRO, PRODUCT_STARTER, iap, proOffered, proWorthUsd, type IapGrant, type IapProduct,
+  FIRST_BUY_MULT, PRODUCT_DOUBLER, PRODUCT_NOADS, PRODUCT_PRO, PRODUCT_STARTER, iap, proOffered, type IapGrant, type IapProduct,
 } from '../platform/iap';
 import { atmosphereOf, decorBonusParts, decorBonusShort, INCOME_CAP } from '../meta/atmosphere';
 import {
@@ -47,7 +47,7 @@ import { openBadges } from './badges';
 import type { GroundState } from '../meta/ground';
 import { confirmGems, gemArt, gemPrice } from './gemUi';
 import { passItemId, seasonOf, seasonTheme, selectJourney } from '../meta/season';
-import { quickSaleValue, squadWages, wageBudget, wageOf } from '../meta/market';
+import { RESALE_STARTS, quickSaleValue, scoutResaleCap, squadWages, wageBudget, wageOf } from '../meta/market';
 import { GOAL_FX_COLORS, TRAIL_COLORS } from '../render/cosmetics';
 import { KIT_DESIGNS } from '../render/kitDesigns';
 import { cssHex } from '../render/palette';
@@ -59,6 +59,7 @@ import { pixelIcon } from './pixelIcons';
 import { faceHtml, hydrateFaces } from './preview';
 import { ShopStage, type StageClub, type StageShow, type StageWear } from './shopStage';
 import { sep } from './text';
+import { gemPackBadge } from './storeOffers';
 import './shop.css';
 import './store.css';
 
@@ -383,9 +384,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     // A gem pack: what you get in big numbers (doubled on the first buy, and it says so), the store's price.
     const pack = (p: IapProduct, i: number) => {
       const total = p.gems * (p.firstBonus ? FIRST_BUY_MULT : 1);
+      const badge = gemPackBadge(p);
       return `<button class="sh-iap gem ${p.tag ? 'tagged' : ''} ${busy === p.id ? 'wait' : ''}" data-a="iap" data-id="${esc(p.id)}" ${off}
-        aria-label="${fmt(total)} gems, ${esc(p.price)}${p.firstBonus ? ', doubled on your first buy' : p.tag ? `, ${p.tag.toLowerCase()}` : ''}">
-        ${p.firstBonus ? `<i class="sh-ribbon first">FIRST BUY X${FIRST_BUY_MULT}</i>` : p.tag ? `<i class="sh-ribbon ${p.tag === 'BEST VALUE' ? 'best' : 'pop'}">${p.tag}</i>` : ''}
+        aria-label="${fmt(total)} gems, ${esc(p.price)}${p.firstBonus ? ', doubled on your first buy' : badge ? `, ${badge.toLowerCase()}` : ''}">
+        ${badge ? `<i class="sh-ribbon ${p.firstBonus ? 'first' : p.tag === 'BEST VALUE' ? 'best' : 'pop'}">${badge}</i>` : ''}
         <span class="sh-pile gems">${gemPile(i + 1)}</span>
         <b>${fmt(total)}</b>
         <small>${p.firstBonus ? 'GEMS, DOUBLED' : p.bonusPct ? `GEMS +${p.bonusPct}%` : 'GEMS'}</small>
@@ -447,11 +449,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       main = `<div class="sh-iaps">${COIN_OFFERS.map(swap).join('')}</div>
         <div class="sh-offers n${extra.length}">${extra.join('')}</div>`;
     } else if (sec === 'offers') {
-      // The one-time offers. The PRO bundle only while neither of its parts is owned (it is priced against both).
-      const proUsd = CATALOGUE.find((e) => e.id === PRODUCT_PRO)?.usd ?? 0;
-      const saving = proUsd ? Math.round((1 - proUsd / proWorthUsd()) * 100) : 0;
+      // State the bundle contents. Localized StoreKit prices cannot support a saving calculated from US defaults.
+      // The PRO bundle only appears while neither permanent benefit is owned.
       const list2 = [
-        pro && proOffered(save) ? offer('pro', pro, pixelIcon('crown', '#ffd23a', 3), 'PRO BUNDLE', `NO ADS + DOUBLER + ${fmt(pro.gems)} GEMS${saving > 0 ? `${sep()}SAVE ${saving}%` : ''}`, 'btn-yellow') : '',
+        pro && proOffered(save) ? offer('pro', pro, pixelIcon('crown', '#ffd23a', 3), 'PRO BUNDLE', `NO ADS + DOUBLER + ${fmt(pro.gems)} GEMS`, 'btn-yellow') : '',
         starter && !starter.owned ? offer('starter', starter, pixelIcon('ball', '#ffd23a', 3), 'STARTER PACK', `${fmt(starter.coins)} COINS + ${fmt(starter.gems)} GEMS + GOLD BALL`, 'btn-yellow') : '',
         noAds ? offer('noads', noAds, pixelIcon('film', '#fff', 3), 'REMOVE ADS', 'NO AD BREAKS, FOR GOOD', 'btn-red') : '',
         doubler ? offer('doubler', doubler, pixelIcon('bolt', '#ffd23a', 3), 'COIN DOUBLER', 'EVERY MATCH PAYS X2, FOR GOOD', 'btn-white') : '',
@@ -1016,6 +1017,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         : '<b>SQUAD DEPTH</b>: he would start on the bench';
       after.innerHTML = `
         <p class="sh-verdict">${lift}</p>
+        ${scoutResaleCap(p) !== null ? `<p class="sh-verdict">SCOUT RESALE CREDIT UNTIL ${RESALE_STARTS} COMPLETED LEAGUE STARTS.</p>` : ''}
         ${overWages ? '<p class="sh-warn">Over your wage budget: wages would cost coins after each ROAD TO GLORY match.</p>' : ''}
         <div class="btn-row no-stick">
           <button class="btn btn-white" data-a="sell">SELL ${coin(value)}</button>

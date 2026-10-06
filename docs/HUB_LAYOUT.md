@@ -52,12 +52,13 @@ Direct Lilita One400 WOFF advance measurements at font11px and an additional sca
 | --- | --- | --- |
 | AD FREE, including letter spacing |48.39|68|
 | $3.99 |31.92|68|
+| US$3.99 (catalogue fallback) |47.22|68|
 | A$5.99 |40.51|68|
 | CHF 3.00 |51.48|68|
 | EUR 3.99 |49.98|68|
 | IDR 59.000 |66.77|68|
 
-These are localized-price samples, not a claim that live StoreKit returned those prices. The IAP tests cover an actual mock-provider price string (`EUR 3.99`) surviving unchanged. The live catalogue currently falls back to `$3.99` until store products are configured. Browser font fallback for additional currency glyphs, shaping, and every possible price string remain unverified.
+These are localized-price samples, not a claim that live StoreKit returned those prices. The IAP tests cover mock-provider price strings (`EUR 3.99`, `A$5.99`, `$3.99`, and `3,99 €`) surviving unchanged. The catalogue fallback is explicitly `US$3.99` until the native store supplies a localized Ad Free price. Paid products remain console setup work in the release record; a fallback price does not establish that a product is purchasable. Browser font fallback for additional currency glyphs, shaping, and every possible price string remain unverified.
 
 ## Store correction
 

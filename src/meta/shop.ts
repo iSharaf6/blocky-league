@@ -680,9 +680,9 @@ export function affordable(save: Pick<SaveData, 'shop' | 'progress' | 'coins'>):
   return ITEMS.filter((it) => it.price > 0 && it.price <= coins && !owns(save, it.cat, it.id)).sort((a, b) => b.price - a.price);
 }
 
-/** The free daily scout pack is waiting (one a local day, YYYY-MM-DD). */
+/** The next free scout pack waits for a later local day; a backward clock never reopens a claimed day. */
 export function freePackReady(save: Pick<SaveData, 'shop'>, day: string): boolean {
-  return shopOf(save).freePack !== day;
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && day > shopOf(save).freePack;
 }
 
 /**
@@ -719,9 +719,10 @@ export function inReach(save: Pick<SaveData, 'shop' | 'progress'>, before: numbe
 export const FREE_AD_COINS = 75;
 export const FREE_AD_DAILY_CAP = 5;
 
-/** Free-coin ads still open today (`day` = localDay(); a new day starts the count again). */
+/** Free-coin ads still open today. Only a later day resets the cap; old dates grant nothing. */
 export function freeAdsLeft(save: Pick<SaveData, 'iap'>, day: string): number {
   const f = iapOf(save).freeAds;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < f.day) return 0;
   return f.day === day ? Math.max(0, FREE_AD_DAILY_CAP - f.count) : FREE_AD_DAILY_CAP;
 }
 
@@ -734,7 +735,7 @@ export type FreeAdResult = { ok: true; coins: number; left: number } | { ok: fal
 export function claimFreeAd(save: Pick<SaveData, 'iap' | 'coins'>, day: string): FreeAdResult {
   if (freeAdsLeft(save, day) <= 0) return { ok: false, reason: 'cap' };
   const f = iapOf(save).freeAds;
-  if (f.day !== day) {
+  if (day > f.day) {
     f.day = day;
     f.count = 0;
   }
@@ -767,6 +768,8 @@ export function earnTokens(save: Pick<SaveData, 'shop'>, n: number): number {
 }
 export type Rarity = 'common' | 'rare' | 'epic' | 'legend';
 export const RARITIES: readonly Rarity[] = ['common', 'rare', 'epic', 'legend'];
+/** Scout Tickets reward squad building; a newly drawn card has a small resale credit until six league starts. */
+export const SCOUT_RESALE: Readonly<Record<Rarity, number>> = { common: 75, rare: 100, epic: 150, legend: 250 };
 
 /** The packs on sale: base price (for a club rated PACK_BASE) and the odds of each rarity, in %, as shown. */
 export const PACKS: { readonly [k in PackKind]: { name: string; price: number; odds: readonly [number, number, number, number] } } = {
@@ -825,10 +828,11 @@ export function rollPack(kind: PackKind, base: number, seed: number, avoid: Iter
   const p = makePlayer(rng, role, target - 4, 0, `pack${seed >>> 0}`, names);
   tuneToOverall(p, target);
   // The better the card, the more likely he is in his prime; a young common one may still grow. Scouted players
-  // sign one-year deals (the lowest resale value: a pack is never a way to print coins, see packPrice).
+  // sign one-year deals. Their temporary resale credit stays bounded even in a high-rated club.
   const age = rarity === 'common' ? 18 + rng.int(15) : rarity === 'rare' ? 20 + rng.int(12) : 23 + rng.int(8);
   const potential = age <= 23 ? 1 + rng.int(rarity === 'common' ? 3 : 5) : 0;
   const player = pinMeta(p, { age, potential, contract: 1 });
+  player.scoutResale = SCOUT_RESALE[rarity];
   return { player, rarity, ovr: overall(player) };
 }
 
@@ -853,21 +857,26 @@ export function openPack(
     const cost = PACK_TOKENS[kind];
     if (shop.tokens < cost) return { ok: false, reason: 'no-tokens', short: cost - shop.tokens };
     shop.tokens -= cost;
-    // (Its coin value, kept with the card: what a sale may fetch and the resale cap go by it, as before.)
+    // Retained as the legacy acquisition basis. New cards carry their smaller rarity resale credit separately.
     price = packPrice(kind, rating);
   }
   const seed = hashString(`${club.short}|${club.name}|${shop.packs}`);
   shop.packs++;
   // Kept until the card is signed or sold (settlePack): a closed tab mid-reveal brings the same card back.
-  shop.pending = { kind, seed, base: rating, price };
-  return { ok: true, card: rollPack(kind, rating, seed, club.squad.map((p) => p.name)), price, free };
+  const card = rollPack(kind, rating, seed, club.squad.map((p) => p.name));
+  shop.pending = { kind, seed, base: rating, price, scoutResale: card.player.scoutResale };
+  return { ok: true, card, price, free };
 }
 
 /** The card of a pack opened but not yet signed or sold (pendingPack in the save), drawn again; null when none. */
 export function pendingCard(save: Pick<SaveData, 'shop'>, club: ClubState | null): { card: PackCard; price: number } | null {
   const p = shopOf(save).pending;
   if (!p || !club) return null;
-  return { card: rollPack(p.kind, p.base, p.seed, club.squad.map((q) => q.name)), price: p.price };
+  const card = rollPack(p.kind, p.base, p.seed, club.squad.map((q) => q.name));
+  // A pack already opened before resale credits shipped keeps the value its reveal originally quoted.
+  if (typeof p.scoutResale === 'number') card.player.scoutResale = p.scoutResale;
+  else delete card.player.scoutResale;
+  return { card, price: p.price };
 }
 
 /** The open pack's card has been signed or sold: nothing is waiting any more. */
@@ -882,7 +891,7 @@ export type SignResult =
 /**
  * Sign a card into the squad (never past SQUAD_MAX): a fresh squad id and a free shirt number; straight into the
  * XI when he beats the weakest starter in a slot of his role (that man drops to the bench), else on the bench.
- * `paid` / `season` are what the career market's resale cap reads (meta/market.ts resaleCap: no flipping).
+ * The cloned scoutResale credit survives signing; paid/season preserve legacy market protection for old cards.
  */
 export function signCard(club: ClubState, card: PackCard, paid = 0, season = 1): SignResult {
   if (club.squad.length >= SQUAD_MAX) return { ok: false, reason: 'squad-full' };
@@ -909,7 +918,7 @@ export function signCard(club: ClubState, card: PackCard, paid = 0, season = 1):
   return { ok: true, player: p, starter: !!replaced, replaced, ovrFrom, ovrTo: clubRating(club) };
 }
 
-/** Sell a card on instead of signing him: his quick-sale value (45% of his value, like any quick sale). */
+/** Sell a card on instead of signing him: the same bounded resale credit shown on his reveal. */
 export function sellCard(save: Pick<SaveData, 'coins'>, card: PackCard): number {
   const v = quickSaleValue(card.player);
   save.coins = wallet(save) + v;

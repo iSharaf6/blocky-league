@@ -1511,7 +1511,7 @@ export class Menus {
   }
 
   fulltime(
-    m: Match, kits: [Kit, Kit], humanSide: number, reward: { coins: number; label: string }, canDouble: boolean,
+    m: Match, kits: [Kit, Kit], humanSide: number, reward: { coins: number; label: string; adBonus?: number }, canDouble: boolean,
     h: { double: () => Promise<boolean>; next: () => void; nextLabel?: string; rematch?: () => void },
     ratings?: { idx: number; name: string; side: number; rating: number; goals: number; assists: number }[],
     prog?: FtProgress,
@@ -1580,7 +1580,7 @@ export class Menus {
             <div class="pane ft-gain">
               <div class="ft-earn">
                 <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
-                ${canDouble ? `<button class="btn btn-yellow ft-dbl" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× COINS</button>` : ''}
+                ${canDouble ? `<button class="btn btn-yellow ft-dbl" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}+${reward.adBonus ?? reward.coins} COINS</button>` : ''}
               </div>
               ${progHtml}
               ${extras ? `<div class="pane-scroll ft-extra">${extras}</div>` : ''}
@@ -1616,8 +1616,8 @@ export class Menus {
       nextBtn.disabled = true;
       const ok = await h.double().finally(() => (nextBtn.disabled = false));
       if (ok) {
-        count(reward.coins * 2);
-        dbl.textContent = 'DOUBLED!';
+        count(reward.coins + (reward.adBonus ?? reward.coins));
+        dbl.textContent = 'BONUS ADDED!';
       } else {
         dbl.textContent = 'AD UNAVAILABLE';
       }
@@ -2543,7 +2543,7 @@ export class Menus {
           <div class="reward"><i></i><span>+${amount}</span>${today.gems ? `<span class="rw-gem">${gemArt(3)}+${today.gems}</span>` : ''}${today.tokens ? '<span class="rw-tok">+1 SCOUT TICKET</span>' : ''}<em>DAY ${streak} OF 7</em></div>
           <p class="gift-note">TOMORROW +${next.coins}${next.gems ? ` AND ${next.gems} GEMS` : ''}${next.tokens ? ' AND A SCOUT TICKET' : ''}${sep()}MISS A DAY, KEEP YOUR PLACE</p>
           <div class="btn-row">
-            ${canDouble ? `<button class="btn btn-white" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× GIFT</button>` : ''}
+            ${canDouble ? `<button class="btn btn-white" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× COINS</button>` : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>
           </div>
         </div>

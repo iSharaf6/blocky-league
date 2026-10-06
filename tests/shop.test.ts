@@ -336,6 +336,21 @@ describe('scout packs', () => {
     expect(t.coins).toBe(5000);
   });
 
+  it('does not reopen free scout packs when the device date moves backward or returns to a claimed day', () => {
+    const s = fresh(5000);
+    const c = club();
+    expect(openPack(s, c, 'scout', '2026-10-03', true).ok).toBe(true);
+    const after = JSON.stringify(s);
+    for (const day of ['2026-10-02', '2026-09-30', '2026-10-03', '']) {
+      expect(freePackReady(s, day)).toBe(false);
+      expect(openPack(s, c, 'scout', day, true)).toMatchObject({ ok: false, reason: 'free-used' });
+      expect(JSON.stringify(s)).toBe(after);
+    }
+    const reloaded = importSave(JSON.parse(after))!;
+    expect(openPack(reloaded, c, 'scout', '2026-10-02', true)).toMatchObject({ ok: false, reason: 'free-used' });
+    expect(openPack(reloaded, c, 'scout', '2026-10-04', true).ok).toBe(true);
+  });
+
   it('a card opened but not signed or sold comes back (a closed tab never loses a paid pack)', () => {
     const s = fresh(5000);
     earnTokens(s, PACK_TOKENS.elite);
@@ -343,7 +358,7 @@ describe('scout packs', () => {
     const r = openPack(s, c, 'elite', DAY);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(s.shop!.pending).toEqual({ kind: 'elite', seed: expect.any(Number), base: clubRating(c), price: r.price });
+    expect(s.shop!.pending).toEqual({ kind: 'elite', seed: expect.any(Number), base: clubRating(c), price: r.price, scoutResale: r.card.player.scoutResale });
     stubStorage(s);
     const back = loadSave();
     const again = pendingCard(back, club());

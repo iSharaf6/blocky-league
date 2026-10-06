@@ -237,6 +237,13 @@ describe('Club Run results', () => {
     st.inMatch = true;
     expect(recordRunResult(st, { won: false, score: [0, 0], how: 'quit' })!.coins).toBe(0);
   });
+
+  it('caps the goal bonus at three in wins and losses without changing round or difficulty rewards', () => {
+    for (const won of [true, false]) for (const round of [1, 7]) for (const difficulty of [0, 1, 2, 3]) {
+      expect(runMatchCoins(round, difficulty, won, 15)).toBe(runMatchCoins(round, difficulty, won, 3));
+      expect(runMatchCoins(round, difficulty, won, 3)).toBeGreaterThan(runMatchCoins(round, difficulty, won, 1));
+    }
+  });
 });
 
 describe('Club Run milestones', () => {
