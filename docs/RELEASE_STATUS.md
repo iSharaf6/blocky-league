@@ -1,4 +1,36 @@
-# TestFlight build 5 — 6 October 2026
+# TestFlight build 6 — 6 October 2026
+
+Build **1.0 (6)** is signed, exported and installed on **EZY (iPhone 15)**. iOS device inventory confirms
+version 1.0, build 6. Apple accepted the upload. The App Store Connect browser session then expired; external group assignment
+awaits the owner signing back in. Build 6 is not yet confirmed available to external testers.
+Build 5 has since been approved by Apple and remains available as the previous playtest build.
+
+The economy audit and reproducible workbook are in [ECONOMY.md](ECONOMY.md) and
+[economy/Blocky-League-Economy.xlsx](economy/Blocky-League-Economy.xlsx). This update closes repeated Moment XP,
+stale settlement and date-rewind reward claims; separates fixed prizes from match/ad multipliers; caps new scout
+card resale until six completed league starts; and removes play rewards from forfeits. Commercial Manager
+upgrades now improve average net income after wages. Saved wallets and legacy card quotes are preserved.
+US catalogue fallback prices are explicit, with no unsupported localized bundle-saving claim.
+
+**Validation:** all **1,524 tests across 79 files** passed in one release regression batch. Typecheck and all five
+web/native release packages passed. Source fingerprints, ZIP hashes, all 33 native game files, code signatures,
+distribution provisioning, Apple sign-in/Game Center entitlements and the privacy manifest were verified against
+the archived app and exported IPA. The workbook has nine sheets and 90 formulas with checked cached values.
+These are code, model, build and installation checks; rendered game QA remains unverified because browser
+preview access was rejected. No claim of perfect balance or every-device visual testing is made.
+
+Source commit `d29306f` is pushed to `main` and `release/ios-app`; fallback tag
+`testflight-build-6-2026-10-06` preserves that runtime. The [main workflow](https://github.com/iSharaf6/blocky-league/actions/runs/37442934089) passed regression checks,
+typecheck, packaging and Pages deployment. The prior build 5 tag is retained. Archive, distribution IPA,
+all five release ZIPs/manifests and verification logs are backed up locally in ignored `release/testflight/1.0-6/`.
+The IPA SHA-256 is `4f049c45e2bd9a6fd498232acfb4a794e21e341dac445e8b10b34e713213a9f3`.
+Apple accepted non-blocking missing-symbol warnings for the existing GoogleMobileAds/UserMessagingPlatform SDKs.
+
+Native IAP products, production ad units and real/sandbox purchase verification remain prerequisites for public
+monetization. Google credential creation/provider entry remains pending; native Apple is configured but requires
+real-device sign-in testing. Existing account/referral features and all earlier gameplay fixes remain included.
+
+## Previous TestFlight build 5 — 6 October 2026
 
 Build **1.0 (5)** is signed, exported and installed on EZY (iPhone 15), confirmed by iOS device inventory.
 Apple accepted the upload and processed build `e4608f3d-d1ca-4a9d-92c2-d82b59271a3e`. It is now **Waiting for

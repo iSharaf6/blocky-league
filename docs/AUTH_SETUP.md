@@ -21,8 +21,9 @@ email is enabled and anonymous sign-in disabled. No OAuth credentials are stored
 The code and native URL scheme are wired. Native Apple still needs a real-device sign-in check before it is
 described as verified end to end. Browser Apple is separately disabled until its Services ID/OAuth secret setup
 and build opt-in are complete. A native Game Center/device account uses the existing edge functions independently
-of these providers. Build 5 is uploaded, installed on the owner's iPhone and **Waiting for Review** for external
-TestFlight testing. Build 4 was withdrawn and removed from the external group.
+of these providers. Build 6 is uploaded and installed on the owner's iPhone; its external group assignment awaits renewed App Store
+Connect browser access. Build 5 has been approved for external TestFlight testing. Build 4 was withdrawn and removed
+from the external group.
 See [RELEASE_STATUS.md](RELEASE_STATUS.md). The GitHub Pages Actions secrets for the public Supabase URL and
 publishable key are configured for the main-branch web build; OAuth/server credentials are not included.
 
