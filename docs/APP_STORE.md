@@ -12,14 +12,14 @@ Apple is enabled, while Google setup and console achievements are still in progr
 
 ## Current TestFlight build — 6 October 2026
 
-App Store Connect app ID: `6819288055`. Version **1.0 (5)** has a compiled, signed archive with all33 native game
+App Store Connect app ID: `6819288055`. Version **1.0 (5)** has a compiled, signed archive with all 33 native game
 assets verified against the iOS bundle and App Store IPA. Source/ZIP fingerprints for all five release packages
-passed. Apple accepted its upload, and the build is installed on the owner's iPhone15. External review submission
-is pending renewed App Store Connect browser sign-in; build4 remains the last observed submission Waiting for Review.
+passed. Apple accepted its upload, and the build is installed on the owner's iPhone 15. It is **Waiting for Review**
+and is the only build in Blocky League Playtest. Build 4 was withdrawn and removed from that group.
 
-Build5 restores score/clock display on resume, clears accepted substitution prompts, restores the visible Ad Free
-price, makes Store products scroll and wrap, and adds durable1,000-coin/50-gem friend rewards. All1,396 workflow
-checks are verified, and the GitHub Pages CI deployment succeeded for main138ea20. The source fallback tag is
+Build 5 restores score/clock display on resume, clears accepted substitution prompts, restores the visible Ad Free
+price, makes Store products scroll and wrap, and adds durable 1,000-coin/50-gem friend rewards. All 1,396 workflow
+checks are verified, and the GitHub Pages CI deployment succeeded for main 138ea20. The source fallback tag is
 `testflight-build-5-2026-10-06`. See docs/HUB_LAYOUT.md for the static-only layout audit and its visual-QA limit.
 
 The existing external playtest link is <https://testflight.apple.com/join/ChfvkUXC>; it requires an approved build

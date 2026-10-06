@@ -1,9 +1,10 @@
 # TestFlight build 5 — 6 October 2026
 
-Build **1.0 (5)** is signed, exported and installed on EZY (iPhone15), confirmed by iOS device inventory.
-Apple accepted the App Store Connect upload (`Upload succeeded`). The browser session expired before build5
-could be added to external testing, so that review submission is pending the owner signing in again. Build4
-remains the last observed external submission; no claim is made that build5 is available to external testers.
+Build **1.0 (5)** is signed, exported and installed on EZY (iPhone 15), confirmed by iOS device inventory.
+Apple accepted the upload and processed build `e4608f3d-d1ca-4a9d-92c2-d82b59271a3e`. It is now **Waiting for
+Review** and is the only build in **Blocky League Playtest**. Build 4's review was withdrawn and its group
+association removed. Automatic notifications are off; no tester invitations were sent. External access through
+<https://testflight.apple.com/join/ChfvkUXC> still requires Apple's approval.
 
 - Match recovery immediately restores the scoreboard, clock and added-time board, including while paused.
 - Accepted quick substitutions show a three-second confirmation, then clear while the change waits for a safe stoppage.
@@ -14,17 +15,17 @@ remains the last observed external submission; no claim is made that build5 is a
   30-day eligibility and 20 invited-friend limits are shown. Durable wallet receipts survive dropped responses,
   and failed local writes roll back rewards. Account switches cannot share another player's cached code.
 
-Validation:1,396 workflow tests across70files passed through the full batch and an82-test recovery/replay recheck.
+Validation: 1,396 workflow tests across 70 files passed through the full batch and an 82-test recovery/replay recheck.
 The sole initial failure was an outdated HUD test fixture, corrected without changing the packaged runtime.
 Typecheck, all five release packages, source/ZIP fingerprints, native asset parity, signatures, distribution
-profile and privacy manifest checks passed. GitHub Pages run37398057405 passed the full CI run and deployed
+profile and privacy manifest checks passed. GitHub Pages run 37398057405 passed the full CI run and deployed
 main commit `138ea20`. Source is pushed to main and release/ios-app; immutable fallback tag
 `testflight-build-5-2026-10-06` points to that source. Archive/IPA/log backups are in ignored `release/testflight/1.0-5/`.
 
 Supabase referral Edge Function version 2 (JWT verification enabled) and migration
 `20261006010812_durable_generous_referral_rewards` are deployed. A rollback-only database integration check passed
 for rewards, retry idempotency, eligibility, reciprocal claims, cap boundaries, permissions, account deletion and
-legacy collection. It left zero synthetic accounts or reward rows. Anonymous HTTP collection is rejected with401.
+legacy collection. It left zero synthetic accounts or reward rows. Anonymous HTTP collection is rejected with 401.
 The uploaded match record remains client-authoritative; this is not server-attested anti-cheat.
 
 Google's consent app has been saved with the owner's explicit policy approval. Its web OAuth client is prepared,
