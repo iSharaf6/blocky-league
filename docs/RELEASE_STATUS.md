@@ -1,7 +1,9 @@
 # TestFlight build 5 — 6 October 2026
 
 Build **1.0 (5)** is signed, exported and installed on EZY (iPhone15), confirmed by iOS device inventory.
-App Store Connect upload is in progress; its external review status will be recorded after Apple processes it.
+Apple accepted the App Store Connect upload (`Upload succeeded`). The browser session expired before build5
+could be added to external testing, so that review submission is pending the owner signing in again. Build4
+remains the last observed external submission; no claim is made that build5 is available to external testers.
 
 - Match recovery immediately restores the scoreboard, clock and added-time board, including while paused.
 - Accepted quick substitutions show a three-second confirmation, then clear while the change waits for a safe stoppage.
@@ -15,7 +17,9 @@ App Store Connect upload is in progress; its external review status will be reco
 Validation:1,396 workflow tests across70files passed through the full batch and an82-test recovery/replay recheck.
 The sole initial failure was an outdated HUD test fixture, corrected without changing the packaged runtime.
 Typecheck, all five release packages, source/ZIP fingerprints, native asset parity, signatures, distribution
-profile and privacy manifest checks passed. Archive/IPA/log backups are in ignored `release/testflight/1.0-5/`.
+profile and privacy manifest checks passed. GitHub Pages run37398057405 passed the full CI run and deployed
+main commit `138ea20`. Source is pushed to main and release/ios-app; immutable fallback tag
+`testflight-build-5-2026-10-06` points to that source. Archive/IPA/log backups are in ignored `release/testflight/1.0-5/`.
 
 Supabase referral Edge Function version 2 (JWT verification enabled) and migration
 `20261006010812_durable_generous_referral_rewards` are deployed. A rollback-only database integration check passed
