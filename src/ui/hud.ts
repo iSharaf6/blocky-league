@@ -255,9 +255,10 @@ export class Hud {
     if (humanSide < 0) this.chip.style.display = 'none';
   }
 
-  setScore(h: number, a: number): void {
+  setScore(h: number, a: number, animate = true): void {
     this.score.innerHTML = scoreHtml(h, a);
     this.score.classList.remove('pop');
+    if (!animate) return;
     void this.score.offsetWidth;
     this.score.classList.add('pop');
   }
@@ -276,7 +277,7 @@ export class Hud {
    * The fourth official's board at 45:00 / 90:00 (Law 7.3): `minutes` of added time, the least that will be played, on
    * a voxel LED board that pops up beside the clock and stays for the added time. null takes it down (the whistle).
    */
-  showAddedBoard(minutes: number | null): void {
+  showAddedBoard(minutes: number | null, animate = true): void {
     const el = this.board;
     if (minutes === null) {
       el.classList.remove('on', 'pop');
@@ -284,8 +285,10 @@ export class Hud {
     }
     el.textContent = `+${minutes}`;
     el.classList.remove('pop');
+    el.classList.add('on');
+    if (!animate) return;
     void el.offsetWidth;
-    el.classList.add('on', 'pop');
+    el.classList.add('pop');
   }
 
   /** The score bug with the added-time board when it is up (it hangs off the bug's right edge). */

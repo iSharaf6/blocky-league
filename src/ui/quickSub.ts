@@ -97,14 +97,15 @@ export class QuickSubCard {
   }
 
   /**
-   * Once a frame (see QuickSubs.update for `shown` and `ready`): the rules step, then the card follows them. The
-   * board shows whatever the HUD is doing (half time included); CSS still hides it in a replay or a close-up.
+   * Once a frame (see QuickSubs.update for `shown` and `ready`): the rules step, then the card follows them. An
+   * accepted card clears after its acknowledgement; the queued change remains valid until the next stoppage.
+   * The board shows whatever the HUD is doing (half time included); CSS hides it in a replay or a close-up.
    */
   update(dt: number, shown: boolean, ready: boolean): void {
     const q = this.qs;
     q.update(dt, shown, ready);
     if (q.rev !== this.drawn) this.draw();
-    const cardOn = shown && (q.mode === 'offer' || q.mode === 'queued');
+    const cardOn = shown && (q.mode === 'offer' || (q.mode === 'queued' && q.left > 0));
     const boardOn = q.mode === 'board';
     if (cardOn !== this.cardOn || boardOn !== this.boardOn) {
       if (cardOn && !this.cardOn) {

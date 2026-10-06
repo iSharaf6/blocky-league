@@ -1485,6 +1485,16 @@ export class MatchSession {
     this.hud?.hideIntro();
     this.hud?.setReplay(false);
     this.hud?.setSkippable(false);
+    // Saved goals have no new goal event to refresh the score bug. Draw the recovered score and clock now,
+    // including while paused, without replaying a goal pop or waiting for the next goal/minute tick.
+    this.hud?.setScore(this.match.score[0], this.match.score[1], false);
+    this.lastMinute = -1;
+    this.updateMatchClock(false);
+    // The caller applies drill labels after recovery. Let the first frame redraw those too, even for an
+    // untimed drill whose countdown never advances.
+    this.lastMinute = -1;
+    const halfEnded = this.match.phase === 'halftime' || this.match.phase === 'fulltime' || this.match.phase === 'shootout';
+    this.hud?.showAddedBoard(this.moment || halfEnded ? null : this.match.addedBoard, false);
     this.present?.hidePlate();
     this.input.reset();
     this.clearLatch();
@@ -3900,7 +3910,8 @@ export class MatchSession {
     matchAudio.frame(this.paused ? 0 : dt, m, (this.subQueue?.length ?? 0) > 0);
   }
 
-  private updateHud(dt: number): void {
+  /** Clock and stadium board share one conversion for normal frames and the first recovered picture. */
+  private updateMatchClock(announceCountdown = true): void {
     const hud = this.hud;
     if (!hud) return;
     const m = this.match;
@@ -3913,7 +3924,7 @@ export class MatchSession {
         this.lastMinute = s;
         hud.setCountdown(s);
         this.stadium.setScore(m.score[0], m.score[1], mo.spec.untimed ? hud.countdownLabel ?? 'PRACTICE' : `${s}s`);
-        if (!mo.spec.untimed && s > 0 && s <= MOMENT_COUNT_S && !mo.outcome && mo.briefT <= 0 && m.phase !== 'goal' && s !== mo.count) {
+        if (announceCountdown && !mo.spec.untimed && s > 0 && s <= MOMENT_COUNT_S && !mo.outcome && mo.briefT <= 0 && m.phase !== 'goal' && s !== mo.count) {
           mo.count = s;
           hud.show(String(s), '', 'small', 0.85);
         }
@@ -3932,6 +3943,13 @@ export class MatchSession {
         this.stadium.setScore(m.score[0], m.score[1], added >= 0 ? `${minute}+${Math.floor(added / 60) + 1}'` : `${minute}'`);
       }
     }
+  }
+
+  private updateHud(dt: number): void {
+    const hud = this.hud;
+    if (!hud) return;
+    const m = this.match;
+    this.updateMatchClock();
     // The minimap sits bottom-centre: off for set pieces, the low cameras, the shootout, and whenever play
     // is in the near third where it would cover the action.
     // (Set pieces: from the whistle until the delivery has had a moment to come in.)

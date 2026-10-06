@@ -16,6 +16,8 @@ import type { PlayerDef, ScenarioSpec, Side } from '../sim/types';
 export const QS_TIRED = 0.4;
 /** Seconds an offer stays up if it's ignored (counted only while it's on screen). */
 export const QS_SHOW_S = 9;
+/** Brief acknowledgement/Undo window after accepting; the change still waits for a safe stoppage. */
+export const QS_QUEUED_SHOW_S = 3;
 /** A player whose offer was ignored, dismissed or undone isn't offered again for this long (real seconds) ... */
 export const QS_SNOOZE_S = 25;
 /** ... nor for this many match minutes, whichever is longer (long halves: a minute is a lot of seconds). */
@@ -75,7 +77,7 @@ export class QuickSubs {
   offer: QuickSubOffer | null = null;
   /** The board's change while mode is 'board'. */
   done: QuickSubDone | null = null;
-  /** Seconds left: the offer's time on screen, or the board's. */
+  /** Seconds left: the offer, queued acknowledgement or completed board's time on screen. */
   left = 0;
   /** Settings > QUICK SUBS. Off: nothing is offered and a queued change is dropped. */
   enabled = true;
@@ -123,6 +125,9 @@ export class QuickSubs {
       return;
     }
     if (this.mode === 'queued') {
+      // The pending change can wait through a whole attack; its full card should not cover that attack.
+      // Count only visible time so a replay/pause cannot swallow the acknowledgement or Undo window.
+      if (shown) this.left = Math.max(0, this.left - dt);
       const o = this.offer;
       if (!o || !this.valid(o)) this.toIdle(QS_GAP_S);
       else if (ready && quickSubStoppage(m, o.idx)) this.execute(o);
@@ -177,6 +182,7 @@ export class QuickSubs {
   accept(): boolean {
     if (this.mode !== 'offer' || !this.offer) return false;
     this.mode = 'queued';
+    this.left = QS_QUEUED_SHOW_S;
     this.rev++;
     return true;
   }

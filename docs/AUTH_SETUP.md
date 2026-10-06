@@ -13,8 +13,9 @@ build values through its configured Actions secrets; the template contains no se
 The existing project `kkumittamjteollyxszd` is `ACTIVE_HEALTHY`. Apple is now **enabled** for native Client ID
 `com.calynx.blockyleague`; manual identity linking is enabled. The Site URL is the published GitHub website, with
 the exact native callback and published website allowlisted as recorded below. Google remains **disabled** while
-the consent-app form in dedicated Google project `blocky-league-510713` awaits the owner's approval of Google's
-API Services User Data Policy. OAuth client creation and credential entry remain pending. GitHub remains disabled;
+the consent app in dedicated Google project `blocky-league-510713` is saved with the owner's explicit approval of Google's
+API Services User Data Policy. The web OAuth client is prepared with the exact origin and callback; credential creation
+and the owner's secure provider entry remain pending. GitHub remains disabled;
 email is enabled and anonymous sign-in disabled. No OAuth credentials are stored in the game or this document.
 
 The code and native URL scheme are wired. Native Apple still needs a real-device sign-in check before it is
@@ -86,8 +87,11 @@ web Apple sign-in; portal builds still have no game accounts.
 INVITE FRIENDS is on the own-site/native hub and ACCOUNT panel. The share sheet includes the public playtest URL
 `https://isharaf6.github.io/blocky-league/`, plus a valid friend code when signed in. It never shares
 `capacitor://localhost`, reads contacts or sends a message automatically. Without native sharing, web uses its share
-sheet or copies the link. Rewards use the existing server rules: a new account's first win, one referral code,
-100 coins each, with existing age/referral/rate limits. This is an invitation to the published web playtest until an
+sheet or copies the link. Qualified referrals pay each player 1,000 coins and 50 gems: a new account signs in, wins a match, and enters
+one friend code within its first 30 days. An inviter can earn rewards for 20 friends; no purchase is required.
+The panel shows joined friends, rewards ready to collect, and a retry button. Protocol 2 uses permanent receipt
+IDs stored with the wallet, so lost responses and repeated collection do not consume or duplicate grants.
+Legacy clients are asked to update before referral actions. This is an invitation to the published web playtest until an
 actual App Store URL is available; no App Store app ID has been invented.
 
 ## Validation

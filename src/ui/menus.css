@@ -67,8 +67,9 @@
   .hub-screen .hub-acts { gap: 5px; }
   .hub-screen .hub-acts .hub-acct { width: 76px; padding: 4px; font-size: calc(12px * var(--ts)); }
   .hub-screen .hub-acct small { font-size: calc(8px * var(--ts)); letter-spacing: 0; }
-  .hub-screen .hub-acts .hub-noads { width: 76px; padding: 0 4px; justify-content: center; font-size: calc(12px * var(--ts)); letter-spacing: 0.3px; }
-  .hub-screen .hub-noads :is(.picon, .hn-p, .hn-full), .hub-screen .ha-full, .hub-screen .hf-full { display: none; }
+  .hub-screen .hub-acts .hub-noads { width: 76px; padding: 3px 4px; display: grid; justify-items: center; align-content: center; gap: 2px; font-size: calc(11px * var(--ts)); letter-spacing: 0.3px; }
+  .hub-screen .hub-noads :is(.picon, .hn-full), .hub-screen .ha-full, .hub-screen .hf-full { display: none; }
+  .hub-screen .hub-noads .hn-p { display: block; width: 100%; padding: 2px 0; font-size: calc(11px * var(--ts)); line-height: 1; letter-spacing: 0; white-space: nowrap; }
   .hub-screen :is(.ha-short, .hn-short, .hf-short) { display: inline; }
   .hub-screen .hub-acts .gems.hub-gems { max-width: 80px; gap: 4px; padding: 0 5px; font-size: calc(15px * var(--ts)); }
   .hub-screen .hub-acts .coins.hub-coins { max-width: 140px; gap: 5px; padding: 0 5px; font-size: calc(15px * var(--ts)); }
@@ -97,9 +98,9 @@
     .hub-screen .hub-acct .ha-short { display: none; }
     .hub-screen .hub-acct .ha-mini { display: inline; }
     .hub-screen .hub-acct small { display: none; }
-    .hub-screen .hub-acts .hub-noads { width: 44px; }
-    .hub-screen .hub-noads .hn-short { display: none; }
-    .hub-screen .hub-noads .picon { display: inline-block; width: 20px; height: 20px; }
+    /* Keep the price and AD FREE label. The decorative plus gives its width to them. */
+    .hub-screen .hub-coins .shop-tag { display: none; }
+    .hub-screen .hub-acts .coins.hub-coins { max-width: 116px; }
     .hub-screen .hub-hero.road:not(.cup) .hh-meta { display: none; }
     .hub-screen .hh-head { justify-content: center; }
   }
@@ -108,7 +109,7 @@
     .hub-screen .hub-progress :is(.hub-gift, .hub-tomorrow) { width: 54px; max-width: 54px; }
     .hub-screen .hub-progress .hub-gift .picon { display: none; }
     .hub-screen .hub-acts .gems.hub-gems { max-width: 76px; font-size: calc(14px * var(--ts)); }
-    .hub-screen .hub-acts .coins.hub-coins { max-width: 136px; font-size: calc(14px * var(--ts)); }
+    .hub-screen .hub-acts .coins.hub-coins { max-width: 108px; font-size: calc(14px * var(--ts)); }
   }
 }
 @media (orientation: landscape) {
@@ -123,9 +124,9 @@
     .hub-screen .hub-acct .ha-short { display: none; }
     .hub-screen .hub-acct .ha-mini { display: inline; }
     .hub-screen .hub-acct small { display: none; }
-    .hub-screen .hub-acts .hub-noads { width: 44px; }
-    .hub-screen .hub-noads .hn-short { display: none; }
-    .hub-screen .hub-noads .picon { display: inline-block; width: 20px; height: 20px; }
+    /* Keep the price and AD FREE label. The decorative plus gives its width to them. */
+    .hub-screen .hub-coins .shop-tag { display: none; }
+    .hub-screen .hub-acts .coins.hub-coins { max-width: 116px; }
     .hub-screen .hub-hero.road:not(.cup) .hh-meta { display: none; }
     .hub-screen .hh-head { justify-content: center; }
   }
@@ -134,7 +135,7 @@
     .hub-screen .hub-progress :is(.hub-gift, .hub-tomorrow) { width: 54px; max-width: 54px; }
     .hub-screen .hub-progress .hub-gift .picon { display: none; }
     .hub-screen .hub-acts .gems.hub-gems { max-width: 76px; font-size: calc(14px * var(--ts)); }
-    .hub-screen .hub-acts .coins.hub-coins { max-width: 136px; font-size: calc(14px * var(--ts)); }
+    .hub-screen .hub-acts .coins.hub-coins { max-width: 108px; font-size: calc(14px * var(--ts)); }
   }
 }
 /* Short phones get deliberate fixture sizes. Flex shrink must never cut through a matchday or objective. */

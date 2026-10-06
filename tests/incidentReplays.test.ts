@@ -50,7 +50,7 @@ function rig(m = newMatch()) {
   writeFrame(m, frame, 0);
   const hud = {
     commentary: vi.fn(), card: vi.fn(), show: vi.fn(), toastMsg: vi.fn(), setCinematic: vi.fn(),
-    setSkippable: vi.fn(), setReplay: vi.fn(), hideIntro: vi.fn(), setScore: vi.fn(), showAddedBoard: vi.fn(),
+    setSkippable: vi.fn(), setReplay: vi.fn(), hideIntro: vi.fn(), setScore: vi.fn(), setClock: vi.fn(), showAddedBoard: vi.fn(),
   };
   const refState = { x: -15, z: 3, faceX: -13.3, faceZ: 3 };
   const view = {
@@ -435,6 +435,8 @@ describe('incident replays', () => {
     h.state.stepReplay(0.3);
     expect(h.state.replay).not.toBeNull();
     h.session.restoreCheckpoint(checkpoint);
+    expect(h.hud.setScore).toHaveBeenLastCalledWith(h.m.score[0], h.m.score[1], false);
+    expect(h.hud.setClock).toHaveBeenCalledOnce();
     expect(football(h.m)).toBe(original);
     expect(h.state.replay).toBeNull();
     expect(h.state.replayIncident).toBeNull();

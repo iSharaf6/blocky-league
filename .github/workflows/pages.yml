@@ -47,6 +47,8 @@ jobs:
           tests/deviceBudget.test.ts tests/goalBanner.test.ts
           tests/cloudAuth.test.ts tests/cloud.test.ts tests/signin.test.ts
           tests/mainMenu.test.ts tests/achievements.test.ts
+          tests/quickSubCard.test.ts tests/referrals.test.ts tests/accountReferrals.test.ts tests/cloudSync.test.ts
+          tests/shop.test.ts tests/uiCopy.test.ts
       - name: Type-check and package the web game
         run: npm run build:web
         env:

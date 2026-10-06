@@ -9,7 +9,7 @@ import { defaultSave, type SaveData } from '../src/core/save';
 import { SYNC_MARK_KEY, _resetForTests, _setClientForTests, _setEnvForTests, cloudBoot, cloudSession, cloudStatus, cloudUser, signOutCloud } from '../src/platform/cloud';
 import { _resetOnlineForTests, gateNow } from '../src/platform/online';
 import {
-  DEVICE_SECRET_KEY, _resetSigninForTests, claimFriendCode, collectFriendCoins, connect, connectError, deleteAccount, deviceSecret, newSecret, planSignIn,
+  DEVICE_SECRET_KEY, _resetSigninForTests, claimFriendCode, collectFriendCoins, friendRewardStatus, connect, connectError, deleteAccount, deviceSecret, newSecret, planSignIn,
   watchConnection, type SignInFacts,
 } from '../src/platform/signin';
 import { ENV, fakeBackend, fakeSession, makeCtx, stubDom, stubFunctions, stubStorage } from './cloudFake';
@@ -297,48 +297,145 @@ describe('connect, delete account, friend codes (stubbed backend)', () => {
     expect(ctx.save.coins).toBe(5000);
   });
 
-  it('a friend code pays once: the claim, then exactly the coins the server says', async () => {
+  const rewardId = '12a99bde-a1bc-4a2e-b197-e304dcba9855';
+  const reward = { id: rewardId, coins: 1000, gems: 50 };
+  const grants = () => ({ rewards: [reward], friends: 1, claimed: true });
+
+  it('a friend code gives both currencies once and keeps its receipt in the cloud save', async () => {
     const { be, ctx } = await boot(rich());
-    let owed = 0;
+    let owed = false;
     const fn = stubFunctions({
       'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }),
       referral: (c) => {
+        expect(c.body.protocol).toBe(2);
         if (c.body.action === 'claim') {
           if (c.body.code !== 'ABC2345') return { status: 404, json: { error: 'unknown_code' } };
-          owed = 100;
-          return { json: { ok: true, coins: 100 } };
+          owed = true;
+          return { json: { ok: true } };
         }
-        const coins = owed;
-        owed = 0;
-        return { json: { coins, friends: 0 } };
+        return { json: owed ? grants() : { rewards: [], friends: 0, claimed: false } };
       },
     });
     expect(await connect()).toBe(true);
-
-    expect(await claimFriendCode(ctx, 'zzzzzzz')).toEqual({ result: 'unknown_code', coins: 0 });
+    expect(await claimFriendCode(ctx, 'zzzzzzz')).toEqual({ result: 'unknown_code', coins: 0, gems: 0 });
     expect(ctx.save.coins).toBe(5000);
-
-    // (Typed in lower case with spaces: sent tidy.)
-    expect(await claimFriendCode(ctx, ' abc2345 ')).toEqual({ result: 'ok', coins: 100 });
+    expect(await claimFriendCode(ctx, ' abc2345 ')).toEqual({ result: 'ok', coins: 1000, gems: 50, pending: false });
     expect(fn.calls.filter((c) => c.name === 'referral' && c.body.action === 'claim').pop()?.body.code).toBe('ABC2345');
-    expect(ctx.save.coins).toBe(5100);
-    // Nothing more is owed: collecting again adds nothing.
-    expect(await collectFriendCoins(ctx)).toEqual({ coins: 0, friends: 0 });
-    expect(ctx.save.coins).toBe(5100);
-    // The reward reaches the cloud save.
+    expect(ctx.save.coins).toBe(6000);
+    expect(ctx.save.gems?.balance).toBe(100);
+    expect(ctx.save.friendReceipts).toEqual([rewardId]);
+    // The endpoint deliberately repeats the grant. Neither repeated collect nor a retried claim pays twice.
+    expect(await collectFriendCoins(ctx)).toMatchObject({ ok: true, coins: 0, gems: 0, friends: 1 });
+    expect(await claimFriendCode(ctx, 'ABC2345')).toMatchObject({ result: 'ok', coins: 0, gems: 0 });
+    expect(ctx.save.coins).toBe(6000);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(be.rows.get('dev-1')?.data.coins).toBe(5100);
+    expect(be.rows.get('dev-1')?.data.coins).toBe(6000);
+    expect(be.rows.get('dev-1')?.data.friendReceipts).toEqual([rewardId]);
+  });
+
+  it('losing the collect response leaves a claim recoverable and never reports money not received', async () => {
+    const { be, ctx } = await boot(rich());
+    let drop = true;
+    stubFunctions({
+      'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }),
+      referral: (c) => {
+        if (c.body.action === 'claim') return { json: { ok: true } };
+        if (drop) throw new TypeError('connection lost');
+        return { json: grants() };
+      },
+    });
+    await connect();
+    expect(await claimFriendCode(ctx, 'ABC2345')).toEqual({ result: 'ok', coins: 0, gems: 0, pending: true });
+    expect(ctx.save.coins).toBe(5000);
+    drop = false;
+    expect(await collectFriendCoins(ctx)).toMatchObject({ coins: 1000, gems: 50 });
+    expect(ctx.save.coins).toBe(6000);
+  });
+
+  it.each(['throw', 'false'] as const)('rolls back a failed local persist (%s) and can collect the same receipt again', async (failure) => {
+    const { be, ctx } = await boot(rich());
+    stubFunctions({ 'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }), referral: () => ({ json: grants() }) });
+    await connect();
+    const persist = ctx.persist;
+    ctx.persist = () => { if (failure === 'false') return false; throw new Error('disk full'); };
+    expect(await collectFriendCoins(ctx)).toMatchObject({ ok: false, coins: 0, gems: 0 });
+    expect(ctx.save.coins).toBe(5000);
+    expect(ctx.save.gems?.balance).toBe(50);
+    expect(ctx.save.friendReceipts).toEqual([]);
+    ctx.persist = persist;
+    expect(await collectFriendCoins(ctx)).toMatchObject({ ok: true, coins: 1000, gems: 50 });
+  });
+
+  it('serializes overlapping collections, and checking progress does not pay rewards', async () => {
+    const { be, ctx } = await boot(rich());
+    const fn = stubFunctions({ 'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }), referral: () => ({ json: grants() }) });
+    await connect();
+    expect(await friendRewardStatus(ctx)).toMatchObject({ coins: 1000, gems: 50, friends: 1 });
+    expect(ctx.save.coins).toBe(5000);
+    const one = collectFriendCoins(ctx);
+    expect(collectFriendCoins(ctx)).toBe(one);
+    await one;
+    expect(fn.calls.filter((c) => c.name === 'referral')).toHaveLength(2);
+    expect(ctx.save.coins).toBe(6000);
+  });
+
+  it('does not apply an old account response after sign-out', async () => {
+    const { be, ctx } = await boot(rich());
+    let release!: (r: { json: ReturnType<typeof grants> }) => void;
+    let started!: () => void;
+    const fetching = new Promise<void>((resolve) => { started = resolve; });
+    stubFunctions({
+      'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }),
+      referral: () => new Promise((resolve) => { release = resolve; started(); }),
+    });
+    await connect();
+    const collection = collectFriendCoins(ctx);
+    await fetching;
+    await signOutCloud();
+    release({ json: grants() });
+    expect(await collection).toMatchObject({ ok: false, coins: 0, gems: 0 });
+    expect(ctx.save.coins).toBe(5000);
+  });
+
+  it('does not apply a pending response to a save replaced by a cloud load', async () => {
+    const { be, ctx } = await boot(rich());
+    let release!: (r: { json: ReturnType<typeof grants> }) => void;
+    let started!: () => void;
+    const fetching = new Promise<void>((resolve) => { started = resolve; });
+    stubFunctions({
+      'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }),
+      referral: () => new Promise((resolve) => { release = resolve; started(); }),
+    });
+    await connect();
+    const collection = collectFriendCoins(ctx);
+    await fetching;
+    ctx.reload(rich({ coins: 7500 }));
+    release({ json: grants() });
+    expect(await collection).toMatchObject({ ok: false, coins: 0, gems: 0 });
+    expect(ctx.save.coins).toBe(7500);
+  });
+
+  it('a second device loading the same wallet cannot collect its grants again', async () => {
+    const { be, ctx } = await boot(rich());
+    stubFunctions({ 'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }), referral: () => ({ json: grants() }) });
+    await connect();
+    await collectFriendCoins(ctx);
+    // Cloud snapshots include both the credited wallet and the receipts; either winning conflict copy is whole.
+    const second = makeCtx(JSON.parse(JSON.stringify(ctx.save)) as SaveData);
+    expect(await collectFriendCoins(second)).toMatchObject({ ok: true, coins: 0, gems: 0 });
+    expect(second.save.coins).toBe(6000);
+    expect(second.save.gems?.balance).toBe(100);
   });
 
   it('a friend code needs an account, and the server\'s refusals come back as they are', async () => {
     const { be, ctx } = await boot(rich());
-    expect(await claimFriendCode(ctx, 'ABC2345')).toEqual({ result: 'failed', coins: 0 });
+    expect(await claimFriendCode(ctx, 'ABC2345')).toEqual({ result: 'failed', coins: 0, gems: 0 });
     stubFunctions({
       'device-login': () => ({ json: be.issue(fakeSession('dev-1')) }),
       referral: () => ({ status: 400, json: { error: 'win_first' } }),
     });
     expect(await connect()).toBe(true);
-    expect(await claimFriendCode(ctx, 'ABC2345')).toEqual({ result: 'win_first', coins: 0 });
+    expect(await claimFriendCode(ctx, 'ABC2345')).toEqual({ result: 'win_first', coins: 0, gems: 0 });
     expect(ctx.save.coins).toBe(5000);
   });
 });

@@ -19,12 +19,13 @@ environment.
 | `profiles` | Display name ("Player"), the club's name, the 7-character friend code. Made on first use by `my_profile()`. |
 | `gc_links` | Game Center `teamPlayerID` to account. |
 | `device_links` | SHA-256 of a device's secret to account. |
-| `referrals` | A friend code used: referrer, referee, coins, when each side collected. |
+| `referrals` | A friend code used: referrer, referee, coin/gem amounts and consumed legacy collection flags. |
+| `referral_rewards` | Durable per-player receipt, inviter/welcome role, coins and gems. The server returns grants; the wallet remembers applied receipts. |
 | `rate_limits` | Request counts per hashed address, for the edge functions. |
 
 Row level security is on for every table, with policies on `(select auth.uid())`: a player reads and writes only
 their own `saves` and `profiles` rows, reads their own `gc_links` and `referrals`, and has no access to
-`device_links` or `rate_limits` (the edge functions write those with the service role). The `anon` role has no
+`device_links`, `referral_rewards` or `rate_limits` (the edge functions write those with the service role). The `anon` role has no
 access to anything. Security advisor: no findings. Performance advisor: two "unused index" notes on new
 foreign-key indexes, which is expected until there is traffic.
 
@@ -33,16 +34,32 @@ foreign-key indexes, which is expected until there is traffic.
 | `gc-login` | off (Apple's signature is the credential) | Verifies the Game Center identity, finds or makes the account, returns a session. |
 | `device-login` | off (the device's secret is the credential) | Finds or makes the device's account, returns a session. |
 | `delete-account` | on | Deletes the caller's rows and the account. |
-| `referral` | on | `claim` a friend code, `collect` the coins owed. |
+| `referral` | on | Protocol 2: atomically `claim` a code; `collect` returns repeatable coin/gem grants and referral progress. |
 
 The two with the check off still require the project's publishable key in `apikey` and are rate limited per
 address.
 
 ## Rebuilding it from the repo
 
-Run `migrations/0001_saves.sql` then `migrations/0002_accounts.sql` in the SQL editor (both are safe to re-run),
+Run `migrations/0001_saves.sql`, `migrations/0002_accounts.sql` and `migrations/0003_referral_rewards.sql` in order in the SQL editor (each whole migration in a transaction),
 or `npx supabase link --project-ref <ref>` and `npx supabase db push`. Deploy the functions with
 `npx supabase functions deploy gc-login device-login delete-account referral` (`config.toml` sets the JWT checks).
+
+## Referral protocol 2 rollout
+
+Deploy the updated `referral` function first, including `_shared/server.ts` and `_shared/referral.ts`; then apply
+`0003_referral_rewards.sql` transactionally, before shipping the client. Legacy requests return `update_required`
+without mutation. The migration atomically transfers unpaid legacy coins to receipts and retains paid sides as
+zero-value history. An insert trigger also consumes legacy collection flags, covering already-in-flight old requests.
+
+The service-role-only `claim_referral_reward` RPC locks both accounts in a fixed order, checks first win, 30-day
+account age, one welcome code, no self/mutual referrals and a lifetime 20-friend cap. Repeating the same code is
+idempotent. Each new side earns 1,000 coins and 50 gems. First-win eligibility trusts the existing player-writable
+cloud save; this is not server-attested match verification or a complete anti-cheat system.
+
+Deleting either account erases that account's own receipts. A surviving player's earned grant is retained with
+`referral_id = NULL`, so it contains no deleted player ID and their earned reward, invite count and used-welcome
+status do not disappear. Receipt IDs travel with coin and gem balances in local/cloud save snapshots.
 
 ## Production build configuration
 

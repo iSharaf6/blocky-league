@@ -1,5 +1,6 @@
 /** Public playtest link: never share the native WebView's capacitor://localhost address. */
 import { inNativeApp } from './native';
+import { FRIEND_REWARD_LABEL } from '../meta/referrals';
 
 export const PLAY_URL = 'https://isharaf6.github.io/blocky-league/';
 
@@ -7,7 +8,7 @@ export function inviteMessage(code?: string | null): { title: string; text: stri
   const valid = typeof code === 'string' && /^[A-HJ-NP-Z2-9]{7}$/.test(code);
   return {
     title: 'Blocky League',
-    text: `Build your club and play Blocky League with me!${valid ? ` Enter my friend code ${code} after your first win and we both get 100 coins.` : ''}`,
+    text: `Build your club and play Blocky League with me!${valid ? ` Enter my friend code ${code} after your first win and we both get ${FRIEND_REWARD_LABEL}. Sign in and use it within your first 30 days.` : ''}`,
     url: PLAY_URL,
   };
 }

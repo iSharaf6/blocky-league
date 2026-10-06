@@ -82,9 +82,8 @@
 .sh-rb {
   position: relative;
   appearance: none;
-  flex: 1 1 0;
-  min-height: 0;
-  max-height: 48px;
+  flex: 0 0 44px;
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -878,7 +877,7 @@
 @media (max-width: 600px) and (min-height: 561px) {
   .sh-screen .panel.mc > .mc-body.sh-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .sh-rail { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; }
-  .sh-rb { flex: none; min-height: 40px; }
+  .sh-rb { flex: none; min-height: 44px; }
   .sh-screen .sh-content.split.sh-cat { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .sh-cat .sh-detail { grid-row: 1; }
   .sh-screen .sh-content.sh-money { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto auto; grid-template-areas: 'pass' 'offers' 'packs' 'foot'; overflow-y: auto; }
@@ -899,4 +898,9 @@
   .sh-modal.flipped .sh-rays { animation: none; }
   .sh-back { animation: none; }
   .sh-pack.p-free .sh-cardback, .sh-dot, .sh-new, .shop-new { animation: none; }
+}
+
+:root.ts-small .sh-screen .sh-rb { min-height: 50px; flex-basis: 50px; }
+@media (max-width: 600px) and (min-height: 561px) {
+  :root.ts-small .sh-screen .sh-rb { flex-basis: auto; }
 }

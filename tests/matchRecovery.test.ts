@@ -30,6 +30,8 @@ import { weatherStep } from '../src/sim/weather';
 import { playMatchday } from '../src/ui/career';
 import { careerState } from '../src/ui/club';
 import { resumeRunRequest } from '../src/ui/run';
+import { Hud } from '../src/ui/hud';
+import { scoreHtml } from '../src/ui/text';
 
 beforeEach(() => {
   vi.stubGlobal('window', new EventTarget());
@@ -52,18 +54,20 @@ function rig(m = match()) {
   const tally = new MatchTally();
   const view = { replacePlayer: vi.fn(), apply: vi.fn(), setMarkerVisible: vi.fn(), frameHook: null, celeb: { end: vi.fn() } };
   const cam = { setMode: vi.fn(), cut: vi.fn() };
-  const hud = { show: vi.fn(), hideIntro: vi.fn(), setReplay: vi.fn(), setSkippable: vi.fn() };
+  const hud = { show: vi.fn(), hideIntro: vi.fn(), setReplay: vi.fn(), setSkippable: vi.fn(),
+    setScore: vi.fn(), setClock: vi.fn(), setCountdown: vi.fn(), showAddedBoard: vi.fn() };
+  const stadium = { setScore: vi.fn() };
   const opt: SessionOptions = { ...m.cfg, kits: [m.teams[0].kit, m.teams[1].kit], attendance: 0.8 };
   const onFinish = vi.fn();
   const session = Object.assign(Object.create(MatchSession.prototype), {
-    match: m, opt, input, view, cam, hud, onFinish, demo: false, driver: null,
+    match: m, opt, input, view, cam, hud, stadium, onFinish, demo: false, driver: null,
     tally, fun: { tracker }, time: 17, lastPasser: [9, 20], subQueue: [], moment: null,
     latch: { pass: false, shoot: false, through: false, power: false, skill: false },
     cur: new Float32Array(FRAME_LEN), prev: new Float32Array(FRAME_LEN),
     foulPresentation: new FoulPresentation(), present: { hidePlate: vi.fn() },
     wearing: m.players.map(p => p.def), paused: false,
   }) as MatchSession;
-  return { m, session, input, tracker, tally, view, cam, hud, onFinish, opt };
+  return { m, session, input, tracker, tally, view, cam, hud, stadium, onFinish, opt };
 }
 
 function wire(graph: StateGraph): StateGraph { return JSON.parse(JSON.stringify(graph)) as StateGraph; }
@@ -191,6 +195,69 @@ describe('football object graph recovery', () => {
 });
 
 describe('actual MatchSession checkpoint and restore', () => {
+  it.each([
+    { half: 1, clock: 75, label: '22:30', board: "22'" },
+    { half: 2, clock: 75, label: '67:30', board: "67'" },
+    { half: 2, clock: 153, label: '90:00<em>+0:54</em>', board: "90+1'" },
+  ])('restores the visible 1–1 score and $label clock before play or another goal', ({ half, clock, label, board }) => {
+    const source = rig();
+    openPlay(source.m);
+    source.m.score = [1, 1];
+    source.m.half = half as 1 | 2;
+    source.m.clock = clock;
+    const graph = snapshot(source);
+    const resumed = rig();
+    const classes = new Set<string>();
+    const score = { innerHTML: scoreHtml(0, 0), offsetWidth: 80,
+      classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c) } };
+    const clockEl = { innerHTML: '00:00' };
+    // Exercise Hud's actual DOM writes, not a spy that merely records setScore being called.
+    const display = Object.assign(Object.create(Hud.prototype), { score, clock: clockEl, countdown: null }) as Hud;
+    resumed.hud.setScore.mockImplementation(display.setScore.bind(display));
+    resumed.hud.setClock.mockImplementation(display.setClock.bind(display));
+    resumed.session.paused = true;
+    resumed.session.restoreCheckpoint(graph);
+    expect(score.innerHTML).toBe(scoreHtml(1, 1));
+    expect(classes.has('pop')).toBe(false); // Recovering is not another goal celebration.
+    expect(clockEl.innerHTML).toBe(label);
+    expect(resumed.stadium.setScore).toHaveBeenLastCalledWith(1, 1, board);
+    expect(resumed.m.events).toEqual([]);
+    expect(snapshot(resumed)).toEqual(graph);
+    // Restoring into the same DOM again must refresh the clock even if its cached minute has not changed.
+    score.innerHTML = scoreHtml(0, 0);
+    clockEl.innerHTML = '00:00';
+    resumed.session.restoreCheckpoint(graph);
+    expect(score.innerHTML).toBe(scoreHtml(1, 1));
+    expect(clockEl.innerHTML).toBe(label);
+  });
+
+  it('refreshes an untimed basics label configured by the caller after recovery', () => {
+    const source = rig();
+    const spec = BASICS[0].spec;
+    applyScenario(source.m, spec);
+    Object.assign(source.session, { moment: { spec, briefT: 0, outcome: null, endT: -1, count: -1 } });
+    const resumed = rig();
+    const clockEl = { innerHTML: '00:00', textContent: '',
+      classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn() } };
+    const display = Object.assign(Object.create(Hud.prototype), { clock: clockEl, countdown: null, countdownLabel: null }) as Hud;
+    resumed.hud.setCountdown.mockImplementation(display.setCountdown.bind(display));
+    resumed.session.restoreCheckpoint(snapshot(source));
+    display.countdownLabel = '1/3'; // main.ts configures this immediately after restoreCheckpoint.
+    (resumed.session as unknown as { updateMatchClock(): void }).updateMatchClock();
+    expect(clockEl.textContent).toBe('1/3');
+    expect(resumed.hud.show).not.toHaveBeenCalled();
+  });
+
+  it.each(['play', 'halftime', 'fulltime', 'shootout'] as const)('synchronizes the recovered added-time board during %s', phase => {
+    const source = rig();
+    source.m.phase = phase;
+    source.m.clock = 153;
+    source.m.addedBoard = 2;
+    const resumed = rig();
+    resumed.session.restoreCheckpoint(snapshot(source));
+    expect(resumed.hud.showAddedBoard).toHaveBeenLastCalledWith(phase === 'play' ? 2 : null, false);
+  });
+
   it('clears a prior card victim pose and pin on restore while retaining the actual booking', () => {
     const source = rig();
     source.m.booked.add(7);

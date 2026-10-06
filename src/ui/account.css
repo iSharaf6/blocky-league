@@ -360,3 +360,25 @@
   .ac-panel .ac-actions .btn,
   .ac-panel .ac-providers .btn { min-width: 0; min-height: 42px; padding: 8px 6px 7px; font-size: 13px; letter-spacing: 0.5px; white-space: normal; line-height: 1.1; }
 }
+
+/* Referral rewards stay readable in the same scrollable account panel, including short landscape phones. */
+.ac-referral-reward {
+  display: grid; gap: 4px; padding: 12px; text-align: center;
+  color: var(--ink); background: var(--yellow); border: 3px solid var(--ink);
+}
+.ac-referral-reward b { font: 400 22px / 1.15 var(--round); }
+.ac-referral-reward span { font: 700 10px / 1.4 var(--px); }
+.ac-referral-steps { min-width: 0; font: 400 15px / 1.4 var(--round); }
+.ac-referral-steps b { font-size: 16px; }
+.ac-referral-steps ol { padding-left: 22px; margin: 8px 0; }
+.ac-referral-steps li + li { margin-top: 5px; }
+.ac-referral-steps p { margin: 0; opacity: 0.8; font-size: 13px; }
+.ac-referral-progress { display: grid; gap: 6px; min-width: 0; font: 400 14px / 1.3 var(--round); }
+.ac-referral-progress b { color: var(--blue-d); }
+.ac-referral-progress .btn { width: 100%; min-height: 44px; white-space: normal; }
+@media (max-height: 560px) and (min-width: 600px) {
+  .ac-panel > .ac-referral-reward { grid-column: 1 / -1; }
+  .ac-panel > .ac-referral-steps { grid-column: 1; grid-row: span 2; align-self: start; }
+  .ac-panel > .ac-referral-progress { grid-column: 2; }
+  .ac-referral-reward { padding: 8px; }
+}

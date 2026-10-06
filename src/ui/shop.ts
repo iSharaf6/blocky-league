@@ -6,10 +6,10 @@
  * - GOALS: goal explosions (GOAL FX), sprint TRAILS, CELEBrations;
  * - STADIUM style for your home ground (by slot);
  * - SCOUT: scout packs for MY CLUB (a random card, earned tokens only) and the way into the transfer market;
- * - STORE: everything to do with money and gems, in four sections: GEMS (the gem packs where a store sells them,
+ * - STORE: everything to do with money and gems, in five sections: GEMS (the gem packs where a store sells them,
  *   the iOS and Android apps: platform/iap.ts; the free daily gems), COINS (gems swapped for coins at a shown rate,
- *   FREE COINS from a few rewarded ads a day), OFFERS (the PRO bundle, the Starter Pack, NO ADS, the Coin Doubler)
- *   and CLUB (the Scouting Network, and what else gems do). The Club Pass stays beside them all, for money or gems.
+ *   FREE COINS from a few rewarded ads a day), OFFERS (the PRO bundle, the Starter Pack, NO ADS, the Coin Doubler),
+ *   CLUB (the Scouting Network, and what else gems do), and CLUB PASS (its rewards and both purchase options).
  * Every look is master and detail (docs/UX.md): tiles on the left, the picked look live on a 3D stage on the right
  * (ui/shopStage.ts) with one-tap BUY, TRY IT ON (your whole team in it, with your ball, lawn and goal explosion) and,
  * for kits, the whole line-up and a night view. Rules live in meta/shop.ts; this file only draws them.
@@ -76,9 +76,9 @@ function coinsTab(): boolean {
 }
 
 /** The STORE tab's sections (the chips over its right pane), remembered for the session. */
-export type StoreSec = 'gems' | 'coins' | 'offers' | 'club';
+export type StoreSec = 'gems' | 'coins' | 'offers' | 'club' | 'pass';
 const STORE_SECS: readonly { sec: StoreSec; label: string }[] = [
-  { sec: 'gems', label: 'GEMS' }, { sec: 'coins', label: 'COINS' }, { sec: 'offers', label: 'OFFERS' }, { sec: 'club', label: 'CLUB' },
+  { sec: 'gems', label: 'GEMS' }, { sec: 'coins', label: 'COINS' }, { sec: 'offers', label: 'OFFERS' }, { sec: 'club', label: 'CLUB' }, { sec: 'pass', label: 'CLUB PASS' },
 ];
 let lastStore: StoreSec = 'gems';
 
@@ -413,10 +413,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const newLooks = totals.items.filter(it => !owns(save, it.cat, it.id)).length;
     const passOn = passActive(save);
     const passPending = !!save.iap?.pendingPass;
-    // The Club Pass is the big card: the month, everything it pays in real numbers, and its two prices (the store's,
-    // where there is one, or gems). Tiers already reached unlock at once.
+    // The pass has its own section so its full reward list and both prices have room on phones.
+    // Tiers already reached unlock at once.
     const passCard = `<section class="sh-passcard ${passOn ? 'on' : ''}">
-          <span class="sh-pc-ic" aria-hidden="true">${pixelIcon('crown', '#ffd23a', 4)}</span>
+          <div class="sh-pc-details"><span class="sh-pc-ic" aria-hidden="true">${pixelIcon('crown', '#ffd23a', 4)}</span>
           <b class="sh-pc-name">CLUB PASS</b>
           <small class="sh-pc-theme">${esc(theme)}${sep()}PERMANENT JOURNEY</small>
           <ul class="sh-pc-facts">
@@ -425,13 +425,13 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
             <li><b>${newLooks}</b>NEW PASS LOOKS</li>
           </ul>
           <small class="sh-pc-note">PERMANENT FOR THIS JOURNEY. CEREMONY NOW; THE REST ON ITS TIERS. OWNED LOOKS ARE ALREADY YOURS</small>
-          <button class="btn btn-white" data-a="signaturepick" data-id="${passItemId(season.id)}">PREVIEW ALL SIX</button>
+          </div><div class="sh-pc-actions"><button class="btn btn-white" data-a="signaturepick" data-id="${passItemId(season.id)}">PREVIEW ALL SIX</button>
           ${passOn ? '<em class="sh-tag own sh-pc-on">OWNED FOR GOOD</em>' : `
             ${pass ? `<button class="btn btn-yellow btn-lg sh-pc-buy" data-a="iap" data-id="${esc(pass.id)}" ${off} ${passPending ? 'disabled' : ''} aria-label="Get the Club Pass, ${esc(pass.price)}"><small>GET IT</small><b>${label(pass)}</b></button>` : ''}
             <button class="btn btn-white sh-pc-gems" data-a="passgems" ${off} ${passPending ? 'disabled' : ''} aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${pass ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>`}
-          ${passPending ? '<small class="sh-pc-note">STORE PAYMENT PENDING. NO NEED TO BUY AGAIN</small>' : ''}
+          ${passPending ? '<small class="sh-pc-note">STORE PAYMENT PENDING. NO NEED TO BUY AGAIN</small>' : ''}</div>
         </section>`;
-    const chips = `<div class="chips sh-slots sh-secs" role="group" aria-label="Store sections">${STORE_SECS.map((x) =>
+    const chips = `<div class="chips sh-slots sh-secs x" data-scroll-key="sh-store-sections" role="group" aria-label="Store sections">${STORE_SECS.map((x) =>
       `<button class="${x.sec === sec ? 'on' : ''}" data-a="sec" data-v="${x.sec}" aria-pressed="${x.sec === sec}">${x.label}</button>`).join('')}</div>`;
     let main = '';
     if (sec === 'gems') {
@@ -459,16 +459,17 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       main = list2.length
         ? `<div class="sh-offers wide n${list2.length}">${list2.join('')}</div>`
         : '<div class="sh-offers n1"><p class="sh-earn"><b>NO OFFERS HERE</b>THE STORE IS IN THE IPHONE AND IPAD APP. EVERYTHING ELSE IS EARNED BY PLAYING</p></div>';
+    } else if (sec === 'pass') {
+      main = passCard;
     } else {
       main = clubHtml();
     }
-    return `${passCard}
-      ${chips}
-      <div class="sh-storemain s-${sec}">${main}</div>
+    return `${chips}
+      <div class="sh-storemain pane-scroll s-${sec}" data-scroll-key="sh-store-${sec}">${main}
       <div class="sh-foot">
         ${iap.storefront ? `<button class="btn btn-white sh-restore" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE'}</button>` : ''}
         <p class="sh-fine">${iap.storefront && !iap.available ? '<b>STORE NOT READY YET.</b> ' : ''}No cash value. Gems and coins never buy anything random. Signature items are cosmetic. Online friendlies use preset teams.</p>
-      </div>`;
+      </div></div>`;
   };
 
   /** The STORE's CLUB section: the Scouting Network (permanent tiers, each a stated guarantee) and what else gems do. */
@@ -523,7 +524,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       </section>`;
   };
 
-  // The STORE: the Club Pass on the left, the section picked on the right (GEMS, COINS, OFFERS, CLUB).
+  // The STORE: fixed section tabs, with one scrollable product area. No card or price is squeezed to fit the screen height.
   const coinsHtml = (): string => `<div class="sh-content sh-money v3">${storeHtml()}</div>`;
 
   // ---- tile art (3D stills of the real thing, taken one a frame after a draw; flat art stands in till then)
@@ -1174,6 +1175,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     }).join('');
   };
 
+  let drawnTab: ShopTab | null = null;
   const draw = () => {
     lastTab = tab;
     lastFeat = feat;
@@ -1188,6 +1190,20 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       handlers,
     );
     restoreScrolls(scr.panel);
+    if (tab !== drawnTab) {
+      // Keep the selected section visible when entering Store from a wallet shortcut. Only its rail moves.
+      const rail = scr.panel.querySelector<HTMLElement>('.sh-rail');
+      const active = rail?.querySelector<HTMLElement>('.sh-rb.on');
+      if (rail && active) {
+        const box = rail.getBoundingClientRect();
+        const item = active.getBoundingClientRect();
+        if (item.top < box.top) rail.scrollTop += item.top - box.top;
+        else if (item.bottom > box.bottom) rail.scrollTop += item.bottom - box.bottom;
+        if (item.left < box.left) rail.scrollLeft += item.left - box.left;
+        else if (item.right > box.right) rail.scrollLeft += item.right - box.right;
+      }
+    }
+    drawnTab = tab;
     hydrateFaces(scr.panel);
     // The wallet runs down to its new total after a purchase.
     const span = scr.panel.querySelector<HTMLElement>('.mc-top .coins span');

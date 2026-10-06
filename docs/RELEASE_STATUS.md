@@ -1,4 +1,33 @@
-# TestFlight build 4 — 6 October 2026
+# TestFlight build 5 — 6 October 2026
+
+Build **1.0 (5)** is signed, exported and installed on EZY (iPhone15), confirmed by iOS device inventory.
+App Store Connect upload is in progress; its external review status will be recorded after Apple processes it.
+
+- Match recovery immediately restores the scoreboard, clock and added-time board, including while paused.
+- Accepted quick substitutions show a three-second confirmation, then clear while the change waits for a safe stoppage.
+- The compact header keeps the Ad Free price visible. Store products wrap into readable cards in one scrolling
+  pane, with a separate Club Pass section and 44px controls. Static font/safe-area checks are in HUB_LAYOUT.md;
+  rendered phone QA remains blocked by the preview's browser restriction.
+- Both players earn **1,000 coins + 50 gems** for a qualifying referral. New account, first win, one welcome code,
+  30-day eligibility and 20 invited-friend limits are shown. Durable wallet receipts survive dropped responses,
+  and failed local writes roll back rewards. Account switches cannot share another player's cached code.
+
+Validation:1,396 workflow tests across70files passed through the full batch and an82-test recovery/replay recheck.
+The sole initial failure was an outdated HUD test fixture, corrected without changing the packaged runtime.
+Typecheck, all five release packages, source/ZIP fingerprints, native asset parity, signatures, distribution
+profile and privacy manifest checks passed. Archive/IPA/log backups are in ignored `release/testflight/1.0-5/`.
+
+Supabase referral Edge Function version 2 (JWT verification enabled) and migration
+`20261006010812_durable_generous_referral_rewards` are deployed. A rollback-only database integration check passed
+for rewards, retry idempotency, eligibility, reciprocal claims, cap boundaries, permissions, account deletion and
+legacy collection. It left zero synthetic accounts or reward rows. Anonymous HTTP collection is rejected with401.
+The uploaded match record remains client-authoritative; this is not server-attested anti-cheat.
+
+Google's consent app has been saved with the owner's explicit policy approval. Its web OAuth client is prepared,
+awaiting credential-creation confirmation and the owner's required secret-entry handoff in Supabase. Google remains
+disabled until that step is saved. Native Apple remains configured but still needs a real-device sign-in check.
+
+## Previous TestFlight build 4 — 6 October 2026
 
 Version **1.0 (4)** was accepted by App Store Connect app **6819288055** and installed successfully on EZY
 (iPhone 15). Apple finished processing build `15caa129-b3d8-45f8-b4cd-9ad59c451a58`; its external TestFlight

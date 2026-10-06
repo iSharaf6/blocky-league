@@ -21,13 +21,14 @@
  * once with a keepalive request when the tab hides. Offline pushes wait for `online`. Failures toast.
  */
 import type { Session } from '@supabase/supabase-js';
+import { normalizeFriendReceipts } from '../meta/referrals';
 import { defaultSave, levelOf, normalizeIap, normalizeProgress, normalizeSettings, normalizeShop, type SaveData } from '../core/save';
 import { inNativeApp } from './native';
 
 export interface CloudContext {
   save: SaveData;
   /** Write the local save (after a cloud load replaced it, or after a change worth syncing). */
-  persist: () => void;
+  persist: () => void | boolean;
   /** Replace the running save with one loaded from the cloud (menus re-read from it). */
   reload: (d: SaveData) => void;
 }
@@ -474,6 +475,7 @@ export function normalizeCloud(raw: unknown): SaveData {
     shop: normalizeShop(d.shop),
     // (Store purchases follow the account: an older copy has none, a damaged one is made whole.)
     iap: normalizeIap(d.iap),
+    friendReceipts: normalizeFriendReceipts(d.friendReceipts),
     updatedAt: typeof d.updatedAt === 'string' ? d.updatedAt : base.updatedAt,
   } as SaveData;
 }

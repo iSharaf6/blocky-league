@@ -9,12 +9,13 @@
 import './account.css';
 import { sfx } from '../audio/sfx';
 import {
-  PROVIDER_LABEL, authProviders, cloudAvailable, cloudProfile, cloudStatus, cloudUser, deleteCloudSave, loadFromCloud, onCloudChange, refreshAuthProviders, signInAsGuest,
+  PROVIDER_LABEL, authProviders, cloudAvailable, cloudProfile, cloudSession, cloudStatus, cloudUser, deleteCloudSave, loadFromCloud, onCloudChange, refreshAuthProviders, signInAsGuest,
   signInWith, signInWithEmail, signOutCloud, syncNow, upgradeGuest, upgradeGuestEmail, type CloudContext, type CloudToastKind, type SaveSummary,
 } from '../platform/cloud';
 import { inNativeApp } from '../platform/native';
 import { PLAY_URL, shareInvite } from '../platform/invite';
-import { claimFriendCode, connect, deleteAccount, friendCodeSeen, type ClaimResult } from '../platform/signin';
+import { FRIEND_LIMIT, FRIEND_REWARD_LABEL, FRIEND_WINDOW_DAYS } from '../meta/referrals';
+import { claimFriendCode, collectFriendCoins, connect, deleteAccount, friendCodeSeen, friendRewardStatus, type ClaimResult, type FriendStatus } from '../platform/signin';
 
 const $ = <T extends HTMLElement>(root: ParentNode, sel: string): T | null => root.querySelector(sel) as T | null;
 
@@ -131,7 +132,10 @@ interface FriendView {
   loading: boolean;
   note: string;
   noteKind: 'good' | 'bad' | '';
+  status: FriendStatus | null;
 }
+
+const rewardText = (coins: number, gems: number): string => `${coins.toLocaleString()} coins + ${gems} gems`;
 
 const CLAIM_SAYS: Record<ClaimResult, string> = {
   ok: '',
@@ -139,8 +143,8 @@ const CLAIM_SAYS: Record<ClaimResult, string> = {
   own_code: 'That is your own code. Send it to a friend.',
   already_used: 'You have already used a friend code.',
   win_first: 'Win a match first, then enter the code.',
-  too_late: 'Friend codes are for new players only.',
-  friend_full: 'That friend has already invited the most players allowed.',
+  too_late: `Use a friend's code within ${FRIEND_WINDOW_DAYS} days of creating your account. You can still invite friends.`,
+  friend_full: `That friend has reached the ${FRIEND_LIMIT}-friend reward limit. Try another friend's code.`,
   rate_limited: 'Too many tries. Try again tomorrow.',
   offline: 'You are offline. Connect and try again.',
   failed: 'That did not work. Try again in a moment.',
@@ -148,6 +152,8 @@ const CLAIM_SAYS: Record<ClaimResult, string> = {
 
 function friendHtml(f: FriendView, working: string): string {
   const signedIn = !!cloudUser();
+  const status = f.status;
+  const pending = !!status && (status.coins > 0 || status.gems > 0);
   const dis = working ? 'disabled' : '';
   const code = f.code
     ? `<div class="ac-code" aria-label="Your friend code">${esc(f.code)}</div>`
@@ -157,17 +163,19 @@ function friendHtml(f: FriendView, working: string): string {
     : f.note ? `<div class="ac-status ${f.noteKind === 'bad' ? 'bad' : 'on'}"><i></i><span>${esc(f.note)}</span></div>` : '';
   return `
     <h2>INVITE FRIENDS</h2>
-    <p class="fine big ac-lead">${signedIn ? 'A friend enters your code after their first win. You both get 100 coins.' : 'Send your friends the game and build your clubs together.'}</p>
+    <div class="ac-referral-reward"><b>${FRIEND_REWARD_LABEL}</b><span>FOR YOU AND YOUR FRIEND</span></div>
+    <div class="ac-referral-steps"><b>BRING YOUR FRIENDS TO THE CLUB</b><ol><li>Share the game and your friend code.</li><li>Your friend signs in, wins a match, then enters your code here.</li><li>You both collect the reward. No purchase needed.</li></ol><p>One welcome code per account, within its first ${FRIEND_WINDOW_DAYS} days. Earn rewards for up to ${FRIEND_LIMIT} friends.</p></div>
     ${signedIn ? code : `<p class="fine ac-note ac-play-link">${esc(PLAY_URL)}</p>`}
     <button class="btn btn-go" data-a="share" ${dis}>${f.code ? 'SHARE GAME + MY CODE' : 'SHARE THE GAME'}</button>
-    ${signedIn ? `<div class="ac-field">
+    ${signedIn ? `<div class="ac-referral-progress" role="status"><b>${status?.ok ? `${status.friends} / ${FRIEND_LIMIT} FRIENDS JOINED` : 'FRIEND REWARDS'}</b><span>${pending ? `${rewardText(status!.coins, status!.gems)} ready` : status?.ok ? 'All earned rewards collected. Invite another friend!' : f.loading ? 'Checking your rewards...' : 'Connect to check your rewards.'}</span><button class="btn btn-yellow" data-a="collect" ${dis}>${pending ? 'COLLECT REWARDS' : 'CHECK REWARDS'}</button></div>` : ''}
+    ${signedIn && !status?.claimed ? `<div class="ac-field">
       <label for="ac-code">GOT A FRIEND'S CODE?</label>
       <input id="ac-code" class="ac-input ac-code-in" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="7" placeholder="ABC2345" ${dis}>
       <div class="ac-field-row">
         <button class="btn btn-blue" data-a="claim" ${dis}>USE CODE</button>
         <button class="btn btn-ghost" data-a="cancel" ${dis}>DONE</button>
       </div>
-    </div>` : cloudAvailable() ? `<button class="btn btn-blue" data-a="cancel" ${dis}>SIGN IN FOR A FRIEND CODE</button>` : ''}
+    </div>` : signedIn ? '<p class="fine ac-note">WELCOME CODE USED. Keep sharing your own code for more rewards.</p>' : cloudAvailable() ? `<button class="btn btn-blue" data-a="cancel" ${dis}>SIGN IN FOR A FRIEND CODE</button>` : ''}
     ${note}${backRow}`;
 }
 
@@ -253,7 +261,9 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial
   let working = '';
   let focusNext = false;
   let closed = false;
-  const friend: FriendView = { code: null, loading: false, note: '', noteKind: '' };
+  const friend: FriendView = { code: null, loading: false, note: '', noteKind: '', status: null };
+  let friendUid = cloudSession()?.userId ?? null;
+  let friendRequest = 0;
 
   const render = (): void => {
     if (closed) return;
@@ -266,11 +276,25 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial
       input.focus();
     }
   };
-  const unsub = onCloudChange(render);
+  const unsub = onCloudChange(() => {
+    const uid = cloudSession()?.userId ?? null;
+    if (uid !== friendUid) {
+      friendUid = uid;
+      friendRequest++;
+      friend.code = null;
+      friend.status = null;
+      friend.note = '';
+      friend.noteKind = '';
+      friend.loading = !!uid;
+      if (mode === 'friend' && !closed) void refreshFriend();
+    }
+    render();
+  });
   if (cloudAvailable()) void refreshAuthProviders();
   const retire = (): void => {
     if (closed) return;
     closed = true;
+    friendRequest++;
     unsub();
     window.removeEventListener('keydown', onEscape, true);
     root.remove();
@@ -326,20 +350,37 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial
     focusNext = focus;
     render();
   };
+  async function refreshFriend(): Promise<void> {
+    const request = ++friendRequest;
+    const uid = cloudSession()?.userId ?? null;
+    friendUid = uid;
+    if (!uid) { friend.code = null; friend.status = null; friend.loading = false; render(); return; }
+    const [profile, status] = await Promise.all([cloudProfile(), friendRewardStatus(ctx)]);
+    if (closed || request !== friendRequest || uid !== cloudSession()?.userId) return;
+    friend.code = profile?.code ?? null;
+    friend.status = status;
+    friend.loading = false;
+    render();
+  }
   const openFriend = (): void => {
     friend.note = '';
-    friend.loading = !friend.code;
+    friend.loading = !!cloudUser();
     show('friend');
     friendCodeSeen();
-    if (friend.code || !cloudUser()) { friend.loading = false; render(); return; }
-    void cloudProfile().then((p) => {
-      friend.code = p?.code ?? null;
-      friend.loading = false;
-      render();
-    });
+    void refreshFriend();
+  };
+  const collect = (): void => {
+    void run('Checking friend rewards', async () => {
+      const uid = cloudSession()?.userId;
+      const paid = await collectFriendCoins(ctx);
+      if (closed || uid !== cloudSession()?.userId) return;
+      friend.note = paid.ok ? paid.coins || paid.gems ? `Collected ${rewardText(paid.coins, paid.gems)}!` : 'You are up to date. Your next reward arrives when a friend uses your code after their first win.' : 'Could not check rewards. They stay saved. Try again when connected.';
+      friend.noteKind = paid.ok ? 'good' : 'bad';
+      await refreshFriend();
+    }, true);
   };
   const shareCode = async (): Promise<void> => {
-    const result = await shareInvite(friend.code);
+    const result = await shareInvite(friendUid === cloudSession()?.userId ? friend.code : null);
     if (result === 'copied') cloudToast('Copied the game link. Paste it to a friend', 'good');
     if (result === 'unavailable') cloudToast('Share is unavailable here. The game link is shown above', 'info');
   };
@@ -351,11 +392,15 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial
       return;
     }
     void run('Checking the code', async () => {
+      const uid = cloudSession()?.userId;
       const r = await claimFriendCode(ctx, code);
+      if (closed || uid !== cloudSession()?.userId) return;
       if (r.result === 'ok') {
-        friend.note = `Done! +${r.coins || 100} coins for you, and 100 for your friend.`;
+        friend.note = r.pending ? 'Code accepted! Your rewards are saved. Press CHECK REWARDS when connected to collect them.' : r.coins || r.gems ? `Collected ${rewardText(r.coins, r.gems)}! Your friend's reward is ready too.` : 'This code is already linked. Your earned rewards are up to date.';
         friend.noteKind = 'good';
-        input.value = '';
+        const currentInput = $<HTMLInputElement>(panel, '#ac-code');
+        if (currentInput) currentInput.value = '';
+        await refreshFriend();
       } else {
         friend.note = CLAIM_SAYS[r.result];
         friend.noteKind = 'bad';
@@ -405,6 +450,7 @@ export function openAccountPanel(ctx: CloudContext, onClose: () => void, initial
       case 'friend': openFriend(); break;
       case 'share': void shareCode(); break;
       case 'claim': claim(); break;
+      case 'collect': collect(); break;
       case 'signout':
         if (cloudUser()?.guest) show('confirm-signout');
         else void run('Signing out', () => signOutCloud());

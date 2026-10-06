@@ -1,3 +1,4 @@
+import { normalizeFriendReceipts } from '../meta/referrals';
 import { normalizeMastery, type MasteryState } from '../meta/mastery';
 import { PRESET_CLUBS } from '../meta/data';
 import { normalizeGems, type GemState } from '../meta/gems';
@@ -234,6 +235,8 @@ export interface SaveData {
    * Scouting Network tier. Always whole once loaded; a save from before gems starts with the welcome gift.
    */
   gems?: GemState;
+  /** Applied referral grants. Stored atomically with both currency balances, including in cloud saves. */
+  friendReceipts?: string[];
   /** The reasons to come back (src/meta/loops.ts): weekly objectives, the daily sweep, rewarded-ad caps. Always whole once loaded. */
   loops?: LoopState;
   updatedAt: string;
@@ -401,6 +404,7 @@ export function defaultSave(): SaveData {
     shop: normalizeShop(undefined),
     iap: normalizeIap(undefined),
     gems: normalizeGems(undefined),
+    friendReceipts: [],
     loops: normalizeLoops(undefined),
     updatedAt: new Date().toISOString(),
   };
@@ -478,6 +482,7 @@ function mergeSave(raw: unknown): SaveData {
     iap: normalizeIap(d.iap),
     // Saves from before gems start with the welcome gift (meta/gems.ts WELCOME_GEMS); the loops start empty.
     gems: normalizeGems(d.gems),
+    friendReceipts: normalizeFriendReceipts(d.friendReceipts),
     loops: normalizeLoops(d.loops),
   } as SaveData;
 }

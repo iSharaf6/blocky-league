@@ -45,6 +45,7 @@ One ticket opens a Scout Pack; three open an Elite Pack. Existing tickets are re
 | Source | Gems | When |
 |---|---|---|
 | Welcome gift | 50 | Once (also for a save from before gems) |
+| Qualified friend referral | 50 plus 1,000 coins each | Friend signs in, wins once and enters a code within 30 days; one welcome code, up to 20 invited friends |
 | Login calendar | 5 on day 3, 20 on day 7 | 25 a round of 7 claimed days |
 | Daily sweep | 3 | All three daily challenges done, once a day |
 | Weekly objectives | 10 each | Three a week |

@@ -18,6 +18,8 @@
  * main.ts loads this file behind the literal VITE_PORTAL check, so portal builds carry none of it.
  */
 import { defaultSave } from '../core/save';
+import { addGems, normalizeGems } from '../meta/gems';
+import { FRIEND_LIMIT, friendRewards, normalizeFriendReceipts, type FriendReward } from '../meta/referrals';
 import {
   accountsRequired, adoptSession, callFunction, cloudAvailable, cloudNotice, cloudSession, cloudStatus, cloudUser, flushNow, forgetAccount, onCloudChange, syncSoon,
   type CloudContext,
@@ -279,31 +281,86 @@ export type ClaimResult = 'ok' | 'unknown_code' | 'own_code' | 'already_used' | 
 
 const CLAIM_ERRORS: readonly string[] = ['unknown_code', 'own_code', 'already_used', 'win_first', 'too_late', 'friend_full', 'rate_limited'];
 
-/** Coins a friend code has earned and not yet paid: added to the save, exactly once (the server marks them paid). */
-export async function collectFriendCoins(ctx: CloudContext): Promise<{ coins: number; friends: number }> {
-  if (!cloudSession()) return { coins: 0, friends: 0 };
-  const r = await callFunction<{ coins?: number; friends?: number }>('referral', { action: 'collect' });
-  const coins = r.ok && typeof r.data?.coins === 'number' && r.data.coins > 0 ? Math.min(100_000, Math.floor(r.data.coins)) : 0;
-  if (coins > 0) {
-    ctx.save.coins += coins;
-    ctx.persist();
-    syncSoon();
-  }
-  return { coins, friends: r.ok && typeof r.data?.friends === 'number' ? r.data.friends : 0 };
+export interface FriendStatus {
+  ok: boolean;
+  coins: number;
+  gems: number;
+  friends: number;
+  claimed: boolean;
+  rewards: FriendReward[];
+}
+const emptyFriendStatus = (): FriendStatus => ({ ok: false, coins: 0, gems: 0, friends: 0, claimed: false, rewards: [] });
+
+/** Read durable grants. The server never consumes them merely because a response was sent. */
+export async function friendRewardStatus(ctx: CloudContext): Promise<FriendStatus> {
+  const uid = cloudSession()?.userId;
+  if (!uid) return emptyFriendStatus();
+  const r = await callFunction<{ rewards?: unknown; friends?: unknown; claimed?: unknown }>('referral', { action: 'collect', protocol: 2 });
+  if (!r.ok || cloudSession()?.userId !== uid || !Array.isArray(r.data?.rewards)) return emptyFriendStatus();
+  const applied = new Set(normalizeFriendReceipts(ctx.save.friendReceipts));
+  const rewards = friendRewards(r.data.rewards).filter((grant) => !applied.has(grant.id));
+  return {
+    ok: true,
+    coins: rewards.reduce((n, r) => n + r.coins, 0),
+    gems: rewards.reduce((n, r) => n + r.gems, 0),
+    friends: typeof r.data.friends === 'number' && Number.isFinite(r.data.friends) ? Math.max(0, Math.min(FRIEND_LIMIT, Math.floor(r.data.friends))) : 0,
+    claimed: r.data.claimed === true,
+    rewards,
+  };
 }
 
-/** Enter a friend's code (after the first win). 'ok': both players are owed their coins; this one is paid at once. */
-export async function claimFriendCode(ctx: CloudContext, code: string): Promise<{ result: ClaimResult; coins: number }> {
-  if (!cloudSession()) return { result: 'failed', coins: 0 };
-  // (The server reads the first win from the cloud save: send what this device has first.)
-  await flushNow();
-  const r = await callFunction('referral', { action: 'claim', code: code.trim().toUpperCase() });
+const collections = new WeakMap<CloudContext, Promise<FriendStatus>>();
+
+/** Coins AND gems, retained under the old exported name for callers. One receipt is applied per saved wallet. */
+export function collectFriendCoins(ctx: CloudContext): Promise<FriendStatus> {
+  const running = collections.get(ctx);
+  if (running) return running;
+  const next = collectFriendRewards(ctx).finally(() => collections.delete(ctx));
+  collections.set(ctx, next);
+  return next;
+}
+
+async function collectFriendRewards(ctx: CloudContext): Promise<FriendStatus> {
+  const uid = cloudSession()?.userId;
+  const save = ctx.save;
+  const receiptsBeforeFetch = save.friendReceipts;
+  const paid = await friendRewardStatus(ctx);
+  // Account switches and cloud loads can happen while a request is in flight, even by mutating the same save.
+  if (!uid || cloudSession()?.userId !== uid || ctx.save !== save || save.friendReceipts !== receiptsBeforeFetch) return emptyFriendStatus();
+  if (!paid.ok || !paid.rewards.length) return paid;
+  const before = { coins: save.coins, gems: save.gems, receipts: save.friendReceipts };
+  save.gems = normalizeGems(save.gems);
+  save.coins += paid.coins;
+  addGems(save, paid.gems, 'friend referral');
+  save.friendReceipts = [...normalizeFriendReceipts(save.friendReceipts), ...paid.rewards.map((r) => r.id)];
+  try {
+    // Currency and receipts are one save, so a retry or another device's cloud copy cannot add them twice.
+    if (ctx.persist() === false) throw new Error('save unavailable');
+  } catch {
+    save.coins = before.coins;
+    save.gems = before.gems;
+    save.friendReceipts = before.receipts;
+    return emptyFriendStatus();
+  }
+  syncSoon();
+  return paid;
+}
+
+/** Claims are idempotent for the same code, including after an interrupted response. */
+export async function claimFriendCode(ctx: CloudContext, code: string): Promise<{ result: ClaimResult; coins: number; gems: number; pending?: boolean }> {
+  const uid = cloudSession()?.userId;
+  if (!uid) return { result: 'failed', coins: 0, gems: 0 };
+  // The server checks the first win in the cloud copy. Never claim against a failed/stale upload.
+  if (!(await flushNow()) || cloudSession()?.userId !== uid) return { result: 'offline', coins: 0, gems: 0 };
+  const r = await callFunction('referral', { action: 'claim', protocol: 2, code: code.trim().toUpperCase() });
+  if (cloudSession()?.userId !== uid) return { result: 'failed', coins: 0, gems: 0 };
   if (!r.ok) {
     const e = r.error ?? '';
-    return { result: e === 'network' ? 'offline' : CLAIM_ERRORS.includes(e) ? (e as ClaimResult) : 'failed', coins: 0 };
+    return { result: e === 'network' ? 'offline' : CLAIM_ERRORS.includes(e) ? (e as ClaimResult) : 'failed', coins: 0, gems: 0 };
   }
+  friendCodeSeen();
   const paid = await collectFriendCoins(ctx);
-  return { result: 'ok', coins: paid.coins };
+  return { result: 'ok', coins: paid.coins, gems: paid.gems, pending: !paid.ok };
 }
 
 /** The friend-code panel was opened here: from now on a reward is looked for at launch. */
@@ -314,7 +371,7 @@ export function friendCodeSeen(): void {
 async function friendCoinsAtLaunch(ctx: CloudContext): Promise<void> {
   if (read(FRIEND_SEEN_KEY) !== '1') return;
   const paid = await collectFriendCoins(ctx);
-  if (paid.coins > 0) cloudNotice(`A friend joined with your code: +${paid.coins} coins`, 'good');
+  if (paid.coins > 0 || paid.gems > 0) cloudNotice(`Friend rewards: +${paid.coins.toLocaleString()} coins + ${paid.gems} gems`, 'good');
 }
 
 export function _resetSigninForTests(): void {
