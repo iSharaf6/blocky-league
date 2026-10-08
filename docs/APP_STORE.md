@@ -14,8 +14,10 @@ Apple is enabled, while Google setup and console achievements are still in progr
 
 App Store Connect app ID: `6819288055`. Version **1.0 (7)** is uploaded, processed and **Approved** for external
 TestFlight testing. It is the only build in the private **Kareem First Beta** group, which has zero testers,
-no public link and automatic notifications off. **Notify Testers** is available; no first-tester invitation or
-notification has been sent. No public App Store release has been submitted.
+no public link and automatic notifications off. **Notify Testers** is available; manual distribution has not
+started. Approved is distinct from Testing. The owner can choose **Notify Testers**, then **Testers > Add Testers**
+to invite the first recipient. No tester has been added and no invitation or notification has been sent.
+No public App Store release has been submitted.
 
 Build 7 includes the final voxel football app icon, current optional-account support and privacy copy, and the
 web-only SEO metadata and sitemap. Typecheck, all five release packages and 183 focused native/account/release
@@ -23,6 +25,12 @@ checks passed. All 33 bundled native web files match the synced bundle, signed a
 The installed Release app's icon, title and main hub were inspected on iPhone 17 Simulator / iOS 26.5;
 gameplay interaction, purchases and sign-in remain physical-device checks. Full evidence and limitations are in
 [RELEASE_STATUS.md](RELEASE_STATUS.md); local release and approval records are in ignored `release/testflight/1.0-7/`.
+
+The [live web game](https://isharaf6.github.io/blocky-league/) now serves the final branding and SEO, with current
+support/privacy copy, canonical URLs, VideoGame structured data and a three-page sitemap. The
+[Pages workflow](https://github.com/iSharaf6/blocky-league/actions/runs/37794780439) passed 1,524 regression checks,
+typecheck, packaging and deployment. Source commit `f44befb` is preserved by `testflight-build-7-2026-10-09`;
+live metadata, page copy and artwork were verified after deployment.
 
 The previous Blocky League Playtest group and its <https://testflight.apple.com/join/ChfvkUXC> link are separate
 from this private first-tester group. Build history is recorded in [RELEASE_STATUS.md](RELEASE_STATUS.md).

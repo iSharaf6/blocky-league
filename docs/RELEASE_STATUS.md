@@ -3,7 +3,9 @@
 Version **1.0 (7)** is uploaded, processed and **Approved** for external TestFlight testing. Apple received the
 upload on **9 October 2026 at 1:12 am Australia/Sydney**. It is the only build in the private **Kareem First Beta**
 group. The group has **zero testers**, its public link is disabled and automatic notifications are off.
-The **Notify Testers** button is available; the owner can send the first invitation when ready.
+The **Notify Testers** button is available. Because automatic notifications were disabled, manual distribution
+has not started: Approved is distinct from Testing. When ready, the owner can choose **Notify Testers**, then
+open **Testers > Add Testers** and invite the first recipient by email.
 No invitation or tester notification has been sent. This is a beta; no public App Store release was submitted.
 
 Its native icon uses the final
@@ -22,6 +24,19 @@ The web package has canonical URLs for the game, support and privacy pages, a th
 updated robots file; native and portal bundles omit those web-only SEO assets. Support copy now reflects
 automatic sprinting, optional cloud saves, match recovery and restore purchases. Privacy copy names the
 current gem products and Game Center score reporting.
+
+**Published web release:** source commit `f44befb613ce76553e5b320c7a9457de71b75018` is pushed to `main` and
+`release/ios-app`; immutable tag `testflight-build-7-2026-10-09` preserves the verified build 7 source. The
+[Pages workflow](https://github.com/iSharaf6/blocky-league/actions/runs/37794780439) passed **1,524 regression
+checks across 79 files**, typecheck, web packaging and deployment. The
+[live game](https://isharaf6.github.io/blocky-league/), support/privacy pages, sitemap, robots file and seven web
+artwork files returned HTTP 200 on 9 October 2026 at 1:46 am Australia/Sydney. The audit verified the current
+title, description and social metadata, exactly one canonical URL per page, matching VideoGame structured data,
+all three sitemap URLs, source-identical support/privacy bodies and source-identical icon/social image bytes.
+Evidence is `logs/pages-workflow.json`, `logs/pages-workflow.log` and `logs/live-site-audit.json` in the handoff
+folder. An independent browser check also verified the new completed title screen and logo;
+`proof/published-game.jpg` records the live result. This publishes the web game; the App Store listing remains an
+unpublished draft.
 
 Archive, IPA, five ZIPs/manifests, local verification logs, upload/export options, approval proof and beta handoff
 files are in ignored `release/testflight/1.0-7/`. Approved build UUID: `aefba3ae-ff6f-48d2-84d2-1452db7d3f7e`.
