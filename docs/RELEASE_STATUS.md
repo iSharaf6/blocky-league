@@ -1,4 +1,53 @@
-# TestFlight build 6 — 6 October 2026
+# TestFlight build 7 — 9 October 2026
+
+Version **1.0 (7)** is uploaded, processed and **Approved** for external TestFlight testing. Apple received the
+upload on **9 October 2026 at 1:12 am Australia/Sydney**. It is the only build in the private **Kareem First Beta**
+group. The group has **zero testers**, its public link is disabled and automatic notifications are off.
+The **Notify Testers** button is available; the owner can send the first invitation when ready.
+No invitation or tester notification has been sent. This is a beta; no public App Store release was submitted.
+
+Its native icon uses the final
+voxel football artwork shared with the web icons and studio mark. The opaque source icon is 1024 × 1024;
+the compiled artwork is present in the archive and matches the exported IPA. Store artwork and listing text
+are prepared separately in `store-assets/app-store/`.
+
+Typecheck, all five release packages and **183 native/account/release checks across eight files** passed.
+The final package source fingerprint is `37d9195519f5809db778b60e089137f0c635e273a8d7aa684096f89a31a268f3`.
+All 33 native web files match the synced bundle, archive and IPA. Signatures, App Store distribution profile,
+version, iPhone/iPad support, Apple sign-in/Game Center entitlements and the UserDefaults privacy declaration
+passed the reusable `scripts/audit-ios-release.mjs` audit. The IPA SHA-256 is
+`ad88273fcf30f963be4d4836c625e961b23a88e0e09cb427538a25afe458fcae`.
+
+The web package has canonical URLs for the game, support and privacy pages, a three-page sitemap and an
+updated robots file; native and portal bundles omit those web-only SEO assets. Support copy now reflects
+automatic sprinting, optional cloud saves, match recovery and restore purchases. Privacy copy names the
+current gem products and Game Center score reporting.
+
+Archive, IPA, five ZIPs/manifests, local verification logs, upload/export options, approval proof and beta handoff
+files are in ignored `release/testflight/1.0-7/`. Approved build UUID: `aefba3ae-ff6f-48d2-84d2-1452db7d3f7e`.
+Private group UUID: `0a571d6a-c6c3-455f-8e32-ebc1f666b9bc`. The
+[private group builds page](https://appstoreconnect.apple.com/teams/656e6aff-e914-4c4b-8bff-c2a8fb1dc50b/apps/6819288055/testflight/groups/0a571d6a-c6c3-455f-8e32-ebc1f666b9bc/builds)
+shows Approved and Notify Testers; the screenshot is `proof/testflight-approved.jpg` in the handoff folder.
+The previous playtest build 5 is approved; build 6 is Ready to Submit. See [TESTFLIGHT.md](TESTFLIGHT.md).
+
+**Rendered native smoke:** the Release app built, installed and launched on **iPhone 17 Simulator / iOS 26.5**.
+The installed home-screen icon, animated title and main hub were inspected. The landscape title fits the safe
+area, and the compact hub's header, prices, wallet, mode cards and bottom controls were visible without clipping.
+Tap to Play reached the hub; opening the installed icon returned to the app. The simulator's 33 bundled web files
+match the signed archive. Screenshots and logs are in `simulator-smoke/` and `logs/`.
+
+Quick Match and gameplay touch response could not be exercised in this native pass: XcodeBuildMCP returned no
+WebView interaction targets, while Simulator coordinate clicks repeatedly failed with `noWindowsAvailable`.
+This is an automation limit, not a demonstrated gameplay failure. The screenshots are the tool's optimized JPEG
+framebuffers; the title and hub are rotated relative to the Simulator's landscape window. They are QA evidence,
+not App Store screenshot exports. Purchases, sign-in, device haptics and physical-device performance remain untested
+in this smoke pass.
+
+These checks establish local release integrity. Build 7 has not yet been installed on a physical device by this
+release pass. Native products, production ad units, Game Center definitions and real device sign-in/purchase
+verification remain prerequisites for public monetization.
+
+## Previous TestFlight build 6 — 6 October 2026
 
 Build **1.0 (6)** is signed, exported and installed on **EZY (iPhone 15)**. iOS device inventory confirms
 version 1.0, build 6. Apple accepted the upload. The App Store Connect browser session then expired; external group assignment

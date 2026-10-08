@@ -1,5 +1,24 @@
 # Blocky League brand and store art
 
+## App Store refresh — 9 October 2026
+
+The current App Store set lives in `store-assets/app-store/`. Its manifest and README are the current upload
+map; the original capture notes below remain a record of the earlier set. The updated app icon and all logo
+lockups use a larger football (radius 4.8) on a smaller, thinner pitch tile (12 wide, 2 thick). This improves
+recognition at Home Screen size while retaining the game's voxel geometry, sky, grass stripes and hard shadow.
+The wordmark is unchanged. `npm run assets:brand` reproducibly exports the source SVGs, iOS asset catalogue
+icon, web/PWA icons and favicons from `src/ui/gameLogo.ts` using Sharp. The iOS master is 1024 square, RGB,
+opaque, with square corners. `store-assets/app-store/icon-size-review.png` shows it at 256, 120, 60 and 40 pixels.
+
+The refreshed artwork uses the real renderer and short pixel captions. Source screenshots remain touch-device
+browser captures rather than native Simulator captures; review notes must retain that distinction.
+
+Current transparent exports: mark 1112×1024; horizontal lockup 1840×424; stacked lockup 1296×1192;
+wordmark 1296×424. Sky lockups remain 2400×800 and 1600×1600. The historical dimensions below describe
+the pre-refresh exports. Apple creative and screenshot dimensions were checked against the official
+[asset specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/creative-assets-specifications)
+and [screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications).
+
 The logo, the icons, the portal covers and the app store screenshots for Blocky League (a Calynx game). This file
 covers the design, the palette, every file (where it is, its size, and the rule it meets) and each platform's
 rules, with the page each rule came from and the date it was read.

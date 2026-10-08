@@ -1,0 +1,12 @@
+Please start with a fresh install or your existing save; tell us which you used. Do not delete an existing save just for this test.
+
+1. First match: complete Learn the Basics, then play a Quick Match. Try passing, a held shot, a through ball, crossing, switching players, tackling and a timed skill move. Tell us which control or prompt was unclear.
+2. Unlocks: score your first goal, return to the hub and open Road to Glory, Moments, Club Run and Blitz. Create a club and finish a league match. Check that coins, XP and the result persist after reopening.
+3. Match recovery: switch to another app or lock the phone during play, then return. Check the score, clock, controls and sound. Close and reopen during a match and try Continue Match; report missing progress or duplicate rewards.
+4. Tactics and menus: make a substitution at half-time, complete the match and open Shop > Store. Check scrolling, prices, wrapped text, touch targets and the screen edges on your device. Confirm accepted substitution prompts disappear.
+5. Offline: enable Airplane Mode and play a Quick Match as a guest. Return online afterwards and check that local progress remains.
+6. Optional services: if you use Apple sign-in, check cancel, sign-in, sign-out and returning to gameplay. If Store products are available, try a sandbox purchase and Restore Purchases. TestFlight purchases run in Apple's sandbox without charges. Report unavailable products or Game Center features as well.
+
+This build uses test ads. If you choose a rewarded ad, check that it returns to the game and grants the displayed reward once. Report crashes, freezes, audio glitches, controls that stop responding or text you cannot read.
+
+Use TestFlight > Send Beta Feedback, or take a screenshot and choose Share Beta Feedback. Include device model, iOS version, build number, game mode, what you expected and what happened. A short screen recording helps with timing or control issues.

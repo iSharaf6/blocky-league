@@ -1,0 +1,25 @@
+{
+  "locale": "en-US",
+  "name": "Blocky League: Soccer",
+  "subtitle": "Voxel football. Build a club.",
+  "promotionalText": "Build your club, climb eight divisions and score with timed skill moves. Try knockout cups, short challenges and Blitz power-ups between league matches.",
+  "description": "Blocky League brings 11-a-side soccer to a chunky voxel pitch. Play quick matches, pull off timed skill moves and build your own club from Park League to the top.\n\n- Road to Glory: climb eight divisions with transfers, training and promotion. Design your uniform and crest, develop your players and grow your stadium.\n- Quick Match: pick from eleven original clubs and four difficulty levels, from Easy to Legend.\n- Blocky Cup: play knockout ties and settle draws with penalty shootouts.\n- Club Run: take on seven matches with one life and choose perks between wins.\n- Moments: tackle eight short challenges with three stars to earn in each.\n- Blitz: collect on-pitch power-ups including Turbo, Mega Shot and Freeze.\n\nThread through balls, cross for a header, time a first-time finish or win the ball with a slide tackle. Celebrate your goals and watch instant replays. Play in daylight, at sunset or under floodlights, with rain and snow on the pitch.\n\nEarn coins, mastery badges and new celebrations, balls and club looks. Club Journeys keep your progress without a monthly reset.\n\nStart with three short practice drills. Landscape touch controls suit iPhone and iPad, with game controller support too.\n\nSingle-player matches work offline with no account required. Ads, in-app purchases and cloud saves need an internet connection.",
+  "keywords": "offline,career,manager,goal,penalty,shootout,dribble,skills,cup,transfer,tactics,controller,striker",
+  "supportUrl": "https://isharaf6.github.io/blocky-league/support.html",
+  "marketingUrl": "https://isharaf6.github.io/blocky-league/",
+  "privacyPolicyUrl": "https://isharaf6.github.io/blocky-league/privacy.html",
+  "copyright": "2026 Calynx",
+  "primaryCategory": "GAMES",
+  "subcategories": [
+    "SPORTS",
+    "CASUAL"
+  ],
+  "characterCounts": {
+    "name": 21,
+    "subtitle": 29,
+    "promotional-text": 152,
+    "description": 1333,
+    "keywords": 99
+  },
+  "keywordBytes": 99
+}

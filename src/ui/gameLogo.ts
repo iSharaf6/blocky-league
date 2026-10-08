@@ -138,8 +138,8 @@ export interface MarkOptions {
   sun: readonly [number, number, number];
 }
 export const MARK_DEFAULT: MarkOptions = {
-  n: 16, patch: 0.95, rot: 30, r: 4,
-  tile: 14, thick: 3, line: 3, stripe: 3,
+  n: 16, patch: 0.95, rot: 30, r: 4.8,
+  tile: 12, thick: 2, line: 2, stripe: 3,
   yaw: 38, pitch: 34,
   sun: [-44, 48, -30],
 };

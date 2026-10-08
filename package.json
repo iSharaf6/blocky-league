@@ -18,7 +18,8 @@
     "build:all": "tsc --noEmit && node scripts/release.mjs web crazygames poki itch",
     "submission": "node scripts/submission.mjs",
     "ios": "npm run build:ios && npx cap sync ios",
-    "economy:model": "node scripts/economy-run.mjs"
+    "economy:model": "node scripts/economy-run.mjs",
+    "assets:brand": "node scripts/export-brand.mjs"
   },
   "dependencies": {
     "@capacitor-community/admob": "^8.1.0",
@@ -36,6 +37,7 @@
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
     "@types/three": "^0.186.0",
+    "sharp": "^0.35.5",
     "typescript": "^5.9.0",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"

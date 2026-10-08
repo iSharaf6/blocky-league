@@ -57,13 +57,27 @@ const VARIANTS = {
 };
 
 // Files from public/ that only make sense on a top-level site we control.
-const WEB_ONLY_FILES = ['sw.js', 'manifest.webmanifest', 'icons', 'apple-touch-icon.png', 'og-image.png', 'robots.txt', 'privacy.html', 'support.html'];
+const WEB_ONLY_FILES = ['sw.js', 'manifest.webmanifest', 'icons', 'apple-touch-icon.png', 'og-image.png', 'robots.txt', 'sitemap.xml', 'privacy.html', 'support.html'];
 const WEB_ONLY_BLOCK = /[ \t]*<!-- web-only:start[\s\S]*?<!-- web-only:end -->\n?/;
 const TEXT_EXT = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.txt', '.svg']);
 const PORTAL_HOSTS = { crazygames: ['sdk.crazygames.com'], poki: ['game-cdn.poki.com'], itch: [] };
 // itch keeps the player-triggered invitation link. Portal SDK builds omit sharing entirely.
 const SHARE_HOSTS = { crazygames: [], poki: [], itch: ['isharaf6.github.io'] };
 const NOT_REQUESTS = new Set(['www.w3.org', 'jcgt.org']);
+
+// Canonicals and sitemap entries belong to the host actually being deployed.
+// Keep the source and portal/native bundles independent of that deployment URL.
+function deploymentSite(value) {
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error('SITE_URL must be an HTTP(S) site URL without credentials, a query or a fragment');
+  }
+  return url.href.replace(/\/+$/, '');
+}
+const xml = (value) => value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character]);
+const canonical = (html, url) => html
+  .replace(/\s*<link\b[^>]*\brel=["']canonical["'][^>]*>/gi, '')
+  .replace('</head>', `  <link rel="canonical" href="${xml(url)}" />\n  </head>`);
 
 // three.js (MIT) and the two fonts (SIL OFL 1.1) require their notices to travel with every copy.
 // The minified bundle drops comments, so each build ships this file, generated from the
@@ -159,11 +173,20 @@ async function buildVariant(variant) {
     html = html.replace(WEB_ONLY_BLOCK, '');
     for (const f of WEB_ONLY_FILES) rmSync(join(outDir, f), { recursive: true, force: true });
   } else if (process.env.SITE_URL) {
-    // Social scrapers need absolute image URLs; only known once the site has a domain.
-    const site = process.env.SITE_URL.replace(/\/+$/, '');
-    html = html
-      .replace(/(<meta (?:property="og:image"|name="twitter:image") content=")\.?\/?og-image\.png"/g, `$1${site}/og-image.png"`)
-      .replace('<meta property="og:type"', `<meta property="og:url" content="${site}/" />\n    <meta property="og:type"`);
+    const site = deploymentSite(process.env.SITE_URL);
+    html = canonical(html, `${site}/`)
+      .replace(/\s*<meta\b[^>]*\bproperty=["']og:url["'][^>]*>/gi, '')
+      .replace(/(<meta (?:property="og:image"|name="twitter:image") content=")\.?\/?og-image\.png"/g, (_, prefix) => `${prefix}${xml(site)}/og-image.png"`)
+      .replace('<meta property="og:type"', `<meta property="og:url" content="${xml(site)}/" />\n    <meta property="og:type"`);
+    const pages = ['', 'support.html', 'privacy.html'];
+    for (const page of pages.filter(Boolean)) {
+      const path = join(outDir, page);
+      writeFileSync(path, canonical(readFileSync(path, 'utf8'), `${site}/${page}`));
+    }
+    writeFileSync(join(outDir, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${pages.map((page) => `  <url><loc>${xml(`${site}/${page}`)}</loc></url>`).join('\n')}\n</urlset>\n`);
+    const robotsPath = join(outDir, 'robots.txt');
+    const robots = readFileSync(robotsPath, 'utf8').replace(/^Sitemap:.*\n?/gmi, '').trimEnd();
+    writeFileSync(robotsPath, `${robots}\n\nSitemap: ${site}/sitemap.xml\n`);
   }
   writeFileSync(indexPath, html);
   writeFileSync(join(outDir, LICENSES_FILE), thirdPartyLicenses());

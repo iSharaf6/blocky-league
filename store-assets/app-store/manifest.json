@@ -1,0 +1,409 @@
+{
+  "capturedAt": "2026-10-08T14:36:18.729Z",
+  "method": "Current game renderer and UI in Chromium touch emulation; creative cameras staged separately.",
+  "sources": {
+    "creative": "https://developer.apple.com/help/app-store-connect/reference/app-information/creative-assets-specifications",
+    "screenshots": "https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications",
+    "guidance": "https://developer.apple.com/app-store/asset-best-practices/"
+  },
+  "files": [
+    {
+      "path": "store-assets/app-store/creative/universal-5244x2950.png",
+      "width": 5244,
+      "height": 2950,
+      "channels": 3,
+      "bytes": 1365083,
+      "sha256": "1dd2022595b81d2153458e6e0fe25f0e6248d76ecc6afee87d36bb8addcbf673",
+      "type": "creative",
+      "placement": "universal-header-search",
+      "wordmark": {
+        "x": 1862,
+        "y": 266,
+        "width": 1520,
+        "height": 497
+      }
+    },
+    {
+      "path": "store-assets/app-store/creative/header-3840x1646.png",
+      "width": 3840,
+      "height": 1646,
+      "channels": 3,
+      "bytes": 1031590,
+      "sha256": "0327fc7c43c96738220db481bd711db956443b54185e4f140ebdc8a09f0f1c02",
+      "type": "creative",
+      "placement": "product-page-header",
+      "wordmark": {
+        "x": 1364,
+        "y": 148,
+        "width": 1112,
+        "height": 364
+      }
+    },
+    {
+      "path": "store-assets/app-store/creative/search-3840x2560.png",
+      "width": 3840,
+      "height": 2560,
+      "channels": 3,
+      "bytes": 864412,
+      "sha256": "bd4260b05b5118e8dd36ceba5c471dce26f14ab0fbdd3904aa4b3ffe4fa9578a",
+      "type": "creative",
+      "placement": "search-results",
+      "wordmark": {
+        "x": 1364,
+        "y": 230,
+        "width": 1112,
+        "height": 364
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-medium/01-score-screamers.png",
+      "width": 2622,
+      "height": 1206,
+      "channels": 3,
+      "bytes": 329398,
+      "sha256": "b9b8c0034686338d80a4e7613b01f884174311369b23bd534ae1373c8cff39e8",
+      "type": "screenshot",
+      "caption": "SCORE SCREAMERS",
+      "device": "iphone-medium",
+      "safeArea": {
+        "left": 47,
+        "right": 47,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 874,
+        "height": 354,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-medium/02-pass-and-move.png",
+      "width": 2622,
+      "height": 1206,
+      "channels": 3,
+      "bytes": 235330,
+      "sha256": "afa8691192d112b4f430e93cdc16f7ec9a127b1fb695f0510caba2ef95ac5441",
+      "type": "screenshot",
+      "caption": "PASS AND MOVE",
+      "device": "iphone-medium",
+      "safeArea": {
+        "left": 47,
+        "right": 47,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 874,
+        "height": 354,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-medium/03-blitz-power-ups.png",
+      "width": 2622,
+      "height": 1206,
+      "channels": 3,
+      "bytes": 256344,
+      "sha256": "0996e0f8598b0d2b319a7fd8f364aefe5828567c3150579aa211891a1cee673c",
+      "type": "screenshot",
+      "caption": "BLITZ POWER UPS",
+      "device": "iphone-medium",
+      "safeArea": {
+        "left": 47,
+        "right": 47,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 874,
+        "height": 354,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-medium/05-bend-it.png",
+      "width": 2622,
+      "height": 1206,
+      "channels": 3,
+      "bytes": 425518,
+      "sha256": "c522bb568a8671b61d325dd6b076eb22669fc93bb70e00ec7dcea02d1388647f",
+      "type": "screenshot",
+      "caption": "BEND IT",
+      "device": "iphone-medium",
+      "safeArea": {
+        "left": 47,
+        "right": 47,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 874,
+        "height": 354,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-large/01-score-screamers.png",
+      "width": 2868,
+      "height": 1320,
+      "channels": 3,
+      "bytes": 375635,
+      "sha256": "7e9da48d281f15918367cd5784f8308880909a761efa77751e1d58ca74ed0edd",
+      "type": "screenshot",
+      "caption": "SCORE SCREAMERS",
+      "device": "iphone-large",
+      "safeArea": {
+        "left": 62,
+        "right": 62,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 956,
+        "height": 388,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-large/02-pass-and-move.png",
+      "width": 2868,
+      "height": 1320,
+      "channels": 3,
+      "bytes": 267268,
+      "sha256": "b0acb2834230ea6243f4d644ff43233bbbf35fdb7180ec3015024ecf7c892e50",
+      "type": "screenshot",
+      "caption": "PASS AND MOVE",
+      "device": "iphone-large",
+      "safeArea": {
+        "left": 62,
+        "right": 62,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 956,
+        "height": 388,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-large/03-blitz-power-ups.png",
+      "width": 2868,
+      "height": 1320,
+      "channels": 3,
+      "bytes": 289833,
+      "sha256": "80ddcad7d0510d9a5cb30cfc32234c777d3bb3b578272eee7bd27c3254aefa49",
+      "type": "screenshot",
+      "caption": "BLITZ POWER UPS",
+      "device": "iphone-large",
+      "safeArea": {
+        "left": 62,
+        "right": 62,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 956,
+        "height": 388,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-large/05-bend-it.png",
+      "width": 2868,
+      "height": 1320,
+      "channels": 3,
+      "bytes": 480797,
+      "sha256": "6e8e69729dfe43cf215e2a295d55123c09b98d7739ac1c1c2658eb1f6f4c7b1f",
+      "type": "screenshot",
+      "caption": "BEND IT",
+      "device": "iphone-large",
+      "safeArea": {
+        "left": 62,
+        "right": 62,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 956,
+        "height": 388,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/ipad-13/01-score-screamers.png",
+      "width": 2752,
+      "height": 2064,
+      "channels": 3,
+      "bytes": 497113,
+      "sha256": "427e1f1d2e0b98ef4bed717114fe893cdef459ebc4a755380b205019a8599ac9",
+      "type": "screenshot",
+      "caption": "SCORE SCREAMERS",
+      "device": "ipad-13",
+      "safeArea": {
+        "left": 0,
+        "right": 0,
+        "bottom": 20
+      },
+      "gameViewport": {
+        "width": 1376,
+        "height": 924,
+        "dpr": 2
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/ipad-13/02-pass-and-move.png",
+      "width": 2752,
+      "height": 2064,
+      "channels": 3,
+      "bytes": 343066,
+      "sha256": "e813b0a68a90c367554f4d07fbf725dce6e15353d4a3688b388718d8e3b1f6d4",
+      "type": "screenshot",
+      "caption": "PASS AND MOVE",
+      "device": "ipad-13",
+      "safeArea": {
+        "left": 0,
+        "right": 0,
+        "bottom": 20
+      },
+      "gameViewport": {
+        "width": 1376,
+        "height": 924,
+        "dpr": 2
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/ipad-13/03-blitz-power-ups.png",
+      "width": 2752,
+      "height": 2064,
+      "channels": 3,
+      "bytes": 366222,
+      "sha256": "a998a0a5b363299d17a283584cbf239d234a16671528e23ebb15a1497fb244c0",
+      "type": "screenshot",
+      "caption": "BLITZ POWER UPS",
+      "device": "ipad-13",
+      "safeArea": {
+        "left": 0,
+        "right": 0,
+        "bottom": 20
+      },
+      "gameViewport": {
+        "width": 1376,
+        "height": 924,
+        "dpr": 2
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/ipad-13/05-bend-it.png",
+      "width": 2752,
+      "height": 2064,
+      "channels": 3,
+      "bytes": 548404,
+      "sha256": "755d7260d37355a4db510e0ab24b5e1ea0017e06a2564dc40be53fccf2a70b87",
+      "type": "screenshot",
+      "caption": "BEND IT",
+      "device": "ipad-13",
+      "safeArea": {
+        "left": 0,
+        "right": 0,
+        "bottom": 20
+      },
+      "gameViewport": {
+        "width": 1376,
+        "height": 924,
+        "dpr": 2
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/ipad-13/04-road-to-glory.png",
+      "width": 2752,
+      "height": 2064,
+      "channels": 3,
+      "bytes": 276734,
+      "sha256": "26784075f6f00504f49bffe34b1d7e5e5382dfbfdbaed4266008e3f894d9c55a",
+      "type": "screenshot",
+      "caption": "ROAD TO GLORY",
+      "device": "ipad-13",
+      "safeArea": {
+        "left": 0,
+        "right": 0,
+        "bottom": 20
+      },
+      "gameViewport": {
+        "width": 1376,
+        "height": 924,
+        "dpr": 2
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-medium/04-road-to-glory.png",
+      "width": 2622,
+      "height": 1206,
+      "channels": 3,
+      "bytes": 120474,
+      "sha256": "0639bf003bdfcda3a0f6ac53608482bb857b6719f3d3ad53fd270138c79ca3c1",
+      "type": "screenshot",
+      "caption": "ROAD TO GLORY",
+      "captionBand": {
+        "height": 96,
+        "pixelCell": 12
+      },
+      "device": "iphone-medium",
+      "safeArea": {
+        "left": 47,
+        "right": 47,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 874,
+        "height": 370,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/screenshots/iphone-large/04-road-to-glory.png",
+      "width": 2868,
+      "height": 1320,
+      "channels": 3,
+      "bytes": 163589,
+      "sha256": "559e8c101bdd69a39c37d195bfe44953fc97903ada9ba8d8f7c3f5be7c3776c0",
+      "type": "screenshot",
+      "caption": "ROAD TO GLORY",
+      "captionBand": {
+        "height": 96,
+        "pixelCell": 12
+      },
+      "device": "iphone-large",
+      "safeArea": {
+        "left": 62,
+        "right": 62,
+        "bottom": 21
+      },
+      "gameViewport": {
+        "width": 956,
+        "height": 408,
+        "dpr": 3
+      }
+    },
+    {
+      "path": "store-assets/app-store/previews/iphone-medium-contact.png",
+      "width": 2136,
+      "height": 698,
+      "channels": 3,
+      "bytes": 725343,
+      "sha256": "0d36386c14c97d5225c17bb4c769466a7a3deff36a7d5e6cb534bf1ebe964a9f",
+      "type": "preview"
+    },
+    {
+      "path": "store-assets/app-store/previews/iphone-large-contact.png",
+      "width": 2136,
+      "height": 698,
+      "channels": 3,
+      "bytes": 731369,
+      "sha256": "712241e3ad0b2991bbc34c58b932fbbc385f1f12bcd3208bf33d6ddfd5ead246",
+      "type": "preview"
+    },
+    {
+      "path": "store-assets/app-store/previews/ipad-13-contact.png",
+      "width": 2136,
+      "height": 1092,
+      "channels": 3,
+      "bytes": 1007559,
+      "sha256": "88da0377b145315a51dd06122f13222f562ae6ecabc42b3ab8ecbfdf87904c67",
+      "type": "preview"
+    }
+  ]
+}

@@ -12,6 +12,12 @@ Copy for CrazyGames, Poki, GameDistribution, itch.io and your own site. Paste as
 
 ---
 
+## Apple App Store and TestFlight
+
+Native iPhone/iPad launch copy is in [store-assets/app-store/metadata](../store-assets/app-store/metadata/README.md): English (Australia) and English (US), with validated name, subtitle, keyword, promotional-text and description limits. TestFlight beta description and What to Test copy are alongside them. [APP_STORE.md](APP_STORE.md) shows the AU listing and native setup details.
+
+Keep the portal copy below specific to browser builds. The native listing covers offline single-player modes, touch controls and controllers; its public copy excludes online friendlies, downloadable clips and pending Game Center availability.
+
 ## Title
 
 **Blocky League**

@@ -1,0 +1,13 @@
+Blocky League is a single-player football game for iPhone and iPad. It uses landscape orientation. No account is required to play or review the game; guest progress is saved on the device.
+
+To start, tap TAP TO PLAY, then LEARN THE BASICS on the hub for three short practice drills. QUICK MATCH is also available. Use the left thumbstick to move; the right buttons pass, shoot, cross, switch players and tackle. Holding a shot builds power. Pushing the stick fully sprints.
+
+ROAD TO GLORY, MOMENTS, CLUB RUN and BLITZ unlock after the player scores their first goal. The hub's EVENTS button opens Moments, Club Run and Blitz. Road to Glory lets the player create a club and play league matches.
+
+This beta uses Google's test ad units. Rewarded ads are optional; occasional full-screen ads occur between later matches, never during play or half-time. Shop > Store contains the native purchase interface and Restore Purchases. Purchase products and Game Center features may be unavailable while their App Store configuration is completed. Core guest gameplay remains available.
+
+Randomized Scout Packs and Elite Packs award player cards. They cost 1 or 3 Scout Tickets respectively; one free Scout Pack is available each day. Tickets are earned through daily challenges and gifts, with an initial grant for a new save. Tickets cannot be bought with money, gems or coins, and the paid Club Pass does not grant them. Pack odds are displayed before opening. The age questionnaire discloses these packs as Loot Boxes. The observed App Store Connect ratings are 9+ in 171 countries, 12+ in Vietnam, 16+ in Australia and Brazil, and All in Korea.
+
+Optional native Apple sign-in and cloud saves are configured but still need device testing. Signing in can be skipped or cancelled. There is no online multiplayer, chat or browser-download feature in this native build.
+
+Please test first-time controls, match recovery after leaving and reopening the app, progression and menu layout. Feedback email: calynx@zohomail.com.au.

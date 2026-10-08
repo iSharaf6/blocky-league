@@ -5,30 +5,27 @@ build in a Capacitor shell (`ios/`, see docs/MONETIZATION.md 4.3): landscape pla
 and no peer-to-peer online matches. Current provider configuration is recorded in docs/AUTH_SETUP.md; native
 Apple is enabled, while Google setup and console achievements are still in progress.
 
-- **Earns money from:** Google AdMob ads (rewarded and between matches, kid-safe) and in-app purchases (gem packs,
+- **Monetization interfaces:** Google AdMob ads (rewarded and between matches) and in-app purchases (gem packs,
   Starter Pack, NO ADS, Club Pass, Coin Doubler, PRO bundle). The design is docs/ECONOMY.md (economy v3).
-- **Game Center:** 21 achievements.
-- **Uploaded build:** version **1.0**, build **5**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
+- **Game Center:** 21 achievement definitions and four leaderboard definitions are prepared; console configuration and native device verification remain pending.
+- **Uploaded build:** version **1.0**, build **7**, bundle id **com.calynx.blockyleague**, iOS 15 and later, iPhone and iPad.
 
-## Current TestFlight build — 6 October 2026
+## Current TestFlight build — 9 October 2026
 
-App Store Connect app ID: `6819288055`. Version **1.0 (5)** has a compiled, signed archive with all 33 native game
-assets verified against the iOS bundle and App Store IPA. Source/ZIP fingerprints for all five release packages
-passed. Apple accepted its upload, and the build is installed on the owner's iPhone 15. It is **Waiting for Review**
-and is the only build in Blocky League Playtest. Build 4 was withdrawn and removed from that group.
+App Store Connect app ID: `6819288055`. Version **1.0 (7)** is uploaded, processed and **Approved** for external
+TestFlight testing. It is the only build in the private **Kareem First Beta** group, which has zero testers,
+no public link and automatic notifications off. **Notify Testers** is available; no first-tester invitation or
+notification has been sent. No public App Store release has been submitted.
 
-Build 5 restores score/clock display on resume, clears accepted substitution prompts, restores the visible Ad Free
-price, makes Store products scroll and wrap, and adds durable 1,000-coin/50-gem friend rewards. All 1,396 workflow
-checks are verified, and the GitHub Pages CI deployment succeeded for main 138ea20. The source fallback tag is
-`testflight-build-5-2026-10-06`. See docs/HUB_LAYOUT.md for the static-only layout audit and its visual-QA limit.
+Build 7 includes the final voxel football app icon, current optional-account support and privacy copy, and the
+web-only SEO metadata and sitemap. Typecheck, all five release packages and 183 focused native/account/release
+checks passed. All 33 bundled native web files match the synced bundle, signed archive and exported IPA.
+The installed Release app's icon, title and main hub were inspected on iPhone 17 Simulator / iOS 26.5;
+gameplay interaction, purchases and sign-in remain physical-device checks. Full evidence and limitations are in
+[RELEASE_STATUS.md](RELEASE_STATUS.md); local release and approval records are in ignored `release/testflight/1.0-7/`.
 
-The existing external playtest link is <https://testflight.apple.com/join/ChfvkUXC>; it requires an approved build
-in the group before testers can join. No new tester invitations or public App Store submission were sent.
-
-Version **1.0 (2)** was successfully uploaded using normal App Store Connect distribution and finished processing
-to **Ready to Submit** for external beta review. The beta description and reviewer contact were saved in
-TestFlight; build 2 was not submitted for beta review. Build 2 includes the AI/cinematics/player-stats baseline
-from `6a01153`, as do uploaded builds 3 and 4. Current details are in [RELEASE_STATUS.md](RELEASE_STATUS.md).
+The previous Blocky League Playtest group and its <https://testflight.apple.com/join/ChfvkUXC> link are separate
+from this private first-tester group. Build history is recorded in [RELEASE_STATUS.md](RELEASE_STATUS.md).
 
 The beta uses Google test ad units. Supabase now accepts native Apple sign-in for `com.calynx.blockyleague`, with
 manual linking and the exact native/web redirects configured. An actual device sign-in still needs verification.
@@ -36,6 +33,29 @@ Google remains disabled while its OAuth setup is underway. Browser Apple sign-in
 and OAuth secret are configured and its public build flag is enabled. Game Center definitions and native purchase
 product configuration remain pending; guest gameplay and local saving are available. No public App Store version
 has been submitted.
+
+## Applied listing draft — 9 October 2026
+
+The authenticated App Store Connect session saved the English (US) and English (Australia) names and subtitles
+shown below, plus version 1.0 promotional text, description, keywords, support and marketing URLs. Games > Sports
+and Casual are saved. Build **1.0 (7)** is attached to the version draft. These changes remain an unpublished
+App Store listing; external TestFlight approval is a separate status.
+
+The English (US) header and search creative are accepted, each with one asset in its slot. English (Australia)
+explicitly uses those English (US) creative assets. The age questionnaire is saved with the observed regional
+ratings documented below. The owner's content-rights declaration remains unset.
+
+English (US) has five accepted screenshots in each of the medium iPhone, largest iPhone and iPad 13-inch slots,
+in filename order 01–05. The final phone career captures use a thinner caption band so the complete fixture
+reward line and bottom controls fit. English (Australia) displays those same five final screenshots per slot
+through **Using Existing Assets**; its custom upload count is zero because the English (US) assets are inherited.
+
+The final local export pack has three creative assets, fifteen screenshots and three review contact sheets.
+Independent validation matched all 21 files to their manifest dimensions, opaque RGB channels, byte counts and
+SHA-256 hashes. The screenshot captions and all three device contact sheets were inspected against the game's
+features, and all three career captures were checked at original resolution. The final manifest timestamp is
+`2026-10-08T14:36:18.729Z` (9 October in Australia/Sydney). The app icon is byte-identical to the native build's
+1024-pixel source icon.
 
 ## How the app makes money
 
@@ -51,18 +71,23 @@ has been submitted.
 | Before a kick-off | A full-screen ad (interstitial) | At most every 2 breaks and 4 minutes apart; never mid-match; never in the first match or the basics |
 | Shop, STORE tab | **Gem packs** US$0.99 to $19.99 (the first buy of each doubled), Starter Pack $1.99, **NO ADS $3.99**, **PRO bundle $9.99** (NO ADS, the Coin Doubler and 600 gems) | NO ADS removes the full-screen ads; rewarded ads stay (they're the player's choice). Gems never buy anything random |
 | Shop, STORE tab and BADGES, JOURNEYS | **Club Pass** $3.99 per permanent selected Journey (or 600 gems): 5,560 coins, 150 gems and six identity pieces on its 30 tiers | Buying late unlocks reached tiers; nothing reached is lost |
-| Shop, STORE tab | **Coin Doubler** $4.99 once: every match pays double coins | Looks, coins and gems only, never an edge in a match |
+| Shop, STORE tab | **Coin Doubler** $4.99 once: every match pays double coins | Multiplies the match coin payout; does not directly change player stats |
 | After the first win | A one-time welcome offer for the Starter Pack | No timer; it stays in the shop |
 
-**Kid-safe:** every ad request is child-directed, so ads are family-rated (G), never personalised, and there's no
-tracking prompt. It earns less per ad than tracked ads; it's the right line for a game kids play (and US law,
-COPPA). The switch is `ADMOB_KID_SAFE` in `src/platform/adConfig.ts`.
+**Ad request settings:** requests are configured as child-directed, with a G maximum content rating and
+non-personalised ads. The app does not show an App Tracking Transparency prompt. The switch is `ADMOB_KID_SAFE`
+in `src/platform/adConfig.ts`; the current beta uses test units and does not earn ad revenue.
 
-## What only you can do, in order
+## Public-release setup reference
 
-1. **Main is merged and pushed.** The latest web game, support and privacy pages were published by GitHub Pages;
-   all 1,311 selected regression tests and the deployment passed. Check the support/privacy links below before
-   a public App Store submission.
+Enrollment, the app record and the build 7 TestFlight upload are complete. The following setup reference also
+includes earlier steps; it is not a list of actions already performed. Native purchase products, Game Center
+definitions, production ad units, the live App Privacy answers, content rights and physical-device checks remain
+public-release work. TestFlight approval does not approve a public App Store version.
+
+1. **Publish the current web package.** Verify the deployed game, support and privacy pages against the release
+   source and check the URLs below before a public App Store submission. Local package validation does not prove
+   that the current SEO and support/privacy changes are published.
 2. **Join the Apple Developer Program:** <https://developer.apple.com/programs/enroll/> with your Apple ID (two-factor
    on). US$99 a year (A$149 in Australia). As an individual the App Store shows your legal name as the seller; to
    show **Calynx**, enrol as an organisation (needs a registered business and a free D-U-N-S number).
@@ -124,56 +149,61 @@ COPPA). The switch is `ADMOB_KID_SAFE` in `src/platform/adConfig.ts`.
    - a gem pack, NO ADS and RESTORE PURCHASES
    - a rewarded ad
    - the Game Center banner when you win a match
-8. **Add for Review**, then **Submit**. Review usually takes a day or two.
+8. Once the public-release prerequisites are verified, **Add for Review**, then **Submit**. Apple's review timing varies.
 
 ## App information
 
 | Field | Value |
 |---|---|
-| Name (30 max) | Blocky League |
-| Subtitle (30 max) | Voxel football. Big goals. |
-| Category | Games. Subcategories: Sports, then Arcade |
-| Content rights | Does not contain, show or access third-party content |
-| Age rating | None or No to every content question, **loot boxes No** (scout packs cost earned-only tokens, never money). If asked: advertising yes, in-app purchases yes. Expected: 4+ |
+| Name (30 max) | Blocky League: Football (English AU, 23); Blocky League: Soccer (English US, 21) |
+| Subtitle (30 max) | Voxel soccer. Build your club. (English AU, 30); Voxel football. Build a club. (English US, 29) |
+| Category | Games. Subcategories: Sports, then Casual (live App Store Connect picker checked 9 October 2026; Arcade is absent) |
+| Content rights | Unset in live App Store Connect (dialog canceled 9 October 2026); the owner's content-rights declaration remains pending. |
+| Age rating | Live questionnaire saved 9 October 2026: advertising Yes; infrequent cartoon/fantasy violence; Loot Boxes Yes for randomized scout cards. Native chat, UGC, unrestricted web access, gambling and contests No. Observed live ratings: **9+ in 171 countries**, **12+ Vietnam**, **16+ Australia and Brazil**, **All in Korea**. |
 | Copyright | 2026 Calynx |
 | Price | Free, all countries |
 | Sign-in required for review | No |
 
+**Age-rating evidence:** `src/meta/shop.ts` `openPack` spends 1 Scout Ticket for a Scout Pack or 3 for an Elite Pack; `rollPack` draws a randomized functional player card. The daily free pack is also randomized. Source checks confirm that tickets come from the initial save grant, daily challenges and gifts; they cannot be purchased with money, gems or coins, and the paid Club Pass does not grant them. Odds are displayed before opening.
+
+**Descriptor interpretation:** the saved Loot Boxes Yes answer discloses this randomized-card mechanic. Apple's [age-rating definitions](https://developer.apple.com/help/app-store-connect/reference/app-information/age-ratings-values-and-definitions/) describe randomized items for purchase without an explicit earned-token exemption; its [age-rating API](https://developer.apple.com/documentation/appstoreconnectapi/ageratingdeclarationupdaterequest/data-data.dictionary/attributes-data.dictionary) describes the field as covering loot boxes or other randomized virtual item mechanics. Applying that descriptor to earned-only ticket packs is our interpretation, separate from the source-verified fact that no real-money purchase buys a random card. Observed live results on 9 October 2026 were 9+ in 171 countries, 12+ in Vietnam, 16+ in Australia and Brazil, and All in Korea. These are console results rather than predictions from the code.
+
 ## Version 1.0
 
-**Promotional text** (170 max):
+The source of truth for launch copy is [store-assets/app-store/metadata](../store-assets/app-store/metadata/README.md). English (Australia) is shown below; English (US) has localized sport and kit wording. Character and byte limits were checked against Apple's current documentation on 9 October 2026. These source files do not update the live App Store Connect listing.
 
-> Skill past defenders, smash screamers and build your club from Sunday League to the top. Free to play, no account needed, plays offline.
+**Promotional text** (170 max, 152 characters):
 
-**Description:**
+> Build your club, climb eight divisions and score with timed skill moves. Try knockout cups, short challenges and Blitz power-ups between league matches.
 
-> Skill past defenders. Smash screamers. Win the league.
->
-> Blocky League is fast, chunky voxel football for your iPhone and iPad.
->
-> Take a defender on and watch his head. When a big ! pops up, hit SKILL and leave him on the floor. Chain your tricks and score a SKILL GOAL!
->
-> - Pull off roulettes, rainbow flicks and stepovers
-> - Smash screamers, whip in crosses and bang in volleys
-> - Road to Glory: build your own club and climb from Park League to the top
-> - Blocky Cup: knockout ties and tense penalty shootouts
-> - Club Run: seven matches, one life, a new perk after every win
-> - Moments: quick challenges to earn three stars
-> - Blitz: crazy power ups like Mega Shot, Freeze and Turbo
-> - Win coins and unlock celebrations, new balls, goal explosions and new players
-> - Daily challenges, win streaks, levels and Game Center achievements
->
-> New to it? Three quick drills teach you the basics in under a minute.
->
-> No account needed. Plays offline. Touch controls built for landscape, and it works with a game controller too.
->
-> Lace up and kick off now!
+**Description** (4,000 max, 1331 characters):
 
-**Keywords** (100 max, exactly 100):
+> Blocky League brings 11-a-side football to a chunky voxel pitch. Play quick matches, pull off timed skill moves and build your own club from Park League to the top.
+>
+> - Road to Glory: climb eight divisions with transfers, training and promotion. Design your kit and crest, develop your players and grow your stadium.
+> - Quick Match: pick from eleven original clubs and four difficulty levels, from Easy to Legend.
+> - Blocky Cup: play knockout ties and settle draws with penalty shootouts.
+> - Club Run: take on seven matches with one life and choose perks between wins.
+> - Moments: tackle eight short challenges with three stars to earn in each.
+> - Blitz: collect on-pitch power-ups including Turbo, Mega Shot and Freeze.
+>
+> Thread through balls, cross for a header, time a first-time finish or win the ball with a slide tackle. Celebrate your goals and watch instant replays. Play in daylight, at sunset or under floodlights, with rain and snow on the pitch.
+>
+> Earn coins, mastery badges and new celebrations, balls and club looks. Club Journeys keep your progress without a monthly reset.
+>
+> Start with three short practice drills. Landscape touch controls suit iPhone and iPad, with game controller support too.
+>
+> Single-player matches work offline with no account required. Ads, in-app purchases and cloud saves need an internet connection.
+
+**Keywords** (100 bytes max, 99 ASCII bytes):
 
 ```
-soccer,football,voxel,skills,dribble,cup,penalty,shootout,goal,striker,career,manager,arcade,offline
+offline,career,manager,goal,penalty,shootout,dribble,skills,cup,transfer,tactics,controller,striker
 ```
+
+The keyword field avoids words already used in the localized name, subtitle and categories. The copy describes the native single-player build; Game Center availability is omitted until its console setup and device behavior are verified. Optional-account configuration currently permits offline guest gameplay.
+
+**TestFlight copy:** [Beta App Description](../store-assets/app-store/metadata/testflight-beta-description.txt) and [What to Test](../store-assets/app-store/metadata/testflight-what-to-test.txt). Feedback email: `calynx@zohomail.com.au`. Check the beta description's service-status sentence against the build being invited.
 
 | Field | Value |
 |---|---|
@@ -182,15 +212,40 @@ soccer,football,voxel,skills,dribble,cup,penalty,shootout,goal,striker,career,ma
 | Privacy policy URL (App Information) | https://isharaf6.github.io/blocky-league/privacy.html |
 | Version | 1.0 |
 
-## Screenshots (store-assets/screenshots, all landscape)
+## Product-page artwork (store-assets/app-store)
 
 | App Store Connect slot | Upload |
 |---|---|
-| iPhone 6.9" | `ios-6.9/` (2868x1320), all five in order: title, pass, goal, blitz, market |
-| iPhone 6.5" | Optional once 6.9" is in; `ios-6.5/` (2778x1284) if it asks |
-| iPad 13" | `ipad-13/` (2752x2064): goal, blitz, fulltime |
+| Header | `creative/header-3840x1646.png` (3840 × 1646); the alternative `creative/universal-5244x2950.png` (5244 × 2950) is also valid. Upload one header. |
+| Search Results | `creative/search-3840x2560.png` (3840 × 2560) |
+| iPhone medium display | `screenshots/iphone-medium/` (2622 × 1206), all five in filename order |
+| iPhone largest display | `screenshots/iphone-large/` (2868 × 1320), all five in filename order |
+| iPad 13" | `screenshots/ipad-13/` (2752 × 2064), all five in filename order |
 
-The app icon comes from the build (`ios-app-icon-1024.png`); App Store Connect takes no separate upload.
+Screenshot order is **Score screamers**, **Pass and move**, **Blitz power ups**, **Road to Glory**, **Bend it**.
+The PNGs are opaque RGB; the [asset manifest](../store-assets/app-store/manifest.json) records dimensions,
+capture context and SHA-256 hashes. The [asset README](../store-assets/app-store/README.md) describes the
+reproduction workflow and [review gallery](../store-assets/app-store/index.html). Contact sheets are review aids
+and must not be uploaded as screenshots. The previous `store-assets/screenshots/` set is superseded.
+
+Screenshots use the current game with Chromium touch emulation, safe-area insets and staged development hooks;
+they are not installed-iOS captures. The short caption band reduces the game viewport height. Creative assets
+use the game's models and poses with a promotional camera. Verify the corresponding gameplay on the approved
+TestFlight build before a public release; native WebKit rendering and performance can differ.
+
+The app icon comes from the build (`store-assets/ios-app-icon-1024.png`); App Store Connect takes no separate upload.
+
+## Product Page Optimization after public launch
+
+No experiment has been created or started. Once the app is publicly available and real impressions/downloads
+support a useful test, compare the current **Score screamers** first screenshot against one treatment that moves
+**Road to Glory** first, keeping the other screenshots' relative order. Keep the icon, artwork, captions and
+listing copy stable so screenshot order is the tested variable.
+
+Use App Store Connect's duration estimate before allocating traffic. Track conversion rate, impressions,
+downloads and confidence against the original page; keep the control if evidence remains inconclusive.
+Apply a treatment only after meaningful volume and at least 90% confidence, following Apple's
+[Product Page Optimization guidance](https://developer.apple.com/app-store/product-page-optimization/).
 
 ## Native privacy manifest
 
@@ -292,7 +347,7 @@ Club Journey IDs submit no score to it. Keep its existing live ID and definition
 
 > Blocky League is a single-player football game. No account or login is needed. The app is landscape only on iPhone and iPad.
 >
-> To start: tap TAP TO PLAY, then LEARN THE BASICS (a short tutorial) or QUICK MATCH, then KICK OFF. Move by holding a thumb on the left of the screen; the buttons on the right pass, shoot and tackle.
+> To start: tap TAP TO PLAY, then LEARN THE BASICS (three practice drills) or QUICK MATCH, then KICK OFF. Move with the left thumbstick; pushing it fully sprints. The buttons on the right pass, shoot and tackle.
 >
 > ROAD TO GLORY, MOMENTS, CLUB RUN and BLITZ unlock after you score your first goal in any match.
 >
@@ -300,9 +355,11 @@ Club Journey IDs submit no score to it. Keep its existing live ID and definition
 >
 > In-app purchases are in SHOP, STORE: five gem packs (the first buy of each pays double), a Starter Pack, NO ADS (removes the full-screen ads), the Club Pass (a permanent paid track for the selected Club Journey, also shown in BADGES, JOURNEYS), the Coin Doubler and the PRO bundle, with RESTORE PURCHASES. Gems are also earned by playing. Gems buy only stated outcomes at a shown price, each confirmed with one tap: coins at a fixed rate, finishing a stadium build, a replay of a lost cup tie, a Scouting Network tier (a guaranteed prospect quality, never a chance), the Club Pass. Player scout packs in SHOP, SCOUT cost Scout Tickets, which are earned by playing and can't be bought with money, gems or coins; their odds are shown.
 >
-> Game Center achievements and leaderboards are reported as you play; BADGES has GAME CENTER ACHIEVEMENTS and LEADERBOARDS buttons. After some wins the app may show Apple's own rating prompt.
+> Game Center achievements and leaderboards may be unavailable while their console configuration is completed. The native purchase interface can also be unavailable until its products are configured. Core guest gameplay remains available. After some wins the app may show Apple's own rating prompt.
 
-Also fill in your name, phone and email as the review contact.
+For build 7 beta review, use the current [TestFlight review notes](../store-assets/app-store/metadata/testflight-review-notes.txt),
+which also disclose earned-ticket randomized packs and the observed age ratings. Recheck service status before a
+public review. Review contact name, phone and email belong to the developer, not a beta tester.
 
 ## What the app leaves out (on purpose)
 

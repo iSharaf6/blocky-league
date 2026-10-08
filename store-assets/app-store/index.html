@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Blocky League — App Store artwork review</title>
+<style>
+  :root{--ink:#26262e;--sky:#5cc8f5;--yellow:#ffd23a;--paper:#fbfbf4}
+  *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  header{padding:32px clamp(20px,5vw,80px);background:var(--sky);border-bottom:8px solid var(--ink);display:flex;align-items:center;gap:28px;flex-wrap:wrap}
+  header img{width:min(380px,80vw);height:auto;image-rendering:pixelated}header p{margin:0;max-width:550px}header b{font-size:20px}
+  main{max-width:1600px;margin:auto;padding:28px clamp(20px,4vw,64px) 64px}nav{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:26px;position:sticky;top:0;padding:12px 0;background:var(--paper);z-index:2}
+  button,a.download{color:var(--ink);background:white;border:3px solid var(--ink);font:inherit;padding:9px 14px;text-decoration:none;cursor:pointer}button[aria-pressed=true]{background:var(--yellow);box-shadow:4px 4px 0 var(--ink)}button:focus-visible,a:focus-visible{outline:4px solid var(--sky);outline-offset:5px}
+  h1{font-size:24px;margin:0}h2{font-size:20px;margin:0 0 16px}p{max-width:950px}.context{padding:18px 22px;background:white;border-left:8px solid var(--sky);margin-bottom:30px}.context p{margin:0}.context a{color:inherit}
+  .group{margin-bottom:42px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px}.creative .grid{grid-template-columns:1fr}figure{margin:0;background:white;border:3px solid var(--ink);overflow:hidden}figure img{display:block;width:100%;height:auto}figcaption{padding:15px 18px;display:flex;gap:14px;align-items:center;justify-content:space-between;border-top:3px solid var(--ink)}figcaption small{display:block;margin-top:3px;font-size:13px}figcaption a{color:var(--ink)}.creative figure:first-child{grid-column:1/-1}.creative .grid{grid-template-columns:repeat(2,minmax(0,1fr))}footer{border-top:3px solid var(--ink);padding-top:20px;font-size:14px}footer a{color:inherit}[hidden]{display:none!important}
+  @media(max-width:700px){.grid,.creative .grid{grid-template-columns:1fr}header{padding:24px 20px}figcaption{align-items:flex-start;font-size:14px}figcaption a{white-space:nowrap}nav{gap:8px}button{padding:7px 9px;font-size:14px}}
+</style>
+<header><img src="../logo/blocky-league-wordmark.svg" alt="Blocky League"><p><b>App Store artwork review</b><br>Game models. Real UI. Native pixel type.</p></header>
+<main>
+<nav aria-label="Asset set">
+<button aria-pressed="true" data-filter="all">All assets</button><button aria-pressed="false" data-filter="creative">Creative</button><button aria-pressed="false" data-filter="iphone-medium">iPhone medium</button><button aria-pressed="false" data-filter="iphone-large">iPhone large</button><button aria-pressed="false" data-filter="ipad-13">iPad 13″</button>
+</nav>
+<aside class="context"><p>Screenshots reproduce the current game's touch layout in Chromium device emulation. Creative assets use staged game poses and an editorial camera. Review the matching TestFlight screens before public release. <a href="README.md">Capture details and upload map</a> · <a href="manifest.json">Dimensions and SHA-256 manifest</a></p></aside>
+<div id="assets"></div>
+<footer>All upload exports are opaque RGB PNGs. Review contact sheets live in <a href="previews/iphone-medium-contact.png">previews</a>. Image links open the original full-size file.</footer>
+</main>
+<script>
+const groups=[
+ {id:'creative',title:'Header and search creative',files:[['universal-5244x2950','Universal header','5244 × 2950'],['header-3840x1646','Wide header alternative','3840 × 1646'],['search-3840x2560','Dedicated search asset','3840 × 2560']]},
+ {id:'iphone-medium',title:'iPhone medium · 2622 × 1206',size:'2622 × 1206'},
+ {id:'iphone-large',title:'iPhone large · 2868 × 1320',size:'2868 × 1320'},
+ {id:'ipad-13',title:'iPad 13″ · 2752 × 2064',size:'2752 × 2064'}
+];
+const shots=[['01-score-screamers','Score screamers'],['02-pass-and-move','Pass and move'],['03-blitz-power-ups','Blitz power ups'],['04-road-to-glory','Road to Glory'],['05-bend-it','Bend it']];
+const root=document.getElementById('assets');
+for(const group of groups){
+ const section=document.createElement('section');section.className='group '+(group.id==='creative'?'creative':'');section.dataset.group=group.id;
+ const h=document.createElement('h2');h.textContent=group.title;section.append(h);
+ const grid=document.createElement('div');grid.className='grid';
+ for(const [file,title,size] of group.files||shots){
+  const path=group.id==='creative'?`creative/${file}.png`:`screenshots/${group.id}/${file}.png`;
+  const fig=document.createElement('figure');const link=document.createElement('a');link.href=path;link.target='_blank';link.rel='noopener';const img=document.createElement('img');img.src=path;img.alt=title;img.loading='lazy';link.append(img);fig.append(link);
+  const cap=document.createElement('figcaption');const detail=document.createElement('span');const strong=document.createElement('b');strong.textContent=title;const small=document.createElement('small');small.textContent=(size||group.size)+' · RGB PNG';detail.append(strong,small);
+  const open=document.createElement('a');open.href=path;open.target='_blank';open.rel='noopener';open.textContent='Open full size ↗';cap.append(detail,open);fig.append(cap);grid.append(fig);
+ }section.append(grid);root.append(section);
+}
+for(const button of document.querySelectorAll('nav button'))button.addEventListener('click',()=>{
+ for(const b of document.querySelectorAll('nav button'))b.setAttribute('aria-pressed',String(b===button));
+ for(const section of document.querySelectorAll('[data-group]'))section.hidden=button.dataset.filter!=='all'&&section.dataset.group!==button.dataset.filter;
+});
+</script>
+</html>

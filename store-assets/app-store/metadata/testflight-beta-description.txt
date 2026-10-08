@@ -1,0 +1,7 @@
+Blocky League is an 11-a-side football game for iPhone and iPad with chunky voxel players, landscape touch controls and game controller support.
+
+Play a Quick Match, build your club in Road to Glory, enter the Blocky Cup, tackle short Moments challenges or try Blitz power-ups. Single-player gameplay works offline without an account.
+
+This beta focuses on first-time controls, match recovery, progression and menu layout. Ads use test units. Purchases and Game Center may be unavailable while their App Store configuration is completed. Optional Apple sign-in and cloud saves still need testing on devices.
+
+Please send feedback through TestFlight with your device model, iOS version, build number and the steps that caused the issue.
