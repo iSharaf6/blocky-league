@@ -9,6 +9,7 @@
  */
 import { sfx } from '../audio/sfx';
 import { buzz } from '../platform/haptics';
+import { adIcon } from './pixelIcons';
 import './gems.css';
 
 const fmt = (n: number): string => Math.round(n).toLocaleString('en-US');
@@ -54,6 +55,11 @@ export interface GemConfirm {
   getGems?: () => void;
   /** The free way to the same thing, said in a line under the buttons ("OR PLAY 2 MATCHDAYS"). */
   free?: string;
+  /**
+   * The same thing for a rewarded ad instead: its own button under the others, with the film icon and the word AD.
+   * `off`: no ad can be shown now (ADS BLOCKED, NO AD RIGHT NOW): the button is there, switched off, saying so.
+   */
+  ad?: { label: string; onAd: () => void; off?: string };
 }
 
 /**
@@ -74,6 +80,7 @@ export function confirmGems(host: HTMLElement, o: GemConfirm): () => void {
       <div class="gem-cost"><span><small>PRICE</small><b>${gemArt(3)}${fmt(o.price)}</b></span><span><small>YOU HAVE</small><b class="${short > 0 ? 'short' : ''}">${gemArt(3)}${fmt(o.have)}</b></span></div>
       ${short > 0 ? `<p class="gem-short">${fmt(short)} MORE ${short === 1 ? 'GEM' : 'GEMS'} NEEDED</p>` : ''}
       <div class="btn-row no-stick"><button class="btn btn-white" data-g="no">${short > 0 ? 'OK' : 'NO THANKS'}</button>${yes}</div>
+      ${o.ad ? `<div class="btn-row no-stick gem-ad"><button class="btn btn-white" data-g="ad"${o.ad.off ? ' disabled' : ''}>${adIcon()}${esc(o.ad.off ?? o.ad.label)}</button></div>` : ''}
       ${o.free ? `<p class="gem-free">${esc(o.free)}</p>` : ''}
     </div>`;
   let open = true;
@@ -108,6 +115,7 @@ export function confirmGems(host: HTMLElement, o: GemConfirm): () => void {
       buzz('success');
       o.onYes();
     } else if (el.dataset.g === 'get') o.getGems?.();
+    else if (el.dataset.g === 'ad') o.ad?.onAd();
     else o.onNo?.();
   });
   host.appendChild(sheet);

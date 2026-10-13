@@ -69,6 +69,11 @@ describe('club income: the rate comes from what the player builds', () => {
     // against each profile's real daily income: at most about a quarter).
     expect(incomeRateMax()).toBeLessThanOrEqual(60);
     expect(incomeCap(incomeRateMax())).toBeLessThanOrEqual(4 * win);
+    // (15 October 2026, economy v7) The ladder itself, pinned: it was 16 / 19 / 22 / 25 / 28 / 32 (52 an hour and a
+    // 416 coin office at the most), which let a keen player's office reach 26.6% of the rest of his day. A new club's
+    // 16 is unchanged; the top is 43 an hour and 344.
+    expect([...TICKET_OFFICE]).toEqual([16, 18, 20, 22, 24, 26]);
+    expect([incomeRateMax(), incomeCap(incomeRateMax())]).toEqual([43, 344]);
   });
 });
 

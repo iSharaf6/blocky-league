@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Ads } from '../src/platform/ads';
+import { Ads, PORTAL_HALF_GAP_MS } from '../src/platform/ads';
 
 type CrazySDK = NonNullable<Window['CrazyGames']>['SDK'];
 type AdCallbacks = Parameters<CrazySDK['ad']['requestAd']>[1];
@@ -140,15 +140,37 @@ describe('ads and audio', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('keeps the portals to their one break before a kick-off (the half-time ad is the app\'s)', async () => {
+  it('asks a portal for the half-time break too, but not inside its SDK\'s spacing of the last ad that played', async () => {
     const { sdk } = crazy();
-    sdk.ad.requestAd = vi.fn((_type, callbacks) => callbacks.adFinished?.());
+    let callbacks!: AdCallbacks;
+    const request = vi.fn((_type: string, cb: AdCallbacks) => { callbacks = cb; });
+    sdk.ad.requestAd = request;
     const ads = new Ads();
     await ads.init();
+    // Nothing has played yet this visit: half time asks, and the ad plays.
+    const first = ads.midgame('halftime');
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith('midgame', expect.anything());
+    callbacks.adStarted?.();
+    callbacks.adFinished?.();
+    await first;
+    // Straight after an ad that played, the next half time asks for nothing (the SDK would refuse it anyway) ...
     await ads.midgame('halftime');
-    expect(sdk.ad.requestAd).not.toHaveBeenCalled();
-    await ads.midgame();
-    expect(sdk.ad.requestAd).toHaveBeenCalledWith('midgame', expect.anything());
+    expect(request).toHaveBeenCalledTimes(1);
+    // ... a kick-off still asks (the SDK decides), and one it refuses starts no new wait ...
+    const kickOff = ads.midgame();
+    expect(request).toHaveBeenCalledTimes(2);
+    callbacks.adError?.({ code: 'adCooldown', message: 'too soon' });
+    await kickOff;
+    await ads.midgame('halftime');
+    expect(request).toHaveBeenCalledTimes(2);
+    // ... and once the gap is behind it, half time asks again.
+    vi.advanceTimersByTime(PORTAL_HALF_GAP_MS + 1000);
+    const again = ads.midgame('halftime');
+    expect(request).toHaveBeenCalledTimes(3);
+    callbacks.adError?.({ code: 'unfilled', message: 'no inventory' });
+    await again;
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('allows a later attempt after an unfilled ad, and only rewards completion', async () => {

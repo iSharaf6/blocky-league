@@ -447,6 +447,9 @@ function playRound(app: AppContext, onBack: () => void): void {
     sideDifficulty: cfg.sideDifficulty,
     skipIntro: true,
     nextLabel: 'CONTINUE RUN',
+    // One life, and one way to keep it: a lost round can be played again once (main.ts: a rewarded ad, one a day, or
+    // gems), before anything is recorded. The replay carries no `decider`, so a round is never replayed twice.
+    decider: `CLUB RUN ROUND ${cfg.round}`,
     quitNote: `Walking off counts as a defeat: your run ends in round ${cfg.round}.`,
     // Called once at full time: the run moves on here, so the result is saved with the match's coins.
     reward: (r) => {

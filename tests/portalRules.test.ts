@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_KEYS, Input, bindKey, normalizeKeyMap, setBindings } from '../src/core/input';
 import { defaultOnboarding, straightToBasics } from '../src/core/onboarding';
-import { AD_AFTER_RESULT_MS, AD_FREE_MATCHES, breakDue, playIsLive } from '../src/platform/ads';
+import { AD_AFTER_RESULT_MS, AD_FREE_MATCHES, PORTAL_HALF_GAP_MS, breakDue, halfBreakDue, playIsLive } from '../src/platform/ads';
 import { devPortal, inNativeApp } from '../src/platform/native';
 import { developerAboutHtml } from '../src/ui/developerAbout';
 import { NO_AD_TEXT, adIcon } from '../src/ui/pixelIcons';
@@ -56,14 +56,18 @@ describe('interstitials: only at a kick-off, and never for a new player', () => 
     expect(breakDue({ ...due, recovered: true })).toBe(false);
   });
 
-  it('is asked in one place only: before a kick-off in startMatch (no menu, tab or screen change asks for an ad)', () => {
+  it('is asked at two natural breaks only: before a kick-off and at half time (no menu, tab or screen change asks for an ad)', () => {
     const src = [...['src/main.ts'], ...['club', 'shop', 'menus', 'career', 'cup', 'market', 'moments', 'run', 'badges', 'glory'].map((f) => `src/ui/${f}.ts`)].map(source).join('\n');
-    expect(src.match(/ads\.midgame\(/g)).toHaveLength(1);
+    expect(src.match(/ads\.midgame\(/g)).toHaveLength(2);
     const kickoff = between(source('src/main.ts'), 'async function startMatch(', 'demo?.dispose();');
     expect(kickoff).toContain('if (breakDue({');
     expect(kickoff).toContain("await ads.midgame(req.scenario ? 'moment' : 'match');");
-    // (And the half-time break is the app's alone: tests/ads.test.ts.)
-    expect(source('src/main.ts')).not.toContain("midgame('halftime')");
+    // The half-time break (2026-10-14): asked once a match, in the half-time handler, behind its own rule, and the
+    // half-time screen comes up after it whether an ad played or not.
+    const half = between(source('src/main.ts'), 's.onHalftime = () => {', 'let halfAdAsked = false;');
+    expect(half).toContain('halfBreakDue({');
+    expect(half).toContain("void ads.midgame('halftime').then(show, show);");
+    expect(half).toContain('halfAdAsked = true;');
   });
 });
 
@@ -499,5 +503,28 @@ describe('happytime is for the big moments only', () => {
     const party = between(source('src/ui/career.ts'), "if (cls === 'champ' || cls === 'up') {", '// The board');
     expect(party).toContain('if (happySeason !== season.number) {');
     expect(party).toContain('ads.happyTime();');
+  });
+});
+
+describe('the half-time break (2026-10-14: "perfect placement for ads")', () => {
+  const due = { recovered: false, basics: false, firstMatch: false, moment: false, played: AD_FREE_MATCHES };
+
+  it('is asked for at half time of an ordinary match once two matches are behind the player', () => {
+    expect(halfBreakDue(due)).toBe(true);
+    expect(halfBreakDue({ ...due, played: 40 })).toBe(true);
+  });
+
+  it('never in a drill, a moment, the first match or a restored match, and never before two matches are played', () => {
+    expect(halfBreakDue({ ...due, basics: true })).toBe(false);
+    expect(halfBreakDue({ ...due, moment: true })).toBe(false);
+    expect(halfBreakDue({ ...due, firstMatch: true })).toBe(false);
+    expect(halfBreakDue({ ...due, recovered: true })).toBe(false);
+    expect(halfBreakDue({ ...due, played: AD_FREE_MATCHES - 1 })).toBe(false);
+    expect(halfBreakDue({ ...due, played: 0 })).toBe(false);
+  });
+
+  it('a portal waits out its SDK\'s spacing: under the 3 minutes CrazyGames allows between interstitials, over a 2 minute half', () => {
+    expect(PORTAL_HALF_GAP_MS).toBeLessThan(180_000);
+    expect(PORTAL_HALF_GAP_MS).toBeGreaterThan(120_000);
   });
 });

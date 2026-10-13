@@ -10,6 +10,46 @@ _Written 3 October 2026. The code and tests below were run. Every console click 
 
 ---
 
+## Ad placement on CrazyGames (14 October 2026, v1.1.0)
+
+CrazyGames pays on the ads its SDK serves. Real-money purchases there go through CrazyGames' own Xsolla store, which
+is **invite only** (<https://docs.crazygames.com/requirements/intro/>): until they invite the game, ads are the only
+income on the portal. So the placements are what earn. Every one is at a break the player already feels, none is on a
+menu, and none reaches a player who has not finished two matches.
+
+**Interstitials** (the SDK allows one every 3 minutes and refuses the rest)
+
+| Break | Rule (`src/platform/ads.ts`) |
+|---|---|
+| Half time | `halfBreakDue`: any ordinary match once two matches are behind the player; never a drill, a Moment, the first match or a restored match; the half-time screen comes up after it. A portal asks only when its last ad that played is 170 s behind (`PORTAL_HALF_GAP_MS`) |
+| Before a kick-off | `breakDue`: never the first match of a visit, never within 8 s of a result screen, never before two matches |
+
+With 2 minute halves that is about one interstitial every 3.5 to 5.5 minutes of a returning player's session, where
+v1.0 showed about one a session. A new player's first session has none.
+
+**Rewarded** (always opt-in, a film icon and the word AD, locked while one runs, never on a live pitch)
+
+| Offer | Where | Limit | Without the ad |
+|---|---|---|---|
+| 2x coins on the daily gift | WELCOME BACK sheet | once a day | the plain gift |
+| One more match fee | full time | every match after the first | the fee as it is |
+| Replay a lost decider or a lost Club Run round | full time, before anything is recorded | once a day | 50 gems, or take the result |
+| FREE COINS 75 | shop | 5 a day | play |
+| FREE GEMS 3 | shop | 2 a day on a portal | play |
+| A new daily deal | shop | once a day | 15 gems |
+| One matchday off a stadium build | MY CLUB | once a day | 20 gems, or play the matchday |
+| Heal an injured player | his card | once a day | 30 gems, or wait |
+
+Every gem shortcut now has an ad beside it, and nothing can only be had by watching one. What each is worth, and the
+share of a player's income that comes from ads, is on the workbook's Ads sheet (`docs/economy/`).
+
+**Not added, on purpose.** Banners: every menu is built to fill a phone-size frame with no scroll, so a banner would
+cover game UI at 800 x 450, which CrazyGames forbids; they could go on the result and pause screens at desktop sizes
+later. Ads on menus or shop tabs: forbidden. An interstitial before the first match of a visit: the portal already
+shows its own before the game loads.
+
+---
+
 ## 0. Status (honest)
 
 | Piece | State |

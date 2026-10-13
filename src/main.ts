@@ -27,7 +27,7 @@ import { GEM_PRICES, GEM_REWARDS, gems, rewardGems, spendGems } from './meta/gem
 import { CALENDAR, adsLeft, advanceWeekly, calendarNext, calendarToday, claimCalendar, claimSweep, useAd, weeklyFor, weeklyObjectives } from './meta/loops';
 import { payoutText, syncAchievementGems } from './meta/gemSources';
 import { syncSeasonGems, syncSignatureEntitlements } from './meta/pass';
-import { ads, breakDue, playIsLive } from './platform/ads';
+import { ads, breakDue, halfBreakDue, playIsLive } from './platform/ads';
 import { adFree, coinDoubler, iap, PRODUCT_NOADS, PRODUCT_STARTER } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
@@ -1351,10 +1351,16 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
         menus.toast(`HALF TIME SHOW: +${atmo.show} COINS AT FULL TIME`);
       }
     };
-    // Let the dressing-room scene land and keep tactics/SECOND HALF immediately usable. Automatic breaks
-    // happen before a later kick-off, after the player has had time with the complete post-match sequence.
-    show();
+    // The half-time break: the one pause football has mid-match, so the interstitial (when one is due: platform/ads.ts
+    // halfBreakDue) comes now, before the half-time screen, and the screen after it. Never in a drill, a moment or
+    // the first match, never before two matches are behind the player, never in a match being restored.
+    if (!halfAdAsked && halfBreakDue({ recovered: !!recovered, basics, firstMatch: !!req.firstMatch, moment: !!req.scenario, played: played() })) {
+      halfAdAsked = true;
+      void ads.midgame('halftime').then(show, show);
+    } else show();
   };
+  /** The half-time break was asked for (once a match: the screen is redrawn from its sub-screens). */
+  let halfAdAsked = false;
   /** The half time show was announced (the half-time screen is redrawn from its sub-screens). */
   let showSaid = false;
   /** The replay of a lost decider was offered (once per match: economy v3). */

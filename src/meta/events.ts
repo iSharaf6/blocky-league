@@ -162,6 +162,15 @@ export const TIMELINE_MAX = 80;
 export const QUIET_MAX = 2;
 /** A sponsor deal runs a season's worth of league matchdays (a literal: this file never reads career.ts at module load). */
 export const SPONSOR_LENGTH = 14;
+/**
+ * League matchdays between one sponsor's call and the next (a running deal outlasts it, so only CASH NOW waits).
+ * (15 October 2026, economy v7. Before: 3. After: 8, the eight matches' worth CASH NOW pays. The model,
+ * scripts/economy-model.ts: with the cash taken at every call a regular career paid 368 coins a league matchday from
+ * sponsors against 155 for EVERY MATCH, 2.4 times as much, because a new sponsor rang three matchdays later. Now it
+ * pays 148 against 155, and the WIN BONUS (185) is the best answer for a side that wins. A deal already running, and
+ * anything already paid, is untouched.)
+ */
+export const SPONSOR_GAP = 8;
 /** Matchdays a promised start has to come within, and what keeping or breaking it does to his morale. */
 /** No club bids for your star in a career's first matches. */
 export const BID_FREE_MATCHES = 4;
@@ -633,7 +642,7 @@ function festivalCard(state: CareerState): EventCard | null {
 
 /** A sponsor wants the shirt (whenever you have none): every match, a win bonus, or cash now. */
 function sponsorCard(state: CareerState, rng: Rng): EventCard | null {
-  if (state.events.sponsor || !ready(state, 'sponsor', 3) || state.events.played < 1) return null;
+  if (state.events.sponsor || !ready(state, 'sponsor', SPONSOR_GAP) || state.events.played < 1) return null;
   mark(state, 'sponsor');
   const name = rng.pick(SPONSORS);
   const base = round10((20 + 12 * step(state)) * sponsorMult(state));

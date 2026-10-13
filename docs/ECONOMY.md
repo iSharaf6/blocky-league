@@ -3,6 +3,117 @@
 The economy now has a reproducible time model, a review spreadsheet, and explicit boundaries between match fees,
 fixed prizes and repeatable rewards. This replaces older estimates and unverified competitor/pricing claims.
 
+## 15 October 2026: the whole economy checked (economy v7)
+
+The owner: "make sure the game economy for the whole game is balanced". Until now the model played quick matches,
+claimed everything and spent nothing. This pass plays ROAD TO GLORY itself, matchday by matchday on the game's own
+engine, with a manager who spends, and holds the result to 22 stated bars. Model: `npm run economy:model`
+(`scripts/economy-model.ts` `modelCareer`, `buildCareerModel`). Workbook sheets Career By Season, Career Tables,
+Balance Checks and Ads. Tests: `tests/economyCareer.test.ts`.
+
+**Verdict.** For the first five to six weeks of daily play the economy balances: 20 of 22 checks pass. At the top
+it does not: coins outrun every sink, and players cost no coins. Those two need a design decision, not a number,
+and are left as FAIL on the sheet. (A third, an ad worth too much, was settled the same day: see item 3 below.)
+
+### What was checked
+
+Three careers over 180 days, every match a career match: learning (45/25/30, 3 days a week, 2 matches), regular
+(60/20/20, daily, 3 matches) and strong (75/15/10, daily, 6 matches, every ad). The mix holds when the two elevens
+are level on Normal; each rating point between them moves 1.5 points of a hundred between wins and defeats (25 at
+most), Hard takes 10 off the wins and Legend 20. The manager keeps three matchdays of staff wages, builds the
+cheapest part of the ground, hires staff in order while their wages stay under half of what a league matchday
+brings, opens every pack (a card is signed when it beats a starter and the wage budget allows, else sold), signs or
+trains only when the eleven is under its division's par, and buys the Local network, the Club Pass, then the other
+networks with gems. The rest is saved. These are assumptions, not telemetry.
+
+| Career, 180 days | Learning | Regular | Strong, every ad |
+|---|---:|---:|---:|
+| Promotions (season and day) | 6: seasons 2, 3, 4, 6, 8, 9 (day 174, Championship) | Elite League in season 8, day 45 | Elite League in season 7, day 20 |
+| Coins in and out a season, Park League | 17,600 / 15,500 | 15,400 / 13,000 | 21,800 / 18,200 |
+| Coins in and out a season, Elite League | not reached | 32,000 / 6,200 | 61,400 / 6,400 |
+| Lowest balance after spending | 50 | 50 | 259 |
+| Matchdays staff unpaid or wages drained | 0 | 0 | 0 |
+| Whole ground, day | 50 | 15 | 7 |
+| Every member of staff, day | not inside 180 | 34 | 15 |
+| Top look (7,500) in the wallet, day | 45 | 13 | 7 |
+| Local network, Club Pass, all networks, day | 22, 87, beyond 180 | 5, 22, 66 | 3, 9, 31 |
+| Coins in the wallet on day 180 | 163,000 | 638,000 | 2,413,000 |
+| Share of coins from club income / from ads | 9% / 0 | 7% / 0 | 4% / 31% |
+| Level 10 and level 30, day | 34, beyond 180 | 9, 151 | 4, 69 |
+
+A regular player's Scout Tickets: 359 earned, 359 spent, 122 cards signed and 417 sold for their resale credit
+(4% of his coins): a ticket always has a use. His gems: 4,569 earned, 2,300 spent on the four permanent goals by
+day 66.
+
+### Findings
+
+| Check | Bar | Before | After | |
+|---|---|---:|---:|---|
+| Club income against the rest of a day's coins, worst profile and stage | under a quarter | 26.6% | 22.3% | PASS |
+| Sponsor: CASH NOW at every call against EVERY MATCH | no answer a quarter better | 2.37 times (368 against 155 a matchday) | 0.95 (148 against 155; WIN BONUS 185) | PASS |
+| Sign a scout's find and sell him at once | no profit | 10 to 40 coins a find | 0 | PASS |
+| Staff unpaid or wages drained, careful manager, every division | never | 0 | 0 | PASS |
+| Staff wages against league matchday income, worst season | under two thirds | 47% | 47% | PASS |
+| A collector who signs every better card: wages, drain and contracts against all he earns | under 100% | 54% | 65% | PASS |
+| Longest wait for the next part of the ground, regular | 8 matches | 7 | 7 | PASS |
+| Whole ground, regular | 6 weeks | day 15 | day 15 | PASS |
+| Mid look, top look in the wallet, regular | 5 days, 3 weeks | day 4, 13 | day 4, 13 | PASS |
+| Coins that need no match against coins from matches, worst profile | under 100% | 70% | 68% | PASS |
+| Buy, play six starts, sell: expected profit | two league wins | 1.5 | 1.4 | PASS |
+| Scout Tickets left unspent, regular | under 5% | 0 | 0 | PASS |
+| Dearest gem goal on a portal, slowest profile | inside a year | day 231 | day 231 | PASS |
+| No ads against every ad, days to each goal, worst | twice the time | 1.7 | 1.7 | PASS |
+| Share of coins from ads, regular who watches every one | under half | 33% | 32% | PASS |
+| Share of a regular player's spending on players | at least a tenth | 0 | 0 | FAIL |
+| Day a regular player has paid for every coin sink in the game | not inside 60 days | day 56 | day 57 | FAIL |
+| The daily gift's 2X ad against a won match, worst stage | about one win (1.25 at most) | 1.8 with the office doubled | 1.07 | PASS |
+
+### What was changed
+
+Three numbers. Nothing a player owns or was paid is touched; saved wallets load as they are.
+
+| File | Before | After | Why |
+|---|---|---|---|
+| `src/meta/clubIncome.ts` `TICKET_OFFICE` | 16 / 19 / 22 / 25 / 28 / 32 an hour (52 and a 416 office at most) | 16 / 18 / 20 / 22 / 24 / 26 (43 and 344) | A keen player's office was 26.6% of the rest of his day, over the quarter |
+| `src/meta/events.ts` `SPONSOR_GAP` | a new sponsor 3 matchdays after the last | 8 | CASH NOW pays 8 matches' worth; taken every 3 matchdays it paid 2.4 times a running deal |
+| `src/meta/staff.ts` `REGIONS.home.fee` | 0.75 | 0.8 | A home youth find cost 0.45 of his price and a quick sale paid 0.47 |
+
+The 14 October tables below were measured at the old ticket office. With the new one a daily player's 90 days are
+211,382 coins (Regular), 368,767 (Keen), 89,948 (Casual) and 48,247 (Learning): 22 to 26% more than before the
+come-back features instead of 24 to 28%. Gems are unchanged.
+
+### Left alone on purpose, for the owner to decide
+
+1. **Coins pile up at the top.** The ground (35,600) and the staff (24,900 in fees) are finished before the County
+   League, on days 15 and 34. From there a regular player takes in about 32,000 coins a season and spends 6,200
+   (staff wages and contracts). He can pay for every look in the shop (187,000) by day 57, a strong player who
+   watches every ad by day 24, and then about 24,000 coins a week have nowhere to go. No small number fixes this
+   without spoiling the early game, which is tight (a lowest balance of 50). It needs late sinks: dearer club
+   projects opened by division, real player wages, or new looks. START A NEW CLUB AS A LEGEND is the one that exists.
+2. **Players cost no coins.** Pack cards are drawn against the club's own eleven, four a day for nothing. A regular
+   player's eleven is 7 over par after one season and 11 to 20 over from there to League One, with 0 coins spent on
+   transfers or training in 180 days. Only a player who outruns his cards (six matches a day) uses the market
+   (43,000). The lever is `RARITY_OVR` in `src/meta/shop.ts`, or drawing against the division's par.
+3. **The welcome sheet's ad (settled).** With the ticket office doubled too it added 429 coins a day in week one,
+   when a won match pays 233: 1.8 wins for one ad. The office doubling was taken out of the game the same day
+   (`src/ui/comeback.ts`). The gift's own 2X is left as it has been since economy v2: 250 coins on average in a first
+   week, 1.07 wins, once a day, and its bar is "about one win" (1.25).
+4. **The wage brake is silent on cards.** The market refuses a signing over the wage budget; a pack card signs
+   anyway. The collector's drain reaches 190% of what his league matchdays bring and his ground comes 13 days late.
+   A squad relegated on the wage bill of the division above is drained 1,185 coins a matchday in the County League
+   until players are sold. The rule works; the reveal and the hub should say so.
+
+Limits: who wins is assumed. Club Run, online play and SIM THIS MATCH are not simulated. The ad rewards were
+modelled as built (the gift's 2X, HEAL A PLAYER, the replay, the half time interstitial). Interstitials at two minute halves come to one a match, ten an hour: half time falls inside the portal's
+three minutes after a kick-off ad.
+
+### Invariants (tests/economyCareer.test.ts, economyBalance.test.ts, comeback.test.ts, clubIncome.test.ts)
+
+- A free player can earn everything: every goal above is reached with no ad and no purchase.
+- Gems are never required to progress: the only gems that leave are the permanent goals a player chooses.
+- Nothing random is sold: Scout Tickets are earned only.
+- Missing a day costs nothing: the office waits full, the calendar keeps its place.
+
 ## 14 October 2026: coming back (economy v6)
 
 CrazyGames' reviewer: "We believe average playtime and retention can be improved further. You can add more progression
@@ -18,7 +129,7 @@ economy:model`; workbook sheets Coming Back, Come Back Sources, Club Income and 
 | Play streak | The first completed match of a local day: 20 coins on day 1 up to 80 from day 7; 2 gems on day 3, 3 on day 5, 5 on every 7th; Music Notes trail on day 7, Rainbow goal on day 14, Halo on day 30 | One missed day a week is forgiven. A longer break halves the streak, never zeroes it. Each look once |
 | Try today | One look not owned (ball, trail, goal explosion or celebration), free for one completed match a day | Pays nothing. KEEP IT is the shop price |
 | Match of the day | 100 coins and 3 gems for completing the day's featured Moment | Once a local day |
-| Club income | The ticket office: 16 / 19 / 22 / 25 / 28 / 32 coins an hour by ground level, +5 with the megastore, +10 / 20 / 30% with the commercial manager, up to +10% for atmosphere. 52 an hour at the very most | Stops after 8 hours (416 coins at most). The clock only moves forward |
+| Club income | The ticket office: 16 / 18 / 20 / 22 / 24 / 26 coins an hour by ground level (15 October: it was 16 / 19 / 22 / 25 / 28 / 32), +5 with the megastore, +10 / 20 / 30% with the commercial manager, up to +10% for atmosphere. 43 an hour at the very most | Stops after 8 hours (344 coins at most). The clock only moves forward |
 | FREE GEMS on a portal | The same 3 gems for one ad | 2 offers a day on CrazyGames and Poki (the apps keep 1); the owner's limit is 3 |
 
 ### Before and after (gross coins / gems, same seeded matches)
@@ -38,7 +149,8 @@ over (5,900 coins of them by day 30 for a daily player) are items, never coins.
 
 Club income against the rest of a profile's coins, a day: Regular 6.9% in week one, 13.6% in days 8 to 30, 18.8% in
 days 31 to 90. Casual 9.3 / 11.7 / 20.6%. Learning 8.6 / 19.5 / 22.6%. Keen, collecting twice a day, 6.9 / 15.0 /
-26.6%: the most anything adds up to, about a quarter. If the total should come down, `TICKET_OFFICE` is the lever.
+26.6%: the most anything added up to, over a quarter. (15 October: `TICKET_OFFICE` came down and the same figures are
+Regular 6.6 / 12.3 / 15.9%, Casual 9.3 / 10.7 / 18.5%, Learning 8.6 / 18.1 / 20.5% and Keen 6.4 / 13.1 / 22.3%.)
 
 Weekly ceiling of gems from the loops: 97 with the daily ad becomes 123 in the apps (76 becomes 102 without ads), and
 144 on a portal with both offers. The tuned band stays 80 to 160; three portal offers would have made it 165.
@@ -66,7 +178,7 @@ FREE GEMS: a casual player who takes one offer a visit is unaffected by the numb
 whatever it is). For a keen one a second offer brings the Club Pass from day 14 to day 12 and every network from day
 64 to day 55 (270 more gems in 90 days); a third would bring day 10 and day 47. Two was chosen: more generous, and
 inside the band. No price is out of reach on a portal (the dearest goal is long and still inside the modelled year),
-and no new source trivialises a sink: the largest, a full office, is at most 416 coins against parts of 800 to 9,000
+and no new source trivialises a sink: the largest, a full office, is at most 344 coins (416 before 15 October) against parts of 800 to 9,000
 and looks of 250 to 7,500.
 
 ### Invariants (tests/comeback.test.ts, clubIncome.test.ts, economyBalance.test.ts, economyV3.test.ts)

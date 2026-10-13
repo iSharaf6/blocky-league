@@ -179,4 +179,179 @@ if cb:
  for x in cb['gemOffers']:
   s.write_row(row,0,[x['offers'],x['profile'],x['taken'],x['weeklyLoopMax'],x['gems30'],x['gems90'],x['adGems90'],day_txt(x['dayPass']),day_txt(x['dayLocal']),day_txt(x['dayAllNetworks'])]); row+=1
  s.merge_range(row+1,0,row+4,9,f"Chosen: {K['portalGemOffers']} offers a day on a portal, {K['gemsPerOffer']} gems each, one ad a reward, in the shop only (the apps keep one). Two keeps the week inside the 80 to 160 band; three would not (165). A casual player who takes one a visit is unaffected by the number.",F['text'])
+# ---------------------------------------------------------------- the career, the balance checks and the ads (15 October 2026, economy v7)
+# model.json 'career': ROAD TO GLORY simulated on the game's own engine (scripts/economy-model.ts modelCareer).
+# Absent from an older model.json, in which case the workbook is the sheets above and nothing more.
+cr=m.get('career')
+if cr:
+ start_sheet=r
+ from xlsxwriter.utility import xl_rowcol_to_cell as rc, xl_col_to_name as cn
+ F['pct1']=w.add_format({'num_format':'0.0%'}); F['pass']=w.add_format({'bold':True,'font_color':'#0B6B3A','bg_color':'#DDF3E4'}); F['fail']=w.add_format({'bold':True,'font_color':'#9C1C1C','bg_color':'#FBE0E0'})
+ F['sub']=w.add_format({'bold':True,'font_size':13,'font_color':'#172434'}); F['calcpct']=w.add_format({'bg_color':'#E4F5EC','num_format':'0.0%'}); F['calcint']=w.add_format({'bg_color':'#E4F5EC','num_format':'#,##0'})
+ A=cr['assumptions']; runs=cr['runs']; none=lambda v,alt='Beyond the run': v if v is not None else alt
+ LOOPS=['calendar','daily','weekly','live','skill','mastery','journeys','passTrack','playStreak','matchOfDay','halfTimeShow','events']; ADS=['adGift','adMatch','adCoins']
+ # --- Career By Season: the ledger, one row a finished season
+ heads=['Profile','Season','Division','League','Finish','Outcome','Day from','Day to','Matches','Won','Drawn','Lost','Coins in','Coins out','Net (in less out)','Balance at the end','Lowest balance after spending',
+  'IN: match fees','IN: megastore','IN: cup prizes','IN: season prize','IN: board','IN: sponsor','IN: commercial manager','IN: player sales','IN: card sales','IN: shared loops (gift, challenges, week, mastery, Journey, streak, match of the day)','IN: club income','IN: ads',
+  'OUT: ground','OUT: staff fees','OUT: staff wages','OUT: wage drain','OUT: transfers','OUT: training','OUT: contracts','OUT: other cards',
+  'Club matchday income (fees, megastore, sponsor, commercial)','Staff wages / club matchday income','Wages, drain and contracts / coins in','Player wages a week','Wage budget','Matchdays staff unpaid','Matchdays a wage drain took coins',
+  'Team rating','Division par (rivals)','Squad','Ground level','Parts built (of 13)','Staff levels (of 18)','Gems in','Gems out','Gems at the end','Tickets in','Tickets out','Cards signed','Cards sold','Manager level']
+ cs=sheet('Career By Season',heads,[40,8,9,18,8,11,9,8,9,6,7,6,11,11,12,14,16]+[13]*12+[12]*8+[18,16,16,12,12,12,14]+[10]*14); cs.set_row(0,62)
+ COL={h:i for i,h in enumerate(heads)}; span={}; row=1
+ for run in runs:
+  first=row
+  for x in run['seasons']:
+   i=x['in']; o=x['out']; n=row+1
+   vals=[run['profile']['name'],x['season'],x['division'],x['league'],x['position'],x['outcome'],x['dayFrom'],x['dayTo'],x['matches'],x['won'],x['drawn'],x['lost'],x['coinsIn'],x['coinsOut'],None,x['balanceEnd'],x['balanceMin'],
+    i['matchFees'],i['megastore'],i['cupPrizes'],i['seasonPrizes'],i['board'],i['sponsor'],i['commercial'],i['playerSales'],i['cardSales'],sum(i[k] for k in LOOPS),i['clubIncome'],sum(i[k] for k in ADS),
+    o['ground'],o['staffFees'],o['staffWages'],o['wageDrain'],o['transfers'],o['training'],o['contracts'],o['events'],
+    None,None,None,x['playerWages'],x['wageBudget'],x['unpaidMatchdays'],x['drainMatchdays'],x['rating'],x['par'],x['squad'],x['ground'],x['partsBuilt'],x['staffLevels'],x['gemsIn'],x['gemsOut'],x['gemsEnd'],x['ticketsIn'],x['ticketsOut'],x['cardsSigned'],x['cardsSold'],x['level']]
+   for c,v in enumerate(vals):
+    if v is not None: cs.write(row,c,v)
+   L=lambda h: f"{cn(COL[h])}{n}"
+   cs.write_formula(row,COL['Net (in less out)'],f"={L('Coins in')}-{L('Coins out')}",F['calcint'],x['coinsIn']-x['coinsOut'])
+   cs.write_formula(row,37,f"={L('IN: match fees')}+{L('IN: megastore')}+{L('IN: sponsor')}+{L('IN: commercial manager')}",F['calcint'],x['clubIncome'])
+   cs.write_formula(row,38,f"=IF({cn(37)}{n}>0,{L('OUT: staff wages')}/{cn(37)}{n},0)",F['calcpct'],x['wageShare'])
+   rec=(o['staffWages']+o['wageDrain']+o['contracts']+o['events'])/max(1,x['coinsIn'])
+   cs.write_formula(row,39,f"=IF({L('Coins in')}>0,({L('OUT: staff wages')}+{L('OUT: wage drain')}+{L('OUT: contracts')}+{L('OUT: other cards')})/{L('Coins in')},0)",F['calcpct'],rec); row+=1
+  span[run['profile']['id']]=(first+1,row)
+ cs.autofilter(0,0,row-1,len(heads)-1)
+ seasons_end=row
+ cs.merge_range(row+1,0,row+7,12,f"ROAD TO GLORY played matchday by matchday on the game's own engine for {cr['horizon']} days (seed {cr['seed']}): the league, the cups, the week at the club, the staff, the ground, the board and the event cards are the real rules. ASSUMED: who wins. The profile's mix (45/25/30, 60/20/20, 75/15/10) holds when the two elevens are level on Normal; every rating point between them moves {A['ratingPoint']*100:g} points of a hundred between wins and defeats (up to {A['ratingClamp']*100:g}); Hard (the Championship) takes {A['hard']*100:g} off the wins and Legend (the Elite League) {A['legend']*100:g}. THE MANAGER: keeps {A['reserveMatchdays']} matchdays of staff wages in the wallet; builds the cheapest part of the ground he can; hires staff in order while their wages stay under {A['staffShare']*100:g}% of what a league matchday brings; opens every pack and signs a card that beats a starter when the wage budget allows, else sells it; signs or trains only when the eleven is under its division's par; buys the Local network, the Club Pass, then the other networks with gems. Everything else is saved: the balance is what is left for looks. Only finished seasons are rows. Not player telemetry.",F['note'])
+ # --- Career Tables: what the checks read
+ ct=w.add_worksheet('Career Tables'); ct.set_column(0,0,44); ct.set_column(1,1,46); ct.set_column(2,15,16); row=0; REF={}
+ def table(title,headers):
+  global row
+  ct.write(row,0,title,F['sub']); row+=1
+  for c,h in enumerate(headers): ct.write(row,c,h,F['head'])
+  ct.set_row(row,32); row+=1
+ Q="'Career Tables'!"
+ table('Headline by profile',['Profile','','Days modelled','Seasons finished','Division at the end','Coins earned','Coins spent','Balance at the end','Gems earned','Gems spent','Day every coin sink is paid for','Average fee of a won match'])
+ for run in runs:
+  ct.write_row(row,0,[run['profile']['name'],'',run['horizon'],len(run['seasons']),run['end']['division'],sum(run['coinsIn'].values()),sum(run['coinsOut'].values()),run['end']['coins'],sum(run['gemsIn'].values()),sum(run['gemsOut'].values()),none(run['exhausted']),round(run['winAverage'])]); REF['exh:'+run['profile']['id']]=rc(row,10); row+=1
+ row+=1; table('Promotions',['Profile','Promoted to','In season','On day'])
+ for run in runs:
+  for x in run['promotions']: ct.write_row(row,0,[run['profile']['name'],f"Division {x['division']}",x['season'],x['day']]); row+=1
+ row+=1; table('Days to each goal',['Profile','Goal','Day'])
+ GN={'midLook':'A mid look in the wallet (1,200 coins)','topLook':'A top look in the wallet (7,500 coins)','ground':'The whole ground built','staff':'Every member of staff at level 3','localNetwork':'Local Scouting Network','clubPass':'Club Pass','allNetworks':'All three Scouting Networks'}
+ for run in runs:
+  for k,name in GN.items(): ct.write_row(row,0,[run['profile']['name'],name,none(run['goalDays'][k])]); REF[f"goal:{run['profile']['id']}:{k}"]=rc(row,2); row+=1
+ row+=1; table('The ground, part by part (Career regular)',['Part','','Coins','Day','Match','Matches since the last part'])
+ b0=row
+ for x in runs[1]['builds']: ct.write_row(row,0,[x['part'],'',x['cost'],x['day'],x['match'],x['sinceLast']]); row+=1
+ REF['builds']=f"{rc(b0,5)}:{rc(row-1,5)}"
+ row+=1; table('By stage: club income, coins that need no match, and the welcome sheet\'s ad',['Profile','Days','Club income a day','Other coins a day','Club income / the rest','No-match coins a day','Match coins a day','No-match / match','Fee of a won match','Welcome sheet ad, coins','Ad in won matches'])
+ s0=row; adrows=[]
+ for x in cr['stages']:
+  n=row+1; ct.write_row(row,0,[x['profile'],f"{x['from']} to {x['to']}",x['incomePerDay'],x['otherPerDay']]); ct.write_formula(row,4,f'=IF(D{n}>0,C{n}/D{n},0)',F['calcpct'],x['incomeShare'])
+  ct.write_row(row,5,[x['passivePerDay'],x['matchPerDay']]); ct.write_formula(row,7,f'=IF(G{n}>0,F{n}/G{n},0)',F['calcpct'],x['passiveShare']); ct.write_row(row,8,[x['winFee'],x['sheetAd']])
+  ct.write_formula(row,10,f'=IF(I{n}>0,J{n}/I{n},0)',F['calc'],x['sheetAdWins'])
+  if x['profile']=='Career regular, every ad': adrows.append(row)
+  row+=1
+ REF['stageIncome']=f"{rc(s0,4)}:{rc(row-1,4)}"; REF['stagePassive']=f"{rc(s0,7)}:{rc(row-1,7)}"; REF['sheetAd']=f"{rc(adrows[0],10)}:{rc(adrows[-1],10)}"
+ row+=1; table('Shared profiles, 90 days: coins that need no match against coins from matches',['Profile','','No-match coins','Match coins','No-match / match'])
+ p0=row
+ for x in cr['sharedPassive']:
+  n=row+1; ct.write_row(row,0,[x['profile'],'',x['passive'],x['match']]); ct.write_formula(row,4,f'=IF(D{n}>0,C{n}/D{n},0)',F['calcpct'],x['share']); row+=1
+ REF['sharedPassive']=f"{rc(p0,4)}:{rc(row-1,4)}"
+ row+=1; table('The sponsor card, the same answer at every call (Career regular)',['Answer','','Coins','League matchdays','Coins a league matchday'])
+ for x in cr['sponsor']:
+  n=row+1; ct.write_row(row,0,[x['answer'],'',x['coins'],x['matchdays']]); ct.write_formula(row,4,f'=IF(D{n}>0,C{n}/D{n},0)',F['calc'],x['perMatchday']); REF['sp:'+x['answer']]=rc(row,4); row+=1
+ row+=1; table('Trades that try to make coins without playing',['Trade','How','Division','Player OVR','Coins in','Coins back','Profit','Profit in league wins','A league win there'])
+ a0=row; inst=[]; held=[]
+ for x in cr['arbitrage']:
+  n=row+1; ct.write_row(row,0,[x['trade'],x['how'],x['division'],x['ovr'],x['cost'],x['back']]); ct.write_formula(row,6,f'=F{n}-E{n}',F['calcint'],x['profit']); ct.write_formula(row,7,f'=IF(I{n}>0,G{n}/I{n},0)',F['calc'],x['wins']); ct.write(row,8,x['win'])
+  (inst if x['instant'] else held if x['cost']>0 else []).append(row); row+=1
+ REF['inst']=','.join(rc(i,6) for i in inst); REF['held']=','.join(rc(i,7) for i in held)
+ row+=1; table('A league matchday by division, at a park pitch and at the dome (Career regular\'s results)',['League','','Division','Ground level','Par OVR','Win fee','Expected fee a match','Sponsor a match (no manager)','Megastore at home','Full staff wages','Full staff / matchday income','Wage budget','10% over budget costs a matchday','Relegated here with the wage bill of the division above: drain a matchday until players are sold','A par signing','A training session'])
+ for x in cr['divisions']:
+  ct.write_row(row,0,[x['league'],'',x['division'],x['stadium'],x['par'],x['winFee'],x['expectedFee'],x['sponsor'],x['megastoreHome'],x['fullStaffWages']]); ct.write_number(row,10,x['staffShare'],F['pct']); ct.write_row(row,11,[x['wageBudget'],x['tenOverCosts'],x['relegatedCosts'],x['parSigning'],x['session']]); row+=1
+ row+=1; table('XP: the day and the match each level that unlocks something is reached',['Profile','Unlocks','Level','Day','Matches'])
+ for x in cr['xp']: ct.write_row(row,0,[x['profile'],x['unlocks'],x['level'],none(x['day']),none(x['matches'])]); row+=1
+ row+=1; table('Where it came from and where it went, the whole run',['Profile','Source or sink','Kind','Amount','Share of its kind'])
+ for run in runs[:3]:
+  for kind,key in [('Coins in','coinsIn'),('Coins out','coinsOut'),('Gems in','gemsIn'),('Gems out','gemsOut'),('Tickets in','ticketsIn'),('Tickets out','ticketsOut')]:
+   tot=sum(run[key].values())
+   for k,v in run[key].items():
+    if v: ct.write_row(row,0,[run['profile']['name'],k,kind,v]); ct.write_number(row,4,v/tot if tot else 0,F['pct1']); row+=1
+ row+=1; table('The balance every five days',['Profile','','Day','Balance','Earned so far','Spent so far','Gems','Division','Team rating'])
+ chart2=w.add_chart({'type':'line'})
+ for run in runs[:3]:
+  f0=row
+  for x in run['rows']: ct.write_row(row,0,[run['profile']['name'],'',x['day'],x['coins'],x['earned'],x['spent'],x['gems'],x['division'],x['rating']]); row+=1
+  chart2.add_series({'name':run['profile']['name'],'categories':['Career Tables',f0,2,row-1,2],'values':['Career Tables',f0,3,row-1,3]})
+ row+=1; table('The balance after every match (Career regular)',['Competition','Result','Match number','Day','Season','Division','Coins the match paid','Balance after the hub'])
+ for x in cr['matchLedger']: ct.write_row(row,0,[x['competition'],x['result'],x['n'],x['day'],x['season'],x['division'],x['coins'],x['balance']]); row+=1
+ chart2.set_title({'name':'Coins in the wallet after the club\'s spending'}); chart2.set_x_axis({'name':'Day'}); chart2.set_y_axis({'name':'Coins','min':0}); chart2.set_legend({'position':'bottom'}); chart2.set_size({'width':760,'height':380})
+ cs.insert_chart(seasons_end+9,0,chart2)
+ # --- Ads
+ ad=cr['ads']; av=w.add_worksheet('Ads'); av.set_column(0,0,40); av.set_column(1,1,52); av.set_column(2,10,17); row=0
+ def atable(title,headers):
+  global row
+  av.write(row,0,title,F['sub']); row+=1
+  for c,h in enumerate(headers): av.write(row,c,h,F['head'])
+  av.set_row(row,32); row+=1
+ QA="'Ads'!"
+ atable('Rewarded ads taken, by placement (a player who watches every one)',['Profile','Placement','Offered','Taken in the run','A day played','Coins','Gems','Coins each','Share of his coins','Share of his gems','What it is worth'])
+ pl0=row; share_cells=[]
+ for x in ad['placements']:
+  av.write_row(row,0,[x['profile'],x['placement'],x['cap'],x['taken']]); av.write_number(row,4,x['perDay'],F['dec']); av.write_row(row,5,[round(x['coins']),x['gems'],round(x['coinsEach'])]); av.write_number(row,8,x['coinShare'],F['pct1']); av.write_number(row,9,x['gemShare'],F['pct1']); av.write(row,10,x['worth'])
+  if x['profile']=='Career regular, every ad': share_cells.append(rc(row,8))
+  row+=1
+ av.set_column(10,10,70)
+ row+=1; atable('Never an ad against every ad: the day each goal is reached (Career regular, three seeds)',['Goal','','No ads, day','Every ad, day','No ads / every ad'])
+ g0=row
+ for x in ad['goals']:
+  n=row+1; av.write(row,0,x['goal'])
+  if x['noAds'] is None or x['everyAd'] is None: av.write_row(row,2,[none(x['noAds']),none(x['everyAd']),'']); 
+  else: av.write_number(row,2,x['noAds'],F['dec']); av.write_number(row,3,x['everyAd'],F['dec']); av.write_formula(row,4,f'=IF(D{n}>0,C{n}/D{n},0)',F['calc'],x['ratio'])
+  row+=1
+ REF['adRatio']=f"{QA}{rc(g0,4)}:{rc(row-1,4)}"; REF['adShare']='+'.join(QA+c for c in share_cells)
+ row+=1; atable('Interstitials in a visit (blue cells are inputs)',['Input','','Value'])
+ T=ad['timing']; av.write(row,0,'Minutes from a kick-off to half time'); av.write_number(row,2,T['kickToHalf'],F['input']); kh=rc(row,2,True,True); row+=1
+ av.write(row,0,'Minutes from half time to the next kick-off'); av.write_number(row,2,T['halfToKick'],F['input']); hk=rc(row,2,True,True); row+=1
+ av.write(row,0,'Minutes the portal asks for between two'); av.write_number(row,2,T['gap'],F['input']); gp=rc(row,2,True,True); row+=2
+ for c,h in enumerate(['Profile','','Matches a visit','Minutes a visit','Interstitials, the save\'s first visit (model)','Interstitials, a later visit (formula)','An hour of play','Rewarded ads a day played']): av.write(row,c,h,F['head'])
+ av.set_row(row,32); row+=1
+ for x in ad['visits']:
+  n=row+1; av.write_row(row,0,[x['profile'],'',x['matches']]); av.write_formula(row,3,f'=C{n}*({kh}+{hk})',F['calc'],x['minutes']); av.write(row,4,x['firstVisit'])
+  av.write_formula(row,5,f'=IF(AND({kh}>={gp},{hk}>={gp}),2*C{n}-1,IF({kh}+{hk}>={gp},C{n},ROUNDUP(C{n}*({kh}+{hk})/{gp},0)))',F['calc'],x['laterVisit'])
+  av.write_formula(row,6,f'=IF(D{n}>0,F{n}/D{n}*60,0)',F['calc'],x['perHour']); av.write_number(row,7,x['rewardedPerDay'],F['dec']); row+=1
+ av.merge_range(row+1,0,row+5,9,'THE RULE MODELLED: one interstitial before a kick-off, never the first match of a visit; one at half time; none until two matches are finished on the save; and the portal\'s SDK lets one through every 3 minutes at most. At the default 2 minute halves half time comes 2.5 minutes after a kick-off ad, inside the 3 minutes, so a visit of N matches shows N: the half time of the first match and the kick-off of every later one. One every six minutes, ten an hour. With 3 minute halves both slots clear the gap and it would be 2N - 1. Rewarded ads are the player\'s choice and are counted apart. MODELLED, NOT BUILT HERE: the welcome sheet\'s ad doubling the ticket office, HEAL A PLAYER by ad, the replay ad, the half time interstitial. Club Run is not in the career simulation.',F['note'])
+ # --- Balance Checks: one row a check; the measured value is a formula over the data wherever the data is on a sheet
+ bc=sheet('Balance Checks',['Area','Check','The bar','Limit','Measured','Result','Before this pass','Unit','What it shows'],[13,74,30,10,13,10,16,11,110]); row=1
+ CS="'Career By Season'!"; rng=lambda col,ids: ','.join(f"{CS}{cn(col)}{span[i][0]}:{cn(col)}{span[i][1]}" for i in ids if span[i][1]>=span[i][0])
+ pol=['career-learning','career-regular','career-strong']; G=lambda i,k: Q+REF[f'goal:{i}:{k}']
+ FX={
+  'wages-paid':f"=SUM({rng(42,pol)})",
+  'wage-drain':f"=SUM({rng(32,pol)})/SUM({rng(37,pol)})",
+  'wage-share':f"=MAX({rng(38,pol)})",
+  'collector-spiral':f"=MAX({rng(39,['career-regular-collector'])})",
+  'ground-part':f"=MAX({Q}{REF['builds']})",
+  'ground-whole':f"={G('career-regular','ground')}",'staff-whole':f"={G('career-regular','staff')}",'mid-look':f"={G('career-regular','midLook')}",'top-look':f"={G('career-regular','topLook')}",
+  'passive':f"=MAX({Q}{REF['stagePassive']},{Q}{REF['sharedPassive']})",
+  'club-income':f"=MAX({Q}{REF['stageIncome']},'Club Income'!E17:E40)",
+  'sponsor':f"={Q}{REF['sp:CASH NOW']}/{Q}{REF['sp:EVERY MATCH']}",
+  'flip-instant':f"=MAX({','.join(Q+c for c in REF['inst'].split(','))})",'flip-held':f"=MAX({','.join(Q+c for c in REF['held'].split(','))})",
+  'squad-sink':f"=SUM({rng(33,['career-regular'])},{rng(34,['career-regular'])})/SUM({rng(13,['career-regular'])})",
+  'sinks-last':f"={Q}{REF['exh:career-regular']}",
+  'ads-twice':f"=MAX({REF['adRatio']})",'ad-single':f"=MAX({Q}{REF['sheetAd']})",'ad-share':f"={REF['adShare']}",
+ }
+ for x in cr['checks']:
+  n=row+1; share=x['unit']=='share'; fmt=F['calcpct'] if share else F['calc']
+  bc.write_row(row,0,[x['area'],x['check'],x['bar']]); bc.write_number(row,3,x['limit'],F['inputpct'] if share else F['input'])
+  if x['id'] in FX: bc.write_formula(row,4,FX[x['id']],fmt,x['value'])
+  else: bc.write_number(row,4,x['value'],F['pct1'] if share else F['dec'])
+  bc.write_formula(row,5,f'=IF(E{n}{x["op"]}D{n},"PASS","FAIL")',F['pass'] if x['pass'] else F['fail'],'PASS' if x['pass'] else 'FAIL')
+  if x['before'] is not None: bc.write_number(row,6,x['before'],F['pct1'] if share else F['dec'])
+  bc.write(row,7,x['unit']); bc.write(row,8,x['note'],F['text']); bc.set_row(row,46); row+=1
+ bc.conditional_format(1,5,row-1,5,{'type':'cell','criteria':'==','value':'"PASS"','format':F['pass']}); bc.conditional_format(1,5,row-1,5,{'type':'cell','criteria':'==','value':'"FAIL"','format':F['fail']})
+ passed=sum(1 for x in cr['checks'] if x['pass']); failed=[x for x in cr['checks'] if not x['pass']]
+ bc.merge_range(row+1,0,row+5,8,'HOW TO READ IT: the green Measured cells are formulas over Career By Season, Career Tables, Club Income and Ads; the blue Limit cells are the bars. Change a limit, or a number on those sheets, and the result moves. A value with no formula is the model\'s own measurement (scripts/economy-model.ts) and moves only when the model is run again. "Before this pass" is the same measurement on the rules of 14 October 2026. The club income check reads the share rows of the Club Income sheet (rows 14 to 40) and the stage table of Career Tables.',F['note'])
+ # --- Start Here: the verdict in plain words
+ v=after+8
+ start_sheet.merge_range(v,1,v,7,'15 OCTOBER 2026, ECONOMY V7: DOES THE WHOLE ECONOMY BALANCE?',F['sub'])
+ start_sheet.merge_range(v+1,1,v+5,7,f"For the first five to six weeks of daily play, yes: {passed} of {len(cr['checks'])} checks pass on the sheet Balance Checks. No division's wages outrun its income, no sink is out of reach (the whole ground on day {runs[1]['goalDays']['ground']} and every member of staff on day {runs[1]['goalDays']['staff']} for a regular player), no daily or idle source pays more than playing, no trade makes coins without playing, tickets and gems always have a use, and a player who never watches an ad is never more than twice as slow. At the top, no: a regular player has paid for every coin sink in the game by day {runs[1]['exhausted']} and then banks about {round((runs[1]['rows'][-1]['coins']-[x for x in runs[1]['rows'] if x['day']==90][0]['coins'])/90*7,-3):,.0f} coins a week with nothing to buy; his squad costs him no coins at all because pack cards do the work; and the welcome sheet's ad is worth nearly two won matches in week one. Those three need a design decision, not a number.",F['text'])
+ start_sheet.merge_range(v+7,1,v+10,7,'WHAT WAS CHANGED (three numbers, nothing a player owns): the ticket office pays 16 / 18 / 20 / 22 / 24 / 26 coins an hour instead of 16 / 19 / 22 / 25 / 28 / 32, so club income is 22% of the rest of a keen player\'s day at the most instead of 27%; a new sponsor calls 8 league matchdays after the last instead of 3, so CASH NOW no longer pays 2.4 times the other answers; a home town scout\'s fee is 0.8 of the going rate instead of 0.75, so a find can no longer be signed and sold at once for a profit.',F['text'])
+ start_sheet.merge_range(v+12,1,v+13,7,'NEW SHEETS: Career By Season (the career simulated season by season), Career Tables (what the checks read), Balance Checks (the bar, the measured value, PASS or FAIL) and Ads (rewarded ads by placement, the no-ad comparison, interstitials a visit).',F['text'])
 w.close(); print(out.resolve())

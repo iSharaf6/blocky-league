@@ -244,6 +244,8 @@ export function comebackUi(app: AppContext, host: ComebackHost): ComebackUi {
     const rate = rateNow();
     // The welcome sheet's one CLAIM takes what the club earned too.
     if (sheetIncome > 0 && !calendarToday(save, day)) {
+      // (The gift's 2X ad doubles the gift's coins only. Doubling these too was tried on 2026-10-14 and taken out the
+      // same day: the model put that one ad at 1.8 match wins in a player's first week, and the bar is one.)
       const got = collectIncome(save, now, rate);
       if (got > 0) say(`YOUR CLUB EARNED ${n(got)} COINS WHILE YOU WERE AWAY`);
       away = false;

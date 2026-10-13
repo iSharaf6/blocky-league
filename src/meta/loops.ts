@@ -18,13 +18,13 @@ import { GEM_REWARDS, addGems } from './gems';
 // ------------------------------------------------------------------ state
 
 /** The optional rewarded ads this module caps (FREE COINS has its own cap: meta/shop.ts FREE_AD_DAILY_CAP). */
-export type AdPlace = 'gem' | 'replay' | 'build' | 'deal';
-export const AD_PLACES: readonly AdPlace[] = ['gem', 'replay', 'build', 'deal'];
+export type AdPlace = 'gem' | 'replay' | 'build' | 'deal' | 'heal';
+export const AD_PLACES: readonly AdPlace[] = ['gem', 'replay', 'build', 'deal', 'heal'];
 
 export type AdCaps = { readonly [k in AdPlace]: number };
 
 /** How many of each a local day allows in the apps and on the web. Small on purpose: a choice at the right moment, never a grind. */
-export const APP_AD_CAPS: AdCaps = { gem: 1, replay: 1, build: 1, deal: 1 };
+export const APP_AD_CAPS: AdCaps = { gem: 1, replay: 1, build: 1, deal: 1, heal: 1 };
 
 /**
  * FREE GEMS offers a day on a portal build (CrazyGames, Poki). Nothing is sold there, so gems come only from play and
@@ -49,6 +49,8 @@ export const AD_TEXT: { readonly [k in AdPlace]: string } = {
   replay: 'REPLAY A LOST DECIDER',
   build: 'ONE MATCHDAY OFF YOUR BUILD',
   deal: 'A NEW DEAL TODAY',
+  // (2026-10-14: every gem shortcut has its ad now. HEAL A PLAYER NOW was the one that had none.)
+  heal: 'HEAL AN INJURED PLAYER',
 };
 
 export interface WeeklyState {
@@ -72,7 +74,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const count = (v: unknown, max = 99): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.min(max, Math.floor(v)) : 0);
 
 export function defaultLoops(): LoopState {
-  return { ads: { day: '', gem: 0, replay: 0, build: 0, deal: 0 }, weekly: { week: '', progress: [0, 0, 0], claimed: [false, false, false] }, sweep: '' };
+  return { ads: { day: '', gem: 0, replay: 0, build: 0, deal: 0, heal: 0 }, weekly: { week: '', progress: [0, 0, 0], claimed: [false, false, false] }, sweep: '' };
 }
 
 /** A loops blob as stored by any build (or none) made whole. */
@@ -86,7 +88,8 @@ export function normalizeLoops(raw: unknown): LoopState {
   const prog = Array.isArray(w.progress) ? w.progress : [];
   const claimed = Array.isArray(w.claimed) ? w.claimed : [];
   return {
-    ads: { day, gem: day ? count(a.gem) : 0, replay: day ? count(a.replay) : 0, build: day ? count(a.build) : 0, deal: day ? count(a.deal) : 0 },
+    // (A save from before an ad place existed counts none of it today.)
+    ads: { day, gem: day ? count(a.gem) : 0, replay: day ? count(a.replay) : 0, build: day ? count(a.build) : 0, deal: day ? count(a.deal) : 0, heal: day ? count(a.heal) : 0 },
     weekly: {
       week: typeof w.week === 'string' && DAY.test(w.week) ? w.week : '',
       progress: [count(prog[0], 9999), count(prog[1], 9999), count(prog[2], 9999)],

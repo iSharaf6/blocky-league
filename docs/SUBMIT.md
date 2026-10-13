@@ -11,7 +11,7 @@ CrazyGames approved the game for Full Launch on 13 October with status **Needs c
 | Requirement | In v1.1.0 |
 |---|---|
 | Land in gameplay at once | No title screen on the portal: a first visit starts the first drill by itself (0 clicks), a returning player lands on the club hub. "Gameplay start" is sent as soon as the drill is waiting for the player |
-| Ads only through the SDK | One interstitial before a kick-off (never before two matches have been played, never on menus); seven opt-in rewarded offers, each marked with a film icon and the word AD, locked while an ad runs, hidden or labelled when ads are blocked |
+| Ads only through the SDK | Interstitials at the two natural breaks, half time and before a kick-off (never before two matches have been played, never the first match of a visit, never on menus; the SDK spaces them 3 minutes apart); eight opt-in rewarded offers, each marked with a film icon and the word AD, locked while an ad runs, hidden or labelled when ads are blocked. The full list: [MONETIZATION.md](MONETIZATION.md) |
 | Works with an adblocker | Play is never blocked; rewarded offers show ADS BLOCKED instead of a dead button |
 | Progress saved to the account | The SDK Data module; a blank save on a new device can no longer replace the account's copy (the fuller save wins) |
 | No external links, logins or store promotion | Mail links, share and download buttons, backup files, "in the app" wording and account sign-in are all compiled out of the portal build; the build fails if any returns |
@@ -22,7 +22,7 @@ CrazyGames approved the game for Full Launch on 13 October with status **Needs c
 
 1. `npm run build:all`, then `npm run submission`. It must end with **All checks passed**.
 2. On <https://developer.crazygames.com/> open Blocky League and press **Submit new version**. Upload `release/submission/crazygames/upload/blocky-league-crazygames-v1.1.0.zip`.
-3. In the Preview (QA) tool check: the first drill starts by itself; a match plays to full time; the film-icon buttons play a test ad and pay out; P pauses; a phone size fits.
+3. In the Preview (QA) tool check: the first drill starts by itself; a match plays to full time; from your third match an ad comes at half time and the half-time screen after it; the film-icon buttons play a test ad and pay out; P pauses; a phone size fits.
 4. Set orientation to **landscape** if the form offers it (the game is built for landscape; mobile gameplay conversion was 58% in Basic Launch and upright phones are one likely reason).
 5. Keep **Progress save** on the SDK option the game already uses (the dashboard shows it as SDKPS). Sign in on CrazyGames, play a match, open the game in a private window signed in to the same account, and confirm the club is there.
 6. Paste the refreshed description and controls from `release/submission/crazygames/listing.txt`.

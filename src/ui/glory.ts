@@ -22,7 +22,11 @@ import {
 } from '../meta/growth';
 import { contractOf, playerAge, wageOf } from '../meta/market';
 import { MORALE_HIGH, MORALE_LOW, expectsToPlay, isInjured, moraleOf } from '../meta/morale';
-import { buyNetwork, healNow } from '../meta/premium';
+import { adsLeft, useAd } from '../meta/loops';
+import { buyNetwork, healFree, healNow } from '../meta/premium';
+import { ads } from '../platform/ads';
+import { localDay } from '../core/day';
+import { NO_AD_TEXT } from './pixelIcons';
 import {
   REGIONS, REGION_IDS, STAFF, STAFF_MAX_LEVEL, canHire, canSignFind, hireStaff, hiredLevel, isScout, releaseStaff, reportOf, scoutEvery, setScout,
   signFind, staffDef, staffNeeds, staffTitle, staffWages, unseenReports, type RegionId, type ScoutSlot, type StaffRole,
@@ -368,6 +372,8 @@ export function growHandlers(
     buzz('tap');
     redraw();
   };
+  /** A heal ad is being asked for or is up: a second tap asks for nothing. */
+  let healAdBusy = false;
   return {
     focus: (el) => {
       const p = current();
@@ -403,6 +409,23 @@ export function growHandlers(
           saved();
           toast(`${lastName(p.name).toUpperCase()} IS FIT AGAIN`, 'good');
         },
+        // The same heal for a rewarded ad, once a day (meta/loops.ts 'heal'): offered while today's is unused, switched
+        // off with the reason when no ad can be shown. Only an ad that played through heals him.
+        ad: adsLeft(app.save, 'heal', localDay()) > 0 && ads.portal !== 'none' ? {
+          label: 'AD HEALS HIM FREE',
+          off: ads.rewardedAvailable ? undefined : ads.rewardedNote || 'NO AD RIGHT NOW',
+          onAd: () => void (async () => {
+            if (healAdBusy) return;
+            healAdBusy = true;
+            const watched = await ads.rewarded().catch(() => false);
+            healAdBusy = false;
+            if (!watched) return toast(NO_AD_TEXT, 'info');
+            if (!useAd(app.save, 'heal', localDay()) || !healFree(st, p.id)) return;
+            sfx.coin();
+            saved();
+            toast(`${lastName(p.name).toUpperCase()} IS FIT AGAIN`, 'good');
+          })(),
+        } : undefined,
       });
     },
   };

@@ -21,7 +21,19 @@ progression). What this build adds over the live one:
   5%), a deliberate curler with a visible bend, aftertouch (move the stick just after the shot), a nutmeg that goes
   between the defender's feet (it rolled 0.4 to 0.7 m beside him before), and a skill prompt about half the size.
 
-**Validation.** Typecheck clean. **2,122 tests across 141 files passed, 2 skipped** in one run of the whole suite on
+**Later on 14 October: ad placement and the whole economy.** A half-time interstitial was added beside the one
+before a kick-off (never a drill, a Moment, the first match or before two matches; the SDK spaces them 3 minutes
+apart, which at 2 minute halves is about one a match), HEAL A PLAYER can be had for a rewarded ad once a day, and a
+lost Club Run round can be replayed once: [MONETIZATION.md](MONETIZATION.md). The career is now simulated in the
+economy model on the game's own engine for 180 days and held to 22 stated bars; **20 pass**. Three numbers were
+changed on its evidence (the ticket office's top rates, the gap between sponsor offers, the home scout's fee). **Two
+checks fail and are open for the owner:** after about eight weeks of daily play a regular player has bought every
+coin sink in the game and banks about 24,000 coins a week, and scout cards hand out players so freely that nothing
+is spent on transfers or training: [ECONOMY.md](ECONOMY.md), 15 October section. Real-money purchases on CrazyGames
+are invite only (their Xsolla store), so ads are the portal's only income for now. After these changes the whole
+suite was run again: **2,141 tests across 142 files passed, 2 skipped**, and the packages were rebuilt.
+
+**Validation (the first build of the day).** Typecheck clean. **2,122 tests across 141 files passed, 2 skipped** in one run of the whole suite on
 the integrated code (the six AI-only determinism rows are bit-identical; the twelve rows a human's shots reach were
 re-recorded as protocol 12). Four small edits came after that run (a `window.focus()` call at portal boot, the dev
 step hook, and listing and status text); typecheck and the targeted menu, copy and shot tests were re-run after them.

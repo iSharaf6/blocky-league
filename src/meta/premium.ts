@@ -49,6 +49,15 @@ export function healNow(state: CareerState, save: GemSave, playerId: string): bo
   return true;
 }
 
+/** The free way (a rewarded ad, meta/loops.ts 'heal', one a day): the same heal for no gems. False when he isn't injured. */
+export function healFree(state: CareerState, playerId: string): boolean {
+  const p = state.club?.squad.find((q) => q.id === playerId) as GrowPlayer | undefined;
+  if (!p || !(p.inj && p.inj > 0)) return false;
+  p.inj = 0;
+  addTimeline(state, `${p.name} was back on his feet at once`, 'medic', 'good');
+  return true;
+}
+
 /** Bring the career's copy of the Scouting Network tier in step with the save's (gems.ts owns it). */
 export function syncNetwork(state: CareerState, save: GemSave): void {
   state.staff.network = scoutNetworkTier(save);

@@ -26,8 +26,15 @@ import { staffLevel } from './staff';
 
 /** The office stops filling after this many hours. */
 export const INCOME_CAP_HOURS = 8;
-/** Coins an hour from the ticket office, by ground level (0 a park pitch .. 5 the dome). */
-export const TICKET_OFFICE: readonly number[] = [16, 19, 22, 25, 28, 32];
+/**
+ * Coins an hour from the ticket office, by ground level (0 a park pitch .. 5 the dome).
+ * (15 October 2026, economy v7. Before: 16 / 19 / 22 / 25 / 28 / 32, 52 an hour and a 416 coin office at the very most.
+ * After: 16 / 18 / 20 / 22 / 24 / 26, 43 an hour and 344 at the very most. The model, scripts/economy-model.ts: a keen
+ * player who collects twice a day took 26.6% of the rest of his day's coins from the office in days 31 to 90, over
+ * the quarter the owner set; it is 22.3% now, the most any profile reaches at any stage. A new club's rate is the same
+ * 16, and a saved office keeps every coin it had banked.)
+ */
+export const TICKET_OFFICE: readonly number[] = [16, 18, 20, 22, 24, 26];
 /** Coins an hour the club shop adds once the MEGASTORE is built. */
 export const CLUB_SHOP = 5;
 /** Per cent on top from the commercial manager, by level (0 none .. 3). */

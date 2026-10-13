@@ -176,9 +176,15 @@ export interface RegionDef {
   ceil: number;
 }
 
-/** The five regions: each produces a different kind of player (names from the game's own map: meta/comps.ts). */
+/**
+ * The five regions: each produces a different kind of player (names from the game's own map: meta/comps.ts).
+ * (15 October 2026, economy v7. HOME TOWNS fee before: 0.75. After: 0.8, still the cheapest. The model,
+ * scripts/economy-model.ts arbitrageTable: a home youth find cost 0.45 of his rating price and a quick sale paid 0.47,
+ * so signing and selling him at once made 10 to 40 coins a find. Now it makes nothing. Reports already delivered
+ * keep the fee they quoted.)
+ */
 export const REGIONS: Record<RegionId, RegionDef> = {
-  home: { id: 'home', name: 'HOME TOWNS', does: 'LOYAL LOCAL PLAYERS, CHEAP', roles: ['DF', 'MF', 'FW', 'GK', 'MF', 'FW'], bias: {}, trait: 'loyal', fee: 0.75, ceil: 0 },
+  home: { id: 'home', name: 'HOME TOWNS', does: 'LOYAL LOCAL PLAYERS, CHEAP', roles: ['DF', 'MF', 'FW', 'GK', 'MF', 'FW'], bias: {}, trait: 'loyal', fee: 0.8, ceil: 0 },
   north: { id: 'north', name: 'BLOKARIA', does: 'TOUGH DEFENDERS AND KEEPERS', roles: ['DF', 'DF', 'GK', 'DF', 'MF'], bias: { defending: 6, stamina: 4, keeping: 4, pace: -3 }, trait: 'leader', fee: 1, ceil: 2 },
   south: { id: 'south', name: 'CUBALIA', does: 'FORWARDS WITH FLAIR', roles: ['FW', 'FW', 'MF', 'FW'], bias: { dribbling: 6, shooting: 4, defending: -4 }, trait: 'biggame', fee: 1.1, ceil: 3 },
   east: { id: 'east', name: 'PIXLAND', does: 'CLEVER PASSERS', roles: ['MF', 'MF', 'DF', 'MF'], bias: { passing: 7, dribbling: 2, pace: -3 }, trait: 'ambitious', fee: 1, ceil: 2 },

@@ -61,6 +61,10 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 .gem-card .gem-short { margin: 0; font: 700 12px / 1.2 var(--px); letter-spacing: 0.8px; color: var(--red-d); }
 .gem-card .gem-free { margin: 4px 0 0; font: 400 13px / 1.2 var(--round); letter-spacing: 0.4px; color: var(--ink-2); }
 .gem-card .btn-row { display: flex; justify-content: center; gap: 10px; margin: 2px 0 0; }
+/* The same thing for a rewarded ad: its own row under the yes and no, the film icon beside its words. */
+.gem-card .btn-row.gem-ad { margin-top: 6px; }
+.gem-card .btn-row.gem-ad .btn { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.gem-card .btn-row.gem-ad .btn[disabled] { opacity: 0.55; }
 .gem-card .btn { min-height: 46px; }
 .gem-card .btn-lg { font-size: 18px; padding: 12px 18px 10px; }
 

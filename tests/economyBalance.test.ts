@@ -108,7 +108,9 @@ describe('coming back (14 October 2026): the new sources stay small, and the old
   it('club income is small next to playing at every stage: under a fifth of a regular player\'s day, about a quarter at the very most', () => {
     for (const s of model.incomeShare) {
       // The most: a keen player who collects twice a day from the dome with a level 3 manager.
-      expect(s.share, `${s.profile} ${s.from} to ${s.to}`).toBeLessThanOrEqual(0.28);
+      // (15 October 2026, economy v7: the bar was 0.28 and the keen player sat at 0.266, over the quarter the owner
+      // set. The ticket office came down to 16 / 18 / 20 / 22 / 24 / 26 an hour and the bar is the quarter itself.)
+      expect(s.share, `${s.profile} ${s.from} to ${s.to}`).toBeLessThanOrEqual(0.25);
       if (s.from === 1) expect(s.share, `${s.profile} week one`).toBeLessThanOrEqual(0.1);
       if (/^Regular, no ads|^Portal regular/.test(s.profile)) expect(s.share, s.profile).toBeLessThanOrEqual(0.2);
     }

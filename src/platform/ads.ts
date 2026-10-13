@@ -59,6 +59,23 @@ export function breakDue(o: {
 }
 
 /**
+ * May an interstitial be asked for as the half-time screen comes up (main.ts onHalftime)? Half time is the one break
+ * football has in the middle of a match, and the owner asked for it ("half time in between breaks should have an ad").
+ * Never in a basics drill, a Football Moment or the first match, never into a match being restored, and not until
+ * AD_FREE_MATCHES whole matches are behind the player. A portal asks only when its last ad is PORTAL_HALF_GAP_MS
+ * behind (Ads.midgame): its SDK would refuse a nearer one anyway, and a refused request is still a blink of held game.
+ */
+export function halfBreakDue(o: { recovered: boolean; basics: boolean; firstMatch: boolean; moment: boolean; played: number }): boolean {
+  return !o.recovered && !o.basics && !o.firstMatch && !o.moment && o.played >= AD_FREE_MATCHES;
+}
+/**
+ * A portal's half-time interstitial waits this long (ms) after the last ad that actually played, a rewarded one
+ * included. CrazyGames allows one interstitial every 3 minutes: with the default 2 minute halves that is an ad at
+ * half time OR before the next kick-off, never both in one short match, and both in a long one.
+ */
+export const PORTAL_HALF_GAP_MS = 170_000;
+
+/**
  * Is a ball actually playable? The portals' "gameplay started" goes out only then (main.ts payPlay): the sim has
  * stepped since the kick-off (or the half) was set up, in a phase the player has something to play, and nothing
  * holds the match (a pause, a menu over it). Not while the fly-in plays, a brief is read or a first match waits on
@@ -191,6 +208,8 @@ export class Ads {
   private appRetry: Record<AppAd, number> = { rewarded: 0, interstitial: 0 };
   /** When the last app ad (either kind) closed (ms, Date.now): the next interstitial waits APP_AD_GAP_MS from it. */
   private appLastAt = -Infinity;
+  /** When the last portal ad that actually played (either kind) ended (ms, Date.now): the half-time break waits on it. */
+  private portalLastAt = -Infinity;
   private readyFns = new Set<() => void>();
 
   /**
@@ -444,9 +463,9 @@ export class Ads {
 
   /**
    * Interstitial at a natural break: 'match' just before a new match kicks off ('moment': a Football Moment's
-   * try), 'halftime' as the half-time screen comes up. The portals: no local cooldown, both SDKs decide whether an
-   * ad actually plays (CrazyGames caps at 1 per 3 min), and they keep their one break before a kick-off (no
-   * half-time one). The app: see APP_AD_GAP_MS.
+   * try), 'halftime' as the half-time screen comes up. The portals: both SDKs decide whether an ad actually plays
+   * (CrazyGames caps at 1 per 3 min); before a kick-off they are simply asked, and at half time only when the last ad
+   * that played is PORTAL_HALF_GAP_MS behind. The app: see APP_AD_GAP_MS.
    */
   async midgame(at: 'match' | 'moment' | 'halftime' = 'match'): Promise<void> {
     if (!this.ok || !this.adsAllowed || this.adInFlight || this.lateAds > 0 || this.adFree()) return;
@@ -457,7 +476,7 @@ export class Ads {
         this.prepareApp('interstitial');
         return;
       }
-    } else if (at === 'halftime') {
+    } else if (at === 'halftime' && Date.now() - this.portalLastAt < PORTAL_HALF_GAP_MS) {
       return;
     }
     this.gameplayStop();
@@ -468,7 +487,10 @@ export class Ads {
       if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && this.portal === 'app') {
         await this.showApp('interstitial');
       } else if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'poki') && this.portal === 'poki') {
-        await withTimeout(window.PokiSDK!.commercialBreak(() => { if (active) this.setAdMute(true); }), 45_000, undefined);
+        await withTimeout(window.PokiSDK!.commercialBreak(() => {
+          this.portalLastAt = Date.now();
+          if (active) this.setAdMute(true);
+        }), 45_000, undefined);
       } else if (this.portal === 'crazygames') {
         await this.crazyAd('midgame');
       }
@@ -541,6 +563,8 @@ export class Ads {
         if (was === 'over') return;
         state = 'over';
         clearTimeout(timer);
+        // (One that played, on time or late, starts the wait to the next half-time break.)
+        if (was === 'playing' || was === 'late') this.portalLastAt = Date.now();
         if (was === 'late') this.lateAdEnd();
         else if (was !== 'left') resolve(watched);
       };
