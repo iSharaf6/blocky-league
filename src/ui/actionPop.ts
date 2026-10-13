@@ -21,6 +21,17 @@ export const TACKLE_WORDS: Readonly<Record<TackleCue, string>> = {
 };
 
 /**
+ * The word for a special strike (sim/actions.ts, sim/match.ts): the KNUCKLEBALL and the CURLER as the boot meets the
+ * ball, AFTERTOUCH the moment the stick bends a shot in the air. One word each, no hyphen (the pixel face's is a bar).
+ */
+export type StrikeWord = 'knuckle' | 'curler' | 'aftertouch';
+export const STRIKE_WORDS: Readonly<Record<StrikeWord, string>> = {
+  knuckle: 'KNUCKLEBALL',
+  curler: 'CURLER',
+  aftertouch: 'AFTERTOUCH',
+};
+
+/**
  * The answer to a TACKLE press, in a word over the man who made it (2026-10-04, the owner: "the button feels useless
  * ... im not sure if this is relatded to teh players skill level or not ... so the other people playing the game wouldnt
  * be sure either"): TACKLE! in green when he wins it, and when he doesn't the reason, small and white (TOO FAR, MISTIMED,
@@ -31,6 +42,8 @@ export class ActionPop {
   private v = new Vector3();
   private t = 0;
   private player = -1;
+  /** The word up is a special strike's (the session keeps the trainer's card out of its way meanwhile). */
+  private strikeUp = false;
 
   constructor() {
     this.root.className = 'act-pop';
@@ -47,11 +60,31 @@ export class ActionPop {
     el.classList.add('on');
     this.t = POP_S;
     this.player = player;
+    this.strikeUp = false;
+  }
+
+  /** A special strike by `player` (STRIKE_WORDS): its name over him, in its own colour (actionPop.css). */
+  strike(player: number, kind: StrikeWord): void {
+    const el = this.root;
+    el.dataset.cue = kind;
+    el.textContent = STRIKE_WORDS[kind];
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
+    this.t = POP_S;
+    this.player = player;
+    this.strikeUp = true;
+  }
+
+  /** A special strike's name is up over the striker. */
+  get striking(): boolean {
+    return this.strikeUp && this.t > 0;
   }
 
   clear(): void {
     this.root.classList.remove('on');
     this.t = 0;
+    this.strikeUp = false;
   }
 
   /** Once a frame: `head` is the drawn head height (m); `hidden`: nothing is drawn (a replay, a pause, a cut away). */

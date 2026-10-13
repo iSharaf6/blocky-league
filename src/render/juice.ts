@@ -105,26 +105,37 @@ export function trailStrength(speed: number): number {
 
 /**
  * What the trail looks like: 'strike' (white, the default for anything struck), 'long' (a long pass, a lofted
- * ball, a clearance: lighter and longer) and 'glow' (a header, a volley, a first-time strike: a cyan glow).
+ * ball, a clearance: lighter and longer), 'glow' (a header, a volley, a first-time strike: a cyan glow), 'knuckle'
+ * (a KNUCKLEBALL, sim/actions.ts: chunky amber puffs shed to either side of a ball with no spin on it, so the wobble
+ * is drawn in the air behind it) and 'curl' (a CURLER or a finesse shot: a thin gold ribbon that hangs long enough to
+ * show the whole bend).
  */
-export type TrailStyle = 'strike' | 'long' | 'glow';
+export type TrailStyle = 'strike' | 'long' | 'glow' | 'knuckle' | 'curl';
 
 /**
  * The trail style for a kick. `kind`: the sim's KickKind; `y`: the ball's height at contact (a volley is struck
- * off the ground); `firstTime`: struck without the striker having had the ball under control first.
+ * off the ground); `firstTime`: struck without the striker having had the ball under control first; `shot`: how a
+ * shot was struck (the sim's ShotStyle on the 'kick' event: a knuckleball and a bent strike have their own trails).
  */
-export function kickTrailStyle(kind: string, power: number, y: number, firstTime: boolean): TrailStyle {
+export function kickTrailStyle(kind: string, power: number, y: number, firstTime: boolean, shot?: string): TrailStyle {
   if (kind === 'header') return 'glow';
+  if (kind === 'shot' && shot === 'knuckle') return 'knuckle';
+  if (kind === 'shot' && (shot === 'curler' || shot === 'finesse')) return 'curl';
   if (kind === 'shot') return y > 0.5 || firstTime ? 'glow' : 'strike';
   if (kind === 'lob' || kind === 'clear' || kind === 'keeper' || kind === 'through' || (kind === 'pass' && power >= 0.7)) return 'long';
   return 'strike';
 }
 
-/** Trail looks: colours, bit size (m) and life (s) at full strength, and bits per second. */
-export const TRAIL_LOOK: Record<TrailStyle, { colors: readonly number[]; size: number; life: number; rate: number }> = {
-  strike: { colors: [0xffffff, 0xf4f4ea], size: 0.17, life: 0.19, rate: 85 },
-  long: { colors: [0xeef6ff, 0xffffff], size: 0.12, life: 0.4, rate: 56 },
-  glow: { colors: [0x5ff6ff, 0xb8fbff, 0xffffff], size: 0.21, life: 0.25, rate: 105 },
+/**
+ * Trail looks: colours, bit size (m) and life (s) at full strength, bits per second, and how far (m) either side of
+ * the ball's path a bit may be shed (`scatter`: the knuckleball's ragged wake; 0 for a clean line).
+ */
+export const TRAIL_LOOK: Record<TrailStyle, { colors: readonly number[]; size: number; life: number; rate: number; scatter: number }> = {
+  strike: { colors: [0xffffff, 0xf4f4ea], size: 0.17, life: 0.19, rate: 85, scatter: 0 },
+  long: { colors: [0xeef6ff, 0xffffff], size: 0.12, life: 0.4, rate: 56, scatter: 0 },
+  glow: { colors: [0x5ff6ff, 0xb8fbff, 0xffffff], size: 0.21, life: 0.25, rate: 105, scatter: 0 },
+  knuckle: { colors: [0xff9a3d, 0xffc98a, 0xffffff], size: 0.24, life: 0.3, rate: 70, scatter: 0.16 },
+  curl: { colors: [0xffd84a, 0xfff2b0, 0xffffff], size: 0.13, life: 0.6, rate: 120, scatter: 0 },
 };
 
 /** A hard strike: the ball flashes white and pops to BALL_FLASH_SCALE for BALL_FLASH_S. */

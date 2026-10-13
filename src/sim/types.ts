@@ -192,6 +192,11 @@ export type MatchEvent =
   /** Timed finishing: the human's second SHOOT tap at the moment of contact (perfect / good) or mistimed. */
   | { type: 'timing'; player: number; grade: 'perfect' | 'good' | 'early' | 'late' }
   /**
+   * AFTERTOUCH (sim/match.ts aftertouchStep): the human moved the stick across his shot's flight just after striking
+   * it and the ball has begun to bend that way (`dir`: world -z / +z). Once per shot, the first step it bites.
+   */
+  | { type: 'aftertouch'; player: number; dir: -1 | 1 }
+  /**
    * SKILL moves (sim/skills.ts). `skillTell`: an AI defender `by` winds up a challenge (a slide, or a standing tackle)
    * on the human's carrier `on`: SKILL within its window is a PERFECT. `skillMove`: the human's move (`cut` / `knock`:
    * a skill cut or knock-on that beat a man and extended a chain), its grade, the chain it makes (0: none) and the
@@ -245,6 +250,10 @@ export type SkillMoveKind = 'roulette' | 'rainbow' | 'stepover' | 'dragback' | '
  * plain move (a man near, not fooled) or a show-off one (nobody near).
  */
 export type SkillGrade = 'perfect' | 'good' | 'plain' | 'show';
-/** How a shot is struck, beyond a plain strike: lifted over the keeper, or curled and placed. */
-export type ShotStyle = 'chip' | 'finesse';
+/**
+ * How a shot is struck, beyond a plain strike: lifted over the keeper, or curled and placed (finesse); the human's
+ * KNUCKLEBALL (a full bar from range, no spin: it wobbles and dips, actions.ts knuckleLaunch) and his deliberate
+ * CURLER (the stick sideways at the strike: a big visible bend, actions.ts CURLER_BEND). The AI strikes neither.
+ */
+export type ShotStyle = 'chip' | 'finesse' | 'knuckle' | 'curler';
 export type RestartKind = 'kickoff' | 'throwin' | 'corner' | 'goalkick' | 'freekick' | 'penalty';

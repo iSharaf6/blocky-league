@@ -626,7 +626,9 @@ export class FunTracker {
       else if (ls.passes >= TEAM_PASSES) tags.push({ text: `${ls.passes} PASS GOAL`, big: false });
       if (ls.header) tags.push({ text: 'HEADER', big: false });
       else if (ls.style === 'chip') tags.push({ text: 'CHIPPED', big: false });
-      else if (ls.style === 'finesse') tags.push({ text: 'CURLER', big: false });
+      // (The KNUCKLEBALL, sim/actions.ts, and both kinds of bent strike: the finesse shot and the human's CURLER.)
+      else if (ls.style === 'knuckle') tags.push({ text: 'KNUCKLEBALL', big: false });
+      else if (ls.style === 'finesse' || ls.style === 'curler') tags.push({ text: 'CURLER', big: false });
       else if (ls.firstTime) tags.push({ text: 'FIRST TIME', big: false });
     }
     // At most three, the headline first.

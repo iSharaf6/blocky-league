@@ -72,6 +72,13 @@ export function stateHash(m: Match): number {
   const b = m.ball;
   h.num(b.pos.x).num(b.pos.y).num(b.pos.z).num(b.vel.x).num(b.vel.y).num(b.vel.z).num(b.spin.x).num(b.spin.y).num(b.spin.z);
   h.word(b.owner).bool(b.held).word(b.lastTouch);
+  // A KNUCKLEBALL in flight (sim/ball.ts Knuckle): its wobble and dip decide where it goes next. And a shot's
+  // AFTERTOUCH window (sim/ball.ts Aftertouch): the stick it is measured from and the spin put on so far. Only a
+  // human's strike has either: no tag otherwise, so every AI v AI hash is what it was.
+  const kn = b.knuckle;
+  if (kn) h.word(0x4b4e554b).num(kn.t).num(kn.T).num(kn.nx).num(kn.nz).num(kn.amp).num(kn.n).num(kn.ph).num(kn.off).num(kn.dip);
+  const at = b.aftertouch;
+  if (at) h.word(0x41465452).word(at.kick).word(at.p).word(at.side).num(at.t).num(at.mx).num(at.mz).num(at.spin).bool(at.shown);
   for (const p of m.players) {
     h.num(p.pos.x).num(p.pos.z).num(p.y).num(p.vel.x).num(p.vel.z).num(p.facing).num(p.stamina).str(p.state).bool(p.sentOff);
     // A queued loose-ball strike changes future contacts before it changes position or velocity. Detect a

@@ -22,6 +22,13 @@
   color: #6dff7e;
 }
 .act-pop[data-cue='behind'] { color: #ffd23e; }
+/* A special strike's name (KNUCKLEBALL, CURLER, AFTERTOUCH): as big as TACKLE!, in the colour of its ball trail
+   (render/juice.ts TRAIL_LOOK: amber for the knuckleball, gold for a bent one). */
+.act-pop[data-cue='knuckle'],
+.act-pop[data-cue='curler'] { font-size: clamp(20px, 2.2vw, 30px); }
+.act-pop[data-cue='knuckle'] { color: #ff9a3d; }
+.act-pop[data-cue='curler'],
+.act-pop[data-cue='aftertouch'] { color: #ffd84a; }
 @media (prefers-reduced-motion: no-preference) {
   .act-pop.on { animation: act-pop 0.85s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
 }
@@ -34,5 +41,7 @@
 }
 @media (max-height: 480px) {
   .act-pop { font-size: 15px; }
-  .act-pop[data-cue='won'] { font-size: 20px; }
+  .act-pop[data-cue='won'],
+  .act-pop[data-cue='knuckle'],
+  .act-pop[data-cue='curler'] { font-size: 20px; }
 }

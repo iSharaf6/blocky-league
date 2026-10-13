@@ -1,7 +1,7 @@
 import { angleDiff, clamp, dist2, pointSegDist } from '../core/math';
-import { Ball, groundPassSpeed, rollTime, solveLob, type BallHit } from './ball';
+import { Ball, groundPassSpeed, knuckleDip, knuckleOffset, rollTime, solveLob, type BallHit, type Knuckle } from './ball';
 import {
-  AIR_DRAG, BALL_R, BOUNCE, BOX_W, DDA_FINISH, DECEL, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SPIN_DECAY,
+  AIR_DRAG, BALL_R, BOUNCE, BOX_W, DDA_FINISH, DECEL, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, KICK_WINDUP, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SPIN_DECAY,
   SPRINT_SPEED, TEMPO,
 } from './constants';
 import type { Match } from './match';
@@ -33,6 +33,8 @@ export interface Launch {
    * and the error it put on top (the ball is struck at aim + err). Timed finishing's late tap re-aims from these.
    */
   aim?: { gx: number; z: number; errZ: number; h: number; errH: number };
+  /** A KNUCKLEBALL (knuckleLaunch): the wobble and the dip its flight carries (Match.execute puts it on the ball). */
+  knuckle?: Knuckle;
 }
 
 function dirOf(p: Player, order: KickOrder): { x: number; z: number } {
@@ -1588,7 +1590,12 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
     // A bent strike: a touch less precise than a clean one, and it starts outside the target. (A
     // finesse shot's bend is the controlled kind: half the extra error.)
     bendErr = m.rng.gauss() * Math.abs(curl) * CURL_ERR * (finesse ? 0.5 : 1) * fin;
-    bendShot(m, L, gx, tz + bendErr, curl);
+    // (The human's deliberate CURLER: a bigger bend, onto the same point.)
+    const curler = human && strike && Math.abs(curl) >= CURLER_MIN && dist2(b.x, b.z, gx, 0) >= CURLER_MIN_D;
+    if (curler) {
+      bendShot(m, L, gx, tz + bendErr, curl, CURLER_BEND, 5);
+      L.style = 'curler';
+    } else bendShot(m, L, gx, tz + bendErr, curl);
   } else {
     // A little natural curl so shots don't look like laser beams.
     L.spinY = m.rng.gauss() * 1.2;
@@ -1969,14 +1976,32 @@ export function naturalPass(m: Match, p: Player, L: Launch, kickNo: number): voi
 export const CURL_SPIN = 10;
 
 /**
- * Put sidespin on a shot so it bends towards +z (curl > 0) or -z, and re-aim the launch so the
- * bend carries it back onto `tz` at the goal line.
+ * The CURLER (the owner, 2026-10-14: "knuckle ball curves allat"): the human's open-play strike with the stick pushed
+ * SIDEWAYS at the moment of the strike (the bend asked for at least CURLER_MIN of a full one: the stick three quarters
+ * of the way across or more, which is further round than the diagonal that only picks a corner: that one bends as it
+ * always did) from CURLER_MIN_D m or more out, and not a finesse one, is struck with CURLER_BEND times a bent strike's
+ * sidespin: a bend anyone can see. From 20 m its path bows ~0.65 m off the straight line to where it ends up (it was
+ * ~0.3 m), which is a ball struck ~2.6 m outside its target and swung back onto it. It is re-aimed onto the same point
+ * with the same error, so it is no more or less accurate, and the keeper reads it as he reads any bend (half of it, as
+ * it comes). Measured against a set keeper (tests/knuckleRates.test.ts) it scores within a few points of what the
+ * smaller bend did: 33% from 16 m (it was 36%), 13% from 18 m (18%), 3% from 20 m (6%), 7% from 22 m (2%). A bigger
+ * bend still (2.4) starts to beat a keeper who has gone early from 22 m far too often (19%). Launch.style is 'curler'.
+ * Never the AI's.
  */
-export function bendShot(m: Match, L: Launch, gx: number, tz: number, curl: number): void {
+export const CURLER_MIN = 0.9;
+export const CURLER_MIN_D = 14;
+export const CURLER_BEND = 2;
+
+/**
+ * Put sidespin on a shot so it bends towards +z (curl > 0) or -z, and re-aim the launch so the
+ * bend carries it back onto `tz` at the goal line. `bend`: times a full curl's spin (the human's CURLER), solved in
+ * `iters` passes (a bigger bend starts further off its line and takes a pass or two more to settle).
+ */
+export function bendShot(m: Match, L: Launch, gx: number, tz: number, curl: number, bend = 1, iters = 3): void {
   const b = m.ball.pos;
-  L.spinY = -clamp(curl, -1, 1) * CURL_SPIN * (Math.sign(L.vx) || 1);
+  L.spinY = -clamp(curl, -1, 1) * CURL_SPIN * bend * (Math.sign(L.vx) || 1);
   const want = Math.atan2(tz - b.z, gx - b.x);
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < iters; i++) {
     const z = crossingZ(b.x, b.y, b.z, L.vx, L.vy, L.vz, L.spinY, gx);
     if (z === null) break;
     const err = angleDiff(Math.atan2(z - b.z, gx - b.x), want);
@@ -2040,6 +2065,187 @@ export function crossingZ(
   return null;
 }
 
+// ------------------------------------------------------------------ the knuckleball
+
+/**
+ * The KNUCKLEBALL (the owner, 2026-10-14: "knuckle ball curves allat make the game perfect!"). The human's strike of a
+ * ball at his feet with SHOOT held to (nearly) a full bar, KNUCKLE_MIN_POWER, from KNUCKLE_MIN_D to KNUCKLE_MAX_D m
+ * out, the stick not asking for a bend (no more curl than KNUCKLE_MAX_CURL: the stick under a quarter of the way
+ * across, stickCurl), and not a chip, a finesse shot, a first-time strike or volley, a SUPER SHOT or a Blitz rocket
+ * (knuckleOn). And his direct free kick struck that hard with no bend on it (setPiece.ts freeKickLaunch: through his
+ * reticle, with the wobble and no dip, so its preview is still the kick).
+ *
+ * It is struck with no spin at all, KNUCKLE_PACE of the strike's pace (never past KNUCKLE_TOP m/s), at KNUCKLE_H m up
+ * the goal plus KNUCKLE_LIFT of the miss the strike would have had upwards: where the full bar from range used to sail
+ * over, this one is aimed under the bar. Its flight carries a late WOBBLE (ball.ts Knuckle: KNUCKLE_SWERVES sideways
+ * swerves of KNUCKLE_AMP m, ending at least KNUCKLE_END of that off its straight line, to either side) and a late DIP
+ * (KNUCKLE_DIP m/s2 more than gravity over the back half), all drawn from the match's rng at the strike. The launch is
+ * solved on the ball's own flight with both on it (knuckleSolve), so it crosses the line where the aim model put it,
+ * with the lateral error any strike has.
+ *
+ * The keeper (keeper.ts KNUCKLE_SEEN, Match.checkKeeperHands) cannot read it until late, then reads a straight flight
+ * from where it is, not the wobble still to come, and can never hold it: a parry at best. Never the AI's: no AI v AI
+ * number moves.
+ *
+ * Measured (tests/knuckleRates.test.ts: a striker with 81 shooting alone against a set keeper on NORMAL): it scores
+ * 36% of the time from 20.5 m, 25% from 22 m, 19% from 24 and 26 m, 18% from 28 m, 13% from 30 m and 6% from 34 m,
+ * where the full bar it replaces scored 34 / 18 / 20 / 5 / 0 / 0 / 0%. A placed strike is still the better shot from
+ * 20 to 22 m (41%, 54%) and scores nothing from 24 m on. It starts at 20 m, not 18: from 18 to 20 m the old full bar
+ * already scores 33 to 45%, more than the knuckleball is meant to.
+ */
+export const KNUCKLE_MIN_POWER = 0.9;
+export const KNUCKLE_MIN_D = 20;
+export const KNUCKLE_MAX_D = 36;
+export const KNUCKLE_MAX_CURL = 0.02;
+/** The ball is on the grass: no higher than this (m) off it. */
+const KNUCKLE_GRASS = 0.15;
+const KNUCKLE_PACE = 1.03;
+export const KNUCKLE_TOP = 35;
+export const KNUCKLE_H = 1.25;
+const KNUCKLE_LIFT = 0.5;
+const KNUCKLE_H_MIN = 0.45;
+export const KNUCKLE_AMP: readonly [number, number] = [0.25, 0.4];
+export const KNUCKLE_SWERVES: readonly [number, number] = [2, 3];
+const KNUCKLE_END = 0.7;
+export const KNUCKLE_DIP = 10;
+/** The most lift (m/s) the solve gives it (one from 36 m needs ~10). */
+const KNUCKLE_VY_MAX = 12.5;
+
+/** Is the shot `L` just solved for `p`'s order `o` to be struck as a knuckleball? (Open play; see KNUCKLE_MIN_POWER.) */
+export function knuckleOn(m: Match, p: Player, o: KickOrder, L: Launch): boolean {
+  if (!m.isHumanControlled(p) || p.isKeeper || m.phase !== 'play') return false;
+  if (L.kind !== 'shot' || L.style || o.style || !L.aim || o.firstTime) return false;
+  if (clamp(o.power, 0, 1) < KNUCKLE_MIN_POWER || Math.abs(o.curl ?? 0) > KNUCKLE_MAX_CURL) return false;
+  const b = m.ball.pos;
+  if (b.y > BALL_R + KNUCKLE_GRASS) return false;
+  return knuckleRange(dist2(b.x, b.z, L.aim.gx, 0));
+}
+
+/** A knuckleball is struck from this far out (m to the middle of the goal). */
+export function knuckleRange(d: number): boolean {
+  return d >= KNUCKLE_MIN_D && d <= KNUCKLE_MAX_D;
+}
+
+/**
+ * A new knuckleball's wobble and dip for a strike from (bx, bz) at (gx, tz) on the goal line, drawn from the match's
+ * rng (three draws and a coin). Its flight time `T` is the solve's to set (knuckleSolve). `dip`: its late dip (a free
+ * kick's has none: setPiece.ts).
+ */
+export function newKnuckle(m: Match, bx: number, bz: number, gx: number, tz: number, dip = KNUCKLE_DIP): Knuckle {
+  const dl = Math.hypot(gx - bx, tz - bz) || 1;
+  const amp = KNUCKLE_AMP[0] + (KNUCKLE_AMP[1] - KNUCKLE_AMP[0]) * m.rng.next();
+  const n = KNUCKLE_SWERVES[0] + (KNUCKLE_SWERVES[1] - KNUCKLE_SWERVES[0]) * m.rng.next();
+  // Where its last swerve leaves it at the line: at least KNUCKLE_END of the amplitude off its straight flight.
+  const end = Math.asin(KNUCKLE_END + (1 - KNUCKLE_END) * m.rng.next()) * (m.rng.chance(0.5) ? 1 : -1);
+  return { t: 0, T: 1, nx: -(tz - bz) / dl, nz: (gx - bx) / dl, amp, n, ph: end - Math.PI * n, off: 0, dip };
+}
+
+const kProbe = new Ball();
+const kHits: BallHit[] = [];
+/** knuckleSolve's probe stops this far (m) short of the goal line: clear of the posts and the bar. */
+const KNUCKLE_PROBE_SHORT = 0.45;
+
+/**
+ * The launch velocity (written into `out`) that sends a knuckleball struck from (bx, by, bz) at `speed` m/s along the
+ * ground through (gx, h, tz) on the goal line, with `kn`'s wobble and dip on it; `kn.T` is set to the flight's time.
+ * Solved on the sim's own Ball flight (Ball.step, the wobble and the dip as the real ball will have them), as
+ * shootout.ts solveStrike does for a spun ball. Pure: no rng, nothing in the match is touched.
+ */
+export function knuckleSolve(
+  bx: number, by: number, bz: number, gx: number, tz: number, h: number, speed: number, kn: Knuckle,
+  out: { vx: number; vy: number; vz: number },
+): { vx: number; vy: number; vz: number } {
+  const dx = gx - bx;
+  const dz = tz - bz;
+  const dl = Math.hypot(dx, dz) || 1;
+  const ad = Math.sign(dx) || 1;
+  const short = gx - ad * KNUCKLE_PROBE_SHORT;
+  let T = dl / (speed * 0.9);
+  let vx = (dx / dl) * speed;
+  let vz = (dz / dl) * speed;
+  let vy = clamp((h - by + 0.5 * GRAVITY * T * T) / T, 1, KNUCKLE_VY_MAX);
+  const y0 = Math.max(by, BALL_R + 0.02);
+  for (let iter = 0; iter < 12; iter++) {
+    kn.T = T;
+    kProbe.reset(bx, bz);
+    kProbe.pos.y = y0;
+    kProbe.vel.x = vx;
+    kProbe.vel.y = vy;
+    kProbe.vel.z = vz;
+    const k: Knuckle = { ...kn, t: 0, off: 0 };
+    kProbe.knuckle = k;
+    let hit: { z: number; y: number; t: number } | null = null;
+    for (let i = 0; i < 300; i++) {
+      const q = kProbe.pos;
+      const w = kProbe.vel;
+      // (Down on the grass short of the line: no knuckleball gets there along the ground.)
+      if (!kProbe.knuckle || w.x * ad < 0.5) break;
+      // (Checked before the step: the step itself would already meet a post.)
+      if ((q.x + w.x * DT - short) * ad >= 0) {
+        const u = (gx - q.x) / w.x;
+        hit = {
+          z: q.z + w.z * u + k.nz * (knuckleOffset(k, k.t + u) - k.off),
+          y: q.y + w.y * u - 0.5 * (GRAVITY + knuckleDip(k, k.t)) * u * u,
+          t: k.t + u,
+        };
+        break;
+      }
+      kHits.length = 0;
+      kProbe.step(DT, kHits);
+    }
+    if (!hit) {
+      // Down short of the line (the first guess knows nothing of the dip): more lift, and again.
+      if (vy >= KNUCKLE_VY_MAX) break;
+      vy = Math.min(KNUCKLE_VY_MAX, vy + 1.5);
+      continue;
+    }
+    if (hit.t < 0.05) break;
+    const ez = tz - hit.z;
+    const ey = h - hit.y;
+    const dT = hit.t - T;
+    T = hit.t;
+    if (Math.abs(ez) < 0.004 && Math.abs(ey) < 0.004 && Math.abs(dT) < 0.002) break;
+    // (Drag takes some of the pace on the way: a change in launch velocity moves the crossing a little less than v x t.)
+    vz += ez / (hit.t * 0.93);
+    vy = clamp(vy + ey / (hit.t * 0.93), 1, KNUCKLE_VY_MAX);
+    const hs = Math.hypot(vx, vz) || 1;
+    vx *= speed / hs;
+    vz *= speed / hs;
+  }
+  kn.T = T;
+  kProbe.knuckle = null;
+  out.vx = vx;
+  out.vy = vy;
+  out.vz = vz;
+  return out;
+}
+
+const kSolved = { vx: 0, vy: 0, vz: 0 };
+
+/**
+ * Turn the open-play strike `L` (knuckleOn said yes) into a knuckleball, in place: no spin, its pace, aimed under the
+ * bar at the strike's own lateral aim and error, its wobble and dip drawn and solved for. Launch.aim keeps the new aim,
+ * so a timed-finish tap after the strike still re-aims it (Match.finishTap).
+ */
+export function knuckleLaunch(m: Match, L: Launch): void {
+  const aim = L.aim;
+  if (!aim) return;
+  const b = m.ball.pos;
+  const hs = Math.hypot(L.vx, L.vz);
+  const speed = Math.max(hs, Math.min(KNUCKLE_TOP, hs * KNUCKLE_PACE));
+  const tz = aim.z + aim.errZ;
+  const h = Math.max(KNUCKLE_H_MIN, KNUCKLE_H + aim.errH * KNUCKLE_LIFT);
+  const kn = newKnuckle(m, b.x, b.z, aim.gx, tz);
+  const v = knuckleSolve(b.x, b.y, b.z, aim.gx, tz, h, speed, kn, kSolved);
+  L.vx = v.vx;
+  L.vy = v.vy;
+  L.vz = v.vz;
+  L.spinX = L.spinY = L.spinZ = 0;
+  L.style = 'knuckle';
+  L.knuckle = kn;
+  L.aim = { gx: aim.gx, z: aim.z, errZ: aim.errZ, h: KNUCKLE_H, errH: h - KNUCKLE_H };
+}
+
 /**
  * Curl from a human's stick at the moment of the strike: its sideways (world z) share bends the
  * shot that way; a gentle push is a gentle bend. Small deflections of the stick do nothing.
@@ -2089,6 +2295,8 @@ export function onTarget(m: Match, side: number): boolean {
   scratch.spin.x = b.spin.x;
   scratch.spin.y = b.spin.y;
   scratch.spin.z = b.spin.z;
+  // (A knuckleball's wobble and dip are part of where it ends up.)
+  if (b.knuckle) scratch.knuckle = { ...b.knuckle };
   for (let i = 0; i < 240; i++) {
     scratchHits.length = 0;
     scratch.step(1 / 60, scratchHits);

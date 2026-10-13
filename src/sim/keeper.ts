@@ -3,6 +3,7 @@ import {
   AIR_DRAG, BALL_R, BOUNCE, BOX_DEPTH, BOX_W, GOAL_H, GOAL_W, GRAVITY, HALF_L, MAGNUS, ROLL_A, ROLL_B, SHOT_TEMPO, SIX_DEPTH, SIX_W, TEMPO,
   WALL_DIST,
 } from './constants';
+import { knuckleDip, knuckleDrift } from './ball';
 import { blitzDive } from './blitz';
 import { vsHuman } from './dribble';
 import type { Match } from './match';
@@ -65,6 +66,19 @@ const FK_UNSIGHTED = 0.05;
  */
 const FINESSE_READ = 0.14;
 /**
+ * A KNUCKLEBALL (actions.ts) cannot be read until late: no spin off the boot, and it is moving about. He stands set
+ * until it is a fixed time from him (never sooner than he reacts to any shot): KNUCKLE_SEEN s plus KNUCKLE_SEEN_FLIGHT
+ * of its whole flight's time, at most KNUCKLE_SEEN_MAX (so ~0.49 s for one from 22 m, ~0.59 s from 30 m), where every
+ * other long shot gives him the whole of a longer flight. Then he dives where he reads it going, which is a straight
+ * line from where it is and the way it is moving (flightCrossing): KNUCKLE_FOOL of the swerve it is in the middle of
+ * is taken for its line. With the parry-only rule (Match.checkKeeperHands) this is what sets how often it beats him,
+ * and it is steep: 0.05 s more is about half as many goals (tests/knuckleRates.test.ts has the measured bands).
+ */
+export const KNUCKLE_SEEN = 0.25;
+export const KNUCKLE_SEEN_FLIGHT = 0.34;
+export const KNUCKLE_SEEN_MAX = 0.6;
+export const KNUCKLE_FOOL = 1;
+/**
  * How far (m) a diving keeper's body travels sideways at most (plus a little for a great keeper); his
  * reach does the rest. So a shot placed right inside the post from the edge of the box is beyond him
  * even when it isn't struck hard: the corner is beaten by placement, not only by pace. A ball that
@@ -124,6 +138,15 @@ export function flightCrossing(m: Match, x: number, ad: number): { t: number; y:
   let vx = b.vel.x;
   let vy = b.vel.y;
   let vz = b.vel.z;
+  // A KNUCKLEBALL (ball.ts Knuckle): he reads a straight flight from where it is and the way it is going right now. The
+  // dip he can see coming; the wobble he cannot, so KNUCKLE_FOOL of the swerve it is in the middle of is taken for its
+  // line, and the swerves still to come are not allowed for at all. He is a step off, one way or the other.
+  const kn = b.knuckle;
+  if (kn) {
+    const w = knuckleDrift(kn, kn.t) * KNUCKLE_FOOL;
+    vx += kn.nx * w;
+    vz += kn.nz * w;
+  }
   const dt = 1 / 60;
   const n = Math.round(SHOT_READ_T / dt);
   for (let i = 1; i <= n; i++) {
@@ -137,6 +160,7 @@ export function flightCrossing(m: Match, x: number, ad: number): { t: number; y:
       vz *= k;
     } else {
       vy -= GRAVITY * dt;
+      if (kn) vy -= knuckleDip(kn, kn.t + (i - 1) * dt) * dt;
       const drag = AIR_DRAG * Math.hypot(vx, vy, vz) * dt;
       vx -= vx * drag;
       vy -= vy * drag;
@@ -371,8 +395,11 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
     if (t > 0 && t < SHOT_READ_T) {
       // A long one (struck from LONG_SHOT_D m or more, or still LONG_READ s away): he has time to get across on
       // his feet first, and misjudges a curler's bend a little more.
-      const long = m.shotKick === m.kickId ? m.shotDist >= LONG_SHOT_D : tLine > LONG_READ;
+      // (A knuckleball is never one he gets across to on his feet: he cannot read it until late, KNUCKLE_SEEN.)
+      const long = (m.shotKick === m.kickId ? m.shotDist >= LONG_SHOT_D : tLine > LONG_READ) && !b.knuckle;
       // A curler's bend is only half read (a free kick, which he's set for, a little better).
+      // (The human's big CURLER, actions.ts CURLER_BEND, is read as any bend is. Reading more of it was measured:
+      // 0.5, 0.6 and 0.69 of it all gave the same goal rate from 14 to 25 m, on tests/knuckleRates.test.ts's bench.)
       const zc = (across?.z ?? b.pos.z + b.vel.z * t) + curlDrift(m, t) * (m.freeKickShot() ? (long ? FK_LONG_CURL_READ : 0.62) : 0.5);
       const yc = across?.y ?? Math.max(BALL_R, b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t);
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
@@ -380,11 +407,14 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
         // A free kick struck over the wall is seen late (the wall is in the way).
         const finesse = m.shotStyle === 'finesse' && m.shotKick === m.kickId && Math.abs(m.kickZ) > GOAL_W / 2;
         // (The base reaction rides on the shot tempo; the wall's and the curler's late read don't.)
-        const reaction = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) / SHOT_TEMPO + (m.freeKickShot() ? FK_UNSIGHTED : 0) +
+        const read = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) / SHOT_TEMPO + (m.freeKickShot() ? FK_UNSIGHTED : 0) +
           (finesse ? FINESSE_READ : 0) +
           (m.anyHuman || m.shotKick !== m.kickId || m.kickKind !== 'shot' || m.shotDist > AI_UNREAD_D ? 0 : AI_STRIKE_UNREAD) +
           (m.shotByHuman && !finesse && m.shotKick === m.kickId && m.kickKind === 'shot' && m.shotStyle !== 'finesse' && !m.freeKickShot() &&
             m.shotDist <= HUMAN_UNREAD_D ? HUMAN_STRIKE_UNREAD * vsHuman(m.aiSkill(k.side)).shotHelp : 0);
+        // (A knuckleball gives nothing away: he stands set until late in its flight, KNUCKLE_SEEN.)
+        const kn = b.knuckle;
+        const reaction = kn ? Math.max(read, m.shotClock + t - Math.min(KNUCKLE_SEEN_MAX, KNUCKLE_SEEN + KNUCKLE_SEEN_FLIGHT * kn.T)) : read;
         const lateral = zc - k.pos.z;
         const high = yc > HIGH_DIVE_Y;
         // A dropper (a floated long shot coming down steeply: over his head where he stands, under the bar at

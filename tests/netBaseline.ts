@@ -28,6 +28,8 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
  * match clock and no longer inflate added time. Restart timers keep running. Drivers and exact assertions are unchanged.
  * The protocol-11 revision (2026-10-05d: the AI's play against a human, and the keeper's near post) re-recorded
  * eighteen rows; aiKo4 is bit-identical. Drivers and exact assertions are unchanged.
+ * The protocol-12 revision (2026-10-14: the human's knuckleball, curler and aftertouch) re-recorded twelve human rows;
+ * all six AI-only rows and penTaker0 are bit-identical. Drivers and exact assertions are unchanged.
  */
 export type Row = [number, number, number, number, number, number];
 

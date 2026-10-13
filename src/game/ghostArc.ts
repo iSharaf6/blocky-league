@@ -76,7 +76,9 @@ export function penaltyGhost(
 
 /**
  * The human's placed free kick (sim/setPiece.ts freeKickLaunch without the miss): through the reticle at (gx, aimH,
- * aimZ) at `power`, bent `curl`: the very solve the kick uses, so the preview is the kick.
+ * aimZ) at `power`, bent `curl`: the very solve the kick uses, so the preview is the kick. (At a full bar with no bend
+ * from range the kick is a KNUCKLEBALL, setPiece.ts fkKnuckle: the same flight through the same point, with a wobble
+ * about it that is drawn at the strike. A free kick's knuckleball has no dip, so this line is still its line.)
  */
 export function freeKickGhost(
   bx: number, by: number, bz: number, gx: number, aimZ: number, aimH: number, power: number, acc: number, curl: number, out: GhostLaunch,

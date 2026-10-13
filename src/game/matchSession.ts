@@ -59,7 +59,7 @@ import { QuickSubCard } from '../ui/quickSub';
 import { ShootoutHud } from '../ui/shootoutHud';
 import { TouchControls, isTouchDevice } from '../ui/touch';
 import { buzz, hapticForEvent, primeHaptics } from '../platform/haptics';
-import { Trainer } from '../ui/trainer';
+import { shotHintLearned, Trainer } from '../ui/trainer';
 import { grassSafeKit, resolveKitClash } from '../meta/data';
 import { captainOf } from '../meta/style';
 import { playFocus } from './camFocus';
@@ -2914,7 +2914,7 @@ export class MatchSession {
           else if (e.kind === 'shot') sfx.shot(e.power, m.shotOnTarget);
           else sfx.kick(e.power);
           // The trail it leaves (juice.ts kickTrailStyle), logged for the replay.
-          this.trailStyle = kickTrailStyle(e.kind, e.power, e.y, firstTime);
+          this.trailStyle = kickTrailStyle(e.kind, e.power, e.y, firstTime, e.style);
           // (A hard shot or header of the human side's wears the SHOP trail behind the ball: render/fx/trails.ts.)
           this.shotFx = (e.kind === 'shot' || e.kind === 'header') && e.power >= SHOT_FX_POWER && kicker >= 0 && m.players[kicker].side === m.cfg.humanSide;
           this.logKick(this.trailStyle, this.shotFx);
@@ -2945,6 +2945,15 @@ export class MatchSession {
             // (The sim tags a chip / finesse strike on the kick event; typed loosely for older sims.)
             const style = (e as { style?: string }).style;
             if (style === 'chip' || style === 'finesse') this.tut.chip = true;
+            // A KNUCKLEBALL or a CURLER (sim/actions.ts): its name over the striker as the boot meets it, its own
+            // voice on top of the strike's (a dead thump for the ball with no spin, a swish for the bent one), and
+            // the trainer's hint for it is learned (ui/trainer.ts).
+            if (e.kind === 'shot' && (style === 'knuckle' || style === 'curler')) {
+              if (!this.replay && !this.demo) this.actionPop?.strike(kicker, style);
+              if (style === 'knuckle') sfx.thump();
+              else sfx.whoosh();
+              shotHintLearned(style === 'knuckle' ? 'KNUCKLEBALL' : 'CURLER');
+            }
           }
           if (e.kind === 'shot' && e.power > 0.5) {
             this.effects.grass(e.x, e.z, 10, e.power);
@@ -3100,6 +3109,15 @@ export class MatchSession {
           break;
         case 'tackleTry':
           this.tackleAttempt(e.by, e.slide);
+          break;
+        case 'aftertouch':
+          // AFTERTOUCH (sim/match.ts): his stick bent the shot in the air. The word over him, a whip of air, and the
+          // hint for it is learned.
+          if (hs === m.players[e.player]?.side && !this.demo) {
+            if (!this.replay) this.actionPop?.strike(e.player, 'aftertouch');
+            sfx.whip();
+            shotHintLearned('AFTERTOUCH');
+          }
           break;
         case 'tackleCue':
           // The press answered in a word over the man he controls (and only his own side's, on his own screen).
@@ -3497,7 +3515,9 @@ export class MatchSession {
         if (hot) fx.fire(px, py, pz, 2, -bvx * 0.04, 0, -bvz * 0.04);
         else {
           const col = look.colors[(Math.random() * look.colors.length) | 0];
-          fx.trailBit(px, py, pz, col, look.size * (0.55 + 0.45 * tk), look.life * (0.6 + 0.4 * tk));
+          // (A knuckleball's wake is ragged: its bits are shed to either side of the path, juice.ts TRAIL_LOOK.scatter.)
+          const sc = look.scatter > 0 ? (Math.random() - 0.5) * 2 * look.scatter : 0;
+          fx.trailBit(px - (bvz / bs) * sc, py + Math.abs(sc) * 0.4, pz + (bvx / bs) * sc, col, look.size * (0.55 + 0.45 * tk), look.life * (0.6 + 0.4 * tk));
           // The glow's hot core: a few sparks shed off it.
           if (style === 'glow' && Math.random() < 0.25 * tk) fx.sparks(px, py, pz, look.colors, 1, 2, 0.16, 0);
         }
@@ -4047,8 +4067,9 @@ export class MatchSession {
     }
     this.updatePassCharge(cinematic, dt);
     this.updateEdgeArrows(dt);
-    // (While a skill move's pop rides over his man it has the space there: the card over him steps aside.)
-    if (this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast' || this.cam.behindActive || this.skillHud?.popping) this.trainer?.hide();
+    // (While a skill move's pop, or a special strike's name, rides over his man it has the space there: the card over
+    // him steps aside.)
+    if (this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast' || this.cam.behindActive || this.skillHud?.popping || this.actionPop?.striking) this.trainer?.hide();
     else this.trainer?.update(m, this.view.frame, this.world.camera, this.view.headTop, dev);
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).

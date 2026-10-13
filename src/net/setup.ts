@@ -34,9 +34,11 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * man with the ball in his reach goes for it, a carrier going nowhere is read and doubled up on, a spin is no skill
  * cut; the man just robbed is locked out for a moment either way; the AI works the ball into the box and finishes by
  * its level; the human's shot assist no longer threads acute angles; and every keeper holds his near post against a
- * man by the byline instead of running out past it, which moves AI v AI matches too.)
+ * man by the byline instead of running out past it, which moves AI v AI matches too.
+ * 12: a human striker's KNUCKLEBALL, CURLER and AFTERTOUCH (sim/actions.ts, sim/match.ts aftertouchStep): their state
+ * rides on the ball and is in the hash; a nutmeg is knocked at the man and is a stepover when his legs are shut.)
  */
-export const NET_VERSION = 11;
+export const NET_VERSION = 12;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides

@@ -208,9 +208,32 @@ const T = {
   chipSaved: ["{k} backpedals and claws {s}'s chip away!", "{k} reads {s}'s chip and gets up to it!"],
   chipOver: ["{s}'s chip drifts over the bar.", 'Too much on the chip from {s}.'],
   finesseWide: ["{s}'s curler bends just the wrong side of the post.", 'Not enough curl from {s}, just wide.'],
+  // The human's KNUCKLEBALL and CURLER (sim/actions.ts: the kick event's style).
+  knuckleTry: ['{p} hits a knuckleball...', 'No spin on that from {p}...', '{p} lets fly, and it is moving in the air...'],
+  knuckleGoal: [
+    'A knuckleball from {p}! {k} never read it!',
+    'It dipped, it swerved, it is in! {p}!',
+    '{p} with a knuckleball from range! Unstoppable!',
+    'That moved everywhere! {p} beats {k} from distance!',
+  ],
+  knuckleSaved: ["{k} can only push {s}'s knuckleball away!", '{k} gets something on the knuckleball from {s}!', "It wobbled all the way, and {k} still got a hand to it!"],
+  knuckleWide: ["{s}'s knuckleball swerves just wide.", 'It moved late, the wrong way for {s}. Wide.'],
+  knuckleOver: ["{s}'s knuckleball dips, but not enough.", 'It never came down for {s}. Over.'],
+  curlerTry: ['{p} wraps his foot right round it...', 'A big bending strike from {p}...', '{p} whips it towards the corner...'],
+  curlerGoal: [
+    'What a curler from {p}! It bent all the way in!',
+    '{p} bends it round {k}! Stunning!',
+    'It kept on bending! {p} curls it home!',
+    'Round the keeper and in! A curler from {p}!',
+  ],
+  curlerWide: ["{s}'s curler keeps bending, and bends wide.", 'Too much bend on it from {s}. Wide.'],
 } satisfies Record<string, string[]>;
 
 type Cat = keyof typeof T;
+
+/** The line sets for a shot struck in a style (sim ShotStyle): as it is struck, and when it goes in. */
+const STYLE_TRY: Record<ShotStyle, Cat> = { chip: 'chipTry', finesse: 'finesseTry', knuckle: 'knuckleTry', curler: 'curlerTry' };
+const STYLE_GOAL: Record<ShotStyle, Cat> = { chip: 'chipGoal', finesse: 'finesseGoal', knuckle: 'knuckleGoal', curler: 'curlerGoal' };
 
 function lastWord(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -314,7 +337,7 @@ export class Commentator {
     const s = this.styled;
     if (s && s.by === by && Commentator.at(m) - s.at <= within) return s.style;
     const live = (m as Match & { shotStyle?: ShotStyle | null }).shotStyle;
-    return m.kickKind === 'shot' && (live === 'chip' || live === 'finesse') && m.ball.lastTouch === by ? live : null;
+    return m.kickKind === 'shot' && live && m.ball.lastTouch === by ? live : null;
   }
 
   private pick(cat: Cat, v: Vars): string {
@@ -416,7 +439,7 @@ export class Commentator {
         if (e.own) core = 'ownGoal';
         else if (this.penFor === side) core = 'penGoal';
         else if (m.kickKind === 'header') core = 'header';
-        else if (this.styleOf(m, scorer.idx)) core = this.styleOf(m, scorer.idx) === 'chip' ? 'chipGoal' : 'finesseGoal';
+        else if (this.styleOf(m, scorer.idx)) core = STYLE_GOAL[this.styleOf(m, scorer.idx)!];
         else if (m.kickKind === 'shot') {
           const d = Math.hypot(m.attackDir(side) * HALF_L - m.kickX, m.kickZ);
           if (d >= 23) {
@@ -447,6 +470,8 @@ export class Commentator {
           return L(this.pick('penSaved', kv), 5, k.side, 'big');
         }
         if (m.shooter >= 0 && this.styleOf(m, m.shooter, 3) === 'chip') return L(this.pick('chipSaved', kv), 4, k.side, 'big');
+        // (A knuckleball is never held: the parry has its own lines.)
+        if (m.shooter >= 0 && !e.caught && this.styleOf(m, m.shooter, 3) === 'knuckle') return L(this.pick('knuckleSaved', kv), 4, k.side, 'big');
         return L(this.pick(e.caught ? 'saveCaught' : 'saveParried', kv), 4, k.side, 'big');
       }
       case 'post': {
@@ -474,6 +499,8 @@ export class Commentator {
         const high = m.ball.pos.y > GOAL_H;
         if (style === 'chip' && high) return L(this.pick('chipOver', kv), 3, side);
         if (style === 'finesse' && !high) return L(this.pick('finesseWide', kv), 3, side);
+        if (style === 'knuckle') return L(this.pick(high ? 'knuckleOver' : 'knuckleWide', kv), 3, side);
+        if (style === 'curler' && !high) return L(this.pick('curlerWide', kv), 3, side);
         return L(this.pick(high ? 'over' : 'wide', kv), 3, side);
       }
       case 'block': {
@@ -619,12 +646,13 @@ export class Commentator {
         return L(this.pick('powerEnd', { ...v, t: clubCall(m.teams[e.side]), pu: POWER_INFO[e.kind].name }), 1, e.side);
       case 'kick': {
         const style = e.style;
-        if ((style === 'chip' || style === 'finesse') && !shootout && m.ball.lastTouch >= 0 && this.penFor < 0) {
+        if (style && !shootout && m.ball.lastTouch >= 0 && this.penFor < 0) {
           const p = m.players[m.ball.lastTouch];
           if (!p) return null;
           this.styled = { style, by: p.idx, at: Commentator.at(m) };
-          // A chip is an event (it gets its line); a finesse curler is colour (the outcome line matters more).
-          return L(this.pick(style === 'chip' ? 'chipTry' : 'finesseTry', { ...v, p: this.sn(p.def.name) }), style === 'chip' ? 2 : 1, p.side);
+          // A chip is an event (it gets its line), and so is a knuckleball; a finesse shot or a curler is colour (the
+          // outcome line matters more).
+          return L(this.pick(STYLE_TRY[style], { ...v, p: this.sn(p.def.name) }), style === 'chip' || style === 'knuckle' ? 2 : 1, p.side);
         }
         if (e.kind !== 'shot' || shootout || e.power < 0.6 || m.ball.lastTouch < 0) return null;
         const p = m.players[m.ball.lastTouch];

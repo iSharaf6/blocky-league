@@ -76,24 +76,30 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * by the byline, which is every keeper's and so moves the AI-only rows too. aiKo4 is bit-identical; aiKo1 and aiKo7
  * keep their end hash, steps, score and shootout flag (only the fold of the mid-match hashes moved). Drivers and exact
  * six-value comparisons are unchanged.
+ * Revision 2026-10-14 (NET_VERSION 12) re-recorded the twelve rows a human's shots reach: the KNUCKLEBALL (a full bar
+ * from 20 m and beyond with no bend asked for), the CURLER (the stick right across at the strike) and AFTERTOUCH (a
+ * push of the stick across the flight in the half second after it), all a human striker's only, with their state on
+ * the ball and in the hash. The nutmeg fix of the same day (it is knocked at the man, and is a stepover when his legs
+ * are shut) moved none of them on its own. All six AI-only rows and penTaker0 are bit-identical. Drivers and exact
+ * six-value comparisons are unchanged.
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2274576712,2001976599,22281,1,3,0],
   aiBlitz: [3498904181,3872199542,13237,0,1,0],
   aiStyles: [2368260632,1524789925,13987,0,4,0],
-  botSide0: [1194897642,1934951311,16504,2,0,0],
-  botPerks: [3765213911,457160814,12639,3,1,0],
-  botFirstMatch: [1867531205,2633510178,13597,4,0,0],
-  fuzzSide1: [2286900221,4090236419,12761,2,0,0],
-  fuzzBlitz0: [2322646181,2825716380,12128,0,0,0],
-  fuzzBlitzPerks1: [2457570559,1657355575,12516,3,0,0],
+  botSide0: [1194897642,990406235,16504,2,0,0],
+  botPerks: [3765213911,1442279365,12639,3,1,0],
+  botFirstMatch: [1867531205,2181418298,13597,4,0,0],
+  fuzzSide1: [258267471,2528447318,11883,1,0,0],
+  fuzzBlitz0: [167473203,427052277,13276,0,4,0],
+  fuzzBlitzPerks1: [1044489209,3540097662,12886,4,0,0],
   penTaker0: [230134424,1679243620,8561,0,1,0],
-  penTaker1Low: [4215701377,3891728656,8382,2,1,0],
-  penTimeout1: [1847486781,1849496566,8516,0,1,0],
-  penKeeper1: [2775677013,937631817,8082,1,0,0],
-  ko1: [3373257372,3758036654,5327,0,0,1],
-  ko3: [1835714631,298038049,5204,0,0,1],
-  ko6: [1820804025,1225392963,4945,0,0,1],
+  penTaker1Low: [21817532,4022934067,8167,1,1,0],
+  penTimeout1: [595044421,1707686538,8314,0,1,0],
+  penKeeper1: [2451147575,1916308876,8290,2,0,0],
+  ko1: [790833819,738924924,4964,0,0,1],
+  ko3: [1018909997,468518517,3638,1,0,0],
+  ko6: [91410580,900885198,4979,0,0,1],
   aiKo1: [4226903564,1665530653,5523,0,0,1],
   aiKo4: [3747054070,2960515602,4095,0,1,0],
   aiKo7: [444176009,4154892212,5463,0,0,1],

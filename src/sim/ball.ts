@@ -19,10 +19,82 @@ export type BallHit =
   | { kind: 'bounce'; speed: number }
   | { kind: 'net'; x: number; y: number; z: number; speed: number };
 
+/**
+ * A KNUCKLEBALL's flight (actions.ts knuckleLaunch: the human's full-bar strike from range, struck with no spin). Two
+ * things ride on the ordinary flight while it is in the air:
+ *
+ * - the WOBBLE: a sideways offset across its line (`nx`, `nz`), `amp` m at its widest, swinging through `n` half
+ *   swerves over the `T` s it was solved to take to the goal line, from phase `ph`, and growing as it goes (it is a
+ *   late wobble: knuckleOffset). It moves the ball's position only, never its velocity, so the flight underneath is
+ *   the straight one (which is what a keeper reads: keeper.ts flightCrossing) and it is bounded by `amp` whatever
+ *   happens;
+ * - the DIP: `dip` m/s2 more than gravity, coming on over the back half of the flight (knuckleDip), so a ball struck
+ *   flat and hard at the top of the goal drops under the bar.
+ *
+ * `t` is the time since the strike and `off` the offset applied so far. It ends (Ball.knuckle is null again) the
+ * moment the ball meets the grass, the frame of the goal or the net, or anybody touches it (Match.step).
+ */
+export interface Knuckle {
+  t: number;
+  T: number;
+  nx: number;
+  nz: number;
+  amp: number;
+  n: number;
+  ph: number;
+  off: number;
+  dip: number;
+}
+
+/**
+ * A shot's AFTERTOUCH window (sim/match.ts aftertouchStep, AFTERTOUCH_T): its kick, who struck it and for which side
+ * (0 / 1), the time since the strike, where his stick was at the strike (`mx`, `mz`), the sidespin put on so far
+ * (`spin`, rad/s about y) and whether its event has gone.
+ */
+export interface Aftertouch {
+  kick: number;
+  p: number;
+  side: 0 | 1;
+  t: number;
+  mx: number;
+  mz: number;
+  spin: number;
+  shown: boolean;
+}
+
+/** The wobble comes on over the flight (0 at the boot, all of it by the goal line), smoothly: no kick at either end. */
+function knuckleEnv(u: number): number {
+  return u * u * (3 - 2 * u);
+}
+/** The knuckleball's sideways offset (m along its `n`) `t` s after the strike; it stays where it was once the flight is over. */
+export function knuckleOffset(k: Knuckle, t: number): number {
+  const u = Math.min(1, Math.max(0, t / k.T));
+  return k.amp * knuckleEnv(u) * Math.sin(Math.PI * k.n * u + k.ph);
+}
+/** How fast (m/s along its `n`) the wobble is carrying the ball sideways `t` s after the strike: what the eye sees it doing. */
+export function knuckleDrift(k: Knuckle, t: number): number {
+  const u = t / k.T;
+  if (u <= 0 || u >= 1) return 0;
+  const a = Math.PI * k.n * u + k.ph;
+  return (k.amp / k.T) * (6 * u * (1 - u) * Math.sin(a) + knuckleEnv(u) * Math.PI * k.n * Math.cos(a));
+}
+/** The dip comes on from KNUCKLE_DIP_FROM of the flight and is all there by KNUCKLE_DIP_FULL of it. */
+export const KNUCKLE_DIP_FROM = 0.4;
+export const KNUCKLE_DIP_FULL = 0.75;
+/** The knuckleball's extra downward pull (m/s2) `t` s after the strike. */
+export function knuckleDip(k: Knuckle, t: number): number {
+  const u = Math.min(1, Math.max(0, (t / k.T - KNUCKLE_DIP_FROM) / (KNUCKLE_DIP_FULL - KNUCKLE_DIP_FROM)));
+  return k.dip * u * u * (3 - 2 * u);
+}
+
 export class Ball {
   pos: V3 = { x: 0, y: BALL_R, z: 0 };
   vel: V3 = { x: 0, y: 0, z: 0 };
   spin: V3 = { x: 0, y: 0, z: 0 };
+  /** A knuckleball in flight (see Knuckle); null for every other ball. */
+  knuckle: Knuckle | null = null;
+  /** The human's shot in its AFTERTOUCH window (see Aftertouch); null otherwise. */
+  aftertouch: Aftertouch | null = null;
   /** Index of the player dribbling it, -1 when loose. */
   owner = -1;
   /** Keeper holding the ball in hands (ball is parked at their hands). */
@@ -38,6 +110,8 @@ export class Ball {
     this.pos.z = z;
     this.vel.x = this.vel.y = this.vel.z = 0;
     this.spin.x = this.spin.y = this.spin.z = 0;
+    this.knuckle = null;
+    this.aftertouch = null;
     this.owner = -1;
     this.held = false;
     this.inGoal = 0;
@@ -62,6 +136,9 @@ export class Ball {
     const v = this.vel;
     const s = this.spin;
     const grounded = p.y <= BALL_R + 0.005 && Math.abs(v.y) < 0.9;
+    // (A knuckleball is one only in the air: on the grass, or in a net, it is a ball like any other.)
+    let kn = this.knuckle;
+    if (kn && (grounded || this.inGoal !== 0)) kn = this.knuckle = null;
 
     if (grounded) {
       p.y = BALL_R;
@@ -80,6 +157,8 @@ export class Ball {
       s.x *= sk; s.y *= sk; s.z *= sk;
     } else {
       v.y -= GRAVITY * dt;
+      // (A knuckleball's late dip: Knuckle.)
+      if (kn) v.y -= knuckleDip(kn, kn.t) * dt;
       const sp = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
       const drag = AIR_DRAG * sp * dt;
       v.x -= v.x * drag;
@@ -96,8 +175,18 @@ export class Ball {
     p.x += v.x * dt;
     p.y += v.y * dt;
     p.z += v.z * dt;
+    if (kn) {
+      // Its wobble: the sideways offset moves on to where it is now (the position only: the flight underneath is straight).
+      kn.t += dt;
+      const w = knuckleOffset(kn, kn.t);
+      p.x += kn.nx * (w - kn.off);
+      p.z += kn.nz * (w - kn.off);
+      kn.off = w;
+    }
 
     if (p.y < BALL_R) {
+      // (The grass ends a knuckleball.)
+      this.knuckle = null;
       p.y = BALL_R;
       if (v.y < -1.1) {
         const impact = -v.y;
@@ -167,6 +256,8 @@ export class Ball {
         p.y = cy + ny * r;
         p.z = cz + nz * r;
         const vn = this.vel.x * nx + this.vel.y * ny + this.vel.z * nz;
+        // (The woodwork ends a knuckleball.)
+        this.knuckle = null;
         if (vn < 0) {
           const e = 1 + 0.62;
           this.vel.x -= e * vn * nx;

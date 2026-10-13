@@ -1,5 +1,5 @@
 import { clamp, dist2 } from '../core/math';
-import { CURL_SPIN, SHOT_SPEED_BASE, SHOT_SPEED_POWER, skillErr, type Launch } from './actions';
+import { CURL_SPIN, CURLER_MIN, KNUCKLE_MIN_POWER, knuckleRange, knuckleSolve, newKnuckle, SHOT_SPEED_BASE, SHOT_SPEED_POWER, skillErr, type Launch } from './actions';
 import { HALF_L, HALF_W } from './constants';
 import type { Match } from './match';
 import type { Player } from './player';
@@ -106,6 +106,15 @@ const FK_SOLVE_ITERS = 6;
 /** His free kick's power when his time runs out with SHOOT not held (a firm, placed one). */
 export const FK_AUTO_POWER = 0.62;
 
+/**
+ * A free kick struck at KNUCKLE_MIN_POWER of the bar or more with no bend asked for (under FK_KNUCKLE_CURL of a full
+ * one) from knuckleball range (`d` m to the middle of the goal) is a KNUCKLEBALL (actions.ts knuckleLaunch).
+ */
+export const FK_KNUCKLE_CURL = 0.06;
+export function fkKnuckle(power: number, curl: number, d: number): boolean {
+  return clamp(power, 0.15, 1) >= KNUCKLE_MIN_POWER && Math.abs(curl) <= FK_KNUCKLE_CURL && knuckleRange(d);
+}
+
 /** The human's placed free kick: where on the goal (z across, h up), how hard, how bent. */
 export interface FkAim {
   z: number;
@@ -132,10 +141,21 @@ export function freeKickLaunch(m: Match, p: Player, aim: FkAim): Launch {
   const far = 1 + Math.max(0, d - FK_SPREAD_FROM) * FK_SPREAD_D;
   const spread = (0.1 + (1 - acc) * 0.75) * (0.65 + power * 0.5) * skillErr(m, p) * far * (1 + Math.abs(aim.curl) * FK_CURL_ERR);
   const miss = placedMiss(spread, power, m.rng.gauss(), m.rng.gauss());
+  if (fkKnuckle(power, aim.curl, dist2(b.x, b.z, gx, 0))) {
+    // A KNUCKLEBALL free kick (actions.ts): no spin, through the reticle with its wobble on it. No dip: he has aimed
+    // its height himself, and the line the preview drew (the plain solve through the same point) is then its line.
+    const tz = aim.z + miss.z;
+    const kn = newKnuckle(m, b.x, b.z, gx, tz, 0);
+    const kv = knuckleSolve(b.x, b.y, b.z, gx, tz, Math.max(0.15, aim.h + miss.h), fkSpeed(power, acc), kn, solved);
+    return { vx: kv.vx, vy: kv.vy, vz: kv.vz, spinX: 0, spinY: 0, spinZ: 0, target: -1, kind: 'shot', power, style: 'knuckle', knuckle: kn };
+  }
   const v = freeKickSolve(b.x, b.y, b.z, gx, aim.z + miss.z, Math.max(0.15, aim.h + miss.h), power, acc, aim.curl, solved);
   // (A straight one still has a little natural spin, as any strike.)
   const spinY = Math.abs(aim.curl) > 0.02 ? v.spinY : m.rng.gauss() * 0.8;
-  return { vx: v.vx, vy: v.vy, vz: v.vz, spinX: 0, spinY, spinZ: 0, target: -1, kind: 'shot', power };
+  const L: Launch = { vx: v.vx, vy: v.vy, vz: v.vz, spinX: 0, spinY, spinZ: 0, target: -1, kind: 'shot', power };
+  // (A free kick bent CURLER_MIN of the way or more is named a CURLER for the HUD: its flight is what it always was.)
+  if (Math.abs(aim.curl) >= CURLER_MIN) L.style = 'curler';
+  return L;
 }
 
 // ------------------------------------------------------------------ the wall

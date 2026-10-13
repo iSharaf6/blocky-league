@@ -9,9 +9,9 @@ import {
   deliveryShape, FK_AUTO_POWER, freeKickLaunch, newFkAim, newZoneAim, steerFreeKick, steerZone, WALL_JUMP_AT, WALL_JUMP_VY, wallRadius, wallTop, zoneBounds,
   type FkAim, type FkAimState, type ZoneAimState,
 } from './setPiece';
-import { headerAtGoal, naturalPass, pickReceiver as pickPassMate, reaimShot, ROLL_CURL_DECAY, WILD_LIFT, type Launch } from './actions';
+import { headerAtGoal, knuckleLaunch, knuckleOn, naturalPass, pickReceiver as pickPassMate, reaimShot, ROLL_CURL_DECAY, WILD_LIFT, type Launch } from './actions';
 import { Ball, groundPassSpeed, type BallHit } from './ball';
-import { blitzClear, blitzGoal, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, megaHands } from './blitz';
+import { blitzClear, blitzGoal, blitzNoSlide, blitzSeek, blitzStep, blitzTackle, effectLeft, megaHands } from './blitz';
 import {
   AssistState, autoRun, carrierGuard, closeTouch, humanDribble, humanTackle, KNOCK_TAP, knockAssist, PRESS_GAIN, PRESS_GAP, PRESS_LEAD, pressSteal,
   TOLD_CLEAN, TOLD_REACH,
@@ -21,10 +21,10 @@ import {
 import { fakeShot, humanSkill, SkillState, skillGoal, skillTells } from './skills';
 import { wetPatches, weatherStep, type WeatherKind, type WetPatch } from './weather';
 import { coachStep, type CoachState } from './coach';
-import { hypeStep, superLaunch, superLive, SUPER_REACH } from './hype';
+import { hypeStep, superArmed, superLaunch, superLive, SUPER_REACH } from './hype';
 import {
   AIR_DRAG, BALL_R, BOX_DEPTH, BOX_W, DT, GOAL_H, GOAL_W, GRAVITY, HALF_L, HALF_W, JOG_SPEED, KICK_WINDUP,
-  PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SHOT_TEMPO, SIX_DEPTH, SIX_W, SPRINT_SPEED, TEMPO, DDA_TACKLE, KEEPER_BOOST,
+  PEN_SPOT, ROLL_A, ROLL_B, SEP_MATE, SEP_OPP, SHOT_TEMPO, SIX_DEPTH, SIX_W, SPIN_DECAY, SPRINT_SPEED, TEMPO, DDA_TACKLE, KEEPER_BOOST,
 } from './constants';
 import { FORMATIONS, kickoffSlot, type Slot } from './formations';
 import { clearOfPenalty, freeKickWall, HUMAN_KEEPER_HOLD, inOwnBox, isDirectFreeKick } from './keeper';
@@ -820,6 +820,34 @@ const LONG_CATCH_FROM = 16;
 const SHOT_LIVE_T = 4;
 /** How much shorter a diving keeper's reach is against a fully bent free kick. */
 const CURL_REACH = 0.15;
+/**
+ * A keeper never holds a KNUCKLEBALL (actions.ts), and his parry of one is tipped behind for a corner only this much
+ * as often as any other parry: the rest come back into play, a rebound.
+ */
+const KNUCKLE_TIP = 0.5;
+/**
+ * AFTERTOUCH (the owner, 2026-10-14: "knuckle ball curves allat"). For AFTERTOUCH_T s after the human's boot meets his
+ * open-play strike or his free kick (not a chip, a knuckleball, a header, a penalty, a SUPER SHOT or a Blitz rocket),
+ * pushing the stick ACROSS the ball's flight puts sidespin on it, and it bends that way in the air. Only the stick's
+ * change since the strike counts, and only a push: what the stick is across the flight now beyond what it already was
+ * that way when he struck it (so a thumb left where it was does nothing, and neither does one eased off or lifted: a
+ * curler's stick let go does not un-bend it). Past AFTERTOUCH_DEAD of the stick's travel, all of it by AFTERTOUCH_FULL,
+ * it asks for up to AFTERTOUCH_SPIN rad/s, put on (or taken off again) at AFTERTOUCH_RATE rad/s a second. That moves a
+ * ball struck from 20 m under a metre at the goal line at the very most (tests/curve.test.ts), on top of whatever the
+ * strike had: it is not re-aimed, and pushed the wrong way it takes a good shot wide. The keeper reads it as he reads
+ * any bend, half of it and as it comes (keeper.ts curlDrift). The first step it bites, an 'aftertouch' event (once per
+ * shot).
+ * (First tuned at 4.5 rad/s past 0.3 of the stick: a thumb moved without looking after a placed strike from 20 m then
+ * cost half its goals, 41% to 20%. At 3.2 past 0.45 it costs a third, 27%, and a push that reads the shot right still
+ * takes it to 63%: tests/knuckleRates.test.ts. A new mechanic should forgive the player who does not know it is there.)
+ */
+export const AFTERTOUCH_T = 0.5;
+export const AFTERTOUCH_DEAD = 0.45;
+export const AFTERTOUCH_FULL = 0.9;
+export const AFTERTOUCH_SPIN = 3.2;
+export const AFTERTOUCH_RATE = 60;
+/** ... and the 'aftertouch' event is pushed once this much of it (rad/s) is on the ball. */
+const AFTERTOUCH_SHOWN = 1.5;
 /** How far (m) in front of / behind his body line a diving keeper can still get a hand to the ball. */
 const DIVE_DEPTH = 0.5;
 /**
@@ -1891,6 +1919,9 @@ export class Match {
 
     if (this.phase === 'play') this.receiveBend(dt);
     this.rollCurlStep(dt);
+    // (A knuckleball is its striker's until anybody or anything else has touched it: Ball.knuckle.)
+    const kb = this.ball;
+    if (kb.knuckle && (kb.owner >= 0 || kb.held || kb.lastTouch !== this.shooter || this.shotKick !== this.kickId)) kb.knuckle = null;
     this.hits.length = 0;
     this.ballPrev.x = this.ball.pos.x;
     this.ballPrev.y = this.ball.pos.y;
@@ -2432,8 +2463,16 @@ export class Match {
     // (Struck: the reticle goes this frame.)
     if (r0?.kind === 'penalty' && r0.taker === p.idx) this.ctl[p.side].penAim = null;
     const pen = so?.pen ?? inMatchPen;
+    // (A Blitz rocket or a SUPER SHOT is its own kind of strike: never a knuckleball or a curler as well.)
+    const humanShot = o.kind === 'shot' && !so && !pen && this.isHumanControlled(p);
+    const megaWas = humanShot && this.cfg.mode === 'blitz' ? effectLeft(this, p.side, 'mega') : 0;
+    const superWas = humanShot && !!this.cfg.hype && superArmed(this, p.side);
     const L = pen ? penaltyLaunch(this, p, pen) : fkAim ? freeKickLaunch(this, p, fkAim) : resolveKick(this, p, o);
     if (this.cfg.hype && !so && !pen) superLaunch(this, p, L);
+    const special = humanShot && ((megaWas > 0 && effectLeft(this, p.side, 'mega') <= 0) || (superWas && !superArmed(this, p.side)));
+    if (special) {
+      if (L.style === 'curler') delete L.style;
+    } else if (humanShot && knuckleOn(this, p, o, L)) knuckleLaunch(this, L);
     // (A ground pass isn't laser-straight: a touch of curl, pace and skim: actions.naturalPass.)
     if (!so) naturalPass(this, p, L, this.kickId + 1);
     b.owner = -1;
@@ -2443,6 +2482,9 @@ export class Match {
     b.spin.x = L.spinX;
     b.spin.y = L.spinY;
     b.spin.z = L.spinZ;
+    // (A knuckleball's wobble and dip ride on the ball; any other kick ends one, and any kick ends an aftertouch.)
+    b.knuckle = L.knuckle ?? null;
+    b.aftertouch = null;
     if (b.pos.y < BALL_R) b.pos.y = BALL_R;
     if (L.vy > 0.5 && b.pos.y <= BALL_R + 0.01) b.pos.y = BALL_R + 0.02;
     b.lastTouch = p.idx;
@@ -2476,6 +2518,11 @@ export class Match {
       this.shotBalance = L.balance ?? 0;
       this.shotByHuman = this.isHumanControlled(p);
       this.shotTiming = grade;
+      // AFTERTOUCH: his strike with the foot (not a chip, not a knuckleball) can be bent from the stick for a moment.
+      const hp = this.ctl[p.side].prev;
+      b.aftertouch = humanShot && !special && L.kind === 'shot' && L.style !== 'chip' && L.style !== 'knuckle'
+        ? { kick: this.kickId, p: p.idx, side: p.side, t: 0, mx: hp.mx, mz: hp.mz, spin: 0, shown: false }
+        : null;
       if (timed) {
         timed.contact = timed.t;
         timed.kick = this.kickId;
@@ -2679,9 +2726,55 @@ export class Match {
 
   // ---------------------------------------------------------------- human control
 
+  /**
+   * AFTERTOUCH (see AFTERTOUCH_T; the window's state rides on the ball, Ball.aftertouch): `side`'s human's stick this
+   * step against where it was when he struck the shot in flight. A push across the ball's line asks for sidespin that
+   * way; the ball gets it at AFTERTOUCH_RATE.
+   */
+  private aftertouchStep(pad: Pad, side: Side, dt: number): void {
+    const b = this.ball;
+    const a = b.aftertouch;
+    if (!a || a.side !== side) return;
+    a.t += dt;
+    if (a.t > AFTERTOUCH_T + 1e-9 || this.phase !== 'play' || this.kickId !== a.kick || b.owner >= 0 || b.held || b.lastTouch !== a.p || b.inGoal !== 0) {
+      b.aftertouch = null;
+      return;
+    }
+    const hs = b.hspeed();
+    if (hs < 5) return;
+    // (What was put on has faded as any spin does: Ball.step.)
+    const grounded = b.pos.y <= BALL_R + 0.005 && Math.abs(b.vel.y) < 0.9;
+    a.spin *= Math.exp(-SPIN_DECAY * (grounded ? 4 : 1) * dt);
+    // The stick across the flight (along the unit (nx, nz)) now, and at the strike. Only a push across counts, and
+    // only what it is beyond where the stick already was that way: left where it was, eased off or let go, nothing.
+    const nx = -b.vel.z / hs;
+    const nz = b.vel.x / hs;
+    const was = a.mx * nx + a.mz * nz;
+    const now = pad.mx * nx + pad.mz * nz;
+    const beyond = now * was > 0 ? Math.max(0, Math.abs(now) - Math.abs(was)) : Math.abs(now);
+    const want = Math.sign(now) * clamp((beyond - AFTERTOUCH_DEAD) / (AFTERTOUCH_FULL - AFTERTOUCH_DEAD), 0, 1);
+    // (Ball.step's Magnus pulls a ball along -(nx, nz) for a positive spin about y: the spin asked for is the other sign.)
+    const add = clamp(-want * AFTERTOUCH_SPIN - a.spin, -AFTERTOUCH_RATE * dt, AFTERTOUCH_RATE * dt);
+    if (Math.abs(add) < 1e-9) return;
+    b.spin.y += add;
+    a.spin += add;
+    // (It may be on target now, or not any more.)
+    const on = onTarget(this, a.side);
+    if (on !== this.shotOnTarget) {
+      this.stats.onTarget[a.side] += on ? 1 : -1;
+      this.shotOnTarget = on;
+      this.shotWasOnTarget = on;
+    }
+    if (!a.shown && Math.abs(a.spin) >= AFTERTOUCH_SHOWN) {
+      a.shown = true;
+      this.events.push({ type: 'aftertouch', player: a.p, dir: -a.spin * nz >= 0 ? 1 : -1 });
+    }
+  }
+
   /** `side`'s human's pad for this step (this.h is his HumanCtl). */
   private applyHuman(dt: number, pad: Pad, side: Side): void {
     const hs = side;
+    this.aftertouchStep(pad, side, dt);
     let passP = pad.pass && !this.h.prev.pass;
     // Timed finishing: a SHOOT press while a strike is being timed is its second tap (judged, and used up:
     // it doesn't slide, charge or strike again until it's let go).
@@ -5569,12 +5662,16 @@ export class Match {
       // A SUPER SHOT (hype.ts): less of him gets to it, and he can only parry it.
       const superShot = !!this.cfg.hype && shotLive && superLive(this, s);
       if (superShot) reachH *= SUPER_REACH;
+      // A KNUCKLEBALL still in the air (actions.ts): he can never hold it.
+      const knuckle = shotLive && !!b.knuckle;
       // A diving keeper is stretched out along his line: full reach sideways, much less in front of
       // or behind his body (a ball whipped across the face of goal from an angle goes past him).
       const dh = diving
         ? Math.hypot((hx - b.pos.x) * (reachH / DIVE_DEPTH), hz - b.pos.z)
         : dist2(hx, hz, b.pos.x, b.pos.z);
       if (dh < reachH && dy < reachV && b.pos.y < GOAL_H + (claiming ? 0.7 : 0.3)) {
+        // (His hands are on it: it is a knuckleball no longer, whatever comes of it.)
+        b.knuckle = null;
         const speed = b.speed();
         // Only a shot that was actually on target counts as a save.
         const onFrame = this.shotClock < SHOT_LIVE_T && this.shotSide !== s && this.shotOnTarget;
@@ -5589,7 +5686,7 @@ export class Match {
         const seen = shotLive ? clamp((this.shotDist - LONG_CATCH_FROM) / 8, 0, 1) : 0;
         const stretch = diving ? clamp(dh / Math.max(0.1, reachH), 0, 1) : 0;
         // (A floated long shot straight at him is his to hold: ~95% for a good keeper.)
-        const pCatch = speed < catchLimit + seen * 7 && !superShot
+        const pCatch = speed < catchLimit + seen * 7 && !superShot && !knuckle
           ? diving
             ? (0.3 + keeping * 0.24) * (0.42 + seen * (0.6 - stretch * 0.35))
             : Math.min(0.95, 0.3 + keeping * 0.24 + seen * 0.42)
@@ -5598,7 +5695,7 @@ export class Match {
         if (this.rng.chance(pCatch)) {
           this.catchBall(k, onFrame);
         } else {
-          this.parry(k, onFrame);
+          this.parry(k, onFrame, knuckle);
         }
       }
     }
@@ -5637,7 +5734,7 @@ export class Match {
   }
 
   /** Keeper gets a hand to it without holding on: back into play, or tipped behind. */
-  private parry(k: Player, onFrame: boolean): void {
+  private parry(k: Player, onFrame: boolean, knuckle = false): void {
     this.offsideTouch(k);
     const b = this.ball;
     const s = k.side;
@@ -5654,7 +5751,9 @@ export class Match {
     // (A long shot he's had time to get across to is palmed down or out rather than tipped behind.)
     // Most parries stay in play: pushed out to the side or spilled back into the box (a rebound).
     const set = this.shotKick === this.kickId ? clamp((this.shotDist - LONG_CATCH_FROM) / 8, 0, 1) : 0;
-    const pTip = edge ? PARRY_TIP + Math.min(0.12, (Math.abs(b.pos.z) / hw) * 0.12) + (sp > 24 * SHOT_TEMPO ? 0.06 : 0) - set * 0.15 : 0.08;
+    const pTip0 = edge ? PARRY_TIP + Math.min(0.12, (Math.abs(b.pos.z) / hw) * 0.12) + (sp > 24 * SHOT_TEMPO ? 0.06 : 0) - set * 0.15 : 0.08;
+    // (A knuckleball he cannot guide: it comes off his hands back into play, a rebound, more often than behind.)
+    const pTip = knuckle ? pTip0 * KNUCKLE_TIP : pTip0;
     if (onFrame && this.rng.chance(pTip)) {
       // Tip it round the post or over the bar.
       if (Math.abs(b.pos.z) < 1.3 || b.pos.y > 1.7) {

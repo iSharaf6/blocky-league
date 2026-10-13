@@ -1,6 +1,7 @@
 import { Vector3, type Camera } from 'three';
 import { clamp } from '../core/math';
 import { BALL_OFS, PF } from '../game/replay';
+import { CURLER_MIN_D, knuckleRange } from '../sim/actions';
 import { HALF_L } from '../sim/constants';
 import { PITCH_Y } from '../render/stadium';
 import type { Match } from '../sim/match';
@@ -81,6 +82,63 @@ export function learnCue(cue: TrainerCue, fresh: boolean): TrainerCue | null {
   return { title: cue.title, actions: cue.actions };
 }
 
+/**
+ * The shot hints (2026-10-14, the owner: "knuckle ball curves allat"): three cards that teach the three things a
+ * strike can do that nobody would find alone. KNUCKLEBALL while he has the ball (or is charging SHOOT) in knuckleball
+ * range, CURLER while he charges a shot from further out than CURLER_MIN_D m, AFTERTOUCH while his shot is in the air.
+ * Each comes up at its moment until he has done the thing once (shotHintLearned: the session calls it when the sim
+ * says he struck one), and HINT_SHOWS times at the most; then the usual card has that moment back. They are counted
+ * with the other cards (learnCue), so PITCH TRAINER switched back on starts them over too.
+ */
+export type ShotHint = 'KNUCKLEBALL' | 'CURLER' | 'AFTERTOUCH';
+export const HINT_SHOWS = 12;
+
+/** Is this hint still worth showing (not done yet, not shown HINT_SHOWS times)? */
+export function shotHintDue(title: ShotHint): boolean {
+  return (learnedCounts()[title] ?? 0) < HINT_SHOWS;
+}
+
+/** He has done it (a knuckleball struck, a curler, an aftertouch that bit): that hint never comes up again. */
+export function shotHintLearned(title: ShotHint): void {
+  const seen = learnedCounts();
+  if ((seen[title] ?? 0) >= HINT_SHOWS) return;
+  seen[title] = HINT_SHOWS;
+  try {
+    localStorage.setItem(LEARN_KEY, JSON.stringify(seen));
+  } catch {
+    /* private mode: he sees it again next visit */
+  }
+}
+
+/** The shot hint for this moment, if one is due (see ShotHint). `mine`: his man has the ball at his feet. */
+function shotHint(m: Match, device: Device, mine: boolean): TrainerCue | null {
+  const hs = m.cfg.humanSide;
+  if (hs !== 0 && hs !== 1) return null;
+  const shoot = keyCap('shoot', device, 'attack');
+  if (mine) {
+    const b = m.ball.pos;
+    const d = Math.hypot(b.x - m.attackDir(hs) * HALF_L, b.z);
+    const charging = m.shootCharge > 0.06;
+    // (A pass or a cross being charged, or a challenge to answer, has the card: this can wait.)
+    if (!charging && (m.throughCharge > 0.08 || m.passCharge >= 0 || skillWindow(m, hs))) return null;
+    if (knuckleRange(d) && shotHintDue('KNUCKLEBALL')) {
+      return charging
+        ? { title: 'KNUCKLEBALL', actions: [[shoot, 'Hold to full from range']] }
+        : { title: 'KNUCKLEBALL', actions: [[shoot, 'Hold to full from range'], [keyCap('pass', device, 'attack'), 'Pass']] };
+    }
+    if (charging && d >= CURLER_MIN_D && shotHintDue('CURLER')) {
+      return { title: 'CURLER', actions: [[moveCap(device), 'Push sideways as you shoot'], [shoot, 'Let go to shoot']] };
+    }
+    return null;
+  }
+  // His strike on its way (not a chip, not a knuckleball: Match.aftertouch's own rule), for a second.
+  if (m.ball.owner < 0 && m.shotByHuman && m.shotKick === m.kickId && m.shooter === m.active && m.kickKind === 'shot' && m.shotClock < 1 &&
+    m.shotStyle !== 'chip' && m.shotStyle !== 'knuckle' && m.ball.lastTouch === m.active && shotHintDue('AFTERTOUCH')) {
+    return { title: 'AFTERTOUCH', actions: [[moveCap(device), 'Move it now to bend the shot']] };
+  }
+  return null;
+}
+
 /** "Let go of the stick" in the device's terms: the assisted run then meets the ball. */
 const letGo = (device: Device) => (device === 'keyboard' ? `Let go of ${moveCap('keyboard')} to meet it` : 'Let the stick go to meet it');
 
@@ -93,6 +151,9 @@ export function trainerCue(m: Match, device: Device): TrainerCue {
   const own = m.ball.owner;
   const mine = own === m.active && own >= 0;
   if (mine && m.ball.held) return keeperCue(device);
+  // (A shot hint he has not learned yet has this moment: KNUCKLEBALL, CURLER, AFTERTOUCH.)
+  const hint = shotHint(m, device, mine);
+  if (hint) return hint;
   if (mine && m.shootCharge > 0.06) return {
     title: 'PICK YOUR CORNER', actions: [[k('shoot'), 'Let go to shoot'], [k('through'), 'Chip it']],
     ...(m.timedFinish ? { detail: `${pressVerb(device)} ${k('shoot')} again as you strike` } : {}),
