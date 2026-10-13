@@ -517,6 +517,9 @@ export const PSTATE = {
   skill: 13, load: 14,
 } as const;
 
+/** A stumble's variant (frame channel 11, skills.ts MEGGED_CODE): nutmegged, and how far (rad) each leg is planted out. */
+const MEGGED = 1;
+const MEG_SPLAY = 0.5;
 /** The skill moves by their frame code (sim/skills.ts SKILL_CODE). */
 const SKILL_MOVE = {
   roulette: 1, rainbow: 2, stepover: 3, dragback: 4, elastico: 5, croqueta: 6, nutmeg: 7, heelchop: 8, ballroll: 9,
@@ -979,6 +982,20 @@ export class Footballer {
         break;
       }
       case PSTATE.stumble: {
+        if (Math.round(p.diveDir) === MEGGED) {
+          // Nutmegged (skills.ts MEGGED_CODE): caught square, feet planted wide, the ball through the gap; he folds at
+          // the waist to watch it go, arms out, and only then starts to turn.
+          this.locomotion(p, time, dt, ph, 0, 0);
+          const k = smoothstep(0, 0.25, p.kickT) * (1 - smoothstep(0.8, 1, p.kickT));
+          lL.rotation.set(MEG_SPLAY * k, 0, 0);
+          lR.rotation.set(-MEG_SPLAY * k, 0, 0);
+          body.position.y = HIP_Y - 0.07 * k;
+          torso.rotation.z = -0.42 * k;
+          head.rotation.z = -0.5 * k;
+          aL.rotation.set(-0.5 * k, 0, 0.9 * k);
+          aR.rotation.set(0.5 * k, 0, 0.9 * k);
+          break;
+        }
         // (Sim stumble state, when it has one: pitched forward, arms thrown out, feet scrambling.)
         this.locomotion(p, time, dt, ph, run, swing);
         const k = Math.sin(clamp(p.stateT / 0.6, 0, 1) * Math.PI);

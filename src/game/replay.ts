@@ -83,6 +83,9 @@ export function writeFrame(m: Match, out: Float32Array, time: number, lunge?: Fl
       if (sk.kind === 'move') {
         out[o + 9] = sk.turn;
         out[o + 11] = sk.code;
+      } else if (sk.kind === 'stumble') {
+        // (Which stumble: 0 the man a PERFECT beat, skills.ts MEGGED_CODE the man a nutmeg is going through.)
+        out[o + 11] = sk.code;
       }
     }
   }

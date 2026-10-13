@@ -73,6 +73,8 @@ export const SKILL_CODE: Readonly<Record<SkillMoveKind, number>> = {
   roulette: 1, rainbow: 2, stepover: 3, dragback: 4, elastico: 5, croqueta: 6, nutmeg: 7, heelchop: 8, ballroll: 9,
   boost: 10, sombrero: 11, fakeshot: 12, flickon: 13,
 };
+/** A stumble pose's variant in the frame (replay.ts writeFrame): the man a NUTMEG goes through, legs apart. */
+export const MEGGED_CODE = 1;
 /** Seconds between the start of one move and the next, and the stamina each one costs (times Player.fatigue). */
 export const SKILL_COOL = 0.7;
 export const SKILL_STAMINA = 0.03;
@@ -290,6 +292,9 @@ const NUTMEG_ROUND = 1.1;
 /** ... and takes it no sooner than this far (m) beyond him. */
 const NUTMEG_BEYOND = 0.5;
 const NUTMEG_CHASE = 0.8;
+/** It is aimed at the man (and kept on him as it rolls) until this close to him (m); he stands legs apart this long (s) after it is through. */
+const NUTMEG_AIM_MIN = 0.3;
+const NUTMEG_GAPE = 0.22;
 /**
  * A move that fits the moment fools a man more often (gradeMove's GOOD roll): a nutmeg on the man squared up, a rainbow
  * over a slide, a side move (elastico, roulette, la croqueta) past a man in front, a heel chop or drag back away from a
@@ -407,6 +412,8 @@ export class SkillState {
   readonly ahead: number[] = new Array(22).fill(-9);
   /** A defender a PERFECT beat, stumbling (the render): who, from when (skill clock), how long. */
   stumble: { idx: number; at: number; dur: number } | null = null;
+  /** The man a NUTMEG is going through, caught with his legs apart while it passes (the render): who, from when, how long. */
+  megged: { idx: number; at: number; dur: number } | null = null;
   /**
    * Men a move beat who can't touch the ball until `until` (skill clock; a flick or a nutmeg's: till the dribbler has
    * it back, `flick`): no tackle, no touch on a loose ball, no header, no slide (applyShield). PERFECT_SHIELD, GOOD_SHIELD.
@@ -807,6 +814,8 @@ function gradeMove(m: Match, p: Player, st: SkillState, since: number): SkillGra
   let perfect: Player | null = null;
   let near = false;
   let beat = false;
+  // (A NUTMEG's own man: it only goes through legs it opened.)
+  let megged = false;
   for (const o of m.teamPlayers(p.side === 0 ? 1 : 0)) {
     if (o.isKeeper || o.sentOff || o.wrongFootT > 0) continue;
     if (o.state !== 'move' && o.state !== 'slide') continue;
@@ -815,6 +824,7 @@ function gradeMove(m: Match, p: Player, st: SkillState, since: number): SkillGra
       beatPerfect(m, p, o, st);
       perfect ??= o;
       near = beat = true;
+      if (o.idx === st.move!.through) megged = true;
       continue;
     }
     if (d > SHOW_R) continue;
@@ -841,11 +851,21 @@ function gradeMove(m: Match, p: Player, st: SkillState, since: number): SkillGra
       // (Beaten: he doesn't get it back off the move itself; a flick or a nutmeg till the dribbler has it again.)
       st.guard(o, mv.dur + GOOD_SHIELD, offFoot(mv.kind));
       beat = true;
+      if (o.idx === mv.through) megged = true;
     }
   }
   if (perfect) st.threat = null;
   const grade: SkillGrade = perfect ? 'perfect' : beat ? 'good' : near ? 'plain' : 'show';
   const mv = st.move!;
+  // 2026-10-14, the owner: "fix the nutmeg". Measured: every NUTMEG rolled 0.4 to 0.7 m BESIDE the man (it was knocked
+  // along the run, not at him), and one that didn't fool him rolled straight to his feet (lost 12 of 12). Now it is a
+  // nutmeg only when it fooled the man in front; with his legs shut it is a STEPOVER over the ball, which he keeps.
+  if (mv.kind === 'nutmeg' && !megged) {
+    mv.kind = 'stepover';
+    mv.dur = SKILL_T.stepover;
+    mv.through = -1;
+    mv.round = 1;
+  }
   if (perfect) {
     // A PERFECT is CHARGED whatever he had left, and costs him nothing.
     if (mv.charged) st.flair = Math.min(FLAIR_MAX, st.flair + FLAIR_PERFECT);
@@ -1201,6 +1221,7 @@ function chase(m: Match, p: Player, pad: Pad, st: SkillState, mv: SkillMove): vo
   }
   const air = lofted(mv.kind) && !mv.landed;
   if (air && b.pos.y <= BALL_R + 0.06 && b.vel.y <= 0.5) mv.landed = true;
+  if (mv.kind === 'nutmeg' && o) throughLegs(m, mv, o);
   // A nutmeg is taken beyond the man, never level with him (it went through his legs, he went round).
   if (mv.kind === 'nutmeg' && o && (b.pos.x - o.pos.x) * mv.fx + (b.pos.z - o.pos.z) * mv.fz < NUTMEG_BEYOND) {
     p.kickCooldown = Math.max(p.kickCooldown, SHIELD_STEP);
@@ -1270,21 +1291,53 @@ function chase(m: Match, p: Player, pad: Pad, st: SkillState, mv: SkillMove): vo
 function nutmeg(m: Match, p: Player, mv: SkillMove): void {
   const b = m.ball;
   const o = mv.through >= 0 ? m.players[mv.through] : null;
-  const along = o ? Math.max(1, (o.pos.x - b.pos.x) * mv.ux + (o.pos.z - b.pos.z) * mv.uz) : 2;
-  const D = along + NUTMEG_PAST;
+  // At the man himself (between his feet), not along the run: he may stand NUTMEG_LANE m off its line.
+  let along = 2;
+  if (o) {
+    const dx = o.pos.x - b.pos.x;
+    const dz = o.pos.z - b.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > NUTMEG_AIM_MIN && dx * mv.ux + dz * mv.uz > 0) {
+      mv.fx = dx / d;
+      mv.fz = dz / d;
+    }
+    along = Math.max(1, dx * mv.fx + dz * mv.fz);
+  }
+  // (Never out of play: it stops inside the lines, but always beyond him.)
+  const D = Math.max(along + NUTMEG_BEYOND + 0.4, Math.min(along + NUTMEG_PAST, roomAlong(b.pos.x, b.pos.z, mv.fx, mv.fz, 1.5)));
   const v = rollSpeedFor(D);
   b.owner = -1;
-  b.vel.x = mv.ux * v;
-  b.vel.z = mv.uz * v;
+  b.vel.x = mv.fx * v;
+  b.vel.z = mv.fz * v;
   b.vel.y = 0;
+  b.spin.x = b.spin.y = b.spin.z = 0;
   b.lastTouch = p.idx;
   b.lastTouchSide = p.side;
   p.kickCooldown = Math.max(p.kickCooldown, FLICK_COOL);
   m.passTarget = -1;
   mv.flicked = true;
-  mv.landX = b.pos.x + mv.ux * D;
-  mv.landZ = b.pos.z + mv.uz * D;
+  mv.landX = b.pos.x + mv.fx * D;
+  mv.landZ = b.pos.z + mv.fz * D;
   mv.chaseEnd = mv.t + (2 * D) / v + NUTMEG_CHASE;
+  // Caught with his legs apart until it is through and a moment more (the render's pose: skillPose).
+  if (o) m.ctl[p.side].skill.megged = { idx: o.idx, at: m.ctl[p.side].skill.t, dur: along / v + NUTMEG_GAPE };
+}
+
+/**
+ * A NUTMEG on its way to the man: kept on him (he may still be shifting his feet) until it is NUTMEG_AIM_MIN m short of
+ * him, so it goes between them and not past his hip. Its pace is its own; only its line is turned.
+ */
+function throughLegs(m: Match, mv: SkillMove, o: Player): void {
+  const b = m.ball;
+  if (b.owner >= 0 || b.held) return;
+  const dx = o.pos.x - b.pos.x;
+  const dz = o.pos.z - b.pos.z;
+  if (dx * mv.fx + dz * mv.fz < NUTMEG_AIM_MIN) return;
+  const d = Math.hypot(dx, dz);
+  const sp = Math.hypot(b.vel.x, b.vel.z);
+  if (sp < 0.5 || d < 1e-3) return;
+  b.vel.x = (dx / d) * sp;
+  b.vel.z = (dz / d) * sp;
 }
 
 /** FLICK ON: his first touch knocked `d` m on along the move's way (mv.fx, fz), for him to run onto. */
@@ -1359,6 +1412,9 @@ export function skillPose(m: Match, p: Player): { kind: 'move' | 'load' | 'stumb
     return { kind: 'move', code: SKILL_CODE[own.kind], t: own.t, dur: own.dur, turn };
   }
   const st = m.ctl[p.side === 0 ? 1 : 0].skill;
+  // (Nutmegged: legs apart as it goes through, MEGGED_CODE; then whatever stumble a PERFECT left him with.)
+  const mg = st.megged;
+  if (mg && mg.idx === p.idx && st.t - mg.at < mg.dur) return { kind: 'stumble', code: MEGGED_CODE, t: st.t - mg.at, dur: mg.dur, turn: 0 };
   const sb = st.stumble;
   if (sb && sb.idx === p.idx && p.wrongFootT > 0 && st.t - sb.at < sb.dur) return { kind: 'stumble', code: 0, t: st.t - sb.at, dur: sb.dur, turn: 0 };
   return null;

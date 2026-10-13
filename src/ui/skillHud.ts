@@ -10,6 +10,8 @@ import './skill.css';
 /** How long (s) a move's pop stays up (matches the CSS animation), and a PERFECT's ring flash. */
 const POP_S = 1.1;
 const RING_S = 0.45;
+/** The timing ring starts this much wider than its zone (1 + RING_OPEN x) and closes onto it as the window runs out. */
+const RING_OPEN = 0.7;
 /** Head clearance (m) for the tell over a defender and the pop over the dribbler. */
 const TELL_UP = 0.55;
 const POP_UP = 0.95;
@@ -160,8 +162,8 @@ export class SkillHud {
       if (on) {
         // Over his head; beside him (away from the card) or under his feet when a card is there. (Never up under the
         // score bar: it slides down over him instead.)
-        const tw = this.tell.offsetWidth || 50;
-        const th = this.tell.offsetHeight || 70;
+        const tw = this.tell.offsetWidth || 34;
+        const th = this.tell.offsetHeight || 46;
         const box = (x: number, y: number): SkillAvoid => {
           const cx = clamp(x, 24, w - 24);
           const cy = clamp(y, TOP_CLEAR + th, h - 30);
@@ -170,14 +172,14 @@ export class SkillHud {
         const clear = (r: SkillAvoid) => !avoid || r.r + 6 < avoid.l || r.l - 6 > avoid.r || r.b + 6 < avoid.t || r.t - 6 > avoid.b;
         const side = avoid && (avoid.l + avoid.r) / 2 > p.x ? -1 : 1;
         const f = feet(tell.by);
-        const opts = [box(p.x, p.y), box(p.x + side * (tw + 26), p.y + th * 0.6), box(f.x, f.y + th + 10)];
+        const opts = [box(p.x, p.y), box(p.x + side * (tw + 20), p.y + th * 0.6), box(f.x, f.y + th + 8)];
         const pick = opts.find(clear) ?? opts[0];
         this.tell.style.transform = `translate(${Math.round(pick.l)}px,${Math.round(pick.t)}px)`;
         this.fill.style.transform = `scaleX(${clamp(tell.left, 0, 1).toFixed(3)})`;
         // The timing ring: a zone under his feet, the ring closing in on it as the window runs out (red for its last third).
         const left = clamp(tell.left, 0, 1);
         this.zone.style.transform = `translate(${Math.round(f.x)}px,${Math.round(f.y)}px)`;
-        this.zone.style.setProperty('--k', (1 + left * 1.2).toFixed(3));
+        this.zone.style.setProperty('--k', (1 + left * RING_OPEN).toFixed(3));
         this.zone.classList.toggle('last', left < 0.34);
       }
       this.zone.classList.toggle('on', on);
