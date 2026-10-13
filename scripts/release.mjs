@@ -64,6 +64,19 @@ const PORTAL_HOSTS = { crazygames: ['sdk.crazygames.com'], poki: ['game-cdn.poki
 // itch keeps the player-triggered invitation link. Portal SDK builds omit sharing entirely.
 const SHARE_HOSTS = { crazygames: [], poki: [], itch: ['isharaf6.github.io'] };
 const NOT_REQUESTS = new Set(['www.w3.org', 'jcgt.org']);
+// What a portal zip must not carry at all (CrazyGames' full-launch rules: no link out of the game, no other
+// platform's store, ad SDK or native shell, no accounts, no custom fullscreen). Each is kept out by a literal
+// VITE_PORTAL check in src/ that the bundler folds away: a hit here means one of those checks was lost.
+const PORTAL_FORBIDDEN = [
+  'mailto:', 'navigator.share', 'window.open', 'requestFullscreen', 'RTCPeerConnection',
+  'IPHONE', 'apps.apple.com', 'testflight', 'ca-app-pub-', 'admob', 'AdMob', 'capacitor', 'Capacitor', 'supabase',
+];
+// (And the CrazyGames zip carries no call into Poki's SDK: src/platform/ads.ts gates each one. The reverse is not
+// gated yet, so the Poki zip is not checked for it.)
+const OTHER_PORTAL_SDK = { crazygames: ['PokiSDK'] };
+// Dependencies that only the app and the web build bundle: a portal zip has none of their code, so none of their
+// notices (the licences file lists what actually travels in that zip).
+const NOT_IN_PORTALS = /^(@capacitor(-community)?\/|@supabase\/|cordova-plugin-)/;
 
 // Canonicals and sitemap entries belong to the host actually being deployed.
 // Keep the source and portal/native bundles independent of that deployment URL.
@@ -83,9 +96,11 @@ const canonical = (html, url) => html
 // The minified bundle drops comments, so each build ships this file, generated from the
 // installed packages so it always matches the versions actually bundled.
 const LICENSES_FILE = 'third-party-licenses.txt';
-function thirdPartyLicenses() {
+function thirdPartyLicenses(variant) {
   const parts = ['Blocky League bundles the following third-party software. Their licences are reproduced below.\n'];
+  const portal = VARIANTS[variant].portal !== 'none';
   for (const dep of Object.keys(pkg.dependencies ?? {}).sort()) {
+    if (portal && NOT_IN_PORTALS.test(dep)) continue;
     const dir = join(ROOT, 'node_modules', dep);
     const meta = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
     const lic = ['LICENSE', 'LICENSE.md', 'LICENSE.txt'].map((f) => join(dir, f)).find((f) => existsSync(f));
@@ -142,6 +157,18 @@ function checkOutput(outDir, variant) {
     // Accounts never ship in a portal or itch zip.
     if (CLOUD_HOST && hosts.has(CLOUD_HOST)) problems.push(`the backend host is in ${variant}: ${CLOUD_HOST}`);
   }
+  if (VARIANTS[variant].portal !== 'none') {
+    // (Every text file in the zip, the licences included: see PORTAL_FORBIDDEN.)
+    const banned = [...PORTAL_FORBIDDEN, ...(OTHER_PORTAL_SDK[variant] ?? [])];
+    for (const f of walk(outDir)) {
+      if (!TEXT_EXT.has(extname(f))) continue;
+      const text = readFileSync(f, 'utf8');
+      for (const word of banned) {
+        const n = text.split(word).length - 1;
+        if (n) problems.push(`${relative(outDir, f)} carries "${word}" (${n}x): not allowed in a ${variant} build`);
+      }
+    }
+  }
   if (VARIANTS[variant].cloud) {
     // (Its hosts are an inventory, not a whitelist: the backend's client library names a few of its own.)
     // No backend is a valid build: accounts and cloud saves are simply off and the game is fully local.
@@ -189,7 +216,7 @@ async function buildVariant(variant) {
     writeFileSync(robotsPath, `${robots}\n\nSitemap: ${site}/sitemap.xml\n`);
   }
   writeFileSync(indexPath, html);
-  writeFileSync(join(outDir, LICENSES_FILE), thirdPartyLicenses());
+  writeFileSync(join(outDir, LICENSES_FILE), thirdPartyLicenses(variant));
 
   const { problems, warnings, hosts } = checkOutput(outDir, variant);
   const files = walk(outDir);

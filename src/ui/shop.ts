@@ -55,7 +55,8 @@ import { overall } from '../sim/types';
 import { careerState, clubCreate, closeMeta, esc, fmt, mountMeta, onMetaClose, openClub, roleBadge, topBar, type MetaScreen } from './club';
 import { openMarket } from './market';
 import { shirtArt } from './menus';
-import { pixelIcon } from './pixelIcons';
+import { NO_AD_TEXT, adIcon, pixelIcon } from './pixelIcons';
+import { devPortal } from '../platform/native';
 import { faceHtml, hydrateFaces } from './preview';
 import { ShopStage, type StageClub, type StageShow, type StageWear } from './shopStage';
 import { sep } from './text';
@@ -241,8 +242,13 @@ function gemPile(tier: number): string {
   return `<span class="sh-gempile" aria-hidden="true">${shown.map(([x, y]) => one(x, y)).join('')}</span>`;
 }
 
-/** A small play triangle for the watch-an-ad button. */
-const PLAY_ART = '<svg class="sh-play" viewBox="0 0 7 7" width="16" height="16" shape-rendering="crispEdges" aria-hidden="true"><path d="M0 0h1v7H0zM1 1h1v5H1zM2 1h1v5H2zM3 2h1v3H3zM4 2h1v3H4zM5 3h1v1H5z" fill="currentColor"/></svg>';
+/**
+ * The words on a free-ad card while no ad can be offered (platform/ads.ts rewardedNote): the button, switched off,
+ * and the line beside it. An ad blocker is named; anything else is just no ad for now.
+ */
+function adOffText(): { label: string; note: string } {
+  return { label: ads.adBlocked ? 'BLOCKED' : 'NO AD YET', note: ads.rewardedNote || 'NO AD RIGHT NOW' };
+}
 
 /** The pixel icon for a category (rail, set parts). */
 const CAT_ICON: { readonly [k in ShopCat]: string } = {
@@ -324,8 +330,9 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
   let shownCoins = save.coins;
   /** Gems as last drawn (the counter pops when they change). */
   let shownGems = gems(save);
-  /** The STORE tab's section. */
-  let sec: StoreSec = lastStore;
+  /** The STORE tab's section. (A portal has no OFFERS: asked for there, it is GEMS.) */
+  let sec: StoreSec = lastStore === 'offers' && (import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki' || (import.meta.env.DEV && devPortal()))
+    ? 'gems' : lastStore;
   let popKey = '';
 
   const say = (msg: string, kind: 'good' | 'bad' | 'info' = 'good') => scr.toast(msg, kind);
@@ -433,14 +440,19 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
             <button class="btn btn-white sh-pc-gems" data-a="passgems" ${off} ${passPending ? 'disabled' : ''} aria-label="Get the Club Pass for ${GEM_PRICES.clubPass} gems">${pass ? 'OR' : 'GET IT'} ${gemPrice(GEM_PRICES.clubPass)}</button>`}
           ${passPending ? '<small class="sh-pc-note">STORE PAYMENT PENDING. NO NEED TO BUY AGAIN</small>' : ''}</div>
         </section>`;
-    const chips = `<div class="chips sh-slots sh-secs x" data-scroll-key="sh-store-sections" role="group" aria-label="Store sections">${STORE_SECS.map((x) =>
+    // OFFERS is the shelf of the app store's products: a portal sells none, and may not point at the app that does,
+    // so its builds have no OFFERS section at all (the literal checks drop the section and its copy with it).
+    const secs = STORE_SECS.filter((x) => x.sec !== 'offers'
+      || !(import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki' || (import.meta.env.DEV && devPortal())));
+    const chips = `<div class="chips sh-slots sh-secs x" data-scroll-key="sh-store-sections" role="group" aria-label="Store sections">${secs.map((x) =>
       `<button class="${x.sec === sec ? 'on' : ''}" data-a="sec" data-v="${x.sec}" aria-pressed="${x.sec === sec}">${x.label}</button>`).join('')}</div>`;
     let main = '';
     if (sec === 'gems') {
       // The gem packs (the app), the free daily gems (an ad, where there are ads), and where gems come from in play.
       const earn = `<p class="sh-earn"><b>FREE BY PLAYING</b>BOARD GOALS +${GEM_REWARDS.boardObjective}${sep()}CUPS +${GEM_REWARDS.cup}${sep()}WEEKLY +${GEM_REWARDS.weekly}${sep()}DAILY GIFT${sep()}SEASON TIERS</p>`;
+      // (A top-up is only mentioned where something is sold: the app's store. Elsewhere every gem is earned.)
       main = `${packs.length ? `<div class="sh-iaps n5">${packs.map(pack).join('')}</div>` : ''}
-        <div class="sh-offers n1"><p class="sh-earn"><b>GEMS GIVE YOUR CLUB AN IDENTITY</b>Guaranteed signature collections, the Club Pass, and useful shortcuts. Earn them playing or buy a top-up.<button class="btn btn-blue" data-a="signaturepick">PREVIEW SIGNATURE COLLECTIONS</button></p>${ads.portal !== 'none' ? gemAdHtml() : ''}${earn}</div>`;
+        <div class="sh-offers n1"><p class="sh-earn"><b>GEMS GIVE YOUR CLUB AN IDENTITY</b>Guaranteed signature collections, the Club Pass, and useful shortcuts. ${!(import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') && iap.storefront ? 'Earn them playing or buy a top-up.' : 'Earn them by playing.'}<button class="btn btn-blue" data-a="signaturepick">PREVIEW SIGNATURE COLLECTIONS</button></p>${ads.portal !== 'none' ? gemAdHtml() : ''}${earn}</div>`;
     } else if (sec === 'coins') {
       const extra = [
         ads.portal !== 'none' ? freeHtml(false) : '',
@@ -448,7 +460,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       ].filter(Boolean);
       main = `<div class="sh-iaps">${COIN_OFFERS.map(swap).join('')}</div>
         <div class="sh-offers n${extra.length}">${extra.join('')}</div>`;
-    } else if (sec === 'offers') {
+    } else if (!(import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') && sec === 'offers') {
       // State the bundle contents. Localized StoreKit prices cannot support a saving calculated from US defaults.
       // The PRO bundle only appears while neither permanent benefit is owned.
       const list2 = [
@@ -469,7 +481,9 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       <div class="sh-storemain pane-scroll s-${sec}" data-scroll-key="sh-store-${sec}">${main}
       <div class="sh-foot">
         ${iap.storefront ? `<button class="btn btn-white sh-restore" data-a="restore" ${off}>${busy === 'restore' ? 'ONE MOMENT' : 'RESTORE'}</button>` : ''}
-        <p class="sh-fine">${iap.storefront && !iap.available ? '<b>STORE NOT READY YET.</b> ' : ''}No cash value. Gems and coins never buy anything random. Signature items are cosmetic. Online friendlies use preset teams.</p>
+        <p class="sh-fine">${iap.storefront && !iap.available ? '<b>STORE NOT READY YET.</b> ' : ''}No cash value. Gems and coins never buy anything random. Signature items are cosmetic.${
+          // (ONLINE is in the web builds only: a portal has no such mode to speak of.)
+          import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki' || (import.meta.env.DEV && devPortal()) ? '' : ' Online friendlies use preset teams.'}</p>
       </div></div>`;
   };
 
@@ -502,8 +516,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const left = adsLeft(save, 'gem', localDay());
     const ready = ads.rewardedAvailable;
     const state = left <= 0 ? 'done' : !ready ? 'none' : busy === 'gemad' ? 'wait' : 'go';
-    const lbl = state === 'done' ? 'DONE TODAY' : state === 'none' ? 'NO AD YET' : state === 'wait' ? 'ONE MOMENT' : `${PLAY_ART}+${GEM_REWARDS.dailyAd}`;
-    const note = state === 'done' ? 'BACK TOMORROW' : state === 'none' ? 'TRY AGAIN SOON' : `WATCH AN AD${sep()}${AD_CAPS.gem === 1 ? 'ONCE A DAY' : `${left} LEFT TODAY`}`;
+    // (The film icon and WATCH AN AD in words: it is an ad, said both ways. No ad to offer: switched off, saying why.)
+    const off = adOffText();
+    const lbl = state === 'done' ? 'DONE TODAY' : state === 'none' ? off.label : state === 'wait' ? 'ONE MOMENT' : `${adIcon()}+${GEM_REWARDS.dailyAd}`;
+    const note = state === 'done' ? 'BACK TOMORROW' : state === 'none' ? off.note : `WATCH AN AD${sep()}${AD_CAPS.gem === 1 ? 'ONCE A DAY' : `${left} LEFT TODAY`}`;
     return `<section class="sh-offer free gemad">
         <span class="sh-offart" aria-hidden="true">${gemArt(3)}</span>
         <div class="sh-offtxt"><b>FREE GEMS</b><small class="sh-left ${state}">${note}</small></div>
@@ -516,11 +532,15 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const left = freeAdsLeft(save, localDay());
     const ready = ads.rewardedAvailable;
     const state = left <= 0 ? 'done' : !ready ? 'none' : busy === 'ad' ? 'wait' : 'go';
-    const label = state === 'done' ? 'DONE TODAY' : state === 'none' ? 'NO AD YET' : state === 'wait' ? 'ONE MOMENT' : `${PLAY_ART}+${FREE_AD_COINS}`;
-    const note = state === 'done' ? 'BACK TOMORROW' : state === 'none' ? 'TRY AGAIN SOON' : `${left} OF ${FREE_AD_DAILY_CAP} LEFT TODAY`;
+    // (As FREE GEMS: the film icon on the button and WATCH AN AD in words beside it; switched off, saying why, when
+    // no ad can be offered.)
+    const off = adOffText();
+    const label = state === 'done' ? 'DONE TODAY' : state === 'none' ? off.label : state === 'wait' ? 'ONE MOMENT' : `${adIcon()}+${FREE_AD_COINS}`;
+    const note = state === 'done' ? 'BACK TOMORROW' : state === 'none' ? off.note
+      : big ? `WATCH AN AD FOR ${FREE_AD_COINS}${sep()}${left} OF ${FREE_AD_DAILY_CAP} LEFT TODAY` : `WATCH AN AD${sep()}${left} LEFT TODAY`;
     return `<section class="sh-offer free ${big ? 'big' : ''}">
         <span class="sh-offart" aria-hidden="true">${coinPile(3)}</span>
-        <div class="sh-offtxt"><b>FREE COINS</b><small class="sh-left ${state}">${big ? `WATCH AN AD FOR ${FREE_AD_COINS}${sep()}` : ''}${note}</small></div>
+        <div class="sh-offtxt"><b>FREE COINS</b><small class="sh-left ${state}">${note}</small></div>
         <button class="btn btn-yellow sh-offbuy sh-watch ${big ? 'btn-lg' : ''}" data-a="ad" ${state === 'go' ? '' : 'disabled'} aria-label="Watch an ad for ${FREE_AD_COINS} coins">${label}</button>
       </section>`;
   };
@@ -716,8 +736,11 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     if (!d) return '';
     const got = owns(save, d.item.cat, d.item.id);
     // A NEW DEAL TODAY: one rewarded ad a day where there are ads (the player's tap), else a few gems (asked first).
-    const adOk = ads.portal !== 'none' && adsLeft(save, 'deal', localDay()) > 0;
-    const again = `<button class="sh-dealnew" data-a="newdeal" aria-label="A new deal today: ${adOk ? 'watch an ad' : `${GEM_PRICES.dealRefresh} gems`}">${adOk ? PLAY_ART : gemArt(1.4)}<span>NEW</span></button>`;
+    // (The ad way only shows while an ad can really be offered, with the film icon and AD in words; otherwise the
+    // button is the gem way, which always works: it never offers an ad it cannot show. The tap checks again.)
+    const adOk = ads.rewardedAvailable && adsLeft(save, 'deal', localDay()) > 0;
+    const again = `<button class="sh-dealnew" data-a="newdeal" aria-label="A new deal today: ${adOk ? 'watch an ad' : `${GEM_PRICES.dealRefresh} gems`}">${
+      adOk ? `${pixelIcon('film', 'currentColor', 1.2, 'inl')}<span>NEW (AD)</span>` : `${gemArt(1.4)}<span>NEW</span>`}</button>`;
     return `<button class="sh-dealchip ${got ? 'got' : ''}" data-a="deal" aria-label="Today's deal: ${esc(d.item.name)} ${esc(CAT_LABEL[d.item.cat])}, ${DEAL_OFF}% off, ${d.price} coins">
         <b>TODAY'S DEAL</b><span>${esc(d.item.name.toUpperCase())}</span><em>${got ? 'OWNED' : `${DEAL_OFF}% OFF`}</em>${got ? '' : `<i class="sh-dealprice">${coin(d.price)}</i>`}
       </button>${again}`;
@@ -1613,13 +1636,15 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         return;
       }
       if (!ads.rewardedAvailable) {
-        say('NO AD RIGHT NOW. TRY AGAIN LATER', 'info');
+        say(NO_AD_TEXT, 'info');
+        draw();
         return;
       }
       busy = 'gemad';
       draw();
       const watched = await ads.rewarded();
       busy = '';
+      // (Only an ad that played through pays: one that did not grants nothing, and says so.)
       const n = watched ? claimDailyGems(save, localDay()) : 0;
       if (n > 0) {
         app.persist();
@@ -1627,7 +1652,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         buzz('success');
       }
       draw();
-      say(n > 0 ? `+${n} GEMS. BACK TOMORROW FOR MORE` : watched ? 'TODAY\'S FREE GEMS ARE TAKEN. BACK TOMORROW' : 'THE AD DID NOT FINISH, SO NO GEMS THIS TIME', n > 0 ? 'good' : 'info');
+      say(n > 0 ? `+${n} GEMS. BACK TOMORROW FOR MORE` : watched ? 'TODAY\'S FREE GEMS ARE TAKEN. BACK TOMORROW' : NO_AD_TEXT, n > 0 ? 'good' : 'info');
     },
     // A NEW DEAL TODAY: a rewarded ad once a day (where there are ads), else a few gems, asked first.
     newdeal: async () => {
@@ -1650,7 +1675,11 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         const watched = await ads.rewarded();
         busy = '';
         if (watched && useAd(save, 'deal', localDay())) moved();
-        else say('THE AD DID NOT FINISH, SO THE DEAL STAYS', 'info');
+        else {
+          // The ad did not play: the deal stays, nothing was used. (Redrawn: with a blocker found, the button is the gem way now.)
+          say(NO_AD_TEXT, 'info');
+          draw();
+        }
         return;
       }
       confirmGems(scr.root, {
@@ -1708,7 +1737,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         return;
       }
       if (!ads.rewardedAvailable) {
-        say('NO AD RIGHT NOW. TRY AGAIN LATER', 'info');
+        say(NO_AD_TEXT, 'info');
+        draw();
         return;
       }
       busy = 'ad';
@@ -1727,7 +1757,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         return;
       }
       draw();
-      say(watched ? 'ALL OF TODAY\'S FREE COINS ARE USED. BACK TOMORROW' : 'THE AD DID NOT FINISH, SO NO COINS THIS TIME', 'info');
+      say(watched ? 'ALL OF TODAY\'S FREE COINS ARE USED. BACK TOMORROW' : NO_AD_TEXT, 'info');
     },
   };
 

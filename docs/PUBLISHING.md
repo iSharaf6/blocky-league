@@ -6,6 +6,23 @@ _CrazyGames integration requirements rechecked on **2 October 2026**. Earlier br
 
 **Where things stand:** `npm run build:all` produces four upload zips, and store covers, screenshots and preview videos have already been prepared. CrazyGames **Basic Launch** is the first submission target; its live Preview/QA pass, dashboard settings and account acceptance remain necessary before publishing. Full Launch is a separate review by CrazyGames. The contact email (calynx@zohomail.com.au) is in the privacy policy.
 
+## Full Launch, 14 October 2026 (v1.1.0)
+
+CrazyGames approved Full Launch on 13 October with changes required. Basic Launch numbers (6 to 12 October, 4,258 plays): playtime 8m55s, day 1 retention 4.3%, day 7 2.1%, returning users 7.8%, gameplay conversion 66.6% (58% on mobile), rating 9.7 from 96. The reviewer asked for the Full Launch requirements, ads, a game that stands out more, and more progression. An audit of the portal build against <https://docs.crazygames.com/requirements/> found and fixed:
+
+| Finding | Fix | Checked |
+|---|---|---|
+| A new device's blank save could overwrite the account's copy in the Data module (the blank save was stamped "now", so it looked newer); a slow SDK meant no mirroring all visit | `src/core/save.ts` `adoptPortalStore`, `hasProgress`: the fuller save wins, a late SDK is adopted at the next safe point | `tests/portalSave.test.ts`; browser: a fresh browser with an account copy of 4,321 coins loaded that copy and left it intact |
+| One click to gameplay, and "gameplay start" sent while the fly-in still played | No title on portal builds; `payPlay` sends it when the ball is playable (a held teaching drill counts) | Browser, SDK local mode |
+| An interstitial could follow the very first match on REMATCH | `breakDue`: none until two matches are complete | `tests/portalRules.test.ts` |
+| Rewarded offers: adblock only learnt after a failed request, some buttons with no ad mark or no busy guard, a failed 2x silently claimed the base gift | `hasAdblock()` at start, one film icon and the word AD on all seven, locked while an ad runs, ADS BLOCKED / NO AD RIGHT NOW inline, a failed 2x claims nothing | `tests/ads.test.ts`; browser: gift 2x paid 200 for 100 after the test ad |
+| A late `adStarted` (after our 15 s wait) could play over a running, unmuted game | The game is held and muted again until the ad ends | `tests/ads.test.ts` |
+| Two `mailto:` links, "THE STORE IS IN THE IPHONE AND IPAD APP", "buy a top-up", SAVE CLIP / SHARE, BACKUP files in the portal bundle | Compiled out with the literal `VITE_PORTAL` check; `scripts/release.mjs` fails a portal build if any of 13 terms returns | grep of `dist-crazygames`: 0 hits |
+| Capacitor, AdMob test ids and Poki branches shipped in the CrazyGames bundle | Literal gates | The same grep |
+| CTRL / CMD could be bound; one screen read `e.key` | Reserved; `e.code` | `tests/inputLifecycle.test.ts` |
+
+Still for the real site only: ads actually filling, and the account save across two devices.
+
 **Tutorial playtest:** the first PASS drill's offside failure, hidden timeout and swallowed first actions were repaired. See [the 2 October playtest](PLAYTEST-2026-10-02.md) for actual reception, tutorial completion and packaged-build evidence. The earlier action-only checks did not establish tutorial completion.
 
 **Playtest deployment:** [GitHub Pages](https://isharaf6.github.io/blocky-league/) is configured for this repository. `.github/workflows/pages.yml` tests and packages the web game on pushes to `main`, then deploys `dist-web`. The source repository remains private; the playable site is public. Portal submissions and monetisation are separate from this playtest deployment.
@@ -39,7 +56,7 @@ _CrazyGames integration requirements rechecked on **2 October 2026**. Earlier br
 |---|---|---|
 | Four release zips (web, crazygames, poki, itch), `index.html` at the zip root, relative paths only | `scripts/release.mjs`, `npm run build:all` | `build:all` passes; the script re-opens each zip and checks every entry |
 | **One ad SDK per portal build.** CrazyGames' zip names only `sdk.crazygames.com`, Poki's only `game-cdn.poki.com`. Their builds omit online play and external account/cloud-save code. Web and itch have no ad SDK; optional online friendlies make WebRTC/STUN requests after the player hosts or joins a game. (`www.w3.org` is an SVG namespace and `jcgt.org` a shader comment, not requests.) Fonts are bundled | `src/platform/ads.ts`, `scripts/release.mjs`, `src/main.ts` online gate | Release host checks and build-branch inspection |
-| **One click to gameplay** for a new player on a portal: TAP TO PLAY goes straight into the first LEARN THE BASICS drill | `src/main.ts` boot, `src/core/onboarding.ts` `straightToBasics` | Browser, `?portal=crazygames` on a fresh save |
+| **No click to gameplay** for a new player on a portal (v1.1.0): the portal build has no title screen; a first visit starts the first LEARN THE BASICS drill by itself and a returning player lands on the hub. Sound wakes on the first key or tap | `src/main.ts` boot and `payPlay`, `src/core/onboarding.ts` `straightToBasics` | Browser, `?portal=crazygames` on a fresh save, 14 Oct: the drill was up with no input and the SDK logged "Requesting gameplay start" |
 | Untimed teaching drills: PASS completes on reception; SHOOT and CROSS teach finishes into an open goal; initial cues wait for input and never swallow the first action | `src/meta/moments.ts`, `src/ui/trainer.ts`, `src/game/matchSession.ts`, `src/sim/scenario.ts` | `tests/basicsPassing.test.ts`, `tests/basicsFinishing.test.ts`, `tests/lesson.test.ts`; fresh browser play |
 | Tap SHOOT early on a reachable incoming rebound to strike first time. Movement assist can take a small step to meet it; aim, opposition and contact still decide the outcome. Contact triggers impact feedback; expired/intercepted attempts cannot fire later | `src/sim/match.ts`, `src/game/matchSession.ts`, `src/ui/trainer.ts` | `tests/reboundStrikes.test.ts`, `tests/netCompatibility.test.ts`; real keyboard/touch browser inputs |
 | A foul stays in the wide shot for about 0.6 seconds so the tackle/fall can read before the referee decision. Pause preserves the remaining beat, advantage keeps play live and superseded decisions cannot cut away later | `src/game/foulPresentation.ts`, `src/game/matchSession.ts` | `tests/foulPresentation.test.ts`; desktop/touch foul, penalty and pause/resume browser checks |
@@ -205,7 +222,7 @@ Developer portal: <https://developer.crazygames.com/> · Docs: <https://docs.cra
 
 **Content**
 - [x] English text; content PEGI-12 compliant.
-- [x] Full Launch: new players reach gameplay immediately or within 1 click. *A first visit's TAP TO PLAY goes straight into the first basics drill.*
+- [x] Full Launch: new players reach gameplay immediately or within 1 click. *From v1.1.0 a first visit starts the first basics drill with no click at all.*
 
 ### 4.4 Money and timing
 

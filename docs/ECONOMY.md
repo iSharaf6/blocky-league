@@ -3,6 +3,84 @@
 The economy now has a reproducible time model, a review spreadsheet, and explicit boundaries between match fees,
 fixed prizes and repeatable rewards. This replaces older estimates and unverified competitor/pricing claims.
 
+## 14 October 2026: coming back (economy v6)
+
+CrazyGames' reviewer: "We believe average playtime and retention can be improved further. You can add more progression
+features." Day 1 retention was 4.3%. This pass adds reasons to come back tomorrow and proves the economy still
+balances with them. No price changed. Rules: `src/meta/comeback.ts`, `src/meta/clubIncome.ts`. Model: `npm run
+economy:model`; workbook sheets Coming Back, Come Back Sources, Club Income and Portal.
+
+### What changed
+
+| New source | What it pays | Limit |
+|---|---|---|
+| Welcome week | The first time each calendar day is claimed: day 2 the Melon ball and a Scout Ticket, day 3 +15 gems, day 4 a Scout Ticket, day 5 the Tiger kit, day 6 +5 gems, day 7 the Big Afro | Once per save. 1,900 coins of looks, 20 gems, 2 tickets in all. A look already owned pays its coin price instead |
+| Play streak | The first completed match of a local day: 20 coins on day 1 up to 80 from day 7; 2 gems on day 3, 3 on day 5, 5 on every 7th; Music Notes trail on day 7, Rainbow goal on day 14, Halo on day 30 | One missed day a week is forgiven. A longer break halves the streak, never zeroes it. Each look once |
+| Try today | One look not owned (ball, trail, goal explosion or celebration), free for one completed match a day | Pays nothing. KEEP IT is the shop price |
+| Match of the day | 100 coins and 3 gems for completing the day's featured Moment | Once a local day |
+| Club income | The ticket office: 16 / 19 / 22 / 25 / 28 / 32 coins an hour by ground level, +5 with the megastore, +10 / 20 / 30% with the commercial manager, up to +10% for atmosphere. 52 an hour at the very most | Stops after 8 hours (416 coins at most). The clock only moves forward |
+| FREE GEMS on a portal | The same 3 gems for one ad | 2 offers a day on CrazyGames and Poki (the apps keep 1); the owner's limit is 3 |
+
+### Before and after (gross coins / gems, same seeded matches)
+
+| Profile | Day 1 | Day 7 | Day 30 | Day 90 |
+|---|---|---|---|---|
+| Learning, no ads | 1,242 / 79 to 1,362 / 82 | 3,315 / 96 to 3,741 / 114 | 12,520 / 192 to 15,132 / 218 | 38,389 / 468 to 48,951 / 527 |
+| Casual, no ads | 1,289 / 79 to 1,409 / 82 | 4,679 / 100 to 5,385 / 121 | 25,510 / 356 to 29,844 / 409 | 73,490 / 757 to 91,244 / 888 |
+| Regular, no ads | 1,420 / 79 to 1,540 / 82 | 14,447 / 222 to 16,421 / 270 | 57,259 / 612 to 68,837 / 720 | 171,380 / 1,391 to 215,526 / 1,677 |
+| Keen, optional ads | 3,597 / 98 to 3,845 / 101 | 29,830 / 383 to 32,976 / 434 | 127,682 / 960 to 150,032 / 1,089 | 297,761 / 1,758 to 378,511 / 2,095 |
+| Regular + Coin Doubler | 1,690 / 79 to 1,810 / 82 | 17,449 / 222 to 19,463 / 270 | 68,971 / 612 to 80,837 / 720 | 205,158 / 1,391 to 250,040 / 1,677 |
+
+A player who comes back every day earns about a quarter more coins and a fifth more gems over 90 days. That is the
+point of the pass and it is the whole of it: for Regular the 44,146 extra coins are 30,456 club income, 6,990 streak
+and 6,700 match of the day; the 286 extra gems are 201 match of the day, 65 streak and 20 welcome week. Looks handed
+over (5,900 coins of them by day 30 for a daily player) are items, never coins.
+
+Club income against the rest of a profile's coins, a day: Regular 6.9% in week one, 13.6% in days 8 to 30, 18.8% in
+days 31 to 90. Casual 9.3 / 11.7 / 20.6%. Learning 8.6 / 19.5 / 22.6%. Keen, collecting twice a day, 6.9 / 15.0 /
+26.6%: the most anything adds up to, about a quarter. If the total should come down, `TICKET_OFFICE` is the lever.
+
+Weekly ceiling of gems from the loops: 97 with the daily ad becomes 123 in the apps (76 becomes 102 without ads), and
+144 on a portal with both offers. The tuned band stays 80 to 160; three portal offers would have made it 165.
+
+### The portal: days to afford with nothing for sale
+
+Every coin or gem saved for the goal (in brackets: 40% of coins beside the club, 75% of gems).
+
+| Goal | Casual, one ad a visit | Regular, no ads | Keen, every offer |
+|---|---:|---:|---:|
+| Local Scouting Network, 200 gems | 12 (14) | 5 (7) | 3 (4) |
+| Club Pass, 600 gems | 42 (61) | 22 (32) | 12 (17) |
+| National network after Local, 700 gems | 49 (73) | 28 (40) | 15 (22) |
+| World network, all three, 1,700 gems | 162 (224) | 91 (138) | 55 (84) |
+| Club Pass and all three, 2,300 gems | 231 (336) | 143 (210) | 86 (126) |
+| Main stand, 800 coins | 1 (1) | 1 (1) | 1 (1) |
+| Mid look, 1,200 coins | 1 (3) | 1 (2) | 1 (1) |
+| Top look, 7,500 coins | 10 (19) | 4 (8) | 2 (4) |
+| The whole ground, 35,600 coins | 35 (89) | 15 (38) | 8 (18) |
+
+The modelled club (40% of coins into the ground, cheapest part first) reaches ground levels 1 to 5 on days 7, 10, 50,
+77 and 101 at a casual rate, 3, 5, 22, 35 and 44 at a regular one, and 2, 3, 11, 18 and 22 at a keen one.
+
+FREE GEMS: a casual player who takes one offer a visit is unaffected by the number of offers (Club Pass on day 42
+whatever it is). For a keen one a second offer brings the Club Pass from day 14 to day 12 and every network from day
+64 to day 55 (270 more gems in 90 days); a third would bring day 10 and day 47. Two was chosen: more generous, and
+inside the band. No price is out of reach on a portal (the dearest goal is long and still inside the modelled year),
+and no new source trivialises a sink: the largest, a full office, is at most 416 coins against parts of 800 to 9,000
+and looks of 250 to 7,500.
+
+### Invariants (tests/comeback.test.ts, clubIncome.test.ts, economyBalance.test.ts, economyV3.test.ts)
+
+- A free player can earn everything: every look handed over is also sold for coins, and every gem goal is reached
+  by playing.
+- Gems are never required to progress.
+- Nothing random is sold. The welcome week, the streak, the free try and the match of the day are all fixed and on
+  show before they are earned.
+- Missing a day costs nothing: the calendar keeps its place, the office waits full, a missed day a week is forgiven
+  and a longer break halves the streak, saying what was kept.
+- Rewarded ads are opt-in: one ad a reward, in the shop only for FREE GEMS, at most 2 a day on a portal.
+- Every date is a high-water mark and the one clock only moves forward: a device date or time set back pays nothing.
+
 ## Decision
 
 Keep the accessible ordinary prices and earned-gem route. Fix inflation and repeated claims first. Newly scouted

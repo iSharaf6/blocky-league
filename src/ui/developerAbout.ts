@@ -1,3 +1,4 @@
+import { devPortal } from '../platform/native';
 import { APP_VERSION, CONTACT_EMAIL, STUDIO } from './brand';
 import { escHtml } from './text';
 import './developerAbout.css';
@@ -5,6 +6,10 @@ import './developerAbout.css';
 /** This portrait loads only when the developer page opens, keeping the hub light. */
 export function developerAboutHtml(): string {
   const portrait = `${import.meta.env.BASE_URL}developer/islam-blocky.png`;
+  // A portal allows no link out of the game: its build carries no mail link (the literal check drops the address too).
+  const contact = import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki' || (import.meta.env.DEV && devPortal())
+    ? ''
+    : `<a class="btn btn-white developer-contact" href="mailto:${escHtml(CONTACT_EMAIL)}">SEND FEEDBACK</a>`;
   return `<div class="panel-wrap dim shell">
     <section class="panel mc shell developer-panel" aria-labelledby="developer-heading">
       <header class="mc-top">
@@ -22,7 +27,7 @@ export function developerAboutHtml(): string {
           <h3>Islam Sharaf</h3>
           <p>Developer of Blocky League at ${escHtml(STUDIO)}.</p>
           <p>Thanks for playing, testing and helping this little football world grow. Your goals, stories and feedback help shape the game.</p>
-          <a class="btn btn-white developer-contact" href="mailto:${escHtml(CONTACT_EMAIL)}">SEND FEEDBACK</a>
+          ${contact}
           <p class="developer-version">Blocky League v${escHtml(APP_VERSION)}</p>
         </div>
       </div>

@@ -180,7 +180,8 @@ function restorePurchaseSave(save: SaveData, before: SaveData): void {
 }
 
 function nativeFailureReceiptsAvailable(): boolean {
-  if (!inNativeApp()) return false;
+  // (A literal check first: a portal build has no native shell to ask.)
+  if ((import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'none') || !inNativeApp()) return false;
   const host = window as unknown as { Capacitor?: { isPluginAvailable?: (name: string) => boolean } };
   return host.Capacitor?.isPluginAvailable?.('PurchaseEvents') === true;
 }

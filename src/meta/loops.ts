@@ -21,8 +21,27 @@ import { GEM_REWARDS, addGems } from './gems';
 export type AdPlace = 'gem' | 'replay' | 'build' | 'deal';
 export const AD_PLACES: readonly AdPlace[] = ['gem', 'replay', 'build', 'deal'];
 
-/** How many of each a local day allows. Small on purpose: a choice at the right moment, never a grind. */
-export const AD_CAPS: { readonly [k in AdPlace]: number } = { gem: 1, replay: 1, build: 1, deal: 1 };
+export type AdCaps = { readonly [k in AdPlace]: number };
+
+/** How many of each a local day allows in the apps and on the web. Small on purpose: a choice at the right moment, never a grind. */
+export const APP_AD_CAPS: AdCaps = { gem: 1, replay: 1, build: 1, deal: 1 };
+
+/**
+ * FREE GEMS offers a day on a portal build (CrazyGames, Poki). Nothing is sold there, so gems come only from play and
+ * from this opt-in offer in the shop: it comes round twice a day instead of once (one ad each, the same gems each).
+ * Three is the limit the owner set; two is the model's answer (scripts/economy-model.ts, docs/ECONOMY.md 14 October
+ * 2026): a keen portal player's Club Pass comes two days sooner, and the week's ceiling from the loops stays inside
+ * the band the rest of the economy is tuned to (144 of 160; three offers would make it 165).
+ */
+export const PORTAL_GEM_OFFERS = 2;
+export const PORTAL_AD_CAPS: AdCaps = { ...APP_AD_CAPS, gem: PORTAL_GEM_OFFERS };
+
+/** This build is a portal's (in dev, ?portal= looks at it). The literal checks let the bundler settle it at build time. */
+const PORTAL_BUILD = import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki'
+  || (import.meta.env.DEV && typeof location !== 'undefined' && new URLSearchParams(location.search).has('portal'));
+
+/** This build's caps. */
+export const AD_CAPS: AdCaps = PORTAL_BUILD ? PORTAL_AD_CAPS : APP_AD_CAPS;
 
 /** What each ad is for, as the button says it. */
 export const AD_TEXT: { readonly [k in AdPlace]: string } = {
@@ -259,19 +278,19 @@ export function advanceWeekly(save: LoopSave & Pick<SaveData, 'gems'>, day: stri
 
 // ------------------------------------------------------------------ rewarded ads (the player's choice, capped a day)
 
-/** Ads of this kind still open today. */
-export function adsLeft(save: LoopSave, place: AdPlace, day: string): number {
+/** Ads of this kind still open today (`caps`: this build's unless said: the model looks at a portal's). */
+export function adsLeft(save: LoopSave, place: AdPlace, day: string, caps: AdCaps = AD_CAPS): number {
   const a = loopsOf(save).ads;
   if (!DAY.test(day) || a.day > day) return 0;
-  return a.day === day ? Math.max(0, AD_CAPS[place] - a[place]) : AD_CAPS[place];
+  return a.day === day ? Math.max(0, caps[place] - a[place]) : caps[place];
 }
 
 /**
  * Count one watched ad of this kind against today's cap. Call it only once the ad was watched through
  * (platform/ads.ts rewarded() resolved true). False, and nothing is counted, when today's are used up.
  */
-export function useAd(save: LoopSave, place: AdPlace, day: string): boolean {
-  if (adsLeft(save, place, day) <= 0) return false;
+export function useAd(save: LoopSave, place: AdPlace, day: string, caps: AdCaps = AD_CAPS): boolean {
+  if (adsLeft(save, place, day, caps) <= 0) return false;
   const a = loopsOf(save).ads;
   if (a.day !== day) {
     a.day = day;
@@ -281,9 +300,12 @@ export function useAd(save: LoopSave, place: AdPlace, day: string): boolean {
   return true;
 }
 
-/** The free daily gems: one watched ad, once a day. Returns the gems paid (0 when today's were taken). */
-export function claimDailyGems(save: LoopSave & Pick<SaveData, 'gems'>, day: string): number {
-  if (!useAd(save, 'gem', day)) return 0;
+/**
+ * The free daily gems: one watched ad for one reward, as many times a day as this build offers it (once in the apps,
+ * PORTAL_GEM_OFFERS on a portal). Returns the gems paid (0 when today's were taken).
+ */
+export function claimDailyGems(save: LoopSave & Pick<SaveData, 'gems'>, day: string, caps: AdCaps = AD_CAPS): number {
+  if (!useAd(save, 'gem', day, caps)) return 0;
   addGems(save, GEM_REWARDS.dailyAd, 'dailyAd');
   return GEM_REWARDS.dailyAd;
 }
@@ -292,9 +314,10 @@ export function claimDailyGems(save: LoopSave & Pick<SaveData, 'gems'>, day: str
 
 /**
  * Gems a free player can earn in a week from the loops alone (no career, no season): one calendar round, seven
- * sweeps, three weekly objectives, seven daily ads. The pacing tables in docs/ECONOMY.md are built on it.
+ * sweeps, three weekly objectives, and every FREE GEMS offer of the week. The pacing tables in docs/ECONOMY.md are
+ * built on it. (`caps`: this build's unless said. The come-back loops are meta/comeback.ts weeklyComebackGems.)
  */
-export function weeklyLoopGems(): number {
+export function weeklyLoopGems(caps: AdCaps = AD_CAPS): number {
   const calendar = CALENDAR.reduce((n, d) => n + d.gems, 0);
-  return calendar + 7 * GEM_REWARDS.dailySweep + 3 * GEM_REWARDS.weekly + 7 * AD_CAPS.gem * GEM_REWARDS.dailyAd;
+  return calendar + 7 * GEM_REWARDS.dailySweep + 3 * GEM_REWARDS.weekly + 7 * caps.gem * GEM_REWARDS.dailyAd;
 }

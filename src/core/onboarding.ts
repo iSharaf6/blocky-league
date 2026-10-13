@@ -68,8 +68,9 @@ export function heroOf(o: OnboardingState, played: number): Hero {
 }
 
 /**
- * A portal build's first visit: TAP TO PLAY goes straight into the first basics step (one click to gameplay),
- * never through the menu. Returning players (or anyone past step one) get the menu.
+ * A portal build's first visit: straight into the first basics step as the game loads (no title screen there, no
+ * click before gameplay: main.ts boot), never through the menu. Returning players (or anyone past step one) get
+ * the menu.
  */
 export function straightToBasics(o: OnboardingState, played: number, portal: boolean): boolean {
   return portal && played === 0 && o.basics === 0 && !o.firstGoal;

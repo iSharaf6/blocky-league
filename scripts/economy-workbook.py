@@ -30,7 +30,10 @@ r.merge_range('B8:H9','HOW TO USE: blue cells in Goals are editable. Green cells
 r.merge_range('B11:H12','WHAT THIS IS: a repeatable planning model, not measured retention, conversion, profit or proof that the game feels fun. Currency totals are gross earnings before spending.',F['text'])
 for i,note in enumerate(m['assumptions']):
  row=14+i*2; r.merge_range(row,1,row+1,7,note,F['note'])
-r.merge_range('B37:H39','Regenerate: npm run economy:model, then run scripts/economy-workbook.py with Python + xlsxwriter. Review after changes to rewards, match length, player progression or purchases. No monthly content update is required by the twelve permanent Journeys.',F['text'])
+# (Under the assumptions, however many there are: a fixed row collided with them once a new one was added.)
+after=14+len(m['assumptions'])*2+1
+r.merge_range(after,1,after+2,7,'Regenerate: npm run economy:model, then run scripts/economy-workbook.py with Python + xlsxwriter. Review after changes to rewards, match length, player progression or purchases. No monthly content update is required by the twelve permanent Journeys.',F['text'])
+r.merge_range(after+4,1,after+6,7,'14 October 2026, coming back: the sheets Coming Back, Come Back Sources, Club Income and Portal show the welcome week, the play streak, the match of the day and club income, each profile before and after, and what a portal player (nothing for sale) can afford and when.',F['text'])
 s=sheet('Source Outputs',['Profile','Day','Matches','Play minutes*','Gross coins','Gross gems','Tickets earned','Free packs available','Journeys completed'],[33,10,12,16,16,16,18,22,22]); row=1
 for p in m['profiles']:
  for day in [1,7,30,60,90]:
@@ -97,4 +100,83 @@ check=sheet('Checks and Limits',['Item','Result / limit'],[38,112]); notes=[
 ]
 for row,(a,b) in enumerate(notes,1): check.write(row,0,a,F['text']); check.write(row,1,b,F['text']); check.set_row(row,43)
 for p in m['ranges']: check.write_row(len(notes)+2+m['ranges'].index(p),0,[p['id'],f"90-day range: {p['coinsMin']:,}–{p['coinsMax']:,} coins; {p['gemsMin']:,}–{p['gemsMax']:,} gems"])
+
+# ---------------------------------------------------------------- coming back (14 October 2026)
+# The welcome week, the play streak, the match of the day, club income and the portal profiles: model.json 'comeback'.
+# Absent from an older model.json, in which case the workbook is the one above and nothing more.
+cb=m.get('comeback')
+if cb:
+ K=cb['constants']; day_txt=lambda d: d if d is not None else f"Beyond {cb['horizon']} days"
+ # --- before and after, every profile, at the day marks
+ s=sheet('Coming Back',['Profile','Day','Coins before','Coins after','Coins change','Gems before','Gems after','Gems change','Looks handed over (coin value)','Ground level','Office coins an hour','Play streak day'],[33,8,15,15,14,14,14,14,30,14,22,18]); row=1
+ for p in cb['beforeAfter']:
+  for x in p['marks']:
+   n=row+1
+   s.write_row(row,0,[p['name'],x['day'],x['coinsBefore'],x['coinsAfter']]); s.write_formula(row,4,f'=IF(C{n}>0,D{n}/C{n}-1,0)',F['pct'],x['coinsAfter']/x['coinsBefore']-1)
+   s.write_row(row,5,[x['gemsBefore'],x['gemsAfter']]); s.write_formula(row,7,f'=IF(F{n}>0,G{n}/F{n}-1,0)',F['pct'],x['gemsAfter']/x['gemsBefore']-1)
+   s.write_row(row,8,[x['looks'],x['ground'],x['incomeRate'],x['streak']]); row+=1
+ s.autofilter(0,0,row-1,11)
+ s.merge_range(row+1,0,row+4,11,'Before: the economy of 6 October 2026 (the same seeded matches, the come-back features off). After: the welcome week, the play streak, the match of the day and club income on, claimed as the assumptions on Start Here say. Gross earning before any spending. Looks are items from the shop at their coin price: they are not coins and are never counted as coins.',F['note'])
+ # --- the new sources: the rules as numbers, then what each profile got from them in 90 days
+ s=sheet('Come Back Sources',['Welcome week, calendar day','Calendar coins','Calendar gems','Calendar tickets','Extra gems, first time','Extra tickets, first time','Look, first time','Look coin value (paid instead if owned)'],[30,16,15,17,22,24,24,36]); row=1
+ for x in K['welcomeWeek']:
+  it=x['item']; s.write_row(row,0,[f"Day {x['day']}",x['calendarCoins'],x['calendarGems'],x['calendarTickets'],x['gems'],x['tickets'],f"{it['name']} ({it['kind']})" if it else '',it['coins'] if it else 0]); row+=1
+ s.write(row,0,'Week total',F['head']);
+ for c in range(1,8):
+  if c!=6: s.write_formula(row,c,f'=SUM({chr(65+c)}2:{chr(65+c)}{row})',F['calc'])
+ row+=3
+ for c,h in enumerate(['Play streak day','Coins','Gems','Reserved look, once','Look coin value']): s.write(row,c,h,F['head'])
+ row+=1
+ for x in K['streak']:
+  it=x['item']; s.write_row(row,0,[f"Day {x['day']}",x['coins'],x['gems'],f"{it['name']} ({it['kind']})" if it else '',it['coins'] if it else 0]); row+=1
+ s.write(row,0,'One missed day a week is forgiven. A longer break halves the streak; nothing is zeroed.',F['note']); row+=3
+ for c,h in enumerate(['Weekly, at the steady rate','Value']): s.write(row,c,h,F['head'])
+ row+=1
+ for label,val in [('Match of the day, coins a day',K['matchOfTheDay']['coins']),('Match of the day, gems a day',K['matchOfTheDay']['gems']),('Come-back gems a week',K['weeklyComebackGems']),('Come-back coins a week (match of the day and streak)',K['weeklyComebackCoins']),
+   ('Loop gems a week, apps, with the daily ad',K['weeklyLoopGemsApp']),('Loop gems a week, apps, no ads',K['weeklyLoopGemsAppNoAds']),('Loop gems a week, portal, every offer',K['weeklyLoopGemsPortal']),('Tuned band for a week of loop gems','80 to 160')]:
+  s.write(row,0,label); s.write(row,1,val); row+=1
+ row+=2
+ for c,h in enumerate(['Profile','Currency','Source','90 day amount','Share of the 90 day total']): s.write(row,c,h,F['head'])
+ row+=1; first=row
+ for p in cb['beforeAfter']:
+  for cur,key,names in [('Coins','coinSources',['streak','matchOfDay','clubIncome']),('Gems','gemSources',['welcomeWeek','streak','matchOfDay'])]:
+   total=sum(p[key].values())
+   for name in names:
+    s.write_row(row,0,[p['name'],cur,name,p[key][name]]); s.write_number(row,4,p[key][name]/total if total else 0,F['pct']); row+=1
+ # --- club income: the rate as editable inputs, then the model's check against each profile's day
+ s=sheet('Club Income',['Ground level','Ticket office, coins an hour','Club shop (megastore)','Commercial manager %','Atmosphere %','Coins an hour','Full office (cap hours x rate)'],[26,28,24,24,16,18,30]); I=K['clubIncome']
+ names=['Park pitch','Main stand','Family stand','Both sides full, floodlights','Both ends','The dome']; row=1
+ for lv,base in enumerate(I['ticketOffice']):
+  n=row+1; s.write(row,0,f"{lv} {names[lv]}"); s.write_number(row,1,base,F['input']); s.write_number(row,2,0,F['input']); s.write_number(row,3,0,F['inputpct']); s.write_number(row,4,0,F['inputpct'])
+  s.write_formula(row,5,f'=ROUND((B{n}+C{n})*(1+D{n}+E{n}),0)',F['calc'],base); s.write_formula(row,6,f'=F{n}*$B$10',F['calc'],base*I['capHours']); row+=1
+ n=row+1; s.write(row,0,'Everything built'); s.write_number(row,1,I['ticketOffice'][-1],F['input']); s.write_number(row,2,I['clubShop'],F['input']); s.write_number(row,3,I['commercialBoost'][-1]/100,F['inputpct']); s.write_number(row,4,I['atmosphereBoost']/100,F['inputpct'])
+ s.write_formula(row,5,f'=ROUND((B{n}+C{n})*(1+D{n}+E{n}),0)',F['calc'],I['rateMax']); s.write_formula(row,6,f'=F{n}*$B$10',F['calc'],I['fullOfficeMax']); row+=2
+ s.write(row,0,'Cap, hours'); s.write_number(row,1,I['capHours'],F['input']); row+=1
+ s.write(row,0,'Share of coins the modelled club spends on its ground'); s.write_number(row,1,I['groundShare'],F['inputpct']); row+=1
+ s.merge_range(row,0,row+2,6,f"Blue cells are inputs: try the megastore ({I['clubShop']}), a manager (10%, 20%, 30%) or an atmosphere (up to {I['atmosphereBoost']}%) on any row. The clock only moves forward and the office stops at the cap, so a week away is one full office, and nothing is ever lost by staying away.",F['note']); row+=4
+ for c,h in enumerate(['Profile','Days','Office coins a day','Other coins a day','Office share of the rest','Office rate at the end','Full office at the end']): s.write(row,c,h,F['head'])
+ row+=1
+ for x in cb['incomeShare']:
+  n=row+1; s.write_row(row,0,[x['profile'],f"{x['from']} to {x['to']}",x['incomePerDay'],x['otherPerDay']]); s.write_formula(row,4,f'=IF(D{n}>0,C{n}/D{n},0)',F['pct'],x['share']); s.write_row(row,5,[x['rate'],x['fullOffice']]); row+=1
+ s.write(row,0,'Guard rail (tests/economyBalance.test.ts): at most about a quarter at any stage; under a fifth for a regular player; under a tenth in week one.',F['note']); row+=3
+ for c,h in enumerate(['Profile','Level 1, day','Level 2, day','Level 3, day','Level 4, day','Level 5, day','Rate day 1 / 30 / 90']): s.write(row,c,h,F['head'])
+ row+=1
+ for x in cb['groundLadder']:
+  s.write_row(row,0,[x['profile']]+[day_txt(l['day']) if l['day'] is not None else 'Beyond the run' for l in x['levels']]+[f"{x['rateDay1']} / {x['rateDay30']} / {x['rateDay90']}"]); row+=1
+ # --- the portal: nothing for sale, rewarded offers at a casual and a keen rate
+ s=sheet('Portal',['Profile','Day','Gross coins','Gross gems','Gems from FREE GEMS ads (whole run)','Ground level','Office coins an hour'],[33,8,15,14,34,14,22]); row=1
+ for p in cb['portalProfiles']:
+  for x in p['marks']:
+   s.write_row(row,0,[p['profile']['name'],x['day'],x['coins'],x['gems'],p['gemSources']['ads'] if x['day']==cb['horizon'] else '',x['ground'],x['incomeRate']]); row+=1
+ row+=2
+ for c,h in enumerate(['Profile','Goal','Currency','Cost','Day, everything saved for it','Day, planning share (40% coins, 75% gems)']): s.write(row,c,h,F['head'])
+ row+=1
+ for x in cb['afford']:
+  s.write_row(row,0,[x['profile'],x['goal'],x['currency']]); s.write_number(row,3,x['cost'],F['int']); s.write(row,4,day_txt(x['dayAll'])); s.write(row,5,day_txt(x['dayShared'])); row+=1
+ s.write(row,0,'Each goal alone: nothing else bought with that currency. The gem goals are cumulative where the name says so.',F['note']); row+=3
+ for c,h in enumerate(['FREE GEMS offers a day','Profile','Offers taken a day','Loop gems a week, at most','Gems day 30','Gems day 90','Ad gems in 90 days','Club Pass, day','Local network, day','All three networks, day']): s.write(row,c,h,F['head']); s.set_column(c,c,max(22,[33,8,15,14,34,14,22,18,20,24][c]) if c<10 else 20)
+ row+=1
+ for x in cb['gemOffers']:
+  s.write_row(row,0,[x['offers'],x['profile'],x['taken'],x['weeklyLoopMax'],x['gems30'],x['gems90'],x['adGems90'],day_txt(x['dayPass']),day_txt(x['dayLocal']),day_txt(x['dayAllNetworks'])]); row+=1
+ s.merge_range(row+1,0,row+4,9,f"Chosen: {K['portalGemOffers']} offers a day on a portal, {K['gemsPerOffer']} gems each, one ad a reward, in the shop only (the apps keep one). Two keeps the week inside the 80 to 160 band; three would not (165). A casual player who takes one a visit is unaffected by the number.",F['text'])
 w.close(); print(out.resolve())

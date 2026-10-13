@@ -14,28 +14,79 @@ import { STAFF, COMMERCIAL_HOME } from '../src/meta/staff';
 import { PARTS } from '../src/meta/ground';
 import { CATALOGUE, FIRST_BUY_MULT, gemsOf, isGemPack } from '../src/platform/iap';
 import { FRIEND_REWARD } from '../src/meta/referrals';
-import { matchCoins, payTable } from '../src/meta/career';
+import { createClub, matchCoins, migrateCareer, payTable } from '../src/meta/career';
+// Coming back (14 October 2026): the welcome week, the play streak, the match of the day and club income.
+import { comebackOf } from '../src/core/comebackState';
+import {
+  MOTD_REWARD, STREAK_ITEMS, WELCOME_WEEK, claimMotd, motdOf, startStreakDay, streakCoins, streakGems, syncWelcomeWeek, weeklyComebackCoins,
+  weeklyComebackGems, welcomeWeekWorth,
+} from '../src/meta/comeback';
+import {
+  ATMOSPHERE_BOOST, CLUB_SHOP, COMMERCIAL_BOOST, INCOME_CAP_HOURS, TICKET_OFFICE, accrueIncome, collectIncome, incomeCap, incomeRate, incomeRateMax,
+  incomeSource,
+} from '../src/meta/clubIncome';
+import { KIT_COLORS } from '../src/meta/data';
+import { groundLevel, nextBuild, startBuild, tickBuild } from '../src/meta/ground';
+import { APP_AD_CAPS, PORTAL_AD_CAPS, PORTAL_GEM_OFFERS, type AdCaps } from '../src/meta/loops';
+import { claimFreeAd, shopItem } from '../src/meta/shop';
+import { hireStaff } from '../src/meta/staff';
 
 export interface Profile {
   id: string; name: string; weekdays: number[]; matches: number; winRate: number; drawRate: number;
   difficulty: number; minutes: number; gemAd: boolean; giftAd: boolean; matchAds: number; doubler: boolean;
+  /** Share of active days the MATCH OF THE DAY is completed, and ticket office collections on an active day. */
+  motd: number; collects: number;
+  /** A portal build (CrazyGames, Poki): nothing is sold; rewarded FREE GEMS and FREE COINS offers taken on an active day. */
+  portal?: boolean; gemAds?: number; coinAds?: number;
 }
+/** What a model run switches (the defaults are the game as shipped). */
+export interface ModelOpts {
+  /** false: the economy before the come-back features (the baseline the before/after tables are built from). */
+  comeback?: boolean;
+  /** FREE GEMS offers a day on a portal profile (the option table; default: PORTAL_GEM_OFFERS). */
+  gemOffers?: number;
+}
+/** Share of every coin earned that the modelled club puts into its ground and its commercial manager. */
+export const GROUND_SHARE = 0.4;
 export const PROFILES: Profile[] = [
-  { id: 'learning', name: 'Learning, no ads', weekdays: [0, 2, 5], matches: 2, winRate: .25, drawRate: .2, difficulty: 0, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: false },
-  { id: 'casual', name: 'Casual, no ads', weekdays: [0, 2, 4, 6], matches: 2, winRate: .5, drawRate: .2, difficulty: 1, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: false },
-  { id: 'regular', name: 'Regular, no ads', weekdays: [0, 1, 2, 3, 4, 5, 6], matches: 3, winRate: .5, drawRate: .2, difficulty: 1, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: false },
-  { id: 'keen', name: 'Keen, optional ads', weekdays: [0, 1, 2, 3, 4, 5, 6], matches: 6, winRate: .65, drawRate: .15, difficulty: 2, minutes: 6, gemAd: true, giftAd: true, matchAds: 1, doubler: false },
-  { id: 'doubler', name: 'Regular + paid Coin Doubler', weekdays: [0, 1, 2, 3, 4, 5, 6], matches: 3, winRate: .5, drawRate: .2, difficulty: 1, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: true },
+  { id: 'learning', name: 'Learning, no ads', weekdays: [0, 2, 5], matches: 2, winRate: .25, drawRate: .2, difficulty: 0, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: false, motd: .4, collects: 1 },
+  { id: 'casual', name: 'Casual, no ads', weekdays: [0, 2, 4, 6], matches: 2, winRate: .5, drawRate: .2, difficulty: 1, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: false, motd: .6, collects: 1 },
+  { id: 'regular', name: 'Regular, no ads', weekdays: [0, 1, 2, 3, 4, 5, 6], matches: 3, winRate: .5, drawRate: .2, difficulty: 1, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: false, motd: .75, collects: 1 },
+  { id: 'keen', name: 'Keen, optional ads', weekdays: [0, 1, 2, 3, 4, 5, 6], matches: 6, winRate: .65, drawRate: .15, difficulty: 2, minutes: 6, gemAd: true, giftAd: true, matchAds: 1, doubler: false, motd: .9, collects: 2 },
+  { id: 'doubler', name: 'Regular + paid Coin Doubler', weekdays: [0, 1, 2, 3, 4, 5, 6], matches: 3, winRate: .5, drawRate: .2, difficulty: 1, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: true, motd: .75, collects: 1 },
 ];
-export function modelProfile(profile: Profile, horizon = 90, seed = 6102026) {
+/**
+ * The portal (CrazyGames, Poki): the same play as Casual, Regular and Keen with nothing for sale, and the rewarded
+ * offers taken at a casual rate (one FREE GEMS a visit) and a keen rate (every FREE GEMS offer, the doubled gift, one
+ * match bonus and two FREE COINS a day).
+ */
+export const PORTAL_PROFILES: Profile[] = [
+  { id: 'portal-casual', name: 'Portal casual, one ad a visit', weekdays: [0, 2, 4, 6], matches: 2, winRate: .5, drawRate: .2, difficulty: 1, minutes: 6, gemAd: true, giftAd: false, matchAds: 0, doubler: false, motd: .6, collects: 1, portal: true, gemAds: 1, coinAds: 0 },
+  { id: 'portal-regular', name: 'Portal regular, no ads', weekdays: [0, 1, 2, 3, 4, 5, 6], matches: 3, winRate: .5, drawRate: .2, difficulty: 1, minutes: 6, gemAd: false, giftAd: false, matchAds: 0, doubler: false, motd: .75, collects: 1, portal: true, gemAds: 0, coinAds: 0 },
+  { id: 'portal-keen', name: 'Portal keen, every offer', weekdays: [0, 1, 2, 3, 4, 5, 6], matches: 6, winRate: .65, drawRate: .15, difficulty: 2, minutes: 6, gemAd: true, giftAd: true, matchAds: 1, doubler: false, motd: .9, collects: 2, portal: true, gemAds: 3, coinAds: 2 },
+];
+const MODEL_KIT = { shirt: KIT_COLORS.blue, shirt2: KIT_COLORS.white, pattern: 'stripes' as const, shorts: KIT_COLORS.white, socks: KIT_COLORS.blue, gk: 0 };
+export function modelProfile(profile: Profile, horizon = 90, seed = 6102026, opts: ModelOpts = {}) {
   const rng = new Rng(seed);
+  // (The come-back features draw from their own stream: the matches are the same with them and without.)
+  const side = new Rng(seed ^ 0x5eed);
+  const comeback = opts.comeback !== false;
+  const caps: AdCaps = profile.portal ? { ...PORTAL_AD_CAPS, gem: Math.max(0, Math.min(3, Math.floor(opts.gemOffers ?? PORTAL_GEM_OFFERS))) } : APP_AD_CAPS;
   const save = defaultSave();
   const start = new Date(2026, 9, 5, 12);
   save.season = defaultSeason(start);
-  const coinSources: Record<string, number> = { welcome: save.coins, matches: 0, calendar: 0, daily: 0, weekly: 0, live: 0, skill: 0, mastery: 0, journeys: 0, matchAds: 0 };
-  const gemSources: Record<string, number> = { welcome: gems(save), calendar: 0, sweep: 0, weekly: 0, levels: 0, journeys: 0, achievements: 0, ads: 0 };
-  const rows: Array<{day: number; date: string; active: boolean; matches: number; minutes: number; coins: number; gems: number; ticketsEarned: number; freePacks: number; completedJourneys: number}> = [];
+  const coinSources: Record<string, number> = { welcome: save.coins, matches: 0, calendar: 0, daily: 0, weekly: 0, live: 0, skill: 0, mastery: 0, journeys: 0, matchAds: 0, coinAds: 0, streak: 0, matchOfDay: 0, clubIncome: 0 };
+  const gemSources: Record<string, number> = { welcome: gems(save), calendar: 0, sweep: 0, weekly: 0, levels: 0, journeys: 0, achievements: 0, ads: 0, welcomeWeek: 0, streak: 0, matchOfDay: 0 };
+  const rows: Array<{day: number; date: string; active: boolean; matches: number; minutes: number; coins: number; gems: number; ticketsEarned: number; freePacks: number; completedJourneys: number;
+    ground: number; incomeRate: number; clubIncome: number; looks: number; streak: number}> = [];
   let matchCount = 0, activeDays = 0, journey = 0;
+  // The modelled club (ROAD TO GLORY): its ground and commercial manager are bought out of GROUND_SHARE of what is
+  // earned, cheapest part first, one build at a time, a league matchday on every active day.
+  const club = migrateCareer(null, 7);
+  club.club = createClub({ name: 'Model FC', short: 'MOD', kit: MODEL_KIT, formation: '4-4-2' }, 7);
+  const fund = { coins: 0 };
+  let lastCoins = save.coins, looks = 0;
+  const lookValue = (it: { item: { price: number }; owned: boolean } | undefined) => { if (it && !it.owned) looks += it.item.price; };
   const bank = (source: string, coins: number) => { coinSources[source] += coins; save.coins += coins; };
   const gemGrant = (source: string, action: () => unknown) => { const before = gems(save); action(); gemSources[source] += gems(save) - before; };
   for (let day = 0; day < horizon; day++) {
@@ -48,8 +99,30 @@ export function modelProfile(profile: Profile, horizon = 90, seed = 6102026) {
       if (gift) {
         const got = claimCalendar(save, key, gift.step, profile.giftAd)!;
         coinSources.calendar += got.coins; gemSources.calendar += got.gems;
+        if (comeback) {
+          // WELCOME WEEK: the first claim of each calendar day hands over its look (counted as looks, not coins), gems or a ticket.
+          const coinsBefore = save.coins, gemsBefore = gems(save);
+          lookValue(syncWelcomeWeek(save)?.item);
+          coinSources.calendar += save.coins - coinsBefore; gemSources.welcomeWeek += gems(save) - gemsBefore;
+        }
       }
-      if (profile.gemAd) gemGrant('ads', () => claimDailyGems(save, key));
+      for (let n = profile.gemAds ?? (profile.gemAd ? 1 : 0); n > 0; n--) gemGrant('ads', () => claimDailyGems(save, key, caps));
+      for (let n = profile.coinAds ?? 0; n > 0; n--) { const before = save.coins; claimFreeAd(save, key); coinSources.coinAds += save.coins - before; }
+      if (comeback) {
+        // CLUB INCOME: the ticket office fills in real time and is collected on a visit (a keen player comes back for a second one).
+        const now = date.getTime();
+        const rate = incomeRate(incomeSource(club, save));
+        accrueIncome(save, now, rate);
+        for (let n = 0; n < profile.collects; n++) { const before = save.coins; collectIncome(save, now + n * INCOME_CAP_HOURS * 3_600_000, rate); coinSources.clubIncome += save.coins - before; }
+        // The MATCH OF THE DAY, completed on a share of the days played (its first time XP is left out, like every moment's).
+        const motd = motdOf(save, key);
+        if (motd && side.chance(profile.motd)) {
+          const coinsBefore = save.coins, gemsBefore = gems(save);
+          claimMotd(save, key, motd.moment.id, true);
+          save.moments = { ...(save.moments ?? {}), [motd.moment.id]: Math.max(1, save.moments?.[motd.moment.id] ?? 0) };
+          coinSources.matchOfDay += save.coins - coinsBefore; gemSources.matchOfDay += gems(save) - gemsBefore;
+        }
+      }
       for (let i = 0; i < profile.matches; i++) {
         matchCount++;
         const outcome = rng.next();
@@ -86,6 +159,12 @@ export function modelProfile(profile: Profile, horizon = 90, seed = 6102026) {
         bank('journeys', claimAllSeason(seasonOf(save, date)));
         gemGrant('journeys', () => syncSeasonGems(save));
         gemGrant('achievements', () => syncAchievementGems(save));
+        if (comeback) {
+          // The PLAY STREAK: the first completed match of the day moves it on and pays its day (null for the rest).
+          const coinsBefore = save.coins, gemsBefore = gems(save);
+          lookValue(startStreakDay(save, key)?.prize.item);
+          coinSources.streak += save.coins - coinsBefore; gemSources.streak += gems(save) - gemsBefore;
+        }
         const season = seasonOf(save, date);
         if (seasonTier(season.xp) === 30 && journey < SEASON_THEMES.length) {
           journey++;
@@ -96,12 +175,93 @@ export function modelProfile(profile: Profile, horizon = 90, seed = 6102026) {
           }
         }
       }
+      if (comeback) {
+        // The ground: a matchday passes for the build going up, then GROUND_SHARE of the day's coins goes to the next
+        // part (the cheapest that can be built), or to the commercial manager while the fund waits for a dearer one.
+        tickBuild(club.ground);
+        fund.coins += GROUND_SHARE * (save.coins - lastCoins);
+        const next = club.ground.building ? null : nextBuild(club.ground);
+        if (next && fund.coins >= next.cost) startBuild(club.ground, fund, next.id);
+        else hireStaff(club, fund, 'commercial');
+        club.stadium = groundLevel(club.ground);
+      }
+      lastCoins = save.coins;
     }
-    rows.push({ day: day + 1, date: key, active, matches: matchCount, minutes: matchCount * profile.minutes, coins: save.coins, gems: gems(save), ticketsEarned: scoutTokens(save) - 2, freePacks: activeDays, completedJourneys: journey });
+    rows.push({ day: day + 1, date: key, active, matches: matchCount, minutes: matchCount * profile.minutes, coins: save.coins, gems: gems(save), ticketsEarned: scoutTokens(save) - 2, freePacks: activeDays, completedJourneys: journey,
+      ground: groundLevel(club.ground), incomeRate: comeback ? incomeRate(incomeSource(club, save)) : 0, clubIncome: coinSources.clubIncome, looks, streak: comebackOf(save).streak.days });
   }
   return { profile, seed, rows, coinSources, gemSources };
 }
+/** The first day a profile's gross total reaches `cost` (every coin or gem saved for it), or null inside the horizon. */
+function dayOf(rows: ReadonlyArray<{ day: number; coins: number; gems: number }>, cur: 'coins' | 'gems', cost: number, share = 1): number | null {
+  const start = cur === 'coins' ? 500 : 50;
+  return rows.find((r) => start + (r[cur] - start) * share >= cost)?.day ?? null;
+}
 
+/** The day marks of the before / after tables. */
+export const MARKS = [1, 7, 30, 90] as const;
+/** What a portal player saves for: the gem sinks in order, a first stand, a mid and a top look, the whole ground. */
+export function portalGoals(): { goal: string; currency: 'coins' | 'gems'; cost: number }[] {
+  const net = GEM_PRICES.scoutNetwork;
+  return [
+    { goal: 'Local Scouting Network', currency: 'gems', cost: net[0] },
+    { goal: 'Club Pass', currency: 'gems', cost: GEM_PRICES.clubPass },
+    { goal: 'National Scouting Network (after Local)', currency: 'gems', cost: net[0] + net[1] },
+    { goal: 'World Scouting Network (all three)', currency: 'gems', cost: net[0] + net[1] + net[2] },
+    { goal: 'Club Pass and all three networks', currency: 'gems', cost: GEM_PRICES.clubPass + net[0] + net[1] + net[2] },
+    { goal: 'Main stand', currency: 'coins', cost: PARTS[0].steps[0].cost },
+    { goal: 'Mid look (EPIC, Inferno goal)', currency: 'coins', cost: shopItem('goalfx', 'fire')!.price },
+    { goal: 'Top look (LEGENDARY, Supernova goal)', currency: 'coins', cost: shopItem('goalfx', 'supernova')!.price },
+    { goal: 'The whole ground', currency: 'coins', cost: PARTS.reduce((n, p) => n + p.steps.reduce((m, s) => m + s.cost, 0), 0) },
+  ];
+}
+/** The come-back sources and the portal: before / after, club income against each profile's day, days to afford, the FREE GEMS options. */
+export function buildComebackModel(profiles: ReturnType<typeof modelProfile>[]) {
+  const baseline = PROFILES.map(p => modelProfile(p, 90, 6102026, { comeback: false }));
+  const beforeAfter = PROFILES.map((p, i) => ({ id: p.id, name: p.name, marks: MARKS.map(d => {
+    const a = baseline[i].rows[d - 1], b = profiles[i].rows[d - 1];
+    return { day: d, coinsBefore: a.coins, coinsAfter: b.coins, gemsBefore: a.gems, gemsAfter: b.gems, looks: b.looks, ground: b.ground, incomeRate: b.incomeRate, streak: b.streak };
+  }), coinSources: profiles[i].coinSources, gemSources: profiles[i].gemSources }));
+  const HORIZON = 365;
+  const portal = PORTAL_PROFILES.map(p => modelProfile(p, HORIZON));
+  const goals = portalGoals();
+  const afford = portal.flatMap(m => goals.map(g => ({
+    profile: m.profile.name, goal: g.goal, currency: g.currency, cost: g.cost,
+    // Every coin or gem saved for it, and a planning share (40% of coins beside the club, 75% of gems).
+    dayAll: dayOf(m.rows, g.currency, g.cost), dayShared: dayOf(m.rows, g.currency, g.cost, g.currency === 'coins' ? GROUND_SHARE : .75),
+  })));
+  const groundLadder = [...profiles, ...portal].map(m => ({ profile: m.profile.name, levels: [1, 2, 3, 4, 5].map(level => ({ level, day: m.rows.find(r => r.ground >= level)?.day ?? null })),
+    rateDay1: m.rows[0].incomeRate, rateDay30: m.rows[29].incomeRate, rateDay90: m.rows[89].incomeRate }));
+  // CLUB INCOME against the rest of each profile's coins, a day, by stage: the "about a quarter at most" check.
+  const windows: [number, number][] = [[1, 7], [8, 30], [31, 90]];
+  const incomeShare = [...profiles, ...portal].flatMap(m => windows.map(([from, to]) => {
+    const a = from > 1 ? m.rows[from - 2] : { coins: 500, clubIncome: 0 }, b = m.rows[to - 1];
+    const days = to - from + 1, income = (b.clubIncome - a.clubIncome) / days, other = (b.coins - a.coins) / days - income;
+    return { profile: m.profile.name, from, to, incomePerDay: Math.round(income), otherPerDay: Math.round(other), share: other > 0 ? income / other : 0, rate: b.incomeRate, fullOffice: incomeCap(b.incomeRate) };
+  }));
+  // FREE GEMS on a portal: one, two or three offers a day, each one ad for the same gems.
+  const gemOffers = [1, 2, 3].flatMap(offers => PORTAL_PROFILES.filter(p => (p.gemAds ?? 0) > 0).map(p => {
+    const m = modelProfile(p, HORIZON, 6102026, { gemOffers: offers });
+    return { offers, profile: p.name, taken: Math.min(offers, p.gemAds ?? 0), weeklyLoopMax: weeklyLoopGems({ ...PORTAL_AD_CAPS, gem: offers }) + weeklyComebackGems(),
+      gems30: m.rows[29].gems, gems90: m.rows[89].gems, adGems90: m.rows[89].gems - modelProfile({ ...p, gemAds: 0, gemAd: false }, 90).rows[89].gems,
+      dayPass: dayOf(m.rows, 'gems', GEM_PRICES.clubPass), dayLocal: dayOf(m.rows, 'gems', GEM_PRICES.scoutNetwork[0]),
+      dayAllNetworks: dayOf(m.rows, 'gems', GEM_PRICES.scoutNetwork.reduce((a, b) => a + b, 0)) };
+  }));
+  const item = (ref: { cat: Parameters<typeof shopItem>[0]; id: string } | undefined) => { const it = ref ? shopItem(ref.cat, ref.id) : undefined; return it ? { name: it.name, kind: it.cat, coins: it.price } : null; };
+  return {
+    beforeAfter, afford, groundLadder, incomeShare, gemOffers, horizon: HORIZON,
+    portalProfiles: portal.map(m => ({ profile: m.profile, coinSources: m.coinSources, gemSources: m.gemSources, marks: [...MARKS, 180, 365].map(d => m.rows[d - 1]) })),
+    constants: {
+      welcomeWeek: WELCOME_WEEK.map((e, i) => ({ day: i + 1, calendarCoins: CALENDAR[i].coins, calendarGems: CALENDAR[i].gems, calendarTickets: CALENDAR[i].tokens, gems: e?.gems ?? 0, tickets: e?.tokens ?? 0, item: item(e?.item) })),
+      welcomeWeekWorth: welcomeWeekWorth(),
+      streak: [1, 2, 3, 4, 5, 6, 7, 14, 30].map(d => ({ day: d, coins: streakCoins(d), gems: streakGems(d), item: item(STREAK_ITEMS[d]) })),
+      matchOfTheDay: MOTD_REWARD, weeklyComebackGems: weeklyComebackGems(), weeklyComebackCoins: weeklyComebackCoins(),
+      weeklyLoopGemsApp: weeklyLoopGems(APP_AD_CAPS) + weeklyComebackGems(), weeklyLoopGemsAppNoAds: weeklyLoopGems({ ...APP_AD_CAPS, gem: 0 }) + weeklyComebackGems(),
+      weeklyLoopGemsPortal: weeklyLoopGems(PORTAL_AD_CAPS) + weeklyComebackGems(), portalGemOffers: PORTAL_GEM_OFFERS, gemsPerOffer: GEM_REWARDS.dailyAd,
+      clubIncome: { capHours: INCOME_CAP_HOURS, ticketOffice: TICKET_OFFICE, clubShop: CLUB_SHOP, commercialBoost: COMMERCIAL_BOOST, atmosphereBoost: ATMOSPHERE_BOOST, rateMax: incomeRateMax(), fullOfficeMax: incomeCap(incomeRateMax()), groundShare: GROUND_SHARE },
+    },
+  };
+}
 export function buildEconomyModel() {
   const profiles = PROFILES.map(p => modelProfile(p));
   const ranges = PROFILES.map(p => {
@@ -116,7 +276,8 @@ export function buildEconomyModel() {
     return {ovr, mean: values.reduce((a,b)=>a+b,0)/values.length, previousMean: previous.reduce((a,b)=>a+b,0)/previous.length, min: Math.min(...values), max: Math.max(...values)};
   });
   return {
-    economyVersion: 5, generatedFor: '2026-10-06', horizon: 90,
+    economyVersion: 6, generatedFor: '2026-10-14', horizon: 90,
+    comeback: buildComebackModel(profiles),
     assumptions: [
       'Scenario forecasts, not player telemetry, human playtests, revenue forecasts or complete-career simulations.',
       'Six minutes per match: four playing minutes at the default two-minute halves, plus an assumed two minutes of menus, stoppages and scenes. Ad watch time excluded.',
@@ -128,6 +289,9 @@ export function buildEconomyModel() {
       'Career prizes, board objectives, academy sales, sponsorship, commercial income, renewals and development spending are separate from these shared-loop scenarios.',
       'No-ads and paid-doubler regular cases use identical results/random seeds. Optional ads case assumes one gem ad, gift ad and match ad per active day, no five-per-day coin-ad grind.',
       'Ranges show 20 deterministic seeds at the stated assumptions; they are sensitivity ranges, not statistical confidence intervals.',
+      'Coming back (14 October 2026): the welcome week and the play streak are claimed on every day played; the MATCH OF THE DAY is completed on 40% (Learning), 60% (Casual), 75% (Regular) or 90% (Keen) of them. Looks handed over are counted at their shop price as looks, never as coins.',
+      'Club income: the modelled club puts 40% of every coin earned into its ground (cheapest part first, one build at a time, a league matchday on every day played) and its commercial manager; the ticket office is collected once on a day played (Keen: twice). No stadium style is bought, so the atmosphere is the ground\'s own.',
+      'Portal profiles (CrazyGames, Poki): nothing is sold. Casual takes one FREE GEMS offer a visit; Keen takes every FREE GEMS offer, the doubled gift, one match bonus and two FREE COINS a day. Days to afford run a 365 day horizon and assume nothing else is bought with that currency.',
     ],
     profiles, ranges, scoutResale,
     commercial: STAFF.find(s=>s.role==='commercial')!.levels.map((s,i)=>({level:i+1,fee:s.fee,wage:s.wage,home:COMMERCIAL_HOME[i+1],netPerMatch:COMMERCIAL_HOME[i+1]/2-s.wage})),

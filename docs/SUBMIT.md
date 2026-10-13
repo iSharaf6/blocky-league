@@ -4,6 +4,32 @@ _Release instructions refreshed 2 October 2026. Historical research and browser 
 
 Everything you upload is already made and checked. Your part: create the accounts, accept the terms, click upload and paste. Nobody else can do those for you.
 
+## 0. CrazyGames Full Launch update (14 October 2026)
+
+CrazyGames approved the game for Full Launch on 13 October with status **Needs changes**: follow the Full Launch requirements, implement ads, stand out more, and improve playtime and retention with more progression. Build **v1.1.0** answers that. What changed against each requirement is in [PUBLISHING.md](PUBLISHING.md) (section "Full Launch, 14 October"); the short version:
+
+| Requirement | In v1.1.0 |
+|---|---|
+| Land in gameplay at once | No title screen on the portal: a first visit starts the first drill by itself (0 clicks), a returning player lands on the club hub. "Gameplay start" is sent as soon as the drill is waiting for the player |
+| Ads only through the SDK | One interstitial before a kick-off (never before two matches have been played, never on menus); seven opt-in rewarded offers, each marked with a film icon and the word AD, locked while an ad runs, hidden or labelled when ads are blocked |
+| Works with an adblocker | Play is never blocked; rewarded offers show ADS BLOCKED instead of a dead button |
+| Progress saved to the account | The SDK Data module; a blank save on a new device can no longer replace the account's copy (the fuller save wins) |
+| No external links, logins or store promotion | Mail links, share and download buttons, backup files, "in the app" wording and account sign-in are all compiled out of the portal build; the build fails if any returns |
+| More progression and retention | Welcome back sheet, a first week of standout daily gifts, a forgiving play streak, a free item to try each day, a match of the day, club income while away, on top of the career, journeys, badges and challenges the live build never had |
+| Stand out | Knuckleballs, deliberate curlers and aftertouch, a nutmeg that goes through the legs, skill duels |
+
+**Your steps**
+
+1. `npm run build:all`, then `npm run submission`. It must end with **All checks passed**.
+2. On <https://developer.crazygames.com/> open Blocky League and press **Submit new version**. Upload `release/submission/crazygames/upload/blocky-league-crazygames-v1.1.0.zip`.
+3. In the Preview (QA) tool check: the first drill starts by itself; a match plays to full time; the film-icon buttons play a test ad and pay out; P pauses; a phone size fits.
+4. Set orientation to **landscape** if the form offers it (the game is built for landscape; mobile gameplay conversion was 58% in Basic Launch and upright phones are one likely reason).
+5. Keep **Progress save** on the SDK option the game already uses (the dashboard shows it as SDKPS). Sign in on CrazyGames, play a match, open the game in a private window signed in to the same account, and confirm the club is there.
+6. Paste the refreshed description and controls from `release/submission/crazygames/listing.txt`.
+7. Submit.
+
+Only the real site can show two things: ads actually filling, and the account save moving between two devices. Both were checked against the SDK's local test mode only.
+
 **Before anything else, refresh the kit** (it takes a minute):
 
 ```bash
@@ -70,7 +96,7 @@ Folder: `release/submission/crazygames/`
 2. **Start a submission.** Click **Submit a game** (or the portal's equivalent, such as *Add game* or *Upload*).
 3. **Upload the build.** Upload `upload/blocky-league-crazygames-v1.0.0.zip`. Its `index.html` is at the root of the zip, all paths are relative, and there are 18 files (about 1.53 MB extracted), well under CrazyGames' limits. _CrazyGames' docs don't say whether the portal wants a zip or loose files. If it asks for files, unzip the zip and upload the contents._
 4. **Test in the Preview tool.** The portal opens your build in the **Preview** (QA) tool. Check all of these:
-   - TAP TO PLAY goes straight into the first drill (one click).
+   - The first drill starts by itself on a first visit (no click). From v1.1.0 the portal build has no title screen.
    - A quick match plays through to full time.
    - Pausing and switching tabs work.
    - A rewarded ad (2× COINS on the result screen) plays and mutes the sound.

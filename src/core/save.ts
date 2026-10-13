@@ -11,6 +11,7 @@ import { normalizeDda, type DdaState } from './dda';
 import { normalizeKeyMap, normalizePadMap, type KeyMap, type PadMap } from './input';
 import type { HapticLevel } from '../platform/haptics';
 import { normalizeOnboarding, type OnboardingState } from './onboarding';
+import { normalizeComeback, type ComebackState } from './comebackState';
 import { Rng, hashString } from './rng';
 import { isWeather, type WeatherKind } from '../sim/weather';
 
@@ -237,6 +238,11 @@ export interface SaveData {
   gems?: GemState;
   /** Applied referral grants. Stored atomically with both currency balances, including in cloud saves. */
   friendReceipts?: string[];
+  /**
+   * Coming back tomorrow (core/comebackState.ts; rules in meta/comeback.ts and meta/clubIncome.ts): the welcome week,
+   * the play streak, TRY TODAY, CLUB INCOME and the MATCH OF THE DAY. Always whole once loaded.
+   */
+  comeback?: ComebackState;
   /** The reasons to come back (src/meta/loops.ts): weekly objectives, the daily sweep, rewarded-ad caps. Always whole once loaded. */
   loops?: LoopState;
   updatedAt: string;
@@ -411,6 +417,7 @@ export function defaultSave(): SaveData {
     iap: normalizeIap(undefined),
     gems: normalizeGems(undefined),
     friendReceipts: [],
+    comeback: normalizeComeback(undefined),
     loops: normalizeLoops(undefined),
     updatedAt: new Date().toISOString(),
   };
@@ -489,6 +496,8 @@ function mergeSave(raw: unknown): SaveData {
     // Saves from before gems start with the welcome gift (meta/gems.ts WELCOME_GEMS); the loops start empty.
     gems: normalizeGems(d.gems),
     friendReceipts: normalizeFriendReceipts(d.friendReceipts),
+    // Saves from before the come-back features start them afresh (a veteran is told apart by the rules, not here).
+    comeback: normalizeComeback(d.comeback),
     loops: normalizeLoops(d.loops),
   } as SaveData;
 }
@@ -576,6 +585,9 @@ export function importSave(raw: unknown): SaveData | null {
 
 export function writeSave(d: SaveData): boolean {
   d.updatedAt = new Date().toISOString();
+  // The portal's copy won and waits to be swapped in (adoptPortalStore): it is in this browser's storage already, and
+  // nothing the outgoing save does may overwrite it, here or in the portal's store.
+  if (portalWaiting) return false;
   const json = JSON.stringify(d);
   let localSaved = false;
   try {
@@ -593,26 +605,96 @@ export function writeSave(d: SaveData): boolean {
 }
 
 /** A portal's save store (CrazyGames' Data Module, platform/ads.ts portalStore), mirrored on every write once adopted. */
-let portalStore: { getItem(key: string): string | null; setItem(key: string, value: string): void } | null = null;
+type PortalSaveStore = { getItem(key: string): string | null; setItem(key: string, value: string): void };
+let portalStore: PortalSaveStore | null = null;
+/** The portal's copy won and has not been swapped into the running game yet: until it is, nothing is written anywhere. */
+let portalWaiting = false;
+/** The coins and gems a brand-new save starts with (hasProgress: off those, something was earned or spent). */
+let freshWallet: { coins: number; gems: number } | null = null;
 
 /**
- * The portal's store is up (the game's boot, once its SDK has started): from now on every save is mirrored there.
- * Returns the portal's copy when it is the newer one (the player signed in on another device: the caller swaps it
- * in), else null, and the browser's copy is written there at once.
+ * Has the player earned anything in this save? A match, a moment or a basics drill played, XP, a career or a cup
+ * under way, a gift claimed, something bought, or coins / gems off what a new save starts with. Settings alone are
+ * not progress: a save made by opening the game, and no more, never beats a copy the player has played on.
  */
-export function adoptPortalStore(store: NonNullable<typeof portalStore>, local: SaveData): SaveData | null {
-  portalStore = store;
+export function hasProgress(d: SaveData): boolean {
+  if (!freshWallet) {
+    const fresh = defaultSave();
+    freshWallet = { coins: fresh.coins, gems: fresh.gems?.balance ?? 0 };
+  }
+  return (d.record?.played ?? 0) > 0 || (d.progress?.xp ?? 0) > 0 || (d.progress?.stars ?? 0) > 0
+    || (d.onboarding?.basics ?? 0) > 0 || d.onboarding?.firstGoal === true
+    || d.career != null || d.cup != null || !!d.gift
+    || Object.keys(d.moments ?? {}).length > 0
+    || (d.shop?.owned.length ?? 0) > 0 || (d.iap?.owned.length ?? 0) > 0
+    || d.coins !== freshWallet.coins || (d.gems?.balance ?? freshWallet.gems) !== freshWallet.gems;
+}
+
+/** What the browser's copy was worth when a visit began (main.ts takes it at load, before the visit writes anything). */
+export interface SaveBaseline {
+  xp: number;
+  played: number;
+  progress: boolean;
+  /** '' for a save nothing was earned in: its stamp only says when this browser made it. */
+  updatedAt: string;
+}
+
+export function saveBaseline(d: SaveData): SaveBaseline {
+  const progress = hasProgress(d);
+  return { xp: d.progress?.xp ?? 0, played: d.record?.played ?? 0, progress, updatedAt: progress ? d.updatedAt ?? '' : '' };
+}
+
+/**
+ * Does the portal's copy replace the browser's? More XP wins, then more matches played: both only ever go up, so
+ * along one line of play that is simply the later copy, and between two different ones (played as a guest here,
+ * then signed in to an account that has its own save) the fuller one is kept. Level on both: the one something was
+ * earned in beats the one nothing was; then the later stamp.
+ */
+function portalCopyWins(remote: SaveData, base: SaveBaseline): boolean {
+  if (remote.progress.xp !== base.xp) return remote.progress.xp > base.xp;
+  if (remote.record.played !== base.played) return remote.record.played > base.played;
+  const theirs = hasProgress(remote);
+  if (theirs !== base.progress) return theirs;
+  return (remote.updatedAt ?? '') > base.updatedAt;
+}
+
+/**
+ * The portal's store is up (at boot, or later in the visit if its SDK was slow: main.ts). `base` is what the
+ * browser's copy was worth when the visit began (default: as it is now), so a few seconds played before a slow SDK
+ * arrived never make a blank or stale browser copy look like the newer one.
+ *
+ * Returns the portal's copy when it wins (portalCopyWins): it is put in the browser's storage at once, and every
+ * write is held until the caller has swapped it into the running game and called portalSaveSwapped (never mid-match:
+ * whatever the outgoing save does meanwhile is dropped with it). Otherwise null: the browser's copy is written to
+ * the store at once, and every save after it is mirrored there. A store that cannot be read is left alone for this
+ * visit (what it holds is unknown, so nothing is written over it).
+ */
+export function adoptPortalStore(store: PortalSaveStore, local: SaveData, base: SaveBaseline = saveBaseline(local)): SaveData | null {
   let remote: SaveData | null = null;
   try {
     const raw = store.getItem(KEY);
     remote = raw ? importSave(raw) : null;
   } catch {
-    remote = null;
+    return null;
   }
-  const newer = remote && (!local.updatedAt || (remote.updatedAt ?? '') > local.updatedAt);
-  if (remote && newer) return remote;
+  portalStore = store;
+  if (remote && portalCopyWins(remote, base)) {
+    portalWaiting = true;
+    try {
+      localStorage.setItem(KEY, JSON.stringify(remote));
+    } catch {
+      // No storage in this browser: the copy still comes from the portal's store next time.
+    }
+    return remote;
+  }
+  portalWaiting = false;
   writeSave(local);
   return null;
+}
+
+/** The portal's copy is the running save now (the caller swapped it in): saving, and mirroring, carry on from here. */
+export function portalSaveSwapped(): void {
+  portalWaiting = false;
 }
 
 // ------------------------------------------------------------------ progression (pure; see tests/progress.test.ts)

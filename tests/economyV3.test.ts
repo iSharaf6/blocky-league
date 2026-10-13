@@ -21,9 +21,10 @@ import {
 import { PARTS, defaultGround, groundFromLevel, startBuild, tickBuild } from '../src/meta/ground';
 import { academyIntake, bestProspectIndex } from '../src/meta/life';
 import {
-  AD_CAPS, AD_PLACES, CALENDAR, WEEKLY_POOL, adsLeft, advanceWeekly, calendarNext, calendarToday, claimDailyGems, claimSweep, normalizeLoops, useAd, weekStart,
-  weeklyFor, weeklyLoopGems, weeklyObjectives,
+  AD_CAPS, AD_PLACES, APP_AD_CAPS, CALENDAR, PORTAL_AD_CAPS, PORTAL_GEM_OFFERS, WEEKLY_POOL, adsLeft, advanceWeekly, calendarNext, calendarToday, claimDailyGems,
+  claimSweep, normalizeLoops, useAd, weekStart, weeklyFor, weeklyLoopGems, weeklyObjectives,
 } from '../src/meta/loops';
+import { weeklyComebackGems } from '../src/meta/comeback';
 import { playerPotential } from '../src/meta/market';
 import { buyPassWithGems, claimAllPass, passActive, passTotals, syncSeasonGems } from '../src/meta/pass';
 import { claimAllSeason, rollSeason, seasonOf, tierXp } from '../src/meta/season';
@@ -217,6 +218,18 @@ describe('invariant: a free player can still earn everything eventually', () => 
     expect(weeklyLoopGems()).toBeGreaterThanOrEqual(80);
     expect(weeklyLoopGems()).toBeLessThanOrEqual(160);
     expect(sumGems(SEASON_GEMS)).toBe(30);
+    // (14 October 2026) The come-back loops (meta/comeback.ts: the MATCH OF THE DAY's 3 a day and the streak's 5 on
+    // every seventh day) are gems from the loops too, so the same band now holds with them counted: 97 + 26 = 123 in
+    // the apps. The band itself is unchanged: they were sized to fit it, not it to fit them.
+    expect(weeklyLoopGems(APP_AD_CAPS) + weeklyComebackGems()).toBeGreaterThanOrEqual(80);
+    expect(weeklyLoopGems(APP_AD_CAPS) + weeklyComebackGems()).toBeLessThanOrEqual(160);
+    // A portal build sells no gems, so its opt-in FREE GEMS comes round twice a day (never more than the owner's
+    // three, one ad a reward): the model's choice, and the week's ceiling still inside the band (118 from the loops
+    // with both offers and 26 from coming back: 144. A third offer would make it 165).
+    expect(PORTAL_GEM_OFFERS).toBeGreaterThanOrEqual(1);
+    expect(PORTAL_GEM_OFFERS).toBeLessThanOrEqual(3);
+    expect(PORTAL_AD_CAPS).toEqual({ ...APP_AD_CAPS, gem: PORTAL_GEM_OFFERS });
+    expect(weeklyLoopGems(PORTAL_AD_CAPS) + weeklyComebackGems()).toBeLessThanOrEqual(160);
   });
 });
 
@@ -588,6 +601,14 @@ describe('the daily sweep and the rewarded ads', () => {
     expect(claimDailyGems(t, DAY)).toBe(GEM_REWARDS.dailyAd);
     expect(claimDailyGems(t, DAY)).toBe(0);
     expect(gems(t)).toBe(WELCOME_GEMS + GEM_REWARDS.dailyAd);
+    // On a portal the offer comes round PORTAL_GEM_OFFERS times a day: one ad a reward, the same cap rules, and a
+    // date set back reopens nothing.
+    const p = defaultSave();
+    for (let i = 0; i < PORTAL_GEM_OFFERS; i++) expect(claimDailyGems(p, DAY, PORTAL_AD_CAPS)).toBe(GEM_REWARDS.dailyAd);
+    expect(claimDailyGems(p, DAY, PORTAL_AD_CAPS)).toBe(0);
+    expect(claimDailyGems(p, '2026-10-01', PORTAL_AD_CAPS)).toBe(0);
+    expect(adsLeft(p, 'gem', '2026-10-13', PORTAL_AD_CAPS)).toBe(PORTAL_GEM_OFFERS);
+    expect(gems(p)).toBe(WELCOME_GEMS + PORTAL_GEM_OFFERS * GEM_REWARDS.dailyAd);
   });
 });
 

@@ -10,7 +10,8 @@ export const ADMOB_IOS = {
 };
 
 /** Still on Google's test ids (a test build: fine to play, earns nothing). */
-export const ADMOB_TEST_IDS = ADMOB_IOS.rewarded.startsWith('ca-app-pub-3940256099942544/');
+// (Marked pure: a build that never reads it, a portal's, then drops this file and its ids altogether.)
+export const ADMOB_TEST_IDS = /* @__PURE__ */ ADMOB_IOS.rewarded.startsWith('ca-app-pub-3940256099942544/');
 
 /**
  * Kid-safe ads. Blocky League is made to appeal to kids, so every request is child-directed (COPPA) and under the

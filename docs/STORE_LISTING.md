@@ -2,11 +2,13 @@
 
 Copy for CrazyGames, Poki, GameDistribution, itch.io and your own site. Paste as-is, or trim to each field's limit. Character counts are noted where a portal enforces a limit.
 
-> **Keep it honest.** Everything below is in the v1 build (checked 29 Sep 2026). If a feature is cut before you upload, delete its line. Two things are browser-dependent and are worded that way: goal clips (recorded only where the browser supports canvas recording) and cloud saves (web build only, and only once the owner has set up the backend: `docs/CLOUD.md`). Neither is mentioned in the portal copy.
+> **Keep it honest.** Everything below is in the v1.1.0 build (checked 14 Oct 2026: knuckleball, curler, aftertouch, the nutmeg, the transfer market, ground and staff, match of the day, the play streak, the free daily try and club income are all in the CrazyGames build). If a feature is cut before you upload, delete its line. Two things are browser-dependent and are worded that way: goal clips (recorded only where the browser supports canvas recording) and cloud saves (web build only, and only once the owner has set up the backend: `docs/CLOUD.md`). Neither is mentioned in the portal copy.
 >
 > **Keep build-specific features out of shared copy.** Online friendlies are included in the own-site web and itch builds, and omitted from CrazyGames and Poki. The shared descriptions below focus on single-player modes so they can be reused across those builds. External account/cloud saves are own-site-only. Commentary is **text only**: the spoken voice was removed, so never write "voiced" or "spoken" commentary.
 >
 > `npm run submission` reads this file to write each portal's `listing.txt` (`release/submission/<portal>/`). Keep the headings as they are; the script stops with an error if one goes missing.
+
+**CrazyGames Full Launch notes (14 Oct 2026):** v1.1.0 is the Full Launch build: ads through the SDK (one interstitial before a kick-off after two matches, seven opt-in rewarded offers), progress in the SDK Data module, no title screen (a new player lands in the first drill). Steps: [SUBMIT.md](SUBMIT.md) section 0. The notes below are the Basic Launch ones.
 
 **CrazyGames release notes (2 Oct 2026):** submit the CrazyGames build for Basic Launch first. Ads are disabled during Basic Launch; an unavailable 2× reward leaves the normal reward intact and never blocks playing. Full Launch and monetization require CrazyGames' approval. Enable **Automatic Progress Save** in the dashboard and test it with a signed-in player before Full Launch; avoid claiming cross-device saves in listing copy until that check passes. The existing local demo ads are only SDK tests.
 
@@ -43,21 +45,21 @@ _(149 chars)_
 
 ## Long description
 
-> **Skill past defenders. Smash screamers. Win the league.** Blocky League is fast, chunky voxel football you can play right in your browser.
+> **Skill past defenders. Bend it in the air. Build your club.** Blocky League is fast, chunky voxel football you can play right in your browser.
 >
-> Take a defender on and watch his head. When a big **!** pops up, hit SKILL and leave him on the floor. Chain your tricks and score a **SKILL GOAL**!
+> Take a defender on and watch his feet. When the ring closes, hit SKILL and leave him on the floor, or slip it through his legs. Chain your tricks and score a **SKILL GOAL**!
 >
-> - Pull off roulettes, rainbow flicks and stepovers
-> - Smash screamers, whip in crosses and bang in volleys
-> - **Road to Glory:** build your own club and climb from Park League to the top
-> - **Blocky Cup:** knockout ties and tense penalty shootouts
+> - Hit a **knuckleball** from range that wobbles and dips, whip a **curler** round the keeper, then bend the ball in the air with **aftertouch**
+> - Pull off roulettes, rainbow flicks, nutmegs and stepovers
+> - **Road to Glory:** build your own club and climb eight divisions from Park League to the top, with the Blocky Cup on the way
+> - Sign players in the transfer market, grow your stadium and hire your staff
 > - **Club Run:** seven matches, one life, a new perk after every win
-> - **Moments:** quick challenges to earn three stars
+> - **Moments** and a new **Match of the Day** every day
 > - **Blitz:** crazy power ups like Mega Shot, Freeze and Turbo
-> - Win coins and unlock celebrations, new balls, goal explosions and new players
-> - Daily challenges, win streaks and levels to climb
+> - Come back tomorrow: daily gifts, a play streak that forgives a day off, a free look to try, and a club that earns while you are away
+> - Win coins and unlock celebrations, balls, goal explosions, kits and stadium looks
 >
-> New to it? Three quick drills teach you to pass, shoot and cross in under a minute.
+> New to it? You are on the pitch the moment it loads: three quick drills teach you to pass, shoot and cross in under a minute.
 >
 > Play with keyboard, controller or touch. Lace up and kick off now!
 
@@ -91,7 +93,10 @@ KEYBOARD
   Through ball        Tap L  |  lob or cross: hold L
   Sprint              Shift
   Defend              Space switches player  |  K tackles (tap while sprinting, or hold: slide)  |  hold L to press
-  Skill move          Q  (when the ! shows over a defender: PERFECT)
+  Skill move          Q  (as the ring closes under a defender: PERFECT)
+  Knuckleball         Hold K to a full bar from outside the box, stick still
+  Curler              Push the stick sideways as you shoot
+  Aftertouch          Move the stick just after the shot to bend it in the air
   Quick sub           B  (when the sub card shows)
   Power-up (Blitz)    E
   Pause               Esc or P

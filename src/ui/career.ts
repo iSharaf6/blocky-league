@@ -7,6 +7,7 @@
  */
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
+import { ads } from '../platform/ads';
 import {
   BOTTOM_DIVISION, CLUBS_PER_DIVISION, DIVISION_NAMES, MATCHDAYS, STADIUM_MAX, STADIUM_NAMES, TOP_DIVISION, YOU,
   afterMatch, clubRating, compsDue, compTieReward, cupClubs, cupDue, cupTieReward, finishSeason, forfeitScore, groundBonus, leagueClubs, leagueTable,
@@ -797,6 +798,9 @@ const sumMemo = { tab: 'story' as 'story' | 'table' };
  * final table right (the board's verdict, the highlights, the legacy it earned, the farewells), START pinned below.
  * A promotion or a title throws a party; the board's last coins and the season's moments come first.
  */
+/** The season whose title or promotion CrazyGames' celebration last marked (platform/ads.ts happyTime): once each. */
+let happySeason = -1;
+
 function seasonSummary(app: AppContext, st: CareerState): void {
   const sum = st.summary!;
   const season = st.season!;
@@ -908,6 +912,11 @@ function seasonSummary(app: AppContext, st: CareerState): void {
     sfx.goal();
     sfx.fanfare(cls === 'champ' ? 'trophy' : 'promotion');
     buzz('win');
+    // CrazyGames' own celebration, once for this title or promotion (not again each time the summary is opened).
+    if (happySeason !== season.number) {
+      happySeason = season.number;
+      ads.happyTime();
+    }
   }
   // The board's verdict pays here, and the season's last moments show (a title's legacy level, the treble).
   showMoments(app, scr.root, st, () => draw());

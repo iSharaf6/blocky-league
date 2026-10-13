@@ -13,7 +13,9 @@ import {
   type CareerState, type ClubState, type TxFail,
 } from '../meta/career';
 import { PARTS as GROUND_PARTS, capacity, groundLevel, nextBuild, partView, stadiumParts, type GroundState, type PartId } from '../meta/ground';
-import { pixelIcon } from './pixelIcons';
+// CLUB INCOME (meta/clubIncome.ts): what the ticket office takes an hour while the player is away, on the STADIUM tab.
+import { incomeRate, incomeSource } from '../meta/clubIncome';
+import { NO_AD_TEXT, adIcon, pixelIcon } from './pixelIcons';
 import './forever.css';
 import { NAME_DISALLOWED, cleanName, fallbackShort, isNameAllowed, nameIssue, nameProblem, nameWhy, suggestName } from '../core/names';
 import { defaultCrest, randomCrest, setMyCrest, type CrestDesign } from '../core/crest';
@@ -737,6 +739,8 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
   };
   /** The part picked on the list: the one going up, else the cheapest you can build, else the main stand. */
   let partSel: PartId = st.ground.building?.id ?? nextBuild(st.ground)?.id ?? 'main';
+  /** The build's rewarded ad has been asked for and has not ended yet: a second tap asks for nothing. */
+  let buildAdBusy = false;
   /** Parts that opened since the last look (a NEW chip each), taken when the tab first draws. */
   let freshParts = new Set<PartId>();
   const takeOpened = () => {
@@ -783,17 +787,25 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     const name = next?.name ?? v.def.steps[v.def.steps.length - 1].name;
     const poor = !!next && app.save.coins < next.cost;
     const busy = !!g.building && g.building.id !== partSel;
+    /** The build ad is on offer at all: a build with ads (a portal, the app), and today's not used yet. */
+    const buildAd = ads.portal !== 'none' && adsLeft(app.save, 'build', localDay()) > 0;
     const btn =
       v.status === 'built'
         ? '<button class="btn btn-go sd-up" disabled>BUILT</button>'
         : v.status === 'building'
           // Going up: it opens by itself after its matchdays. FINISH NOW opens it at once for gems (asked first, with the
-          // price), and one rewarded ad a day takes a matchday off (economy v3: meta/premium.ts, meta/loops.ts).
+          // price), and one rewarded ad a day takes a matchday off (economy v3: meta/premium.ts, meta/loops.ts). The
+          // ad button carries the film icon and WATCH AD in words, with what it does on the line below; no ad to
+          // offer (an ad blocker, none loaded): it shows switched off and says why. No ads in this build, or
+          // today's is used: no button.
           ? `<div class="sd-now">
               <button class="btn btn-go sd-up" data-a="finishnow" aria-label="Finish the ${esc(name.toLowerCase())} now for ${finishBuildCost(st)} gems">FINISH NOW ${gemPrice(finishBuildCost(st))}</button>
-              ${ads.portal !== 'none' && adsLeft(app.save, 'build', localDay()) > 0 ? `<button class="btn btn-yellow sd-up sd-ad" data-a="buildad" aria-label="Watch an ad to take one matchday off this build">${pixelIcon('film', '#26262e', 2, 'inl')}1 MATCHDAY OFF</button>` : ''}
+              ${!buildAd ? ''
+                : ads.rewardedAvailable && !buildAdBusy
+                  ? `<button class="btn btn-yellow sd-up sd-ad" data-a="buildad" aria-label="Watch an ad to take one matchday off this build">${adIcon()}WATCH AD</button>`
+                  : `<button class="btn btn-yellow sd-up sd-ad" disabled>${adIcon()}${buildAdBusy ? 'ONE MOMENT' : ads.adBlocked ? 'ADS BLOCKED' : 'NO AD NOW'}</button>`}
             </div>
-            <small class="sd-opens">OR IT OPENS IN ${v.left} ${v.left === 1 ? 'MATCHDAY' : 'MATCHDAYS'}</small>`
+            <small class="sd-opens">${buildAd && ads.rewardedAvailable ? `AD TAKES 1 MATCHDAY OFF${sep()}` : ''}OR IT OPENS IN ${v.left} ${v.left === 1 ? 'MATCHDAY' : 'MATCHDAYS'}</small>`
           : v.status === 'locked'
             ? `<button class="btn btn-go sd-up" disabled>${esc(v.needs ?? 'LOCKED')}</button>`
             : busy
@@ -813,6 +825,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
           <span class="mc-stadlvl">${esc(v.def.does)}</span>
           <div class="sd-facts">
             ${fact('SEATS', fmt(seats), fmt(seatsAfter))}
+            ${fact('AWAY INCOME AN HOUR', String(incomeRate(incomeSource(st, app.save))), String(incomeRate(incomeSource({ ...st, ground: after }, app.save))))}
             ${lvl !== lvlAfter ? fact('GROUND', STADIUM_NAMES[lvl], STADIUM_NAMES[lvlAfter]) : ''}
             ${next ? `<span class="sd-fact"><small>BUILD</small><b>${next.weeks} ${next.weeks === 1 ? 'MATCHDAY' : 'MATCHDAYS'}</b></span>` : ''}
           </div>
@@ -1016,18 +1029,25 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
         },
         // One rewarded ad a day takes a matchday off the build: the player's own tap, a stated reward, a daily cap.
         buildad: async () => {
-          if (!st.ground.building) return;
+          // (One request a tap: a second tap while the ad is asked for or plays does nothing.)
+          if (buildAdBusy || !st.ground.building) return;
           if (adsLeft(app.save, 'build', localDay()) <= 0) {
             scr.toast("TODAY'S BUILD AD IS USED. BACK TOMORROW", 'info');
             return;
           }
           if (!ads.rewardedAvailable) {
-            scr.toast('NO AD RIGHT NOW. TRY AGAIN LATER', 'info');
+            scr.toast(NO_AD_TEXT, 'info');
+            if (scr.root.isConnected) draw();
             return;
           }
-          const watched = await ads.rewarded();
+          buildAdBusy = true;
+          draw();
+          const watched = await ads.rewarded().catch(() => false);
+          buildAdBusy = false;
+          // Only an ad that played through takes the matchday off: one that did not changes nothing, and says so.
           if (!watched || !st.ground.building || !useAd(app.save, 'build', localDay())) {
-            scr.toast('THE AD DID NOT FINISH, SO NOTHING CHANGED', 'info');
+            if (scr.root.isConnected) draw();
+            scr.toast(NO_AD_TEXT, 'info');
             return;
           }
           skipBuildMatchday(st);

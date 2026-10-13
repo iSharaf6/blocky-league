@@ -1,3 +1,48 @@
+# CrazyGames Full Launch build v1.1.0 — 14 October 2026
+
+**Not uploaded and not on `main`.** The source is on branch `release/crazygames-full-launch` (fallback tag
+`fallback-2026-10-14` is the state before it). The upload is `release/submission/crazygames/upload/
+blocky-league-crazygames-v1.1.0.zip` (16 files, 3.49 MB unpacked, 1.79 MB zipped; the only external host is
+`sdk.crazygames.com`). The owner submits it with **Submit new version**: [SUBMIT.md](SUBMIT.md) section 0.
+
+CrazyGames approved Full Launch on 13 October with changes required (requirements, ads, stand out, more
+progression). What this build adds over the live one:
+
+- **Full Launch requirements.** No title screen on the portal (a first visit starts the first drill with no click;
+  "gameplay start" is sent while the drill waits for the player), progress through the SDK Data module with the fuller
+  save winning (a blank save on a new device can no longer replace the account's copy), one interstitial before a
+  kick-off and never before two matches, seven opt-in rewarded offers that lock while an ad runs and say ADS BLOCKED
+  instead of going dead, and no mail links, share or download buttons, backup files, app wording or sign-in in the
+  portal bundle (the build fails if any of 14 terms returns). Details: [PUBLISHING.md](PUBLISHING.md).
+- **Reasons to come back.** A WELCOME BACK sheet that opens by itself on a new day, a first week of standout gifts,
+  a play streak that forgives a missed day, a free look to try each day, a match of the day and club income while
+  away. Economy model and workbook regenerated with a portal profile: [ECONOMY.md](ECONOMY.md).
+- **On the pitch.** The knuckleball (a full bar from 20 m and beyond: about 19% from 26 m where a strike scored 0 to
+  5%), a deliberate curler with a visible bend, aftertouch (move the stick just after the shot), a nutmeg that goes
+  between the defender's feet (it rolled 0.4 to 0.7 m beside him before), and a skill prompt about half the size.
+
+**Validation.** Typecheck clean. **2,122 tests across 141 files passed, 2 skipped** in one run of the whole suite on
+the integrated code (the six AI-only determinism rows are bit-identical; the twelve rows a human's shots reach were
+re-recorded as protocol 12). Four small edits came after that run (a `window.focus()` call at portal boot, the dev
+step hook, and listing and status text); typecheck and the targeted menu, copy and shot tests were re-run after them.
+All five packages build; `npm run submission` passes for CrazyGames and Poki.
+
+**Checked in a browser** (the CrazyGames SDK in its local test mode, and the built `dist-crazygames` served as is): a
+first visit lands in the drill with no click and the SDK logs loading start, loading stop and gameplay start; a fresh
+browser with an account copy of 4,321 coins loads that copy and leaves it intact; the gift's 2x ad, the full-time
+bonus ad and the interstitial before a rematch all play the SDK's test ad, lock the buttons and pay only afterwards;
+the portal shop carries no app or top-up wording; the WELCOME BACK sheet, the hub strip and full time fit 800x450
+and 852x393 with no page scroll; a nutmeg goes between the feet with the defender's legs apart; a knuckleball shows
+its name and trail. No console errors in the built package.
+
+**Not verified.** Ads actually filling and the account save moving between two devices can only be seen on the real
+site. Nothing was run on a phone, and no native iOS build was made or installed for this version (the iOS web bundle
+builds). The browser pane used was about 384 px wide, so layout was confirmed by measurement and reduced captures,
+not by full-size screenshots. A `hasAdblock` false positive hides rewarded offers until an ad plays. With a slow SDK
+whose account copy wins, the first match played before it arrived is dropped (the player is told the saved progress
+loaded). `npm run submission` still reports the itch build's existing invite link to `isharaf6.github.io`; that is
+not part of the CrazyGames package.
+
 # TestFlight build 7 — 9 October 2026
 
 Version **1.0 (7)** is uploaded, processed and **Approved** for external TestFlight testing. Apple received the

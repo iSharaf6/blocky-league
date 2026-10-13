@@ -1,0 +1,182 @@
+/*
+ * COMING BACK (ui/comeback.ts): the hub's strip of cards, the gift sheet's welcome parts, full time's TOMORROW strip
+ * and rows, the moment result's line. Loaded after style.css, shell.css and menus.css; every rule that meets one of
+ * theirs carries one more class, so it wins without !important.
+ *
+ * One screen, no page scroll (docs/UX.md): the strip is a fixed row of the hub's grid (the hero and the tiles share
+ * what is left, as before), and everything else here is a fixed strip, a chip or a row inside an existing pane.
+ */
+
+/* ---------------------------------------------------------------- shared bits */
+
+.cb-art { display: block; width: 100%; height: 100%; }
+.cb-coin { flex: none; display: inline-block; width: 0.72em; height: 0.72em; background: var(--yellow); box-shadow: inset -2px -2px 0 var(--yellow-d), inset 2px 2px 0 #fff3b0; }
+.cb-gem, .cb-tk, .cb-it { flex: none; display: inline-flex; align-items: center; gap: 2px; font-style: normal; }
+.cb-gem { color: #35c3f5; }
+.cb-tk { color: var(--go); }
+.cb-it { width: 1.25em; height: 1.25em; }
+.cb-ic { flex: none; display: grid; place-items: center; width: 22px; height: 22px; line-height: 0; font-style: normal; }
+.cb-ic > svg, .cb-ic > .picon { width: 100%; height: 100%; filter: none; }
+
+/* ---------------------------------------------------------------- the hub's strip */
+
+.hub.has-cb { grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "cb" "body" "foot"; }
+.hub.has-cb.with-cap { grid-template-areas: "top top" "cb cb" "cap body" "cap foot"; }
+/* (The strip says what tomorrow brings in full: the top bar's small TOMORROW chip steps aside for it.) */
+.hub-screen .hub.has-cb .hub-progress .hub-tomorrow { display: none; }
+
+.hub-cb {
+  grid-area: cb; position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--gap);
+  min-width: 0; height: calc(40px * var(--ts, 1));
+}
+.cb-card {
+  appearance: none; border: 0; margin: 0; font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  position: relative; overflow: hidden; min-width: 0; height: 100%;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 6px; padding: 0 8px 2px 7px; text-align: left;
+  color: var(--cream); background: rgba(38, 38, 46, 0.88); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  transition: transform 0.06s, box-shadow 0.06s;
+}
+.cb-card:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3); }
+.cb-t { display: grid; gap: 4px; min-width: 0; }
+.cb-t small { font: 400 calc(9px * var(--ts, 1)) / 1 var(--round); letter-spacing: 0.7px; color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-t b { display: flex; align-items: center; gap: 4px; min-width: 0; font: 400 calc(13px * var(--ts, 1)) / 1 var(--round); letter-spacing: 0.4px; white-space: nowrap; overflow: hidden; }
+.cb-t b > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cb-t b > u { flex: none; padding: 2px 4px 1px; font-size: 0.72em; letter-spacing: 0.6px; text-decoration: none; color: var(--ink); background: var(--yellow); }
+.cb-t b > .cb-dim { font-size: 0.82em; letter-spacing: 0.5px; color: #cfcab8; }
+.cb-card.ready { color: var(--ink); background: var(--yellow); box-shadow: 0 4px 0 var(--yellow-d); animation: hub-throb 1.6s ease-in-out infinite; }
+.cb-card.ready .cb-t small { color: #8a2a1e; }
+.cb-card.ready .cb-t b > u { color: var(--cream); background: var(--ink); }
+.cb-card.ready .cb-gem { color: #0f5e8f; }
+.cb-card.ready .cb-tk { color: var(--go-d); }
+.cb-card.done { color: #cfcab8; background: rgba(38, 38, 46, 0.6); }
+.cb-card.done .cb-t small { color: #cfcab8; }
+.cb-card.done .cb-t b > u { color: var(--cream); background: var(--go-d); }
+.cb-card.ready .cb-t b > .cb-dim { color: var(--ink-2); }
+/* A reward beside a card's name (MATCH OF THE DAY): coins over gems, at the caption's size. */
+.cb-rw { display: grid; justify-items: end; gap: 3px; font: 400 calc(11px * var(--ts, 1)) / 1 var(--round); letter-spacing: 0.4px; color: var(--yellow); white-space: nowrap; }
+.cb-rw b { display: inline-flex; align-items: center; gap: 3px; font-weight: 400; }
+/* CLUB INCOME: the office's fill level along the card's foot. */
+.cb-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255, 255, 255, 0.18); }
+.cb-fill u { display: block; height: 100%; background: var(--go); text-decoration: none; }
+.cb-inc.ready .cb-fill { background: rgba(0, 0, 0, 0.18); }
+.cb-inc.ready .cb-fill u { background: var(--ink); }
+
+/* TOMORROW, the whole list (a tap on the card). Over the hub, never part of its height. */
+.cb-pop {
+  position: absolute; z-index: 7; top: calc(100% + 6px); left: 0; width: min(400px, 100%); margin: 0; padding: 8px 10px 9px; list-style: none;
+  display: grid; gap: 5px; color: var(--cream); background: rgba(38, 38, 46, 0.97); border-top: 3px solid var(--yellow); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3);
+}
+.cb-pop[hidden] { display: none; }
+.cb-pop li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; font: 400 calc(13px * var(--ts, 1)) / 1.15 var(--round); letter-spacing: 0.4px; }
+.cb-pop li.cb-pop-h { display: block; font-size: calc(11px * var(--ts, 1)); letter-spacing: 1.5px; color: var(--yellow); }
+.cb-pop li .cb-ic { width: 20px; height: 20px; }
+.cb-pop li > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-pop li > b { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; color: var(--yellow); white-space: nowrap; }
+.cb-pop li > b u { text-decoration: none; color: var(--cream); }
+
+/* A phone on its side and the short portal frame: the strip is a little lower, and the line under the hero with it. */
+@media (orientation: landscape) and (max-height: 450px) {
+  .hub-cb { height: 36px; }
+  .hub-screen .hub.has-cb .hub-goal { min-height: 36px; }
+  .cb-card { column-gap: 5px; padding: 0 6px 2px 6px; }
+  .cb-ic { width: 20px; height: 20px; }
+}
+/* The strip's height comes out of the hero: on a phone the fixture gives up its OVR line (the captain's tag has it). */
+@media (orientation: landscape) and (max-height: 420px) {
+  .hub-screen .hub.has-cb .hh-side small { display: none; }
+}
+@media (orientation: landscape) and (max-height: 365px) {
+  .hub-cb { height: 32px; }
+  .cb-card .cb-ic { display: none; }
+  .cb-t { gap: 3px; }
+}
+/* The smallest phones (320 high): no room for a fifth row. The top bar's TOMORROW chip comes back instead. */
+@media (orientation: landscape) and (max-height: 340px) {
+  .hub.has-cb { grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "top" "body" "foot"; }
+  .hub.has-cb.with-cap { grid-template-areas: "top top" "cap body" "cap foot"; }
+  .hub-cb { display: none; }
+  .hub-screen .hub.has-cb .hub-progress .hub-tomorrow { display: inline-grid; }
+}
+/* Phones and the portal frames: four cards. The streak (it is in the TOMORROW list, on the gift sheet and at full
+   time) gives its room to the others; five from an iPad up. */
+@media (max-width: 960px) {
+  .hub-cb .cb-st { display: none; }
+}
+@media (max-width: 700px) {
+  .hub-cb .cb-try { display: none; }
+}
+/* Upright windows (the web on a phone held upright): the hub is a column that scrolls; the strip wraps in twos. */
+@media (max-aspect-ratio: 1/1) {
+  .hub.has-cb, .hub.has-cb.with-cap { grid-template-rows: auto; grid-template-areas: "top" "cb" "cap" "body" "foot"; }
+  .hub-cb { height: auto; grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hub-cb .cb-st, .hub-cb .cb-try { display: grid; }
+  .cb-card { height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cb-card.ready { animation: none; }
+}
+
+/* ---------------------------------------------------------------- the gift sheet (Menus.gift) */
+
+.panel.narrow.gift-panel.cb-gift { width: min(580px, 94vw); }
+.gift-panel.cb-gift h2 small { margin-left: 10px; padding: 3px 7px 2px; font: 400 0.6em / 1 var(--round); letter-spacing: 1px; vertical-align: middle; color: var(--ink); background: var(--yellow); }
+.gift-panel.cb-gift .gift-days li em.gd-x { display: flex; align-items: center; justify-content: center; gap: 3px; min-height: 14px; font: 400 11px / 1 var(--round); font-style: normal; color: #1470a8; white-space: nowrap; }
+.gift-panel.cb-gift .gift-days li em.gd-x .cb-it { width: 14px; height: 14px; }
+.gift-panel.cb-gift .gift-days li em.gd-x .cb-tk { color: var(--go-d); }
+.gift-panel.cb-gift .reward { flex-wrap: nowrap; gap: 10px; min-width: 0; }
+.gift-panel.cb-gift .reward .rw-tok { margin-left: 0; white-space: nowrap; }
+.rw-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font: 400 16px / 1.05 var(--round); color: var(--ink); }
+.rw-item .cb-it { width: 24px; height: 24px; }
+.rw-item b { min-width: 0; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rw-item small { flex: none; padding: 3px 5px 2px; font: 400 11px / 1 var(--round); letter-spacing: 0.4px; color: #fff; background: var(--go-d); white-space: nowrap; }
+.cb-rows { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.cb-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; min-width: 0; padding: 5px 8px 5px 6px; background: #fff; border: 3px solid var(--cream-2); }
+.cb-row > span { display: grid; gap: 3px; min-width: 0; }
+.cb-row small { font: 400 10px / 1 var(--round); letter-spacing: 0.7px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-row b { display: flex; align-items: center; gap: 4px; min-width: 0; font: 400 14px / 1 var(--round); color: var(--ink); white-space: nowrap; overflow: hidden; }
+.cb-row b u { min-width: 0; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }
+.cb-row .cb-gem { color: #1470a8; }
+@media (max-height: 560px) {
+  .panel.narrow.gift-panel.cb-gift { gap: 8px; }
+  .gift-panel.cb-gift .gift-days li { gap: 1px; padding: 3px 2px; }
+  .cb-row { padding: 4px 6px 4px 5px; }
+  .rw-item { font-size: 15px; }
+}
+@media (max-width: 480px) {
+  .cb-rows { grid-auto-flow: row; }
+}
+
+/* ---------------------------------------------------------------- full time (Menus.fulltime) */
+
+.cb-ft-tm {
+  /* (The gift and the streak are numbers and take what they need; the free try's name gets the rest of the row.) */
+  flex: none; display: grid; grid-template-columns: auto auto auto minmax(0, 1fr); align-items: stretch; gap: 5px; min-width: 0; min-height: 38px;
+  padding: 4px 5px 4px 9px; color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25);
+}
+.cb-ft-tm > b { align-self: center; font: 400 12px / 1 var(--round); letter-spacing: 1px; color: var(--yellow); }
+.cb-chip { display: grid; gap: 3px; align-content: center; min-width: 0; padding: 3px 6px 2px; background: rgba(255, 255, 255, 0.1); }
+.cb-chip small { font: 400 9px / 1 var(--round); letter-spacing: 0.6px; color: #cfcab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-chip em { display: flex; align-items: center; gap: 4px; min-width: 0; font: 400 13px / 1 var(--round); font-style: normal; white-space: nowrap; overflow: hidden; }
+.cb-chip em u { min-width: 0; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }
+.cb-ft-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 4px 8px; font: 400 14px / 1.15 var(--round); letter-spacing: 0.4px; color: var(--ink); background: #fff; border: 2px solid var(--cream-2); }
+.cb-ft-line > span { min-width: 0; }
+.cb-ft-line small { display: flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--go-d); }
+.cb-ft-line > b { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; color: var(--yellow-d); white-space: nowrap; }
+.cb-ft-line .cb-gem { color: #1470a8; }
+.cb-ft-line.try { border-color: var(--yellow-d); background: #fff5c4; }
+.btn.cb-keep { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 6px 10px 5px; font-size: 14px; letter-spacing: 0.6px; white-space: nowrap; }
+@media (max-height: 560px) {
+  .cb-ft-tm { min-height: 34px; padding: 3px 4px 3px 7px; }
+  .cb-ft-tm > b { font-size: 11px; letter-spacing: 0.6px; }
+}
+@media (max-width: 700px) {
+  .cb-ft-tm { grid-template-columns: auto auto minmax(0, 1fr); }
+  .cb-ft-tm > b { display: none; }
+}
+
+/* ---------------------------------------------------------------- the moment result (Menus.momentResult) */
+
+.cb-mo { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0; font: 400 15px / 1.1 var(--round); letter-spacing: 1px; color: var(--ink-2); }
+.cb-mo b { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; color: var(--yellow-d); }
+.cb-mo .cb-gem { color: #1470a8; }
+.cb-mo.won { color: var(--go-d); }

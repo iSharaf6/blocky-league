@@ -15,7 +15,8 @@ interface PurchaseEventsNative {
 
 /** Native retains each event on disk until the save records it and this listener acknowledges it. */
 export async function watchPurchaseRejections(accept: (event: PurchaseRejection) => boolean): Promise<void> {
-  if (!inNativeApp()) return;
+  // (The literal portal check lets the CrazyGames and Poki builds drop Capacitor's chunk altogether.)
+  if ((import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'none') || !inNativeApp()) return;
   try {
     const { registerPlugin } = await import('@capacitor/core');
     const plugin = registerPlugin<PurchaseEventsNative>('PurchaseEvents');

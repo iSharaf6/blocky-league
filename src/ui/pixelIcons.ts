@@ -158,6 +158,19 @@ export const ICON_NAMES = Object.keys(ICON_ROWS) as IconName[];
  * A crisp pixel icon as inline SVG. `px` is the size of one cell (the icon is 10 cells square); `cls` adds classes
  * beside "picon" (CSS sets the real size where it differs by screen). An unknown name draws nothing.
  */
+/**
+ * A rewarded ad offer reads the same on every screen that has one (the daily gift, full time, a lost decider, the
+ * shop's free coins, free gems and new deal, a stadium build): this film icon on the button beside words that say it
+ * is an ad; switched off, with ADS BLOCKED or NO AD RIGHT NOW in its place, when none can be shown
+ * (platform/ads.ts rewardedNote); and NO_AD_TEXT when one was asked for and did not play.
+ */
+export function adIcon(color = '#26262e'): string {
+  return pixelIcon('film', color, 2, 'inl');
+}
+
+/** A rewarded ad was asked for and did not play: nothing was granted, and this is all the game says about it. */
+export const NO_AD_TEXT = 'NO AD RIGHT NOW, TRY LATER';
+
 export function pixelIcon(name: string, color = '#fbfbf4', px = 5, cls = ''): string {
   const rows = ICONS[name];
   if (!rows) return '';

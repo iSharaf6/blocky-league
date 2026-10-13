@@ -34,6 +34,40 @@ export const APP_AD_MOMENT_GAP_MS = 240_000;
 /** Longest a full-screen ad may hold the game before it carries on regardless. */
 const APP_AD_MAX_MS = 180_000;
 
+/** Whole matches a save must have behind it before its first interstitial: a new player plays, and is not sold to. */
+export const AD_FREE_MATCHES = 2;
+/** A result screen is left alone this long before the next kick-off may bring an interstitial (ms). */
+export const AD_AFTER_RESULT_MS = 8000;
+
+/**
+ * May an interstitial be asked for before this kick-off (main.ts startMatch, the only place one ever is)? Only at
+ * that natural break: never as the first thing of a visit, never straight off a result screen, never in or after
+ * a basics drill or before the first match, never into a match being restored, and not until AD_FREE_MATCHES whole
+ * matches have been played (so a REMATCH straight after the first ever match gets none). Navigation never comes
+ * here: no menu, tab or screen change asks for an ad.
+ */
+export function breakDue(o: {
+  recovered: boolean; basics: boolean; firstMatch: boolean;
+  /** Matches and moments finished this visit. */
+  finishedThisVisit: number;
+  /** Since the last result screen came up (ms). */
+  sinceResultMs: number;
+  /** Whole matches on the save (a drill or a moment is not one). */
+  played: number;
+}): boolean {
+  return !o.recovered && !o.basics && !o.firstMatch && o.finishedThisVisit > 0 && o.sinceResultMs >= AD_AFTER_RESULT_MS && o.played >= AD_FREE_MATCHES;
+}
+
+/**
+ * Is a ball actually playable? The portals' "gameplay started" goes out only then (main.ts payPlay): the sim has
+ * stepped since the kick-off (or the half) was set up, in a phase the player has something to play, and nothing
+ * holds the match (a pause, a menu over it). Not while the fly-in plays, a brief is read or a first match waits on
+ * its kick-off: the sim does not step through any of those.
+ */
+export function playIsLive(phase: string, stepped: boolean, held: boolean): boolean {
+  return stepped && !held && phase !== 'goal' && phase !== 'halftime' && phase !== 'fulltime';
+}
+
 interface CrazyAdError {
   code: 'adsDisabledBasicLaunch' | 'unfilled' | 'adblock' | 'adCooldown' | 'other';
   message: string;
@@ -127,8 +161,21 @@ export class Ads {
   private adMuted = false;
   private settingsMuted = false;
   private muted = false;
+  /**
+   * An ad blocker is on, as far as CrazyGames can tell: asked once its SDK is up (the answer is not always right), set
+   * by a request that fails for it, cleared by any ad that does play. Rewarded offers are off while it is set.
+   */
+  private blocked = false;
+  /** CrazyGames ads that started only after their request had been given up on (crazyAd): the game is held meanwhile. */
+  private lateAds = 0;
+  private busy = false;
   /** true = all game audio must be silent (ad playing, or CrazyGames muteAudio setting); false = may play. */
   onMute: (muted: boolean) => void = () => {};
+  /**
+   * true = an ad is being asked for or is on screen: the game takes no input until false (main.ts shields its
+   * screens, and pauses a match one has started over). Always followed by false, whatever the SDK does.
+   */
+  onBusy: (busy: boolean) => void = () => {};
   /**
    * true = the player owns NO ADS (platform/iap.ts adFree): no interstitial is ever requested. Rewarded ads are
    * opt-in rewards, not interruptions, so they stay available. main.ts points it at the live save.
@@ -136,8 +183,9 @@ export class Ads {
   adFree: () => boolean = () => false;
 
   // ---- the app's AdMob state ('app' only)
-  private admob: AdMobPlugin | null = null;
-  private admobMod: AdMobModule | null = null;
+  // (Named for what they hold, not for the SDK: a portal build then carries no trace of the app's ad provider.)
+  private appPlugin: AdMobPlugin | null = null;
+  private appModule: AdMobModule | null = null;
   private appLoaded: Record<AppAd, boolean> = { rewarded: false, interstitial: false };
   private appLoading: Record<AppAd, boolean> = { rewarded: false, interstitial: false };
   private appRetry: Record<AppAd, number> = { rewarded: 0, interstitial: 0 };
@@ -145,7 +193,10 @@ export class Ads {
   private appLastAt = -Infinity;
   private readyFns = new Set<() => void>();
 
-  /** `fn` runs whenever an app ad finishes loading (the shop redraws its FREE COINS card). Returns the unsubscribe. */
+  /**
+   * `fn` runs whenever what can be offered changes: an app ad finished loading, or CrazyGames reported an ad blocker
+   * (the shop redraws its FREE COINS card). Returns the unsubscribe.
+   */
   onAdReady(fn: () => void): () => void {
     this.readyFns.add(fn);
     return () => void this.readyFns.delete(fn);
@@ -187,6 +238,13 @@ export class Ads {
             });
           });
           this.syncMute();
+          // An ad blocker: known from the start, so a rewarded offer says ADS BLOCKED instead of failing on a tap.
+          // (Not waited for: the answer can be slow, and it must never hold the game's start.)
+          safe(() => void sdk.ad.hasAdblock().then((on) => {
+            if (on !== true || this.blocked) return;
+            this.blocked = true;
+            for (const fn of this.readyFns) safe(fn);
+          }, () => {}));
         }
       } else if (import.meta.env.VITE_PORTAL === 'poki' || (!import.meta.env.VITE_PORTAL && q === 'poki')) {
         await withTimeout(loadScript('https://game-cdn.poki.com/scripts/v2/poki-sdk.js'), 6000, undefined);
@@ -229,8 +287,8 @@ export class Ads {
       maxAdContentRating: kid ? m.MaxAdContentRating.General : m.MaxAdContentRating.ParentalGuidance,
       initializeForTesting: ADMOB_TEST_IDS,
     }), 10_000, undefined);
-    this.admob = A;
-    this.admobMod = m;
+    this.appPlugin = A;
+    this.appModule = m;
     this.portal = 'app';
     this.ok = true;
     this.prepareApp('rewarded');
@@ -239,7 +297,9 @@ export class Ads {
 
   /** Load the next ad of a kind; a failed load tries again later (15 s, doubling, at most 5 min apart). */
   private prepareApp(kind: AppAd): void {
-    const A = this.admob;
+    // (A literal check, as in initApp: a portal build carries none of the app's ad code or its unit ids.)
+    if (import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'none') return;
+    const A = this.appPlugin;
     if (!A || this.appLoading[kind] || this.appLoaded[kind]) return;
     this.appLoading[kind] = true;
     const opts = { adId: ADMOB_IOS[kind], npa: true };
@@ -265,8 +325,9 @@ export class Ads {
    * dismissal is what ends it.)
    */
   private showApp(kind: AppAd): Promise<boolean> {
-    const A = this.admob!;
-    const M = this.admobMod!;
+    if (import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'none') return Promise.resolve(false);
+    const A = this.appPlugin!;
+    const M = this.appModule!;
     this.appLoaded[kind] = false;
     return new Promise<boolean>((resolve) => {
       let earned = false;
@@ -304,13 +365,29 @@ export class Ads {
     });
   }
 
-  /** Rewarded ads: on the portals, and in the app once one has loaded (asking for the next if not). */
+  /**
+   * Rewarded ads: on the portals (not with an ad blocker on: see adBlocked), and in the app once one has loaded
+   * (asking for the next if not). Every rewarded offer reads this before it draws itself and again on the tap.
+   */
   get rewardedAvailable(): boolean {
-    if (this.portal === 'app') {
+    if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && this.portal === 'app') {
       if (!this.appLoaded.rewarded) this.prepareApp('rewarded');
       return this.ok && this.appLoaded.rewarded;
     }
-    return this.ok && this.adsAllowed;
+    return this.ok && this.adsAllowed && !this.blocked;
+  }
+
+  /** An ad blocker is on (CrazyGames): a rewarded offer shows itself switched off, with ADS BLOCKED beside it. */
+  get adBlocked(): boolean {
+    return this.blocked;
+  }
+
+  /**
+   * The words a rewarded offer shows in place of its reward while no ad can be offered ('' when one can): ADS BLOCKED
+   * with an ad blocker on, else NO AD RIGHT NOW. Inline on the offer itself, never a popup.
+   */
+  get rewardedNote(): string {
+    return this.rewardedAvailable ? '' : this.blocked ? 'ADS BLOCKED' : 'NO AD RIGHT NOW';
   }
 
   /** This build can show interstitial ads at all (so NO ADS is worth selling in it; see ui/shop.ts). */
@@ -328,7 +405,8 @@ export class Ads {
   private sendLoaded(): void {
     if (this.loadedSent || !this.ok) return;
     this.loadedSent = true;
-    if (this.portal === 'poki') safe(() => window.PokiSDK!.gameLoadingFinished());
+    // (Poki's calls sit behind the literal check everywhere in this file: the CrazyGames build carries none of them.)
+    if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'poki') && this.portal === 'poki') safe(() => window.PokiSDK!.gameLoadingFinished());
     if (this.portal === 'crazygames') safe(() => window.CrazyGames!.SDK.game.loadingStop());
   }
 
@@ -345,10 +423,18 @@ export class Ads {
   }
 
   private syncGameplay(): void {
-    if (!this.ok || !this.loadedSent || this.adInFlight || this.playing === this.wantsGameplay) return;
+    if (!this.ok || !this.loadedSent || this.adInFlight || this.lateAds > 0 || this.playing === this.wantsGameplay) return;
     this.playing = this.wantsGameplay;
-    if (this.portal === 'poki') safe(() => this.playing ? window.PokiSDK!.gameplayStart() : window.PokiSDK!.gameplayStop());
+    if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'poki') && this.portal === 'poki') safe(() => this.playing ? window.PokiSDK!.gameplayStart() : window.PokiSDK!.gameplayStop());
     if (this.portal === 'crazygames') safe(() => this.playing ? window.CrazyGames!.SDK.game.gameplayStart() : window.CrazyGames!.SDK.game.gameplayStop());
+  }
+
+  /** An ad is being asked for or is up (a late one included): tell the game once each way (onBusy). */
+  private syncBusy(): void {
+    const b = this.adInFlight || this.lateAds > 0;
+    if (b === this.busy) return;
+    this.busy = b;
+    safe(() => this.onBusy(b));
   }
 
   /** CrazyGames celebration for a real achievement; use sparingly. Poki has no HTML5 equivalent. */
@@ -363,8 +449,8 @@ export class Ads {
    * half-time one). The app: see APP_AD_GAP_MS.
    */
   async midgame(at: 'match' | 'moment' | 'halftime' = 'match'): Promise<void> {
-    if (!this.ok || !this.adsAllowed || this.adInFlight || this.adFree()) return;
-    if (this.portal === 'app') {
+    if (!this.ok || !this.adsAllowed || this.adInFlight || this.lateAds > 0 || this.adFree()) return;
+    if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && this.portal === 'app') {
       // Every break, clear of the last ad, and only an ad that is already loaded.
       const gap = at === 'moment' ? APP_AD_MOMENT_GAP_MS : at === 'match' ? APP_AD_MATCH_GAP_MS : APP_AD_GAP_MS;
       if (Date.now() - this.appLastAt < gap || !this.appLoaded.interstitial) {
@@ -376,11 +462,12 @@ export class Ads {
     }
     this.gameplayStop();
     this.adInFlight = true;
+    this.syncBusy();
     let active = true;
     try {
-      if (this.portal === 'app') {
+      if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && this.portal === 'app') {
         await this.showApp('interstitial');
-      } else if (this.portal === 'poki') {
+      } else if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'poki') && this.portal === 'poki') {
         await withTimeout(window.PokiSDK!.commercialBreak(() => { if (active) this.setAdMute(true); }), 45_000, undefined);
       } else if (this.portal === 'crazygames') {
         await this.crazyAd('midgame');
@@ -389,27 +476,29 @@ export class Ads {
       /* an ad failure never blocks play */
     } finally {
       active = false;
-      this.adInFlight = false;
-      this.setAdMute(false);
-      this.syncGameplay();
+      this.adEnded();
     }
   }
 
-  /** Opt-in rewarded ad. Resolves true only if the player watched it through. */
+  /**
+   * Opt-in rewarded ad. Resolves true only if the player watched it through: an error, an ad that never came or one
+   * the SDK gave no answer for is false, and nothing is granted for it.
+   */
   async rewarded(): Promise<boolean> {
-    if (!this.ok || !this.adsAllowed || this.adInFlight) return false;
+    if (!this.ok || !this.adsAllowed || this.adInFlight || this.lateAds > 0) return false;
     this.gameplayStop();
     this.adInFlight = true;
+    this.syncBusy();
     let active = true;
     try {
-      if (this.portal === 'app') {
+      if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && this.portal === 'app') {
         if (!this.appLoaded.rewarded) {
           this.prepareApp('rewarded');
           return false;
         }
         return await this.showApp('rewarded');
       }
-      if (this.portal === 'poki') {
+      if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'poki') && this.portal === 'poki') {
         return await withTimeout(window.PokiSDK!.rewardedBreak(() => { if (active) this.setAdMute(true); }), 60_000, false);
       }
       if (this.portal === 'crazygames') {
@@ -420,43 +509,90 @@ export class Ads {
       return false;
     } finally {
       active = false;
-      this.adInFlight = false;
-      this.setAdMute(false);
-      this.syncGameplay();
+      this.adEnded();
     }
   }
 
+  /** A request is over (played, failed or given up on): sound and input come back unless a late ad is still up. */
+  private adEnded(): void {
+    this.adInFlight = false;
+    if (this.lateAds === 0) this.setAdMute(false);
+    this.syncBusy();
+    this.syncGameplay();
+  }
+
+  /**
+   * One CrazyGames ad request. Resolves true only when the ad played through. The sound is muted when it actually
+   * starts, never before, and comes back when it ends. A request the SDK gives no answer to lets the caller go after
+   * 15 s (an ad that does not come must not stall the game). Should that ad start after all, it would play over a
+   * running game: the game is muted and held again (lateAdStart) until it finishes, fails, or 120 s pass, and nothing
+   * is granted for it (its caller was already told no).
+   */
   private crazyAd(type: 'midgame' | 'rewarded'): Promise<boolean> {
     return new Promise((resolve) => {
-      let finished = false;
-      // Give a started video time to finish. A missing SDK callback must still
-      // release the UI, without allowing a later callback to mute it forever.
-      let timer = setTimeout(() => finish(false), 15_000);
-      const finish = (watched: boolean) => {
-        if (finished) return;
-        finished = true;
+      // asked: no answer yet. playing: it started in time. left: the caller was let go. late: it started after that.
+      let state: 'asked' | 'playing' | 'left' | 'late' | 'over' = 'asked';
+      let timer = setTimeout(() => {
+        state = 'left';
+        resolve(false);
+      }, 15_000);
+      const over = (watched: boolean) => {
+        const was = state;
+        if (was === 'over') return;
+        state = 'over';
         clearTimeout(timer);
-        resolve(watched);
+        if (was === 'late') this.lateAdEnd();
+        else if (was !== 'left') resolve(watched);
       };
       try {
         window.CrazyGames!.SDK.ad.requestAd(type, {
           adStarted: () => {
-            if (finished) return;
+            if (state !== 'asked' && state !== 'left') return;
+            // (An ad that plays: whatever said a blocker was on, it did not stop this one.)
+            this.blocked = false;
             clearTimeout(timer);
-            timer = setTimeout(() => finish(false), 120_000);
-            this.setAdMute(true);
+            // Give a started video time to finish; a missing callback must still give the game back.
+            timer = setTimeout(() => over(false), 120_000);
+            if (state === 'left') {
+              state = 'late';
+              this.lateAdStart();
+            } else {
+              state = 'playing';
+              this.setAdMute(true);
+            }
           },
-          adFinished: () => finish(true),
+          adFinished: () => over(true),
           adError: (error) => {
-            if (finished) return;
+            if (state === 'over') return;
+            // No ads in this launch at all: nothing more is asked for. A blocker: the same, and the offers say so.
             if (error.code === 'adsDisabledBasicLaunch' || error.code === 'adblock') this.adsAllowed = false;
-            finish(false); // never grant a reward for an error
+            if (error.code === 'adblock') this.blocked = true;
+            over(false); // never grant a reward for an error
           },
         });
       } catch {
-        finish(false);
+        over(false);
       }
     });
+  }
+
+  /** An ad came up after its request was given up on: over whatever the game is doing now. Mute, and hold the game. */
+  private lateAdStart(): void {
+    // The portal hears that play stopped; what the game wants is kept (syncGameplay) for when the ad has gone.
+    if (this.playing) {
+      this.playing = false;
+      safe(() => window.CrazyGames!.SDK.game.gameplayStop());
+    }
+    this.lateAds++;
+    this.setAdMute(true);
+    this.syncBusy();
+  }
+
+  private lateAdEnd(): void {
+    this.lateAds = Math.max(0, this.lateAds - 1);
+    if (this.lateAds === 0 && !this.adInFlight) this.setAdMute(false);
+    this.syncBusy();
+    this.syncGameplay();
   }
 
   private setAdMute(m: boolean): void {

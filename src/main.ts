@@ -16,7 +16,7 @@ import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock,
   type SaveData, momentStarsTotal, claimMomentXp } from './core/save';
-import { adoptPortalStore, challengeCounts, recordShowtime, showtimeMode, type ChallengeKind } from './core/save';
+import { adoptPortalStore, challengeCounts, portalSaveSwapped, recordShowtime, saveBaseline, showtimeMode, type ChallengeKind } from './core/save';
 import { GRADE_BONUS, type BountyKind, type DailyLive } from './game/funLayer';
 import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
@@ -27,7 +27,7 @@ import { GEM_PRICES, GEM_REWARDS, gems, rewardGems, spendGems } from './meta/gem
 import { CALENDAR, adsLeft, advanceWeekly, calendarNext, calendarToday, claimCalendar, claimSweep, useAd, weeklyFor, weeklyObjectives } from './meta/loops';
 import { payoutText, syncAchievementGems } from './meta/gemSources';
 import { syncSeasonGems, syncSignatureEntitlements } from './meta/pass';
-import { ads } from './platform/ads';
+import { ads, breakDue, playIsLive } from './platform/ads';
 import { adFree, coinDoubler, iap, PRODUCT_NOADS, PRODUCT_STARTER } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
@@ -62,12 +62,13 @@ import { gameCenterSignInOnce, queueGameCenterSync, syncGameCenter } from './pla
 import { canStart, gateNow, gateWhy, onGateChange } from './platform/online';
 import { connectOpen, markHub, openConnect } from './ui/connect';
 import { buzz, installUiHaptics, setHapticsLevel, setHapticsQuiet } from './platform/haptics';
-import { inNativeApp } from './platform/native';
+import { devPortal, inNativeApp } from './platform/native';
 import type { WeatherKind } from './render/weather';
 import { MatchRecoveryStore, RECOVERY_INTERVAL_S, recoveryRequest, recoveryRoute, type PendingMatch } from './game/matchRecovery';
 import { rebuildRecoveryRequest, recoveryContext } from './game/matchRecoveryRequest';
 import { standardCoinReward, skillGoalCoins, MAX_REWARDED_SKILL_GOALS, matchCoinPayout } from './meta/matchEconomy';
 import { maybeAskForReview } from './platform/review';
+import { comebackDev, comebackUi } from './ui/comeback';
 
 /** A brief studio entrance on the standalone site; portals only wait for actual loading. */
 const bootAt = performance.now();
@@ -80,8 +81,17 @@ Trainer.input = input;
 // Every on-screen key hint names the device in hand (core/input.ts).
 setDeviceSource(() => input.lastDevice);
 const menus = new Menus();
-menus.clipActions = { save: saveClip, share: shareClip };
+// SAVE CLIP is a file download and SHARE the system share sheet: both lead out of the game, so a portal build has
+// neither (the literal check drops their code too) and its screens draw no clip row (Menus.clipRow).
+if (!(import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki' || (import.meta.env.DEV && devPortal()))) {
+  menus.clipActions = { save: saveClip, share: shareClip };
+}
 const save = loadSave();
+/**
+ * What this browser's save was worth as the visit began, before anything in it is written: what CrazyGames' copy is
+ * measured against, even when its SDK comes up late and a drill has been played meanwhile (core/save.ts adoptPortalStore).
+ */
+const saveAtLoad = saveBaseline(save);
 let saveGeneration = 0;
 /** An ad must pay the save/account that requested it, even though reload replaces contents in place. */
 function rewardSaveGuard(): () => boolean {
@@ -89,9 +99,11 @@ function rewardSaveGuard(): () => boolean {
   const account = cloudSession()?.userId;
   return () => generation === saveGeneration && account === cloudSession()?.userId;
 }
-/** A portal build (CrazyGames / Poki; in dev, ?portal=): a first visit goes straight from TAP TO PLAY to the first drill. */
-const PORTAL = import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki'
-  || (import.meta.env.DEV && new URLSearchParams(location.search).has('portal'));
+/**
+ * A portal build (CrazyGames / Poki; in dev, ?portal=): no title screen (a first visit lands straight in the first
+ * drill, a returning one on the hub), no link, download or share out of the game, no BACKUP (boot, mainMenu).
+ */
+const PORTAL = import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki' || (import.meta.env.DEV && devPortal());
 let session: MatchSession | null = null;
 let demo: MatchSession | null = null;
 /** The main menu (or a screen off it) is up, as opposed to the title screen or a match. */
@@ -158,13 +170,69 @@ function reload(d: SaveData): void {
   }
 }
 
+/** CrazyGames' store has been read this visit (once: what the two copies were worth as the visit began decides). */
+let portalAsked = false;
+/** CrazyGames' copy of the save, when it is the one to keep and has not been swapped in yet (a match was on). */
+let portalSave: SaveData | null = null;
+
+/**
+ * CrazyGames: the save also lives in its Data Module, with the player's account, on any device. Run once its SDK is
+ * up: at boot, or later in the visit when the SDK was slow (boot waits for it only so long). The copy with more
+ * progress is kept, measured against this browser's as the visit began (core/save.ts adoptPortalStore): the
+ * browser's is written to the store and mirrored there from now on, or CrazyGames' is swapped in (settlePortalSave).
+ */
+function adoptPortalSave(): void {
+  if (portalAsked) return;
+  const store = ads.portalStore();
+  if (!store) return;
+  portalAsked = true;
+  portalSave = adoptPortalStore(store, save, saveAtLoad);
+  settlePortalSave();
+}
+
+/**
+ * CrazyGames' copy comes in, through the same door a cloud save or an imported file uses (reload), if one is
+ * waiting and no match or drill is on: never mid-match. Until then nothing the outgoing save does is stored
+ * (core/save.ts holds its writes). The hub and every kick-off ask first. True when it was swapped in.
+ */
+function settlePortalSave(): boolean {
+  const theirs = portalSave;
+  if (!theirs || session) return false;
+  portalSave = null;
+  portalSaveSwapped();
+  reload(theirs);
+  // (Arrived after the game was already on screen, a slow SDK: what changed under the player is said once.)
+  if (gameEntered) menus.toast('YOUR SAVED PROGRESS IS LOADED');
+  return true;
+}
+
+/** The game has been entered (the hub, a drill or a restored match is on screen): boot is over. */
+let gameEntered = false;
+
+/**
+ * A match is over, or was walked off, and hands back to where it came from (the career road, the moments list),
+ * unless CrazyGames' copy of the save is waiting to come in. Then it is the hub, where it does: those screens would
+ * only show, and take changes to, a save that is about to be replaced.
+ */
+function handBack(go: () => void): void {
+  if (portalSave && !session) mainMenu();
+  else go();
+}
+
 /** The match camera distance from Settings (older saves: normal). */
 function camZoom(): CamZoom {
   return save.settings.camZoom ?? 'normal';
 }
 
+/**
+ * TRY TODAY (meta/comeback.ts): the look worn free in the match being set up (a ball, a trail, a goal explosion or a
+ * celebration the player does not own). Set by startMatch for the session it builds, and cleared at once after.
+ */
+let trial: ShopItem | null = null;
+
 /** A SHOP category's look to play with: the chosen one while it is yours (earned by level or bought), else none (the default). */
 function equipped(cat: ShopCat): string | undefined {
+  if (trial && trial.cat === cat) return trial.id;
   const id = equippedId(save, cat);
   return id === DEFAULT_ID[cat] ? undefined : id;
 }
@@ -385,6 +453,17 @@ const app: AppContext = {
 };
 
 /**
+ * COMING BACK (ui/comeback.ts; rules in meta/comeback.ts and meta/clubIncome.ts): the welcome week, WELCOME BACK, the
+ * play streak, TRY TODAY, CLUB INCOME and the MATCH OF THE DAY. One object draws them for the menus and settles them.
+ */
+const comeback = comebackUi(app, {
+  started: () => played() > 0 || onboarding().firstGoal,
+  momentsOpen: () => featureOpen(onboarding(), 'moments'),
+  gate: (go) => online(go)(),
+});
+menus.comeback = comeback;
+
+/**
  * Today's gift if not yet claimed: the 7-day login calendar (meta/loops.ts CALENDAR: 100 coins on day 1, +50 a day
  * up to day 7, gems on days 3 and 7, a Scout Token on day 5, then round again). It counts the days the gift was
  * claimed, not days in a row: missing a day never costs the player their place (rewarding a return, never punishing
@@ -533,6 +612,8 @@ onGateChange(() => {
 
 function mainMenu(): void {
   atMenu = true;
+  // (CrazyGames' copy of the save was waiting for a match to end: it comes in now, and the hub is drawn with it.)
+  if (settlePortalSave()) return;
   basicsNow = false;
   Trainer.lesson = null;
   if (!demo) startDemo();
@@ -568,12 +649,22 @@ function mainMenu(): void {
   } catch {
     achPaid = [];
   }
+  // COMING BACK (ui/comeback.ts): the welcome week's reward for a gift just claimed, the ticket office banked, and
+  // WELCOME BACK due or not (a later day than the first, the gift unclaimed, once a day: never over a match, the
+  // drills or the first match, which never come through here with the campaign still leading).
+  let welcomeBack = false;
+  try {
+    welcomeBack = comeback.hubOpening();
+  } catch {
+    // (Retention bookkeeping never breaks the menu.)
+  }
   const info = mainInfo();
   const backup = (): void => menus.backup(save, { onImport: reload, back: () => settings() });
-  // (No BACKUP inside the iPhone / iPad app: its export is a browser download, and iOS backs the app up itself.)
+  // (No BACKUP inside the iPhone / iPad app: its export is a browser download, and iOS backs the app up itself. None
+  // on a portal either: CrazyGames keeps the save with the player's account, and no file may leave the game there.)
   // REMOVE ADS, first in Settings where this build sells it (the app): bought, it reads NO ADS: ON.
   const settings = (): void => menus.settings(save, applySettings, mainMenu, 'general', {
-    backup: inNativeApp() ? undefined : backup,
+    backup: PORTAL || inNativeApp() ? undefined : backup,
     removeAds: iap.storefront ? { price: info.noAds?.price ?? '', owned: adFree(save), buy: buyNoAds } : undefined,
     account: cloudAvailable() ? () => openAccount({ save, persist, reload }, settings) : undefined,
     invite: !PORTAL ? () => openAccount({ save, persist, reload }, settings, 'friend') : undefined,
@@ -588,21 +679,28 @@ function mainMenu(): void {
       if (!g) return mainMenu();
       const sameSave = rewardSaveGuard();
       const giftDay = localDay();
+      let giftDoubled = false;
       menus.gift(g.amount, g.streak, ads.rewardedAvailable, {
         claim: async (double) => {
           if (!sameSave()) return false;
-          const doubled = double && (await ads.rewarded());
+          // 2X: only an ad that played through doubles it. One that did not claims NOTHING: the gift is still there
+          // to take as it is, or to try the ad for again (the screen says so).
+          if (double && !(await ads.rewarded())) return false;
           if (!sameSave()) return false;
           const before = save.coins;
-          if (!claimCalendar(save, giftDay, g.streak, doubled)) return false;
+          if (!claimCalendar(save, giftDay, g.streak, double)) return false;
           persist();
+          giftDoubled = double;
           giftReach = inReach(save, before, save.coins);
           return true;
         },
+        // (An ad blocker: the 2X offer shows switched off and says so.)
+        adNote: () => (ads.adBlocked ? 'ADS BLOCKED' : ''),
         back: () => {
           mainMenu();
-          // The gift put something in the SHOP within reach: say so once, over the menu.
-          if (giftReach) menus.toast(`NOW IN REACH IN THE SHOP: ${giftReach.name.toUpperCase()} ${CAT_LABEL[giftReach.cat].toUpperCase()}`);
+          // The ad doubled it: say what it added. Else, the gift put something in the SHOP within reach: say so once.
+          if (giftDoubled) menus.toast(`GIFT DOUBLED: +${(g.amount * 2).toLocaleString('en-US')} COINS`);
+          else if (giftReach) menus.toast(`NOW IN REACH IN THE SHOP: ${giftReach.name.toUpperCase()} ${CAT_LABEL[giftReach.cat].toUpperCase()}`);
           giftReach = null;
         },
       }, CALENDAR);
@@ -645,6 +743,8 @@ function mainMenu(): void {
   if (achPaid.length) menus.toast(payoutText(achPaid));
   // Not connected (the app and the web game): the tiles that need it say CONNECT TO PLAY.
   markHub(document.querySelector('.hub-screen'), gateNow() !== 'open');
+  // WELCOME BACK: the gift sheet opens by itself (the hub's own GIFT button, so it is the one sheet and one CLAIM).
+  comeback.hubOpened(welcomeBack);
 }
 
 /**
@@ -948,6 +1048,34 @@ function recordResult(r: MatchResult): void {
   else rec.lost++;
 }
 
+/**
+ * The portals' "gameplay started" is owed for the match on screen: sent the moment a ball is actually playable, not
+ * while the fly-in plays, a brief is read or the first match waits on its kick-off (the sim does not step through
+ * any of those). A kick-off and a second half owe it; a pause, half time and full time take it back (gameplayStop).
+ */
+let playOwed = false;
+/** The sim's phase and its time in it when the debt was taken, or last looked at: it moves only while the sim steps. */
+let playMark = '';
+const simMark = (s: MatchSession): string => `${s.match.phase}:${s.match.phaseT}`;
+function owePlay(): void {
+  playOwed = true;
+  playMark = session ? simMark(session) : '';
+}
+/** Every frame: pay it once the sim is stepping in a phase the player has the ball to play in. */
+function payPlay(): void {
+  const s = session;
+  if (!playOwed || !s) return;
+  const mark = simMark(s);
+  // (A teaching drill holds the sim until the player's first press, and the phase clock stands still in open play:
+  // the ball is at his feet waiting for him, which is as playable as it gets. Checked in the browser: without this
+  // a first-time visitor's drill never sent "gameplay started" at all.)
+  const stepped = mark !== playMark || s.teachingHeld;
+  playMark = mark;
+  if (!playIsLive(s.match.phase, stepped, s.paused || menus.open)) return;
+  playOwed = false;
+  ads.gameplayStart();
+}
+
 /** Matches and moments finished this visit (an ad break is only ever between two of them). */
 let finishedThisVisit = 0;
 /** Results follow the whole scene chain. A fast rematch never cuts that moment short with an automatic ad. */
@@ -981,6 +1109,8 @@ function clipOf(s: MatchSession): ClipSource | undefined {
     clipSupported?: () => boolean;
     lastPoster?: () => Blob | null;
   };
+  // (No clip to save or share on a portal: both lead out of the game. See menus.clipActions above.)
+  if (import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki' || (import.meta.env.DEV && devPortal())) return undefined;
   if (!api.clipSupported?.()) return undefined;
   return { clip: () => api.lastClip?.() ?? null, poster: () => api.lastPoster?.() ?? null };
 }
@@ -993,13 +1123,22 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     connectPanel(() => void startMatch(req));
     return;
   }
+  // CrazyGames' copy of the save is waiting to come in (its SDK came up during the last match or drill): it does, on
+  // the hub, before anything else kicks off.
+  if (portalSave && !session) {
+    mainMenu();
+    return;
+  }
   atMenu = false;
   menus.close();
   sfx.stopMusic();
   const basics = req.kind === 'basics';
-  // Portal interstitial only at a natural break before a new kick-off: never the first thing this visit, never
-  // in or right after the basics, never before the first real match.
-  if (!recovered && finishedThisVisit > 0 && performance.now() - resultShownAt >= 8000 && !basics && !req.firstMatch && played() > 0) {
+  // An interstitial only at a natural break before a new kick-off: never the first thing this visit, never in or
+  // right after the basics, and not until two whole matches are behind the player (platform/ads.ts breakDue: a
+  // REMATCH straight after the first ever match gets none). Never on a menu, never at half time on a portal.
+  if (breakDue({
+    recovered: !!recovered, basics, firstMatch: !!req.firstMatch, finishedThisVisit, sinceResultMs: performance.now() - resultShownAt, played: played(),
+  })) {
     await ads.midgame(req.scenario ? 'moment' : 'match');
   }
   if (!recovered) clearMatchRecovery();
@@ -1021,6 +1160,10 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
   } catch {
     atmo = null;
   }
+  // TRY TODAY (meta/comeback.ts): today's free look goes on for the first real match of the day. Never the drills, a
+  // moment or the very first match; a match brought back after a reload keeps the looks it was saved with.
+  const tried = !recovered && !basics && !req.scenario && !req.firstMatch && played() > 0 ? comeback.tryFor() : null;
+  trial = tried;
   // A new player's first three matches are played in daylight and clear weather (no snow on a first kick-off).
   const early = played() < 3;
   // The hidden ease (core/dda.ts): the request's own, else the save's streaks decide. Shown nowhere.
@@ -1071,6 +1214,8 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     ...(recovered?.options ?? {}),
     ...(recovered ? { skipIntro: true } : {}),
   });
+  // (TRY TODAY's look was for this session only: the menus and the next match read the player's own again.)
+  trial = null;
   if (recovered) session.restoreCheckpoint(recovered.runtime);
   applyControls(session.match, basics ? CONTROL_DEFAULTS : controlsOf(save.settings));
   // (The session set the ground's crowd; a better atmosphere makes the home crowd sing more often.)
@@ -1120,7 +1265,8 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     save.settings.camZoom = z;
     persist();
   };
-  ads.gameplayStart();
+  // (Not "gameplay started" yet: the fly-in, a brief or the first-match hold may come first. See payPlay.)
+  owePlay();
   // TACTICS & SUBS: BACK returns to the pause (or half-time) screen; RESUME (SECOND HALF) goes straight back to play.
   const tacticsMenu = (back: () => void, resume?: () => void, resumeLabel?: string) =>
     menus.tactics(s.match, humanSide, kits, {
@@ -1141,14 +1287,18 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     menus.close();
     endMatch();
     menuMusic();
-    (req.onQuit ?? mainMenu)();
+    handBack(req.onQuit ?? mainMenu);
   };
   s.onPause = () => {
+    // (Paused before play was live, in the fly-in say: the start is still owed when the match carries on.)
+    const owed = playOwed;
+    playOwed = false;
     ads.gameplayStop();
     const resumeMatch = (): void => {
       menus.close();
       s.resume();
-      ads.gameplayStart();
+      if (owed) owePlay();
+      else ads.gameplayStart();
     };
     const pauseMenu = (): void =>
       menus.pause({
@@ -1175,11 +1325,13 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     pauseMenu();
   };
   s.onHalftime = () => {
+    playOwed = false;
     ads.gameplayStop();
     const secondHalf = (): void => {
       menus.close();
       s.continueSecondHalf();
-      ads.gameplayStart();
+      // (The teams walk back out first: play is live again at the kick-off.)
+      owePlay();
     };
     // The same set as the pause menu: TACTICS & SUBS, CONTROLS, SETTINGS and QUIT (FORFEIT), each back to this screen.
     const ht = (): void => menus.halftime(s.match, kits, secondHalf, () => tacticsMenu(ht, secondHalf, 'SECOND HALF'), {
@@ -1209,6 +1361,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
   let replayAsked = false;
   s.onFinish = (r) => {
     checkpointMatch(true);
+    playOwed = false;
     ads.gameplayStop();
     // A LOST DECIDER (a cup tie, a final, a title or promotion decider: req.decider): one chance to play it again,
     // BEFORE anything is recorded or paid. Gems (a shown price, one tap) or a rewarded ad once a day; NO THANKS takes
@@ -1228,16 +1381,23 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
         const offer = (): void => menus.replayOffer({
           what: req.decider ?? 'DECIDER', score: scoreHtml(mine, theirs), price: GEM_PRICES.replayMatch, have: gems(save),
           canAd: ads.rewardedAvailable && adsLeft(save, 'replay', localDay()) > 0,
+          // (An ad blocker, with today's ad replay still unused: the offer shows switched off and says so.)
+          adNote: ads.adBlocked && adsLeft(save, 'replay', localDay()) > 0 ? 'ADS BLOCKED' : undefined,
         }, {
           gems: () => {
             if (spendGems(save, GEM_PRICES.replayMatch, 'replayMatch')) again();
             else s.onFinish?.(r);
           },
+          // Only an ad that played through earns the replay: one that did not uses nothing up, and the offer stays.
           ad: async () => {
             const ok = (await ads.rewarded()) && useAd(save, 'replay', localDay());
-            if (ok) again();
+            if (ok) {
+              again();
+              menus.toast('REPLAY EARNED. PLAY IT AGAIN');
+            }
             return ok;
           },
+          adNote: () => (ads.adBlocked ? 'ADS BLOCKED' : ''),
           no: () => {
             menus.close();
             s.onFinish?.(r);
@@ -1281,6 +1441,12 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
       const p = save.progress;
       const xpFrom = p.xp;
       p.xp += claimMomentXp(save, req.scenario.id, o.stars);
+      // MATCH OF THE DAY (meta/comeback.ts): today's featured moment, completed, pays its coins and gems once.
+      try {
+        comeback.momentDone(req.scenario.id, o.won);
+      } catch {
+        // (Retention bookkeeping never stops the result screen.)
+      }
       noteGoals(onboarding(), 'moment', Math.max(0, r.score[hs] - (req.scenario.score?.[hs] ?? 0)));
       retention(null, p.xp - xpFrom);
       persist();
@@ -1295,7 +1461,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
         retry: () => leave(() => void startMatch({ ...req, skipIntro: true })),
         next: () => leave(() => {
           menuMusic();
-          req.onDone(r, 0);
+          handBack(() => req.onDone(r, 0));
         }),
         nextLabel: req.nextLabel,
         menu: () => leave(() => mainMenu()),
@@ -1396,6 +1562,13 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
       goals: scored, assists: summary.assists, passes: summary.passes, tackles: tally.tacklesWon, cleanSheet: their === 0,
       skills: tally.skills, saves: r.match.stats.saves?.[hs] ?? 0,
     }, p.xp - xpFrom);
+    // COMING BACK (ui/comeback.ts): the first completed match of the day moves the play streak on and pays its day,
+    // and TRY TODAY's look has had its match (full time shows both, with KEEP IT at the look's price).
+    try {
+      comeback.matchDone(tried);
+    } catch {
+      // (Retention bookkeeping never stops the result screen.)
+    }
     req.onBanked?.(r, earned);
     persist();
     // Full time: the result goes to the cloud now (offline it waits on the device and goes up when the connection is back).
@@ -1424,14 +1597,19 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
           return true;
         } finally { doubling = false; }
       },
+      // (An ad blocker: the bonus offer shows switched off and says so. No offer where there is no bonus to add.)
+      adNote: () => (payout.adBonus > 0 && ads.adBlocked ? 'ADS BLOCKED' : ''),
       next: () => {
+        // (Nothing leaves this screen while its ad is asked for or plays: the buttons are off too, Menus.fulltime.)
+        if (doubling) return;
         menus.close();
         endMatch();
         menuMusic();
-        req.onDone(r, earned);
+        handBack(() => req.onDone(r, earned));
       },
       // One more: the same fixture and settings, straight to the kick-off (the coins above are already banked).
       rematch: req.rematch ? () => {
+        if (doubling) return;
         menus.close();
         endMatch();
         const easy = easyNow ? { difficulty: 0, reward: (x: MatchResult) => standardReward(x, 0) } : {};
@@ -1474,11 +1652,14 @@ function tryResumeMatch(): boolean {
 
 function pauseKey(e: KeyboardEvent): void {
   if (e.repeat || (e.target instanceof HTMLElement && (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)))) return;
+  // (CTRL or CMD held: a browser shortcut, CTRL+P say, is not the pause key.)
+  if (e.ctrlKey || e.metaKey) return;
   if (isKey('pause', e.code) && session && !session.paused && !menus.open) session.requestPause();
 }
 
 function endMatch(): void {
   clearMatchRecovery();
+  playOwed = false;
   window.removeEventListener('keydown', pauseKey);
   session?.dispose();
   session = null;
@@ -1500,6 +1681,40 @@ const autoPause = (): void => {
   // break: do not replace it with a hidden pause that survives the SECOND HALF action.
   if (session && !session.paused && !menus.open && session.match.phase !== 'halftime' && session.match.phase !== 'fulltime') session.requestPause();
 };
+/** A key pressed while an ad is asked for or is up never reaches the game (adShield). */
+const swallowKey = (e: KeyboardEvent): void => e.stopImmediatePropagation();
+
+/**
+ * A portal's ad is being asked for or is on screen (platform/ads.ts onBusy; false when it has gone): the game takes
+ * no input meanwhile. Every screen of its own (menus, HUD, touch controls: all under #ui) goes inert, so nothing
+ * behind the ad can be tapped or tabbed to, and its keys are swallowed; whatever was held is let go. A match that is
+ * running (only an ad the SDK started long after its request was given up on can find one) is paused, and the pause
+ * menu is what the player comes back to.
+ */
+function adShield(busy: boolean): void {
+  const ui = document.getElementById('ui');
+  if (ui) ui.inert = busy;
+  window.removeEventListener('keydown', swallowKey, true);
+  if (!busy) return;
+  window.addEventListener('keydown', swallowKey, true);
+  input.reset();
+  autoPause();
+}
+
+/**
+ * A portal has no title screen, so no TAP TO PLAY to wake the sound on: the first tap, click or key anywhere does
+ * (a browser only lets sound start from one), and the menu music comes up with it if the hub is what is showing.
+ */
+function wakeAudioOnGesture(): void {
+  const types = ['pointerdown', 'touchend', 'mousedown', 'keydown'] as const;
+  const wake = (): void => {
+    for (const t of types) window.removeEventListener(t, wake, true);
+    sfx.unlock();
+    if (atMenu && !session && save.settings.music) sfx.startMusic();
+  };
+  for (const t of types) window.addEventListener(t, wake, { capture: true, passive: true });
+}
+
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { checkpointMatch(true); autoPause(); }
 });
@@ -1585,6 +1800,7 @@ function frame(now: number): void {
   canvasRect = canvas.getBoundingClientRect();
   const shown = session ?? demo;
   shown?.update(dt);
+  payPlay();
   basicsWatch(dt);
   syncControlsUi(session);
   recoveryT += dt;
@@ -1619,6 +1835,8 @@ async function boot(): Promise<void> {
     sfx.setMuted(m);
     setHapticsQuiet(m);
   };
+  // A portal: while an ad is asked for or is up, the game takes no input at all (adShield).
+  if (PORTAL) ads.onBusy = adShield;
   // The store (the apps' native one, or the dev fake): loads in the background, the shop looks when it opens.
   void iap.init();
   // Every screen's text goes through the divider guard (see ui/text.ts): no glyph the fonts lack.
@@ -1627,8 +1845,11 @@ async function boot(): Promise<void> {
   // Never let a slow or blocked portal SDK hold the title screen hostage; the studio splash gets its moment.
   // Both UI fonts are asked for now (the pixel face used to arrive only once the title drew with it, a swap
   // after the splash had gone).
+  // (The SDK may take up to 12 s on a bad line; the game waits 3 s for it and carries on. When it does come up, late,
+  // what hangs on it still happens: the loading and gameplay events (platform/ads.ts) and the save below.)
+  const sdkUp = ads.init();
   const ready = Promise.all([
-    Promise.race([ads.init(), new Promise<void>((r) => setTimeout(r, 3000))]),
+    Promise.race([sdkUp, new Promise<void>((r) => setTimeout(r, 3000))]),
     // Fonts must not strand the player on the loader when a font request hangs.
     Promise.race([
       Promise.all([
@@ -1658,15 +1879,11 @@ async function boot(): Promise<void> {
   performance.measure('bl:demo', { start: t0, end: t1 });
   performance.measure('bl:firstRender', { start: t1, end: t2 });
   await ready;
-  // CrazyGames: the save also lives in its Data Module (the player's account). A newer copy there wins (he played
-  // on another device), swapped in before any menu reads it, and its settings applied.
-  const store = ads.portalStore();
-  const theirs = store ? adoptPortalStore(store, save) : null;
-  if (theirs) {
-    for (const k of Object.keys(save)) delete (save as unknown as Record<string, unknown>)[k];
-    Object.assign(save, theirs);
-    applySettings();
-  }
+  // CrazyGames: the save also lives in its Data Module (the player's account). The SDK is normally up by now, so
+  // the copy to keep is settled before any screen reads the save; a slow one settles it when it arrives (never
+  // mid-match: adoptPortalSave), and from then on every save is mirrored there.
+  adoptPortalSave();
+  void sdkUp.then(adoptPortalSave);
   performance.mark('bl:ready');
   requestAnimationFrame(frame);
   document.getElementById('boot')?.setAttribute('aria-busy', 'false');
@@ -1694,14 +1911,33 @@ async function boot(): Promise<void> {
     });
     return;
   }
-  menus.title(() => {
-    sfx.unlock();
+  const enter = (): void => {
+    gameEntered = true;
     applySettings();
     if (tryResumeMatch()) return;
-    // Portal builds, first visit: TAP TO PLAY is the one click to gameplay (the first basics drill).
+    // A portal's first visit: straight into the first basics drill. Everyone else: the hub.
     if (straightToBasics(onboarding(), played(), PORTAL)) startBasics(0);
     else mainMenu();
-  });
+  };
+  if (PORTAL) {
+    // No title screen on a portal (CrazyGames: a new player is in the game at once, no click needed): a first visit
+    // lands in the first drill, a returning one on the hub, or back in a match left unfinished. With no TAP TO PLAY
+    // to wake the sound on, the first tap, click or key anywhere does it.
+    wakeAudioOnGesture();
+    // (The game sits in the portal's frame: ask for the keyboard, so the first key press is ours where the browser
+    // allows it without a click. Harmless where it does not.)
+    try {
+      window.focus();
+    } catch {
+      // No focus to take: the first click on the game gives it.
+    }
+    enter();
+  } else {
+    menus.title(() => {
+      sfx.unlock();
+      enter();
+    });
+  }
   // Cloud saves (a no-op until a backend is configured): pull the newer copy, then keep pushing changes. Then the
   // silent sign-in (platform/signin.ts: Game Center in the app, else this device's own account), kept up from here on.
   // (The literal check keeps the sign-in code out of the portal builds altogether.)
@@ -1724,10 +1960,18 @@ if (import.meta.env.DEV) {
     input,
     save,
     app,
+    /**
+     * COMING BACK (ui/comeback.ts comebackDev): `dayLater()` moves every stored day back one (a night has passed:
+     * the gift, WELCOME BACK, the streak, TRY TODAY, the MATCH OF THE DAY, the office full), `hoursLater(8)` only the
+     * ticket office, `state()` what the rules see, `measure()` every panel's scroll height against its own.
+     */
+    comeback: comebackDev(app),
     /** Advance the game by n frames even when the pane is hidden (rAF paused). */
     step(n: number, dt = 1 / 60) {
       for (let i = 0; i < n; i++) {
         (session ?? demo)?.update(dt);
+        // (As the frame loop does: the portals' "gameplay started" is paid here, so a hidden pane can check it.)
+        payPlay();
         basicsWatch(dt);
       }
       syncControlsUi(session);

@@ -5,6 +5,7 @@
  */
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
+import { ads } from '../platform/ads';
 import { cupClubs, trophyCount, type CareerState } from '../meta/career';
 import {
   CUP_AFTER, CUP_DIV_SCALE, FINISH_NAMES, ROUND_NAMES, ROUND_PRIZE, ROUND_SHORT, ROUND_TIES, TROPHY_PRIZE, champion, cupFinish, cupPrizeTotal,
@@ -191,4 +192,6 @@ export function cupTrophyScreen(app: AppContext, st: CareerState, onNext: () => 
   sfx.fanfare('trophy');
   sfx.coin();
   buzz('win');
+  // (CrazyGames' own celebration: a trophy lifted is as good as it gets. Once: this screen shows once a cup.)
+  ads.happyTime();
 }

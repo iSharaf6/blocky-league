@@ -209,7 +209,9 @@ export function playEvents(app: AppContext, root: HTMLElement, st: CareerState, 
       }
       return;
     }
-    const n = Number(e.key);
+    // (The physical key, not the character: on a layout whose number row types symbols, 1 2 3 still pick.)
+    const digit = /^(?:Digit|Numpad)([1-3])$/.exec(e.code);
+    const n = digit ? Number(digit[1]) : 0;
     if (n >= 1 && n <= 3) {
       e.preventDefault();
       e.stopPropagation();

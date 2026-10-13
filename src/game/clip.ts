@@ -36,6 +36,8 @@ export function clipMime(audio: boolean): string | null {
 export function clipSupported(): boolean {
   // (Not in the iPhone / iPad app: a WebM can't go to Photos there, and a download goes nowhere.)
   if (inNativeApp()) return false;
+  // (Nor on the portals: the SAVE CLIP and SHARE buttons are not offered there, so nothing is recorded for them.)
+  if (import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') return false;
   if (typeof HTMLCanvasElement === 'undefined' || typeof HTMLCanvasElement.prototype.captureStream !== 'function') return false;
   return clipMime(false) !== null;
 }

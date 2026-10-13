@@ -55,8 +55,14 @@ export const DEFAULT_PAD: Readonly<PadMap> = Object.freeze({ pass: [0], shoot: [
 
 /** Buttons that can't be bound: the d-pad (movement) and the home / guide button. */
 const PAD_RESERVED = new Set([12, 13, 14, 15, 16]);
+/**
+ * The browser's own modifiers, never a game key: with CTRL or CMD held every other key is a browser shortcut (close
+ * the tab, save the page, reload), so binding one makes the game fight the browser (and the portals ask games not
+ * to). A map stored before this rule loses them when it is read (normalizeKeyMap).
+ */
+const KEY_MODIFIERS = new Set(['ControlLeft', 'MetaLeft', 'MetaRight', 'OSLeft', 'OSRight']);
 /** Keys that can't be bound: focus and browser keys. (Escape cancels a rebind; Backspace / Delete clears a slot.) */
-const KEY_RESERVED = new Set(['Tab', 'MetaLeft', 'MetaRight', 'ContextMenu', 'F5', 'F11', 'F12', 'Escape', 'Backspace', 'Delete']);
+const KEY_RESERVED = new Set([...KEY_MODIFIERS, 'Tab', 'ContextMenu', 'F5', 'F11', 'F12', 'Escape', 'Backspace', 'Delete']);
 
 /** Left and right modifier keys count as one (SHIFT is SHIFT whichever side). */
 export function normCode(code: string): string {
@@ -95,7 +101,7 @@ export function normalizeKeyMap(raw: unknown): KeyMap {
     for (const c of list) {
       if (typeof c !== 'string' || !c || out[a].length >= KEY_SLOTS) continue;
       const k = normCode(c);
-      if (used.has(k)) continue;
+      if (used.has(k) || KEY_MODIFIERS.has(k)) continue;
       used.add(k);
       out[a].push(k);
     }
@@ -395,6 +401,8 @@ export class Input {
   constructor() {
     window.addEventListener('keydown', (e) => {
       if (e.repeat || editable(e.target)) return;
+      // CTRL or CMD held: that is a browser shortcut (close the tab, save, print), never a game key, and never ours to block.
+      if (e.ctrlKey || e.metaKey) return;
       const code = normCode(e.code);
       if (gameKey(code)) e.preventDefault();
       this.keys.add(code);

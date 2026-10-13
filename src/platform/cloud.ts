@@ -889,7 +889,7 @@ export async function cloudBoot(ctx: CloudContext): Promise<void> {
     notify();
     const returned = cleanCallbackUrl();
     if (inNativeApp()) {
-      const { bootNativeAuth } = await import('./nativeAuth');
+      const { bootNativeAuth } = await nativeBridge();
       await bootNativeAuth(completeNativeAuthUrl);
     }
     if (!session) return;
@@ -1082,6 +1082,16 @@ export async function forgetAccount(): Promise<void> {
   notify();
 }
 
+/**
+ * The app's sign-in bridge (platform/nativeAuth.ts: Capacitor's App and Browser plugins). Only the app ever asks for
+ * it, and the app is the VITE_PORTAL 'none' build: the literal check lets a portal build drop the bridge, and
+ * Capacitor's chunks with it, altogether.
+ */
+function nativeBridge(): Promise<typeof import('./nativeAuth')> {
+  if (import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'none') return Promise.reject(new Error('no native sign-in in a portal build'));
+  return import('./nativeAuth');
+}
+
 async function panelModule(): Promise<typeof import('../ui/account') | null> {
   if (typeof document === 'undefined') return null;
   // (The literal check lets the bundler drop the account screens, and the sign-in code they use, from a portal build.)
@@ -1132,7 +1142,7 @@ const nativeCodes = new Set<string>();
 
 /** Complete both a warm-app and a cold-launch PKCE return without trusting tokens in a deep link. */
 export async function completeNativeAuthUrl(url: string): Promise<boolean> {
-  const { authCallback, closeNativeOAuth } = await import('./nativeAuth');
+  const { authCallback, closeNativeOAuth } = await nativeBridge();
   const callback = authCallback(url);
   if (!callback) return false;
   if (callback.error) {
@@ -1167,7 +1177,7 @@ export async function completeNativeAuthUrl(url: string): Promise<boolean> {
 async function signInWithNativeApple(c: CloudClient): Promise<boolean> {
   if (!c.auth.signInWithIdToken) return false;
   try {
-    const { nativeAppleCredential } = await import('./nativeAuth');
+    const { nativeAppleCredential } = await nativeBridge();
     const credential = await nativeAppleCredential();
     const { data, error } = await c.auth.signInWithIdToken({ provider: 'apple', token: credential.token, nonce: credential.nonce });
     if (error || !data.session) throw new Error(error?.message ?? 'no session');
@@ -1200,7 +1210,7 @@ export async function signInWith(provider: OAuthProvider): Promise<boolean> {
   }
   const native = inNativeApp();
   if (native && provider === 'apple') return signInWithNativeApple(c);
-  const bridge = native ? await import('./nativeAuth') : null;
+  const bridge = native ? await nativeBridge() : null;
   const { data, error } = await c.auth.signInWithOAuth({ provider, options: {
     redirectTo: bridge?.NATIVE_AUTH_REDIRECT ?? pageUrl(), ...(native ? { skipBrowserRedirect: true } : {}),
   } });
@@ -1264,7 +1274,7 @@ export async function upgradeGuest(provider: OAuthProvider): Promise<boolean> {
   const native = inNativeApp();
   // Native Apple signs into its durable Apple account; the same save comparison protects either existing club.
   if (native && provider === 'apple') return signInWithNativeApple(c);
-  const bridge = native ? await import('./nativeAuth') : null;
+  const bridge = native ? await nativeBridge() : null;
   const { data, error } = await c.auth.linkIdentity({ provider, options: {
     redirectTo: bridge?.NATIVE_AUTH_REDIRECT ?? pageUrl(), ...(native ? { skipBrowserRedirect: true } : {}),
   } });

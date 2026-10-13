@@ -7,11 +7,12 @@ import {
   CELEBRATION_NAMES, celebrationUnlocked, type CelebrationId, exportSave, importSave, unlockLadder, xpAt } from '../core/save';
 import { APP_VERSION, CONTACT_EMAIL, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
-import { pixelIcon } from './pixelIcons';
+import { NO_AD_TEXT, adIcon, pixelIcon } from './pixelIcons';
 import { gemArt } from './gemUi';
 import './menus.css';
 import './rewards.css';
 import { buzz, hapticsAvailable, type HapticLevel } from '../platform/haptics';
+import { devPortal } from '../platform/native';
 import { coachText } from './coach';
 import { clubRating as presetRating } from '../meta/cup';
 import { PRESET_CLUBS, makeTeam, type ClubSeed } from '../meta/data';
@@ -33,6 +34,8 @@ import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef, ty
 import { suggestSubs, type SubPlan } from '../meta/squad';
 import { bindDragSwap } from './dragSwap';
 import { developerAboutHtml } from './developerAbout';
+// (Type only: ui/comeback.ts draws the come-back cards and main.ts hands it over, so nothing of it loads with this file.)
+import type { ComebackUi } from './comeback';
 
 export { pixelIcon };
 
@@ -349,9 +352,12 @@ function howtoBody(tab: HtTab, dev: HtDev): string {
         htRow('', 'NONE', 'Stepover (standing: ball roll)'),
       ], 'two')}
       ${list([
-        htRow(stick, 'CUT', 'Turn sharply while dribbling to beat a man'),
-        htRow(cap('shoot', 'shoot'), 'CURL', 'A soft diagonal shot curls'),
-      ])}`;
+        htRow('', 'KNUCKLEBALL', 'Full bar from range, stick still'),
+        htRow('', 'CURLER', 'Stick sideways as you shoot'),
+        htRow('', 'AFTERTOUCH', 'Move the stick after the shot'),
+        htRow('', 'FINESSE', 'A soft diagonal shot curls'),
+      ], 'two')}
+      ${list([htRow(stick, 'CUT', 'Turn sharply while dribbling to beat a man')])}`;
   }
   if (tab === 'crosses') {
     return `<div class="ht-cols">
@@ -453,6 +459,11 @@ export class Menus {
   stick: 'floating' | 'fixed' = 'floating';
   /** Save and share a goal clip (main.ts wires ui/clips.ts; hidden when absent). */
   clipActions: { save: (c: { blob: Blob; name: string }) => void; share: (c: { blob: Blob; name: string }) => Promise<'shared' | 'saved' | 'cancelled'> } | null = null;
+  /**
+   * COMING BACK (main.ts wires ui/comeback.ts; nothing is drawn when absent): the hub's strip of cards, the gift
+   * sheet's welcome parts, full time's TOMORROW strip and the moment result's MATCH OF THE DAY line.
+   */
+  comeback: ComebackUi | null = null;
 
   constructor() {
     this.root = document.getElementById('ui')!;
@@ -502,6 +513,12 @@ export class Menus {
   }
 
   title(onStart: () => void): void {
+    // (A portal build has no title screen: a player there is in the game at once. main.ts never asks for one, and
+    // the literal check drops the screen from that build.)
+    if (import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') {
+      onStart();
+      return;
+    }
     const d = this.mount(`
       <div class="title-wrap">
         <h1 class="logo lockup">${logoSvg('stacked', 320, {}, 'bl-logo lock-s', { markWidth: 0.5, markOutline: 0.25 })}${logoSvg('horizontal', 120, {}, 'bl-logo lock-h', { markOutline: 0.25 })}</h1>
@@ -726,9 +743,13 @@ export class Menus {
         </button>`
       : '';
 
+    // COMING BACK (ui/comeback.ts): today's gift or TOMORROW, the streak, TRY TODAY, CLUB INCOME, the MATCH OF THE
+    // DAY, as one strip under the top bar. Never while the first session's campaign leads the hub.
+    const cb = campaign ? '' : this.comeback?.hubHtml() ?? '';
     const d = this.mount(`
-      <div class="hub ${campaign ? 'campaign' : ''} ${cap ? 'with-cap' : ''}">
+      <div class="hub ${campaign ? 'campaign' : ''} ${cap ? 'with-cap' : ''} ${cb ? 'has-cb' : ''}">
         ${top}
+        ${cb}
         ${captain}
         <div class="hub-body">
           <div class="hub-main">${hero}${goal}</div>
@@ -743,6 +764,7 @@ export class Menus {
       else cv.remove();
     }
     this.wireLocked(d, h.locked);
+    if (cb) this.comeback?.wire(d);
     const on = (a: string, fn?: () => void) => d.querySelector(`[data-a=${a}]`)?.addEventListener('click', () => fn?.());
     on('playnow', h.playNow);
     on('career', h.career);
@@ -1512,12 +1534,18 @@ export class Menus {
 
   fulltime(
     m: Match, kits: [Kit, Kit], humanSide: number, reward: { coins: number; label: string; adBonus?: number }, canDouble: boolean,
-    h: { double: () => Promise<boolean>; next: () => void; nextLabel?: string; rematch?: () => void },
+    h: {
+      double: () => Promise<boolean>; next: () => void; nextLabel?: string; rematch?: () => void;
+      /** Why no rewarded ad can be offered right now ('' = one can, or there is nothing to say): ADS BLOCKED. */
+      adNote?: () => string;
+    },
     ratings?: { idx: number; name: string; side: number; rating: number; goals: number; assists: number }[],
     prog?: FtProgress,
     extra: FtExtras = {},
   ): void {
     if (extra.noAds) canDouble = false;
+    // No ad can be offered and there is a reason to give (an ad blocker): the offer shows switched off, saying so.
+    const adOff = !canDouble && !extra.noAds ? h.adNote?.() ?? '' : '';
     const motm = ratings?.[0];
     const mine = ratings?.filter((r) => r.side === humanSide).slice(0, 3) ?? [];
     // Head shots: the player as he looked on the pitch, in the kit his side wore.
@@ -1557,6 +1585,8 @@ export class Menus {
         </div>`
       : '';
     const extras = [
+      // COMING BACK (ui/comeback.ts): what today's streak day paid, and the look that was tried with KEEP IT at its price.
+      this.comeback?.ftLines() ?? '',
       extra.showtime ? this.showtimeRow(extra.showtime) : '',
       prog && prog.streak >= 1 && prog.mult > 1 ? `<div class="ft-streak">${pixelIcon('fire', '#ff9a3a', 2, 'inl')}${prog.streak} WIN STREAK <b>×${prog.mult.toFixed(1)}</b></div>` : '',
       extra.tryEasy ? '<p class="ft-easy">Tough run? <button class="btn btn-white ft-easy-btn" data-a="easy">TRY EASY</button></p>' : '',
@@ -1580,9 +1610,12 @@ export class Menus {
             <div class="pane ft-gain">
               <div class="ft-earn">
                 <div class="reward"><i></i><span class="rw-n">+0</span><em>${reward.label}</em></div>
-                ${canDouble ? `<button class="btn btn-yellow ft-dbl" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}+${reward.adBonus ?? reward.coins} COINS</button>` : ''}
+                ${canDouble
+                  ? `<button class="btn btn-yellow ft-dbl" data-a="double" aria-label="Watch an ad for ${reward.adBonus ?? reward.coins} more coins">${adIcon()}AD +${reward.adBonus ?? reward.coins} COINS</button>`
+                  : adOff ? `<button class="btn btn-yellow ft-dbl" disabled>${adIcon()}${escHtml(adOff)}</button>` : ''}
               </div>
               ${progHtml}
+              ${this.comeback?.ftTomorrow() ?? ''}
               ${extras ? `<div class="pane-scroll ft-extra">${extras}</div>` : ''}
             </div>
           </div>
@@ -1611,16 +1644,30 @@ export class Menus {
     if (prog) this.playProgress(d, prog);
     const dbl = d.querySelector<HTMLButtonElement>('[data-a=double]');
     const nextBtn = $<HTMLButtonElement>(d, '[data-a=next]');
+    const rematchBtn = d.querySelector<HTMLButtonElement>('[data-a=rematch]');
+    let adBusy = false;
     dbl?.addEventListener('click', async () => {
-      dbl.disabled = true;
-      nextBtn.disabled = true;
-      const ok = await h.double().finally(() => (nextBtn.disabled = false));
+      // (One request a tap: a second tap while the ad is asked for or plays does nothing.)
+      if (adBusy || dbl.disabled) return;
+      adBusy = true;
+      // Nothing on this screen moves on while the ad is asked for and plays: REMATCH and CONTINUE wait with it.
+      const held = [dbl, nextBtn, rematchBtn].filter((b): b is HTMLButtonElement => !!b);
+      held.forEach((b) => (b.disabled = true));
+      const ok = await h.double().catch(() => false);
+      adBusy = false;
+      nextBtn.disabled = false;
+      if (rematchBtn) rematchBtn.disabled = false;
       if (ok) {
         count(reward.coins + (reward.adBonus ?? reward.coins));
         dbl.textContent = 'BONUS ADDED!';
-      } else {
-        dbl.textContent = 'AD UNAVAILABLE';
+        return;
       }
+      // The ad did not play: nothing was added, said plainly. The offer stays if another ad may come; with a
+      // blocker on it switches off and says so.
+      this.toast(NO_AD_TEXT);
+      const off = h.adNote?.() ?? '';
+      if (off) dbl.innerHTML = `${adIcon()}${escHtml(off)}`;
+      else dbl.disabled = false;
     });
     $(d, '[data-a=next]').addEventListener('click', h.next);
     if (h.rematch) d.querySelector('[data-a=rematch]')?.addEventListener('click', h.rematch);
@@ -1631,6 +1678,7 @@ export class Menus {
       easy.textContent = 'EASY IS SET';
     });
     this.wireClip(d, extra.clip);
+    this.comeback?.wire(d);
   }
 
   /** Full time's SHOWTIME line: the grade letter, the points, the coins it added, NEW BEST or the best to beat. */
@@ -1648,6 +1696,9 @@ export class Menus {
    * record or there is no clip yet. `big` = the full-time layout (a labelled row).
    */
   private clipRow(src?: ClipSource, big = false): string {
+    // (Never on a portal: a download and the share sheet both lead out of the game. main.ts sets no clipActions
+    // there; the literal check drops the row from that build.)
+    if (import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') return '';
     const c = src?.clip();
     if (!c || !this.clipActions) return '';
     return `<div class="clip-row ${big ? 'big' : ''}">
@@ -1658,6 +1709,7 @@ export class Menus {
   }
 
   private wireClip(d: HTMLElement, src?: ClipSource): void {
+    if (import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') return;
     const act = this.clipActions;
     if (!src || !act) return;
     const saveBtn = d.querySelector<HTMLButtonElement>('[data-a=clip-save]');
@@ -1870,6 +1922,7 @@ export class Menus {
                 ${nu ? `<div class="ft-next">NEXT UNLOCK: <b>${nu.name.toUpperCase()}</b>${sep()}LV ${nu.level}${sep()}${nu.xpLeft} XP</div>` : ''}
               </div>
             </div>
+            ${this.comeback?.momentHtml() ?? ''}
           </div>
           <div class="mc-actions">
             <button class="btn btn-yellow" data-a="retry">⟳ RETRY</button>
@@ -1975,8 +2028,10 @@ export class Menus {
               ${opts.account ? '<button data-a="account" aria-label="Account and cloud saves"><span>SAVE PROGRESS</span><b class="link">GOOGLE / APPLE</b></button>' : ''}
               ${opts.invite ? '<button data-a="invite" aria-label="Invite friends"><span>INVITE FRIENDS</span><b class="link">SHARE THE GAME</b></button>' : ''}
               ${opts.about ? '<button data-a="about" aria-label="About the developer"><span>THE DEVELOPER</span><b class="link">MEET ISLAM</b></button>' : ''}
-              ${opts.backup ? '<button data-a="backup" aria-label="Backup: export or import your save"><span>BACKUP</span><b class="link">EXPORT / IMPORT</b></button>' : ''}
-              <button data-a="feedback" aria-label="Send feedback by email"><span>FEEDBACK</span><b class="link">EMAIL US</b></button>
+              ${!(import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') && opts.backup
+                ? '<button data-a="backup" aria-label="Backup: export or import your save"><span>BACKUP</span><b class="link">EXPORT / IMPORT</b></button>' : ''}
+              ${import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki' || (import.meta.env.DEV && devPortal())
+                ? '' : '<button data-a="feedback" aria-label="Send feedback by email"><span>FEEDBACK</span><b class="link">EMAIL US</b></button>'}
             </div>
           </div>
           <p class="set-hint mc-hint1" role="status" aria-live="polite"></p>
@@ -2294,11 +2349,14 @@ export class Menus {
       }),
     );
     draw();
-    // FEEDBACK: an email to the studio (the app hands mailto: to Mail), with the version for context.
-    d.querySelector('[data-a=feedback]')?.addEventListener('click', () => {
-      const subject = encodeURIComponent(`Blocky League feedback (v${APP_VERSION})`);
-      location.href = `mailto:${CONTACT_EMAIL}?subject=${subject}`;
-    });
+    // FEEDBACK: an email to the studio (the app hands mailto: to Mail), with the version for context. Not on a portal:
+    // no link may lead out of the game there, so its build has neither the row nor this code (a literal check).
+    if (!(import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki')) {
+      d.querySelector('[data-a=feedback]')?.addEventListener('click', () => {
+        const subject = encodeURIComponent(`Blocky League feedback (v${APP_VERSION})`);
+        location.href = `mailto:${CONTACT_EMAIL}?subject=${subject}`;
+      });
+    }
     d.querySelector('[data-a=backup]')?.addEventListener('click', () => {
       stopListening();
       opts.backup?.();
@@ -2339,10 +2397,16 @@ export class Menus {
    * Settings > BACKUP: the save as a file, so progress survives a cleared browser and can move between
    * devices. EXPORT downloads blocky-league-save.json; IMPORT reads one back, checks it really is a Blocky
    * League save (importSave), shows what it holds beside the current one and, on REPLACE, hands it to
-   * `h.onImport` (main.ts swaps the running save, stores it and redraws the menu). Local only: it works the
-   * same on the portal builds.
+   * `h.onImport` (main.ts swaps the running save, stores it and redraws the menu). Local only. The web and itch
+   * builds: the app backs itself up, and a portal keeps the save itself and allows no download out of the game.
    */
   backup(save: SaveData, h: { onImport: (d: SaveData) => void; back: () => void }): void {
+    // Not on a portal: its save is kept by the portal itself (CrazyGames' Data Module, core/save.ts), and a file
+    // download is a link out of the game. main.ts offers no BACKUP row there; the literal check drops the screen too.
+    if (import.meta.env.VITE_PORTAL === 'crazygames' || import.meta.env.VITE_PORTAL === 'poki') {
+      h.back();
+      return;
+    }
     const line = (d: SaveData) => {
       const lv = levelOf(d.progress.xp);
       const when = d.updatedAt ? new Date(d.updatedAt) : null;
@@ -2523,36 +2587,70 @@ export class Menus {
    * Ticket on some. It counts the days claimed, never days in a row: MISS A DAY, KEEP YOUR PLACE.
    */
   gift(
-    amount: number, streak: number, canDouble: boolean, h: { claim: (double: boolean) => Promise<boolean>; back: () => void },
+    amount: number, streak: number, canDouble: boolean,
+    /**
+     * `claim(true)` asks for the rewarded ad first and resolves false, with NOTHING claimed, when it did not play.
+     * `adNote`: why no ad can be offered right now ('' = one can, or there is nothing to say): ADS BLOCKED.
+     */
+    h: { claim: (double: boolean) => Promise<boolean>; back: () => void; adNote?: () => string },
     cal?: readonly { coins: number; gems: number; tokens: number }[],
   ): void {
     const dayOf = (i: number) => cal?.[i] ?? { coins: 100 + 50 * i, gems: 0, tokens: 0 };
     const extra = (d: { gems: number; tokens: number }) => `${d.gems ? `<em class="gd-gem">${gemArt(1.6)}${d.gems}</em>` : ''}${d.tokens ? '<em class="gd-tok">+1 SCOUT TICKET</em>' : ''}`;
+    const cb = this.comeback?.gift(streak);
     const days = Array.from({ length: 7 }, (_, i) => {
       const d = dayOf(i);
       const state = i < streak - 1 ? 'got' : i === streak - 1 ? 'today' : '';
-      return `<li class="${state}"><span>DAY ${i + 1}</span><b>${d.coins}</b>${extra(d)}</li>`;
+      return `<li class="${state}"><span>DAY ${i + 1}</span><b>${d.coins}</b>${cb?.day(i) ?? extra(d)}</li>`;
     }).join('');
     const today = dayOf(streak - 1);
     const next = dayOf(streak % 7);
+    // With ui/comeback.ts wired: WELCOME BACK and the day, the welcome week's look beside the coins, then the play
+    // streak, today's free try and what the club earned as one row of chips. Still one CLAIM.
+    const todayExtra = cb ? cb.reward : `${today.gems ? `<span class="rw-gem">${gemArt(3)}+${today.gems}</span>` : ''}${today.tokens ? '<span class="rw-tok">+1 SCOUT TICKET</span>' : ''}`;
+    const note = cb ? cb.note : `TOMORROW +${next.coins}${next.gems ? ` AND ${next.gems} GEMS` : ''}${next.tokens ? ' AND A SCOUT TICKET' : ''}${sep()}MISS A DAY, KEEP YOUR PLACE`;
     const d = this.mount(`
       <div class="panel-wrap dim">
-        <div class="panel narrow gift-panel">
-          <h2>DAILY GIFT</h2>
+        <div class="panel narrow gift-panel ${cb ? 'cb-gift' : ''}">
+          <h2>${cb?.title ?? 'DAILY GIFT'}</h2>
           <ul class="gift-days">${days}</ul>
-          <div class="reward"><i></i><span>+${amount}</span>${today.gems ? `<span class="rw-gem">${gemArt(3)}+${today.gems}</span>` : ''}${today.tokens ? '<span class="rw-tok">+1 SCOUT TICKET</span>' : ''}<em>DAY ${streak} OF 7</em></div>
-          <p class="gift-note">TOMORROW +${next.coins}${next.gems ? ` AND ${next.gems} GEMS` : ''}${next.tokens ? ' AND A SCOUT TICKET' : ''}${sep()}MISS A DAY, KEEP YOUR PLACE</p>
+          <div class="reward"><i></i><span>+${amount}</span>${todayExtra}<em>DAY ${streak} OF 7</em></div>
+          ${cb?.rows ?? ''}
+          <p class="gift-note">${note}</p>
           <div class="btn-row">
-            ${canDouble ? `<button class="btn btn-white" data-a="double">${pixelIcon('film', '#26262e', 2, 'inl')}2× COINS</button>` : ''}
+            ${canDouble
+              ? `<button class="btn btn-white" data-a="double" aria-label="Watch an ad to double today's coins">${adIcon()}AD 2× COINS</button>`
+              : h.adNote?.() ? `<button class="btn btn-white" disabled>${adIcon()}${escHtml(h.adNote())}</button>` : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>
           </div>
         </div>
       </div>`, 'gift-screen');
+    let busy = false;
+    const buttons = () => d.querySelectorAll<HTMLButtonElement>('button');
     const go = async (double: boolean) => {
-      d.querySelectorAll('button').forEach((b) => ((b as HTMLButtonElement).disabled = true));
-      await h.claim(double);
-      sfx.coin();
-      buzz('success');
+      // (One claim, and one ad request, a tap.)
+      if (busy) return;
+      busy = true;
+      buttons().forEach((b) => (b.disabled = true));
+      const ok = await h.claim(double).catch(() => false);
+      if (double && !ok) {
+        // The ad did not play: nothing was claimed, so today's gift is still here to take (CLAIM) or to try the ad
+        // for again. With a blocker on the offer switches off and says so.
+        busy = false;
+        buttons().forEach((b) => (b.disabled = false));
+        const dbl = d.querySelector<HTMLButtonElement>('[data-a=double]');
+        const off = h.adNote?.() ?? '';
+        if (dbl && off) {
+          dbl.disabled = true;
+          dbl.innerHTML = `${adIcon()}${escHtml(off)}`;
+        }
+        this.toast(NO_AD_TEXT);
+        return;
+      }
+      if (ok) {
+        sfx.coin();
+        buzz('success');
+      }
       h.back();
     };
     $(d, '[data-a=claim]').addEventListener('click', () => void go(false));
@@ -2565,8 +2663,9 @@ export class Menus {
    * ads; NO THANKS takes the result. Short of gems it says so (and GET GEMS goes to the store, in the app).
    */
   replayOffer(
-    o: { what: string; score: string; price: number; have: number; canAd: boolean },
-    h: { gems: () => void; ad?: () => Promise<boolean>; no: () => void; getGems?: () => void },
+    /** `adNote`: an ad would be offered here but none can be shown, and why (ADS BLOCKED): the offer shows switched off. */
+    o: { what: string; score: string; price: number; have: number; canAd: boolean; adNote?: string },
+    h: { gems: () => void; ad?: () => Promise<boolean>; no: () => void; getGems?: () => void; adNote?: () => string },
   ): void {
     const short = Math.max(0, o.price - o.have);
     const main = short > 0
@@ -2581,7 +2680,9 @@ export class Menus {
           <p class="gift-note">ONE REPLAY A MATCH${sep()}THE FIRST RESULT IS WIPED${short > 0 ? `${sep()}${short} MORE ${short === 1 ? 'GEM' : 'GEMS'} NEEDED` : ''}</p>
           <div class="btn-row">
             <button class="btn btn-white" data-a="no">NO THANKS</button>
-            ${o.canAd && h.ad ? `<button class="btn btn-yellow" data-a="ad">${pixelIcon('film', '#26262e', 2, 'inl')}WATCH AN AD</button>` : ''}
+            ${o.canAd && h.ad
+              ? `<button class="btn btn-yellow" data-a="ad" aria-label="Watch an ad to replay this match">${adIcon()}WATCH AN AD</button>`
+              : o.adNote ? `<button class="btn btn-yellow" disabled>${adIcon()}${escHtml(o.adNote)}</button>` : ''}
             ${main}
           </div>
         </div>
@@ -2604,12 +2705,18 @@ export class Menus {
       if (busy || !h.ad) return;
       busy = true;
       all().forEach((b) => (b.disabled = true));
-      void h.ad().then((ok) => {
-        // (The ad did not finish: the offer stays, nothing was used.)
+      void h.ad().catch(() => false).then((ok) => {
+        // (The ad did not play: the offer stays, nothing was used. With a blocker on its ad button switches off.)
         if (ok) return;
         busy = false;
         all().forEach((b) => (b.disabled = false));
-        this.toast('THE AD DID NOT FINISH. THE OFFER STAYS');
+        const adBtn = d.querySelector<HTMLButtonElement>('[data-a=ad]');
+        const off = h.adNote?.() ?? '';
+        if (adBtn && off) {
+          adBtn.disabled = true;
+          adBtn.innerHTML = `${adIcon()}${escHtml(off)}`;
+        }
+        this.toast(NO_AD_TEXT);
       });
     });
     this.listenKey((e) => {
