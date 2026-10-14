@@ -74,6 +74,17 @@ export function halfBreakDue(o: { recovered: boolean; basics: boolean; firstMatc
  * half time OR before the next kick-off, never both in one short match, and both in a long one.
  */
 export const PORTAL_HALF_GAP_MS = 170_000;
+/**
+ * A portal's interstitial before a kick-off waits this long (ms) after the last ad that actually played, a rewarded
+ * one included: a replay earned by an ad restarts the match, and the full-time bonus ad is followed by REMATCH, so
+ * without it an ad the player chose would be answered with one he did not, back to back. (A Football Moment's try
+ * waits APP_AD_MOMENT_GAP_MS, as in the app: retried tries are never ad after ad.)
+ */
+export const PORTAL_AD_GAP_MS = 60_000;
+/** How long a CrazyGames request may go unanswered before the game carries on without it (ms; Ads.crazyAd). */
+export const PORTAL_NO_ANSWER_MS = { midgame: 6_000, rewarded: 15_000 } as const;
+/** A CrazyGames SDK that was not up in time is tried again this long after (ms; Ads.crazyRetry). */
+export const PORTAL_RETRY_MS = 20_000;
 
 /**
  * Is a ball actually playable? The portals' "gameplay started" goes out only then (main.ts payPlay): the sim has
@@ -98,10 +109,23 @@ export interface PortalStore {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
+interface CrazyUser {
+  username?: string;
+  profilePictureUrl?: string;
+}
 interface CrazySDK {
   init(): Promise<void>;
   environment: 'local' | 'crazygames' | 'disabled';
   data?: PortalStore;
+  /** The User module (all of it optional: an SDK without it behaves as one that cannot say who is playing). */
+  user?: {
+    /** The signed-in player, or null for a guest. */
+    getUser?(): Promise<CrazyUser | null>;
+    /** A JWT whose payload carries the account's `userId`. */
+    getUserToken?(): Promise<string>;
+    /** Fires when a guest signs in (a sign-out reloads the page instead). */
+    addAuthListener?(fn: (user: CrazyUser | null) => void): void;
+  };
   ad: {
     requestAd(type: 'midgame' | 'rewarded', cb: { adStarted?: () => void; adFinished?: () => void; adError?: (e: CrazyAdError) => void }): void;
     hasAdblock(): Promise<boolean>;
@@ -156,6 +180,24 @@ function settled(p: Promise<unknown>, ms: number): Promise<boolean> {
   return withTimeout(p.then(() => true, () => false), ms, false);
 }
 
+/**
+ * The `userId` in a CrazyGames user token (a JWT: its second part is base64url JSON), '' when it cannot be read. Read
+ * only to tell one account's save from another's in this browser (core/save.ts): nothing is trusted on it, and the
+ * token itself is neither kept nor sent anywhere.
+ */
+export function tokenUserId(token: unknown): string {
+  try {
+    if (typeof token !== 'string') return '';
+    const part = token.split('.')[1];
+    if (!part) return '';
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const id = (JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4))) as { userId?: unknown }).userId;
+    return typeof id === 'string' || typeof id === 'number' ? String(id) : '';
+  } catch {
+    return '';
+  }
+}
+
 /** A portal SDK hiccup must never break the game. */
 function safe(fn: () => void): void {
   try {
@@ -194,6 +236,16 @@ export class Ads {
    */
   onBusy: (busy: boolean) => void = () => {};
   /**
+   * true = an interstitial was asked for and nothing has come up yet: the game is held with nothing on screen to say
+   * why (before a kick-off the menus are closed, at half time no screen is up yet), so main.ts puts ONE MOMENT there
+   * if it lasts (ui/adHold.ts). false once the ad starts or the request is over. Always inside an onBusy(true) ..
+   * onBusy(false) pair. Never for a rewarded ad: the player asked for that one.
+   */
+  onWait: (waiting: boolean) => void = () => {};
+  /** The request in flight is an interstitial (onWait). */
+  private interstitial = false;
+  private waiting = false;
+  /**
    * true = the player owns NO ADS (platform/iap.ts adFree): no interstitial is ever requested. Rewarded ads are
    * opt-in rewards, not interruptions, so they stay available. main.ts points it at the live save.
    */
@@ -226,9 +278,41 @@ export class Ads {
    * any device), else null. The save mirrors itself there (core/save.ts adoptPortalStore).
    */
   portalStore(): PortalStore | null {
-    if (this.portal !== 'crazygames') return null;
+    // (Not before the SDK has been asked who is playing: the save is settled per account, so the store waits for that.)
+    if (this.portal !== 'crazygames' || !this.userAsked) return null;
     const d = window.CrazyGames?.SDK?.data;
     return d && typeof d.getItem === 'function' && typeof d.setItem === 'function' ? d : null;
+  }
+
+  /** Who is playing on CrazyGames: '' a guest, else the account's id; null when it cannot say (or elsewhere). */
+  private uid: string | null = null;
+  private userAsked = false;
+  /** A guest signed in mid-visit (CrazyGames): `uid` is the account now playing. main.ts settles the save again. */
+  onAuth: (uid: string) => void = () => {};
+
+  /** Who is playing, as last heard from CrazyGames (see `uid`). Known once init() has finished. */
+  portalUser(): string | null {
+    return this.uid;
+  }
+
+  /**
+   * Ask CrazyGames who is playing. Never throws and never hangs: an SDK without a User module, one that throws, and
+   * one that gives no answer in time are all "cannot say" (null), and the game behaves as it did before accounts
+   * were told apart. The account's id comes from its token; the username stands in only on an SDK that has no tokens
+   * at all (a token that merely failed this once must not make the same player look like someone else).
+   */
+  private async askUser(sdk: CrazySDK): Promise<string | null> {
+    try {
+      const u = sdk.user;
+      if (!u || typeof u.getUser !== 'function') return null;
+      const who = await withTimeout(Promise.resolve(u.getUser()), 1500, undefined);
+      if (who === undefined) return null;
+      if (!who) return '';
+      if (typeof u.getUserToken !== 'function') return typeof who.username === 'string' && who.username ? `name:${who.username}` : null;
+      return tokenUserId(await withTimeout(Promise.resolve(u.getUserToken()), 1500, '')) || null;
+    } catch {
+      return null;
+    }
   }
 
   init(): Promise<void> {
@@ -242,29 +326,8 @@ export class Ads {
       if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && inNativeApp()) {
         await this.initApp();
       } else if (import.meta.env.VITE_PORTAL === 'crazygames' || (!import.meta.env.VITE_PORTAL && q === 'crazygames')) {
-        await withTimeout(loadScript('https://sdk.crazygames.com/crazygames-sdk-v3.js'), 6000, undefined);
-        const sdk = window.CrazyGames?.SDK;
-        // Off CrazyGames' domains (and not localhost) the SDK is 'disabled' and every call throws.
-        if (sdk && (await settled(sdk.init(), 6000)) && sdk.environment !== 'disabled') {
-          this.portal = 'crazygames';
-          this.ok = true;
-          safe(() => sdk.game.loadingStart());
-          safe(() => {
-            this.settingsMuted = !!sdk.game.settings.muteAudio;
-            sdk.game.addSettingsChangeListener((s) => {
-              this.settingsMuted = !!s.muteAudio;
-              this.syncMute();
-            });
-          });
-          this.syncMute();
-          // An ad blocker: known from the start, so a rewarded offer says ADS BLOCKED instead of failing on a tap.
-          // (Not waited for: the answer can be slow, and it must never hold the game's start.)
-          safe(() => void sdk.ad.hasAdblock().then((on) => {
-            if (on !== true || this.blocked) return;
-            this.blocked = true;
-            for (const fn of this.readyFns) safe(fn);
-          }, () => {}));
-        }
+        // Not up in time (a slow network, a slow init): the game starts without it, and it is tried again behind it.
+        if (!(await this.crazyUp())) this.crazyRetry();
       } else if (import.meta.env.VITE_PORTAL === 'poki' || (!import.meta.env.VITE_PORTAL && q === 'poki')) {
         await withTimeout(loadScript('https://game-cdn.poki.com/scripts/v2/poki-sdk.js'), 6000, undefined);
         // init() rejects (or, with some adblockers, never settles): play on without ads either way.
@@ -279,6 +342,94 @@ export class Ads {
     }
     if (this.loaded) this.sendLoaded();
     this.syncGameplay();
+  }
+
+  /** The SDK script's tag (one at a time: only a tag that FAILED is ever added again), and its init(), called once. */
+  private crazyTag: Promise<void> | null = null;
+  private crazyStart: Promise<void> | null = null;
+  private crazyTries = 0;
+  /** The SDK answered and said no (off CrazyGames' domains, or init() refused): it is not tried again. */
+  private crazyOff = false;
+  /**
+   * The SDK came up late, on a background retry (crazyRetry), after init() had already resolved without it: main.ts
+   * settles the save with its store now, as it does when init() itself was merely slow.
+   */
+  onLate: () => void = () => {};
+
+  /**
+   * Bring CrazyGames' SDK up: its script and its init(), each waited for 6 s at most, then everything that hangs on
+   * it. False when it is not up (yet). Safe to call again: a script still loading or an init() still running is
+   * waited for again, never started twice.
+   */
+  private async crazyUp(): Promise<boolean> {
+    // (The literal check: every other build drops this method's body, and CrazyGames' address with it. The release
+    // script refuses a Poki or itch package that names another portal's host.)
+    if (import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'crazygames') return false;
+    this.crazyTries++;
+    if (!this.crazyTag) {
+      const tag = loadScript('https://sdk.crazygames.com/crazygames-sdk-v3.js');
+      this.crazyTag = tag;
+      tag.catch(() => {
+        if (this.crazyTag === tag) this.crazyTag = null;
+      });
+    }
+    await settled(this.crazyTag, 6000);
+    const sdk = window.CrazyGames?.SDK;
+    if (!sdk) return false;
+    this.crazyStart ??= Promise.resolve().then(() => sdk.init());
+    const started = await withTimeout(this.crazyStart.then(() => 'up' as const, () => 'refused' as const), 6000, 'slow' as const);
+    // Off CrazyGames' domains (and not localhost) the SDK is 'disabled' and every call throws.
+    if (started === 'refused' || (started === 'up' && sdk.environment === 'disabled')) this.crazyOff = true;
+    if (started !== 'up' || this.crazyOff) return false;
+    this.portal = 'crazygames';
+    this.ok = true;
+    safe(() => sdk.game.loadingStart());
+    safe(() => {
+      this.settingsMuted = !!sdk.game.settings.muteAudio;
+      sdk.game.addSettingsChangeListener((s) => {
+        this.settingsMuted = !!s.muteAudio;
+        this.syncMute();
+      });
+    });
+    this.syncMute();
+    // An ad blocker: known from the start, so a rewarded offer says ADS BLOCKED instead of failing on a tap.
+    // (Not waited for: the answer can be slow, and it must never hold the game's start.)
+    safe(() => void sdk.ad.hasAdblock().then((on) => {
+      if (on !== true || this.blocked) return;
+      this.blocked = true;
+      for (const fn of this.readyFns) safe(fn);
+    }, () => {}));
+    // Who is playing: the save is kept per account (core/save.ts adoptPortalStore), so this is known before the
+    // store is handed out (portalStore). A guest who signs in later is heard here, and the save settled again.
+    this.uid = await this.askUser(sdk);
+    this.userAsked = true;
+    safe(() => sdk.user?.addAuthListener?.(() => {
+      void this.askUser(sdk).then((uid) => {
+        if (uid === null || uid === this.uid) return;
+        this.uid = uid;
+        safe(() => this.onAuth(uid));
+      });
+    }));
+    return true;
+  }
+
+  /**
+   * The SDK was not up in time: without it there are no ads, no portal events and no account save for the whole
+   * visit, so it is tried once more PORTAL_RETRY_MS later, behind the game (and a second time only when the script's
+   * tag itself failed to load: then nothing is still on its way). When it comes up, everything that hangs on it
+   * happens as for an init() that was merely slow: loading and gameplay events, the offers, the save (onLate).
+   */
+  private crazyRetry(): void {
+    if (this.crazyOff || this.crazyTries >= (this.crazyTag ? 2 : 3)) return;
+    setTimeout(() => {
+      void this.crazyUp().then((up) => {
+        if (!up) return this.crazyRetry();
+        if (this.loaded) this.sendLoaded();
+        this.syncGameplay();
+        for (const fn of this.readyFns) safe(fn);
+        safe(() => this.onLate());
+      }, () => {});
+    }, PORTAL_RETRY_MS);
   }
 
   /**
@@ -451,9 +602,21 @@ export class Ads {
   /** An ad is being asked for or is up (a late one included): tell the game once each way (onBusy). */
   private syncBusy(): void {
     const b = this.adInFlight || this.lateAds > 0;
-    if (b === this.busy) return;
-    this.busy = b;
-    safe(() => this.onBusy(b));
+    // (The wait is told inside the hold: after it begins, and before it ends.)
+    if (!b) this.syncWait();
+    if (b !== this.busy) {
+      this.busy = b;
+      safe(() => this.onBusy(b));
+    }
+    if (b) this.syncWait();
+  }
+
+  /** An interstitial is asked for and no ad is up yet: tell the game once each way (onWait). */
+  private syncWait(): void {
+    const w = this.adInFlight && this.interstitial && !this.adMuted && this.lateAds === 0;
+    if (w === this.waiting) return;
+    this.waiting = w;
+    safe(() => this.onWait(w));
   }
 
   /** CrazyGames celebration for a real achievement; use sparingly. Poki has no HTML5 equivalent. */
@@ -464,8 +627,9 @@ export class Ads {
   /**
    * Interstitial at a natural break: 'match' just before a new match kicks off ('moment': a Football Moment's
    * try), 'halftime' as the half-time screen comes up. The portals: both SDKs decide whether an ad actually plays
-   * (CrazyGames caps at 1 per 3 min); before a kick-off they are simply asked, and at half time only when the last ad
-   * that played is PORTAL_HALF_GAP_MS behind. The app: see APP_AD_GAP_MS.
+   * (CrazyGames caps at 1 per 3 min), and they are asked only when the last ad that played, a rewarded one included,
+   * is far enough behind: PORTAL_AD_GAP_MS before a kick-off, APP_AD_MOMENT_GAP_MS before a Moment's try,
+   * PORTAL_HALF_GAP_MS at half time. The app: see APP_AD_GAP_MS.
    */
   async midgame(at: 'match' | 'moment' | 'halftime' = 'match'): Promise<void> {
     if (!this.ok || !this.adsAllowed || this.adInFlight || this.lateAds > 0 || this.adFree()) return;
@@ -476,10 +640,12 @@ export class Ads {
         this.prepareApp('interstitial');
         return;
       }
-    } else if (at === 'halftime' && Date.now() - this.portalLastAt < PORTAL_HALF_GAP_MS) {
+    } else if (Date.now() - this.portalLastAt < (at === 'halftime' ? PORTAL_HALF_GAP_MS : at === 'moment' ? APP_AD_MOMENT_GAP_MS : PORTAL_AD_GAP_MS)) {
+      // Too soon after the last ad that played (a rewarded one counts): nothing is asked for, the game is not held.
       return;
     }
     this.gameplayStop();
+    this.interstitial = true;
     this.adInFlight = true;
     this.syncBusy();
     let active = true;
@@ -487,10 +653,14 @@ export class Ads {
       if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'none') && this.portal === 'app') {
         await this.showApp('interstitial');
       } else if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'poki') && this.portal === 'poki') {
+        let played = false;
         await withTimeout(window.PokiSDK!.commercialBreak(() => {
+          played = true;
           this.portalLastAt = Date.now();
           if (active) this.setAdMute(true);
         }), 45_000, undefined);
+        // (Counted from when it ended, like every other ad.)
+        if (played) this.portalLastAt = Date.now();
       } else if (this.portal === 'crazygames') {
         await this.crazyAd('midgame');
       }
@@ -509,6 +679,7 @@ export class Ads {
   async rewarded(): Promise<boolean> {
     if (!this.ok || !this.adsAllowed || this.adInFlight || this.lateAds > 0) return false;
     this.gameplayStop();
+    this.interstitial = false;
     this.adInFlight = true;
     this.syncBusy();
     let active = true;
@@ -521,7 +692,13 @@ export class Ads {
         return await this.showApp('rewarded');
       }
       if ((!import.meta.env.VITE_PORTAL || import.meta.env.VITE_PORTAL === 'poki') && this.portal === 'poki') {
-        return await withTimeout(window.PokiSDK!.rewardedBreak(() => { if (active) this.setAdMute(true); }), 60_000, false);
+        // A rewarded ad that played starts the wait to the next interstitial too (midgame).
+        let played = false;
+        const ended = (earned: boolean): boolean => {
+          if (played || earned) this.portalLastAt = Date.now();
+          return earned;
+        };
+        return await withTimeout(window.PokiSDK!.rewardedBreak(() => { played = true; if (active) this.setAdMute(true); }), 60_000, false).then(ended);
       }
       if (this.portal === 'crazygames') {
         return await this.crazyAd('rewarded');
@@ -546,9 +723,10 @@ export class Ads {
   /**
    * One CrazyGames ad request. Resolves true only when the ad played through. The sound is muted when it actually
    * starts, never before, and comes back when it ends. A request the SDK gives no answer to lets the caller go after
-   * 15 s (an ad that does not come must not stall the game). Should that ad start after all, it would play over a
-   * running game: the game is muted and held again (lateAdStart) until it finishes, fails, or 120 s pass, and nothing
-   * is granted for it (its caller was already told no).
+   * PORTAL_NO_ANSWER_MS (an ad that does not come must not stall the game: 6 s for an interstitial, which holds a game
+   * the player did not stop himself; 15 s for a rewarded one, which he asked for). Should that ad start after all, it
+   * would play over a running game: the game is muted and held again (lateAdStart) until it finishes, fails, or 120 s
+   * pass, and nothing is granted for it (its caller was already told no).
    */
   private crazyAd(type: 'midgame' | 'rewarded'): Promise<boolean> {
     return new Promise((resolve) => {
@@ -557,7 +735,7 @@ export class Ads {
       let timer = setTimeout(() => {
         state = 'left';
         resolve(false);
-      }, 15_000);
+      }, PORTAL_NO_ANSWER_MS[type]);
       const over = (watched: boolean) => {
         const was = state;
         if (was === 'over') return;
@@ -622,6 +800,8 @@ export class Ads {
   private setAdMute(m: boolean): void {
     this.adMuted = m;
     this.syncMute();
+    // (Muted for an ad means one is up: the wait for it is over.)
+    this.syncWait();
   }
 
   private syncMute(): void {

@@ -394,3 +394,121 @@ describe('touch lifecycle', () => {
     expect(input.read().power).toBe(false);
   });
 });
+
+describe('the page the game sits in never scrolls (a portal frames the game)', () => {
+  function keyWith(code: string, extra: object = {}, origin?: Element): Event {
+    const e = new Event('keydown', { cancelable: true });
+    Object.assign(e, { code, key: code, repeat: false, ...extra });
+    if (origin) Object.defineProperty(e, 'target', { value: origin });
+    win.dispatchEvent(e);
+    return e;
+  }
+
+  /** An element as the wheel check reads it: its scroll box, its overflow and its parent. */
+  function box(o: { flow?: string; size?: number; view?: number; at?: number; parent?: object | null; tag?: string }) {
+    return {
+      tagName: o.tag ?? 'DIV', parentElement: o.parent ?? null, flow: o.flow ?? 'visible',
+      scrollHeight: o.size ?? 100, clientHeight: o.view ?? 100, scrollTop: o.at ?? 0,
+      scrollWidth: 100, clientWidth: 100, scrollLeft: 0,
+    };
+  }
+
+  function wheel(target: object, deltaY: number, extra: object = {}): Event {
+    const e = new Event('wheel', { cancelable: true });
+    Object.assign(e, { deltaX: 0, deltaY, ...extra });
+    Object.defineProperty(e, 'target', { value: target });
+    win.dispatchEvent(e);
+    return e;
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('getComputedStyle', (el: { flow: string }) => ({ overflowY: el.flow, overflowX: 'hidden' }));
+  });
+
+  it('a HELD arrow or Space is stopped on every repeat, and still counts as one press', () => {
+    const input = new Input();
+    const heard: string[] = [];
+    input.onKey((c) => heard.push(c));
+    for (const code of ['ArrowDown', 'ArrowUp', 'Space', 'KeyW', 'PageDown', 'End']) {
+      expect(keyWith(code).defaultPrevented).toBe(true);
+      expect(keyWith(code, { repeat: true }).defaultPrevented).toBe(true);
+      expect(keyWith(code, { repeat: true }).defaultPrevented).toBe(true);
+    }
+    expect(heard).toEqual(['ArrowDown', 'ArrowUp', 'Space', 'KeyW', 'PageDown', 'End']);
+    expect(input.read().sy).toBe(0); // up and down both held
+  });
+
+  it('typing a club name is never stopped, nor is a browser shortcut, nor a key the game does not use', () => {
+    const input = new Input();
+    const field = new Element();
+    field.tagName = 'INPUT';
+    for (const repeat of [false, true]) {
+      expect(keyWith('Space', { repeat }, field).defaultPrevented).toBe(false);
+      expect(keyWith('ArrowLeft', { repeat }, field).defaultPrevented).toBe(false);
+      expect(keyWith('KeyW', { repeat, ctrlKey: true }).defaultPrevented).toBe(false);
+      expect(keyWith('KeyW', { repeat, metaKey: true }).defaultPrevented).toBe(false);
+      expect(keyWith('ArrowLeft', { repeat, altKey: true }).defaultPrevented).toBe(false);
+      expect(keyWith('F5', { repeat }).defaultPrevented).toBe(false);
+      expect(keyWith('Tab', { repeat }).defaultPrevented).toBe(false);
+    }
+    expect(input.read().pass).toBe(false);
+  });
+
+  it('ALT bound to an action by the player is a game key, not a shortcut', () => {
+    setBindings({ up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'], pass: ['Space'], shoot: ['KeyK'], through: ['KeyL'], sprint: ['AltLeft'], skill: ['KeyQ'], power: ['KeyE'], pause: ['Escape'] });
+    const input = new Input();
+    expect(keyWith('AltLeft', { altKey: true }).defaultPrevented).toBe(true);
+    expect(keyWith('ArrowUp', { altKey: true, repeat: true }).defaultPrevented).toBe(true);
+    expect(input.read().sprint).toBe(true);
+  });
+
+  it('the wheel is stopped over the pitch and over a screen with nothing to scroll', () => {
+    new Input();
+    const body = box({ flow: 'auto', size: 5000, view: 400 });
+    vi.stubGlobal('document', Object.assign(doc, { body, documentElement: null }));
+    const canvas = box({ tag: 'CANVAS', parent: body });
+    expect(wheel(canvas, 120).defaultPrevented).toBe(true);
+    expect(wheel(canvas, -120).defaultPrevented).toBe(true);
+    const card = box({ parent: box({ flow: 'hidden', size: 900, view: 300, parent: body }) });
+    expect(wheel(card, 120).defaultPrevented).toBe(true);
+    // (Even a page that could scroll: that is the host's, or the body's own, and never the game's to move.)
+    expect(wheel(body, 120).defaultPrevented).toBe(true);
+  });
+
+  it('a list pane that can still move takes the wheel; at its end the wheel is stopped again', () => {
+    new Input();
+    const body = box({});
+    vi.stubGlobal('document', Object.assign(doc, { body, documentElement: null }));
+    const pane = box({ flow: 'auto', size: 900, view: 300, at: 200, parent: body });
+    const row = box({ parent: box({ parent: pane }) });
+    expect(wheel(row, 120).defaultPrevented).toBe(false);
+    expect(wheel(row, -120).defaultPrevented).toBe(false);
+    pane.scrollTop = 600;
+    expect(wheel(row, 120).defaultPrevented).toBe(true);
+    expect(wheel(row, -120).defaultPrevented).toBe(false);
+    pane.scrollTop = 0;
+    expect(wheel(row, -120).defaultPrevented).toBe(true);
+    // A pane whose list fits has nothing to scroll.
+    const short = box({ flow: 'auto', size: 300, view: 300, parent: body });
+    expect(wheel(box({ parent: short }), 120).defaultPrevented).toBe(true);
+    // CTRL with the wheel is the browser's zoom: not ours.
+    expect(wheel(canvasOf(body), 120, { ctrlKey: true }).defaultPrevented).toBe(false);
+  });
+
+  function canvasOf(parent: object) {
+    return box({ tag: 'CANVAS', parent });
+  }
+
+  it('no browser menu over the pitch; elsewhere it is left alone', () => {
+    new Input();
+    const menu = (target: object): Event => {
+      const e = new Event('contextmenu', { cancelable: true });
+      Object.defineProperty(e, 'target', { value: target });
+      win.dispatchEvent(e);
+      return e;
+    };
+    expect(menu(box({ tag: 'CANVAS' })).defaultPrevented).toBe(true);
+    expect(menu(box({ tag: 'INPUT' })).defaultPrevented).toBe(false);
+    expect(menu(box({ tag: 'DIV' })).defaultPrevented).toBe(false);
+  });
+});

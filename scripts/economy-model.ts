@@ -36,7 +36,7 @@ import { FORMATIONS } from '../src/sim/formations';
 import { atmosphereOf } from '../src/meta/atmosphere';
 import { payBoard } from '../src/meta/board';
 import {
-  BOTTOM_DIVISION, DIVISION_NAMES, MATCHDAYS, SQUAD_MAX, TRAIN_STEP, afterMatch, buildPart, clubRating, compTieReward, cupTieReward, divisionLevel,
+  BOTTOM_DIVISION, DIVISION_NAMES, MATCHDAYS, PRICE_KNEE, SQUAD_MAX, SQUAD_MIN, STAT_CAP, TOP_DIVISION, TRAIN_KNEE, TRAIN_STEP, basePrice, divisionPar, pricePremium, ratingPrice, sessionCost, afterMatch, buildPart, clubRating, compTieReward, cupTieReward, divisionLevel,
   divisionPlayerOverall, groundBonus, matchDifficulty, matchReward, newSeason, nextMatch, playerPrice, resolveCompTie, resolveCupTie, resolveMatchday,
   sellPlayer, skipBuild, startNextSeason, trainPlayer, trainingCost, trainingDiscount, type CareerState,
 } from '../src/meta/career';
@@ -45,10 +45,10 @@ import { syncCareerGems } from '../src/meta/gemSources';
 import { scoutNetworkTier, SCOUT_NETWORKS } from '../src/meta/gems';
 import { megastoreCoins, has as hasPart } from '../src/meta/ground';
 import { useAd } from '../src/meta/loops';
-import { QUICK_SALE, RESALE_CAP, WAGE_DRAIN, clubWageBudget, placeBid, playerValue, squadWages, wageBudget, wageDrain, wageOf, windowOpen, type MetaPlayer } from '../src/meta/market';
+import { QUICK_SALE, RESALE_CAP, RESALE_STARTS, WAGE_DIV, WAGE_DRAIN, baseValue, clubWageBudget, marketValue, placeBid, playerValue, squadWages, wageBudget, wageDrain, wageOf, windowOpen, type MetaPlayer } from '../src/meta/market';
 import { buyPassWithGems, claimAllPass } from '../src/meta/pass';
 import { buyNetwork, syncNetwork } from '../src/meta/premium';
-import { PACK_TOKENS, freePackReady, openPack, packPrice, releaseCandidate, sellCard, settlePack, signCard, type PackKind } from '../src/meta/shop';
+import { PACK_LIFT, PACK_OVR_CAP, PACK_OWN_CAP, PACK_TOKENS, RARITIES, RARITY_OVR, SCOUT_RESALE, freePackReady, openPack, packLevel, packPrice, releaseCandidate, sellCard, settlePack, signCard, type PackKind } from '../src/meta/shop';
 import { autoLineupFit, bestStat, trainBest } from '../src/meta/squad';
 import { REGIONS, STAFF_ROLES, canHire, hiredLevel, signFind, staffDef, staffWages, type StaffRole } from '../src/meta/staff';
 import { LEVEL_TITLES } from '../src/core/save';
@@ -302,6 +302,8 @@ export interface CareerProfile {
   sponsor: 0 | 1 | 2;
   /** Signs every pack card that beats a starter and hires every member of staff he has the fee for, whatever the wages. */
   naive?: boolean; portal?: boolean;
+  /** The share of his spare coins that goes on players (default CAREER.squadShare): 0 lives on his cards alone, 1 saves nothing. */
+  squadShare?: number;
 }
 export const CAREER_HORIZON = 180;
 export const CAREER_SEED = 15102026;
@@ -315,8 +317,14 @@ export const CAREER = {
   reserveMatchdays: 3,
   /** Staff are hired while their wages stay under this share of what a league matchday brings the club. */
   staffShare: 0.5,
-  /** Signings and training sessions a matchday, at most, to bring the eleven up to the division's par. */
+  /** Signings and training sessions a matchday, at most. */
   squadActions: 12,
+  /** Of the coins that are his to spend after wages, the ground and the staff, the share that goes on players. The rest is saved (the looks). */
+  squadShare: 0.5,
+  /** The eleven he is building: this far over his division's par (the form that goes up, and at the top the form that wins it). */
+  edge: 5,
+  /** In the Elite League there is no par left to chase: he builds toward this rating (every stat his rating counts at 99). */
+  cap: 99,
 } as const;
 const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
 export const CAREER_PROFILES: CareerProfile[] = [
@@ -351,6 +359,23 @@ export interface CareerSeason {
   clubIncome: number; staffWages: number; wageShare: number; playerWages: number; wageBudget: number; unpaidMatchdays: number; drainMatchdays: number; shortMatchdays: number;
   rating: number; par: number; squad: number; ground: number; partsBuilt: number; staffLevels: number; gemsIn: number; gemsOut: number; gemsEnd: number;
   ticketsIn: number; ticketsOut: number; cardsSigned: number; cardsSold: number; level: number;
+}
+/**
+ * What it costs to train an eleven to the cap: every +2 session at its price then (the training discount applied),
+ * each player's rating-heaviest stat first, until nothing his rating counts is under 99. The evergreen coin goal.
+ */
+export function ceilingCost(squad: readonly PlayerDef[], discount = 0): number {
+  let cost = 0;
+  for (const src of squad.slice(0, 11)) {
+    const p: PlayerDef = { ...src, stats: { ...src.stats } };
+    for (let guard = 0; guard < 400; guard++) {
+      const stat = bestStat(p);
+      if (!stat) break;
+      cost += trainingCost(p, discount);
+      p.stats[stat] = Math.min(STAT_CAP, p.stats[stat] + TRAIN_STEP);
+    }
+  }
+  return cost;
 }
 export function modelCareer(profile: CareerProfile, horizon = CAREER_HORIZON, seed = CAREER_SEED) {
   const rng = new Rng(seed), side = new Rng(seed ^ 0x5eed);
@@ -413,13 +438,13 @@ export function modelCareer(profile: CareerProfile, horizon = CAREER_HORIZON, se
   const fit = (wage: number): boolean => { for (let g = 0; g < 10 && !room(wage); g++) if (!release()) break; return room(wage); };
   /** A pack: the card is signed when it beats a starter in its position (and the wages fit), else sold for its resale credit. */
   const pack = (kind: PackKind, key: string, free: boolean): boolean => {
-    const r = openPack(save, club, kind, key, free);
+    const r = openPack(save, club, kind, key, free, st.season?.division ?? BOTTOM_DIVISION);
     if (!r.ok) return false;
     if (!free) tout[kind === 'elite' ? 'elitePacks' : 'scoutPacks'] += PACK_TOKENS[kind];
     const p = r.card.player;
-    let sign = overall(p) > weakest(p.role);
-    if (sign) sign = profile.naive ? club.squad.length < SQUAD_MAX || release() : fit(wageOf(p));
-    if (sign && signCard(club, r.card, r.price || packPrice('scout', clubRating(club)), st.season?.number ?? 1).ok) cards.signed++;
+    // (Economy v8: the card obeys the wage budget like any signing, so every manager makes room for him or sells him.)
+    const sign = overall(p) > weakest(p.role) && fit(wageOf(p));
+    if (sign && signCard(club, r.card, r.price || packPrice('scout', clubRating(club)), st.season?.number ?? 1, clubWageBudget(st)).ok) cards.signed++;
     else { cin.cardSales += sellCard(save, r.card); cards.sold++; }
     settlePack(save);
     return true;
@@ -451,6 +476,9 @@ export function modelCareer(profile: CareerProfile, horizon = CAREER_HORIZON, se
   // staff in order, the eleven brought up to the division's par, the gem goals in order. Everything else is saved.
   const reserve = () => CAREER.reserveMatchdays * staffWages(st);
   const spare = () => save.coins - reserve();
+  const squadSpent = () => cout.transfers + cout.training;
+  // The eleven he is building: `edge` over his division's par, and in the top division the best the game allows.
+  const target = () => (st.season?.division ?? BOTTOM_DIVISION) === TOP_DIVISION ? CAREER.cap : par() + CAREER.edge;
   const matchdayIncome = (): number => {
     const pt = payTable(st.season!.division, st.stadium), sp = st.events.sponsor;
     const fee = profile.win * (pt.win + 2 * pt.goal) + profile.draw * (pt.draw + pt.goal) + (1 - profile.win - profile.draw) * pt.loss;
@@ -474,20 +502,33 @@ export function modelCareer(profile: CareerProfile, horizon = CAREER_HORIZON, se
       if (!profile.naive && staffWages(st) + lv[level - 1].wage - (lv[level - 2]?.wage ?? 0) > CAREER.staffShare * matchdayIncome()) break;
       pay('staffFees', () => hireStaff(st, save, role));
     }
-    for (let n = 0; n < CAREER.squadActions && clubRating(club) < par(); n++) {
+    // The eleven (economy v8): a stated share of the coins that are his to spend goes on players, on whatever lifts
+    // the eleven most for the coins: a free agent at his asking price while the window is open, a scout's ready find,
+    // or a session for the weakest starter. He never spends more on players than `share` of what he has kept and spent
+    // on them together, so the first weeks (the ground, the staff) come first and the rest is saved.
+    const share = profile.squadShare ?? CAREER.squadShare;
+    const groundDone = parts() >= PARTS.reduce((m, q) => m + q.steps.length, 0);
+    const allowance = () => groundDone ? Math.min(spare(), share * (save.coins + squadSpent() - cin.welcome) - squadSpent()) : 0;
+    for (let n = 0; n < CAREER.squadActions && share > 0 && clubRating(club) < target(); n++) {
       const best: { score: number; wage: number; go: (() => boolean) | null } = { score: 0, wage: 0, go: null };
       const consider = (p: PlayerDef, cost: number, go: () => boolean) => {
         const lift = overall(p) - weakest(p.role);
-        if (lift >= 2 && cost <= spare() && lift / cost > best.score) Object.assign(best, { score: lift / cost, wage: wageOf(p), go });
+        if (lift >= 2 && cost <= allowance() && lift / cost > best.score) Object.assign(best, { score: lift / cost, wage: wageOf(p), go });
       };
       if (windowOpen(season.matchday)) for (const l of st.tm.listings) if (!l.club && !l.youth) consider(l.player, l.asking, () => placeBid(st, save, l.id, l.asking).ok);
       for (const r of st.staff.reports) r.finds.forEach((f, i) => { if (f.kind === 'ready') consider(f.player, f.fee, () => signFind(st, save, r.slot, i).ok); });
-      if (best.go && fit(best.wage) && pay('transfers', best.go) > 0) { club.squad = autoLineupFit(club.squad, club.formation); continue; }
+      // (The game's own TRAIN BEST: the weakest starter, in the stat his rating leans on most.)
       const pick = trainBest(club.squad);
       const who = pick ? club.squad[pick.index] : null;
-      if (!pick || !who || trainingCost(who, trainingDiscount(st)) > spare()) break;
+      const session = who ? trainingCost(who, trainingDiscount(st)) : Infinity;
+      // (What a +2 session adds to his rating: twice the stat's weight in it, 0.7 to 1.5 of a point.)
+      const gain = pick && who ? (overall({ ...who, stats: { ...who.stats, [pick.stat]: who.stats[pick.stat] + 100 } }) - overall(who)) / 100 * TRAIN_STEP : 0;
+      if (best.go && (session > allowance() || best.score >= gain / session) && fit(best.wage) && pay('transfers', best.go) > 0) { club.squad = autoLineupFit(club.squad, club.formation); continue; }
+      if (!pick || !who || session > allowance()) break;
       pay('training', () => trainPlayer(club, save, who.id, pick.stat, trainingDiscount(st)));
     }
+    // (A better player earns more: a careful manager lets a reserve go before the wage bill costs him a coin.)
+    if (!profile.naive) for (let g = 0; g < 10 && squadWages(club) > clubWageBudget(st) && release(); g++);
     // The permanent gem goals, in order: the Local network, the Club Pass, then the National and World networks.
     const tier = scoutNetworkTier(save);
     if ((tier === 0 || passBought) && tier < SCOUT_NETWORKS.length && gems(save) >= SCOUT_NETWORKS[tier].price) { const r = buyNetwork(st, save); if (r.ok) gout.scoutNetwork += r.price; }
@@ -602,7 +643,8 @@ export function modelCareer(profile: CareerProfile, horizon = CAREER_HORIZON, se
     if (league && save.coins < staffWages(st)) low.short++;
   };
   const goalDays: Record<string, number | null> = { ground: null, staff: null, localNetwork: null, clubPass: null, allNetworks: null, midLook: null, topLook: null };
-  const rows: { day: number; matches: number; season: number; division: number; coins: number; earned: number; spent: number; gems: number; tickets: number; ground: number; staff: number; rating: number; clubIncome: number; passive: number; oneTime: number; adGift: number; adGifts: number; winCoins: number; winCount: number }[] = [];
+  let bottomTwoBest = 0;
+  const rows: { day: number; matches: number; season: number; division: number; coins: number; earned: number; spent: number; gems: number; tickets: number; ground: number; staff: number; rating: number; par: number; ceiling: number; clubIncome: number; passive: number; oneTime: number; adGift: number; adGifts: number; winCoins: number; winCount: number }[] = [];
   for (day = 0; day < horizon; day++) {
     const date = new Date(start);
     date.setDate(start.getDate() + day);
@@ -645,12 +687,13 @@ export function modelCareer(profile: CareerProfile, horizon = CAREER_HORIZON, se
     goal('ground', parts() >= PARTS.reduce((n, p) => n + p.steps.length, 0)); goal('staff', staffSum() >= STAFF_ROLES.length * 3);
     goal('localNetwork', tier >= 1); goal('clubPass', passBought); goal('allNetworks', tier >= SCOUT_NETWORKS.length);
     goal('midLook', save.coins >= 1200); goal('topLook', save.coins >= 7500);
+    if ((st.season?.division ?? 0) >= BOTTOM_DIVISION - 1) bottomTwoBest = Math.max(bottomTwoBest, ...club.squad.map(overall));
     rows.push({ day: day + 1, matches, season: st.season?.number ?? 0, division: st.season?.division ?? 0, coins: save.coins, earned: total(cin), spent: total(cout), gems: gems(save),
-      tickets: scoutTokens(save), ground: groundLevel(st.ground), staff: staffSum(), rating: clubRating(club), clubIncome: cin.clubIncome, passive: PASSIVE_KEYS.reduce((n, k) => n + cin[k], 0),
+      tickets: scoutTokens(save), ground: groundLevel(st.ground), staff: staffSum(), rating: clubRating(club), par: Math.round(par()), ceiling: ceilingCost(club.squad, trainingDiscount(st)), clubIncome: cin.clubIncome, passive: PASSIVE_KEYS.reduce((n, k) => n + cin[k], 0),
       oneTime: cout.ground + cout.staffFees, adGift: cin.adGift, adGifts: ads.gift, winCoins, winCount });
   }
   return {
-    profile, seed, horizon, seasons, rows, matchRows, builds, promotions, levels, goalDays, ads, cards, residual, adMax, sheetMax, winAverage: winCount ? winCoins / winCount : 0,
+    profile, seed, horizon, seasons, rows, matchRows, builds, promotions, levels, goalDays, ads, cards, residual, adMax, sheetMax, bottomTwoBest, winAverage: winCount ? winCoins / winCount : 0,
     coinsIn: cin, coinsOut: cout, gemsIn: gin, gemsOut: gout, ticketsIn: tin, ticketsOut: tout,
     end: { coins: save.coins, gems: gems(save), tickets: scoutTokens(save), division: st.season?.division ?? 0, season: st.season?.number ?? 0, rating: clubRating(club), level: levelOf(save.progress.xp).level,
       unpaid: st.staff.unpaid },
@@ -662,6 +705,22 @@ export type CareerRun = ReturnType<typeof modelCareer>;
 const STAGES: readonly [number, number][] = [[1, 7], [8, 30], [31, 90], [91, CAREER_HORIZON]];
 /** What was measured on the rules as they stood before this pass (economy v6, 14 October 2026), same model, same seeds. */
 export const BEFORE_V7 = { clubIncomeShare: 0.266, clubIncomeProfile: 'Keen, optional ads, days 31 to 90', sponsorCashRatio: 2.37, sponsorCashPerMatchday: 379, sponsorMatchPerMatchday: 160, ticketOffice: [16, 19, 22, 25, 28, 32], sponsorGap: 3 } as const;
+/**
+ * What the same model measured on the rules of 15 October 2026 (economy v7, commit 75f0304), same seed: every check's
+ * value, and the regular player's first weeks. The v7 manager signed or trained only when under par (he never was).
+ */
+export const BEFORE_V8 = {
+  checks: {
+    ledger: 0, 'wages-paid': 0, 'wage-drain': 0, 'wage-share': 0.4726, 'collector-spiral': 0.6459, 'ground-part': 7, 'ground-whole': 15, 'staff-whole': 34, 'mid-look': 4, 'top-look': 13,
+    passive: 0.6789, 'club-income': 0.2234, sponsor: 0.9532, 'flip-instant': 0, 'flip-held': 1.375, tickets: 0, 'gems-portal': 231, 'squad-sink': 0, 'sinks-last': 57, 'ads-twice': 1.4,
+    'ad-single': 1.0723, 'ad-share': 0.2977,
+    // The new checks, measured on the v7 output where it has the number.
+    'card-level': 20, 'squad-coins': 0, 'coins-ahead': 0, 'goal-left': 0, 'strong-sinks': 25, 'top-pace': 45, 'card-budget': 1.9,
+  } as Record<string, number>,
+  /** Career regular: the day each part of the ground was started, the first promotion, the lowest balance of the first 30 days. */
+  buildDays: [1, 3, 3, 4, 5, 5, 6, 8, 9, 10, 11, 12, 14], firstPromotion: 6, lowestBalance: 50, coinsDay30: 62884,
+  promotions: [6, 11, 17, 23, 28, 34, 45], overPar: '7 to 20', coinsIn: 853044, wallet180: 638082,
+} as const;
 /** A stand-in player of this overall, with the age and contract a listing of that kind carries. */
 function sample(ovr: number, age: number, contract: number): MetaPlayer {
   const p = rollPack('scout', ovr, 4242).player;
@@ -675,8 +734,14 @@ export function arbitrageTable() {
   return [8, 5, 1].flatMap(division => {
     // (A league win at the ground a club of that division has: a park pitch at the bottom, the dome in the Elite League.)
     const ovr = divisionPlayerOverall(division, 'MF'), win = payTable(division, Math.max(0, 6 - division)).win;
-    const agent = sample(ovr, 26, 2), price = playerPrice(agent), value = playerValue(agent);
+    // (Economy v8: whoever is bought holds the fee that was paid for him, and is worth no more than it when he is sold.)
+    const agent = sample(ovr, 26, 2), price = playerPrice(agent);
+    agent.fee = price;
+    const value = playerValue(agent);
     const kid = sample(ovr - 9, 17, 3), kidFee = r10(Math.max(40, playerPrice(kid) * 0.6 * REGIONS.home.fee));
+    kid.fee = kidFee;
+    // A pack card of that rating, free, after the six league starts that lift his resale credit.
+    const card = Object.assign(sample(ovr, 26, 1), { starts: RESALE_STARTS, scoutResale: SCOUT_RESALE.legend });
     const stat = bestStat(agent), trained = stat ? { ...agent, stats: { ...agent.stats, [stat]: agent.stats[stat] + TRAIN_STEP } } : agent;
     const row = (trade: string, instant: boolean, cost: number, back: number, how: string) => ({ division, ovr, win, trade, instant, cost, back, profit: back - cost, wins: (back - cost) / win, how });
     return [
@@ -687,6 +752,7 @@ export function arbitrageTable() {
       row('A scout\'s home youth find, sold at once', true, kidFee, quickSaleValue(kid), 'quick sale'),
       row('A scout\'s home youth find, sold after 6 league starts (expected offer)', false, kidFee, r10(playerValue(kid) * .825), 'needs a squad place, an open window and an offer (65% a week)'),
       row('An academy prospect, promoted and sold at once', false, 0, quickSaleValue(sample(ovr - 14, 16, 3)), 'two to five a season, none after a season of walk-offs'),
+      row('A free pack card of the division\'s rating, sold after 6 league starts', false, 0, quickSaleValue(card), `his base value, never the market's (which asks ${playerPrice(card)} for him)`),
     ];
   });
 }
@@ -706,6 +772,78 @@ export function interstitials(matches: number, completedBefore: number, t = { ki
   }
   return n;
 }
+/**
+ * How often a manager whose eleven is `gap` rating points off his division's is promoted (top two of eight), on the
+ * game's own league engine with the career simulation's assumption about who wins. `seasons` seeded seasons a gap.
+ */
+export function promotionOdds(win = CAREER_PROFILES[1].win, draw = CAREER_PROFILES[1].draw, gaps: readonly number[] = [5, 0, -5, -9, -14, -20], seasons = 200) {
+  return gaps.map(gap => {
+    let up = 0, n = 0, place = 0;
+    const pWin = within(win + within(gap * CAREER.ratingPoint, -CAREER.ratingClamp, CAREER.ratingClamp), .05, .92), pDraw = (1 - pWin) * (draw / (1 - win));
+    for (let seed = 1; seed <= seasons; seed++) {
+      const st = migrateCareer(null, seed);
+      st.club = createClub({ name: 'Model FC', short: 'MOD', kit: MODEL_KIT, formation: '4-4-2' }, seed);
+      newSeason(st, 4, 1);
+      const rng = new Rng(seed * 7919), wallet = { coins: 1e9 };
+      for (let md = 0; md < MATCHDAYS; md++) {
+        for (let g = 0; g < 4 && st.season?.cup && nextMatch(st)?.competition === 'cup'; g++) resolveCupTie(st, 0, 1, false, null);
+        const f = st.season!.fixtures.find(x => x.md === md && (x.home === 'you' || x.away === 'you'));
+        if (!f) break;
+        const x = rng.next(), [my, their] = x < pWin ? [2, 1] : x < pWin + pDraw ? [1, 1] : [0, 2], home = f.home === 'you';
+        resolveMatchday(st, wallet, md, home ? my : their, home ? their : my);
+      }
+      if (!st.summary) continue;
+      n++; place += st.summary.position;
+      if (st.summary.outcome === 'promoted') up++;
+    }
+    return { gap, pWin, seasons: n, promoted: n ? up / n : 0, meanPosition: n ? place / n : 0, seasonsToGoUp: up ? n / up : null };
+  });
+}
+/**
+ * Relegated into `division` with a full squad of the division above (SQUAD_MAX players at its par): how many must be
+ * sold to be back under the wage budget, never going under SQUAD_MIN. Every sale is a quick sale that pays coins.
+ */
+export function relegatedSales(division: number, stadium: number): number {
+  const wage = Math.round(divisionPar(division - 1) ** 2 / WAGE_DIV), budget = wageBudget(division, stadium);
+  let squad = SQUAD_MAX;
+  while (squad > SQUAD_MIN && squad * wage > budget) squad--;
+  return squad * wage <= budget ? SQUAD_MAX - squad : Infinity;
+}
+/** The curves of economy v8 by rating: what the market asks, what a session costs, the wage (unchanged), what a free card sells for. */
+export function curveTable(ovrs: readonly number[] = [50, 55, 60, 65, 70, 75, 80, 85, 90, 93, 95, 97, 99]) {
+  return ovrs.map(ovr => {
+    const card = sample(ovr, 26, 1);
+    return { ovr, priceBefore: basePrice(ovr), price: ratingPrice(ovr), premium: pricePremium(ovr), wage: Math.round(ovr ** 2 / WAGE_DIV), sessionBefore: 40 + 3 * ovr, session: sessionCost(ovr),
+      freeCardSale: quickSaleValue(card), freeCardBefore: r10(baseValue(card) * QUICK_SALE), marketWouldPay: r10(marketValue(card) * QUICK_SALE) };
+  });
+}
+/** What a pack draws in each division: the level, the par, and each rarity's range (and that range against par). */
+export function cardTable() {
+  return [8, 7, 6, 5, 4, 3, 2, 1].map(division => {
+    const par = divisionPar(division), own = divisionLevel(division) + PACK_LIFT < PACK_OWN_CAP, level = packLevel(division, own ? PACK_OWN_CAP : 0);
+    const range = (r: typeof RARITIES[number]) => ({ from: Math.min(PACK_OVR_CAP, level + RARITY_OVR[r][0]), to: Math.min(PACK_OVR_CAP, level + RARITY_OVR[r][1]) });
+    return { division, league: DIVISION_NAMES[division], par, divisionLevel: divisionLevel(division) + PACK_LIFT, ownEleven: own, level, common: range('common'), rare: range('rare'), epic: range('epic'), legend: range('legend') };
+  });
+}
+/** The best player the Park and District Leagues ever list or a scout there ever finds (the dearest thing a new club is shown). */
+export function bottomTwoMarket(seeds = 60) {
+  let listed = 0, found = 0;
+  for (const division of [BOTTOM_DIVISION, BOTTOM_DIVISION - 1]) for (let seed = 1; seed <= seeds; seed++) {
+    const st = migrateCareer(null, seed);
+    st.club = createClub({ name: 'Model FC', short: 'MOD', kit: MODEL_KIT, formation: '4-4-2' }, seed);
+    newSeason(st, division, 1);
+    st.stadium = 5;
+    for (const slot of ['scout1', 'scout2'] as const) st.staff.hired[slot] = { name: 'Model Scout', level: 3, region: 'home', brief: 'ready' };
+    const wallet = { coins: 1e9 };
+    for (let md = 0; md < MATCHDAYS; md++) {
+      for (const l of st.tm.listings) listed = Math.max(listed, overall(l.player));
+      for (const r of st.staff.reports) for (const f of r.finds) found = Math.max(found, overall(f.player));
+      for (let g = 0; g < 4 && st.season?.cup && nextMatch(st)?.competition === 'cup'; g++) resolveCupTie(st, 0, 1, false, null);
+      if (!resolveMatchday(st, wallet, md, 1, 1)) break;
+    }
+  }
+  return { listed, found };
+}
 export interface BalanceCheck { id: string; area: string; check: string; bar: string; op: '<=' | '>='; limit: number; value: number; unit: string; before: number | null; pass: boolean; note: string }
 /** The career profiles, the variants the checks need, and one row per balance check: the bar, the measured value, PASS or FAIL. */
 export function buildCareerModel(shared: ReturnType<typeof modelProfile>[], comeback: ReturnType<typeof buildComebackModel>) {
@@ -715,6 +853,9 @@ export function buildCareerModel(shared: ReturnType<typeof modelProfile>[], come
   const variant = (id: string, name: string, over: Partial<CareerProfile>, seed = CAREER_SEED) => modelCareer({ ...base, id, name, ...over }, CAREER_HORIZON, seed);
   const allAds = variant('career-regular-ads', 'Career regular, every ad', { ads: true });
   const collector = variant('career-regular-collector', 'Career regular, signs every better card, hires everyone', { naive: true });
+  // What coins buy (economy v8): the same player living on his cards alone, and putting every spare coin into the eleven.
+  const cardsOnly = variant('career-regular-cards', 'Career regular, cards only (no coin on players)', { squadShare: 0 });
+  const allIn = variant('career-regular-allin', 'Career regular, every spare coin on players', { squadShare: 1 });
   const sponsor = [regular, variant('career-sponsor-win', 'Career regular, WIN BONUS', { sponsor: 1 }), variant('career-sponsor-cash', 'Career regular, CASH NOW', { sponsor: 2 })].map((r, i) => {
     const coins = r.seasons.reduce((n, s) => n + s.in.sponsor, 0), matchdays = r.seasons.length * MATCHDAYS;
     return { answer: ['EVERY MATCH', 'WIN BONUS', 'CASH NOW'][i], coins, matchdays, perMatchday: coins / matchdays };
@@ -734,10 +875,15 @@ export function buildCareerModel(shared: ReturnType<typeof modelProfile>[], come
   });
   const catalogue = shopItems().filter(i => i.price > 0 && !i.pass).reduce((n, i) => n + i.price, 0);
   const groundCost = PARTS.reduce((n, p) => n + p.steps.reduce((m, x) => m + x.cost, 0), 0), staffCost = STAFF.reduce((n, d) => n + d.levels.reduce((m, l) => m + l.fee, 0), 0);
-  const exhausted = (r: CareerRun) => r.rows.find(x => x.coins + x.oneTime >= groundCost + staffCost + catalogue)?.day ?? null;
+  // Every coin sink paid for: the ground, the staff, every look in the shop, AND (economy v8) the eleven he has trained
+  // to the cap. `exhaustedLooks` is the v7 measure (no eleven), kept so the two passes can be read side by side.
+  const exhaustedLooks = (r: CareerRun) => r.rows.find(x => x.coins + x.oneTime >= groundCost + staffCost + catalogue)?.day ?? null;
+  const exhausted = (r: CareerRun) => r.rows.find(x => x.coins + x.oneTime >= groundCost + staffCost + catalogue + x.ceiling)?.day ?? null;
   // The same manager with every ad and with none, three seeds each: the days to each goal.
   const seeds = [1, 2].map(n => CAREER_SEED + n);
   const free = [regular, ...seeds.map(s => variant('career-regular', base.name, {}, s))], watched = [allAds, ...seeds.map(s => variant('career-regular-ads', 'Career regular, every ad', { ads: true }, s))];
+  const frugal = [cardsOnly, ...seeds.map(s => variant('career-regular-cards', cardsOnly.profile.name, { squadShare: 0 }, s))];
+  const lavish = [allIn, ...seeds.map(s => variant('career-regular-allin', allIn.profile.name, { squadShare: 1 }, s))];
   const meanDay = (rs: CareerRun[], k: string): number | null => rs.some(r => r.goalDays[k] === null) ? null : rs.reduce((n, r) => n + (r.goalDays[k] ?? 0), 0) / rs.length;
   const GOALS: [string, string][] = [['midLook', 'A mid look in the wallet (1,200 coins)'], ['topLook', 'A top look in the wallet (7,500 coins)'], ['ground', 'The whole ground built'],
     ['staff', 'Every member of staff at level 3'], ['localNetwork', 'Local Scouting Network'], ['clubPass', 'Club Pass'], ['allNetworks', 'All three Scouting Networks']];
@@ -773,8 +919,21 @@ export function buildCareerModel(shared: ReturnType<typeof modelProfile>[], come
     const sponsorBase = r10(20 + 12 * (BOTTOM_DIVISION - division)), budget = wageBudget(division, stadium);
     return { division, league: DIVISION_NAMES[division], stadium, par: divisionLevel(division) + 5, winFee: pt.win, expectedFee: Math.round(fee), sponsor: sponsorBase, megastoreHome: megastoreCoins(division),
       fullStaffWages: fullStaff, staffShare: fullStaff / (fee + sponsorBase * 1.75 + COMMERCIAL_HOME[3] / 2 + megastoreCoins(division) / 2), wageBudget: budget,
-      tenOverCosts: Math.round(budget * 0.1 * WAGE_DRAIN), relegatedCosts: division > 1 ? Math.round((wageBudget(division - 1, stadium) - budget) * WAGE_DRAIN) : 0, parSigning: playerPrice(sample(divisionLevel(division) + 5, 26, 2)), session: trainingCost(sample(divisionLevel(division) + 5, 26, 2)) };
+      tenOverCosts: Math.round(budget * 0.1 * WAGE_DRAIN), relegatedCosts: division > 1 ? Math.round((wageBudget(division - 1, stadium) - budget) * WAGE_DRAIN) : 0,
+      relegatedSales: division > 1 ? relegatedSales(division, stadium) : 0, parSigning: playerPrice(sample(divisionLevel(division) + 5, 26, 2)), session: trainingCost(sample(divisionLevel(division) + 5, 26, 2)) };
   }));
+  // ---- what coins buy: the eleven against par, season by season, for the three ways of spending (three seeds each)
+  const overPar = (rs: CareerRun[], from: number, to: number) => {
+    const ss = rs.flatMap(r => r.seasons).filter(x => x.division <= from && x.division >= to);
+    return ss.length ? ss.reduce((n, x) => n + x.rating - x.par, 0) / ss.length : 0;
+  };
+  const stay = (rs: CareerRun[], d: number) => rs.reduce((n, r) => n + r.seasons.filter(x => x.division === d).length, 0) / rs.length;
+  const coinsBuy = [5, 4, 3, 2, 1].map(division => ({ division, league: DIVISION_NAMES[division], par: divisionPar(division),
+    cardsOnly: overPar(frugal, division, division), half: overPar(free, division, division), allIn: overPar(lavish, division, division),
+    seasonsCardsOnly: stay(frugal, division), seasonsHalf: stay(free, division), seasonsAllIn: stay(lavish, division) }));
+  const topDay = (r: CareerRun) => r.promotions.find(x => x.division === TOP_DIVISION)?.day ?? null;
+  const pace = [...runs, allAds, cardsOnly, allIn].map(r => ({ profile: r.profile.name, promotions: [7, 6, 5, 4, 3, 2, 1].map(division => ({ division, league: DIVISION_NAMES[division], day: r.promotions.find(x => x.division === division)?.day ?? null })),
+    top: topDay(r), topOtherSeeds: r === regular ? free.slice(1).map(topDay) : r === cardsOnly ? frugal.slice(1).map(topDay) : r === allIn ? lavish.slice(1).map(topDay) : [] }));
   // ---- the checks
   const policy = runs.flatMap(r => r.seasons.map(s => ({ ...s, profile: r.profile.name })));
   const worst = <T>(list: T[], f: (x: T) => number) => list.reduce((m, x) => Math.max(m, f(x)), 0);
@@ -784,45 +943,85 @@ export function buildCareerModel(shared: ReturnType<typeof modelProfile>[], come
   const firstWeek = stages.find(s => s.profile === allAds.profile.name && s.from === 1)!;
   const sheetWorst = worst(stages.filter(s => s.profile === allAds.profile.name), s => s.sheetAdWins);
   const adShare = (allAds.coinsIn.adGift + allAds.coinsIn.adMatch + allAds.coinsIn.adCoins) / total(allAds.coinsIn);
-  const squadSpend = (regular.coinsOut.transfers + regular.coinsOut.training) / total(regular.coinsOut);
+  const squadCoins = regular.coinsOut.transfers + regular.coinsOut.training;
+  const squadSpend = squadCoins / total(regular.coinsOut);
   const collectorWorst = worst(collector.seasons, s => (s.out.staffWages + s.out.wageDrain + s.out.contracts + s.out.events) / Math.max(1, s.coinsIn));
   const collectorDrain = worst(collector.seasons, s => s.out.wageDrain / Math.max(1, s.clubIncome));
   const portalAll = comeback.afford.filter(a => /Club Pass and all three/.test(a.goal)).map(a => a.dayAll ?? Infinity);
-  const C = (id: string, area: string, check: string, bar: string, op: '<=' | '>=', limit: number, value: number, unit: string, note: string, before: number | null = null): BalanceCheck =>
+  // (Economy v8.) What is left to buy on the last day: the looks, the ground and staff not yet paid for, and the eleven
+  // to the cap, less what is in the wallet; in weeks of what he earned over the last four.
+  const sinksAll = groundCost + staffCost + catalogue;
+  const goalLeft = (r: CareerRun) => {
+    const last = r.rows[r.rows.length - 1], week = (last.earned - r.rows[r.rows.length - 29].earned) / 4;
+    return { coins: sinksAll + last.ceiling - last.oneTime - last.coins, ceiling: last.ceiling, wallet: last.coins, week, weeks: (sinksAll + last.ceiling - last.oneTime - last.coins) / Math.max(1, week) };
+  };
+  const left = goalLeft(regular), leftFrugal = goalLeft(cardsOnly), leftLavish = goalLeft(allIn);
+  // The first 30 days against v7: the lowest balance, the day each part of the ground was started, the first promotion.
+  const early = regular.builds.filter(b => b.day <= 30).map(b => b.day);
+  const low30 = Math.min(...regular.seasons.filter(x => x.dayFrom <= 30).map(x => x.balanceMin));
+  const rel = (now: number, then: number) => Math.abs(now - then) / Math.max(1, then);
+  const earlyWorst = Math.max(rel(low30, BEFORE_V8.lowestBalance), rel(regular.promotions[0]?.day ?? 999, BEFORE_V8.firstPromotion),
+    early.length === BEFORE_V8.buildDays.length ? Math.max(...early.map((d, i) => rel(d, BEFORE_V8.buildDays[i]))) : 1);
+  const market = bottomTwoMarket();
+  const bottomBest = Math.max(market.listed, market.found);
+  const curves = curveTable(Array.from({ length: 50 }, (_, i) => 50 + i));
+  const freeCardOver = Math.max(...curves.map(c => c.freeCardSale - c.freeCardBefore));
+  const cardsOver = Math.max(...coinsBuy.filter(c => c.division <= 4).map(c => c.cardsOnly));
+  const ahead = overPar(free, 5, 3) - overPar(frugal, 5, 3);
+  const odds = promotionOdds();
+  // ("Before" is what the same check measured on the rules of 15 October 2026, economy v7: BEFORE_V8.)
+  const C = (id: string, area: string, check: string, bar: string, op: '<=' | '>=', limit: number, value: number, unit: string, note: string, before: number | null = BEFORE_V8.checks[id] ?? null): BalanceCheck =>
     ({ id, area, check, bar, op, limit, value, unit, before, pass: op === '<=' ? value <= limit : value >= limit, note });
   const checks: BalanceCheck[] = [
     C('ledger', 'The model', 'Every league matchday settles to the coin against the rules read beforehand', 'No coin unaccounted for', '<=', 0, [...runs, allAds, collector].reduce((n, r) => n + r.residual, 0), 'coins', 'Wages, the wage drain, the sponsor, the commercial manager and the season prize, itemised before the engine settles the matchday.'),
     C('wages-paid', 'Wages', 'Matchdays the staff went unpaid, careful manager, all three profiles, every division', 'Never', '<=', 0, policy.reduce((n, s) => n + s.unpaidMatchdays, 0), 'matchdays', `Lowest balance after spending in any season: ${Math.min(...policy.map(s => s.balanceMin))} coins (the wage reserve of a new club).`),
     C('wage-drain', 'Wages', 'Coins the wage drain took from a careful manager, against what his league matchdays brought', 'Under 1%', '<=', 0.01, policy.reduce((n, s) => n + s.out.wageDrain, 0) / policy.reduce((n, s) => n + s.clubIncome, 0), 'share', `${policy.reduce((n, s) => n + s.drainMatchdays, 0)} matchdays in ${policy.length} seasons: he sells down to the budget before a new season's first match. One who does not, relegated to the County League with the wage bill of the division above, is drained ${divisions.find(d => d.division === 5 && d.stadium === 5)!.relegatedCosts} coins a matchday (an expected match fee there is ${divisions.find(d => d.division === 5 && d.stadium === 5)!.expectedFee}) until players are sold.`),
     C('wage-share', 'Wages', 'Staff wages against what league matchdays bring the club, worst season of any profile', 'Under two thirds', '<=', 0.67, worst(policy, s => s.wageShare), 'share', 'The full staff costs the same 320 a matchday in every division: it is paced by the division, not by the fee.'),
-    C('collector-spiral', 'Wages', 'A collector who signs every better card and hires everyone: wages, drain and contracts against all he earns, worst season', 'Under 100% (no death spiral)', '<=', 1, collectorWorst, 'share', `His wage drain alone reaches ${Math.round(collectorDrain * 100)}% of what his league matchdays bring: the brake on a squad far over its division. He still promotes; his ground is finished on day ${collector.goalDays.ground} instead of ${regular.goalDays.ground}.`),
+    C('collector-spiral', 'Wages', 'A collector who signs every better card and hires everyone: wages, drain and contracts against all he earns, worst season', 'Under 100% (no death spiral)', '<=', 1, collectorWorst, 'share', `A card now obeys the wage budget, so his drain is ${Math.round(collectorDrain * 1000) / 10}% of what his league matchdays bring at the worst (it reached ${Math.round(BEFORE_V8.checks['card-budget'] * 100)}%). He hires everyone before he builds: his ground is finished on day ${collector.goalDays.ground} instead of ${regular.goalDays.ground}.`),
     C('ground-part', 'Sinks', 'Matches between one part of the ground and the next, regular player, longest wait', '8 matches at most', '<=', 8, Math.max(...gaps), 'matches', `Every wait: ${gaps.join(', ')}. One part goes up at a time and takes one or two matchdays.`),
     C('ground-whole', 'Sinks', 'The whole ground (35,600 coins), regular player', 'Inside 6 weeks of daily play', '<=', 42, regular.goalDays.ground ?? 999, 'days', `Learning (3 days a week): day ${learning.goalDays.ground}. Strong with every ad: day ${strong.goalDays.ground}.`),
     C('staff-whole', 'Sinks', 'Every member of staff at level 3 (24,900 coins of fees), regular player', 'Inside 10 weeks of daily play', '<=', 70, regular.goalDays.staff ?? 999, 'days', `Paced by the division (wages). Learning: ${learning.goalDays.staff === null ? 'not inside the run' : `day ${learning.goalDays.staff}`}.`),
     C('mid-look', 'Sinks', 'A mid look (1,200 coins) in the wallet beside the club, regular player', 'Inside 5 days', '<=', 5, regular.goalDays.midLook ?? 999, 'days', `Learning: day ${learning.goalDays.midLook}.`),
     C('top-look', 'Sinks', 'A top look (7,500 coins) in the wallet beside the club, regular player', 'Inside 3 weeks', '<=', 21, regular.goalDays.topLook ?? 999, 'days', `Learning: day ${learning.goalDays.topLook}.`),
     C('passive', 'Sources', 'Coins that need no match (gift, ticket office, match of the day, streak day, coin ads) against coins from matches, worst profile and stage', 'Under what the matches pay (100%)', '<=', 1, Math.max(worst(sharedPassive, s => s.share), worst(stages, s => s.passiveShare)), 'share', `Shared profiles over 90 days: ${sharedPassive.map(s => `${s.profile} ${Math.round(s.share * 100)}%`).join(', ')}.`),
-    C('club-income', 'Sources', 'Club income against the rest of a day\'s coins, every profile (shared, portal, career) at every stage', 'Under a quarter', '<=', 0.25, Math.max(...incomeShares), 'share', `Before: ${BEFORE_V7.clubIncomeProfile}. The lever was the ticket office: ${BEFORE_V7.ticketOffice.join(' / ')} became ${TICKET_OFFICE.join(' / ')} coins an hour.`, BEFORE_V7.clubIncomeShare),
-    C('sponsor', 'Arbitrage', 'The sponsor card: CASH NOW taken every time against EVERY MATCH, coins a league matchday', 'No answer more than a quarter better', '<=', 1.25, sponsor[2].perMatchday / sponsor[0].perMatchday, 'ratio', `Coins a league matchday: ${sponsor.map(s => `${s.answer} ${Math.round(s.perMatchday)}`).join(', ')}. Before, a new sponsor called ${BEFORE_V7.sponsorGap} matchdays after the cash was taken.`, BEFORE_V7.sponsorCashRatio),
+    C('club-income', 'Sources', 'Club income against the rest of a day\'s coins, every profile (shared, portal, career) at every stage', 'Under a quarter', '<=', 0.25, Math.max(...incomeShares), 'share', `Two passes ago (v6) it was ${Math.round(BEFORE_V7.clubIncomeShare * 1000) / 10}%: ${BEFORE_V7.clubIncomeProfile}. The lever was the ticket office: ${BEFORE_V7.ticketOffice.join(' / ')} became ${TICKET_OFFICE.join(' / ')} coins an hour.`),
+    C('sponsor', 'Arbitrage', 'The sponsor card: CASH NOW taken every time against EVERY MATCH, coins a league matchday', 'No answer more than a quarter better', '<=', 1.25, sponsor[2].perMatchday / sponsor[0].perMatchday, 'ratio', `Coins a league matchday: ${sponsor.map(s => `${s.answer} ${Math.round(s.perMatchday)}`).join(', ')}. Two passes ago (v6) the ratio was ${BEFORE_V7.sponsorCashRatio}: a new sponsor called ${BEFORE_V7.sponsorGap} matchdays after the cash was taken.`),
     C('flip-instant', 'Arbitrage', 'Buy and sell at once (a free agent, a scout\'s find), train and sell: best profit', 'Nothing', '<=', 0, Math.max(...arbitrage.filter(a => a.instant).map(a => a.profit)), 'coins', 'A quick sale is 45% of value; a session adds a fraction of its cost to a player\'s value.'),
     C('flip-held', 'Arbitrage', 'Buy, play him six league starts, sell: expected profit in league wins, best case', 'Two league wins at most', '<=', 2, Math.max(...arbitrage.filter(a => !a.instant && a.cost > 0).map(a => a.wins)), 'wins', 'The scout\'s home youth find is the bargain it is meant to be; a free agent resold loses money on average.'),
     C('tickets', 'Currencies', 'Scout Tickets left unspent at the end, regular player', 'Under 5% of those earned', '<=', 0.05, regular.end.tickets / Math.max(1, total(regular.ticketsIn)), 'share', `${regular.cards.signed} cards signed and ${regular.cards.sold} sold for their resale credit (${Math.round(regular.coinsIn.cardSales / total(regular.coinsIn) * 1000) / 10}% of his coins): a ticket always has a use.`),
     C('gems-portal', 'Currencies', 'The dearest gem goal (Club Pass and all three networks, 2,300 gems) on a portal with nothing for sale, slowest profile', 'Inside the modelled year', '<=', 365, Math.max(...portalAll), 'days', `Career regular, no ads: Local network day ${regular.goalDays.localNetwork}, Club Pass day ${regular.goalDays.clubPass}, all three networks day ${regular.goalDays.allNetworks}.`),
-    C('squad-sink', 'Lopsided', 'Share of a regular player\'s spending that goes on players (transfers and training)', 'At least a tenth', '>=', 0.1, squadSpend, 'share', `Pack cards are drawn against his own eleven, four a day, free: ${regular.cards.signed} signed in ${regular.horizon} days keep it above its division's par with no coins. DESIGN DECISION, not a number.`),
-    C('sinks-last', 'Lopsided', 'The day a regular player has paid for every coin sink in the game (ground, staff, the whole look catalogue)', 'Not inside 60 days', '>=', 60, exhausted(regular) ?? 999, 'days', `Strong with every ad: day ${exhausted(strong) ?? `beyond ${strong.horizon}`}. Learning: ${exhausted(learning) === null ? `beyond ${learning.horizon}` : `day ${exhausted(learning)}`}. After it nothing is left to buy but players. DESIGN DECISION: late sinks.`),
+    C('squad-sink', 'Lopsided', 'Share of a regular player\'s spending that goes on players (transfers and training)', 'At least a tenth', '>=', 0.1, squadSpend, 'share', `${Math.round(regular.coinsOut.transfers).toLocaleString('en-US')} coins of transfers and ${Math.round(regular.coinsOut.training).toLocaleString('en-US')} of training in ${regular.horizon} days. Before, pack cards were drawn against his own eleven and kept it ${BEFORE_V8.overPar} over par for nothing. Now a card is drawn at the division's level, and he puts ${CAREER.squadShare * 100}% of his spare coins into the eleven (an assumption, stated on Career By Season).`),
+    C('sinks-last', 'Lopsided', 'The day a regular player\'s coins have paid for every coin sink in the game (the ground, the staff, every look, and his eleven trained to the cap)', 'Not inside 60 days', '>=', 60, exhausted(regular) ?? regular.horizon + 1, 'days', `${exhausted(regular) === null ? `Not inside the ${regular.horizon} days modelled (shown as ${regular.horizon + 1})` : `Day ${exhausted(regular)}`}. Counting only the ground, the staff and the looks, as the last pass did: day ${exhaustedLooks(regular) ?? `beyond ${regular.horizon}`} (it was ${BEFORE_V8.checks['sinks-last']}). The same player who never spends a coin on players: ${exhausted(cardsOnly) === null ? 'not inside the run' : `day ${exhausted(cardsOnly)}`}; who spends every spare coin on them: ${exhausted(allIn) === null ? 'not inside the run' : `day ${exhausted(allIn)}`}. Learning: ${exhausted(learning) === null ? 'not inside the run' : `day ${exhausted(learning)}`}.`),
     C('ads-twice', 'Ads', 'A player who never watches an ad against one who watches them all: days to each goal, worst ratio', 'Twice the time at most', '<=', 2, Math.max(...adGoals.map(g => g.ratio ?? 0)), 'ratio', adGoals.map(g => `${g.goal}: ${g.noAds === null ? 'beyond the run' : Math.round(g.noAds)} against ${g.everyAd === null ? 'beyond the run' : Math.round(g.everyAd)}`).join('; ')),
     // (The bar was "one win" when the ad also doubled the ticket office: 1.8 wins, and the office doubling was taken
     // out. What is left is the daily gift's own 2X, in the game since economy v2: 250 coins on average in a first week
     // against a 233 coin win, once a day. About one win is the honest bar for it: a quarter over at most.)
     C('ad-single', 'Ads', 'The daily gift\'s 2X ad against a won match\'s fee at the same stage, worst stage', 'About one match win (a quarter over at most)', '<=', 1.25, sheetWorst, 'wins', `Days 1 to 7: the ad adds ${firstWeek.sheetAd} coins on average, a won match pays ${firstWeek.winFee}. Doubling the ticket office with it as well made this 1.8 and was taken out. The full-time bonus is one match by rule; FREE COINS is ${FREE_AD_COINS}.`),
     C('ad-share', 'Ads', 'Share of coins that come from ads for a regular player who watches every one', 'Under half', '<=', 0.5, adShare, 'share', `Strong, 6 matches a day: ${Math.round((strong.coinsIn.adGift + strong.coinsIn.adMatch + strong.coinsIn.adCoins) / total(strong.coinsIn) * 100)}%. The full-time bonus on every match is nearly all of it.`),
+    // ---- economy v8 (16 October 2026): players cost coins
+    C('card-level', 'Players', 'The eleven a regular player builds on pack cards alone (no coin on players), against his division\'s par: the highest division average from the National League up, three seeds', 'Within 5 of par (the spread of the league itself)', '<=', 5, cardsOver, 'OVR', `By division, the mean over par on cards alone: ${coinsBuy.map(c => `${c.league} ${c.cardsOnly.toFixed(1)}`).join(', ')}. Before, on cards alone, he was ${BEFORE_V8.overPar} over (season by season: 13, 20, 16, 11, 13 from the County League to the Championship). The County League is the last one where a card is still drawn against the club's own eleven (up to ${PACK_OWN_CAP}).`),
+    C('squad-coins', 'Players', 'Share of ALL the coins a regular player earns in 180 days that goes on players (transfers and training)', 'At least a fifth', '>=', 0.2, squadCoins / total(regular.coinsIn), 'share', `${Math.round(squadCoins).toLocaleString('en-US')} of ${Math.round(total(regular.coinsIn)).toLocaleString('en-US')} coins. It is ${CAREER.squadShare * 100}% of what is his to spend once the ground is whole, by assumption; the check says the game now has that much to sell him.`),
+    C('coins-ahead', 'Players', 'What the coins buy: the regular player\'s eleven over par against the same player\'s on cards alone, County League to League One, three seeds', 'At least 1 rating point ahead', '>=', 1, ahead, 'OVR', `Mean over par, cards only / half his spare coins / every spare coin: ${coinsBuy.map(c => `${c.league} ${c.cardsOnly.toFixed(1)} / ${c.half.toFixed(1)} / ${c.allIn.toFixed(1)}`).join('; ')}. In the Championship and the Elite League the gap is small: the last points before the cap are dear and a season ages every player a year.`),
+    C('goal-left', 'Players', 'What a regular player still has to buy on day 180 (every look, and his eleven to the cap, less his wallet), in weeks of his income', 'At least four weeks', '>=', 4, left.weeks, 'weeks', `${Math.round(left.coins).toLocaleString('en-US')} coins: ${Math.round(left.ceiling).toLocaleString('en-US')} of sessions to the cap and the looks, against ${Math.round(left.wallet).toLocaleString('en-US')} in the wallet and ${Math.round(left.week).toLocaleString('en-US')} a week coming in. On cards alone (nothing spent on players, everything banked): ${leftFrugal.weeks.toFixed(1)} weeks. Every spare coin on players: ${leftLavish.weeks.toFixed(1)} weeks. Before, he could pay for everything on day ${BEFORE_V8.checks['sinks-last']} and banked 24,000 a week after it.`),
+    C('strong-sinks', 'Players', 'The day a strong player who watches every ad has coins for every sink (the ground, the staff, every look, his eleven to the cap)', 'Not before day 90', '>=', 90, exhausted(strong) ?? strong.horizon + 1, 'days', `He earns ${Math.round(total(strong.coinsIn) / strong.horizon * 7).toLocaleString('en-US')} coins a week, four times a regular player. Counting only the ground, the staff and the looks: day ${exhaustedLooks(strong)} (it was ${BEFORE_V8.checks['strong-sinks']}). A thin margin: the last two points of rating are what hold him.`),
+    C('top-pace', 'Players', 'The day a regular player (six wins in ten at par) reaches the Elite League', 'Eight weeks of daily play or more (day 56)', '>=', 56, topDay(regular) ?? regular.horizon + 1, 'days', `The bar was first set at day 90 to 150; no price can meet that, and it was the wrong bar: on the game's own league (top two of eight go up) a manager who wins six in ten at par is promoted in ${odds.map(o => `${Math.round(o.promoted * 100)}% of seasons ${o.gap === 0 ? 'at par' : o.gap > 0 ? `${o.gap} over` : `${-o.gap} under`}`).join(', ')}. A climb of 90 days needs him 12 under par the whole way up, so cards and coins would both have to be worthless. Other seeds: day ${free.slice(1).map(topDay).join(' and ')}; on cards alone ${frugal.map(topDay).join(', ')}. It was day ${BEFORE_V8.checks['top-pace']}, so the climb is a third longer than it was, and it ends with 18 weeks of income still to spend at the top. Two months of daily play to the top division is a fair length for a browser game; making it longer is a matter of who goes up or how hard a division plays, not of prices.`),
+    C('early-ledger', 'Early game', 'The first 30 days against the last pass, regular player: the lowest balance, the day each part of the ground was started, the first promotion, worst difference', 'Within 10%', '<=', 0.1, earlyWorst, 'share', `Lowest balance ${low30} (it was ${BEFORE_V8.lowestBalance}); the ground's parts on days ${early.join(', ')} (${BEFORE_V8.buildDays.join(', ')}); first promotion on day ${regular.promotions[0]?.day} (${BEFORE_V8.firstPromotion}). Promotions: days ${regular.promotions.slice(0, 7).map(x => x.day).join(', ')} (${BEFORE_V8.promotions.join(', ')}).`),
+    C('early-prices', 'Early game', 'The best player the Park and District Leagues ever list or scout (60 careers each, every matchday), against the rating where the market\'s premium starts', `At or under ${PRICE_KNEE}: every price there is what it was`, '<=', PRICE_KNEE, bottomBest, 'OVR', `Best listed ${market.listed}, best scout find ${market.found}. The best player in the regular player's own squad down there is a ${regular.bottomTwoBest}, and a session costs what it did up to ${TRAIN_KNEE}. What a club is PAID for a player is unchanged at every rating.`),
+    C('free-card', 'Arbitrage', 'A free pack card sold after its six league starts, at every rating from 50 to 99: coins over what it sold for before', 'Nothing', '<=', 0, freeCardOver, 'coins', `A 95 sells for ${curves.find(c => c.ovr === 95)!.freeCardSale} at once, as before; the market asks ${curves.find(c => c.ovr === 95)!.price.toLocaleString('en-US')} for a 95 and would have paid ${curves.find(c => c.ovr === 95)!.marketWouldPay.toLocaleString('en-US')}. Until six league starts the credit is 75 to 250 by rarity, as before.`),
+    C('card-budget', 'Wages', 'A collector who signs every better card: the wage drain against what his league matchdays bring, worst season', 'Under 5% (a card obeys the wage budget)', '<=', 0.05, collectorDrain, 'share', `Before, a card signed past the wage budget and the drain reached ${Math.round(BEFORE_V8.checks['card-budget'] * 100)}% of his league matchday income. Now the card waits until a player is let go, or is sold.`),
+    C('relegated-exit', 'Wages', 'Relegated with a full squad of the division above: the most players a club must sell to be back under its wage budget, any division, a park pitch', `${SQUAD_MAX - SQUAD_MIN} at most (the squad never goes under ${SQUAD_MIN})`, '<=', SQUAD_MAX - SQUAD_MIN, Math.max(...divisions.map(d => d.relegatedSales)), 'players', `By division: ${divisions.filter(d => d.stadium === 0 && d.division > 1).map(d => `${d.league} ${d.relegatedSales}`).join(', ')}. Every sale is a quick sale that pays 45% of his value at once; nothing is charged for selling. A player bought for a fee gives back 45% of the fee.`),
   ];
   const slim = (r: CareerRun) => ({ profile: r.profile, seed: r.seed, horizon: r.horizon, seasons: r.seasons, promotions: r.promotions, builds: r.builds, goalDays: r.goalDays, ads: r.ads, cards: r.cards,
     coinsIn: r.coinsIn, coinsOut: r.coinsOut, gemsIn: r.gemsIn, gemsOut: r.gemsOut, ticketsIn: r.ticketsIn, ticketsOut: r.ticketsOut, end: r.end, exhausted: exhausted(r), winAverage: r.winAverage,
-    sheetMax: r.sheetMax, rows: r.rows.filter(x => x.day % 5 === 0 || x.day === 1) });
+    sheetMax: r.sheetMax, exhaustedLooks: exhaustedLooks(r), bottomTwoBest: r.bottomTwoBest, rows: r.rows.filter(x => x.day % 5 === 0 || x.day === 1) });
   return {
     horizon: CAREER_HORIZON, seed: CAREER_SEED, assumptions: CAREER, costs: { ground: groundCost, staff: staffCost, catalogue, fullStaffWages: fullStaff },
-    runs: [...runs, allAds, collector].map(slim), matchLedger: regular.matchRows, stages, sharedPassive, sponsor, arbitrage, divisions, xp, checks,
+    runs: [...runs, allAds, collector, cardsOnly, allIn].map(slim), matchLedger: regular.matchRows, stages, sharedPassive, sponsor, arbitrage, divisions, xp, checks,
+    // Economy v8: the curves by rating, what a pack draws by division, the climb by profile, what coins buy, who goes up.
+    v8: { curves: curveTable(), cards: cardTable(), pace, coinsBuy, odds, goalLeft: { regular: left, cardsOnly: leftFrugal, allIn: leftLavish }, market, before: BEFORE_V8,
+      // (What the coins-ahead check reads: every season from the County League to League One, pooled over the three seeds.)
+      pooled: { cardsOnly: overPar(frugal, 5, 3), half: overPar(free, 5, 3), allIn: overPar(lavish, 5, 3) }, sinks: sinksAll, low30, earlyBuildDays: early,
+      rules: { priceKnee: PRICE_KNEE, trainKnee: TRAIN_KNEE, packLift: PACK_LIFT, packOwnCap: PACK_OWN_CAP, packCap: PACK_OVR_CAP } },
     ads: { goals: adGoals, placements: [allAds, strong].flatMap(placements), visits, timing: { kickToHalf: 2.5, halfToKick: 3.5, gap: 3 } },
   };
 }
@@ -842,7 +1041,7 @@ export function buildEconomyModel() {
   });
   const comeback = buildComebackModel(profiles);
   return {
-    economyVersion: 7, generatedFor: '2026-10-15', horizon: 90,
+    economyVersion: 8, generatedFor: '2026-10-16', horizon: 90,
     comeback, career: buildCareerModel(profiles, comeback),
     assumptions: [
       'Scenario forecasts, not player telemetry, human playtests or revenue forecasts.',

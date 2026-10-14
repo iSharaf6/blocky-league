@@ -401,7 +401,7 @@ function setShot(seed: number, dist: number, z: number, hold: number, fwd: numbe
 }
 
 describe('finesse and stick-aimed finishing (round 7)', () => {
-  it('a finesse curler at the far post from ~18 m out wide of the post beats a set keeper 30-40% of the time', () => {
+  it('a finesse curler at the far post from ~18 m out wide of the post beats a set keeper about 45% of the time', () => {
     let n = 0;
     let goals = 0;
     let wide = 0;
@@ -422,8 +422,15 @@ describe('finesse and stick-aimed finishing (round 7)', () => {
     // eslint-disable-next-line no-console
     console.log(`finesse, far post, from ~18 m wide of the post: ${goals}/${n} (${((goals / n) * 100).toFixed(0)}%), ${wide} wide`);
     // It was 0/48 in the browser (every one saved: too slow, too far inside the post, read at once).
-    expect(goals / n).toBeGreaterThanOrEqual(0.3);
-    expect(goals / n).toBeLessThanOrEqual(0.42);
+    // (2026-10-14, the range balance: 39% -> 46%, the band's top 0.42 -> 0.52 and its floor 0.3 -> 0.34. These are
+    // struck from 17.5 m, the widest of them with 20 m to fly to the far post. With more than DIVE_WAIT in hand once he
+    // had read one, he used to dive at once with the extra travel a dive got for every moment it had (keeper.ts
+    // DIVE_SHUFFLE); against a human's strike he edges across and dives DIVE_WAIT before it arrives now (HUMAN_EDGE),
+    // which is what took the cliff out of the placed strike from range, and from here that dive covers a little
+    // less. From 19 m on the finesse shot is aimed further inside the post and read sooner (actions.ts
+    // FINESSE_RANGE_AIM): 35% from 19 m, 22% from 20 m on tests/shotBench.ts's bench.)
+    expect(goals / n).toBeGreaterThanOrEqual(0.34);
+    expect(goals / n).toBeLessThanOrEqual(0.52);
   }, 60_000);
 
   it('a shot aimed with the stick from the edge of the box: under 20% wide on either side, and the charge no longer drags him', () => {

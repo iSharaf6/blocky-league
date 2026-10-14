@@ -8,11 +8,11 @@
  */
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
-import { BOTTOM_DIVISION, KEY_STATS, ROLES, SQUAD_MAX, STAT_SHORT, newSeason, refreshMarket, sellPlayer, sellValue, type CareerState, type ClubState } from '../meta/career';
+import { BOTTOM_DIVISION, KEY_STATS, PRICE_KNEE, ROLES, SQUAD_MAX, STAT_SHORT, newSeason, refreshMarket, sellPlayer, sellValue, type CareerState, type ClubState } from '../meta/career';
 import { canAfford, forYouSort, transferBudget, upgradeOf, type TransferBudget } from '../meta/forYou';
 import {
   MORALE_DIP, RESALE_STARTS, SCOUT_COST, SHORTLIST_MAX, YOUNG_AGE,
-  acceptCounter, acceptOffer, bidFor, canBid, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, marketUnread, newsStrip,
+  acceptCounter, acceptOffer, bidFor, canBid, contractOf, filterListings, listPlayer, listingById, markNewsSeen, marketSummary, marketUnread, marketValue, newsStrip,
   placeBid, playerAge, playerPotential, playerValue, rejectOffer, resaleCap, resaleOfferAmount, saleFor, scoutListing, shortlisted, sortListings, toggleShortlist,
   townOf, unlistPlayer, wageOf, withdrawBid, type Listing, type MarketFail, type MetaPlayer, type NewsItem,
 } from '../meta/market';
@@ -315,7 +315,13 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
             : w.open
               ? 'OFFERS COME AFTER LEAGUE MATCHDAYS'
               : 'NO OFFERS WHILE THE WINDOW IS SHUT'
-          : `A LISTED PLAYER PLAYS ${MORALE_DIP} DOWN`;
+          // (Economy v8: why his VALUE is not the market's asking price. A bought player is worth his fee at the most;
+          // a card, an academy player or an old signing is worth his base value. Only above PRICE_KNEE, where they differ.)
+          : playerValue(p) < marketValue(p) && overall(p) > PRICE_KNEE
+            ? typeof m.fee === 'number' && m.fee > 0
+              ? `WORTH WHAT YOU PAID AT THE MOST: ${fmt(m.fee)}`
+              : 'NOT BOUGHT FOR A FEE: CLUBS PAY HIS BASE VALUE'
+            : `A LISTED PLAYER PLAYS ${MORALE_DIP} DOWN`;
     return `<div class="mk-dh">${faceHtml(p, club.kit, 'md')}<div class="mk-did"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<em>${starter ? 'STARTER' : 'BENCH'}${dot}${contractOf(p)} YR LEFT</em>${sale ? tag('bid', 'LISTED') : ''}</span></div>${bigOvr(overall(p))}</div>
       <div class="mk-dbody pane-scroll" data-scroll-key="mk-d-${id}">
         ${keyStats(p)}

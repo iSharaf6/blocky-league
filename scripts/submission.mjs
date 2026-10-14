@@ -95,6 +95,10 @@ const PORTALS = {
     name: 'itch.io',
     zip: 'itch',
     allowHosts: [],
+    // Hosts that are only ever a link the player chooses to share or open (Invite Friends shares the public play
+    // link, src/platform/invite.ts): never requested by the game itself, so they may be in the build. itch allows
+    // outgoing links; the portals' builds carry no invite code at all.
+    linkHosts: ['isharaf6.github.io'],
     // itch.io/docs/creators/html5 (read 29 Sep 2026)
     limits: { files: 1000, bytes: 500 * MB, fileBytes: 200 * MB, pathLen: 240, note: '1,000 files or fewer, 500 MB or less extracted, 200 MB or less per file, paths of 240 characters or fewer' },
     images: [{ dir: 'cover', src: [STORE, 'itch-cover-630x500.png'], w: 630, h: 500 }],
@@ -303,7 +307,7 @@ function checkZip(portal, cfg, zipPath) {
     }
   }
   for (const h of res.hosts.keys()) {
-    if (!cfg.allowHosts.includes(h)) problem(portal, `external host in the build: ${h} (allowed: ${cfg.allowHosts.join(', ') || 'none'})`);
+    if (!cfg.allowHosts.includes(h) && !(cfg.linkHosts ?? []).includes(h)) problem(portal, `external host in the build: ${h} (allowed: ${cfg.allowHosts.join(', ') || 'none'})`);
   }
   for (const h of cfg.allowHosts) if (!res.hosts.has(h)) problem(portal, `the ${cfg.name} SDK host ${h} is not in the build: was this zip built with the right VITE_PORTAL?`);
   res.entries = entries;

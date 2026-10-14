@@ -33,6 +33,28 @@ is spent on transfers or training: [ECONOMY.md](ECONOMY.md), 15 October section.
 are invite only (their Xsolla store), so ads are the portal's only income for now. After these changes the whole
 suite was run again: **2,141 tests across 142 files passed, 2 skipped**, and the packages were rebuilt.
 
+**16 October: scout cards, shooting from range, and the second audit.** CrazyGames confirmed the game is selected
+for global release, subject to Full Implementation and a Full QA review. Since the build above:
+
+- **Economy v8.** Scout cards are drawn at the division's level, not against the club's own eleven; top players cost
+  real coins (prices and training climb steeply above 60 and 70 OVR; the early game is unchanged); a card obeys the
+  wage budget. The career model's 33 checks all pass; the workbook's 1,611 formula cells were recalculated and agree.
+  [ECONOMY.md](ECONOMY.md), 16 October section.
+- **Shooting from range.** A placed strike scored 54% from 22 m and 1% from 24 m; it now falls smoothly (34 / 26 /
+  20 / 11 / 10 / 6% from 16 to 26 m). The curler is a real choice (39 / 26 / 24 / 16% from 16 to 22 m; it was 33 /
+  13 / 3 / 7%). The knuckleball is unchanged. A human striker's shots only: the six AI-only determinism rows are
+  bit-identical, the human rows are re-recorded as protocol 13. Not met: 14 m is still 52%; on Hard and Legend the
+  curler scores less than a placed strike.
+- **Second audit of the portal build, all fixed:** held arrows, Space and the wheel no longer scroll the host page;
+  no interstitial within 60 s of any ad, and Moments keep a 4 minute gap; a request the SDK never answers shows ONE
+  MOMENT and gives the game back after 6 s; a blocking layer holds input during ads; the save is tagged with the
+  CrazyGames user, so two accounts on one browser never get each other's club and a guest who signs in cannot
+  overwrite the account's copy; a slow SDK is retried; nothing a portal player reads is under 9 px.
+
+After all of it the whole suite was run again: **2,222 tests across 145 files passed, 2 skipped**, and every package
+was rebuilt. Still only the real site can show: ads filling, the account save across two devices, a real sign-in
+mid-session (whether the SDK's data is the account's by the time its auth listener fires), and anything on a phone.
+
 **Validation (the first build of the day).** Typecheck clean. **2,122 tests across 141 files passed, 2 skipped** in one run of the whole suite on
 the integrated code (the six AI-only determinism rows are bit-identical; the twelve rows a human's shots reach were
 re-recorded as protocol 12). Four small edits came after that run (a `window.focus()` call at portal boot, the dev

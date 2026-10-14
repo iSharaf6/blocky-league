@@ -333,7 +333,7 @@ button.gl-soon { appearance: none; width: 100%; margin: 0; cursor: pointer; colo
   .gl-grow { gap: 3px; }
   .gl-chart { height: 30px; }
   .gl-nums b { font-size: 11px; }
-  .gl-nums small { font-size: 8px; }
+  .gl-nums small { font-size: 9px; }
   .gl-line { min-height: 26px; }
   .gl-focus { min-height: 30px; padding: 3px 3px 2px; }
   .panel .btn.gl-all { min-height: 30px; }

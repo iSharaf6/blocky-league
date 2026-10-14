@@ -110,7 +110,7 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 @media (max-width: 900px) {
   /* (TOMORROW over its prize, two short lines: it takes no more room than the gift button it replaces.) */
   .hub-tomorrow { display: inline-grid; grid-template-columns: auto auto; column-gap: 5px; row-gap: 3px; align-content: center; justify-items: center; padding: 0 7px; font-size: calc(13px * var(--ts, 1)); }
-  .hub-tomorrow small { grid-column: 1 / -1; font-size: calc(8px * var(--ts, 1)); letter-spacing: 0.6px; }
+  .hub-tomorrow small { grid-column: 1 / -1; font-size: calc(9px * var(--ts, 1)); letter-spacing: 0.6px; }
   .hub-tomorrow b:only-of-type:last-child { grid-column: 1 / -1; }
   .hub-acts .hg-w { display: none; }
   .hub-acts .gems.hub-gems { padding: 0 6px 0 5px; gap: 4px; font-size: calc(15px * var(--ts, 1)); }

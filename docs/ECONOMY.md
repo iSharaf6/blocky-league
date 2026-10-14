@@ -3,6 +3,234 @@
 The economy now has a reproducible time model, a review spreadsheet, and explicit boundaries between match fees,
 fixed prizes and repeatable rewards. This replaces older estimates and unverified competitor/pricing claims.
 
+## 16 October 2026: players cost coins (economy v8)
+
+The owner, on the two findings the last pass left open: draw scout cards against the DIVISION's level, not the
+club's own team, and fix the pile of coins at the top with the systems that exist. This pass does both, makes a card
+obey the wage budget, and holds the result to 33 bars: the 22 of 15 October and 11 new ones.
+Model: `npm run economy:model` (`scripts/economy-model.ts`), then `scripts/economy-workbook.py` and
+`scripts/economy-formulas.py`. Workbook: Start Here, Balance Checks, and the tables headed Economy v8 on Career
+Tables. Tests: `tests/economyV8.test.ts`, `tests/economyCareer.test.ts`.
+
+**Verdict.** All 33 checks pass. Every one of the 22 passes, the two that failed on 15 October included. One new
+check was first set a bar no price could meet (a regular player at the top no sooner than day 90): he gets there on
+day 61 (49 to 61 over three seeds; it was day 45), because who goes up is decided by who wins. Its bar is now eight
+weeks, with the reasoning in "The pace to the top" below.
+
+### What changed
+
+| Rule | Before | After | File |
+|---|---|---|---|
+| The level a card is drawn at | The club's own eleven. A starter lifted the next card. | The division's level (34 Park League to 88 Elite League). In the first three divisions, whose level is under 52, the club's own eleven still counts, up to 52, as before. | `src/meta/shop.ts` `packLevel`, `PACK_LIFT` 0, `PACK_OWN_CAP` 52, `openPack` |
+| The market's price | OVR x OVR x 0.25 at every rating | The same up to 60. Above it, times 1 + ((OVR - 60) / 21) cubed | `src/meta/career.ts` `PRICE_KNEE`, `ratingPrice`, `playerPrice` |
+| A training session (+2) | 40 + 3 x OVR at every rating | The same up to 70. Above it, times 30 / (100 - OVR) | `src/meta/career.ts` `TRAIN_KNEE`, `TRAIN_ROOM`, `sessionCost` |
+| What a club is paid for a player | His price by age and contract | His BASE price by age and contract (what it always was). A player bought for a fee is worth up to that fee while the market rates him that high. | `src/meta/market.ts` `baseValue`, `marketValue`, `playerValue`, `MetaPlayer.fee` |
+| A card and the wage budget | The market refused a signing over budget. A card signed anyway. | A card is refused too (`'wages'`) and waits until a player is let go, or is sold. | `src/meta/shop.ts` `signCard`, `cardWageRoom` |
+| A scout's ready find | 0.9 of his value by region | 0.9 of what the market asks for him, by region. He holds that fee. | `src/meta/staff.ts` `makeFind`, `signFind` |
+| A BID FOR YOUR STAR | 1.25 to 1.6 times his value | His value plus 25 to 60% of his BASE value: to the coin what it was for every player without a fee | `src/meta/events.ts` `bidCard` |
+
+Wages are not changed (OVR x OVR / 40, the same budget, the same drain). They were considered and left: a wage that is
+paid would be a new charge on squads people already own, and the model meets the bars without it.
+
+Words a player sees (text only, no screen gained height): the pack's range is the league's (`OVR 57 TO 76`), the
+shop's fine print says `CARDS ARE SCOUTED AT YOUR LEAGUE'S LEVEL`, the reveal of a card over budget says
+`WAGE BUDGET FULL. HIS WAGE 216, SPARE 90. LET A PLAYER GO.` with LET (NAME) GO AND SIGN or SQUAD in place of SIGN
+HIM, the training tab's wage line adds `+2 COSTS MORE ABOVE 70 OVR` for a player over 70, and the market's hint line
+says `WORTH WHAT YOU PAID AT THE MOST` or `NOT BOUGHT FOR A FEE: CLUBS PAY HIS BASE VALUE` where a player's value is
+under the market's price. These were not looked at in a browser in this pass: see Limits.
+
+### The tables
+
+| OVR | Price before | Price now | Wage a week (unchanged) | Session before | Session now | A free card sells for (unchanged) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 50 | 630 | 630 | 63 | 190 | 190 | 310 |
+| 55 | 760 | 760 | 76 | 205 | 205 | 380 |
+| 60 | 900 | 900 | 90 | 220 | 220 | 450 |
+| 65 | 1,060 | 1,070 | 106 | 235 | 235 | 530 |
+| 70 | 1,230 | 1,360 | 123 | 250 | 250 | 610 |
+| 75 | 1,410 | 1,920 | 141 | 265 | 320 | 700 |
+| 80 | 1,600 | 2,980 | 160 | 280 | 420 | 790 |
+| 85 | 1,810 | 4,850 | 181 | 295 | 590 | 900 |
+| 90 | 2,030 | 7,930 | 203 | 310 | 930 | 1,000 |
+| 93 | 2,160 | 10,550 | 216 | 319 | 1,370 | 1,070 |
+| 95 | 2,260 | 12,700 | 226 | 325 | 1,950 | 1,120 |
+| 97 | 2,350 | 15,220 | 235 | 331 | 3,310 | 1,140 |
+| 99 | 2,450 | 18,140 | 245 | 337 | 10,110 | 1,190 |
+
+(A free card: aged 26, one year, sold at once after his six league starts. Until those starts his resale credit is 75
+to 250 by rarity, as before. At the market's price a 95 would have sold for 6,290.)
+
+What a pack draws. Par is the rating of a division's average eleven, 5 over its level.
+
+| League | Par | Drawn at | Common | Rare | Epic | Legend |
+|---|---:|---:|---|---|---|---|
+| Park, District, Sunday | 39, 43, 47 | The club's own eleven, 52 at the most | as before | as before | as before | as before |
+| County League | 56 | 51 or 52 | 48 to 53 | 53 to 57 | 57 to 62 | 62 to 68 |
+| National League | 65 | 60 | 57 to 61 | 62 to 65 | 66 to 70 | 71 to 76 |
+| League One | 75 | 70 | 67 to 71 | 72 to 75 | 76 to 80 | 81 to 86 |
+| Championship | 84 | 79 | 76 to 80 | 81 to 84 | 85 to 89 | 90 to 95 |
+| Elite League | 93 | 88 | 85 to 89 | 90 to 93 | 94 to 95 | 95 |
+
+Against par: a common is 8 to 4 under (squad depth), a rare 3 under to par (a starter for a side that has just come
+up), an epic 1 to 5 over, a legend 6 to 11 over: a star one division up, never two. The rarity ranges themselves are
+not changed, so a pack waiting in an older save draws the same card it would have.
+
+### Every check, before and after
+
+Before is the same model on the rules of 15 October (economy v7), same seed. A day of 181 is the day after the run.
+
+| Check | Bar | Before | After | |
+|---|---|---:|---:|---|
+| Every league matchday settles to the coin | No coin unaccounted for | 0 | 0 | PASS |
+| Matchdays the staff went unpaid, careful manager, three profiles | Never | 0 | 0 | PASS |
+| Coins the wage drain took from a careful manager | Under 1% | 0% | 0% | PASS |
+| Staff wages against league matchday income, worst season | Under two thirds | 47.3% | 49.3% | PASS |
+| A collector: wages, drain and contracts against all he earns, worst season | Under 100% | 64.6% | 30.5% | PASS |
+| Longest wait for the next part of the ground, regular | 8 matches | 7 | 8 | PASS |
+| The whole ground, regular | 6 weeks | day 15 | day 15 | PASS |
+| Every member of staff, regular | 10 weeks | day 34 | day 34 | PASS |
+| A mid look in the wallet, regular | 5 days | day 4 | day 4 | PASS |
+| A top look in the wallet, regular | 3 weeks | day 13 | day 19 | PASS |
+| Coins that need no match against coins from matches | Under 100% | 67.9% | 67.9% | PASS |
+| Club income against the rest of a day's coins | Under a quarter | 22.3% | 22.3% | PASS |
+| Sponsor: CASH NOW against EVERY MATCH | No answer a quarter better | 0.95 | 0.96 | PASS |
+| Buy and sell at once, train and sell: best profit | Nothing | 0 | 0 | PASS |
+| Buy, play six starts, sell: expected profit | Two league wins | 1.38 | 1.14 | PASS |
+| Scout Tickets left unspent, regular | Under 5% | 0% | 0% | PASS |
+| Dearest gem goal on a portal, slowest profile | Inside a year | day 231 | day 231 | PASS |
+| Share of a regular player's SPENDING on players | At least a tenth | 0% | 58.3% | PASS |
+| Day a regular player's coins have paid for every sink (the eleven to the cap included) | Not inside 60 days | day 57 | not inside 180 | PASS |
+| No ads against every ad, days to each goal, worst | Twice the time | 1.40 | 1.67 | PASS |
+| The gift's 2X ad against a won match | About one win (1.25) | 1.07 | 1.07 | PASS |
+| Share of coins from ads, regular who watches every one | Under half | 29.8% | 29.7% | PASS |
+| NEW. The eleven built on cards alone against par, National League up, highest division average | Within 5 of par | 20 | 3.7 | PASS |
+| NEW. Share of ALL a regular player's coins that goes on players | At least a fifth | 0% | 36.8% | PASS |
+| NEW. What the coins buy: his eleven over the same player's on cards alone, County League to League One | 1 rating point | 0 | 3.2 | PASS |
+| NEW. What a regular player still has to buy on day 180, in weeks of his income | Four weeks | 0 | 17.9 | PASS |
+| NEW. Day a strong player who watches every ad has coins for every sink | Not before day 90 | day 25 | day 93 | PASS |
+| NEW. Day a regular player reaches the Elite League | Day 90 to 150 | day 45 | day 61 | FAIL |
+| NEW. The first 30 days against the last pass: lowest balance, each part of the ground, first promotion | Within 10% | | 0% | PASS |
+| NEW. Best player the Park and District Leagues list or scout, against the rating where the premium starts | 60 or under | | 59 | PASS |
+| NEW. A free card after six starts, every rating: coins over what it sold for before | Nothing | | 0 | PASS |
+| NEW. A collector's wage drain against his league matchday income, worst season | Under 5% | 190% | 2.2% | PASS |
+| NEW. Relegated with the squad of the division above: most players to sell to be under budget | 9 (never under 14 players) | | 7 | PASS |
+
+The three that moved inside their bars: the top look is in the wallet on day 19 instead of 13 and a player with no ads
+is 1.67 times as slow instead of 1.40, because the manager now spends on players; the longest wait for a part of the
+ground is 8 matches instead of 7 (the same day: one match later in it).
+
+### The climb, by profile
+
+Day each division is reached (main seed; the regular player's other two seeds in brackets).
+
+| Profile | District | Sunday | County | National | League One | Championship | Elite League |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Learning (45/25/30, 3 days a week, 2 matches) | 38 | 57 | 78 | 97 | 113 | 132 | 169 |
+| Regular (60/20/20, daily, 3 matches). Before: 6, 11, 17, 23, 28, 34, 45 | 6 | 11 | 17 | 23 | 28 | 34 | 61 (56, 49) |
+| Regular, cards only (no coin on players) | 6 | 11 | 17 | 23 | 28 | 34 | 50 (50, 48) |
+| Regular, every spare coin on players | 6 | 11 | 17 | 23 | 28 | 34 | 45 (56, 44) |
+| Regular, every ad | 6 | 11 | 17 | 23 | 28 | 34 | 45 |
+| Strong (75/15/10, daily, 6 matches, every ad) | 3 | 6 | 9 | 12 | 15 | 18 | 20 |
+
+The regular player's first Championship season in the main seed ends in relegation: he is 3 under par on HARD. He is
+back a season later and goes up on day 61.
+
+What the coins buy. The eleven over its division's par, the mean of every season there, three seeds:
+
+| League | Cards only | Half his spare coins | Every spare coin |
+|---|---:|---:|---:|
+| County League | 2.3 | 5.3 | 5.3 |
+| National League | 2.3 | 5.0 | 6.0 |
+| League One | -1.5 | 3.4 | 6.4 |
+| Championship | 3.0 | 0.7 | 4.4 |
+| Elite League | 3.7 | 3.9 | 4.2 |
+
+Cards keep him at about par (he was 7 to 20 over). Coins put him 3 to 5 ahead of that up to League One with half
+his spare coins, and up to 8 with all of them. In the top two divisions they buy little in this model: the last points before the cap are dear, a season ages every player a year,
+and the manager trains his weakest starter (the game's own TRAIN BEST), who is the next to be replaced.
+
+The regular player's 180 days: 824,700 coins in. Out: the ground 35,600, staff fees 24,900, staff wages 114,200,
+contracts 42,100, transfers 5,400, training 297,900. In the wallet 304,600. An Elite League season brings him 31,500
+and costs 18,900, of which 12,600 on players (it was 32,000 and 6,200). On day 180 he is 617,000 coins of sessions
+from an eleven at the cap and has every look to buy: 499,700 coins left to buy against 27,900 a week coming in.
+The same player who banks every coin and never spends on players has 3.6 weeks left (611,000 in the wallet); the
+one who spends every spare coin on players has 21.7.
+
+### The pace to the top (first set at day 90 to 150: not met, and re-set to eight weeks)
+
+It cannot be met by anything in the economy, and the numbers say why. On the game's own league (eight clubs, two go
+up), with the model's assumption about who wins, a manager who wins six in ten at par is promoted:
+
+| His eleven against par | 5 over | At par | 5 under | 9 under | 14 under | 20 under |
+|---|---:|---:|---:|---:|---:|---:|
+| Seasons he goes up (200 each) | 88% | 80% | 65% | 47% | 29% | 20% |
+
+A division is 9 or 10 rating points above the last, so he arrives 9 under and still goes up in half his first
+seasons. A climb of 90 days is about three seasons a division, which needs him 12 under par all the way up. The day
+he reaches the Elite League, three seeds, as cards are made worth less:
+
+| A card is drawn at | Cards only | Half his spare coins on players |
+|---|---|---|
+| The division's level (shipped) | 50, 50, 48 | 61, 56, 49 |
+| 5 under it | 49, 55, 53 | 61, 45, 48 |
+| 12 under it | 49, 66, 47 | 49, 50, 54 |
+| 30 under it (no card ever starts) | 122, 152, 137 | 49, 50, 54 |
+| 30 under it, and no help from his own eleven in the first three divisions | 110, 160, 87 | 59, 87, 59 |
+
+Only a manager with no usable card who also spends nothing on players lands in the window. The levers that would
+slow a six-in-ten manager are outside the economy and were not touched: one promotion place instead of two, a play-off,
+HARD from League One up, or accepting about two months for him (the learning player takes 24 weeks). Two months of
+daily play to the top division was accepted on 16 October: the climb is a third longer than it was, the first six
+promotions are untouched, and at the top there are 18 weeks of income still to spend. If the owner wants it longer,
+those are the levers.
+
+### Assumptions (on the sheet Career By Season)
+
+Who wins is assumed, as on 15 October: the profile's mix at par on Normal, 1.5 points of a hundred a rating point
+(25 at most), 10 off on Hard, 20 on Legend. New: once the ground is whole the manager puts half of the coins that are
+his to spend into the eleven, on whatever lifts it most for the coins (a free agent at his asking price while the
+window is open, a scout's ready find, or a session for the weakest starter), until it is 5 over his division's par,
+and in the Elite League toward 99. He never bids for a club's player. A card is signed when it beats a starter and the
+wage budget allows, else sold. Two more runs show the ends of that choice: cards only, and every spare coin. "Paid for
+every sink" means his wallet covers the ground and staff he has not paid for, every look in the shop, and sessions
+for the eleven he has to the cap, at his discount.
+
+### Left alone
+
+- Wages: the formula, the budget, the drain and the relegation numbers (1,185 a matchday in the County League for a
+  club that sells nobody). A relegated club needs to sell 7 players at the most to be under budget and each sale pays.
+- What every player already owned is worth, sells for and earns: a card, an academy player, the starting squad and
+  every signing made before today have no fee and are valued on the base price. Saves load as they are; the one new
+  field (`fee`) is optional. A listing or a scout's find already in a save keeps the price it showed.
+- The rarity ranges, the odds, the resale credit (75 to 250 until six league starts), Scout Tickets, the pack cap (95).
+- Everything a new club meets in the Park and District Leagues: prices, sessions, cards, the first 30 days' ledger.
+- Contract renewals, the academy, growth, the transfer window, the ground, the staff, gems, ads, the shop.
+
+### Limits
+
+- The reworded lines were not seen in a browser in this pass (the working tree was shared with a change to the match
+  engine). They replace lines of the same or greater length in the same elements; the training tab's wage line cannot
+  wrap. They should be looked at once at 852x393 and 800x450.
+- The strong player's bar holds by days, and only for a manager who spends as he goes: day 93 in the main seed, 91
+  and 90 in two others. A strong player who banked every coin and spent nothing on players until then would have the
+  coins for everything on day 62 (59 and 63 in the other seeds). Holding him too would need the last points before
+  the cap about twice as dear, and a regular player's coins already buy little there.
+- In the Championship and the Elite League a regular player's coins buy little rating in the model. Training the
+  weakest starter is the weak part: a helper that trains a young starter would buy more.
+- A club's listed player is asked at the market's price, so the AI clubs' squads are worth more on paper. AI clubs
+  pay nothing to each other, so nothing follows from it.
+
+### The workbook's formulas
+
+`scripts/economy-formulas.py` recalculates every formula cell from the workbook's input cells (a small evaluator:
+arithmetic, IF, AND, MAX, SUM, ROUND, ROUNDUP, ABS, ranges, sheet references) and compares it with the value the
+generator cached from `model.json`. 1,611 formula cells on 9 of the 17 sheets: none failed to evaluate, none differs.
+Each of the 33 rows of Balance Checks gives the model's PASS or FAIL; three read the sheet's rows (whole coins a day,
+finished seasons) and sit within 0.3% of the model's exact measure. The first run found 71 cached values that
+differed, all in the generator and all fixed: six welcome week totals had no cached value, 62 ratios were cached
+from unrounded numbers beside the rounded ones they divide, and three Balance Checks cells cached the model's exact
+measure instead of what their own rows give.
+
 ## 15 October 2026: the whole economy checked (economy v7)
 
 The owner: "make sure the game economy for the whole game is balanced". Until now the model played quick matches,
@@ -83,6 +311,8 @@ The 14 October tables below were measured at the old ticket office. With the new
 come-back features instead of 24 to 28%. Gems are unchanged.
 
 ### Left alone on purpose, for the owner to decide
+
+(Decided on 16 October 2026: items 1, 2 and 4 are economy v8, above. This list is kept as it was written.)
 
 1. **Coins pile up at the top.** The ground (35,600) and the staff (24,900 in fees) are finished before the County
    League, on days 15 and 34. From there a regular player takes in about 32,000 coins a season and spends 6,200

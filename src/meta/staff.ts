@@ -28,7 +28,7 @@ import { makeName, makePlayer, surnameOf } from './data';
 import { has, partDef, type PartId } from './ground';
 import { CEIL_HEADROOM, type GrowPlayer, type TraitId } from './growth';
 import { prospectCeiling } from './life';
-import { clubWageBudget, pinMeta, playerValue, pushNews, squadWages, wageOf } from './market';
+import { clubWageBudget, marketValue, pinMeta, pushNews, squadWages, wageOf } from './market';
 
 export type StaffRole = 'assistant' | 'physio' | 'scout1' | 'scout2' | 'academy' | 'commercial';
 export type ScoutSlot = 'scout1' | 'scout2';
@@ -363,7 +363,8 @@ function makeFind(state: CareerState, rng: Rng, m: StaffMember, region: RegionDe
   const g = pinMeta(p, { age, potential: stars, contract: youth ? 3 : 2 + rng.int(2) }) as GrowPlayer;
   g.ceil = Math.min(STAT_CAP, youth ? prospectCeiling(g) + CEIL_HEADROOM + region.ceil : overall(g) + Math.max(0, 27 - age));
   g.traits = rng.chance(0.6) ? [region.trait] : [];
-  const fee = round10(Math.max(40, (youth ? playerPrice(g) * 0.6 : playerValue(g) * 0.9) * region.fee));
+  // (A find is bought, so he is priced on what the market asks: marketValue, the premium above PRICE_KNEE included.)
+  const fee = round10(Math.max(40, (youth ? playerPrice(g) * 0.6 : marketValue(g) * 0.9) * region.fee));
   return { player: g, fee, wage: wageOf(g), kind };
 }
 
@@ -444,6 +445,8 @@ export function signFind(state: CareerState, wallet: Wallet, slot: ScoutSlot, id
   wallet.coins -= find.fee;
   const p: GrowPlayer = { ...find.player, stats: { ...find.player.stats }, look: { ...find.player.look }, id: `c${club.nextId++}`, number: freeNumber(club.squad, find.player.role) };
   p.paid = find.fee;
+  // The fee he holds (market.ts playerValue): a sale never gives back more than was paid for him.
+  p.fee = find.fee;
   p.boughtSeason = state.season?.number ?? 0;
   p.starts = 0;
   p.joined = state.season?.number ?? 1;

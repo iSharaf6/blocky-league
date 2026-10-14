@@ -8,7 +8,8 @@ import type { AppContext, MatchKind, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
 import { localDay } from './core/day';
 import { ddaAssist, ddaRecord, suggestEasy, type Outcome } from './core/dda';
-import { Input, isKey, setBindings, setDeviceSource } from './core/input';
+import { Input, holdsPage, isKey, setBindings, setDeviceSource } from './core/input';
+import { adHold, adWait } from './ui/adHold';
 import {
   BASICS_STEPS, LOCKED_FEATURES, basicsDone, completeBasics, featureOpen, heroOf, noteGoals, straightToBasics, type LockedFeature,
 } from './core/onboarding';
@@ -16,7 +17,7 @@ import {
   CONTROL_DEFAULTS, advanceDaily, controlsOf, dailyChallenges, dailyFor, levelOf, levelTitle, loadSave, matchStars, matchXp, nextStreak,
   streakMult, writeSave, type CamZoom, type ControlSettings, type MatchSummary, nextUnlock,
   type SaveData, momentStarsTotal, claimMomentXp } from './core/save';
-import { adoptPortalStore, challengeCounts, portalSaveSwapped, recordShowtime, saveBaseline, showtimeMode, type ChallengeKind } from './core/save';
+import { adoptPortalStore, challengeCounts, holdPortalWrites, portalSaveSwapped, recordShowtime, saveBaseline, showtimeMode, type ChallengeKind } from './core/save';
 import { GRADE_BONUS, type BountyKind, type DailyLive } from './game/funLayer';
 import { MatchSession, type MatchResult, type SessionOptions } from './game/matchSession';
 import { PRESET_CLUBS, dedupeSurnames, makeTeam, resolveKitClash } from './meta/data';
@@ -186,7 +187,26 @@ function adoptPortalSave(): void {
   const store = ads.portalStore();
   if (!store) return;
   portalAsked = true;
-  portalSave = adoptPortalStore(store, save, saveAtLoad);
+  portalSave = adoptPortalStore(store, save, saveAtLoad, ads.portalUser());
+  settlePortalSave();
+}
+
+/**
+ * A guest signed in to CrazyGames mid-visit (platform/ads.ts onAuth): the save is settled again, for the account
+ * now playing. Its own copy comes in if it has one (at the next safe point, never mid-match, and nothing the guest's
+ * save does meanwhile is written over it); if it has none, the guest's progress goes into the account with him.
+ */
+function portalAuthChanged(uid: string): void {
+  if (!portalAsked) return;
+  const store = ads.portalStore();
+  if (!store) return;
+  settlePortalSave();
+  // (A copy still waiting to come in, a match is on, is what this browser holds now: it is the one measured, and if
+  // it is the one to keep it still waits, with the outgoing save's writes held.)
+  const waiting = portalSave;
+  const theirs = adoptPortalStore(store, waiting ?? save, undefined, uid);
+  portalSave = theirs ?? waiting;
+  if (!theirs && waiting) holdPortalWrites();
   settlePortalSave();
 }
 
@@ -1688,16 +1708,23 @@ const autoPause = (): void => {
   if (session && !session.paused && !menus.open && session.match.phase !== 'halftime' && session.match.phase !== 'fulltime') session.requestPause();
 };
 /** A key pressed while an ad is asked for or is up never reaches the game (adShield). */
-const swallowKey = (e: KeyboardEvent): void => e.stopImmediatePropagation();
+const swallowKey = (e: KeyboardEvent): void => {
+  // (core/input.ts never hears it, so the page the game sits in is kept still from here: a held arrow or Space.)
+  if (holdsPage(e)) e.preventDefault();
+  e.stopImmediatePropagation();
+};
 
 /**
  * A portal's ad is being asked for or is on screen (platform/ads.ts onBusy; false when it has gone): the game takes
  * no input meanwhile. Every screen of its own (menus, HUD, touch controls: all under #ui) goes inert, so nothing
  * behind the ad can be tapped or tabbed to, and its keys are swallowed; whatever was held is let go. A match that is
  * running (only an ad the SDK started long after its request was given up on can find one) is paused, and the pause
- * menu is what the player comes back to.
+ * menu is what the player comes back to. A transparent layer goes over all of it too (ui/adHold.ts): `inert` is
+ * missing from older Safari, and the pitch's own canvas is outside #ui.
  */
 function adShield(busy: boolean): void {
+  // (First, and by itself: the layer comes down on every path, whatever the rest of this does.)
+  adHold(busy);
   const ui = document.getElementById('ui');
   if (ui) ui.inert = busy;
   window.removeEventListener('keydown', swallowKey, true);
@@ -1843,6 +1870,13 @@ async function boot(): Promise<void> {
   };
   // A portal: while an ad is asked for or is up, the game takes no input at all (adShield).
   if (PORTAL) ads.onBusy = adShield;
+  // An interstitial awaited with nothing on screen says ONE MOMENT on that layer, if it lasts (ui/adHold.ts).
+  if (PORTAL) ads.onWait = adWait;
+  // CrazyGames: a guest who signs in mid-visit gets his account's save, not the guest's written over it.
+  if (PORTAL) ads.onAuth = portalAuthChanged;
+  // CrazyGames' SDK came up on a background retry, after boot stopped waiting for it: the save is settled with its
+  // store then, exactly as for an init that was merely slow (never mid-match: adoptPortalSave).
+  if (PORTAL) ads.onLate = adoptPortalSave;
   // The store (the apps' native one, or the dev fake): loads in the background, the shop looks when it opens.
   void iap.init();
   // Every screen's text goes through the divider guard (see ui/text.ts): no glyph the fonts lack.

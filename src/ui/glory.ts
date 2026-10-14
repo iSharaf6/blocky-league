@@ -420,7 +420,11 @@ export function growHandlers(
             const watched = await ads.rewarded().catch(() => false);
             healAdBusy = false;
             if (!watched) return toast(NO_AD_TEXT, 'info');
-            if (!useAd(app.save, 'heal', localDay()) || !healFree(st, p.id)) return;
+            // The heal first, and today's ad is counted only once it has happened. An ad watched for nothing is never
+            // silent: he was fit again already (the day moved on, or he was healed another way), or today's was used.
+            if (adsLeft(app.save, 'heal', localDay()) <= 0) return toast('TODAY\'S FREE HEAL IS USED. NOTHING WAS TAKEN', 'info');
+            if (!healFree(st, p.id)) return toast(`${lastName(p.name).toUpperCase()} IS FIT ALREADY. YOUR FREE HEAL IS KEPT`, 'info');
+            useAd(app.save, 'heal', localDay());
             sfx.coin();
             saved();
             toast(`${lastName(p.name).toUpperCase()} IS FIT AGAIN`, 'good');

@@ -519,9 +519,28 @@ export function clubRating(club: ClubState): number {
 
 // ------------------------------------------------------------------ training
 
+/**
+ * What a +2 session costs a player of this rating before any discount (economy v8, 16 October 2026): 40 + 3 x OVR, as
+ * it always was, and from TRAIN_KNEE up that times TRAIN_ROOM over his distance from 100: the closer to perfect, the
+ * dearer the next step. Nothing at or under 70 changes (the League One's par is 75).
+ * BEFORE: 40 + 3 x OVR everywhere (319 coins at 93: an eleven went from the Elite League's par to the cap for about
+ * 40,000, a week and a half of a regular player's income there, and then there was nothing left to train).
+ * AFTER: 75: 320 / 85: 590 / 90: 930 / 93: 1,370 / 95: 1,950 / 97: 3,310 / 98: 5,010 / 99: 10,110. The eleven's last
+ * points are the evergreen goal the top was missing: on day 180 the model's regular player is still 450,000 to
+ * 620,000 coins of sessions from an eleven at the cap (docs/ECONOMY.md "16 October 2026").
+ */
+export const TRAIN_KNEE = 70;
+export const TRAIN_ROOM = 30;
+
+export function sessionCost(ovr: number): number {
+  const base = 40 + ovr * 3;
+  if (ovr <= TRAIN_KNEE) return base;
+  return round10(base * TRAIN_ROOM / Math.max(1, 100 - ovr));
+}
+
 /** A +2 session; `discount` (0..1) comes from the TRAINING GROUND and the legacy coach perk (trainingDiscount). */
 export function trainingCost(p: PlayerDef, discount = 0): number {
-  const base = 40 + overall(p) * 3;
+  const base = sessionCost(overall(p));
   return discount > 0 ? round10(base * (1 - Math.min(0.5, discount))) : base;
 }
 
@@ -1288,9 +1307,44 @@ export function cupTieReward(division: number, stadium: number, my: number, thei
 // The market itself (listings, offers, sales, AI trades, scouting) lives in meta/market.ts; what's here is the
 // price scale, the legacy free-agent view used by the career hub, and the instant quick sale.
 
-/** About three or four wins' pay for a squad-level signing (a 50-rated player costs ~630). */
+/**
+ * The market's premium on a player's rating (economy v8, 16 October 2026). Up to PRICE_KNEE nothing changes: a
+ * signing is three or four wins' pay, as it always was (a 50-rated player costs ~630). Above it the price climbs
+ * with the cube of the distance, so a star is half a season's income at the top and not pocket change.
+ * BEFORE: OVR² x 0.25 at every rating (a 95 cost 2,260 coins, when an Elite League season brings a regular player
+ * 32,000: the model's manager spent 0 coins on players in 180 days and banked 24,000 a week).
+ * AFTER: the same up to 60, then 65: 1,070 / 75: 1,920 / 85: 4,850 / 93: 10,550 / 95: 12,700 / 99: 18,140
+ * (scripts/economy-model.ts, docs/ECONOMY.md "16 October 2026").
+ * The knee sits above everything the Park and District Leagues ever put on the market: over 60 careers and every
+ * matchday of a season their best listed player is a 55 and a 59, and a scout's best find there a 51.
+ */
+export const PRICE_KNEE = 60;
+export const PRICE_SPAN = 21;
+export const PRICE_POWER = 3;
+
+/** The price scale before the premium: OVR² x 0.25. What a club is paid for a player it never paid a fee for (market.ts playerValue). */
+export function basePrice(ovr: number): number {
+  return round10(Math.max(0, ovr) ** 2 * 0.25);
+}
+
+/** What the market multiplies the base price by: 1 up to PRICE_KNEE, 1.01 at 65, 1.4 at 75, 2.7 at 85, 5.6 at 95, 7.4 at 99. */
+export function pricePremium(ovr: number): number {
+  return 1 + (Math.max(0, ovr - PRICE_KNEE) / PRICE_SPAN) ** PRICE_POWER;
+}
+
+/** The unrounded price curve. */
+function priceCurve(ovr: number): number {
+  return Math.max(0, ovr) ** 2 * 0.25 * pricePremium(ovr);
+}
+
+/** What the market asks for a player of this rating. */
+export function ratingPrice(ovr: number): number {
+  return round10(priceCurve(ovr));
+}
+
+/** What the market asks for him: his rating's price (the base price up to PRICE_KNEE, the premium above it). */
 export function playerPrice(p: PlayerDef): number {
-  return round10(overall(p) ** 2 * 0.25);
+  return ratingPrice(overall(p));
 }
 
 /** What a quick sale pays now: 45% of the player's value (rating price by age and contract, market.ts). */
@@ -1304,6 +1358,11 @@ export function sellValue(p: PlayerDef): number {
  */
 export function divisionPlayerOverall(division: number, role: Role): number {
   return divisionLevel(division) + ROLE_OVR_OFFSET[role];
+}
+
+/** The rating an average eleven of this division has (its par): 39 in the Park League, 93 in the Elite League. */
+export function divisionPar(division: number): number {
+  return divisionLevel(division) + 5;
 }
 
 export function tuneToOverall(p: PlayerDef, target: number): void {
@@ -1434,7 +1493,7 @@ function readPlayer(v: unknown): PlayerDef | null {
     stats[k] = clamp(Math.round(s), 1, STAT_CAP);
   }
   const look = isObj(v.look) ? v.look : {};
-  const p: PlayerDef & { age?: number; potential?: number; contract?: number; paid?: number; boughtSeason?: number; starts?: number; scoutResale?: number } = {
+  const p: PlayerDef & { age?: number; potential?: number; contract?: number; paid?: number; boughtSeason?: number; starts?: number; scoutResale?: number; fee?: number } = {
     id: v.id,
     name: v.name.slice(0, 24),
     number: int(v.number, 0, 99, 0),
@@ -1457,6 +1516,8 @@ function readPlayer(v: unknown): PlayerDef | null {
   if (isNum(v.boughtSeason)) p.boughtSeason = int(v.boughtSeason, 0, 1e6, 0);
   if (isNum(v.starts)) p.starts = int(v.starts, 0, 1e6, 0);
   if (isNum(v.scoutResale) && v.scoutResale > 0) p.scoutResale = int(v.scoutResale, 1, 250, 75);
+  // The transfer fee he still holds (economy v8, market.ts playerValue): absent on every player signed before it.
+  if (isNum(v.fee) && v.fee > 0) p.fee = int(v.fee, 1, 1e9, 0);
   // His life at the club (life.ts): games, goals, the season he joined, an academy graduate.
   const lp = p as LifePlayer;
   if (isNum(v.apps)) lp.apps = int(v.apps, 0, 1e6, 0);

@@ -36,9 +36,11 @@ import type { Kit, MatchMode, Side, TeamDef } from '../sim/types';
  * its level; the human's shot assist no longer threads acute angles; and every keeper holds his near post against a
  * man by the byline instead of running out past it, which moves AI v AI matches too.
  * 12: a human striker's KNUCKLEBALL, CURLER and AFTERTOUCH (sim/actions.ts, sim/match.ts aftertouchStep): their state
- * rides on the ball and is in the hash; a nutmeg is knocked at the man and is a stepover when his legs are shut.)
+ * rides on the ball and is in the hash; a nutmeg is knocked at the man and is a stepover when his legs are shut.
+ * 13: the shooting balance from range: how a keeper handles a human's strike (sim/keeper.ts HUMAN_EDGE), where the
+ * shot assist and a finesse shot are placed from range (sim/actions.ts HUMAN_WIDE) and his reach against a CURLER.)
  */
-export const NET_VERSION = 12;
+export const NET_VERSION = 13;
 
 /**
  * A player's Settings > Controls that the sim reads (the trainer is his screen only, so it stays local; AUTO SPRINT rides

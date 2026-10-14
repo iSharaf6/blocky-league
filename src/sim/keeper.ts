@@ -123,6 +123,38 @@ const JUMP_LEAD = 0.28;
 /** A dropper (DROPPER_DIP m lower at the line than where he stands) has him back-pedal to DROPPER_LINE m off his line. */
 const DROPPER_LINE = 0.4;
 const DROPPER_DIP = 0.3;
+/**
+ * A HUMAN's open-play strike with the foot (2026-10-14; not his knuckleball, chip, free kick or header, and never an
+ * AI's strike: AI v AI is bit for bit what it was). It used to be handled in two ways that met at LONG_SHOT_D: from
+ * inside 24 m he dived the moment he had reacted, and a LOW one with time on it (the placed strike from 19 m on) found
+ * him landed and sliding to a stop a metre and a half from where he set off, so the further out it was struck the more
+ * it scored (35% from 20 m, 54% from 22 m, 60% from 23.5 m); from 24 m on he ran across on his feet for the whole
+ * flight and saved every one (1%, then 0%). A cliff, and at the wrong end.
+ *
+ * Now, from anywhere: with more than DIVE_WAIT s in hand he keeps his feet set and edges across towards where he reads
+ * it, at HUMAN_EDGE of his jog (about 1.6 m/s: a keeper's set steps, not a run across his goal), and dives DIVE_WAIT s
+ * before it arrives. The longer the flight the more of the goal he has covered by then, a little at a time, so the
+ * goal rate falls away smoothly with distance and never steps. With actions.ts HUMAN_WIDE (where the assist puts it)
+ * the placed strike scores 52 / 34 / 26 / 20 / 11 / 10 / 6 / 2% from 14 / 16 / 18 / 20 / 22 / 24 / 26 / 28 m on NORMAL
+ * (tests/rangeShots.test.ts; it was 52 / 47 / 39 / 35 / 54 / 1 / 0 / 0%). Measured either side of it, from 22 / 24 /
+ * 26 / 28 m: HUMAN_EDGE 0.2 leaves 13 / 13 / 8 / 5%, 0.3 leaves 10 / 8 / 4 / 1%. (Running across as he does for an AI's
+ * long shot, with the assist's old aim, saved all but 10% from 22 m and every one from 24 m.)
+ *
+ * A strike that is not low (a harder one, a curler, a finesse shot) used to get a long, floating dive from 19 to 24 m
+ * (its travel grew by DIVE_SHUFFLE for every second he had), and nothing at all from 26 m. Those are timed like the
+ * rest now: SHOOT held 0.3 to 0.42 s with the stick left alone scores 19 to 23% from 20 m, 11 to 18% from 22 m, 8 to
+ * 10% from 24 m and 5 to 6% from 26 m (it was 12 to 26%, 4 to 18%, 3 to 13% and 0%). What each kind of strike scores
+ * is set where it is struck: actions.ts HUMAN_WIDE and FINESSE_RANGE_AIM, Match's CURLER_REACH.
+ */
+const HUMAN_EDGE = 0.25;
+/**
+ * The human's finesse shot from range: its late read (FINESSE_READ) fades from all of it at FINESSE_READ_FROM m to none
+ * at FINESSE_READ_GONE m (from there he has the time to see it bend). With the timed dive above and FINESSE_READ whole,
+ * one curled inside his near post from 5 m to one side went in about half the time from 20 m and from 22 m (52%, 54%);
+ * it is 37% and 17% now. See actions.ts FINESSE_RANGE_AIM, which goes with it.
+ */
+const FINESSE_READ_FROM = 17;
+const FINESSE_READ_GONE = 21;
 
 /**
  * When (s from now), how high and where (z) the ball crosses the plane x = `x` on its way towards the goal
@@ -396,10 +428,15 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
       // A long one (struck from LONG_SHOT_D m or more, or still LONG_READ s away): he has time to get across on
       // his feet first, and misjudges a curler's bend a little more.
       // (A knuckleball is never one he gets across to on his feet: he cannot read it until late, KNUCKLE_SEEN.)
-      const long = (m.shotKick === m.kickId ? m.shotDist >= LONG_SHOT_D : tLine > LONG_READ) && !b.knuckle;
+      // (A HUMAN's open-play strike with the foot is never a "long one" by where it was struck from: he edges across
+      // to it and dives late from anywhere, HUMAN_EDGE below. No cliff at LONG_SHOT_D. AI v AI is as it was.)
+      const humanStrike = m.shotByHuman && m.shotKick === m.kickId && m.kickKind === 'shot' && !m.freeKickShot() && !b.knuckle;
+      const long = (m.shotKick === m.kickId ? m.shotDist >= LONG_SHOT_D : tLine > LONG_READ) && !b.knuckle && !humanStrike;
       // A curler's bend is only half read (a free kick, which he's set for, a little better).
       // (The human's big CURLER, actions.ts CURLER_BEND, is read as any bend is. Reading more of it was measured:
-      // 0.5, 0.6 and 0.69 of it all gave the same goal rate from 14 to 25 m, on tests/knuckleRates.test.ts's bench.)
+      // 0.5, 0.6 and 0.69 of it all gave the same goal rate from 14 to 25 m, on tests/knuckleRates.test.ts's bench;
+      // reading less, 0.25, the same again; reading none of it is erratic: 47% from 20 m, which was 72% of those struck
+      // at his near post from 5 m to one side and 9% of those swung to his far post.)
       const zc = (across?.z ?? b.pos.z + b.vel.z * t) + curlDrift(m, t) * (m.freeKickShot() ? (long ? FK_LONG_CURL_READ : 0.62) : 0.5);
       const yc = across?.y ?? Math.max(BALL_R, b.pos.y + b.vel.y * t - 0.5 * GRAVITY * t * t);
       const onFrame = Math.abs(zc) < GOAL_W / 2 + 0.9 && yc < GOAL_H + 0.6;
@@ -408,7 +445,7 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
         const finesse = m.shotStyle === 'finesse' && m.shotKick === m.kickId && Math.abs(m.kickZ) > GOAL_W / 2;
         // (The base reaction rides on the shot tempo; the wall's and the curler's late read don't.)
         const read = clamp(KEEPER_REACT - keeping * 0.2 - m.keeperBonus(k.side), 0.09, 0.37) / SHOT_TEMPO + (m.freeKickShot() ? FK_UNSIGHTED : 0) +
-          (finesse ? FINESSE_READ : 0) +
+          (finesse ? FINESSE_READ * (humanStrike ? clamp((FINESSE_READ_GONE - m.shotDist) / (FINESSE_READ_GONE - FINESSE_READ_FROM), 0, 1) : 1) : 0) +
           (m.anyHuman || m.shotKick !== m.kickId || m.kickKind !== 'shot' || m.shotDist > AI_UNREAD_D ? 0 : AI_STRIKE_UNREAD) +
           (m.shotByHuman && !finesse && m.shotKick === m.kickId && m.kickKind === 'shot' && m.shotStyle !== 'finesse' && !m.freeKickShot() &&
             m.shotDist <= HUMAN_UNREAD_D ? HUMAN_STRIKE_UNREAD * vsHuman(m.aiSkill(k.side)).shotHelp : 0);
@@ -436,6 +473,16 @@ export function updateKeeper(m: Match, k: Player, dt: number): void {
             k.vy = JUMP_VY;
             k.y = 0.01;
           }
+          return;
+        }
+        if (m.shotClock >= reaction && humanStrike && !high && t > DIVE_WAIT) {
+          // A human's strike with time in hand, from any distance (HUMAN_EDGE): he edges across towards where he
+          // reads it, feet set, and dives DIVE_WAIT s before it gets to him.
+          const tz = clamp(zc, -GOAL_W / 2 + 0.2, GOAL_W / 2 - 0.2);
+          k.wantX = 0;
+          k.wantZ = clamp((tz - k.pos.z) * 2.5, -1, 1) * HUMAN_EDGE;
+          k.sprint = false;
+          k.faceTarget = Math.atan2(b.pos.z - k.pos.z, b.pos.x - k.pos.x);
           return;
         }
         if (m.shotClock >= reaction && (long || high) && t > (high ? DIVE_WAIT_HIGH : DIVE_WAIT)) {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { adoptPortalStore, defaultSave, hasProgress, loadSave, portalSaveSwapped, saveBaseline, writeSave, type SaveData } from '../src/core/save';
+import { adoptPortalStore, defaultSave, hasProgress, holdPortalWrites, loadSave, portalSaveSwapped, saveBaseline, writeSave, type SaveData } from '../src/core/save';
 
 const KEY = 'blocky-league-save-v1';
 
@@ -277,5 +277,263 @@ describe('a store that throws', () => {
     got.coins += 1;
     expect(writeSave(got)).toBe(false);
     expect(stored(store.m).coins).toBe(got.coins);
+  });
+});
+
+// ------------------------------------------------------------------ whose save it is (CrazyGames accounts)
+
+const ASIDE = `${KEY}:set-aside`;
+
+/** A played save that is recognisably one player's: his club and his coins. */
+function club(owner: 'A' | 'B' | 'guest', matches: number, tag?: string): SaveData {
+  const d = played(matches, '2026-10-01T10:00:00.000Z', owner === 'A' ? 11_111 : owner === 'B' ? 22_222 : 33_333);
+  d.clubIdx = owner === 'A' ? 1 : owner === 'B' ? 2 : 3;
+  if (tag !== undefined) d.portalUid = tag;
+  return d;
+}
+
+/**
+ * One visit, as main.ts runs it: load this browser's copy, settle it with the store for whoever is playing, swap the
+ * store's copy in if it won. Returns the save the visit plays on.
+ */
+function visit(store: ReturnType<typeof fakeStore>, uid: string | null): SaveData {
+  const local = loadSave();
+  const theirs = adoptPortalStore(store, local, saveBaseline(local), uid);
+  if (theirs) portalSaveSwapped();
+  return theirs ?? local;
+}
+
+function playOn(d: SaveData, matches: number): void {
+  d.record.played += matches;
+  d.progress.xp += 90 * matches;
+  expect(writeSave(d)).toBe(true);
+}
+
+describe('the portal cannot say who is playing (no User module, or no answer): exactly as before', () => {
+  it('nothing is tagged, in the browser or in the store, whichever copy is kept', () => {
+    const local = club('A', 12);
+    const store = fakeStore(JSON.stringify(club('A', 9)));
+    expect(adoptPortalStore(store, local)).toBeNull();
+    expect(adoptPortalStore(store, local, saveBaseline(local), null)).toBeNull();
+    expect('portalUid' in stored(store.m)).toBe(false);
+    expect('portalUid' in stored(browser)).toBe(false);
+    const fuller = fakeStore(JSON.stringify(club('A', 40)));
+    const got = adoptPortalStore(fuller, local, saveBaseline(local), null)!;
+    expect(got.record.played).toBe(40);
+    expect('portalUid' in got).toBe(false);
+    expect('portalUid' in stored(browser)).toBe(false);
+  });
+
+  it('a tagged copy is still measured the old way, and keeps the tag it had', () => {
+    const local = club('A', 12, 'acct-a');
+    const store = fakeStore(JSON.stringify(club('B', 3)));
+    expect(adoptPortalStore(store, local, saveBaseline(local), null)).toBeNull();
+    expect(stored(store.m).portalUid).toBe('acct-a');
+    expect(browser.has(ASIDE)).toBe(false);
+  });
+});
+
+describe('an untagged browser copy (every save made before the tag): the fuller copy wins, then it is tagged', () => {
+  it('this browser\'s copy is the fuller one: kept, tagged for the player, and pushed', () => {
+    const local = club('A', 12);
+    const store = fakeStore(JSON.stringify(club('A', 9)));
+    expect(adoptPortalStore(store, local, saveBaseline(local), 'acct-a')).toBeNull();
+    expect(local.portalUid).toBe('acct-a');
+    expect(stored(store.m)).toMatchObject({ portalUid: 'acct-a', record: { played: 12 } });
+    expect(stored(browser).portalUid).toBe('acct-a');
+    expect(browser.has(ASIDE)).toBe(false);
+  });
+
+  it('the account\'s copy is the fuller one: it comes in, tagged for the player', () => {
+    const local = club('A', 3);
+    const store = fakeStore(JSON.stringify(club('A', 40)));
+    const got = adoptPortalStore(store, local, saveBaseline(local), 'acct-a')!;
+    expect(got.record.played).toBe(40);
+    expect(got.portalUid).toBe('acct-a');
+    expect(stored(browser)).toMatchObject({ portalUid: 'acct-a', record: { played: 40 } });
+    portalSaveSwapped();
+    playOn(got, 1);
+    expect(stored(store.m)).toMatchObject({ portalUid: 'acct-a', record: { played: 41 } });
+  });
+
+  it('a guest\'s untagged copy is tagged as a guest\'s (\'\'), which is not the same as untagged', () => {
+    const local = club('guest', 5);
+    const store = fakeStore();
+    expect(adoptPortalStore(store, local, saveBaseline(local), '')).toBeNull();
+    expect(local.portalUid).toBe('');
+    expect(stored(store.m).portalUid).toBe('');
+    expect(stored(browser).portalUid).toBe('');
+  });
+});
+
+describe('the same player on a second device', () => {
+  it('a new browser, his account further on: his copy comes in', () => {
+    const store = fakeStore(JSON.stringify(club('A', 40, 'acct-a')));
+    const run = visit(store, 'acct-a');
+    expect(run).toMatchObject({ clubIdx: 1, coins: 11_111, portalUid: 'acct-a', record: { played: 40 } });
+  });
+
+  it('both tagged for him: further on in the account wins; further on here is pushed', () => {
+    browser.set(KEY, JSON.stringify(club('A', 12, 'acct-a')));
+    const ahead = fakeStore(JSON.stringify(club('A', 15, 'acct-a')));
+    expect(visit(ahead, 'acct-a').record.played).toBe(15);
+    browser.set(KEY, JSON.stringify(club('A', 20, 'acct-a')));
+    const behind = fakeStore(JSON.stringify(club('A', 15, 'acct-a')));
+    expect(visit(behind, 'acct-a').record.played).toBe(20);
+    expect(stored(behind.m).record.played).toBe(20);
+    expect(browser.has(ASIDE)).toBe(false);
+  });
+});
+
+describe('a browser copy tagged for someone else is never this player\'s, however full it is', () => {
+  it('account B on a browser holding A\'s fuller save: B\'s own copy wins outright, and nothing of A\'s reaches B\'s account', () => {
+    const local = club('A', 60, 'acct-a');
+    const store = fakeStore(JSON.stringify(club('B', 3, 'acct-b')));
+    const setItem = vi.spyOn(store, 'setItem');
+    const got = adoptPortalStore(store, local, saveBaseline(local), 'acct-b')!;
+    expect(got).toMatchObject({ clubIdx: 2, coins: 22_222, portalUid: 'acct-b', record: { played: 3 } });
+    expect(setItem).not.toHaveBeenCalled();
+    expect(stored(browser)).toMatchObject({ clubIdx: 2, portalUid: 'acct-b' });
+    // A's copy gave way: it is set aside in this browser, not destroyed (and it is still in A's account).
+    expect(JSON.parse(browser.get(ASIDE)!)).toMatchObject({ clubIdx: 1, coins: 11_111, portalUid: 'acct-a' });
+    // Whatever A's outgoing save does before the swap is written nowhere.
+    local.coins += 500;
+    expect(writeSave(local)).toBe(false);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(stored(browser).clubIdx).toBe(2);
+  });
+
+  it('B\'s account has no copy: B starts on a new save (A\'s is never pushed into it)', () => {
+    const local = club('A', 60, 'acct-a');
+    const store = fakeStore();
+    const setItem = vi.spyOn(store, 'setItem');
+    const got = adoptPortalStore(store, local, saveBaseline(local), 'acct-b')!;
+    expect(hasProgress(got)).toBe(false);
+    expect(got).toMatchObject({ portalUid: 'acct-b', coins: defaultSave().coins, record: { played: 0 } });
+    expect(setItem).not.toHaveBeenCalled();
+    expect(stored(browser)).toMatchObject({ portalUid: 'acct-b', record: { played: 0 } });
+    portalSaveSwapped();
+    playOn(got, 1);
+    expect(setItem).toHaveBeenCalledTimes(1);
+    expect(stored(store.m)).toMatchObject({ portalUid: 'acct-b', record: { played: 1 } });
+    expect(stored(store.m).coins).not.toBe(11_111);
+  });
+
+  it('an account\'s copy while a guest plays now: the guest store\'s copy wins outright, or a new save', () => {
+    const local = club('A', 60, 'acct-a');
+    const withCopy = fakeStore(JSON.stringify(club('guest', 2, '')));
+    expect(adoptPortalStore(withCopy, local, saveBaseline(local), '')).toMatchObject({ clubIdx: 3, portalUid: '', record: { played: 2 } });
+    portalSaveSwapped();
+    const empty = fakeStore();
+    const fresh = adoptPortalStore(empty, club('A', 60, 'acct-a'), undefined, '')!;
+    expect(fresh).toMatchObject({ portalUid: '', record: { played: 0 } });
+    expect(empty.m.size).toBe(0);
+  });
+});
+
+describe('a guest who signs in', () => {
+  it('the account already has a copy: it wins outright, however much the guest played, and is never written over', () => {
+    const guest = club('guest', 30, '');
+    const store = fakeStore(JSON.stringify(club('B', 4, 'acct-b')));
+    const setItem = vi.spyOn(store, 'setItem');
+    const got = adoptPortalStore(store, guest, saveBaseline(guest), 'acct-b')!;
+    expect(got).toMatchObject({ clubIdx: 2, coins: 22_222, portalUid: 'acct-b', record: { played: 4 } });
+    // Mid-match when he signed in: the guest save goes on being saved by the match, and none of it lands anywhere.
+    playOnHeld(guest);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(stored(store.m)).toMatchObject({ clubIdx: 2, record: { played: 4 } });
+    expect(stored(browser)).toMatchObject({ clubIdx: 2, record: { played: 4 } });
+    expect(JSON.parse(browser.get(ASIDE)!)).toMatchObject({ clubIdx: 3, record: { played: 30 } });
+    portalSaveSwapped();
+    playOn(got, 1);
+    expect(stored(store.m)).toMatchObject({ clubIdx: 2, portalUid: 'acct-b', record: { played: 5 } });
+  });
+
+  function playOnHeld(d: SaveData): void {
+    d.record.played += 1;
+    expect(writeSave(d)).toBe(false);
+  }
+
+  it('the account has no copy: the guest\'s progress goes into it with him (CrazyGames\' own rule), tagged for the account', () => {
+    const guest = club('guest', 30, '');
+    const store = fakeStore();
+    expect(adoptPortalStore(store, guest, saveBaseline(guest), 'acct-b')).toBeNull();
+    expect(guest.portalUid).toBe('acct-b');
+    expect(stored(store.m)).toMatchObject({ clubIdx: 3, portalUid: 'acct-b', record: { played: 30 } });
+    expect(stored(browser).portalUid).toBe('acct-b');
+    expect(browser.has(ASIDE)).toBe(false);
+    // And it is his from then on: the next visit, signed in, is the same line of play.
+    playOn(guest, 2);
+    expect(visit(store, 'acct-b').record.played).toBe(32);
+  });
+
+  it('a copy still waiting to come in when he signs in: it can be held again until it is swapped in', () => {
+    const waiting = club('guest', 30, '');
+    const store = fakeStore();
+    expect(adoptPortalStore(store, waiting, saveBaseline(waiting), 'acct-b')).toBeNull();
+    holdPortalWrites();
+    const outgoing = club('guest', 1, '');
+    expect(writeSave(outgoing)).toBe(false);
+    expect(stored(store.m).record.played).toBe(30);
+    portalSaveSwapped();
+    expect(writeSave(waiting)).toBe(true);
+  });
+});
+
+describe('two accounts taking turns on one browser', () => {
+  it('neither ever sees the other\'s club, and neither account\'s copy is ever written with the other\'s', () => {
+    const storeA = fakeStore();
+    const storeB = fakeStore();
+    const writesA = vi.spyOn(storeA, 'setItem');
+    const writesB = vi.spyOn(storeB, 'setItem');
+    // A plays first on this browser and picks his club.
+    let a = visit(storeA, 'acct-a');
+    a.clubIdx = 1;
+    a.coins = 11_111;
+    playOn(a, 5);
+    for (let round = 0; round < 3; round++) {
+      // B signs in on the same browser.
+      const b = visit(storeB, 'acct-b');
+      expect(b.portalUid).toBe('acct-b');
+      expect(b.coins).not.toBe(11_111);
+      if (round === 0) {
+        expect(hasProgress(b)).toBe(false);
+        b.clubIdx = 2;
+        b.coins = 22_222;
+      } else {
+        expect(b).toMatchObject({ clubIdx: 2, coins: 22_222, record: { played: 2 * round } });
+      }
+      playOn(b, 2);
+      // A comes back.
+      a = visit(storeA, 'acct-a');
+      expect(a).toMatchObject({ clubIdx: 1, coins: 11_111, portalUid: 'acct-a', record: { played: 5 + 3 * round } });
+      playOn(a, 3);
+    }
+    const tags = (spy: typeof writesA): string[] => [...new Set(spy.mock.calls.map((c) => (JSON.parse(c[1]) as SaveData).portalUid ?? 'untagged'))];
+    const clubs = (spy: typeof writesA): number[] => [...new Set(spy.mock.calls.map((c) => (JSON.parse(c[1]) as SaveData).clubIdx))];
+    expect(tags(writesA)).toEqual(['acct-a']);
+    expect(tags(writesB)).toEqual(['acct-b']);
+    expect(clubs(writesA).includes(2)).toBe(false);
+    expect(clubs(writesB).includes(1)).toBe(false);
+    expect(stored(storeA.m)).toMatchObject({ clubIdx: 1, coins: 11_111, record: { played: 14 } });
+    expect(stored(storeB.m)).toMatchObject({ clubIdx: 2, coins: 22_222, record: { played: 6 } });
+  });
+});
+
+describe('the tag in a stored save', () => {
+  it('is kept when it is a string, dropped when it is anything else, and absent on a save that never had one', () => {
+    browser.set(KEY, JSON.stringify({ ...club('A', 3), portalUid: 'acct-a' }));
+    expect(loadSave().portalUid).toBe('acct-a');
+    browser.set(KEY, JSON.stringify({ ...club('A', 3), portalUid: '' }));
+    expect(loadSave().portalUid).toBe('');
+    for (const bad of [5, null, { id: 'x' }, ['acct-a'], true]) {
+      browser.set(KEY, JSON.stringify({ ...club('A', 3), portalUid: bad }));
+      expect('portalUid' in loadSave()).toBe(false);
+    }
+    browser.set(KEY, JSON.stringify(club('A', 3)));
+    const old = loadSave();
+    expect('portalUid' in old).toBe(false);
+    expect(old.record.played).toBe(3);
+    expect('portalUid' in defaultSave()).toBe(false);
   });
 });

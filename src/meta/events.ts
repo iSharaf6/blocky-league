@@ -29,7 +29,7 @@ import {
 import { randomClubSeed } from './data';
 import { addTrait, autoMentors, canMentor, gainXp, hasTrait, mentorOf, pupilOf, setMentor, type GrowPlayer, type TraitId, TRAITS } from './growth';
 import { captainOf, type LifePlayer } from './life';
-import { contractOf, listPlayer, playerAge, playerValue, pushNews, resaleCap, saleFor, townOf, wageOf, windowOpen } from './market';
+import { baseValue, contractOf, listPlayer, playerAge, playerValue, pushNews, resaleCap, saleFor, townOf, wageOf, windowOpen } from './market';
 import { addMorale, expectsToPlay, isInjured, moraleOf } from './morale';
 import { sponsorMult } from './staff';
 import { addMoment, isDerby, storyTag } from './story';
@@ -580,7 +580,10 @@ function bidCard(state: CareerState, rng: Rng, again?: { who: string; coins: num
     const stars = [...club.squad].sort((a, b) => overall(b) - overall(a)).slice(0, 3).filter((q) => canSell(state, q.id).ok && !saleFor(state, q.id) && !isInjured(q));
     if (!stars.length) return null;
     p = stars[rng.int(stars.length)];
-    coins = round10(playerValue(p) * (1.25 + rng.next() * 0.35));
+    // A bigger club pays 25 to 60% over the odds. Economy v8: the "over" is counted on his base value (to the coin
+    // what it was for every player without a fee), on top of what he is worth to you, so a star bought for 12,700
+    // draws 13,400 to 14,300 and not up to 20,300: the card is a decision, never a way to turn a fee into a profit.
+    coins = playerValue(p) + round10(baseValue(p) * (0.25 + rng.next() * 0.35));
     to = randomClubSeed(rng, 60).name;
   }
   if (!p || !canSell(state, p.id).ok || coins <= 0) return null;

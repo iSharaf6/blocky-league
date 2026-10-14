@@ -292,7 +292,7 @@ function shellTop(title: string, sub = '', right = '', back = 'BACK'): string {
   return `<header class="mc-top">${b}<div class="mc-title"><h2>${title}</h2>${sub ? `<span>${sub}</span>` : ''}</div>${right || gap}</header>`;
 }
 
-const coinChip = (n: number) => `<div class="coins mc-coins"><i></i><span>${n.toLocaleString()}</span></div>`;
+const coinChip = (n: number) => `<div class="coins mc-coins"><i></i><span>${n.toLocaleString('en-US')}</span></div>`;
 
 type SettingsTab = 'general' | 'controls' | 'keys' | 'more';
 type HtDev = 'keyboard' | 'touch' | 'gamepad';
@@ -692,15 +692,15 @@ export class Menus {
           <span class="hl-txt"><b>${escHtml(lv.title.toUpperCase())}${streak}</b><i class="hl-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i>${info?.unlock ? `<small class="hl-next">NEXT: ${escHtml(info.unlock.name.toUpperCase())}${sep()}${info.unlock.xpLeft} XP</small>` : ''}</span>
         </${lvTag}>`
       : '<span></span>';
-    const coins = save.coins.toLocaleString();
+    const coins = save.coins.toLocaleString('en-US');
     const wallet = h.coins || h.shop
       ? `<button class="coins shop-btn hub-coins" data-a="coins" aria-label="${coins} coins. ${h.coins ? 'Get coins' : 'Shop'}"><i></i><span>${coins}</span><b class="shop-tag">${h.coins ? '+' : 'SHOP'}</b></button>`
       : `<div class="coins hub-coins"><i></i><span>${coins}</span></div>`;
     // Gems, the premium currency, beside the coins (a tap: the shop's STORE).
     const gemN = info?.gems;
     const gemChip = gemN === undefined ? ''
-      : h.gems ? `<button class="gems hub-gems" data-a="gems" aria-label="${gemN.toLocaleString()} gems. Store">${gemArt(2)}<span>${gemN.toLocaleString()}</span></button>`
-        : `<div class="gems hub-gems" aria-label="${gemN.toLocaleString()} gems">${gemArt(2)}<span>${gemN.toLocaleString()}</span></div>`;
+      : h.gems ? `<button class="gems hub-gems" data-a="gems" aria-label="${gemN.toLocaleString('en-US')} gems. Store">${gemArt(2)}<span>${gemN.toLocaleString('en-US')}</span></button>`
+        : `<div class="gems hub-gems" aria-label="${gemN.toLocaleString('en-US')} gems">${gemArt(2)}<span>${gemN.toLocaleString('en-US')}</span></div>`;
     // The reason to come back: today's gift until it is claimed, then what tomorrow's pays (no timer, no penalty).
     const gf = info?.gift;
     const giftExtra = gf?.gems ? `<i class="hg-gem">${gemArt(1.6)}${gf.gems}</i>` : '';
@@ -1620,7 +1620,7 @@ export class Menus {
             </div>
           </div>
           <div class="mc-actions">
-            ${h.rematch ? '<button class="btn btn-white" data-a="rematch">⟳ REMATCH</button>' : ''}
+            ${h.rematch ? '<button class="btn btn-white" data-a="rematch">REMATCH</button>' : ''}
             <button class="btn btn-go btn-lg" data-a="next">${h.nextLabel ?? 'CONTINUE'}</button>
           </div>
         </div>
@@ -1686,7 +1686,7 @@ export class Menus {
     const g = /^[SABC]$/.test(st.grade) ? st.grade : 'C';
     const best = st.newBest ? '<small class="nb">NEW BEST</small>' : st.best ? `<small>BEST ${escHtml(st.best)}</small>` : '';
     return `<div class="ft-show" data-g="${g}" aria-label="Showtime grade ${g}, ${st.score} points">
-        <b class="ft-grade">${g}</b><span>SHOWTIME <em>${Math.round(st.score).toLocaleString()}</em></span>
+        <b class="ft-grade">${g}</b><span>SHOWTIME <em>${Math.round(st.score).toLocaleString('en-US')}</em></span>
         ${st.bonus > 0 ? `<strong>+${Math.round(st.bonus * 100)}% COINS</strong>` : ''}${best}
       </div>`;
   }
@@ -1756,7 +1756,7 @@ export class Menus {
           <p class="fine big">Score in your first match to open every mode.</p>
           <div class="btn-row">
             <button class="btn btn-white" data-a="menu">MENU</button>
-            <button class="btn btn-go btn-lg pulse" data-a="play">FIRST MATCH ▸</button>
+            <button class="btn btn-go btn-lg pulse" data-a="play">FIRST MATCH</button>
           </div>
         </div>
       </div>`, 'basics-screen');
@@ -1925,7 +1925,7 @@ export class Menus {
             ${this.comeback?.momentHtml() ?? ''}
           </div>
           <div class="mc-actions">
-            <button class="btn btn-yellow" data-a="retry">⟳ RETRY</button>
+            <button class="btn btn-yellow" data-a="retry">RETRY</button>
             <button class="btn btn-go btn-lg" data-a="next">${escHtml(h.nextLabel ?? 'NEXT MOMENT')}</button>
           </div>
         </div>
@@ -2411,7 +2411,7 @@ export class Menus {
       const lv = levelOf(d.progress.xp);
       const when = d.updatedAt ? new Date(d.updatedAt) : null;
       const date = when && !Number.isNaN(when.getTime()) ? `${sep()}${when.toLocaleDateString()}` : '';
-      return `<b>LV ${lv.level}</b> ${levelTitle(lv.level).toUpperCase()}${sep()}${d.coins.toLocaleString()} COINS${sep()}${d.record.played} MATCHES${date}`;
+      return `<b>LV ${lv.level}</b> ${levelTitle(lv.level).toUpperCase()}${sep()}${d.coins.toLocaleString('en-US')} COINS${sep()}${d.record.played} MATCHES${date}`;
     };
     // One screen: the save (and the file's, when importing) on the left, what to do with it on the right.
     const d = this.mount(`
@@ -2619,7 +2619,7 @@ export class Menus {
           <p class="gift-note">${note}</p>
           <div class="btn-row">
             ${canDouble
-              ? `<button class="btn btn-white" data-a="double" aria-label="Watch an ad to double today's coins">${adIcon()}AD 2× COINS</button>`
+              ? `<button class="btn btn-white" data-a="double" aria-label="Watch an ad to double today's coins">${adIcon()}AD 2X COINS</button>`
               : h.adNote?.() ? `<button class="btn btn-white" disabled>${adIcon()}${escHtml(h.adNote())}</button>` : ''}
             <button class="btn btn-go btn-lg" data-a="claim">CLAIM</button>
           </div>

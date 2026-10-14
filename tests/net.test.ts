@@ -82,24 +82,32 @@ import { NetSim, runPeers, SimPeer, testSetup } from './netSim';
  * the ball and in the hash. The nutmeg fix of the same day (it is knocked at the man, and is a stepover when his legs
  * are shut) moved none of them on its own. All six AI-only rows and penTaker0 are bit-identical. Drivers and exact
  * six-value comparisons are unchanged.
+ * Revision 2026-10-14b (NET_VERSION 13) re-recorded all thirteen human rows for the shooting balance from range, which
+ * is a human striker's shots and the keeper's handling of those only: the keeper edges across and dives late at a
+ * human's open-play strike from any distance instead of going at once inside 24 m and running across beyond it
+ * (keeper.ts HUMAN_EDGE), the shot assist spreads a strike from 14 m out wider of the post (actions.ts HUMAN_WIDE), a
+ * finesse shot from 16 m out is placed and read as one from range (FINESSE_RANGE_AIM), and a diving keeper's reach is
+ * shorter against a CURLER (match.ts CURLER_REACH). No new state. All six AI-only rows (aiClassic, aiBlitz, aiStyles,
+ * aiKo1, aiKo4, aiKo7) are bit-identical; ko1 keeps its end hash, steps, score and shootout flag (only the fold of the
+ * mid-match hashes moved). Drivers and exact six-value comparisons are unchanged.
  */
 const BEFORE: Record<string, Row> = {
   aiClassic: [2274576712,2001976599,22281,1,3,0],
   aiBlitz: [3498904181,3872199542,13237,0,1,0],
   aiStyles: [2368260632,1524789925,13987,0,4,0],
-  botSide0: [1194897642,990406235,16504,2,0,0],
-  botPerks: [3765213911,1442279365,12639,3,1,0],
-  botFirstMatch: [1867531205,2181418298,13597,4,0,0],
-  fuzzSide1: [258267471,2528447318,11883,1,0,0],
-  fuzzBlitz0: [167473203,427052277,13276,0,4,0],
-  fuzzBlitzPerks1: [1044489209,3540097662,12886,4,0,0],
-  penTaker0: [230134424,1679243620,8561,0,1,0],
-  penTaker1Low: [21817532,4022934067,8167,1,1,0],
-  penTimeout1: [595044421,1707686538,8314,0,1,0],
-  penKeeper1: [2451147575,1916308876,8290,2,0,0],
-  ko1: [790833819,738924924,4964,0,0,1],
-  ko3: [1018909997,468518517,3638,1,0,0],
-  ko6: [91410580,900885198,4979,0,0,1],
+  botSide0: [1977300907,1317171915,16810,0,0,0],
+  botPerks: [2066498005,1544324163,13007,4,1,0],
+  botFirstMatch: [3994347698,1277846842,13141,1,0,0],
+  fuzzSide1: [178603962,1819323837,13069,1,0,0],
+  fuzzBlitz0: [624509709,2224787184,13573,2,1,0],
+  fuzzBlitzPerks1: [2021202359,3213554365,12194,0,0,0],
+  penTaker0: [978815748,1200232006,8724,0,0,0],
+  penTaker1Low: [3883718738,1579094321,8250,1,1,0],
+  penTimeout1: [3320037725,339330953,8663,0,1,0],
+  penKeeper1: [3575133209,3360303419,8041,1,0,0],
+  ko1: [790833819,3404226235,4964,0,0,1],
+  ko3: [1201248933,4144238995,7959,0,0,1],
+  ko6: [503065631,1000189102,5295,0,0,1],
   aiKo1: [4226903564,1665530653,5523,0,0,1],
   aiKo4: [3747054070,2960515602,4095,0,1,0],
   aiKo7: [444176009,4154892212,5463,0,0,1],

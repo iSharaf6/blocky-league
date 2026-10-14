@@ -7,7 +7,7 @@ import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
 import { Rng } from '../core/rng';
 import {
-  BOTTOM_DIVISION, DIVISION_NAMES, KEY_STATS, PATTERNS, SQUAD_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_STEP,
+  BOTTOM_DIVISION, DIVISION_NAMES, KEY_STATS, PATTERNS, SQUAD_MAX, STADIUM_NAMES, STAT_CAP, STAT_KEYS, STAT_NAME, STAT_SHORT, TRAIN_KNEE, TRAIN_STEP,
   buildPart, clubRating, createClub, keeperColor, lineupIssues, migrateCareer, newClubLevel, randomKit,
   sanitizeName, sanitizeShort, setFormation, swapPlayers, trainPlayer, trainingCost, trainingDiscount,
   type CareerState, type ClubState, type TxFail,
@@ -634,7 +634,11 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     const over = s.drain > 0;
     const text = over
       ? `OVER BUDGET${sep()}${fmt(s.drain)} COINS A MATCH, ${WAGE_DIP} OVR DOWN`
-      : `WAGE ${fmt(wageOf(p))} A WEEK${sep()}SQUAD ${fmt(s.wages)} OF ${fmt(s.budget)}`;
+      // (Economy v8: a session costs more the closer he is to the cap, from TRAIN_KNEE up. Said here, on the one line
+      // under the stats, only for a player it applies to: the line never wraps, so the tab keeps its height.)
+      : overall(p) > TRAIN_KNEE
+        ? `WAGE ${fmt(wageOf(p))}${sep()}SQUAD ${fmt(s.wages)} OF ${fmt(s.budget)}${sep()}+${TRAIN_STEP} COSTS MORE ABOVE ${TRAIN_KNEE} OVR`
+        : `WAGE ${fmt(wageOf(p))} A WEEK${sep()}SQUAD ${fmt(s.wages)} OF ${fmt(s.budget)}`;
     return `<p class="tr-wage ${over ? 'warn' : ''}">${text}</p>`;
   };
 
@@ -765,7 +769,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     const gl = has3d();
     const status = (x: ReturnType<typeof partView>) =>
       x.status === 'built'
-        ? '<em class="sd-ps ok">✓ BUILT</em>'
+        ? '<em class="sd-ps ok">BUILT</em>'
         : x.status === 'building'
           ? `<em class="sd-ps go">${pixelIcon('clock', 'currentColor', 1.3, 'inl')}${x.left} MD</em>`
           : x.status === 'locked'

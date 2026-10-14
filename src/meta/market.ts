@@ -15,7 +15,7 @@ import { makePlayer, surnameOf } from './data';
 // (Runtime cycle: only used inside functions.) A player's potential: the overall his natural growth stops at.
 import { hasRoom, pinCeil } from './growth';
 import {
-  KEY_STATS, SQUAD_MAX, SQUAD_MIN, STAT_CAP, STAT_KEYS, canSell, clonePlayer, divisionLevel, divisionPlayerOverall, freeNumber,
+  KEY_STATS, SQUAD_MAX, SQUAD_MIN, STAT_CAP, STAT_KEYS, basePrice, canSell, clonePlayer, divisionLevel, divisionPlayerOverall, freeNumber,
   playerPrice, removeFromSquad, rivalRating, rivalSquad, tuneToOverall, wageBudgetFor,
   type CareerState, type ClubState, type LeagueClub, type TxFail, type Wallet,
 } from './career';
@@ -80,6 +80,12 @@ export interface MetaPlayer extends PlayerDef {
   starts?: number;
   /** New scout's maximum resale credit until RESALE_STARTS completed league starts; survives season changes. */
   scoutResale?: number;
+  /**
+   * The transfer fee he holds (economy v8): what you paid a club, an agent or a scout for him, set when he signs.
+   * He is worth up to it when you sell (playerValue). Unset on a pack card, an academy player, the squad a club
+   * starts with and everyone signed before 16 October 2026: they are valued on the base price, as they always were.
+   */
+  fee?: number;
 }
 
 export interface Listing {
@@ -282,9 +288,36 @@ export function ageFactor(age: number): number {
   return 0.55;
 }
 
-/** A player's transfer value: his rating price (career.ts playerPrice) by age and contract length. */
+/** Age and contract length on a price: 0.55 (a 33 year old on one year) to 1.36 (24 to 28, four years). */
+function termFactor(p: PlayerDef): number {
+  return ageFactor(playerAge(p)) * (1 + 0.08 * (contractOf(p) - 1));
+}
+
+/** His value on the base price (career.ts basePrice: OVR² x 0.25) by age and contract: every player's value before economy v8. */
+export function baseValue(p: PlayerDef): number {
+  return round10(basePrice(overall(p)) * termFactor(p));
+}
+
+/** What the market asks for a player like him: his rating price with its premium (career.ts playerPrice) by age and contract. */
+export function marketValue(p: PlayerDef): number {
+  return round10(playerPrice(p) * termFactor(p));
+}
+
+/**
+ * What YOUR player is worth when you sell him (the quick sale, clubs' offers, the VALUE on his card): his base value,
+ * and for a player you paid a transfer fee for, up to that fee while the market still rates him that high.
+ * Economy v8 (16 October 2026): the market's asking prices climb steeply above PRICE_KNEE, but what a club is PAID
+ * does not follow them. BEFORE: one curve both ways. Had sales followed the new prices, a free pack card rated 95
+ * would have sold at once for 6,290 coins after six starts instead of 1,120 (four cards a day), and every squad
+ * already owned would have been repriced upward. AFTER: a card, a graduate and every player signed before today sell
+ * for exactly what they did; a signing gives back at most what was paid (95% of it from the best offer), so buying,
+ * playing and selling never makes a coin above PRICE_KNEE (scripts/economy-model.ts arbitrageTable).
+ */
 export function playerValue(p: PlayerDef): number {
-  return round10(playerPrice(p) * ageFactor(playerAge(p)) * (1 + 0.08 * (contractOf(p) - 1)));
+  const base = baseValue(p);
+  const fee = (p as MetaPlayer).fee;
+  if (typeof fee !== 'number' || !(fee > base)) return base;
+  return Math.max(base, Math.min(marketValue(p), round10(fee)));
 }
 
 /** New scout resale credit stays bounded until he has actually started six completed league matches. */
@@ -521,7 +554,8 @@ function canSpare(squad: PlayerDef[], p: Pick<PlayerDef, 'role'>): boolean {
 /** The asking price: value by form, hot interest and the selling club's need; free agents ask their rating price. */
 export function askingPrice(p: PlayerDef, club: LeagueClub | null, hot: boolean, form: number, youth: boolean): number {
   if (!club) return youth ? round10(playerPrice(p) * 0.5) : playerPrice(p);
-  return round10(playerValue(p) * (1 + 0.04 * form) * (hot ? 1.15 : 1) * (roleNeed(club, p.role) ? 1.2 : 1));
+  // (What the market asks, premium and all: marketValue. Up to PRICE_KNEE it is the same number playerValue gives.)
+  return round10(marketValue(p) * (1 + 0.04 * form) * (hot ? 1.15 : 1) * (roleNeed(club, p.role) ? 1.2 : 1));
 }
 
 function makeListing(state: CareerState, rng: Rng, week: number, player: MetaPlayer, club: LeagueClub | null, youth: boolean): Listing {
@@ -626,6 +660,8 @@ function signListing(state: CareerState, listing: Listing, paid: number): MetaPl
   // A real market purchase is no longer a free scout draw, even if he once belonged to your scouts.
   delete p.scoutResale;
   p.paid = paid;
+  // The fee he holds from here on (playerValue): what he gives back when he is sold is never more than this.
+  p.fee = paid;
   p.boughtSeason = state.season?.number ?? 0;
   p.starts = 0;
   club.squad.push(p);

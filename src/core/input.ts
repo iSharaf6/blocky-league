@@ -364,10 +364,46 @@ export function freePadButton(i: number): boolean {
   return gamepads().some((gp) => !!gp?.buttons[i]?.pressed);
 }
 
+/** Keys that scroll a page by themselves: on a portal the game sits in a frame, and they would move the host's page. */
+const PAGE_KEYS = new Set(['Space', 'PageUp', 'PageDown', 'Home', 'End']);
+
 /** A key the game uses: the page mustn't scroll or tab away on it while playing. */
 function gameKey(code: string): boolean {
-  if (code === 'Space' || code.startsWith('Arrow')) return true;
+  if (PAGE_KEYS.has(code) || code.startsWith('Arrow')) return true;
   for (const a of KEY_ACTIONS) if (keysNow[a].includes(code)) return true;
+  return false;
+}
+
+/**
+ * A key press the page must not act on: a key the game uses, not typed into a text box, and no browser shortcut
+ * (CTRL or CMD; ALT too, back and forward, unless the player bound ALT to an action himself). True for every repeat
+ * of a held key as well: each one would scroll the page the game sits in. (main.ts asks too, while an ad holds the keys.)
+ */
+export function holdsPage(e: KeyboardEvent): boolean {
+  if (editable(e.target) || e.ctrlKey || e.metaKey) return false;
+  return gameKey(normCode(e.code)) && !(e.altKey && freeKey('AltLeft'));
+}
+
+/**
+ * Can something between `t` and the page still scroll the way this wheel turn asks (a list pane, mid-list)? Only
+ * then is the wheel left to the browser: anywhere else, and at a list's end, it would scroll the page the game sits in.
+ */
+function wheelScrolls(t: EventTarget | null, dx: number, dy: number): boolean {
+  if (typeof getComputedStyle !== 'function') return false;
+  let el = t as HTMLElement | null;
+  for (let i = 0; el && i < 40 && typeof el.scrollHeight === 'number'; i++, el = el.parentElement) {
+    if (el === document.body || el === document.documentElement) return false;
+    const room = (delta: number, at: number, size: number, view: number, flow: string): boolean =>
+      delta !== 0 && size > view + 1 && (flow === 'auto' || flow === 'scroll') && (delta < 0 ? at > 0 : at + view < size - 1);
+    let cs: CSSStyleDeclaration;
+    try {
+      cs = getComputedStyle(el);
+    } catch {
+      return false;
+    }
+    if (room(dy, el.scrollTop, el.scrollHeight, el.clientHeight, cs.overflowY)) return true;
+    if (room(dx, el.scrollLeft, el.scrollWidth, el.clientWidth, cs.overflowX)) return true;
+  }
   return false;
 }
 
@@ -400,14 +436,27 @@ export class Input {
 
   constructor() {
     window.addEventListener('keydown', (e) => {
-      if (e.repeat || editable(e.target)) return;
+      if (editable(e.target)) return;
       // CTRL or CMD held: that is a browser shortcut (close the tab, save, print), never a game key, and never ours to block.
       if (e.ctrlKey || e.metaKey) return;
       const code = normCode(e.code);
-      if (gameKey(code)) e.preventDefault();
+      // Before the repeat check: a HELD arrow or Space repeats, and every repeat would scroll the page the game sits in.
+      if (holdsPage(e)) e.preventDefault();
+      if (e.repeat) return;
       this.keys.add(code);
       this.lastDevice = 'keyboard';
       for (const l of this.listeners) l(code);
+    });
+    // The mouse wheel (and a trackpad's two fingers) never scrolls the page the game sits in: only a list that can
+    // still move takes it. CTRL or CMD with it is the browser's zoom, left alone.
+    window.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) return;
+      const dx = e.deltaX || (e.shiftKey ? e.deltaY : 0);
+      if (!wheelScrolls(e.target, dx, e.shiftKey && !e.deltaX ? 0 : e.deltaY)) e.preventDefault();
+    }, { passive: false });
+    // No browser menu over the pitch (a right click in play is a slip, and the menu would hold the match's input).
+    window.addEventListener('contextmenu', (e) => {
+      if ((e.target as HTMLElement | null)?.tagName === 'CANVAS') e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(normCode(e.code)));
     window.addEventListener('blur', () => this.reset());

@@ -100,6 +100,36 @@ const ACUTE_FROM = 0.42;
 const ACUTE_FULL = 0.16;
 const HUMAN_AUTO_LEVEL = 0.4;
 /**
+ * The shot assist from range (2026-10-14). The open side it picks is spread over a stretch inside the post that used to
+ * NARROW with distance (2 m from 11 m, 1.1 m from 16 m, 0.6 m from 24 m: "from range, where only the corners beat a
+ * keeper, it's placed nearer them"), so a strike with the stick left alone from 20 to 23 m was put in the corner for him
+ * every time and went in 35 to 60% of the time. Now, from HUMAN_WIDE_FROM m out, that stretch is HUMAN_WIDE m wider by
+ * HUMAN_WIDE_FULL m (1.5 m from 14 m as it was, 1.7 m from 16 m, 2 m from 17.5 m) and HUMAN_WIDE_FAR m wider again over
+ * the next HUMAN_WIDE_FAR_OVER m, which undoes the old narrowing (2 m all the way to 24 m, 2.1 m from 25.5 m): from range
+ * the assist finds the open side, not the corner; the corner is for a player who aims at it, bends it (the CURLER) or
+ * strikes a knuckleball. From HUMAN_WIDE_FROM m and nearer nothing has changed. Not a full bar's (KNUCKLE_MIN_POWER):
+ * that is the knuckleball from KNUCKLE_MIN_D m, whose placing is its own, and the riser it always was from nearer.
+ *
+ * With the keeper's timed dive (keeper.ts HUMAN_EDGE) the placed strike (SHOOT held 0.2 s) scores 52 / 46 / 34 / 32 /
+ * 26 / 21 / 20 / 11 / 10 / 6 / 2% from 14 / 15 / 16 / 17 / 18 / 19 / 20 / 22 / 24 / 26 / 28 m against a set keeper on
+ * NORMAL, where it scored 52 / 54 / 47 / 46 / 39 / 34 / 35 / 54 / 1 / 0 / 0% (tests/rangeShots.test.ts,
+ * tests/knuckleRates.test.ts); from 14 m and nearer it scores exactly what it did. A full bar from inside 20 m is what
+ * it was too (54% from 16 m, 38% from 18 m), so it runs into the knuckleball's 36% from 20.5 m without a step.
+ *
+ * (It starts at 14 m and no nearer. It was measured from 13 and 13.5 m too, which takes 14 m itself down to 47 to
+ * 49%, but two tests this work may not move stand in the way: tests/feel.test.ts holds the assist's aim from 14 m to
+ * within 1.9 m of the post, and tests/controlsFeel.test.ts asks that a casual phone player score a goal a match over
+ * four whole matches, which he does with the start at 14 m (4 goals, with HUMAN_WIDE_FULL anywhere from 17 to 18.5)
+ * and did not with it at 13.3 to 13.9 m or at 14.2 m (2 or 3). Over 24 such matches he scores 1.29 a match with this,
+ * 1.25 before it and 1.13 with the 13.5 m start: the four are a small sample, but they are the pin. So the drop from
+ * 14 to 16 m is the steepest step on the curve.)
+ */
+const HUMAN_WIDE_FROM = 14;
+const HUMAN_WIDE_FULL = 17.5;
+const HUMAN_WIDE = 1;
+const HUMAN_WIDE_FAR = 0.5;
+const HUMAN_WIDE_FAR_OVER = 8;
+/**
  * The human's open-play strike isn't punished for a tap: it leaves the foot with at least HUMAN_TAP_PACE of
  * the bar's pace (a driven shot, still low and true: the height and accuracy are the tap's). And the power-miss
  * is softened: the lateral error grows with the bar by HUMAN_POWER_ERR (0.6 in the base model), the upward
@@ -1467,7 +1497,9 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
     aimZ = clamp(order.aimZ, -hw - 4, hw + 4);
   } else if (finesse && Math.abs(lateral) > 0.3) {
     // A finesse shot is placed: just inside the post it's curled towards.
-    aimZ = Math.sign(lateral) * (hw - FINESSE_POST_AIM);
+    // (From range it is not placed as fine: FINESSE_RANGE_AIM.)
+    aimZ = Math.sign(lateral) * (hw - FINESSE_POST_AIM -
+      FINESSE_RANGE_AIM * clamp((dist2(b.x, b.z, gx, 0) - FINESSE_RANGE_FROM) / (FINESSE_RANGE_FULL - FINESSE_RANGE_FROM), 0, 1));
   } else if (Math.abs(lateral) > 0.3 && !assist) {
     // The stick picks a corner: from the edge of the box, inside the post by enough that the usual miss
     // still finds the frame; close in, tighter to the post (easier to hit, and to miss).
@@ -1486,12 +1518,17 @@ function resolveShot(m: Match, p: Player, order: KickOrder, header: boolean): La
     let dir = gapR >= gapL ? 1 : -1;
     const dG = dist2(b.x, b.z, gx, 0);
     // A human who doesn't aim gets the open side, but not the corner every time close in (aim for
-    // that); from range, where only the corners beat a keeper, it's placed nearer them. The AI goes for
+    // that); from range, where only the corners beat a keeper, it's placed nearer them (the AI's, and the human's
+    // full bar: his other strikes from range are spread wider again, HUMAN_WIDE below). The AI goes for
     // the corner, right by the post.
     // (Struck hard from the edge of the box, it's meant for the corner: the harder, the nearer it.)
     const edge = clamp((dG - 12.5) / 3.5, 0, 1) * clamp((20 - dG) / 2.5, 0, 1);
+    // (The human's strike from HUMAN_WIDE_FROM m out is not placed that near the post: HUMAN_WIDE. Not his full bar.)
+    const wide = human && !header && power < KNUCKLE_MIN_POWER
+      ? HUMAN_WIDE * clamp((dG - HUMAN_WIDE_FROM) / (HUMAN_WIDE_FULL - HUMAN_WIDE_FROM), 0, 1) + HUMAN_WIDE_FAR * clamp((dG - HUMAN_WIDE_FULL) / HUMAN_WIDE_FAR_OVER, 0, 1)
+      : 0;
     const spread = (dG < 16 ? 2.0 - clamp((dG - 11) / 5, 0, 1) * 0.9 : 1.1 - clamp((dG - 16) / 8, 0, 1) * 0.5) *
-      (1 - power * power * 0.35 * edge);
+      (1 - power * power * 0.35 * edge) + wide;
     // Similar gaps: mix it up (near post / far post) so keepers can't cheat.
     const flip = Math.abs(gapR - gapL) < 0.9 && m.rng.chance(0.4);
     // (The shot assist: the corner away from the keeper whenever he leaves one; only with the gaps level within
@@ -1690,6 +1727,20 @@ const CURL_ERR = 0.45;
 export const FINESSE_CURL = 0.6;
 export const FINESSE_MAX_POWER = 0.6;
 const FINESSE_POST_AIM = 0.35;
+/**
+ * From range a finesse shot is not placed as fine (2026-10-14): FINESSE_RANGE_AIM m further inside the post from
+ * FINESSE_RANGE_FULL m, nothing more from FINESSE_RANGE_FROM m or nearer. It is the tidiest strike there is
+ * (FINESSE_ACC), and against a keeper who dives on time (keeper.ts HUMAN_EDGE) one from straight on went in 38% of the
+ * time from 20 m with it placed as it is from the edge of the box. With keeper.ts FINESSE_READ_FROM it is 65 / 62 /
+ * 51 / 35 / 22 / 14 / 10 / 3% from 16 / 17 / 18 / 19 / 20 / 21 / 22 / 24 m on tests/shotBench.ts's bench (from 16 / 18 /
+ * 20 / 22 / 24 m it was 62 / 42 / 19 / 17 / 34%, and 0% from 26 m: the same cliff the placed strike had). The first
+ * metre or two of it change nothing (a ball that was hitting the post goes in instead: the keeper is not getting to
+ * either from 17 m); from 19 m it is what keeps the finesse shot level with the placed strike. Only the human
+ * strikes one.
+ */
+const FINESSE_RANGE_FROM = 16;
+const FINESSE_RANGE_FULL = 19;
+const FINESSE_RANGE_AIM = 0.3;
 const FINESSE_PACE = 0.95;
 export const FINESSE_MIN_SPEED = 24;
 const FINESSE_ACC = 0.6;
@@ -1987,6 +2038,11 @@ export const CURL_SPIN = 10;
  * smaller bend did: 33% from 16 m (it was 36%), 13% from 18 m (18%), 3% from 20 m (6%), 7% from 22 m (2%). A bigger
  * bend still (2.4) starts to beat a keeper who has gone early from 22 m far too often (19%). Launch.style is 'curler'.
  * Never the AI's.
+ *
+ * (The range balance of the same day: those rates made it a far worse shot than leaving the stick alone from 18 to
+ * 22 m. The keeper no longer goes early at a human's strike, keeper.ts HUMAN_EDGE, and his reach is shorter against a
+ * CURLER, Match's CURLER_REACH: it scores 39 / 26 / 24 / 16 / 7% from 16 / 18 / 20 / 22 / 25 m now, a little more than
+ * the placed strike's 34 / 26 / 20 / 11 / 6%, and most from 20 m on when it is swung across him to the far post.)
  */
 export const CURLER_MIN = 0.9;
 export const CURLER_MIN_D = 14;
@@ -2092,6 +2148,11 @@ export function crossingZ(
  * where the full bar it replaces scored 34 / 18 / 20 / 5 / 0 / 0 / 0%. A placed strike is still the better shot from
  * 20 to 22 m (41%, 54%) and scores nothing from 24 m on. It starts at 20 m, not 18: from 18 to 20 m the old full bar
  * already scores 33 to 45%, more than the knuckleball is meant to.
+ *
+ * (The range balance of the same day, HUMAN_WIDE and keeper.ts HUMAN_EDGE: that 41% and 54% for a placed strike was a
+ * defect. It scores 16% from 20.5 m, 11% from 22 m, 10% from 24 m, 6% from 26 m and 2% from 28 m now, so from 20 m
+ * on the knuckleball is the better shot, as a skill shot should be. The knuckleball's own rates did not move: it keeps
+ * the aim it had and the keeper's handling of it, KNUCKLE_SEEN, was not touched.)
  */
 export const KNUCKLE_MIN_POWER = 0.9;
 export const KNUCKLE_MIN_D = 20;

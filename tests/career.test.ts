@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BOTTOM_DIVISION, CAREER_VERSION, CLUBS_PER_DIVISION, HALF_SEASON, MARKET_SIZE, MATCHDAYS, SQUAD_MAX, SQUAD_MIN, STADIUM_MAX, STAT_CAP, YOU,
-  autoPick, buyPlayer, canBuy, canSell, clubTeam, computeTable, createClub, cupDue, deriveShort, divisionLevel, divisionPlayerOverall,
+  BOTTOM_DIVISION, CAREER_VERSION, CLUBS_PER_DIVISION, HALF_SEASON, MARKET_SIZE, MATCHDAYS, PRICE_KNEE, SQUAD_MAX, SQUAD_MIN, STADIUM_MAX, STAT_CAP, YOU,
+  autoPick, basePrice, buyPlayer, canBuy, canSell, clubTeam, computeTable, createClub, cupDue, deriveShort, divisionLevel, divisionPlayerOverall,
   finishSeason, forfeitScore, resolveCupTie,
-  leagueTable, lineupIssues, matchAttendance, matchCoins, matchDifficulty, migrateCareer, newSeason, nextMatch, playerPrice,
+  leagueTable, lineupIssues, matchAttendance, matchCoins, matchDifficulty, migrateCareer, newSeason, nextMatch, playerPrice, pricePremium,
   refreshMarket, resolveMatchday, sanitizeName, sanitizeShort, seasonOutcome, seasonPrizeLines, sellPlayer, sellValue, setFormation,
   stadiumUpgradeCost, startNextSeason, swapPlayers, trainPlayer, trainingCost, upgradeStadium, userFixture,
   type CareerState, type Fixture,
@@ -378,14 +378,21 @@ describe('promotion and relegation', () => {
 });
 
 describe('transfers', () => {
-  it('lists 4 free agents rated around the division level at round(ovr² x 0.25 / 10) x 10', () => {
+  // (Pin moved 16 October 2026, economy v8: the price was round(ovr² x 0.25 / 10) x 10 at every rating, so a 95 cost
+  // 2,260 coins and the model's manager never spent a coin on players. It is that base price up to PRICE_KNEE and the
+  // base times the market's premium above it: tests/economyV8.test.ts holds the curve.)
+  it('lists 4 free agents rated around the division level at the base price up to 60 OVR and the premium above it', () => {
     for (let div = 1; div <= 6; div++) {
       const st = freshCareer(31, div);
       for (let md = 0; md < 5; md++) {
         expect(st.market).toHaveLength(MARKET_SIZE);
         for (const p of st.market) {
           expect(Math.abs(overall(p) - divisionPlayerOverall(div, p.role))).toBeLessThanOrEqual(6);
-          expect(playerPrice(p)).toBe(Math.round((overall(p) ** 2 * 0.25) / 10) * 10);
+          const base = Math.round((overall(p) ** 2 * 0.25) / 10) * 10;
+          expect(basePrice(overall(p))).toBe(base);
+          if (overall(p) <= PRICE_KNEE) expect(playerPrice(p)).toBe(base);
+          else expect(playerPrice(p)).toBe(Math.round((overall(p) ** 2 * 0.25 * pricePremium(overall(p))) / 10) * 10);
+          expect(playerPrice(p)).toBeGreaterThanOrEqual(base);
         }
         playMine(st, { coins: 0 }, 1, 1);
       }

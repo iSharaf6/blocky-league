@@ -137,7 +137,16 @@ describe('a portal build starts in the game, with no title to click through', ()
     expect(boot.indexOf('adoptPortalSave();')).toBeLessThan(boot.indexOf('const enter = (): void => {'));
     // Measured against the save as the visit began, taken before anything writes.
     expect(main.indexOf('const saveAtLoad = saveBaseline(save);')).toBeGreaterThan(main.indexOf('const save = loadSave();'));
-    expect(main).toContain('adoptPortalStore(store, save, saveAtLoad)');
+    // ... and for whoever CrazyGames says is playing: one browser shared by two accounts never mixes their saves.
+    expect(main).toContain('adoptPortalStore(store, save, saveAtLoad, ads.portalUser())');
+    // A guest who signs in mid-visit: settled again for the account, through the same hold and the same door.
+    expect(main).toContain('if (PORTAL) ads.onAuth = portalAuthChanged;');
+    // An SDK that only came up on its background retry settles the save then, the same way.
+    expect(main).toContain('if (PORTAL) ads.onLate = adoptPortalSave;');
+    const auth = between(main, 'function portalAuthChanged(uid: string): void {', '\n}');
+    expect(auth).toContain('adoptPortalStore(store, waiting ?? save, undefined, uid)');
+    expect(auth).toContain('if (!theirs && waiting) holdPortalWrites();');
+    expect(auth.trimEnd().endsWith('settlePortalSave();')).toBe(true);
     // Swapped in through reload, never while a match is on; the hub and every kick-off ask first.
     const settle = between(main, 'function settlePortalSave(): boolean {', '\n}');
     expect(settle).toContain('if (!theirs || session) return false;');
@@ -161,6 +170,12 @@ describe('a portal build starts in the game, with no title to click through', ()
     expect(shield).toContain("window.addEventListener('keydown', swallowKey, true);");
     expect(shield).toContain('autoPause();');
     expect(main).toContain('if (PORTAL) ads.onBusy = adShield;');
+    // The layer over the pitch and the screens (ui/adHold.ts) goes up and comes down first, whatever follows; an
+    // interstitial awaited with nothing on screen says ONE MOMENT on it; and a held key still never scrolls the page.
+    expect(shield.indexOf('adHold(busy);')).toBeGreaterThan(-1);
+    expect(shield.indexOf('adHold(busy);')).toBeLessThan(shield.indexOf('ui.inert = busy;'));
+    expect(main).toContain('if (PORTAL) ads.onWait = adWait;');
+    expect(between(main, 'const swallowKey = (e: KeyboardEvent): void => {', '\n};')).toContain('if (holdsPage(e)) e.preventDefault();');
   });
 });
 
@@ -238,7 +253,7 @@ describe('a rewarded offer reads the same everywhere', () => {
     const shop = source('src/ui/shop.ts');
     const club = source('src/ui/club.ts');
     // The daily gift's 2X, full time's bonus and the lost decider's replay (ui/menus.ts).
-    expect(menus).toContain('${adIcon()}AD 2× COINS</button>');
+    expect(menus).toContain('${adIcon()}AD 2X COINS</button>');
     expect(menus).toContain('${adIcon()}AD +${reward.adBonus ?? reward.coins} COINS</button>');
     expect(menus).toContain('${adIcon()}WATCH AN AD</button>');
     for (const off of ['disabled>${adIcon()}${escHtml(h.adNote())}', 'disabled>${adIcon()}${escHtml(adOff)}', 'disabled>${adIcon()}${escHtml(o.adNote)}']) expect(menus).toContain(off);
@@ -332,7 +347,7 @@ describe('a rewarded offer on a screen: one request a tap, nothing for an ad tha
     const back = vi.fn();
     menus.gift(100, 1, true, { claim, back });
     const d = mounted();
-    expect(d.innerHTML).toContain('AD 2× COINS');
+    expect(d.innerHTML).toContain('AD 2X COINS');
     expect(d.innerHTML).toContain('class="picon inl"');
     const dbl = d.querySelector('[data-a=double]')!;
     const take = d.querySelector('[data-a=claim]')!;

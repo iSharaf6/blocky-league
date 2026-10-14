@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { makeTeam, PRESET_CLUBS } from '../src/meta/data';
-import { crossingZ, KNUCKLE_MIN_D } from '../src/sim/actions';
-import { DT, GOAL_W, HALF_L, HALF_W } from '../src/sim/constants';
-import { EMPTY_PAD, Match, SHOOT_FULL_T, type Pad } from '../src/sim/match';
-import type { Player } from '../src/sim/player';
+import { KNUCKLE_MIN_D } from '../src/sim/actions';
+import { DT, HALF_L } from '../src/sim/constants';
+import { EMPTY_PAD, Match, SHOOT_FULL_T } from '../src/sim/match';
 import { HumanBot } from './humanBot';
+import { CURLED, NORMAL, PLACED, fmtRates as fmt, rates, type Rates, type Strike } from './shotBench';
 
 /*
  * How often the KNUCKLEBALL, the CURLER and an AFTERTOUCH score (the owner: "knuckle ball curves allat make the game
@@ -36,128 +36,37 @@ import { HumanBot } from './humanBot';
  *
  * Whole matches (16 of them, 2 x 90 s): 82 knuckleballs struck from 21 to 30 m, 15 scored (18%), 32 parried, none
  * held, 10 blocked, 5 off the frame, 20 wide or over; the same man placing it from there scored 6 of 103 (6%).
+ *
+ * THE RANGE BALANCE (the same day, later; tests/rangeShots.test.ts has its own table and pins). Two rows of the table
+ * above were defects: the placed strike's 41% and 54% from 20.5 and 22 m with nothing from 24 m (a cliff where the
+ * keeper's handling of a long shot began, and at the wrong end), and the curler's 13 / 3 / 7% from 18 / 20 / 22 m (a
+ * named skill shot far worse than leaving the stick alone). keeper.ts HUMAN_EDGE, actions.ts HUMAN_WIDE and Match's
+ * CURLER_REACH put them right. The knuckleball's rows did not move by a trial: it keeps its aim and the keeper's
+ * handling of it. Measured as above (600 trials a cell, the same seeds):
+ *
+ *                                   20.5 m   22 m   24 m   26 m   28 m   30 m   34 m
+ *   placed strike (0.2 s), now        16%     11%    10%     6%     2%     0%     0%
+ *   the knuckleball                   36%     25%    19%    19%    18%    13%     6%
+ *
+ *                                   14.5 m   16 m   18 m   20 m   22 m   25 m
+ *   the curler, now                   57%     39%    26%    24%    16%     7%
+ *
+ *   aftertouch on a placed strike:   20.5 m   26 m     (300 trials a cell)
+ *   none                              15%      8%
+ *   pushed one way without looking    13%      -      (it no longer costs 14 points: the assist's strike is not for
+ *                                                     the corner any more, so a blind push spoils fewer of them, and
+ *                                                     sends twice as many wide or onto the post: 12% from 5%)
+ *   read and pushed right, 0.2 s on   22%      4%
+ *
+ * So the bands below that set the knuckleball against the placed strike changed sides: from 20 m on the knuckleball is
+ * the better shot now, as the skill shot should be, and a placed one from 26 m is a hopeful one, not a dead one.
  */
-
-const NORMAL = 1.8;
-
-function newMatch(seed: number, difficulty = NORMAL): Match {
-  return new Match({ home: makeTeam(PRESET_CLUBS[5]), away: makeTeam(PRESET_CLUBS[6]), halfLength: 120, difficulty, humanSide: 0, seed });
-}
-
-function place(p: Player, x: number, z: number): void {
-  p.pos.x = x;
-  p.pos.z = z;
-  p.vel.x = p.vel.z = 0;
-  p.setState('move');
-  p.order = null;
-}
 
 const phase = (m: Match): string => m.phase;
 
-interface Strike {
-  /** Seconds SHOOT is held. */
-  hold: number;
-  /** The stick while it is held and at the strike, across the goal (world z). */
-  lat?: number;
-  /** The stick's sideways push after the strike (aftertouch), world z: without looking. */
-  after?: number;
-  /**
-   * A player who reads his own shot: `react` s after it is struck he pushes the stick all the way (world z) to bend it
-   * towards a spot `read` m inside the post on the side it is heading for (in if it is going wide, out if it is central).
-   */
-  read?: number;
-  react?: number;
-}
-
-interface Outcome { res: 'goal' | 'saved' | 'held' | 'off' | 'post'; style: string | null }
-
-/** The ball `dist` m from the middle of the goal, `z` m off the pitch's axis; only the keeper (1.5 m off his line) to beat. */
-function strikeTrial(seed: number, dist: number, z: number, s: Strike, difficulty = NORMAL): Outcome {
-  const m = newMatch(seed, difficulty);
-  m.phase = 'play';
-  m.restart = null;
-  m.clock = 20;
-  m.players.forEach((p, i) => place(p, -40 + i * 3.6, -HALF_W + 1.5));
-  const ad = m.attackDir(0);
-  const gx = ad * HALF_L;
-  const p = m.players[9];
-  place(p, ad * (HALF_L - Math.sqrt(dist * dist - z * z) - 0.5), z);
-  p.facing = Math.atan2(-z * 0.3, ad);
-  place(m.keeperOf(1)!, ad * (HALF_L - 1.5), 0);
-  const b = m.ball;
-  b.reset(p.pos.x + ad * 0.5, p.pos.z);
-  b.owner = p.idx;
-  b.lastTouch = p.idx;
-  b.lastTouchSide = 0;
-  m.active = p.idx;
-  m.updateBallPath();
-  for (let i = 0; i < 4; i++) m.step(DT, EMPTY_PAD);
-  m.drainEvents();
-  const stick: Pad = { ...EMPTY_PAD, mz: s.lat ?? 0 };
-  for (let i = 0; i < Math.round(s.hold / DT); i++) m.step(DT, { ...stick, shoot: true });
-  const g0 = m.score[0];
-  let style: string | null = null;
-  let struck = -1;
-  let saved = false;
-  let held = false;
-  let post = false;
-  let push = s.after ?? 0;
-  for (let i = 0; i < 260; i++) {
-    // The stick stays where it was until the boot meets the ball; then the aftertouch (if any) moves it.
-    const pushing = struck >= 0 && push !== 0 && i - struck < 40 && (i - struck) * DT >= (s.react ?? 0);
-    m.step(DT, struck >= 0 && i - struck >= 40 ? EMPTY_PAD : pushing ? { ...EMPTY_PAD, mz: Math.max(-1, Math.min(1, (s.lat ?? 0) + push)) } : stick);
-    for (const e of m.drainEvents()) {
-      if (e.type === 'kick' && e.kind === 'shot' && struck < 0) {
-        struck = i;
-        style = e.style ?? null;
-        if (s.read !== undefined) {
-          const z0 = crossingZ(b.pos.x, b.pos.y, b.pos.z, b.vel.x, b.vel.y, b.vel.z, b.spin.y, gx);
-          if (z0 !== null) {
-            const zt = (Math.sign(z0) || 1) * (GOAL_W / 2 - s.read);
-            if (Math.abs(zt - z0) > 0.25) push = Math.sign(zt - z0) * 2;
-          }
-        }
-      }
-      if (e.type === 'save') {
-        saved = true;
-        held = e.caught;
-      }
-      if (e.type === 'post') post = true;
-    }
-    if (m.score[0] > g0) return { res: 'goal', style };
-    if (phase(m) === 'out' || (m.ball.owner >= 0 && m.players[m.ball.owner].side === 1) || m.ball.held) break;
-  }
-  return { res: held ? 'held' : saved ? 'saved' : post ? 'post' : 'off', style };
-}
-
-interface Rates { n: number; goal: number; saved: number; held: number; off: number; post: number; styles: Record<string, number> }
-
-/** `n` trials from `dist` m, a third of them from 5 m either side of the pitch's axis, each on its own seed. */
-function rates(dist: number, s: Strike, n: number, difficulty = NORMAL): Rates {
-  const r: Rates = { n: 0, goal: 0, saved: 0, held: 0, off: 0, post: 0, styles: {} };
-  const zs = [0, 5, -5];
-  for (let k = 0; k < n; k++) {
-    const o = strikeTrial(11 + k * 7 + Math.round(dist * 2) * 1013, dist, zs[k % 3], s, difficulty);
-    r.n++;
-    r[o.res]++;
-    const st = o.style ?? 'plain';
-    r.styles[st] = (r.styles[st] ?? 0) + 1;
-  }
-  r.goal /= n;
-  r.saved /= n;
-  r.held /= n;
-  r.off /= n;
-  r.post /= n;
-  return r;
-}
-
-const pc = (v: number) => `${(v * 100).toFixed(0)}%`.padStart(4);
-const fmt = (label: string, r: Rates) =>
-  `${label.padEnd(36)} goal ${pc(r.goal)} | parried ${pc(r.saved)} | held ${pc(r.held)} | off ${pc(r.off)} | post ${pc(r.post)}`;
-
-const PLACED: Strike = { hold: 0.2 };
+// (The bench itself, a striker alone against a set keeper, each trial on its own seed, is tests/shotBench.ts: shared
+// with tests/rangeShots.test.ts so the two files' numbers are the same trials.)
 const FULL: Strike = { hold: SHOOT_FULL_T + 0.1 };
-const CURLED: Strike = { hold: 0.36, lat: 1 };
 const N = 300;
 
 describe('knuckleball: how often it scores (a set keeper, NORMAL)', () => {
@@ -196,7 +105,7 @@ describe('knuckleball: how often it scores (a set keeper, NORMAL)', () => {
     expect(by.get(34)!.goal).toBeLessThanOrEqual(0.15);
   }, 300_000);
 
-  it('is the shot from 24 m and beyond, but not the best way to score from the edge of its range, and never one from inside it', () => {
+  it('is the better shot than a placed strike all through its range, by most from 24 m and beyond, and never one from inside it', () => {
     const out: string[] = [];
     const placedNear = rates(20.5, PLACED, N);
     const knuckleNear = rates(20.5, FULL, N);
@@ -210,11 +119,17 @@ describe('knuckleball: how often it scores (a set keeper, NORMAL)', () => {
     console.log(out.join('\n'));
     expect(inside.styles.knuckle ?? 0).toBe(0);
     expect(inside.styles.plain).toBe(N);
-    // From 26 m a placed strike is the keeper's every time; the knuckleball is the way to score from there.
-    expect(placedFar.goal).toBeLessThanOrEqual(0.04);
-    expect(knuckleFar.goal).toBeGreaterThanOrEqual(placedFar.goal + 0.08);
-    // At the near edge of its range the placed strike is still the better shot.
-    expect(knuckleNear.goal).toBeLessThanOrEqual(placedNear.goal + 0.02);
+    // From 26 m a placed strike is a hopeful one, the keeper's nine times in ten; the knuckleball is the way to score
+    // from there. (The range balance, 2026-10-14: it was 0% from 24 m on, behind a cliff: 54% from 22 m. It falls away
+    // smoothly now, 6% from here over 600 trials, 8% over these 300. The bands were <= 0.04 and + 0.08.)
+    expect(placedFar.goal).toBeLessThanOrEqual(0.12);
+    expect(knuckleFar.goal).toBeGreaterThanOrEqual(placedFar.goal + 0.06);
+    // At the near edge of its range it is the better shot already. (The same revision: this used to say the placed
+    // strike was still the better one from here, knuckleNear <= placedNear + 0.02, when a placed strike from 20.5 m
+    // went in 41% of the time. That was the defect: it is 15 to 17% now, and the skill shot is the better shot.)
+    expect(knuckleNear.goal).toBeGreaterThanOrEqual(placedNear.goal + 0.08);
+    expect(placedNear.goal).toBeGreaterThanOrEqual(0.08);
+    expect(placedNear.goal).toBeLessThanOrEqual(0.27);
     // ... and it does not make the full bar from 20 m a better shot than the full bar from 18.5 m.
     expect(knuckleNear.goal).toBeLessThanOrEqual(inside.goal + 0.1);
   }, 300_000);
@@ -235,7 +150,7 @@ describe('knuckleball: how often it scores (a set keeper, NORMAL)', () => {
 });
 
 describe('curler and aftertouch: how often they score (a set keeper, NORMAL)', () => {
-  it('the curler is the bent strike it was, within a few points: a chance from the edge of the box, a hopeful one from range', () => {
+  it('the curler is a chance from the edge of the box and a real choice from range: it falls away with distance and never dies at 20 m', () => {
     const out: string[] = [];
     const by = new Map<number, Rates>();
     for (const d of [16, 18, 20, 22, 25]) {
@@ -246,19 +161,24 @@ describe('curler and aftertouch: how often they score (a set keeper, NORMAL)', (
     }
     // eslint-disable-next-line no-console
     console.log(out.join('\n'));
-    // (Before the bigger bend: 36% / 18% / 6% / 2% / 0%.)
-    expect(by.get(16)!.goal).toBeGreaterThanOrEqual(0.22);
-    expect(by.get(16)!.goal).toBeLessThanOrEqual(0.46);
-    expect(by.get(18)!.goal).toBeGreaterThanOrEqual(0.05);
-    expect(by.get(18)!.goal).toBeLessThanOrEqual(0.27);
-    expect(by.get(20)!.goal).toBeLessThanOrEqual(0.14);
-    expect(by.get(22)!.goal).toBeLessThanOrEqual(0.16);
-    expect(by.get(25)!.goal).toBeLessThanOrEqual(0.08);
+    // (Before the bigger bend: 36% / 18% / 6% / 2% / 0%. With it, until the range balance of 2026-10-14: 33% / 13% /
+    // 3% / 7% / 0%, a far worse shot than leaving the stick alone from 18 to 22 m and not monotone; the bands were
+    // 0.22-0.46, 0.05-0.27, <= 0.14, <= 0.16, <= 0.08. Now 39% / 26% / 24% / 16% / 7% over 600 trials, a little more
+    // than the placed strike's 35% / 26% / 20% / 11% / 6%: keeper.ts HUMAN_EDGE, Match's CURLER_REACH.
+    // tests/rangeShots.test.ts sets it against the placed strike distance by distance.)
+    const band: Record<number, [number, number]> = { 16: [0.3, 0.5], 18: [0.19, 0.37], 20: [0.15, 0.33], 22: [0.08, 0.24], 25: [0.02, 0.14] };
+    for (const [d, [lo, hi]] of Object.entries(band)) {
+      expect(by.get(Number(d))!.goal, `${d} m`).toBeGreaterThanOrEqual(lo);
+      expect(by.get(Number(d))!.goal, `${d} m`).toBeLessThanOrEqual(hi);
+    }
+    // Never better from further out (3 points is the bench's noise).
+    const ds = [16, 18, 20, 22, 25];
+    for (let i = 1; i < ds.length; i++) expect(by.get(ds[i])!.goal, `${ds[i]} m`).toBeLessThanOrEqual(by.get(ds[i - 1])!.goal + 0.03);
     // It is on target as often as ever (it is re-aimed): the keeper is what stops it.
     for (const r of by.values()) expect(r.off).toBeLessThanOrEqual(0.15);
   }, 300_000);
 
-  it('aftertouch is a skill, not a gift: pushed without looking it costs goals, read right it adds them, and from 26 m it changes nothing', () => {
+  it('aftertouch is a skill, not a gift: pushed without looking it adds no goals and sends more wide, read right it adds them, and from 26 m it adds nothing', () => {
     const none = rates(20.5, PLACED, N);
     const blind = rates(20.5, { ...PLACED, after: 1 }, N);
     const read = rates(20.5, { ...PLACED, read: 0.6, react: 0.2 }, N);
@@ -267,12 +187,17 @@ describe('curler and aftertouch: how often they score (a set keeper, NORMAL)', (
     // eslint-disable-next-line no-console
     console.log([fmt('20.5 m placed', none), fmt('20.5 m placed, pushed blind', blind), fmt('20.5 m placed, read and pushed', read),
       fmt('26 m placed', farNone), fmt('26 m placed, read and pushed', farRead)].join('\n'));
-    expect(blind.goal).toBeLessThanOrEqual(none.goal - 0.08);
-    // (Bent off target, mostly: that is what it costs.)
+    // (The range balance, 2026-10-14: this was blind <= none - 0.08, when the assist put a placed strike from 20.5 m in
+    // the corner, 41% of them went in and a careless push bent a third of those away: 27%. The assist's strike from
+    // range is spread across the open side now (actions.ts HUMAN_WIDE) and 15% go in; a blind push spoils the ones for
+    // the corner and now and then improves one that was not: 13%. It still must never ADD goals.)
+    expect(blind.goal).toBeLessThanOrEqual(none.goal + 0.02);
+    // (Bent off target or onto the frame, mostly: that is what it costs.)
     expect(blind.off).toBeGreaterThan(none.off);
+    expect(blind.off + blind.post).toBeGreaterThanOrEqual(none.off + none.post + 0.04);
     expect(read.goal).toBeGreaterThanOrEqual(none.goal + 0.05);
-    // A perfect reader with a human's reaction time: better, never a formality.
-    expect(read.goal).toBeLessThanOrEqual(0.8);
+    // A perfect reader with a human's reaction time: better, never a formality. (It was <= 0.8, of 63%; 23% now.)
+    expect(read.goal).toBeLessThanOrEqual(0.45);
     // From range it does not turn a placed strike into a goal.
     expect(farRead.goal).toBeLessThanOrEqual(farNone.goal + 0.05);
   }, 300_000);

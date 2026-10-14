@@ -19,13 +19,13 @@
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
 import { localDay } from '../core/day';
-import { STAT_SHORT, KEY_STATS, SQUAD_MAX, clubRating, type ClubState } from '../meta/career';
+import { BOTTOM_DIVISION, STAT_SHORT, KEY_STATS, SQUAD_MAX, clubRating, type ClubState } from '../meta/career';
 import { PRESET_CLUBS, makeTeam } from '../meta/data';
 import {
-  BUNDLES, BUNDLE_OFF, CAT_LABEL, FREE_AD_COINS, FREE_AD_DAILY_CAP, LOOK_WHO, PACKS, PACK_TOKENS, RARITIES, RARITY_OVR, SHOP_CATS,
-  SLOT_LABEL, DEAL_OFF, ITEM_TIER_NAMES, bundleItems, bundleMissing, bundleOf, bundlePrice, bundleValue, buyBundle, buyItem, claimFreeAd,
+  BUNDLES, BUNDLE_OFF, CAT_LABEL, FREE_AD_COINS, FREE_AD_DAILY_CAP, LOOK_WHO, PACKS, PACK_OVR_CAP, PACK_TOKENS, RARITIES, RARITY_OVR, SHOP_CATS,
+  SLOT_LABEL, DEAL_OFF, ITEM_TIER_NAMES, bundleItems, bundleMissing, bundleOf, bundlePrice, bundleValue, buyBundle, buyItem, cardWageRoom, claimFreeAd,
   dailyDeal, equipItem, equippedId, equippedSlots, featuredShelf, freeAdsLeft, freePackReady, isEquipped, isSlotCat, itemKey, itemTier,
-  makeRoom, markSeen, nextDeal, openPack, owns, packPrice, pendingCard, priceOn, releaseCandidate, rerollDeal, scoutTokens, seasonPassItems, sellCard,
+  makeRoom, markSeen, nextDeal, openPack, owns, packLevel, packPrice, pendingCard, priceOn, releaseCandidate, rerollDeal, scoutTokens, seasonPassItems, sellCard,
   settlePack, shopItem, shopItems, shopOf, signCard, unequipItem,
   type Bundle, type PackCard, type PackKind, type Rarity, type ShopCat, type ShopItem,
 } from '../meta/shop';
@@ -47,7 +47,7 @@ import { openBadges } from './badges';
 import type { GroundState } from '../meta/ground';
 import { confirmGems, gemArt, gemPrice } from './gemUi';
 import { passItemId, seasonOf, seasonTheme, selectJourney } from '../meta/season';
-import { RESALE_STARTS, quickSaleValue, scoutResaleCap, squadWages, wageBudget, wageOf } from '../meta/market';
+import { RESALE_STARTS, clubWageBudget, quickSaleValue, scoutResaleCap, squadWages, wageOf } from '../meta/market';
 import { GOAL_FX_COLORS, TRAIL_COLORS } from '../render/cosmetics';
 import { KIT_DESIGNS } from '../render/kitDesigns';
 import { cssHex } from '../render/palette';
@@ -357,6 +357,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
 
   /** What is in flight: a product id, 'restore' or 'ad' (its buttons wait; the rest of the screen stays usable). */
   let busy = '';
+  /** The NEW DEAL button as it was last drawn: true = it said AD (dealHtml decides, the newdeal tap obeys). */
+  let dealByAd = false;
 
   // Any grant while the shop is up (a purchase, a late approval, a restore) runs the wallet up and chimes.
   const offGrant = iap.onGrant((g: IapGrant) => {
@@ -737,8 +739,10 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     const got = owns(save, d.item.cat, d.item.id);
     // A NEW DEAL TODAY: one rewarded ad a day where there are ads (the player's tap), else a few gems (asked first).
     // (The ad way only shows while an ad can really be offered, with the film icon and AD in words; otherwise the
-    // button is the gem way, which always works: it never offers an ad it cannot show. The tap checks again.)
+    // button is the gem way, which always works: it never offers an ad it cannot show. Decided here, once: the tap
+    // does what the button it was drawn as said, dealByAd, and never starts an ad the button did not announce.)
     const adOk = ads.rewardedAvailable && adsLeft(save, 'deal', localDay()) > 0;
+    dealByAd = adOk;
     const again = `<button class="sh-dealnew" data-a="newdeal" aria-label="A new deal today: ${adOk ? 'watch an ad' : `${GEM_PRICES.dealRefresh} gems`}">${
       adOk ? `${pixelIcon('film', 'currentColor', 1.2, 'inl')}<span>NEW (AD)</span>` : `${gemArt(1.4)}<span>NEW</span>`}</button>`;
     return `<button class="sh-dealchip ${got ? 'got' : ''}" data-a="deal" aria-label="Today's deal: ${esc(d.item.name)} ${esc(CAT_LABEL[d.item.cat])}, ${DEAL_OFF}% off, ${d.price} coins">
@@ -932,6 +936,8 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     }
     const day = today();
     const rating = clubRating(club);
+    // (Economy v8: a card is drawn at the division's level, meta/shop.ts packLevel, not at the club's own rating.)
+    const level = packLevel(careerState(app).season?.division ?? BOTTOM_DIVISION, rating);
     const full = club.squad.length >= SQUAD_MAX;
     const wages = squadWages(club);
     const odds = (k: PackKind) => `<ul class="sh-odds">${RARITIES.map((r, i) => (PACKS[k].odds[i] ? `<li class="r-${r}"><i></i>${RARITY_NAME[r]} ${PACKS[k].odds[i]}%</li>` : '')).join('')}</ul>`;
@@ -944,7 +950,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       return `<button class="sh-pack p-${free ? 'free' : k} ${poor ? 'poor' : ''}" data-a="pack" data-k="${k}" data-free="${free ? 1 : 0}" aria-label="${name}, ${free ? 'free' : `${cost} scout ${cost === 1 ? 'ticket' : 'tickets'}`}">
           <span class="sh-cardback" aria-hidden="true"><i></i></span>
           <b>${name}</b>
-          <small>${free ? 'ONE A DAY' : `OVR ${Math.max(30, rating + lo)} TO ${Math.min(95, rating + 16)}`}</small>
+          <small>${free ? 'ONE A DAY' : `OVR ${Math.max(30, level + lo)} TO ${Math.min(PACK_OVR_CAP, level + RARITY_OVR.legend[1])}`}</small>
           ${odds(k)}
           <em class="sh-tag price ${poor ? 'poor' : 'buy'}">${free ? 'FREE' : `${cost} ${cost === 1 ? 'TICKET' : 'TICKETS'}`}</em>
         </button>`;
@@ -963,7 +969,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
           ${pack('scout', false)}
           ${pack('elite', false)}
         </div>
-        <p class="mc-hint sh-fine">Scout tickets are earned from daily challenges and gifts. 1 opens a Scout Pack; 3 open an Elite Pack. Coins and gems never buy tickets. Odds are shown.</p>
+        <p class="mc-hint sh-fine">CARDS ARE SCOUTED AT YOUR LEAGUE'S LEVEL. TICKETS COME FROM DAILY CHALLENGES AND GIFTS, NEVER FROM COINS OR GEMS. ODDS ARE SHOWN.</p>
       </div>`;
   };
 
@@ -1027,10 +1033,13 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       const c = clubOf();
       if (!c) return;
       const full = c.squad.length >= SQUAD_MAX;
-      const out = full ? releaseCandidate(c) : -1;
-      const gone = out >= 0 ? c.squad[out] : null;
       const st = careerState(app);
-      const overWages = squadWages(c) + wageOf(p) > wageBudget(st.season?.division ?? 6, st.stadium);
+      // (Economy v8: a card obeys the wage budget like any signing. Over it, the weakest reserve can go to make
+      // room, as when the squad is full; if that is not enough the card waits here until a player is sold.)
+      const room = cardWageRoom(c, card, clubWageBudget(st));
+      const out = full || !room.fits ? releaseCandidate(c) : -1;
+      const gone = out >= 0 ? c.squad[out] : null;
+      const fitsAfter = room.fits || (!!gone && squadWages(c) - wageOf(gone) + room.wage <= clubWageBudget(st));
       // What signing him would do to the XI (worked out on a copy of the squad, the sub who would go left out).
       const copy = { ...c, squad: c.squad.filter((_, i) => i !== out) };
       const trial = signCard(copy, card);
@@ -1038,25 +1047,33 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         ? `<b>STRAIGHT INTO YOUR XI</b>${sep()}REPLACES ${esc(lastName(trial.replaced.name).toUpperCase())} (${overall(trial.replaced)})${
           trial.ovrTo > trial.ovrFrom ? `${sep()}CLUB OVR ${trial.ovrFrom} TO ${trial.ovrTo}` : ''}`
         : '<b>SQUAD DEPTH</b>: he would start on the bench';
+      const swapBtn = gone && fitsAfter ? `<button class="btn btn-go btn-lg" data-a="swap">LET ${esc(lastName(gone.name).toUpperCase())} GO AND SIGN</button>` : '';
       after.innerHTML = `
         <p class="sh-verdict">${lift}</p>
         ${scoutResaleCap(p) !== null ? `<p class="sh-verdict">SCOUT RESALE CREDIT UNTIL ${RESALE_STARTS} COMPLETED LEAGUE STARTS.</p>` : ''}
-        ${overWages ? '<p class="sh-warn">Over your wage budget: wages would cost coins after each ROAD TO GLORY match.</p>' : ''}
+        ${room.fits ? '' : `<p class="sh-warn">WAGE BUDGET FULL. HIS WAGE ${fmt(room.wage)}, SPARE ${fmt(room.spare)}. LET A PLAYER GO.</p>`}
         <div class="btn-row no-stick">
           <button class="btn btn-white" data-a="sell">SELL ${coin(value)}</button>
-          ${full
-            ? gone ? `<button class="btn btn-go btn-lg" data-a="swap">LET ${esc(lastName(gone.name).toUpperCase())} GO AND SIGN</button>` : ''
+          ${full || !room.fits
+            ? swapBtn || (room.fits ? '' : '<button class="btn btn-blue btn-lg" data-a="squad">SQUAD</button>')
             : '<button class="btn btn-go btn-lg" data-a="sign">SIGN HIM</button>'}
         </div>`;
       after.classList.add('on');
-      after.querySelector<HTMLElement>('button[data-a=sign], button[data-a=swap]')?.focus({ preventScroll: true });
+      after.querySelector<HTMLElement>('button[data-a=sign], button[data-a=swap], button[data-a=squad]')?.focus({ preventScroll: true });
     };
     const sign = (swap: boolean) => {
       const st = careerState(app);
       const c = st.club;
       if (!c) return;
       let let_go = '';
+      const budget = clubWageBudget(st);
       if (swap) {
+        // (Nobody is let go unless the card then fits the wage budget.)
+        const gone = c.squad[releaseCandidate(c)];
+        if (gone && squadWages(c) - wageOf(gone) + wageOf(p) > budget) {
+          say('WAGE BUDGET FULL. SELL A PLAYER FIRST', 'bad');
+          return;
+        }
         const r = makeRoom(st, save);
         if (!r.ok) {
           say('NOBODY CAN GO RIGHT NOW', 'bad');
@@ -1064,9 +1081,9 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         }
         let_go = ` (${lastName(r.player.name).toUpperCase()} LEFT, +${fmt(r.coins)})`;
       }
-      const r = signCard(c, card, price || packPrice('scout', clubRating(c)), st.season?.number ?? 1);
+      const r = signCard(c, card, price || packPrice('scout', clubRating(c)), st.season?.number ?? 1, budget);
       if (!r.ok) {
-        say(`SQUAD FULL (${SQUAD_MAX} MAX)`, 'bad');
+        say(r.reason === 'wages' ? 'WAGE BUDGET FULL. SELL A PLAYER FIRST' : `SQUAD FULL (${SQUAD_MAX} MAX)`, 'bad');
         return;
       }
       settlePack(save);
@@ -1087,6 +1104,11 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       sfx.click();
       if (el.dataset.a === 'sign') sign(false);
       else if (el.dataset.a === 'swap') sign(true);
+      // (The card waits, shop.pending: it is here again when the shop is opened, with room made for him or not.)
+      else if (el.dataset.a === 'squad') {
+        closeSheet();
+        handlers.squad();
+      }
       else if (el.dataset.a === 'sell') {
         const v = sellCard(save, card);
         settlePack(save);
@@ -1520,7 +1542,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       const kind = (el.dataset.k === 'elite' ? 'elite' : 'scout') as PackKind;
       const free = el.dataset.free === '1';
       const before = save.coins;
-      const r = openPack(save, clubOf(), kind, today(), free);
+      const r = openPack(save, clubOf(), kind, today(), free, careerState(app).season?.division ?? BOTTOM_DIVISION);
       if (!r.ok) {
         if (r.reason === 'no-tokens') say(`${r.short} MORE SCOUT ${r.short === 1 ? 'TICKET' : 'TICKETS'} NEEDED. DAILY CHALLENGES EARN THEM`, 'bad');
         else if (r.reason === 'free-used') say('TODAY\'S FREE PACK IS OPENED. BACK TOMORROW', 'info');
@@ -1670,7 +1692,9 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         else draw();
         say(d ? `NEW DEAL: ${d.item.name.toUpperCase()} ${DEAL_OFF}% OFF` : 'NOTHING ELSE LEFT TO SELL', d ? 'good' : 'info');
       };
-      if (ads.portal !== 'none' && adsLeft(save, 'deal', day) > 0 && ads.rewardedAvailable) {
+      // What the button said when it was drawn (dealHtml): NEW (AD) asks for the ad, NEW asks for gems. An ad that
+      // became available since never starts from a button that showed gems; one that went away says so below.
+      if (dealByAd) {
         busy = 'dealad';
         const watched = await ads.rewarded();
         busy = '';

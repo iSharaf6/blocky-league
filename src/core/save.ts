@@ -245,6 +245,11 @@ export interface SaveData {
   comeback?: ComebackState;
   /** The reasons to come back (src/meta/loops.ts): weekly objectives, the daily sweep, rewarded-ad caps. Always whole once loaded. */
   loops?: LoopState;
+  /**
+   * CrazyGames only: whose copy this is, '' for a guest's, else the account's id (adoptPortalStore tags it). Absent on
+   * every save made before the tag existed and on every other build: such a copy is nobody's in particular.
+   */
+  portalUid?: string;
   updatedAt: string;
 }
 
@@ -463,7 +468,7 @@ function mergeSave(raw: unknown): SaveData {
   const clubIdx = clubIndex(d.clubIdx, base.clubIdx);
   const opponentIdx = clubIndex(d.opponentIdx, clubIdx === base.opponentIdx ? base.clubIdx : base.opponentIdx);
   const gift = d.gift;
-  return {
+  const out = {
     ...base,
     ...d,
     version: 1,
@@ -500,6 +505,10 @@ function mergeSave(raw: unknown): SaveData {
     comeback: normalizeComeback(d.comeback),
     loops: normalizeLoops(d.loops),
   } as SaveData;
+  // Whose copy it is (CrazyGames): kept only as a string; a save without one stays without (never an empty key).
+  if (typeof d.portalUid === 'string') out.portalUid = d.portalUid.slice(0, 128);
+  else delete out.portalUid;
+  return out;
 }
 
 // ------------------------------------------------------------------ Football Moments (best stars by id)
@@ -668,8 +677,18 @@ function portalCopyWins(remote: SaveData, base: SaveBaseline): boolean {
  * whatever the outgoing save does meanwhile is dropped with it). Otherwise null: the browser's copy is written to
  * the store at once, and every save after it is mirrored there. A store that cannot be read is left alone for this
  * visit (what it holds is unknown, so nothing is written over it).
+ *
+ * `uid` is who is playing (platform/ads.ts portalUser): '' a guest, else the account's id, null when the portal
+ * cannot say (then everything above is all there is, and nothing is tagged). The browser's copy carries who it was
+ * last kept for (SaveData.portalUid), so one browser shared by two accounts never hands one the other's club:
+ * - an untagged copy (every save from before the tag) or one tagged for this same player: the rule above;
+ * - a copy tagged for SOMEONE ELSE (another account, or an account's while a guest plays now): the store's copy wins
+ *   outright, and with none in the store the player starts on a new save. A stranger's copy is never pushed;
+ * - a guest's copy when the player has since signed in: the account's copy wins outright if it has one; if it has
+ *   none the guest's copy goes with him into the account (CrazyGames' own rule for guest progress).
+ * Whatever is kept is tagged for `uid` before it is written anywhere.
  */
-export function adoptPortalStore(store: PortalSaveStore, local: SaveData, base: SaveBaseline = saveBaseline(local)): SaveData | null {
+export function adoptPortalStore(store: PortalSaveStore, local: SaveData, base: SaveBaseline = saveBaseline(local), uid: string | null = null): SaveData | null {
   let remote: SaveData | null = null;
   try {
     const raw = store.getItem(KEY);
@@ -678,23 +697,47 @@ export function adoptPortalStore(store: PortalSaveStore, local: SaveData, base: 
     return null;
   }
   portalStore = store;
-  if (remote && portalCopyWins(remote, base)) {
+  const known = typeof uid === 'string';
+  const tag = known ? local.portalUid : undefined;
+  const stranger = known && tag !== undefined && tag !== uid;
+  let theirs: SaveData | null = null;
+  if (stranger) {
+    if (tag !== '' || remote) theirs = remote ?? defaultSave();
+  } else if (remote && portalCopyWins(remote, base)) {
+    theirs = remote;
+  }
+  if (theirs) {
+    if (known) theirs.portalUid = uid;
     portalWaiting = true;
     try {
-      localStorage.setItem(KEY, JSON.stringify(remote));
+      // (The copy that gives way is set aside in this browser, not destroyed: it was someone's progress.)
+      if (stranger) localStorage.setItem(ASIDE_KEY, JSON.stringify(local));
+      localStorage.setItem(KEY, JSON.stringify(theirs));
     } catch {
       // No storage in this browser: the copy still comes from the portal's store next time.
     }
-    return remote;
+    return theirs;
   }
+  if (known) local.portalUid = uid;
   portalWaiting = false;
   writeSave(local);
   return null;
 }
 
+/** Where a copy that gave way to another player's is set aside in this browser (adoptPortalStore). */
+const ASIDE_KEY = `${KEY}:set-aside`;
+
 /** The portal's copy is the running save now (the caller swapped it in): saving, and mirroring, carry on from here. */
 export function portalSaveSwapped(): void {
   portalWaiting = false;
+}
+
+/**
+ * A copy is still waiting to be swapped in (main.ts: a match is on) after adoptPortalStore was run again for it (the
+ * player signed in mid-visit and it was the one to keep): the outgoing save's writes stay held until it is.
+ */
+export function holdPortalWrites(): void {
+  portalWaiting = true;
 }
 
 // ------------------------------------------------------------------ progression (pure; see tests/progress.test.ts)

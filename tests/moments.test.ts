@@ -507,7 +507,15 @@ describe('a decent player (the scripted bot) over ten seeds', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`Football Moments, scripted bot, ${N} seeds each:\n${rows.join('\n')}`);
-    for (const mo of MOMENTS) expect(rate[mo.id], mo.id).toBeGreaterThan(0);
+    // (2026-10-16: with the placed strike from 20 to 22 m no longer a one in two chance, the bot wins GIANT KILLING
+    // about one time in six, 7 of 40 seeds where it was 10 of 40, so ten seeds can all miss. Before calling a moment
+    // never completed, twenty more seeds: one win among thirty is "at least sometimes".)
+    for (const mo of MOMENTS) {
+      if (rate[mo.id] > 0) continue;
+      let won = 0;
+      for (let seed = N + 1; seed <= N + 20 && !won; seed++) if (playMoment(mo, seed * 101 + 7).outcome?.won) won++;
+      expect(won, `${mo.id}: no win in ${N + 20} seeds`).toBeGreaterThan(0);
+    }
     // The teaching moments are the easy ones; the last four are the hard ones.
     const easy = (rate['first-touch'] + rate['cross-finish'] + rate['one-on-one'] + rate['corner-kick']) / 4;
     const hard = (rate['two-down'] + rate['hold-the-fort'] + rate['giant-killing'] + rate['blitz-mega']) / 4;

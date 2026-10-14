@@ -114,7 +114,7 @@
 /* Slot chips over a slot category's tiles (players, stadium): the worn slots are underlined green. */
 .chips.sh-slots { padding: 2px 2px 4px; }
 .chips.sh-slots > button { position: relative; min-height: 34px; padding: 4px 10px 3px; font-size: 13px; }
-.chips.sh-slots .sh-dot { top: -9px; right: -6px; padding: 2px 3px 1px; font-size: 8px; animation: none; }
+.chips.sh-slots .sh-dot { top: -9px; right: -6px; padding: 2px 3px 1px; font-size: 9px; animation: none; }
 .chips.sh-slots { padding-top: 9px; padding-right: 8px; }
 .chips.sh-slots > button.worn:not(.on) { box-shadow: inset 0 -4px 0 var(--go); }
 

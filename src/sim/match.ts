@@ -1,7 +1,7 @@
 import { angleDiff, clamp, dist2, pointSegDist, turnToward } from '../core/math';
 import { Rng } from '../core/rng';
 import {
-  assistLevel, crossAim, crossTarget, CURL_SPIN, FINESSE_CURL, FINESSE_MAX_POWER, humanThroughTarget, isCrossPosition, onTarget, passAimPoint,
+  assistLevel, crossAim, crossTarget, CURL_SPIN, CURLER_MIN_D, FINESSE_CURL, FINESSE_MAX_POWER, humanThroughTarget, isCrossPosition, onTarget, passAimPoint,
   pickReceiver, resolveKick, shotQuality, stickCurl, throwInPlan,
 } from './actions';
 import { assistRun, intercept, isCrossingRestart, makeBrain, meetSpot, penaltyWaitSpot, setPieceAim, setPieceAimAt, setPieceReady, setPieceRunnerAt, setPieceTargets, updateTeamAI, type TeamBrain } from './ai';
@@ -820,6 +820,28 @@ const LONG_CATCH_FROM = 16;
 const SHOT_LIVE_T = 4;
 /** How much shorter a diving keeper's reach is against a fully bent free kick. */
 const CURL_REACH = 0.15;
+/**
+ * ... and against the human's CURLER (actions.ts CURLER_BEND; 2026-10-14), which swings away from his hands the whole
+ * way: CURLER_REACH of his reach shorter, from nothing for one struck from CURLER_REACH_FROM m to all of it from
+ * CURLER_REACH_FULL m (from close in it has hardly begun to swing, and scored as it should already). And CURLER_FAR_REACH
+ * more for one swung right ACROSS him to the far post: struck from the other side of the goal's middle from where it
+ * is now, by CURLER_FAR_ANGLE of its distance or more (4 m to one side from 16 m; in proportion nearer the middle; all
+ * of it from CURLER_REACH_FROM m, nothing at the CURLER's own CURLER_MIN_D). That one crosses in front of a keeper who
+ * is off his line well inside where it crosses the goal line (he has cut the angle), so it was the worst curler to
+ * strike where it should be the best: before this, with his dive timed, 7% from 18 m against 17% from straight on.
+ * Never an AI's shot: only a human strikes a CURLER.
+ *
+ * Measured (tests/rangeShots.test.ts, with keeper.ts HUMAN_EDGE; goals on NORMAL from 16 / 18 / 20 / 22 / 25 m): 39 /
+ * 26 / 24 / 16 / 7%, where it was 33 / 13 / 3 / 7 / 0%, and the placed strike is 34 / 26 / 20 / 11 / 6%. Swung to the
+ * far post from 5 m to one side 35 / 27 / 28 / 22 / 11%; from straight on 45 / 24 / 26 / 13 / 4%. (On HARD and LEGEND,
+ * where the keeper's dive carries him further, it is the placed strike that scores more: 17% against 10% from 18 m on
+ * HARD.)
+ */
+const CURLER_REACH = 0.2;
+const CURLER_REACH_FROM = 16;
+const CURLER_REACH_FULL = 18;
+const CURLER_FAR_REACH = 0.4;
+const CURLER_FAR_ANGLE = 0.25;
 /**
  * A keeper never holds a KNUCKLEBALL (actions.ts), and his parry of one is tipped behind for a corner only this much
  * as often as any other parry: the rest come back into play, a rebound.
@@ -5658,6 +5680,12 @@ export class Match {
         }
         // A bending free kick is hard to judge: the keeper's reach is a little shorter against it.
         if (this.fkShotKick === this.shotKick) reachH *= 1 - CURL_REACH * this.shotCurl;
+        // The human's CURLER swings away from his hands, most of all one swung across him to the far post (CURLER_REACH).
+        if (this.shotStyle === 'curler' && this.shotByHuman) {
+          const far = clamp((-this.kickZ * Math.sign(b.pos.z)) / (this.shotDist * CURLER_FAR_ANGLE), 0, 1) *
+            clamp((this.shotDist - CURLER_MIN_D) / (CURLER_REACH_FROM - CURLER_MIN_D), 0, 1);
+          reachH *= 1 - CURLER_REACH * clamp((this.shotDist - CURLER_REACH_FROM) / (CURLER_REACH_FULL - CURLER_REACH_FROM), 0, 1) - CURLER_FAR_REACH * far;
+        }
       }
       // A SUPER SHOT (hype.ts): less of him gets to it, and he can only parry it.
       const superShot = !!this.cfg.hype && shotLive && superLive(this, s);

@@ -30,6 +30,9 @@ import { FuzzPad, netConfig, runToEnd, stoppages, type RunResult } from './netHa
  * eighteen rows; aiKo4 is bit-identical. Drivers and exact assertions are unchanged.
  * The protocol-12 revision (2026-10-14: the human's knuckleball, curler and aftertouch) re-recorded twelve human rows;
  * all six AI-only rows and penTaker0 are bit-identical. Drivers and exact assertions are unchanged.
+ * The protocol-13 revision (2026-10-14b: the shooting balance from range, a human striker's shots and the keeper's
+ * handling of those only) re-recorded all thirteen human rows; all six AI-only rows are bit-identical, and ko1 keeps
+ * its end hash, steps, score and shootout flag. Drivers and exact assertions are unchanged.
  */
 export type Row = [number, number, number, number, number, number];
 

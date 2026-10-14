@@ -22,9 +22,12 @@ import {
 import { SEASON_THEMES, passItemId } from './season';
 import { FORMATIONS } from '../sim/formations';
 import { overall, type PlayerDef, type Role } from '../sim/types';
-import { SQUAD_MAX, SQUAD_MIN, clonePlayer, clubRating, freeNumber, sellPlayer, swapPlayers, tuneToOverall, type CareerState, type ClubState, type Wallet } from './career';
+import {
+  BOTTOM_DIVISION, SQUAD_MAX, SQUAD_MIN, clonePlayer, clubRating, divisionLevel, freeNumber, sellPlayer, swapPlayers, tuneToOverall,
+  type CareerState, type ClubState, type Wallet,
+} from './career';
 import { makePlayer, surnameOf } from './data';
-import { pinMeta, quickSaleValue, type MetaPlayer } from './market';
+import { pinMeta, quickSaleValue, squadWages, wageOf, type MetaPlayer } from './market';
 
 // ------------------------------------------------------------------ catalogue
 
@@ -777,11 +780,37 @@ export const PACKS: { readonly [k in PackKind]: { name: string; price: number; o
   elite: { name: 'ELITE PACK', price: 1200, odds: [0, 55, 35, 10] },
 };
 
-/** A card's overall against your XI's average, by rarity (inclusive): a common is squad depth, a legend a star. */
+/** A card's overall against the level it is drawn at (packLevel), by rarity (inclusive): a common is squad depth, a legend a star. */
 export const RARITY_OVR: { readonly [k in Rarity]: readonly [number, number] } = {
   common: [-3, 1], rare: [2, 5], epic: [6, 10], legend: [11, 16],
 };
 export const PACK_OVR_CAP = 95;
+/**
+ * The level a card is drawn at (economy v8, 16 October 2026): the DIVISION's, not the club's own eleven.
+ * BEFORE: `base` was the club's own XI average, so every card that started lifted the next one: four free cards a
+ * day kept the model's regular player 7 to 20 OVR over his division's par and he spent 0 coins on players in 180
+ * days (docs/ECONOMY.md, 15 October 2026, check squad-sink).
+ * AFTER: the division's level (career.ts divisionLevel: 34 in the Park League, 88 in the Elite League) plus PACK_LIFT.
+ * A division's average eleven plays 5 over its level (divisionPar), so with the rarity ranges above a common is 8 to
+ * 4 under par (squad depth), a rare 3 under to par (a starter for a side that has just come up), an epic 1 to 5 over
+ * (a little over) and a legend 6 to 11 over (a star: one division up, never two). On cards alone the model's manager
+ * now sits 0 to 4 over par instead of 7 to 20: cards keep a club at its level; the market and training get it ahead.
+ * PACK_LIFT is the one number to move if cards should be worth more or less (each point is a point of every card).
+ */
+export const PACK_LIFT = 0;
+/**
+ * A new club still finds its feet on its scouts: while its division's level is under this, a card is drawn against
+ * the club's own eleven as before, counted up to this rating and no further. It is the old PACK_BASE (the rating "a
+ * new club's base prices hold up to"). The Park, District and Sunday Leagues are under it (levels 34, 38, 42), so the
+ * first three divisions play as they did; the County League's level is 51, and from the National League (60) the
+ * division alone sets the draw.
+ */
+export const PACK_OWN_CAP = 52;
+
+/** The level a pack is drawn at for a club rated `rating` (its XI average) playing in `division`. */
+export function packLevel(division: number, rating = 0): number {
+  return Math.max(divisionLevel(division) + PACK_LIFT, Math.min(Math.round(rating), PACK_OWN_CAP));
+}
 /** The club rating the base prices hold up to (a new club is ~51); a stronger club's scouts cost more (packPrice). */
 export const PACK_BASE = 52;
 
@@ -803,8 +832,9 @@ export interface PackCard {
 }
 
 /**
- * One card from a `kind` pack for a club whose XI averages `base`: pure, so the same seed always draws the same
- * card. Surnames in `avoid` (the squad's) are never drawn.
+ * One card from a `kind` pack drawn at the level `base` (packLevel: the division's; a pack waiting in an older save
+ * keeps the level it was opened at): pure, so the same seed always draws the same card. Surnames in `avoid` (the
+ * squad's) are never drawn.
  */
 export function rollPack(kind: PackKind, base: number, seed: number, avoid: Iterable<string> = []): PackCard {
   const rng = new Rng(hashString(`pack|${kind}|${seed >>> 0}`));
@@ -842,13 +872,15 @@ export type PackResult = { ok: true; card: PackCard; price: number; free: boolea
  * Open a pack for `club`: its Scout Tickets (PACK_TOKENS, or nothing for the day's free scout pack) are spent,
  * never below zero; `price` is the card's coin value (packPrice at the club's rating), and the card is drawn from the save's own pack count (so a reload draws
  * the same card again: no rerolling). The card is not signed yet: see signCard / sellCard.
+ * `division` is the league the club plays in: the card is drawn at its level (packLevel), not at the club's own.
  */
 export function openPack(
-  save: Pick<SaveData, 'shop' | 'coins'>, club: ClubState | null, kind: PackKind, day: string, free = false,
+  save: Pick<SaveData, 'shop' | 'coins'>, club: ClubState | null, kind: PackKind, day: string, free = false, division = BOTTOM_DIVISION,
 ): PackResult {
   if (!club) return { ok: false, reason: 'no-club', short: 0 };
   const shop = shopOf(save);
   const rating = clubRating(club);
+  const level = packLevel(division, rating);
   let price = 0;
   if (free) {
     if (kind !== 'scout' || !freePackReady(save, day)) return { ok: false, reason: 'free-used', short: 0 };
@@ -863,8 +895,8 @@ export function openPack(
   const seed = hashString(`${club.short}|${club.name}|${shop.packs}`);
   shop.packs++;
   // Kept until the card is signed or sold (settlePack): a closed tab mid-reveal brings the same card back.
-  const card = rollPack(kind, rating, seed, club.squad.map((p) => p.name));
-  shop.pending = { kind, seed, base: rating, price, scoutResale: card.player.scoutResale };
+  const card = rollPack(kind, level, seed, club.squad.map((p) => p.name));
+  shop.pending = { kind, seed, base: level, price, scoutResale: card.player.scoutResale };
   return { ok: true, card, price, free };
 }
 
@@ -886,15 +918,27 @@ export function settlePack(save: Pick<SaveData, 'shop'>): void {
 
 export type SignResult =
   | { ok: true; player: MetaPlayer; starter: boolean; replaced?: PlayerDef; ovrFrom: number; ovrTo: number }
-  | { ok: false; reason: 'squad-full' };
+  | { ok: false; reason: 'squad-full' | 'wages' };
+
+/** What a card needs from the wage budget and what is spare: the reveal's line when he does not fit. */
+export function cardWageRoom(club: ClubState, card: PackCard, budget: number): { wage: number; spare: number; fits: boolean } {
+  const wage = wageOf(card.player);
+  const spare = Math.max(0, Math.floor(budget - squadWages(club)));
+  return { wage, spare, fits: squadWages(club) + wage <= budget };
+}
 
 /**
  * Sign a card into the squad (never past SQUAD_MAX): a fresh squad id and a free shirt number; straight into the
  * XI when he beats the weakest starter in a slot of his role (that man drops to the bench), else on the bench.
  * The cloned scoutResale credit survives signing; paid/season preserve legacy market protection for old cards.
+ * `budget` is the club's wage budget (market.ts clubWageBudget). Economy v8 (16 October 2026): a card obeys it like
+ * any signing. BEFORE: the market refused a signing over the budget and a card signed anyway, so a collector's wage
+ * drain reached 190% of what his league matchdays brought. AFTER: 'wages', nothing changes, and the card waits
+ * (shop.pending) until a player is let go or the card is sold.
  */
-export function signCard(club: ClubState, card: PackCard, paid = 0, season = 1): SignResult {
+export function signCard(club: ClubState, card: PackCard, paid = 0, season = 1, budget = Infinity): SignResult {
   if (club.squad.length >= SQUAD_MAX) return { ok: false, reason: 'squad-full' };
+  if (!cardWageRoom(club, card, budget).fits) return { ok: false, reason: 'wages' };
   const ovrFrom = clubRating(club);
   const src = card.player;
   const p = pinMeta({ ...clonePlayer(src), id: `c${club.nextId++}`, number: freeNumber(club.squad, src.role) }, {
