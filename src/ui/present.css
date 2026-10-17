@@ -17,12 +17,12 @@
    ticker runs along the top band between them, and the minimap and the touch controls own the bottom. It steps left
    of the quick-sub card while that is up. */
 .pz-chant {
-  top: calc(max(12px, env(safe-area-inset-top)) + 54px);
-  right: max(12px, env(safe-area-inset-right));
+  top: calc(max(12px, var(--sa-top)) + 54px);
+  right: max(12px, var(--sa-right));
   display: flex;
   align-items: center;
   gap: 7px;
-  max-width: min(46vw, 360px);
+  max-width: min(calc(46 * var(--vw)), 360px);
   padding: 5px 9px 4px 7px;
   background: rgba(38, 38, 46, 0.78);
   border-right: 4px solid var(--yellow);
@@ -58,7 +58,7 @@
   text-overflow: ellipsis;
 }
 
-.hud:has(.hud-qsub.on) .pz-chant { right: calc(max(12px, env(safe-area-inset-right)) + 274px); }
+.hud:has(.hud-qsub.on) .pz-chant { right: calc(max(12px, var(--sa-right)) + 274px); }
 
 /* Nothing sung over a replay, a close-up or a staged shot's own caption. */
 .hud.replaying .pz-chant,
@@ -66,8 +66,8 @@
   opacity: 0 !important;
 }
 
-@media (max-width: 720px), (max-height: 480px) {
-  .pz-chant { top: calc(max(12px, env(safe-area-inset-top)) + 46px); font-size: 11px; max-width: 44vw; }
+@container app (max-width: 720px) or (max-height: 480px) {
+  .pz-chant { top: calc(max(12px, var(--sa-top)) + 46px); font-size: 11px; max-width: calc(44 * var(--vw)); }
 }
 
 /* A staged shot (the line-up, a change, the man of the match) is a clean frame with its own caption: no banner
@@ -85,7 +85,7 @@
 
 .pz-sub {
   left: 50%;
-  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 34px);
+  bottom: calc(max(16px, var(--sa-bottom)) + 34px);
   transform: translate(-50%, 10px);
   display: grid;
   justify-items: center;
@@ -129,7 +129,7 @@
   padding: 0 12px 0 0;
   background: rgba(38, 38, 46, 0.92);
   color: var(--cream);
-  font: 700 clamp(15px, 2.1vw, 22px) / 1 var(--px);
+  font: 700 clamp(15px, calc(2.1 * var(--vw)), 22px) / 1 var(--px);
   letter-spacing: 1px;
   white-space: nowrap;
 }
@@ -159,7 +159,7 @@
 
 .pz-off span,
 .pz-on span {
-  max-width: 24vw;
+  max-width: calc(24 * var(--vw));
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -167,11 +167,11 @@
 /* ---------------------------------------------------------------- the lower-third plate (line-up, man of the match) */
 
 .pz-plate {
-  left: max(18px, env(safe-area-inset-left));
-  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 34px);
+  left: max(18px, var(--sa-left));
+  bottom: calc(max(16px, var(--sa-bottom)) + 34px);
   display: flex;
   align-items: stretch;
-  max-width: min(78vw, 560px);
+  max-width: min(calc(78 * var(--vw)), 560px);
   background: rgba(38, 38, 46, 0.92);
   border-left: 8px solid var(--pz, var(--yellow));
   color: var(--cream);
@@ -213,7 +213,7 @@
 }
 
 .pz-title {
-  font: 700 clamp(18px, 3vw, 30px) / 1 var(--px);
+  font: 700 clamp(18px, calc(3 * var(--vw)), 30px) / 1 var(--px);
   letter-spacing: 1px;
   white-space: nowrap;
   overflow: hidden;
@@ -221,7 +221,7 @@
 }
 
 .pz-line {
-  font: 400 clamp(13px, 1.5vw, 16px) / 1.1 var(--round);
+  font: 400 clamp(13px, calc(1.5 * var(--vw)), 16px) / 1.1 var(--round);
   font-style: normal;
   letter-spacing: 0.5px;
   color: var(--cream-2);

@@ -7,6 +7,7 @@
  * GLORY screens use revealInPane, PaneScroll and escBack.)
  */
 import { onMetaClose } from './club';
+import { layoutScale } from './fitBox';
 
 /** A keyed pane's key: `data-scroll-key`, else `data-key`. */
 function keyOf(el: HTMLElement): string {
@@ -39,12 +40,14 @@ export function revealInPane(el: Element | null | undefined, block: 'nearest' | 
   if (!el || !box) return;
   const b = box.getBoundingClientRect();
   const r = el.getBoundingClientRect();
+  // Client rects are screen pixels; scrollTop is layout pixels (they differ inside the fit box: ui/fitBox.ts).
+  const k = layoutScale(box);
   if (block === 'center') {
-    box.scrollTop += r.top + r.height / 2 - (b.top + b.height / 2);
+    box.scrollTop += (r.top + r.height / 2 - (b.top + b.height / 2)) / k;
     return;
   }
-  if (r.top < b.top) box.scrollTop += r.top - b.top - 4;
-  else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom + 4;
+  if (r.top < b.top) box.scrollTop += (r.top - b.top) / k - 4;
+  else if (r.bottom > b.bottom) box.scrollTop += (r.bottom - b.bottom) / k + 4;
 }
 
 /**

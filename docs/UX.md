@@ -98,9 +98,35 @@ Every chore gets a one-tap helper:
 No "·", "●", "—" or "–" separators (use `sep()` from src/ui/text.ts). No emojis (use `pixelIcon`). No monospace fonts.
 No hyphens in Silkscreen captions. Bold, saturated, chunky blocks.
 
+## 10. Every frame: the fit box (src/ui/fitBox.ts)
+
+CrazyGames rejected the Full Launch (October 2026) for menus that overlapped or ran off screen on iPhones (landscape
+under Safari's bars and the portal's banner, and upright) and iPads held upright. The rule since then:
+
+- The menus are designed for landscape frames of at least 667 by 375. A frame outside that (narrower, shorter, or
+  upright: width over height under 1.25) lays each menu screen (`#ui > .screen`) out at a landscape design box and
+  scales it to fit, centred, with the stadium around it:
+  - small landscape frames: the frame scaled up to 375 tall or 667 wide, same shape (640x290 is laid out at 827x375,
+    scale 0.77), held at 2.4 to 1 at most;
+  - upright frames: 852x480 (an iPad: 820x1100 at 0.96, 930x1250 at 1.09), or 667x375 under 600 wide (a phone: 390x700
+    at 0.58).
+- Inside the box the screen is its own size container. So every layout rule asks `@container app (...)`, never
+  `@media (...)` (#ui is the `app` container everywhere else, so the HUD sees the window as before), and uses
+  `var(--vw)`, `var(--vh)`, `var(--dvh)`, `var(--vmin)` and `var(--sa-top)` etc. instead of raw viewport units and
+  `env(safe-area-inset-*)`. `@media` is only for `prefers-reduced-motion`, `hover` and `pointer`.
+- A rule on the `.screen` element itself still sees the window (an element cannot query itself): give it a
+  `#ui.fit > .screen` override in shell.css when it matters.
+- Code that turns client rects into scroll offsets or sizes divides by `layoutScale(el)`.
+- Every strip or list that holds more than fits scrolls by finger and by mouse drag (src/ui/dragScroll.ts); a mouse
+  wheel moves a sideways strip sideways.
+- Check a change with `__uiAudit()` in the console (dev builds): text that spills or is cut, buttons off the frame or
+  cut, interactive elements or text drawn over each other. It should return `[]` on every screen at 640x290, 700x320,
+  667x375, 852x393, 800x450, 1080x607, 1180x760, 1920x1080, 820x1100, 930x1250 and 390x700.
+- For CrazyGames: the game is landscape first; on phones ask for landscape only (upright works, scaled small).
+
 ## Checklist for every screen
 
-1. Fits 852x393 and 667x375 with no page scroll.
+1. Fits 852x393 and 667x375 with no page scroll, and `__uiAudit()` is empty at the sizes in section 10.
 2. The primary action is visible without scrolling.
 3. Selecting and acting happen with both visible.
 4. There is a one-tap helper for the chore.

@@ -6,7 +6,7 @@ describe('the trainer gets quieter as he learns', () => {
   const onBall = { title: 'ON THE BALL', actions: [['SPACE', 'Pass'], ['K', 'Shoot']] as [string, string][], detail: 'Hold L to cross' };
   const beat = { title: 'BEAT HIM', actions: [['Q', 'Skill now']] as [string, string][] };
 
-  it('a routine card: in full (no detail line) at first, then the keys alone, then nothing', () => {
+  it('a routine card: in full (no detail line) at first, then a step fainter with every word kept, then nothing', () => {
     Trainer.resetLearned();
     const first = learnCue(onBall, true);
     expect(first).toEqual({ title: 'ON THE BALL', actions: onBall.actions });
@@ -14,15 +14,16 @@ describe('the trainer gets quieter as he learns', () => {
     for (let i = 0; i < 50; i++) learnCue(onBall, false);
     expect(learnCue(onBall, false)?.actions[0][1]).toBe('Pass');
     for (let i = 1; i < 20; i++) learnCue(onBall, true);
-    expect(learnCue(onBall, true)).toEqual({ title: 'ON THE BALL', actions: [['SPACE', ''], ['K', '']] });
+    // (Never the keys alone: "SPACE K L" was what CrazyGames' review could not read.)
+    expect(learnCue(onBall, true)).toEqual({ title: 'ON THE BALL', actions: onBall.actions, quiet: true });
     for (let i = 21; i < 80; i++) learnCue(onBall, true);
     expect(learnCue(onBall, true)).toBeNull();
   });
 
-  it('a moment-to-moment card (BEAT HIM) goes to the keys but never away', () => {
+  it('a card that is not routine (BEAT HIM) goes fainter but never away, and keeps its words', () => {
     Trainer.resetLearned();
     for (let i = 0; i < 200; i++) learnCue(beat, true);
-    expect(learnCue(beat, true)).toEqual({ title: 'BEAT HIM', actions: [['Q', '']] });
+    expect(learnCue(beat, true)).toEqual({ title: 'BEAT HIM', actions: [['Q', 'Skill now']], quiet: true });
   });
 
   it('switching the trainer back on brings every card back in full', () => {

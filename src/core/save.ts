@@ -246,8 +246,10 @@ export interface SaveData {
   /** The reasons to come back (src/meta/loops.ts): weekly objectives, the daily sweep, rewarded-ad caps. Always whole once loaded. */
   loops?: LoopState;
   /**
-   * CrazyGames only: whose copy this is, '' for a guest's, else the account's id (adoptPortalStore tags it). Absent on
-   * every save made before the tag existed and on every other build: such a copy is nobody's in particular.
+   * CrazyGames only: whose copy this is, '' for a guest's, else `name:` and the account's username (platform/ads.ts
+   * portalUidOf; adoptPortalStore tags it). Absent on every save made before the tag existed and on every other build:
+   * such a copy is nobody's in particular. So is one tagged the old way, with the account's id from a user token the
+   * game no longer asks for (portalTagCurrent).
    */
   portalUid?: string;
   updatedAt: string;
@@ -678,10 +680,12 @@ function portalCopyWins(remote: SaveData, base: SaveBaseline): boolean {
  * the store at once, and every save after it is mirrored there. A store that cannot be read is left alone for this
  * visit (what it holds is unknown, so nothing is written over it).
  *
- * `uid` is who is playing (platform/ads.ts portalUser): '' a guest, else the account's id, null when the portal
- * cannot say (then everything above is all there is, and nothing is tagged). The browser's copy carries who it was
- * last kept for (SaveData.portalUid), so one browser shared by two accounts never hands one the other's club:
- * - an untagged copy (every save from before the tag) or one tagged for this same player: the rule above;
+ * `uid` is who is playing (platform/ads.ts portalUser): '' a guest, else `name:` and his username, null when the
+ * portal cannot say (then everything above is all there is, and nothing is tagged). The browser's copy carries who it
+ * was last kept for (SaveData.portalUid), so one browser shared by two accounts never hands one the other's club:
+ * - an untagged copy (every save from before the tag), one tagged the old way (an account id: portalTagCurrent says
+ *   who that was no longer can be told, so it is never taken for someone else's) or one tagged for this same player:
+ *   the rule above, and it is tagged anew;
  * - a copy tagged for SOMEONE ELSE (another account, or an account's while a guest plays now): the store's copy wins
  *   outright, and with none in the store the player starts on a new save. A stranger's copy is never pushed;
  * - a guest's copy when the player has since signed in: the account's copy wins outright if it has one; if it has
@@ -698,7 +702,7 @@ export function adoptPortalStore(store: PortalSaveStore, local: SaveData, base: 
   }
   portalStore = store;
   const known = typeof uid === 'string';
-  const tag = known ? local.portalUid : undefined;
+  const tag = known && portalTagCurrent(local.portalUid) ? local.portalUid : undefined;
   const stranger = known && tag !== undefined && tag !== uid;
   let theirs: SaveData | null = null;
   if (stranger) {
@@ -722,6 +726,15 @@ export function adoptPortalStore(store: PortalSaveStore, local: SaveData, base: 
   portalWaiting = false;
   writeSave(local);
   return null;
+}
+
+/**
+ * Is a stored tag in today's form (platform/ads.ts portalUidOf): '' a guest's, or `name:` and a username? A tag
+ * from before (the account's id, read from a user token the game no longer asks for) is not: whose copy it was can no
+ * longer be told, so adoptPortalStore treats it as no tag at all (the fuller copy wins) and tags it anew.
+ */
+export function portalTagCurrent(tag: string | undefined): tag is string {
+  return tag === '' || (typeof tag === 'string' && tag.startsWith('name:'));
 }
 
 /** Where a copy that gave way to another player's is set aside in this browser (adoptPortalStore). */

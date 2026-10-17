@@ -19,6 +19,29 @@
   /* Calynx, the studio (src/ui/brand.ts). */
   --studio: #2230d6;
   color-scheme: light;
+  /*
+   * Viewport units, as variables (src/ui/fitBox.ts): a menu screen laid out in the fit box (a phone upright, a frame
+   * under 667 by 375) gets the box's units instead, so `calc(100 * var(--dvh))` is the box's height there and the
+   * window's everywhere else. Write these, never raw vw/vh/dvh/vmin, in any rule a menu screen uses.
+   */
+  --vw: 1vw;
+  --vh: 1vh;
+  --dvh: 1vh;
+  --svh: 1vh;
+  --vmin: 1vmin;
+  --vmax: 1vmax;
+  /* The notch's insets, as variables for the same reason (a box in the middle of an upright phone has none). */
+  --sa-top: env(safe-area-inset-top, 0px);
+  --sa-right: env(safe-area-inset-right, 0px);
+  --sa-bottom: env(safe-area-inset-bottom, 0px);
+  --sa-left: env(safe-area-inset-left, 0px);
+}
+
+@supports (height: 1dvh) {
+  :root {
+    --dvh: 1dvh;
+    --svh: 1svh;
+  }
 }
 
 * {
@@ -46,8 +69,8 @@ body {
 #game {
   position: fixed;
   inset: 0;
-  width: 100vw;
-  height: 100vh;
+  width: calc(100 * var(--vw));
+  height: calc(100 * var(--vh));
   display: block;
 }
 
@@ -56,6 +79,12 @@ body {
   inset: 0;
   pointer-events: none;
   z-index: 2;
+  /*
+   * The size every layout rule asks about: `@container app (max-height: 560px)`, not `@media`. Here it is the
+   * window; a menu screen in the fit box (src/ui/fitBox.ts, shell.css) is its own `app` container, so its rules see
+   * the box. The HUD and the touch controls always see the window.
+   */
+  container: app / size;
 }
 
 #ui > * {
@@ -72,7 +101,7 @@ body {
   border: 0;
   margin: 0;
   cursor: pointer;
-  font: 700 clamp(16px, 1.6vw, 20px) / 1 var(--px);
+  font: 700 clamp(16px, calc(1.6 * var(--vw)), 20px) / 1 var(--px);
   letter-spacing: 1.5px;
   color: var(--t);
   background: var(--c);
@@ -118,8 +147,8 @@ body {
   letter-spacing: 0.5px;
   min-height: 40px;
 }
-.btn-lg { font-size: clamp(17px, 2vw, 24px); padding: 18px 28px 16px; }
-.btn-xl { font-size: clamp(20px, 2.6vw, 32px); padding: 22px 36px 20px; }
+.btn-lg { font-size: clamp(17px, calc(2 * var(--vw)), 24px); padding: 18px 28px 16px; }
+.btn-xl { font-size: clamp(20px, calc(2.6 * var(--vw)), 32px); padding: 22px 36px 20px; }
 
 .pulse {
   animation: pulse 1.1s ease-in-out infinite;
@@ -138,7 +167,7 @@ body {
   align-items: center;
   justify-content: center;
   animation: fade 0.25s ease-out;
-  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  padding: max(16px, var(--sa-top)) max(16px, var(--sa-right)) max(16px, var(--sa-bottom)) max(16px, var(--sa-left));
 }
 
 @keyframes fade {
@@ -159,7 +188,7 @@ body {
 .logo span {
   display: block;
   color: var(--cream);
-  font-size: clamp(54px, 11vw, 150px);
+  font-size: clamp(54px, calc(11 * var(--vw)), 150px);
   text-shadow:
     0 6px 0 var(--ink), 4px 6px 0 var(--ink), -4px 6px 0 var(--ink),
     0 -4px 0 var(--ink), 4px 0 0 var(--ink), -4px 0 0 var(--ink), 4px -4px 0 var(--ink), -4px -4px 0 var(--ink),
@@ -173,7 +202,7 @@ body {
 }
 
 .logo.small span {
-  font-size: clamp(38px, 6vw, 76px);
+  font-size: clamp(38px, calc(6 * var(--vw)), 76px);
 }
 
 /* The title's lockup (src/ui/gameLogo.ts: the voxel-ball mark over the pixel wordmark, one crisp SVG). */
@@ -184,7 +213,7 @@ body {
 
 .logo.lockup .bl-logo {
   display: block;
-  width: min(86vw, 58vh, 620px);
+  width: min(calc(86 * var(--vw)), calc(58 * var(--vh)), 620px);
   height: auto;
   animation: drop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1) both;
 }
@@ -194,9 +223,9 @@ body {
 }
 
 /* Short landscape screens (phones on their side): the mark beside the wordmark keeps the letters readable. */
-@media (max-height: 480px) and (orientation: landscape) {
+@container app (max-height: 480px) and (orientation: landscape) {
   .logo.lockup .lock-s { display: none; }
-  .logo.lockup .lock-h { display: block; width: min(64vw, 620px); }
+  .logo.lockup .lock-h { display: block; width: min(calc(64 * var(--vw)), 620px); }
 }
 
 @keyframes drop {
@@ -213,7 +242,7 @@ body {
 
 .tagline {
   margin: 0;
-  font: 400 clamp(18px, 2.4vw, 28px) var(--round);
+  font: 400 clamp(18px, calc(2.4 * var(--vw)), 28px) var(--round);
   color: var(--cream);
   text-shadow: 0 3px 0 var(--ink);
 }
@@ -248,7 +277,7 @@ body {
 .menu-col {
   display: grid;
   gap: 16px;
-  width: min(360px, 86vw);
+  width: min(360px, calc(86 * var(--vw)));
 }
 
 .menu-col .btn {
@@ -265,7 +294,7 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
-  width: min(380px, 88vw);
+  width: min(380px, calc(88 * var(--vw)));
 }
 
 .tile {
@@ -311,10 +340,10 @@ body {
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
 }
 
-@media (max-height: 520px) {
+@container app (max-height: 520px) {
   .main-wrap { gap: 12px; }
   .logo.small span { font-size: 34px; }
-  .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); width: min(640px, 94vw); gap: 10px; }
+  .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); width: min(640px, calc(94 * var(--vw))); gap: 10px; }
   .tile { aspect-ratio: 1; gap: 8px; font: 400 15px / 1.1 var(--round); }
 }
 
@@ -328,8 +357,8 @@ body {
 
 .topbar {
   position: absolute;
-  top: max(14px, env(safe-area-inset-top));
-  right: max(16px, env(safe-area-inset-right));
+  top: max(14px, var(--sa-top));
+  right: max(16px, var(--sa-right));
   display: flex;
   gap: 12px;
 }
@@ -362,7 +391,7 @@ body {
   align-items: center;
   justify-content: center;
   /* It covers the whole screen (not the .screen's padded box), so it keeps clear of the notch itself. */
-  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  padding: max(16px, var(--sa-top)) max(16px, var(--sa-right)) max(16px, var(--sa-bottom)) max(16px, var(--sa-left));
   overflow-y: auto;
 }
 
@@ -371,24 +400,24 @@ body {
 }
 
 .panel {
-  --pp: clamp(18px, 3vw, 30px);
+  --pp: clamp(18px, calc(3 * var(--vw)), 30px);
   background: var(--cream);
   border: 4px solid var(--ink);
   box-shadow: 0 10px 0 var(--ink), 0 22px 40px rgba(0, 0, 0, 0.25);
   padding: var(--pp);
-  width: min(760px, 94vw);
+  width: min(760px, calc(94 * var(--vw)));
   display: grid;
   gap: 18px;
   animation: pop 0.28s cubic-bezier(0.2, 1.5, 0.4, 1);
   /* Never taller than the screen (16 px clear top and bottom, or the notch's inset): the rest scrolls inside the panel. */
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
+  max-height: calc(calc(100 * var(--vh)) - 32px);
+  max-height: calc(calc(100 * var(--dvh)) - max(16px, var(--sa-top)) - max(16px, var(--sa-bottom)));
   overflow-y: auto;
   overflow-x: hidden;
 }
 
 .panel.narrow {
-  width: min(420px, 92vw);
+  width: min(420px, calc(92 * var(--vw)));
   overflow-x: hidden;
 }
 
@@ -430,7 +459,7 @@ body {
 .panel h2 {
   margin: 0;
   text-align: center;
-  font: 700 clamp(24px, 3.4vw, 40px) var(--px);
+  font: 700 clamp(24px, calc(3.4 * var(--vw)), 40px) var(--px);
   letter-spacing: 2px;
   color: var(--ink);
 }
@@ -459,7 +488,7 @@ body {
 }
 
 .vs {
-  font: 700 clamp(22px, 3vw, 34px) var(--px);
+  font: 700 clamp(22px, calc(3 * var(--vw)), 34px) var(--px);
   color: var(--red);
   text-shadow: 0 3px 0 var(--ink);
 }
@@ -512,14 +541,14 @@ body {
 
 .tp-3d {
   display: block;
-  width: clamp(100px, 13vw, 160px);
+  width: clamp(100px, calc(13 * var(--vw)), 160px);
   aspect-ratio: 1;
 }
 
-@media (max-height: 820px) {
+@container app (max-height: 820px) {
   .panel.qm { gap: 12px; padding-top: 16px; padding-bottom: 16px; }
   .panel.qm h2 { font-size: 28px; }
-  .qm .tp-3d { width: clamp(90px, 11vw, 132px); }
+  .qm .tp-3d { width: clamp(90px, calc(11 * var(--vw)), 132px); }
   .qm .team-pick { gap: 4px; padding: 8px 8px 10px; }
   .qm .seg button { padding: 8px 4px 7px; }
 }
@@ -536,7 +565,7 @@ body {
 }
 
 .tp-name {
-  font: 400 clamp(17px, 2vw, 22px) var(--round);
+  font: 400 clamp(17px, calc(2 * var(--vw)), 22px) var(--round);
 }
 
 .tp-stars {
@@ -630,7 +659,7 @@ body {
 }
 
 .f-score {
-  font: 700 clamp(46px, 7vw, 76px) var(--px);
+  font: 700 clamp(46px, calc(7 * var(--vw)), 76px) var(--px);
   line-height: 1;
   padding-top: 18px;
 }
@@ -646,7 +675,7 @@ body {
 }
 
 /* Wide panels: two columns of five (play stats | set pieces and discipline). */
-@media (min-width: 700px) {
+@container app (min-width: 700px) {
   .stats {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-rows: repeat(5, auto);
@@ -752,7 +781,7 @@ body {
   height: 24px;
 }
 
-@media (min-width: 560px) {
+@container app (min-width: 560px) {
   .ft-foot .reward { flex: 0 1 auto; margin-right: auto; }
 }
 
@@ -872,7 +901,7 @@ body {
 }
 
 /* Wide screens: the pad and its note on the left, what each button does on the right. */
-@media (min-width: 640px) {
+@container app (min-width: 640px) {
   .ht-touch {
     grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     grid-template-areas: 'pad table' 'note table' 'fine fine';
@@ -887,7 +916,7 @@ body {
   .ht-touch > .fine { grid-area: fine; }
 }
 
-@media (max-height: 520px) {
+@container app (max-height: 520px) {
   .ht-note { font-size: 15px; }
   .ht-table td { padding: 4px 7px 3px; }
 }
@@ -1054,13 +1083,13 @@ kbd {
 }
 
 .scorebug {
-  top: max(12px, env(safe-area-inset-top));
-  left: max(12px, env(safe-area-inset-left));
+  top: max(12px, var(--sa-top));
+  left: max(12px, var(--sa-left));
   display: grid;
   grid-template-columns: repeat(4, auto);
   justify-content: start;
   align-items: stretch;
-  font: 700 clamp(16px, 1.8vw, 22px) var(--px);
+  font: 700 clamp(16px, calc(1.8 * var(--vw)), 22px) var(--px);
   color: var(--cream);
   filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.3));
 }
@@ -1147,7 +1176,7 @@ kbd {
   border: 3px solid #34343e;
   color: #7dff8e;
   text-shadow: 0 0 6px rgba(110, 255, 130, 0.85);
-  font: 700 clamp(16px, 1.8vw, 22px) / 1 var(--px);
+  font: 700 clamp(16px, calc(1.8 * var(--vw)), 22px) / 1 var(--px);
   letter-spacing: 1px;
   white-space: nowrap;
   transform-origin: left center;
@@ -1216,8 +1245,8 @@ kbd {
 }
 
 .hud-pause {
-  top: max(12px, env(safe-area-inset-top));
-  right: max(12px, env(safe-area-inset-right));
+  top: max(12px, var(--sa-top));
+  right: max(12px, var(--sa-right));
   pointer-events: auto;
   appearance: none;
   border: 0;
@@ -1233,8 +1262,8 @@ kbd {
 /* The match camera button (WIDE / NORMAL / CLOSE / CINEMATIC): in the top row beside pause, clear of the touch
    controls along the bottom, the minimap and the notch (the safe-area inset, as pause). */
 .hud-cam {
-  top: max(12px, env(safe-area-inset-top));
-  right: calc(max(12px, env(safe-area-inset-right)) + 54px);
+  top: max(12px, var(--sa-top));
+  right: calc(max(12px, var(--sa-right)) + 54px);
   pointer-events: auto;
   appearance: none;
   border: 0;
@@ -1251,8 +1280,8 @@ kbd {
 }
 .hud-cam .picon { width: 26px; height: 26px; }
 .hud-cam:active { transform: translateY(2px); box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); }
-@media (max-width: 720px), (max-height: 480px) {
-  .hud-cam { width: 38px; height: 38px; right: calc(max(12px, env(safe-area-inset-right)) + 44px); }
+@container app (max-width: 720px) or (max-height: 480px) {
+  .hud-cam { width: 38px; height: 38px; right: calc(max(12px, var(--sa-right)) + 44px); }
   .hud-cam .picon { width: 22px; height: 22px; }
 }
 
@@ -1272,7 +1301,7 @@ kbd {
 
 .bn-title {
   display: flex;
-  font: 700 clamp(56px, 12vw, 160px) / 1 var(--px);
+  font: 700 clamp(56px, calc(12 * var(--vw)), 160px) / 1 var(--px);
   color: var(--cream);
 }
 
@@ -1291,15 +1320,15 @@ kbd {
   animation: letter 0.6s cubic-bezier(0.2, 1.8, 0.4, 1) both, wobble 0.9s ease-in-out 0.6s infinite;
 }
 .hud-banner.on.against .bn-title i { color: #ffb4ae; }
-.hud-banner.small .bn-title { font-size: clamp(38px, 7vw, 90px); }
+.hud-banner.small .bn-title { font-size: clamp(38px, calc(7 * var(--vw)), 90px); }
 /* A foul's decision ("FOUL" / "PENALTY!" and its reason line): the lower third, clear of the radar, so the man on the
    floor in the middle of the picture is not behind the words. */
 .hud-banner.foul {
   align-content: end;
-  bottom: max(24%, calc(env(safe-area-inset-bottom) + 84px));
+  bottom: max(24%, calc(var(--sa-bottom) + 84px));
   gap: 8px;
 }
-.hud-banner.small.foul .bn-title { font-size: clamp(34px, 6vw, 72px); }
+.hud-banner.small.foul .bn-title { font-size: clamp(34px, calc(6 * var(--vw)), 72px); }
 .hud-banner.card .bn-title i { color: var(--yellow); }
 .hud-banner.card.red .bn-title i { color: var(--red); }
 /* Cards: a compact plate (title + who) in the top ~20% of the screen: the top band beside the score bug in
@@ -1307,9 +1336,9 @@ kbd {
    the referee and the offender in the middle of the lens, so it never sits across their bodies. */
 .hud-banner.card {
   inset: auto;
-  top: calc(max(12px, env(safe-area-inset-top)) + 64px);
+  top: calc(max(12px, var(--sa-top)) + 64px);
   left: 12px;
-  width: calc(100vw - 24px);
+  width: calc(calc(100 * var(--vw)) - 24px);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -1318,25 +1347,25 @@ kbd {
   gap: 4px 12px;
   pointer-events: none;
 }
-.hud-banner.card .bn-title { font-size: clamp(24px, 2.8vw, 40px); }
+.hud-banner.card .bn-title { font-size: clamp(24px, calc(2.8 * var(--vw)), 40px); }
 .hud-banner.card .bn-title i {
   text-shadow:
     0 4px 0 var(--ink), 3px 4px 0 var(--ink), -3px 4px 0 var(--ink),
     3px 0 0 var(--ink), -3px 0 0 var(--ink), 0 -3px 0 var(--ink), 3px -3px 0 var(--ink), -3px -3px 0 var(--ink),
     0 8px 0 rgba(0, 0, 0, 0.25);
 }
-.hud-banner.card .bn-sub { font-size: clamp(16px, 1.5vw, 20px); padding: 5px 10px 4px; }
+.hud-banner.card .bn-sub { font-size: clamp(16px, calc(1.5 * var(--vw)), 20px); padding: 5px 10px 4px; }
 /* The tutorial tip gives way to the booking plate. */
 .hud:has(.hud-banner.on.card) .hud-tip { opacity: 0; }
 /* Goals: up top and a size smaller, so the celebrating scorer (centre of the lens) stays in view. */
 .hud-banner.goal {
-  top: max(12%, calc(max(12px, env(safe-area-inset-top)) + 46px));
+  top: max(12%, calc(max(12px, var(--sa-top)) + 46px));
   bottom: auto;
   align-content: start;
 }
-.hud-banner.goal:not(.small) .bn-title { font-size: clamp(42px, 9vw, 120px); }
+.hud-banner.goal:not(.small) .bn-title { font-size: clamp(42px, calc(9 * var(--vw)), 120px); }
 
-@media (max-height: 480px) {
+@container app (max-height: 480px) {
   .hud-banner.goal:not(.small) .bn-title { font-size: 48px; }
   .hud-banner .bn-sub { font-size: 16px; padding: 6px 12px 5px; }
 }
@@ -1348,17 +1377,17 @@ kbd {
   justify-items: start;
   justify-content: start;
   gap: 5px;
-  max-width: min(240px, calc(100vw - 24px));
+  max-width: min(240px, calc(calc(100 * var(--vw)) - 24px));
   pointer-events: none;
 }
-.hud-banner.goal.score-flash:not(.small) .bn-title { font-size: clamp(26px, 4vw, 34px); }
+.hud-banner.goal.score-flash:not(.small) .bn-title { font-size: clamp(26px, calc(4 * var(--vw)), 34px); }
 .hud-banner.goal.score-flash .bn-title { justify-content: start; }
 .hud-banner.goal.score-flash .bn-title i {
   animation: letter 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
   text-shadow: 0 3px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink);
 }
 .hud-banner.goal.score-flash .bn-sub {
-  font-size: clamp(14px, 1.7vw, 17px);
+  font-size: clamp(14px, calc(1.7 * var(--vw)), 17px);
   padding: 4px 8px;
   max-width: 100%;
   overflow-wrap: anywhere;
@@ -1374,7 +1403,7 @@ kbd {
 }
 
 .bn-sub {
-  font: 400 clamp(18px, 2.4vw, 30px) var(--round);
+  font: 400 clamp(18px, calc(2.4 * var(--vw)), 30px) var(--round);
   color: var(--cream);
   background: var(--ink);
   padding: 8px 16px 6px;
@@ -1385,10 +1414,10 @@ kbd {
 /* Event flag ("CORNER", "FOUL!"): hangs off the bottom-left of the score bug like a broadcast tab (the HUD
    sets left / top from the score bug), up at the top edge where it never covers players in the box. */
 .hud-toast {
-  top: calc(max(12px, env(safe-area-inset-top)) + 48px);
-  left: max(12px, env(safe-area-inset-left));
+  top: calc(max(12px, var(--sa-top)) + 48px);
+  left: max(12px, var(--sa-left));
   transform: translateY(-5px);
-  font: 700 clamp(16px, 1.6vw, 20px) / 1 var(--px);
+  font: 700 clamp(16px, calc(1.6 * var(--vw)), 20px) / 1 var(--px);
   letter-spacing: 1px;
   color: var(--ink);
   background: var(--yellow);
@@ -1423,7 +1452,7 @@ kbd {
 }
 .hud-timing.on { opacity: 1; }
 .hud-timing b {
-  font: 700 clamp(26px, 2.6vw, 38px) / 1 var(--px);
+  font: 700 clamp(26px, calc(2.6 * var(--vw)), 38px) / 1 var(--px);
   letter-spacing: 1px;
   color: var(--tc);
   text-shadow:
@@ -1472,19 +1501,19 @@ kbd {
   100% { opacity: 0; transform: translateY(-12px); }
 }
 
-@media (max-height: 480px) {
+@container app (max-height: 480px) {
   .hud-timing b { font-size: 24px; }
   .hud-timing em { font-size: 14px; padding: 4px 6px 2px; }
 }
 
 .hud-hint {
   /* Up top (clear of the score bug and its booking chips): at set pieces the taker stands mid / low in the lens. */
-  top: max(16%, calc(max(12px, env(safe-area-inset-top)) + 58px));
+  top: max(16%, calc(max(12px, var(--sa-top)) + 58px));
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
-  max-width: calc(100vw - 24px);
-  font: 700 clamp(16px, 1.5vw, 17px) / 1.25 var(--px);
+  max-width: calc(calc(100 * var(--vw)) - 24px);
+  font: 700 clamp(16px, calc(1.5 * var(--vw)), 17px) / 1.25 var(--px);
   color: var(--cream);
   background: rgba(38, 38, 46, 0.78);
   padding: 9px 14px 7px;
@@ -1510,8 +1539,8 @@ kbd {
 .hud .hud-hint.low,
 .hud:has(.sb-cards:not(:empty)) .hud-hint.low {
   top: auto;
-  bottom: max(14px, env(safe-area-inset-bottom));
-  left: max(12px, env(safe-area-inset-left));
+  bottom: max(14px, var(--sa-bottom));
+  left: max(12px, var(--sa-left));
   transform: none;
   text-align: left;
 }
@@ -1522,11 +1551,11 @@ kbd {
 /* One broadcast caption line: minute tag, club-colour stripe, text. The HUD places it (top band beside the
    score bug, under the top cluster, or the lower third) wherever the ball is not. */
 .hud-cm {
-  top: max(12px, env(safe-area-inset-top));
+  top: max(12px, var(--sa-top));
   left: 50%;
   display: flex;
   align-items: stretch;
-  max-width: calc(100vw - 24px);
+  max-width: calc(calc(100 * var(--vw)) - 24px);
   background: rgba(38, 38, 46, 0.9);
   color: var(--cream);
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
@@ -1570,7 +1599,7 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   padding: 8px 12px 7px;
-  font: 400 clamp(15px, 1.35vw, 18px) / 1.15 var(--round);
+  font: 400 clamp(15px, calc(1.35 * var(--vw)), 18px) / 1.15 var(--round);
   letter-spacing: 0.3px;
 }
 
@@ -1578,7 +1607,7 @@ kbd {
 
 .hud.replaying .hud-cm { opacity: 0; transition: opacity 0.15s; }
 
-@media (max-width: 480px), (max-height: 420px) {
+@container app (max-width: 480px) or (max-height: 420px) {
   .cm-tag { min-width: 38px; padding: 0 6px; }
   .cm-text { font-size: 14px; padding: 7px 9px 6px; }
 }
@@ -1590,11 +1619,11 @@ kbd {
 }
 
 .hud-tip {
-  top: max(66px, calc(env(safe-area-inset-top) + 56px));
+  top: max(66px, calc(var(--sa-top) + 56px));
   left: 50%;
   transform: translate(-50%, -8px);
-  max-width: min(640px, 92vw);
-  font: 400 clamp(14px, 1.6vw, 18px) / 1.35 var(--round);
+  max-width: min(640px, calc(92 * var(--vw)));
+  font: 400 clamp(14px, calc(1.6 * var(--vw)), 18px) / 1.35 var(--round);
   color: var(--ink);
   background: var(--cream);
   border: 3px solid var(--ink);
@@ -1621,8 +1650,8 @@ kbd {
 }
 
 .hud-chip {
-  bottom: max(14px, env(safe-area-inset-bottom));
-  left: max(14px, env(safe-area-inset-left));
+  bottom: max(14px, var(--sa-bottom));
+  left: max(14px, var(--sa-left));
   display: grid;
   grid-template-columns: auto auto;
   align-items: center;
@@ -1655,10 +1684,10 @@ kbd {
 }
 
 .hud-radar {
-  bottom: max(12px, env(safe-area-inset-bottom));
+  bottom: max(12px, var(--sa-bottom));
   left: 50%;
   transform: translateX(-50%);
-  width: clamp(110px, 12vw, 180px);
+  width: clamp(110px, calc(12 * var(--vw)), 180px);
   height: auto;
   aspect-ratio: 8 / 5;
   opacity: 0.75;
@@ -1737,30 +1766,30 @@ kbd {
   opacity: 0.18;
 }
 
-@media (max-height: 419.98px) {
+@container app (max-height: 419.98px) {
   .hud-radar { width: 104px; }
 }
 
 /* Portrait phones: the touch buttons own the bottom edge, so the minimap hangs under the pause button. */
-@media (orientation: portrait) and (max-width: 720px) {
+@container app (orientation: portrait) and (max-width: 720px) {
   .hud-radar {
-    top: calc(max(12px, env(safe-area-inset-top)) + 50px);
+    top: calc(max(12px, var(--sa-top)) + 50px);
     bottom: auto;
     left: auto;
-    right: max(12px, env(safe-area-inset-right));
+    right: max(12px, var(--sa-right));
     transform: none;
     width: 104px;
   }
 }
 
 .hud-replay {
-  top: max(70px, calc(env(safe-area-inset-top) + 60px));
-  left: max(12px, env(safe-area-inset-left));
+  top: max(70px, calc(var(--sa-top) + 60px));
+  left: max(12px, var(--sa-left));
   display: grid;
   gap: 4px;
   opacity: 0;
   transition: opacity 0.2s;
-  max-width: calc(100vw - max(12px, env(safe-area-inset-left)) - max(12px, env(safe-area-inset-right)) - 52px);
+  max-width: calc(calc(100 * var(--vw)) - max(12px, var(--sa-left)) - max(12px, var(--sa-right)) - 52px);
 }
 
 .hud-replay.on,
@@ -1771,7 +1800,7 @@ kbd {
 /* A goal celebration a tap skips: only the skip line shows, low and centred (clear of the banner and the HUD up top). */
 .hud-replay.skip-only {
   top: auto;
-  bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
+  bottom: max(16px, calc(var(--sa-bottom) + 10px));
   left: 50%;
   transform: translateX(-50%);
 }
@@ -1922,8 +1951,8 @@ kbd {
 
 .touch-btns {
   position: absolute;
-  right: max(18px, env(safe-area-inset-right));
-  bottom: max(18px, env(safe-area-inset-bottom));
+  right: max(18px, var(--sa-right));
+  bottom: max(18px, var(--sa-bottom));
   width: 250px;
   height: 230px;
   pointer-events: none;
@@ -2066,11 +2095,11 @@ kbd {
   pointer-events: none;
 }
 
-@media (max-width: 720px) {
+@container app (max-width: 720px) {
   .howto { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 720px), (max-height: 480px) {
+@container app (max-width: 720px) or (max-height: 480px) {
   .opt-row { grid-template-columns: 1fr; gap: 6px; }
   .st-row { grid-template-columns: 30px minmax(0, 1fr) 108px minmax(0, 1fr) 30px; gap: 6px; }
   /* Phones keep the radar (DLS players live by it), just smaller; the chip goes. */
@@ -2094,8 +2123,8 @@ kbd {
   .touch-btns { width: 170px; height: 180px; }
 }
 
-@media (max-height: 480px) and (orientation: landscape) {
-  .hud-radar { bottom: max(6px, env(safe-area-inset-bottom)); }
+@container app (max-height: 480px) and (orientation: landscape) {
+  .hud-radar { bottom: max(6px, var(--sa-bottom)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2172,14 +2201,14 @@ kbd {
 .ratings b.hi { background: var(--go); color: #fff; }
 .ratings b.lo { background: var(--red); color: #fff; }
 
-@media (max-width: 560px) {
+@container app (max-width: 560px) {
   .motm { grid-template-columns: 1fr; }
 }
 
 .main-wrap.with-captain {
   display: flex;
   align-items: center;
-  gap: clamp(18px, 4vw, 56px);
+  gap: clamp(18px, calc(4 * var(--vw)), 56px);
 }
 
 .main-col {
@@ -2196,7 +2225,7 @@ kbd {
 }
 
 .captain-3d {
-  width: clamp(170px, 20vw, 280px);
+  width: clamp(170px, calc(20 * var(--vw)), 280px);
   aspect-ratio: 0.85;
   filter: drop-shadow(0 12px 0 rgba(38, 38, 46, 0.25));
 }
@@ -2310,23 +2339,23 @@ kbd {
   color: var(--go-d);
 }
 
-@media (max-height: 560px), (max-width: 720px) {
+@container app (max-height: 560px) or (max-width: 720px) {
   .main-wrap.with-captain .captain { display: none; }
 }
 
 /* ===== career + club (meta) ===== */
 
 .meta .mc-wrap {
-  padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  padding: max(10px, var(--sa-top)) max(10px, var(--sa-right)) max(10px, var(--sa-bottom)) max(10px, var(--sa-left));
 }
 
 .meta .panel.mc {
   width: min(900px, 100%);
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
+  max-height: calc(calc(100 * var(--vh)) - 32px);
+  max-height: calc(calc(100 * var(--dvh)) - 32px);
   gap: 14px;
   align-content: start;
-  --pp: clamp(12px, 2.2vw, 24px);
+  --pp: clamp(12px, calc(2.2 * var(--vw)), 24px);
   padding: var(--pp);
   touch-action: pan-y;
   overscroll-behavior: contain;
@@ -2359,7 +2388,7 @@ kbd {
 }
 
 .panel.mc .mc-title h2 {
-  font-size: clamp(20px, 3vw, 32px);
+  font-size: clamp(20px, calc(3 * var(--vw)), 32px);
   line-height: 1;
 }
 
@@ -2494,14 +2523,14 @@ kbd {
 
 .mc-toast {
   position: absolute;
-  top: max(18px, env(safe-area-inset-top));
+  top: max(18px, var(--sa-top));
   left: 50%;
   z-index: 6;
-  max-width: calc(100vw - 32px);
+  max-width: calc(calc(100 * var(--vw)) - 32px);
   transform: translate(-50%, -24px) scale(0.92);
   opacity: 0;
   pointer-events: none;
-  font: 400 clamp(16px, 1.6vw, 19px) / 1.2 var(--round);
+  font: 400 clamp(16px, calc(1.6 * var(--vw)), 19px) / 1.2 var(--round);
   letter-spacing: 1px;
   text-align: center;
   padding: 11px 16px 9px;
@@ -2575,7 +2604,7 @@ kbd {
 }
 
 .mc-vsx {
-  font: 700 clamp(22px, 3vw, 32px) var(--px);
+  font: 700 clamp(22px, calc(3 * var(--vw)), 32px) var(--px);
   color: var(--red);
   text-shadow: 0 3px 0 var(--ink);
 }
@@ -3493,7 +3522,7 @@ button.mc-pl:active {
 }
 
 .mc-stadname {
-  font: 700 clamp(20px, 2.6vw, 28px) var(--px);
+  font: 700 clamp(20px, calc(2.6 * var(--vw)), 28px) var(--px);
 }
 
 .mc-stadlvl {
@@ -3532,7 +3561,7 @@ button.mc-pl:active {
 }
 
 .mc-result b {
-  font: 700 clamp(34px, 7vw, 64px) / 1 var(--px);
+  font: 700 clamp(34px, calc(7 * var(--vw)), 64px) / 1 var(--px);
   text-shadow: 0 5px 0 var(--ink);
   animation: drop 0.6s cubic-bezier(0.2, 1.6, 0.4, 1) both;
 }
@@ -3605,7 +3634,7 @@ button.mc-pl:active {
 
 /* phones */
 
-@media (max-width: 640px) {
+@container app (max-width: 640px) {
   .mc-back span { display: none; }
   .mc-title span { white-space: normal; line-height: 1.35; }
   .coins.mc-coins { font-size: 16px; padding: 7px 8px 6px 7px; gap: 6px; }
@@ -3639,7 +3668,7 @@ button.mc-pl:active {
 }
 
 /* Narrow phones: the shirt number rides on the face tile's corner, so the name keeps its room. */
-@media (max-width: 480px) {
+@container app (max-width: 480px) {
   .mc-pl { grid-template-columns: 34px 40px auto minmax(0, 1fr) auto; }
   .mc-pl .face { --fs: 40px; grid-column: 2; grid-row: 1; }
   .mc-pl .face ~ .mc-num {
@@ -3658,7 +3687,7 @@ button.mc-pl:active {
   }
 }
 
-@media (max-width: 560px) {
+@container app (max-width: 560px) {
   .mc-tablewrap .nm-full,
   .mc-fx .nm-full,
   .mc-ys .nm-full { display: none; }
@@ -3690,9 +3719,9 @@ button.mc-pl:active {
 .tile.tile-side small { justify-self: start; margin: 0; }
 
 /* Short desktop windows: keep the logo clear of the gift / coins bar. */
-@media (max-height: 820px) and (min-height: 451px) {
-  .screen.main { padding-top: max(60px, env(safe-area-inset-top)); }
-  .logo.small span { font-size: clamp(38px, 5vw, 64px); }
+@container app (max-height: 820px) and (min-height: 451px) {
+  .screen.main { padding-top: max(60px, var(--sa-top)); }
+  .logo.small span { font-size: clamp(38px, calc(5 * var(--vw)), 64px); }
   .main-col { gap: 16px; }
 }
 
@@ -3705,14 +3734,14 @@ button.mc-pl:active {
   50% { transform: translateY(-3px) rotate(-6deg); }
 }
 
-@media (max-height: 520px) {
+@container app (max-height: 520px) {
   .tile.tile-side { min-height: 42px; padding: 8px 12px 6px; }
 }
 
 /* Shootout tracker: inside .hud (absolutely placed), tucked under the scorebug. */
 .so-track {
-  top: calc(max(12px, env(safe-area-inset-top)) + 50px);
-  left: max(12px, env(safe-area-inset-left));
+  top: calc(max(12px, var(--sa-top)) + 50px);
+  left: max(12px, var(--sa-left));
   display: grid;
   gap: 5px;
   padding: 7px 10px 8px;
@@ -3800,28 +3829,28 @@ button.mc-pl:active {
   50% { opacity: 0.35; }
 }
 
-@media (max-width: 720px), (max-height: 480px) {
-  .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 34px); font-size: 14px; padding: 5px 7px 6px; gap: 3px; }
+@container app (max-width: 720px) or (max-height: 480px) {
+  .so-track { top: calc(max(12px, var(--sa-top)) + 34px); font-size: 14px; padding: 5px 7px 6px; gap: 3px; }
   .so-dot { width: 11px; height: 11px; }
   .so-dots { gap: 3px; }
 }
 
 /* Bookings under the score bug push the widgets that hang below it down a row. */
-.hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 78px); }
-.hud:has(.sb-cards:not(:empty)) .hud-replay:not(.skip-only) { top: max(96px, calc(env(safe-area-inset-top) + 86px)); }
+.hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, var(--sa-top)) + 78px); }
+.hud:has(.sb-cards:not(:empty)) .hud-replay:not(.skip-only) { top: max(96px, calc(var(--sa-top) + 86px)); }
 
-@media (max-width: 720px), (max-height: 480px) {
-  .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 70px); }
+@container app (max-width: 720px) or (max-height: 480px) {
+  .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, var(--sa-top)) + 70px); }
 }
 
 /* Widgets that hang under the score bug (tutorial tip, hints, toasts) clear it and its booking row. */
-.hud:has(.sb-cards:not(:empty)) .hud-tip { top: calc(max(12px, env(safe-area-inset-top)) + 84px); }
+.hud:has(.sb-cards:not(:empty)) .hud-tip { top: calc(max(12px, var(--sa-top)) + 84px); }
 
-@media (max-width: 720px), (max-height: 480px) {
-  .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 42px); }
-  .hud-tip { top: calc(max(12px, env(safe-area-inset-top)) + 46px); }
+@container app (max-width: 720px) or (max-height: 480px) {
+  .so-track { top: calc(max(12px, var(--sa-top)) + 42px); }
+  .hud-tip { top: calc(max(12px, var(--sa-top)) + 46px); }
   .hud:has(.sb-cards:not(:empty)) .hud-tip,
-  .hud:has(.sb-cards:not(:empty)) .hud-hint { top: calc(max(12px, env(safe-area-inset-top)) + 72px); }
+  .hud:has(.sb-cards:not(:empty)) .hud-hint { top: calc(max(12px, var(--sa-top)) + 72px); }
 }
 
 /* The radar only shows the line-up during penalties, and it covers the taker's feet. */
@@ -3895,7 +3924,7 @@ button.mc-pl:active {
   align-content: center;
 }
 
-@media (max-width: 560px) {
+@container app (max-width: 560px) {
   .cup-entry { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 }
 
@@ -4013,7 +4042,7 @@ button.mc-pl:active {
   animation: cup-nudge 1.4s ease-in-out infinite;
 }
 
-@media (max-width: 640px) {
+@container app (max-width: 640px) {
   .cup-bracket { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cup-hero { padding: 10px 12px; gap: 12px; }
   .cup-hero p { font-size: 15px; }
@@ -4047,8 +4076,8 @@ button.mc-pl:active {
 .cup-sumline em { margin-left: auto; font-style: normal; font-size: 14px; }
 .mc-hist .picon.inl { margin: 0 0 0 0.35em; }
 /* The trophy lift's title fits its panel (CHAMPIONS! at 58px ran off the right edge). */
-.cup-trophy-screen .panel .cup-champ-title { font-size: clamp(30px, 6vw, 48px); }
-@media (max-height: 450px) {
+.cup-trophy-screen .panel .cup-champ-title { font-size: clamp(30px, calc(6 * var(--vw)), 48px); }
+@container app (max-height: 450px) {
   .cup-head { padding: 6px 10px; }
   .cup-status b { font-size: 16px; }
   /* Landscape phones: a smaller trophy, so the title, the club and the prize money show above CONTINUE. */
@@ -4094,7 +4123,7 @@ button.mc-pl:active {
 
 .panel .cup-champ-title {
   position: relative;
-  font-size: clamp(34px, 7vw, 58px);
+  font-size: clamp(34px, calc(7 * var(--vw)), 58px);
   color: var(--yellow);
   text-shadow:
     0 5px 0 var(--ink), 3px 5px 0 var(--ink), -3px 5px 0 var(--ink),
@@ -4147,7 +4176,7 @@ button.mc-pl:active {
 }
 
 @keyframes cup-fall {
-  to { transform: translate(var(--dx), 110vh) rotate(var(--r)); }
+  to { transform: translate(var(--dx), calc(110 * var(--vh))) rotate(var(--r)); }
 }
 
 /* ===== small screens: landscape phones (<= 450 px tall, e.g. 740x360 .. 932x430) and narrow portrait phones ===== */
@@ -4161,7 +4190,7 @@ button.mc-pl:active {
   min-width: 0;
 }
 
-@media (max-width: 480px) {
+@container app (max-width: 480px) {
   .btn-lg { padding-left: 16px; padding-right: 16px; letter-spacing: 1px; }
   .mc-play { white-space: normal; line-height: 1.15; }
 
@@ -4185,7 +4214,7 @@ button.mc-pl:active {
   }
   .tp-body .tp-kit { grid-column: 1 / -1; grid-row: 1; justify-self: center; }
   .tp-body .arrow { width: 44px; height: 38px; font-size: 16px; }
-  .tp-3d { width: clamp(84px, 26vw, 120px); }
+  .tp-3d { width: clamp(84px, calc(26 * var(--vw)), 120px); }
   .team-pick { padding: 10px 6px 12px; }
   .vs-row { align-items: stretch; }
   .vs-row .vs { align-self: center; }
@@ -4202,12 +4231,12 @@ button.mc-pl:active {
 /* Short screens (760 px tall and under, e.g. 1280 x 720): panel spacing drops by a quarter so the common
    screens fit without scrolling; anything longer scrolls under the sticky button row (its fade shows there
    is more). The phone rules below (450 px and under) tighten further. */
-@media (max-height: 760px) {
-  .panel { --pp: clamp(14px, 2.25vw, 22px); gap: 13px; }
-  .panel h2 { font-size: clamp(22px, 2.6vw, 32px); }
+@container app (max-height: 760px) {
+  .panel { --pp: clamp(14px, calc(2.25 * var(--vw)), 22px); gap: 13px; }
+  .panel h2 { font-size: clamp(22px, calc(2.6 * var(--vw)), 32px); }
   .panel h3 { margin-bottom: 4px; }
   .panel > .btn-row:last-child:not(.no-stick) { padding-top: 9px; }
-  .meta .panel.mc { --pp: clamp(10px, 1.65vw, 18px); gap: 10px; }
+  .meta .panel.mc { --pp: clamp(10px, calc(1.65 * var(--vw)), 18px); gap: 10px; }
   .panel.mc .mc-h { margin: 2px 0 -5px; }
   /* New club / kit editor: a little flatter, so the whole form and CREATE CLUB fit a 720 px screen. */
   .mc-kited { gap: 8px; }
@@ -4226,10 +4255,10 @@ button.mc-pl:active {
   .cup-hero { padding: 9px 14px; }
 }
 
-@media (max-height: 450px) {
-  .screen { padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-  .panel-wrap { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
-  .panel { --pp: 14px; gap: 10px; max-height: calc(100vh - 16px); max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))); }
+@container app (max-height: 450px) {
+  .screen { padding: max(8px, var(--sa-top)) max(12px, var(--sa-right)) max(8px, var(--sa-bottom)) max(12px, var(--sa-left)); }
+  .panel-wrap { padding: max(8px, var(--sa-top)) max(8px, var(--sa-right)) max(8px, var(--sa-bottom)) max(8px, var(--sa-left)); }
+  .panel { --pp: 14px; gap: 10px; max-height: calc(calc(100 * var(--vh)) - 16px); max-height: calc(calc(100 * var(--dvh)) - max(8px, var(--sa-top)) - max(8px, var(--sa-bottom))); }
   .panel h2 { font-size: 22px; }
   .panel > .btn-row:last-child:not(.no-stick) { padding-top: 8px; }
   .btn-lg { padding: 15px 24px 13px; }
@@ -4241,15 +4270,15 @@ button.mc-pl:active {
   .btn-xl { font-size: 20px; padding: 18px 30px 16px; }
 
   /* Main menu: captain on the left, compact tiles on the right, logo tucked top-left of them. */
-  .topbar { top: max(8px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); gap: 8px; }
+  .topbar { top: max(8px, var(--sa-top)); right: max(12px, var(--sa-right)); gap: 8px; }
   .topbar .gift { min-height: 38px; padding: 9px 12px 8px; font-size: 15px; }
   .coins { font-size: 16px; padding: 7px 11px 7px 8px; gap: 8px; }
   .coins i { width: 16px; height: 16px; box-shadow: inset -3px -3px 0 var(--yellow-d), inset 3px 3px 0 #fff3b0; }
   .main-wrap,
   .main-wrap.with-captain { width: min(860px, 100%); gap: 14px; }
   .main-wrap.with-captain { display: flex; justify-content: center; align-items: center; }
-  .main-wrap.with-captain .captain { display: grid; flex: 0 0 22vw; width: 22vw; gap: 6px; }
-  .captain-3d { width: 22vw; max-height: calc(100dvh - 96px); }
+  .main-wrap.with-captain .captain { display: grid; flex: 0 0 calc(22 * var(--vw)); width: calc(22 * var(--vw)); gap: 6px; }
+  .captain-3d { width: calc(22 * var(--vw)); max-height: calc(calc(100 * var(--dvh)) - 96px); }
   .captain-tag { max-width: 100%; padding: 6px 10px 7px; }
   .captain-tag b { font-size: 14px; }
   .main-col { flex: 1 1 0; min-width: 0; max-width: 560px; gap: 10px; justify-items: stretch; }
@@ -4307,18 +4336,18 @@ button.mc-pl:active {
   .qm .vs { font-size: 20px; }
 
   /* Pause: RESUME across the top, the rest two by two. */
-  .pause .panel.narrow { width: min(560px, 94vw); }
+  .pause .panel.narrow { width: min(560px, calc(94 * var(--vw))); }
   .pause .menu-col { grid-template-columns: 1fr 1fr; gap: 12px; }
   .pause .menu-col .btn-lg { grid-column: 1 / -1; }
   .pause .quit-ask .menu-col .btn-lg { grid-column: auto; }
 
   /* Settings: toggles two by two; the controls rows two by two as well (each keeps its own one-button switch). */
-  .settings .panel.narrow { width: min(560px, 94vw); }
+  .settings .panel.narrow { width: min(560px, calc(94 * var(--vw))); }
   .toggles { grid-template-columns: 1fr 1fr; }
   .toggles button { padding: 10px 12px 8px; }
   /* Controls: title and tabs share the top row; one row per option: its name and line on the left, the
      value (ASSISTED | SEMI | MANUAL, or ON | OFF) on the right, so all five fit a 375 px tall screen. */
-  .settings .panel.narrow.set-panel { width: min(640px, 96vw); grid-template-columns: auto minmax(0, 1fr); column-gap: 18px; }
+  .settings .panel.narrow.set-panel { width: min(640px, calc(96 * var(--vw))); grid-template-columns: auto minmax(0, 1fr); column-gap: 18px; }
   .set-panel > h2 { text-align: left; align-self: center; }
   .set-panel > :not(h2, .set-tabs) { grid-column: 1 / -1; }
   .set-tabs { width: min(360px, 100%); justify-self: end; }
@@ -4358,8 +4387,8 @@ button.mc-pl:active {
   .gift-days li { padding: 4px 2px; }
 
   /* Career / club / cup. */
-  .meta .mc-wrap { padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
-  .meta .panel.mc { --pp: 12px; gap: 10px; max-height: calc(100vh - 12px); max-height: calc(100dvh - 12px); }
+  .meta .mc-wrap { padding: max(6px, var(--sa-top)) max(10px, var(--sa-right)) max(6px, var(--sa-bottom)) max(10px, var(--sa-left)); }
+  .meta .panel.mc { --pp: 12px; gap: 10px; max-height: calc(calc(100 * var(--vh)) - 12px); max-height: calc(calc(100 * var(--dvh)) - 12px); }
   .mc-top .mc-back { padding: 10px 12px 8px; min-height: 42px; }
   .panel.mc .mc-title h2 { font-size: 20px; }
   .mc-next { gap: 8px; padding: 8px 10px; }
@@ -4381,7 +4410,7 @@ button.mc-pl:active {
 
 /* ===== portrait phones: score bug reflow (clock under the score) and a stacked top-right column ===== */
 
-@media (orientation: portrait) and (max-width: 720px) {
+@container app (orientation: portrait) and (max-width: 720px) {
   /* Crest+name | score | name+crest, with the clock tucked under the score (fixed width, so "+1" never
      shifts anything) and the bookings under each team. Leaves the top-right corner to the pause button. */
   .scorebug { grid-template-columns: auto minmax(100px, auto) auto; }
@@ -4393,17 +4422,17 @@ button.mc-pl:active {
 
   /* Minimap under the pause button, below the two-row score bug (and its booking plates, which can wrap to
      two lines); banners / hints / tips below that. */
-  .hud-radar { top: calc(max(12px, env(safe-area-inset-top)) + 76px); }
-  .hud:has(.sb-cards:not(:empty)) .hud-radar { top: calc(max(12px, env(safe-area-inset-top)) + 116px); }
+  .hud-radar { top: calc(max(12px, var(--sa-top)) + 76px); }
+  .hud:has(.sb-cards:not(:empty)) .hud-radar { top: calc(max(12px, var(--sa-top)) + 116px); }
   .hud-tip,
-  .hud-hint { top: calc(max(12px, env(safe-area-inset-top)) + 150px); }
+  .hud-hint { top: calc(max(12px, var(--sa-top)) + 150px); }
   .hud:has(.sb-cards:not(:empty)) .hud-tip,
-  .hud:has(.sb-cards:not(:empty)) .hud-hint { top: calc(max(12px, env(safe-area-inset-top)) + 190px); }
-  .hud-tip { max-width: calc(100vw - 24px); }
+  .hud:has(.sb-cards:not(:empty)) .hud-hint { top: calc(max(12px, var(--sa-top)) + 190px); }
+  .hud-tip { max-width: calc(calc(100 * var(--vw)) - 24px); }
   .hud-replay:not(.skip-only),
-  .hud:has(.sb-cards:not(:empty)) .hud-replay:not(.skip-only) { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
+  .hud:has(.sb-cards:not(:empty)) .hud-replay:not(.skip-only) { top: calc(max(12px, var(--sa-top)) + 80px); }
   .so-track,
-  .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
+  .hud:has(.sb-cards:not(:empty)) .so-track { top: calc(max(12px, var(--sa-top)) + 80px); }
 }
 
 /* ===== in-match tactics: team-sheet pitch (XI in formation slots) + formation / mentality / bench ===== */
@@ -4679,15 +4708,15 @@ button.mc-pl:active {
 
 /* Landscape: pitch on the left at full panel height; the side column fits beside it and only the bench
    list scrolls, so DONE is always on screen. */
-@media (orientation: landscape) and (min-width: 600px) {
+@container app (orientation: landscape) and (min-width: 600px) {
   .panel.tx {
-    --txh: min(480px, calc(100vh - 40px - 2 * var(--pp)));
-    --txh: min(480px, calc(100dvh - 40px - 2 * var(--pp)));
+    --txh: min(480px, calc(calc(100 * var(--vh)) - 40px - 2 * var(--pp)));
+    --txh: min(480px, calc(calc(100 * var(--dvh)) - 40px - 2 * var(--pp)));
     height: calc(var(--txh) + 2 * var(--pp) + 8px);
     grid-template-columns: auto minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
     grid-template-areas: 'pitch side' 'pitch foot';
-    column-gap: clamp(14px, 2vw, 24px);
+    column-gap: clamp(14px, calc(2 * var(--vw)), 24px);
     row-gap: 10px;
     overflow: hidden;
   }
@@ -4706,7 +4735,7 @@ button.mc-pl:active {
   .panel.tx:has(> .btn-row:last-child:not(.no-stick)) { padding-bottom: var(--pp); }
 }
 
-@media (orientation: landscape) and (min-width: 600px) and (min-height: 600px) {
+@container app (orientation: landscape) and (min-width: 600px) and (min-height: 600px) {
   .panel.tx { --tw: 60px; }
   .tx-shirt { height: 40px; }
   .tx-shirt b { font-size: 19px; margin-top: -6px; }
@@ -4717,10 +4746,10 @@ button.mc-pl:active {
   .tx-b { min-height: 46px; font-size: 16px; }
 }
 
-@media (orientation: landscape) and (min-width: 600px) and (max-height: 450px) {
+@container app (orientation: landscape) and (min-width: 600px) and (max-height: 450px) {
   .panel.tx {
-    --txh: calc(100vh - 24px - 2 * var(--pp));
-    --txh: calc(100dvh - 24px - 2 * var(--pp));
+    --txh: calc(calc(100 * var(--vh)) - 24px - 2 * var(--pp));
+    --txh: calc(calc(100 * var(--dvh)) - 24px - 2 * var(--pp));
     --tw: 54px;
     row-gap: 8px;
   }
@@ -4747,7 +4776,7 @@ button.mc-pl:active {
 
 /* Narrow landscape phones (667 x 375): beside the pitch the side column is too narrow for a label plus five
    formation (or three mentality) buttons, which ran off the panel. There the labels sit above their rows. */
-@media (orientation: landscape) and (min-width: 600px) {
+@container app (orientation: landscape) and (min-width: 600px) {
   .tx-side { container: txside / inline-size; }
 }
 
@@ -4757,14 +4786,14 @@ button.mc-pl:active {
 }
 
 /* Portrait: one column. Title + formation, then the pitch, mentality and bench; DONE stays pinned. */
-@media (orientation: portrait), (max-width: 599.98px) {
+@container app (orientation: portrait) or (max-width: 599.98px) {
   .panel.tx { gap: 10px; --tw: 54px; }
   .tx-side { display: contents; }
   .tx-head { order: 1; }
   .tx-forms-row { order: 2; }
   /* Full panel width; an explicit height (not aspect-ratio), because the panel's max-height would
      otherwise let the grid squeeze this row below the pitch's real height. */
-  .tx .tx-pitch { order: 3; justify-self: stretch; aspect-ratio: auto; height: calc((100vw - 40px - 2 * var(--pp)) * 1.08); }
+  .tx .tx-pitch { order: 3; justify-self: stretch; aspect-ratio: auto; height: calc((calc(100 * var(--vw)) - 40px - 2 * var(--pp)) * 1.08); }
   .tx-ment-row { order: 4; }
   .tx-benchbox { order: 5; }
   .panel.tx > .btn-row { order: 6; }
@@ -4775,7 +4804,7 @@ button.mc-pl:active {
   .panel.tx .tx-head h2 { font-size: 22px; }
 }
 
-@media (orientation: portrait) and (min-width: 600px) {
+@container app (orientation: portrait) and (min-width: 600px) {
   .tx .tx-pitch { justify-self: center; width: 440px; height: 475px; }
 }
 
@@ -4783,18 +4812,18 @@ button.mc-pl:active {
 .mc-teampitch { --tw: 56px; }
 .mc-teampitch .tx-p { cursor: pointer; }
 
-@media (max-width: 640px) {
+@container app (max-width: 640px) {
   .mc-teampitch { aspect-ratio: 1 / 1.05; }
 }
 
 /* Very narrow portrait phones (< 360 px): the crests go so the score bug still clears the pause button. */
-@media (orientation: portrait) and (max-width: 359.98px) {
+@container app (orientation: portrait) and (max-width: 359.98px) {
   .sb-team .crest-svg,
   .sb-team i.crest { display: none; }
 }
 
 /* Daily gift on narrow phones: two rows of days, so "DAY 1" (14 px) stays on one line. */
-@media (max-width: 480px) {
+@container app (max-width: 480px) {
   .gift-days { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 8px; }
   .gift-days li { white-space: nowrap; }
 }
@@ -4834,7 +4863,7 @@ button.mc-pl:active {
 
 /* Daily challenges card. */
 .daily {
-  width: min(380px, 88vw);
+  width: min(380px, calc(88 * var(--vw)));
   background: rgba(38, 38, 46, 0.82);
   color: var(--cream);
   box-shadow: 0 5px 0 rgba(0, 0, 0, 0.3);
@@ -4959,8 +4988,8 @@ button.mc-pl:active {
 /* HUD: the power-up slot under the score bug (blitz only). */
 .hud-power {
   position: absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + 56px);
-  left: max(12px, env(safe-area-inset-left));
+  top: calc(max(12px, var(--sa-top)) + 56px);
+  left: max(12px, var(--sa-left));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -5004,15 +5033,15 @@ button.mc-pl:active {
 /* Power-up call: the compact plate (top band / under the cluster, off the goal mouth), tinted per power-up. */
 .hud-banner.power {
   inset: auto;
-  top: calc(max(12px, env(safe-area-inset-top)) + 64px);
+  top: calc(max(12px, var(--sa-top)) + 64px);
   left: 12px;
-  width: calc(100vw - 24px);
+  width: calc(calc(100 * var(--vw)) - 24px);
   display: flex;
   justify-content: center;
   align-items: center;
   pointer-events: none;
 }
-.hud-banner.power .bn-title { font-size: clamp(26px, 3.4vw, 46px); }
+.hud-banner.power .bn-title { font-size: clamp(26px, calc(3.4 * var(--vw)), 46px); }
 .hud-banner.power .bn-title i {
   color: var(--pw, var(--yellow));
   text-shadow:
@@ -5036,7 +5065,7 @@ button.mc-pl:active {
 .touch.blitz .tb-power { display: block; }
 .tb-power:not(.has) { opacity: 0.35; filter: grayscale(0.6); }
 .tb-power.has { opacity: 0.9; animation: pw-pulse 1.2s ease-in-out infinite; }
-@media (max-width: 720px), (max-height: 480px) {
+@container app (max-width: 720px) or (max-height: 480px) {
   .tb-power { right: 34px; bottom: 184px; width: 56px; height: 56px; font-size: 22px; }
   .tb-power .picon { width: 26px; height: 26px; }
 }
@@ -5070,7 +5099,7 @@ button.mc-pl:active {
 .ht-pw li span { color: var(--ink-2); }
 
 /* Landscape phones: the challenges card is one row of three; the level badge reads on one line. */
-@media (max-height: 450px) {
+@container app (max-height: 450px) {
   .daily { width: 100%; padding: 6px 10px 7px; gap: 4px; }
   .daily-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 12px; }
   .daily-list li { grid-template-columns: minmax(0, 1fr) 30px; grid-template-areas: 'text n' 'bar bar'; gap: 2px 6px; }
@@ -5098,11 +5127,11 @@ button.mc-pl:active {
   .tile .picon { width: 24px; height: 24px; }
   .ft-prog { padding: 8px 12px 9px; gap: 6px; }
   .ft-stars { font-size: 30px; }
-  .hud-power { top: calc(max(12px, env(safe-area-inset-top)) + 40px); padding: 3px 8px 3px 3px; gap: 6px; }
+  .hud-power { top: calc(max(12px, var(--sa-top)) + 40px); padding: 3px 8px 3px 3px; gap: 6px; }
   .pw-slot, .pw-ring { width: 34px; height: 34px; }
   .pw-ico { font-size: 18px; }
 }
-@media (max-width: 480px) {
+@container app (max-width: 480px) {
   .tile .picon.bolt { font-size: 36px; height: 36px; }
   /* Narrow portrait: the two sideways tiles (BLITZ, cup) keep their subtitle on one line. */
   .tile.tile-side { column-gap: 8px; padding: 10px 10px 9px; font-size: 16px; min-height: 60px; }
@@ -5114,17 +5143,17 @@ button.mc-pl:active {
   .panel.qm { gap: 10px; }
   .qm .opt-row { gap: 4px; }
   .qm .seg button { padding: 8px 2px 7px; font-size: 14px; }
-  .hud-power { top: calc(max(12px, env(safe-area-inset-top)) + 40px); padding: 3px 8px 3px 3px; gap: 6px; }
+  .hud-power { top: calc(max(12px, var(--sa-top)) + 40px); padding: 3px 8px 3px 3px; gap: 6px; }
   .pw-slot, .pw-ring { width: 34px; height: 34px; }
   .pw-ico { font-size: 18px; }
   .main-foot .btn-ghost { padding: 10px 12px 9px; font-size: 15px; }
 }
-@media (max-height: 520px) {
+@container app (max-height: 520px) {
   .tile.tile-side { min-height: 42px; padding: 8px 12px 6px; }
 }
 
 /* Desktop windows up to 820 px tall: squarer tiles leave room for the challenges card (phones keep theirs). */
-@media (max-height: 820px) and (min-height: 451px) and (min-width: 481px) {
+@container app (max-height: 820px) and (min-height: 451px) and (min-width: 481px) {
   .tile:not(.tile-side) { aspect-ratio: 1.4; }
   .tile.tile-side { min-height: 56px; padding: 8px 14px 7px; }
   .main-wrap { gap: 18px; }
@@ -5132,7 +5161,7 @@ button.mc-pl:active {
   .daily { padding: 6px 12px 7px; gap: 4px; }
   /* Quick Match: one row more (MODE) than before, so slightly smaller kit previews and gaps keep it at 720. */
   .panel.qm { gap: 10px; }
-  .qm .tp-3d { width: clamp(90px, 10vw, 120px); }
+  .qm .tp-3d { width: clamp(90px, calc(10 * var(--vw)), 120px); }
   .qm-why { margin-top: -8px; }
 }
 
@@ -5209,12 +5238,12 @@ button.mc-pl:active {
   row-gap: 4px;
   min-height: 72px;
   padding: 12px 18px 10px;
-  font-size: clamp(18px, 2vw, 22px);
+  font-size: clamp(18px, calc(2 * var(--vw)), 22px);
 }
 .tile.tile-wide .picon { grid-row: 1 / span 2; }
 .tile.tile-wide > span,
 .tile.tile-wide small { justify-self: start; margin: 0; }
-@media (max-height: 520px) {
+@container app (max-height: 520px) {
   .tile.tile-wide { min-height: 56px; padding: 8px 16px 7px; font-size: 17px; }
 }
 .topbar .acct { min-height: 42px; padding: 10px 14px 9px; font: 400 17px / 1 var(--round); letter-spacing: 0.5px; }
@@ -5252,19 +5281,19 @@ button.mc-pl:active {
 
 /* Short, wide windows (a 1280×720 laptop or stream): four tile columns, as on landscape phones, so the whole
    column sits above the fold (PLAY NOW added a row; at HEAD the badge already ended 9 px under it). */
-@media (max-height: 820px) and (min-height: 451px) and (min-width: 700px) {
-  .screen.main { padding-top: max(52px, env(safe-area-inset-top)); }
+@container app (max-height: 820px) and (min-height: 451px) and (min-width: 700px) {
+  .screen.main { padding-top: max(52px, var(--sa-top)); }
   .main-col { gap: 12px; }
-  .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); width: min(640px, 94vw); gap: 12px; }
+  .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); width: min(640px, calc(94 * var(--vw))); gap: 12px; }
   .tile:not(.tile-side):not(.tile-wide) { aspect-ratio: auto; min-height: 0; gap: 8px; padding: 12px 8px 10px; }
   .tile.tile-side { grid-column: span 2; }
   .tile.tile-wide { min-height: 60px; padding: 8px 16px 7px; }
-  .daily { width: min(640px, 94vw); }
+  .daily { width: min(640px, calc(94 * var(--vw))); }
 }
 
 /* Phone-height screens (a 375 px tall landscape phone, a 667 px tall portrait one): the menu logo goes (the
    title screen and splash carry the branding) so PLAY NOW and the tiles fit above the fold. */
-@media (max-height: 400px), (max-width: 480px) and (max-height: 700px) {
+@container app (max-height: 400px) or ((max-width: 480px) and (max-height: 700px)) {
   .screen.main .logo.small { display: none; }
   .main-foot { gap: 10px; }
   .tile.tile-wide { min-height: 48px; padding: 6px 14px 5px; font-size: 17px; }
@@ -5273,12 +5302,12 @@ button.mc-pl:active {
 /* Landscape phones: the footer is one row (HOW TO PLAY beside a two-column badge) and the gaps are tighter. */
 /* Portrait phones: the gift/coins bar takes its own row. The title has already shown the logo;
    repeating it here used to cover DAILY GIFT on taller phones. */
-@media (max-width: 600px) and (min-height: 451px) {
-  .screen.main { padding-top: max(16px, env(safe-area-inset-top)); }
+@container app (max-width: 600px) and (min-height: 451px) {
+  .screen.main { padding-top: max(16px, var(--sa-top)); }
   .screen.main .topbar { position: static; width: 100%; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 8px; }
   .screen.main .logo.small { display: none; }
 }
-@media (max-height: 400px) {
+@container app (max-height: 400px) {
   .main-col { gap: 6px; }
   .main-foot { flex-wrap: nowrap; }
   .record-chip.lvl { flex: 1 1 0; min-width: 0; grid-auto-flow: row; grid-template-columns: 1fr 1fr; gap: 2px 10px; }
@@ -5290,18 +5319,18 @@ button.mc-pl:active {
 .btn-teal { --c: #23b0a0; --d: #14776b; --t: #fff; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
 .btn-teal.tile small { color: #e2fffa; }
 /* Two wide tiles (PLAY NOW, MOMENTS) share one row wherever the grid has four columns. */
-@media (max-height: 520px) {
+@container app (max-height: 520px) {
   .tile.tile-wide { grid-column: span 2; }
 }
-@media (max-height: 820px) and (min-height: 451px) and (min-width: 700px) {
+@container app (max-height: 820px) and (min-height: 451px) and (min-width: 700px) {
   .tile.tile-wide { grid-column: span 2; }
 }
 /* Landscape phones (≤ 450 px tall; the grid is three columns there, see the earlier ≤ 450 block): the gift and
    coins stack in the top-left corner, above the captain, where nothing else is, so PLAY NOW never runs under
    them and the tile column keeps every pixel. PLAY NOW takes two columns of row one and MOMENTS the third, both
    40 px; the square tiles keep their titles only. */
-@media (max-height: 450px) {
-  .screen.main .topbar { top: max(8px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); right: auto; flex-direction: column; align-items: flex-start; gap: 6px; }
+@container app (max-height: 450px) {
+  .screen.main .topbar { top: max(8px, var(--sa-top)); left: max(12px, var(--sa-left)); right: auto; flex-direction: column; align-items: flex-start; gap: 6px; }
   .screen.main .topbar .gift-w { display: none; }
   .screen.main .topbar .gift, .screen.main .topbar .acct { min-height: 34px; padding: 8px 10px 7px; font-size: 14px; }
   .screen.main .coins { min-height: 34px; padding: 6px 10px 6px 8px; }
@@ -5314,12 +5343,12 @@ button.mc-pl:active {
   .tile:not(.tile-wide):not(.tile-side):not([data-a='settings']) small { display: none; }
   .tile:not(.tile-wide):not(.tile-side) { gap: 4px; }
   /* The captain sits at the foot of his column, a size down, clear of the gift / coins stack above him. */
-  .main-wrap.with-captain .captain { align-self: flex-end; flex-basis: 20vw; width: 20vw; }
-  .captain-3d { width: 20vw; }
+  .main-wrap.with-captain .captain { align-self: flex-end; flex-basis: calc(20 * var(--vw)); width: calc(20 * var(--vw)); }
+  .captain-3d { width: calc(20 * var(--vw)); }
 }
 /* Portrait phones (≤ 480 wide, ≤ 700 tall): tighter gaps and paddings, so the MOMENTS row costs the fold no more
    than PLAY NOW did (the column scrolls only once it is really taller than the screen). */
-@media (max-width: 480px) and (max-height: 700px) {
+@container app (max-width: 480px) and (max-height: 700px) {
   .tiles { gap: 8px; }
   .main-col { gap: 10px; }
   .tile.tile-wide { min-height: 42px; padding: 3px 12px 2px; }
@@ -5350,7 +5379,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 .ul-head em { margin-left: auto; font: 700 16px var(--px); font-style: normal; color: var(--blue-d); }
 .ul-bar { margin-top: -6px; }
 .ul-sum { margin: -6px 0 0; font: 400 14px var(--round); letter-spacing: 0.5px; color: var(--ink-2); text-align: center; }
-.ul-list { list-style: none; margin: 0; padding: 2px; display: grid; gap: 6px; max-height: min(50vh, 440px); max-height: min(50dvh, 440px); overflow-y: auto; overscroll-behavior: contain; }
+.ul-list { list-style: none; margin: 0; padding: 2px; display: grid; gap: 6px; max-height: min(calc(50 * var(--vh)), 440px); max-height: min(calc(50 * var(--dvh)), 440px); overflow-y: auto; overscroll-behavior: contain; }
 .ul-list li { display: grid; grid-template-columns: auto 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px 10px 5px; background: #fff; border: 3px solid var(--cream-2); color: var(--ink-2); }
 .ul-list li.got { border-color: var(--go); color: var(--ink); }
 .ul-list li.next { border-color: var(--yellow); }
@@ -5362,8 +5391,8 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 .ul-list li.got em { color: var(--go-d); }
 .ul-list li.next em { color: var(--yellow-d); }
 .ul-list li.legend { margin-top: 4px; }
-@media (max-height: 450px) {
-  .ul-list { max-height: calc(100dvh - 210px); }
+@container app (max-height: 450px) {
+  .ul-list { max-height: calc(calc(100 * var(--dvh)) - 210px); }
   .ul-list li { gap: 8px; padding: 4px 8px 3px; }
 }
 /* Moment result. */
@@ -5376,7 +5405,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 .mo-foot { justify-content: center; }
 /* HUD banner: words are groups of letters (they wrap between words when a title is too wide) and long titles
    shrink through --bn-k (Hud.show sets it from the length: 1 up to 12 characters, then 12 / length). */
-.bn-title { flex-wrap: wrap; justify-content: center; column-gap: 0.55em; max-width: 96vw; }
+.bn-title { flex-wrap: wrap; justify-content: center; column-gap: 0.55em; max-width: calc(96 * var(--vw)); }
 .bn-w { display: flex; }
 .bn-title i { font-size: calc(1em * var(--bn-k, 1)); }
 /* Score bug: the countdown of a Football Moment (Hud.setCountdown): on ink, red and pulsing from 5 s. */
@@ -5407,7 +5436,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 }
 /* The campaign hero ("LEARN THE BASICS" / "FIRST MATCH") keeps the green, and pulses. */
 .tiles.campaign > [data-a='playnow'] small { opacity: 1; }
-@media (max-height: 450px) {
+@container app (max-height: 450px) {
   .tiles.t14 > .tile.locked .lock-note { display: none; }
 }
 
@@ -5415,10 +5444,10 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 .menu-toast {
   position: fixed;
   left: 50%;
-  bottom: max(18px, env(safe-area-inset-bottom));
+  bottom: max(18px, var(--sa-bottom));
   z-index: 40;
   transform: translateX(-50%);
-  max-width: calc(100vw - 32px);
+  max-width: calc(calc(100 * var(--vw)) - 32px);
   padding: 10px 16px 9px;
   font: 400 15px / 1.2 var(--round);
   letter-spacing: 0.5px;
@@ -5466,7 +5495,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 .kb-msg:empty { min-height: 0; padding: 0; }
 .kb-msg.good { color: var(--go-d); }
 .kb-msg.bad { color: var(--red-d); }
-@media (max-width: 400px) {
+@container app (max-width: 400px) {
   .kb-row { grid-template-columns: 64px repeat(3, minmax(0, 1fr)); gap: 4px; }
   .kb-grid.pad .kb-row { grid-template-columns: 64px repeat(2, minmax(0, 1fr)) minmax(0, 1fr); }
   .kb-act, .kb-slot { font-size: 13px; }
@@ -5480,16 +5509,16 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 
 /* The FIXED thumbstick: anchored bottom-left, base always drawn (floating: see .touch-base above). */
 .touch.fixed .touch-base {
-  left: calc(max(22px, env(safe-area-inset-left)) + 64px);
+  left: calc(max(22px, var(--sa-left)) + 64px);
   top: auto;
-  bottom: calc(max(22px, env(safe-area-inset-bottom)) + 64px);
+  bottom: calc(max(22px, var(--sa-bottom)) + 64px);
   margin: 0 0 -64px -64px;
   opacity: 0.8;
 }
 .touch.fixed.used .touch-base:not(.on) { opacity: 0.65; }
 .touch.fixed .touch-base.on { opacity: 1; }
-@media (max-height: 480px) and (orientation: landscape) {
-  .touch.fixed .touch-base { width: 112px; height: 112px; left: calc(max(18px, env(safe-area-inset-left)) + 56px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 56px); margin: 0 0 -56px -56px; }
+@container app (max-height: 480px) and (orientation: landscape) {
+  .touch.fixed .touch-base { width: 112px; height: 112px; left: calc(max(18px, var(--sa-left)) + 56px); bottom: calc(max(14px, var(--sa-bottom)) + 56px); margin: 0 0 -56px -56px; }
 }
 
 /* Full time: badge / season tier-ups, the Try EASY line, the goal clip row. */
@@ -5513,14 +5542,14 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 .ul-new b { font: 400 16px var(--round); letter-spacing: 1px; }
 .ul-new span { font: 400 14px / 1.2 var(--round); color: var(--ink-2); }
 .ul-bolt { font-style: normal; font-size: 22px; text-align: center; }
-@media (max-width: 420px) {
+@container app (max-width: 420px) {
   .ul-new li { grid-template-columns: 30px minmax(0, 1fr); }
   .ul-new span { grid-column: 2; }
 }
 /* A claim waiting on the BADGES screen: a small count on the level badge. */
 .record-chip.lvl .lvl-dot { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 6px; padding: 0 4px; font: 400 12px / 1 var(--round); font-style: normal; color: #fff; background: var(--red); border-radius: 9px; vertical-align: 1px; }
 /* Short landscape screens: the UNLOCKED list goes two by two, the one-line descriptions stay. */
-@media (max-height: 450px) {
+@container app (max-height: 450px) {
   .ul-new { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
   .ul-new li { grid-template-columns: 26px minmax(0, 1fr); gap: 2px 8px; padding: 5px 8px 4px; }
   .ul-new span { grid-column: 2; font-size: 13px; }
@@ -5564,7 +5593,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 }
 .net-room {
   justify-self: center;
-  font: 700 clamp(48px, 9vw, 78px) var(--px);
+  font: 700 clamp(48px, calc(9 * var(--vw)), 78px) var(--px);
   letter-spacing: 10px;
   color: var(--ink);
   background: #fff;
@@ -5617,11 +5646,11 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   top: 24%;
   left: 50%;
   transform: translateX(-50%);
-  max-width: 92vw;
+  max-width: calc(92 * var(--vw));
   text-align: center;
   background: var(--ink);
   color: var(--yellow);
-  font: 700 clamp(16px, 2.4vw, 24px) var(--px);
+  font: 700 clamp(16px, calc(2.4 * var(--vw)), 24px) var(--px);
   letter-spacing: 2px;
   padding: 12px 20px 8px;
   border: 3px solid var(--cream);
@@ -5632,7 +5661,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 .net-chip {
   position: absolute;
   left: 50%;
-  bottom: max(8px, env(safe-area-inset-bottom));
+  bottom: max(8px, var(--sa-bottom));
   transform: translateX(-50%);
   font: 400 13px var(--round);
   letter-spacing: 1px;
@@ -5669,8 +5698,8 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
    into the broadcast board: the number going off in red, the one coming on in green. The wrapper keeps the
    card's box (the ticker, the set-piece hint and the edge arrows keep clear of it); only the card takes taps. */
 .hud-qsub {
-  top: calc(max(12px, env(safe-area-inset-top)) + 56px);
-  right: max(12px, env(safe-area-inset-right));
+  top: calc(max(12px, var(--sa-top)) + 56px);
+  right: max(12px, var(--sa-right));
   width: 212px;
   z-index: 5;
   pointer-events: none;
@@ -5961,7 +5990,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 }
 
 /* Phones: the tutorial tip spans the top; the card waits for it. */
-@media (max-width: 720px), (max-height: 480px) {
+@container app (max-width: 720px) or (max-height: 480px) {
   .hud:has(.hud-tip.on) .hud-qsub .qs-card {
     opacity: 0;
     visibility: hidden;
@@ -5969,9 +5998,9 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   }
 }
 
-@media (max-width: 720px), (max-height: 480px) {
+@container app (max-width: 720px) or (max-height: 480px) {
   .hud-qsub {
-    top: calc(max(12px, env(safe-area-inset-top)) + 46px);
+    top: calc(max(12px, var(--sa-top)) + 46px);
     width: 178px;
   }
   .qs-head, .hud-qsub.queued .qs-head { min-height: 26px; padding-left: 8px; font-size: 11px; }
@@ -5987,7 +6016,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 
 /* Landscape phones: the touch buttons (SKILL on top) start high on the right, so the card goes wide and short:
    the two players on the left, the button square on the right. */
-@media (max-height: 480px) {
+@container app (max-height: 480px) {
   .hud-qsub { width: 262px; }
   .qs-card {
     display: grid;
@@ -6059,7 +6088,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   from { transform: scale(1); }
   to { transform: scale(1.08); background: var(--yellow); color: var(--ink); text-shadow: none; }
 }
-@media (max-width: 720px), (max-height: 480px) {
+@container app (max-width: 720px) or (max-height: 480px) {
   .tb-skill { right: 90px; bottom: 92px; width: 66px; height: 66px; font-size: 15px; }
 }
 
@@ -6150,7 +6179,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 }
 .sk-pop.on { opacity: 1; }
 .sk-pop b {
-  font: 700 clamp(22px, 2.4vw, 34px) / 1 var(--px);
+  font: 700 clamp(22px, calc(2.4 * var(--vw)), 34px) / 1 var(--px);
   letter-spacing: 1px;
   color: var(--cream);
   text-shadow:
@@ -6159,7 +6188,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
     0 8px 0 rgba(0, 0, 0, 0.25);
 }
 .sk-pop span {
-  font: 400 clamp(16px, 1.5vw, 20px) / 1 var(--round);
+  font: 400 clamp(16px, calc(1.5 * var(--vw)), 20px) / 1 var(--round);
   letter-spacing: 1px;
   color: var(--cream);
   text-shadow: 0 3px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink);
@@ -6213,7 +6242,7 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   100% { opacity: 0; transform: scale(1.8); }
 }
 
-@media (max-height: 480px) {
+@container app (max-height: 480px) {
   .sk-pop b { font-size: 22px; }
   .sk-pop span { font-size: 15px; }
   .sk-tell b { width: 19px; height: 21px; font-size: 15px; }
@@ -6250,7 +6279,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 .tiles.t14 > .tile[data-a='blitz'] { grid-area: blitz; }
 .tiles.t14 > .tile[data-a='online'] { grid-area: online; }
 .tiles.t14 > .tile[data-a='settings'] { grid-area: set; }
-.tiles.t14 > .tile-wide { font-size: clamp(17px, 1.7vw, 21px); }
+.tiles.t14 > .tile-wide { font-size: clamp(17px, calc(1.7 * var(--vw)), 21px); }
 .tiles.t14.campaign > [data-a='playnow'] { font-size: 17px; }
 /* The slim tiles: icon left, title over subtitle; a long title wraps between words instead of ending in dots. */
 .tiles.t14 > .tile.tile-side { justify-content: start; padding-left: 12px; padding-right: 10px; font-size: 15px; }
@@ -6260,7 +6289,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 .tiles.t14 > .tile[data-a='settings'] { min-height: 44px; padding-top: 6px; padding-bottom: 5px; justify-content: center; }
 .tiles.t14 > .tile[data-a='settings'] .picon { width: 24px; height: 24px; animation: none; }
 
-@media (max-width: 480px) {
+@container app (max-width: 480px) {
   .tiles.t14 { gap: 12px; }
   .tiles.t14 > .tile-wide { min-height: 62px; padding-top: 8px; padding-bottom: 7px; }
   .tiles.t14 > .tile:not(.tile-wide):not(.tile-side) { min-height: 100px; }
@@ -6270,7 +6299,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
   .tiles.t14 > .tile[data-a='settings'] { min-height: 42px; padding-top: 5px; padding-bottom: 4px; }
   .tiles.t14 > .tile[data-a='settings'] .picon { width: 22px; height: 22px; }
 }
-@media (max-width: 480px) and (max-height: 700px) {
+@container app (max-width: 480px) and (max-height: 700px) {
   .tiles.t14 > .tile.tile-side { min-height: 46px; padding-top: 5px; padding-bottom: 4px; }
   .tiles.t14 > .tile:not(.tile-wide):not(.tile-side) { padding: 7px 8px 6px; gap: 5px; }
   .tiles.t14 > .tile:not(.tile-wide):not(.tile-side) .picon { width: 38px; height: 38px; }
@@ -6279,7 +6308,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 
 /* Four columns (any landscape screen, and short ones): PLAY NOW and ROAD TO GLORY across the top, then QUICK MATCH,
    MY CLUB, BLOCKY CUP and MOMENTS as stacked tiles, then a slim row. (Two columns, taller, only stand upright.) */
-@media (max-height: 520px), (min-width: 700px) and (min-aspect-ratio: 1/1) {
+@container app (max-height: 520px) or ((min-width: 700px) and (min-aspect-ratio: 1/1)) {
   .tiles.t14 {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     grid-template-areas: "play play road road" "quick club cup mom" "run blitz set set";
@@ -6298,7 +6327,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
   .tiles.t14 > .tile[data-a='settings'] .picon { width: 20px; height: 20px; }
 }
 /* Landscape phones: titles only on the stacked tiles, tighter everything. */
-@media (max-height: 450px) {
+@container app (max-height: 450px) {
   .tiles.t14 { gap: 8px; }
   .tiles.t14 > .tile-wide { font-size: 16px; }
   .tiles.t14 > .tile[data-a='cup'] small, .tiles.t14 > .tile[data-a='moments'] small, .tiles.t14 > .tile.tile-side small { display: none; }
@@ -6311,18 +6340,18 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
   .tiles.t14 > .tile[data-a='settings'] { min-height: 36px; padding: 4px 8px 3px; }
 }
 /* Short windows (800 by 600): the logo steps aside so the whole menu sits above the fold. */
-@media (max-height: 650px) and (min-height: 451px) and (min-width: 700px) {
+@container app (max-height: 650px) and (min-height: 451px) and (min-width: 700px) {
   .screen.main .logo.small { display: none; }
 }
 /* Between a tablet and a laptop (721 to 899 wide, short): the captain leaves so the four columns have the room. */
-@media (min-width: 721px) and (max-width: 899px) and (min-height: 451px) and (max-height: 820px) {
+@container app (min-width: 721px) and (max-width: 899px) and (min-height: 451px) and (max-height: 820px) {
   .main-wrap.with-captain .captain { display: none; }
 }
 
 /* ROAD TO GLORY: the "how it works" panel (ui/roadIntro.ts) and its button on the hub. */
 .mc-tabrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: stretch; }
 .mc-how { min-height: 48px; padding: 10px 14px 9px; font: 400 14px / 1 var(--round); letter-spacing: 0.5px; white-space: nowrap; }
-@media (max-width: 480px) {
+@container app (max-width: 480px) {
   .mc-tabrow { grid-template-columns: 1fr; }
   .mc-how { min-height: 40px; padding-top: 8px; padding-bottom: 7px; }
 }
@@ -6341,7 +6370,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 .rg-ic .picon { width: 30px; height: 30px; filter: none; }
 .rg-points b { display: block; margin-bottom: 2px; font: 400 17px / 1.1 var(--round); letter-spacing: 0.5px; color: var(--blue-d); }
 .rg-points span { font: 400 16px / 1.3 var(--round); color: var(--ink-2); }
-@media (min-width: 720px) { .rg { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 22px; } }
+@container app (min-width: 720px) { .rg { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 22px; } }
 .mc-road-screen .btn-row { justify-content: center; }
 
 /* ---------------------------------------------------------------- main menu: the logo on one line, short frames */
@@ -6352,7 +6381,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 /* Short frames (a portal's 900 by 506 iframe, a laptop's 800 by 531 window): the tiles start under the gift and coin
    bar, and the rows are tighter, so the menu and its footer sit above the fold. (Phones on their side, 400 tall and
    under, keep their own layout.) */
-@media (min-width: 700px) and (max-height: 600px) and (min-height: 401px) {
+@container app (min-width: 700px) and (max-height: 600px) and (min-height: 401px) {
   .screen.main { padding-top: 64px; }
   .main-col { gap: 8px; }
   .tiles.t14 { gap: 8px; }
@@ -6369,7 +6398,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
   .screen.main .logo.small { display: none; }
 }
 /* ...and a 16:9 frame 450 tall (800 by 450): a step tighter still. */
-@media (min-width: 700px) and (max-height: 480px) and (min-height: 401px) {
+@container app (min-width: 700px) and (max-height: 480px) and (min-height: 401px) {
   .screen.main { padding-top: 60px; }
   .main-col, .tiles.t14 { gap: 6px; }
   .tiles.t14 > .tile.tile-wide { min-height: 50px; }
@@ -6383,10 +6412,10 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 
 /* Tall landscape screens (a fullscreen laptop, a monitor): the four columns as on a short window, at a size for the
    room. (They were held to the upright layout's 380 px column: four tiles of 83 px, every title cut.) */
-@media (min-width: 700px) and (min-aspect-ratio: 1/1) and (min-height: 821px) {
-  .screen.main { padding-top: max(72px, env(safe-area-inset-top)); }
-  .tiles, .daily { width: min(760px, 58vw); }
-  .main-foot { width: min(760px, 58vw); max-width: none; }
+@container app (min-width: 700px) and (min-aspect-ratio: 1/1) and (min-height: 821px) {
+  .screen.main { padding-top: max(72px, var(--sa-top)); }
+  .tiles, .daily { width: min(760px, calc(58 * var(--vw))); }
+  .main-foot { width: min(760px, calc(58 * var(--vw))); max-width: none; }
   .tiles.t14 { gap: 14px; }
   .tiles.t14 > .tile.tile-wide { min-height: 84px; }
   .tiles.t14 > .tile[data-a='quick'], .tiles.t14 > .tile[data-a='club'], .tiles.t14 > .tile-cup, .tiles.t14 > .tile-moments { min-height: 136px; }
@@ -6394,7 +6423,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
 /* A stacked tile's subtitle wraps under its title rather than ending in dots (MOMENTS on an upright phone). */
 .tiles.t14 > .tile-moments small, .tiles.t14 > .tile-cup small { white-space: normal; overflow: visible; text-overflow: clip; }
 /* Small phones on their side: the tiles start clear of the gift and coin bar over the captain. */
-@media (max-height: 400px) {
+@container app (max-height: 400px) {
   .main-wrap.with-captain .main-col { padding-left: 10px; }
 }
 
@@ -6414,10 +6443,10 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
   align-items: stretch;
   justify-content: center;
   overflow: hidden;
-  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  padding: max(10px, var(--sa-top)) max(14px, var(--sa-right)) max(10px, var(--sa-bottom)) max(14px, var(--sa-left));
 }
 .hub {
-  --gap: clamp(6px, 1.3vmin, 14px);
+  --gap: clamp(6px, calc(1.3 * var(--vmin)), 14px);
   width: 100%;
   max-width: 1240px;
   height: 100%;
@@ -6431,7 +6460,7 @@ small.lock .picon.inl { margin: 0 0.25em 0 0; }
   min-height: 0;
 }
 .hub.with-cap {
-  grid-template-columns: clamp(104px, 19vw, 290px) minmax(0, 1fr);
+  grid-template-columns: clamp(104px, calc(19 * var(--vw)), 290px) minmax(0, 1fr);
   grid-template-areas: "top top" "cap body" "cap foot";
 }
 .hub button { -webkit-tap-highlight-color: transparent; }
@@ -6488,7 +6517,7 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
   color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3); transition: transform 0.06s;
 }
 .hub-captag > b { display: flex; align-items: center; justify-content: center; gap: 6px; max-width: 100%; font: 400 calc(15px * var(--ts)) / 1.05 var(--round); letter-spacing: 0.5px; }
-.hub-captag > b > span { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-align: left; }
+.hub-captag > b > span { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-align: left; overflow-wrap: anywhere; }
 .hub-captag .hc-div { max-width: 100%; font: 400 calc(11px * var(--ts)) / 1.1 var(--round); letter-spacing: 0.5px; color: #cfcab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hub-captag .crest-svg { flex: none; width: calc(18px * var(--ts)); height: auto; }
 .hub-captag .hc-meta { max-width: 100%; font: 400 calc(12px * var(--ts)) / 1.1 var(--round); letter-spacing: 0.5px; color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -6502,7 +6531,7 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
   appearance: none; border: 4px solid var(--ink); margin: 0; font: inherit; cursor: pointer;
   position: relative; overflow: hidden; flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 4px;
-  padding: clamp(8px, 2vmin, 20px) clamp(10px, 2vmin, 22px) clamp(10px, 2.2vmin, 22px);
+  padding: clamp(8px, calc(2 * var(--vmin)), 20px) clamp(10px, calc(2 * var(--vmin)), 22px) clamp(10px, calc(2.2 * var(--vmin)), 22px);
   color: #fff; text-align: center;
   background: linear-gradient(160deg, #3f8cf2 0%, #2f7be8 35%, #1c4fa3 100%);
   box-shadow: 0 6px 0 var(--ink), 0 12px 0 rgba(38, 38, 46, 0.2), inset 0 -8px 0 rgba(0, 0, 0, 0.18);
@@ -6515,26 +6544,26 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 .hub-hero.now { background: linear-gradient(160deg, #4fd06b 0%, #3cc15a 35%, #238a3b 100%); }
 .hh-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; }
 .hub-hero.now .hh-head, .hub-hero.create .hh-head { justify-content: center; }
-.hh-title { font: 400 calc(clamp(18px, 2.5vw, 32px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; color: var(--yellow); text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); white-space: nowrap; }
+.hh-title { font: 400 calc(clamp(18px, calc(2.5 * var(--vw)), 32px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; color: var(--yellow); text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); white-space: nowrap; }
 .hub-hero.now .hh-title { color: #fff; }
 .hh-meta { min-width: 0; padding: 4px 7px 3px; font: 400 calc(11px * var(--ts)) / 1 var(--round); font-style: normal; letter-spacing: 1px; color: var(--ink); background: var(--cream); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hh-fix { display: flex; align-items: center; justify-content: center; gap: clamp(6px, 2vw, 26px); width: 100%; min-width: 0; }
+.hh-fix { display: flex; align-items: center; justify-content: center; gap: clamp(6px, calc(2 * var(--vw)), 26px); width: 100%; min-width: 0; }
 .hh-side { display: grid; justify-items: center; gap: 3px; flex: 1 1 0; min-width: 0; }
 .hh-fix.solo .hh-side { flex: 0 1 auto; }
-.hh-side .crest-svg { width: calc(clamp(30px, 6.5vmin, 66px) * var(--ts)); height: auto; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.3)); }
-.hh-side b { max-width: 100%; font: 400 calc(clamp(16px, 2.3vw, 28px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hh-side .crest-svg { width: calc(clamp(30px, calc(6.5 * var(--vmin)), 66px) * var(--ts)); height: auto; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.3)); }
+.hh-side b { max-width: 100%; font: 400 calc(clamp(16px, calc(2.3 * var(--vw)), 28px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hh-side small { font: 400 calc(11px * var(--ts)) / 1 var(--round); letter-spacing: 1px; color: #d5e4ff; }
-.hh-vs { flex: none; padding: 5px 8px 4px; font: 400 calc(clamp(14px, 1.9vw, 22px) * var(--ts)) / 1 var(--round); color: var(--yellow); background: rgba(0, 0, 0, 0.28); }
+.hh-vs { flex: none; padding: 5px 8px 4px; font: 400 calc(clamp(14px, calc(1.9 * var(--vw)), 22px) * var(--ts)) / 1 var(--round); color: var(--yellow); background: rgba(0, 0, 0, 0.28); }
 .hh-sub { max-width: 100%; font: 400 calc(12px * var(--ts)) / 1.2 var(--round); letter-spacing: 1px; color: #e6eeff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hub-hero.now .hh-sub { color: #effff2; }
 .hub-hero.create .hh-sub { white-space: normal; }
-.hh-big { font: 400 calc(clamp(17px, 2.3vw, 28px) * var(--ts)) / 1.05 var(--round); letter-spacing: 1px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3); }
+.hh-big { font: 400 calc(clamp(17px, calc(2.3 * var(--vw)), 28px) * var(--ts)) / 1.05 var(--round); letter-spacing: 1px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3); }
 .hh-art { line-height: 0; }
-.hh-art .picon { width: calc(clamp(30px, 7.5vmin, 72px) * var(--ts)); height: auto; filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.3)); }
+.hh-art .picon { width: calc(clamp(30px, calc(7.5 * var(--vmin)), 72px) * var(--ts)); height: auto; filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.3)); }
 .hh-play {
   display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; max-width: 380px;
   min-height: calc(42px * var(--ts)); padding: 7px 16px 6px;
-  font: 400 calc(clamp(17px, 2.3vw, 28px) * var(--ts)) / 1 var(--round); letter-spacing: 2px; white-space: nowrap;
+  font: 400 calc(clamp(17px, calc(2.3 * var(--vw)), 28px) * var(--ts)) / 1 var(--round); letter-spacing: 2px; white-space: nowrap;
   color: #fff; background: var(--go); box-shadow: 0 5px 0 var(--go-d), inset 0 -4px 0 rgba(0, 0, 0, 0.15); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
   animation: hub-throb 1.6s ease-in-out infinite;
 }
@@ -6559,14 +6588,18 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
   appearance: none; border: 3px solid var(--ink); margin: 0; font: inherit; cursor: pointer;
   position: relative; overflow: hidden; min-width: 0; min-height: 0;
   display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px;
-  padding: clamp(6px, 1.5vmin, 16px) clamp(8px, 1.5vmin, 16px); text-align: left;
+  padding: clamp(6px, calc(1.5 * var(--vmin)), 16px) clamp(8px, calc(1.5 * var(--vmin)), 16px); text-align: left;
   color: var(--t); background: var(--c); box-shadow: 0 5px 0 var(--d), inset 0 -5px 0 rgba(0, 0, 0, 0.12);
   transition: transform 0.06s, box-shadow 0.06s;
 }
 .hub-tile:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--d), inset 0 -5px 0 rgba(0, 0, 0, 0.12); }
 .hub-tile .ht-ic { line-height: 0; margin-bottom: 2px; }
-.hub-tile .ht-ic .picon { width: calc(clamp(22px, 5.2vmin, 46px) * var(--ts)); height: auto; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.22)); }
-.hub-tile .ht-t { max-width: 100%; font: 400 calc(clamp(15px, 1.9vw, 24px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-tile .ht-ic .picon { width: calc(clamp(22px, calc(5.2 * var(--vmin)), 46px) * var(--ts)); height: auto; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.22)); }
+.hub-tile .ht-t { max-width: 100%; font: 400 calc(clamp(15px, calc(1.9 * var(--vw)), 24px) * var(--ts)) / 1 var(--round); letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The title is held to its tile's width as well (18% of it fits TRANSFERS whole): the tiles stop growing before the
+   type does, which cut it at 1920x1080 and on an iPad on its side. */
+.hub-tile { container-type: inline-size; }
+.hub-tile .ht-t { font-size: min(calc(clamp(15px, calc(1.9 * var(--vw)), 24px) * var(--ts)), 18cqi); }
 .hub-tile .ht-s {
   max-width: 100%; font: 400 calc(11px * var(--ts)) / 1.15 var(--round); letter-spacing: 0.4px; opacity: 0.92;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -6586,7 +6619,7 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 .t-season .hs-tier em { font-style: normal; font-size: 1.4em; color: #fff; }
 .t-season .hs-bar { display: block; width: 100%; height: 7px; background: rgba(0, 0, 0, 0.32); }
 .t-season .hs-bar u { display: block; height: 100%; background: var(--yellow); text-decoration: none; }
-.t-season.offer { padding-bottom: calc(clamp(6px, 1.5vmin, 16px) + 20px * var(--ts)); }
+.t-season.offer { padding-bottom: calc(clamp(6px, calc(1.5 * var(--vmin)), 16px) + 20px * var(--ts)); }
 .t-season .hs-pass {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 6px 3px;
   font: 400 calc(12px * var(--ts)) / 1 var(--round); font-style: normal; letter-spacing: 1.5px; text-align: center;
@@ -6621,7 +6654,7 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 .hub-daily .hd-bar i { display: block; height: 100%; background: var(--go); }
 .hub-daily .hd-coins { font: 400 calc(13px * var(--ts)) / 1 var(--round); font-style: normal; color: var(--yellow); }
 .hub-dl {
-  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 5; width: min(440px, 92vw); margin: 0; padding: 10px 12px; list-style: none;
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 5; width: min(440px, calc(92 * var(--vw))); margin: 0; padding: 10px 12px; list-style: none;
   display: grid; gap: 7px; color: var(--cream); background: rgba(38, 38, 46, 0.96); border-top: 3px solid var(--yellow); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3);
 }
 .hub-dl[hidden] { display: none; }
@@ -6634,7 +6667,7 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 .hub-dl li.done .dc-n { color: var(--go); }
 
 /* ---- EVENTS (ui/menus.ts events()) */
-.ev-panel { width: min(760px, 94vw); }
+.ev-panel { width: min(760px, calc(94 * var(--vw))); }
 .ev-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .ev-card {
   --c: var(--cream); --d: #b9b5aa;
@@ -6653,7 +6686,7 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 .ev-card.ev-blitz { --c: #8a5cf6; --d: #5b36b8; }
 .ev-card.ev-online { --c: var(--blue); --d: var(--blue-d); }
 .ev-card.locked { --c: #8f8c85; --d: #62605b; }
-@media (max-height: 450px) {
+@container app (max-height: 450px) {
   .ev-grid { gap: 10px; }
   .ev-card { padding: 9px 10px; }
   .ev-card .ev-ic .picon { width: 32px; height: 32px; }
@@ -6662,11 +6695,11 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 
 /* ---- sizes */
 /* Phones on their side, and short frames: the level's next unlock and the gift's word step aside. */
-@media (max-height: 520px) {
+@container app (max-height: 520px) {
   .hub-lv .hl-next { display: none; }
   .hub-lv .hl-txt { gap: 5px; }
 }
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .hub-acts .hg-w, .hub-noads .hn-p { display: none; }
   .hub-daily { grid-template-columns: auto minmax(0, 1fr) auto; }
   .hub-daily .hd-bar { display: none; }
@@ -6675,12 +6708,16 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
   .hub-lv { max-width: 190px; }
 }
 /* The smallest phones on their side (667 by 375): the hero's crests and the tiles' icons come down a step. */
-@media (max-height: 380px) {
+@container app (max-height: 380px) {
   .hub-tile .ht-ic .picon { width: calc(20px * var(--ts)); }
   .hh-side .crest-svg { width: calc(28px * var(--ts)); }
 }
+/* (667 wide: the club's name in the captain's tag a step smaller, so STONEHAVEN fits its column whole.) */
+@container app (max-width: 700px) {
+  .hub-captag > b { font-size: calc(13px * var(--ts)); }
+}
 /* Big screens (an iPad, a desktop): room for more air and bigger captions. */
-@media (min-height: 700px) and (min-width: 1000px) {
+@container app (min-height: 700px) and (min-width: 1000px) {
   .hub-tile .ht-s, .hh-sub, .hub-daily .hd-text { font-size: calc(15px * var(--ts)); }
   .hh-side small, .hh-meta { font-size: calc(13px * var(--ts)); }
   .hub-acts .btn, .hub-acts .coins.hub-coins, .hub-ico { height: calc(46px * var(--ts)); }
@@ -6689,34 +6726,34 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
   .hub-mini b { font-size: calc(18px * var(--ts)); }
   .hub-lv .hl-txt > b { font-size: calc(17px * var(--ts)); }
   /* (The hero and the tiles grow with the screen's height, not only its width.) */
-  .hh-title { font-size: calc(clamp(24px, 4.4vmin, 42px) * var(--ts)); }
-  .hh-side .crest-svg { width: calc(clamp(40px, 11vmin, 112px) * var(--ts)); }
-  .hh-side b { font-size: calc(clamp(20px, 4.4vmin, 44px) * var(--ts)); }
-  .hh-side small, .hh-meta { font-size: calc(clamp(13px, 2vmin, 18px) * var(--ts)); }
-  .hh-vs { font-size: calc(clamp(18px, 3.4vmin, 32px) * var(--ts)); padding: 8px 12px 6px; }
-  .hh-sub { font-size: calc(clamp(15px, 2.2vmin, 20px) * var(--ts)); }
-  .hh-big { font-size: calc(clamp(22px, 4.2vmin, 40px) * var(--ts)); }
-  .hh-play { max-width: 460px; min-height: calc(64px * var(--ts)); font-size: calc(clamp(22px, 4vmin, 36px) * var(--ts)); }
-  .hub-tile .ht-ic .picon { width: calc(clamp(36px, 8vmin, 72px) * var(--ts)); }
-  .hub-tile .ht-t { font-size: calc(clamp(20px, 3.6vmin, 34px) * var(--ts)); }
-  .hub-tile .ht-s { font-size: calc(clamp(14px, 2vmin, 18px) * var(--ts)); }
-  .t-season .hs-tier { font-size: calc(clamp(14px, 2.2vmin, 20px) * var(--ts)); }
+  .hh-title { font-size: calc(clamp(24px, calc(4.4 * var(--vmin)), 42px) * var(--ts)); }
+  .hh-side .crest-svg { width: calc(clamp(40px, calc(11 * var(--vmin)), 112px) * var(--ts)); }
+  .hh-side b { font-size: calc(clamp(20px, calc(4.4 * var(--vmin)), 44px) * var(--ts)); }
+  .hh-side small, .hh-meta { font-size: calc(clamp(13px, calc(2 * var(--vmin)), 18px) * var(--ts)); }
+  .hh-vs { font-size: calc(clamp(18px, calc(3.4 * var(--vmin)), 32px) * var(--ts)); padding: 8px 12px 6px; }
+  .hh-sub { font-size: calc(clamp(15px, calc(2.2 * var(--vmin)), 20px) * var(--ts)); }
+  .hh-big { font-size: calc(clamp(22px, calc(4.2 * var(--vmin)), 40px) * var(--ts)); }
+  .hh-play { max-width: 460px; min-height: calc(64px * var(--ts)); font-size: calc(clamp(22px, calc(4 * var(--vmin)), 36px) * var(--ts)); }
+  .hub-tile .ht-ic .picon { width: calc(clamp(36px, calc(8 * var(--vmin)), 72px) * var(--ts)); }
+  .hub-tile .ht-t { font-size: calc(clamp(20px, calc(3.6 * var(--vmin)), 34px) * var(--ts)); font-size: min(calc(clamp(20px, calc(3.6 * var(--vmin)), 34px) * var(--ts)), 18cqi); }
+  .hub-tile .ht-s { font-size: calc(clamp(14px, calc(2 * var(--vmin)), 18px) * var(--ts)); }
+  .t-season .hs-tier { font-size: calc(clamp(14px, calc(2.2 * var(--vmin)), 20px) * var(--ts)); }
   .t-season .hs-bar { height: 10px; }
-  .t-season .hs-pass { font-size: calc(clamp(14px, 2vmin, 18px) * var(--ts)); padding: 7px 8px 6px; }
-  .t-season.offer { padding-bottom: calc(clamp(6px, 1.5vmin, 16px) + 32px * var(--ts)); }
+  .t-season .hs-pass { font-size: calc(clamp(14px, calc(2 * var(--vmin)), 18px) * var(--ts)); padding: 7px 8px 6px; }
+  .t-season.offer { padding-bottom: calc(clamp(6px, calc(1.5 * var(--vmin)), 16px) + 32px * var(--ts)); }
   .hub-captag > b { font-size: calc(18px * var(--ts)); }
   .hub-captag .hc-meta { font-size: calc(15px * var(--ts)); }
   .hub-captag .hc-div { font-size: calc(13px * var(--ts)); }
 }
 /* Upright windows (the web on a phone held upright): one column that scrolls. */
-@media (max-aspect-ratio: 1/1) {
+@container app (max-aspect-ratio: 1/1) {
   .screen.hub-screen { overflow-y: auto; align-items: flex-start; }
   .hub, .hub.with-cap {
     height: auto; max-height: none; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto;
     grid-template-areas: "top" "cap" "body" "foot";
   }
   .hub-top { flex-wrap: wrap; }
-  .hub-cap { height: 30vh; }
+  .hub-cap { height: calc(30 * var(--vh)); }
   .hub-body { grid-template-columns: minmax(0, 1fr); }
   .hub-hero { min-height: 240px; }
   .hub-t2 { grid-template-rows: auto; }
@@ -6737,27 +6774,27 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
    pitch and the camera never read it. */
 :root:is(.ts-small, .ts-large) .panel > :not(.btn-row:last-child) { zoom: var(--ts); }
 :root:is(.ts-small, .ts-large) .menu-toast { font-size: calc(15px * var(--ts)); }
-:root:is(.ts-small, .ts-large) .scorebug { font-size: calc(clamp(16px, 1.8vw, 22px) * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-toast { font-size: calc(clamp(16px, 1.6vw, 20px) * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-hint { font-size: calc(clamp(16px, 1.5vw, 17px) * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-tip { font-size: calc(clamp(14px, 1.6vw, 18px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .scorebug { font-size: calc(clamp(16px, calc(1.8 * var(--vw)), 22px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-toast { font-size: calc(clamp(16px, calc(1.6 * var(--vw)), 20px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-hint { font-size: calc(clamp(16px, calc(1.5 * var(--vw)), 17px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .hud-tip { font-size: calc(clamp(14px, calc(1.6 * var(--vw)), 18px) * var(--ts)); }
 :root:is(.ts-small, .ts-large) .cm-tag { font-size: calc(16px * var(--ts)); }
-:root:is(.ts-small, .ts-large) .cm-text { font-size: calc(clamp(15px, 1.35vw, 18px) * var(--ts)); }
+:root:is(.ts-small, .ts-large) .cm-text { font-size: calc(clamp(15px, calc(1.35 * var(--vw)), 18px) * var(--ts)); }
 :root:is(.ts-small, .ts-large) .hud-chip { font-size: calc(16px * var(--ts)); }
 :root:is(.ts-small, .ts-large) .hud-replay b { font-size: calc(22px * var(--ts)); }
 :root:is(.ts-small, .ts-large) .hud-replay span { font-size: calc(16px * var(--ts)); }
 :root:is(.ts-small, .ts-large) .hud-timing em { font-size: calc(16px * var(--ts)); }
-@media (max-height: 450px) {
+@container app (max-height: 450px) {
   :root:is(.ts-small, .ts-large) .scorebug { font-size: calc(16px * var(--ts)); }
   :root:is(.ts-small, .ts-large) .hud-tip { font-size: calc(14px * var(--ts)); }
   :root:is(.ts-small, .ts-large) .cm-text { font-size: calc(14px * var(--ts)); }
 }
 /* (Before your club exists the hero has room: its shirt is the big picture.) */
-.hub-hero.create .hh-art .picon, .hub-hero.now .hh-art .picon { width: calc(clamp(40px, 13vmin, 110px) * var(--ts)); }
+.hub-hero.create .hh-art .picon, .hub-hero.now .hh-art .picon { width: calc(clamp(40px, calc(13 * var(--vmin)), 110px) * var(--ts)); }
 /* A BLOCKY CUP tie inside the season: the hero turns cup red. */
 .hub-hero.road.cup { background: linear-gradient(160deg, #f0604f 0%, #ec4a3e 35%, #a62b22 100%); }
 .hub-hero.road.cup .hh-meta { color: var(--ink); background: var(--yellow); }
-.hh-vs .picon { display: block; margin: 0 auto 3px; width: calc(clamp(18px, 4vmin, 36px) * var(--ts)); height: auto; }
+.hh-vs .picon { display: block; margin: 0 auto 3px; width: calc(clamp(18px, calc(4 * var(--vmin)), 36px) * var(--ts)); height: auto; }
 /* Settings: REMOVE ADS, first in GENERAL in the app, in the shop's red. */
 .toggles button.set-noads { border-color: var(--red-d); background: #ffece9; }
 .toggles button.set-noads > span { color: var(--red-d); }

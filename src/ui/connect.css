@@ -76,7 +76,7 @@
 }
 
 /* Landscape phones (667 x 375): the art steps aside so the panel fits with no scroll. */
-@media (max-height: 480px) {
+@container app (max-height: 480px) {
   .cn-panel {
     gap: 8px;
   }

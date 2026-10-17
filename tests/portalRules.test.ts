@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_KEYS, Input, bindKey, normalizeKeyMap, setBindings } from '../src/core/input';
 import { defaultOnboarding, straightToBasics } from '../src/core/onboarding';
-import { AD_AFTER_RESULT_MS, AD_FREE_MATCHES, PORTAL_HALF_GAP_MS, breakDue, halfBreakDue, playIsLive } from '../src/platform/ads';
+import { ADBLOCKER_NOTE, AD_AFTER_RESULT_MS, AD_FREE_MATCHES, PLAY_SETTLE_S, PORTAL_HALF_GAP_MS, breakDue, halfBreakDue, playIsHeld, playIsLive, playStep, type PlayState } from '../src/platform/ads';
 import { devPortal, inNativeApp } from '../src/platform/native';
 import { developerAboutHtml } from '../src/ui/developerAbout';
 import { NO_AD_TEXT, adIcon } from '../src/ui/pixelIcons';
@@ -89,17 +89,127 @@ describe('"gameplay started" means a ball is playable', () => {
   it('a match owes it at the kick-off and the second half; a pause, half time and full time take it back', () => {
     const main = source('src/main.ts');
     const match = between(main, 'async function startMatch(', '\nfunction tryResumeMatch(');
-    // Never sent as the session is made: the frame loop pays it (payPlay) once the sim is stepping.
+    // Never sent as the session is made: the frame loop pays it (payPlay) once the sim is stepping. The one start
+    // here is a resume straight back into live play.
     const starts = match.match(/ads\.gameplayStart\(\)/g) ?? [];
     expect(starts).toHaveLength(1);
-    expect(between(match, 's.onPause = () => {', 'const pauseMenu')).toContain('else ads.gameplayStart();');
+    const pause = between(match, 's.onPause = () => {', 'const pauseMenu');
+    expect(pause).toContain('if (owed || playIsHeld(s.match.phase, s.cutScene)) owePlay();');
+    expect(pause).toContain('ads.gameplayStart();');
     expect(match).toContain('owePlay();');
     expect(between(match, 's.onHalftime = () => {', 'const ht = ')).toContain('owePlay();');
     for (const stop of ['s.onPause = () => {', 's.onHalftime = () => {', 's.onFinish = (r) => {']) {
-      expect(between(match, stop, 'menus.')).toContain('ads.gameplayStop();');
+      expect(between(match, stop, 'menus.')).toContain('stopPlay();');
     }
-    expect(between(main, 'function frame(now: number): void {', 'requestAnimationFrame(frame);')).toContain('payPlay();');
-    expect(between(main, 'function endMatch(): void {', '\n}')).toContain('playOwed = false;');
+    // Every stop goes through stopPlay or the frame loop: only ever when a start is out.
+    expect(between(main, 'function stopPlay(): void {', '\n}')).toContain('if (play.out) ads.gameplayStop();');
+    expect(main.match(/ads\.gameplayStop\(\)/g)).toHaveLength(2);
+    expect(between(main, 'function frame(now: number): void {', 'requestAnimationFrame(frame);')).toContain('payPlay(dt);');
+    expect(between(main, 'function endMatch(): void {', '\n}')).toContain('stopPlay();');
+    // An online match goes by the same rule: owed at the start, never sent as the session is made.
+    expect(between(main, 'const s = new MatchSession(world, input, {', 'return s;')).toContain('owePlay();');
+  });
+});
+
+describe('"gameplay stopped" at a goal and at every cut scene, until play is live again (CrazyGames review)', () => {
+  type Frame = { phase: string; scene?: boolean; stepped?: boolean; held?: boolean };
+  /** Run frames at 60 fps through the rule main.ts runs every frame; returns what the portal heard, with frame numbers. */
+  function run(frames: Frame[], st: PlayState = { out: false, owed: true, liveS: -1 }): { said: string[]; at: number[]; st: PlayState } {
+    const said: string[] = [];
+    const at: number[] = [];
+    frames.forEach((f, i) => {
+      const s = playStep(st, { phase: f.phase, scene: !!f.scene, stepped: f.stepped ?? true, held: !!f.held, dt: 1 / 60 });
+      if (s) {
+        said.push(s);
+        at.push(i);
+      }
+    });
+    return { said, at, st };
+  }
+  const n = (k: number, f: Frame): Frame[] => Array.from({ length: k }, () => f);
+
+  it('a goal: one stop on the goal\'s first frame, nothing through the celebration and the replay, one start once the kick-off is live', () => {
+    const frames = [
+      ...n(20, { phase: 'kickoff' }), ...n(60, { phase: 'play' }),
+      // The goal: the celebration (the sim steps), the replay (it does not: a cut scene), the walk back.
+      ...n(120, { phase: 'goal' }), ...n(300, { phase: 'goal', scene: true, stepped: false }), ...n(30, { phase: 'goal' }),
+      ...n(60, { phase: 'kickoff' }), ...n(60, { phase: 'play' }),
+    ];
+    const { said, at } = run(frames);
+    expect(said).toEqual(['start', 'stop', 'start']);
+    expect(at[1]).toBe(80);
+    // Back on at the kick-off, once it has held for PLAY_SETTLE_S.
+    expect(at[2]).toBeGreaterThanOrEqual(530);
+    expect(at[2]).toBeLessThanOrEqual(530 + Math.ceil(PLAY_SETTLE_S * 60) + 1);
+  });
+
+  it('a substitution\'s touchline shot right after the kick-off: no start in between, so never a start and a stop back to back', () => {
+    const frames = [
+      ...n(60, { phase: 'play' }), ...n(200, { phase: 'goal' }),
+      ...n(2, { phase: 'kickoff' }), ...n(240, { phase: 'kickoff', scene: true, stepped: false }), ...n(60, { phase: 'kickoff' }),
+    ];
+    expect(run(frames).said).toEqual(['start', 'stop', 'start']);
+  });
+
+  it('an incident (offside, a foul, a penalty awarded): stopped for its decision, recap and the referee\'s close-up, started at the restart', () => {
+    const frames = [
+      ...n(60, { phase: 'play' }), ...n(90, { phase: 'out', scene: true, stepped: false }), ...n(4, { phase: 'restart' }),
+      ...n(108, { phase: 'restart', scene: true }), ...n(60, { phase: 'restart' }), ...n(60, { phase: 'play' }),
+    ];
+    expect(run(frames).said).toEqual(['start', 'stop', 'start']);
+  });
+
+  it('half time and full time stop it at the whistle; the half-time screen and the result add no second stop', () => {
+    const frames = [...n(60, { phase: 'play' }), ...n(120, { phase: 'halftime' }), ...n(30, { phase: 'halftime', held: true })];
+    const { said, st } = run(frames);
+    expect(said).toEqual(['start', 'stop']);
+    // (main.ts onHalftime then calls stopPlay, which sends nothing: no start is out.)
+    expect(st.out).toBe(false);
+  });
+
+  it('a pause is left to onPause, and a hit-stop or a frame the sim does not step is not a stoppage', () => {
+    const frames = [...n(60, { phase: 'play' }), ...n(30, { phase: 'play', held: true }), ...n(2, { phase: 'play', stepped: false }), ...n(60, { phase: 'play' })];
+    expect(run(frames).said).toEqual(['start']);
+    // The fly-in and a brief (no step): owed, never paid.
+    expect(run(n(200, { phase: 'kickoff', stepped: false })).said).toEqual([]);
+    expect(run(n(200, { phase: 'kickoff', scene: true, stepped: false })).said).toEqual([]);
+  });
+
+  it('starts and stops strictly alternate, whatever the match does frame to frame', () => {
+    let seed = 7;
+    const rnd = (): number => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const phases = ['kickoff', 'play', 'out', 'restart', 'goal', 'halftime', 'fulltime', 'shootout'];
+    const frames: Frame[] = [];
+    for (let i = 0; i < 4000; i++) {
+      const k = 1 + Math.floor(rnd() * 40);
+      const f = { phase: phases[Math.floor(rnd() * phases.length)], scene: rnd() < 0.2, stepped: rnd() < 0.8, held: rnd() < 0.05 };
+      for (let j = 0; j < k; j++) frames.push(f);
+    }
+    const { said } = run(frames);
+    expect(said.length).toBeGreaterThan(10);
+    said.forEach((s, i) => expect(s).toBe(i % 2 === 0 ? 'start' : 'stop'));
+  });
+
+  it('what counts: the goal phase, half and full time, and any cut scene; never a pause by itself', () => {
+    for (const phase of ['goal', 'halftime', 'fulltime']) expect(playIsHeld(phase, false)).toBe(true);
+    for (const phase of ['kickoff', 'play', 'out', 'restart', 'shootout']) {
+      expect(playIsHeld(phase, false)).toBe(false);
+      expect(playIsHeld(phase, true)).toBe(true);
+      expect(playIsLive(phase, true, false, true)).toBe(false);
+    }
+  });
+
+  it('call sites: the session says when a cut scene is on, and the frame loop and the dev step both run the rule', () => {
+    const session = source('src/game/matchSession.ts');
+    const cut = between(session, 'get cutScene(): boolean {', '\n  }');
+    for (const part of ['this.introLeft > 0', '!!this.replay', 'this.incidents().waiting(this.match)', '!!this.subCut', '!!this.interlude',
+      '!this.motmDone', "this.cam.mode === 'card'", "this.cam.mode === 'scene'"]) expect(cut).toContain(part);
+    const main = source('src/main.ts');
+    const pay = between(main, 'function payPlay(dt: number): void {', '\n}');
+    expect(pay).toContain('playStep(play, { phase: s.match.phase, scene: s.cutScene, stepped, held: s.paused || menus.open, dt });');
+    expect(pay).toContain("if (said === 'stop') ads.gameplayStop();");
+    expect(pay).toContain("else if (said === 'start') ads.gameplayStart();");
+    expect(between(main, 'step(n: number, dt = 1 / 60) {', 'world.render();')).toContain('payPlay(dt);');
   });
 });
 
@@ -264,12 +374,12 @@ describe('a rewarded offer reads the same everywhere', () => {
     expect(shop).toContain('`WATCH AN AD${sep()}${left} LEFT TODAY`');
     expect(shop).toContain('<span>NEW (AD)</span>');
     expect(shop).toContain("const adOk = ads.rewardedAvailable && adsLeft(save, 'deal', localDay()) > 0;");
-    expect(shop).toContain("{ label: ads.adBlocked ? 'BLOCKED' : 'NO AD YET', note: ads.rewardedNote || 'NO AD RIGHT NOW' }");
+    expect(shop).toContain("{ label: ads.adBlocked ? `<span class=\"ad-blocked\">${ADBLOCKER_NOTE}</span>` : 'NO AD YET', note: ads.rewardedNote || 'NO AD RIGHT NOW' }");
     expect(shop.match(/NO_AD_TEXT/g)!.length).toBeGreaterThanOrEqual(5);
     // A stadium build's matchday (ui/club.ts).
     expect(club).toContain('${adIcon()}WATCH AD</button>');
     expect(club).toContain('AD TAKES 1 MATCHDAY OFF');
-    expect(club).toContain("disabled>${adIcon()}${buildAdBusy ? 'ONE MOMENT' : ads.adBlocked ? 'ADS BLOCKED' : 'NO AD NOW'}</button>");
+    expect(club).toContain("disabled>${adIcon()}${buildAdBusy ? 'ONE MOMENT' : ads.adBlocked ? `<span class=\"ad-blocked\">${ADBLOCKER_NOTE}</span>` : 'NO AD NOW'}</button>");
     expect(between(club, 'buildad: async () => {', 'skipBuildMatchday(st);')).toContain('if (buildAdBusy || !st.ground.building) return;');
     // No offer is drawn from "this build has ads" alone any more: each asks whether one can be shown.
     for (const src of [menus, shop, club]) expect(src).not.toMatch(/pixelIcon\('film', '#26262e', 2, 'inl'\)/);
@@ -290,6 +400,18 @@ describe('a rewarded offer reads the same everywhere', () => {
     expect(ftUi).toContain('if (adBusy || dbl.disabled) return;');
     // The replay: the day's ad is only used up by an ad that played.
     expect(main).toContain("const ok = (await ads.rewarded()) && useAd(save, 'replay', localDay());");
+  });
+
+  it('an ad blocker is named as CrazyGames asked, ADBLOCKER DETECTED, on every offer (never ADS BLOCKED)', () => {
+    expect(ADBLOCKER_NOTE).toBe('ADBLOCKER DETECTED');
+    const files = ['src/main.ts', 'src/platform/ads.ts', ...['shop', 'menus', 'club', 'glory', 'gemUi', 'career', 'cup'].map((f) => `src/ui/${f}.ts`)];
+    for (const f of files) expect(source(f), f).not.toMatch(/['"`](ADS )?BLOCKED['"`]/);
+    // The gift's 2X, the replay offer (drawn, and on a tap) and full time's bonus: all four say it.
+    expect(source('src/main.ts').match(/ads\.adBlocked[^\n]*\? ADBLOCKER_NOTE/g)).toHaveLength(4);
+    expect(source('src/platform/ads.ts')).toContain("this.blocked ? ADBLOCKER_NOTE : 'NO AD RIGHT NOW'");
+    // The two narrow buttons let the longer words wrap to two lines, a step smaller, rather than overflow.
+    expect(source('src/ui/shop.css')).toContain('.sh-watch .ad-blocked { white-space: normal;');
+    expect(source('src/ui/gems.css')).toContain('.sd-now .btn.sd-ad .ad-blocked { white-space: normal;');
   });
 });
 
@@ -372,10 +494,10 @@ describe('a rewarded offer on a screen: one request a tap, nothing for an ad tha
 
   it('the daily gift: with a blocker on, the ad way shows switched off and says so; found on a tap, it switches off then', async () => {
     const { menus, mounted } = await screen();
-    menus.gift(100, 1, false, { claim: async () => true, back: vi.fn(), adNote: () => 'ADS BLOCKED' });
+    menus.gift(100, 1, false, { claim: async () => true, back: vi.fn(), adNote: () => 'ADBLOCKER DETECTED' });
     let d = mounted();
     expect(d.querySelector('[data-a=double]')).toBeNull();
-    expect(d.innerHTML).toMatch(/<button class="btn btn-white" disabled>.*ADS BLOCKED<\/button>/);
+    expect(d.innerHTML).toMatch(/<button class="btn btn-white" disabled>.*ADBLOCKER DETECTED<\/button>/);
     expect(d.querySelector('[data-a=claim]')).not.toBeNull();
     // No ads in this build at all (the web game): no ad button of any kind.
     menus.gift(100, 1, false, { claim: async () => true, back: vi.fn() });
@@ -384,13 +506,13 @@ describe('a rewarded offer on a screen: one request a tap, nothing for an ad tha
     expect(d.innerHTML).not.toContain('picon');
     // The blocker turns up on the first request.
     let blocked = false;
-    menus.gift(100, 1, true, { claim: async (double) => { if (double) blocked = true; return !double; }, back: vi.fn(), adNote: () => (blocked ? 'ADS BLOCKED' : '') });
+    menus.gift(100, 1, true, { claim: async (double) => { if (double) blocked = true; return !double; }, back: vi.fn(), adNote: () => (blocked ? 'ADBLOCKER DETECTED' : '') });
     d = mounted();
     const dbl = d.querySelector('[data-a=double]')!;
     dbl.click();
     await settle();
     expect(dbl.disabled).toBe(true);
-    expect(dbl.innerHTML).toContain('ADS BLOCKED');
+    expect(dbl.innerHTML).toContain('ADBLOCKER DETECTED');
     expect(d.querySelector('[data-a=claim]')!.disabled).toBe(false);
   });
 
@@ -420,9 +542,9 @@ describe('a rewarded offer on a screen: one request a tap, nothing for an ad tha
     // (Played through: main.ts restarts the match; nothing more is said here.)
     expect(toasts()).toEqual(['NO AD RIGHT NOW, TRY LATER']);
     // With a blocker on and today's ad replay unused: switched off, with the reason.
-    menus.replayOffer({ what: 'CUP FINAL', score: '1:2', price: 30, have: 50, canAd: false, adNote: 'ADS BLOCKED' }, { gems: vi.fn(), ad, no });
+    menus.replayOffer({ what: 'CUP FINAL', score: '1:2', price: 30, have: 50, canAd: false, adNote: 'ADBLOCKER DETECTED' }, { gems: vi.fn(), ad, no });
     expect(mounted().querySelector('[data-a=ad]')).toBeNull();
-    expect(mounted().innerHTML).toMatch(/<button class="btn btn-yellow" disabled>.*ADS BLOCKED<\/button>/);
+    expect(mounted().innerHTML).toMatch(/<button class="btn btn-yellow" disabled>.*ADBLOCKER DETECTED<\/button>/);
   });
 });
 
@@ -506,6 +628,16 @@ describe('a portal build keeps the player in the game', () => {
     const cloud = source('src/platform/cloud.ts');
     expect(cloud.match(/import\('\.\/nativeAuth'\)/g)).toHaveLength(2);
     expect(between(cloud, 'function nativeBridge()', "return import('./nativeAuth');")).toContain("if (import.meta.env.VITE_PORTAL && import.meta.env.VITE_PORTAL !== 'none') return Promise.reject(");
+  });
+
+  it('asks CrazyGames for no user token (its review): none in the source, none in the built bundle', () => {
+    type Fs = { readdirSync(p: string, o: { recursive: true }): string[]; existsSync(p: string): boolean; readFileSync(p: string, e: 'utf8'): string };
+    const fs = (process as unknown as { getBuiltinModule(id: 'node:fs'): Fs }).getBuiltinModule('node:fs');
+    const hits = (dir: string, ext: RegExp): string[] => fs.readdirSync(dir, { recursive: true })
+      .filter((f) => ext.test(f) && fs.readFileSync(`${dir}/${f}`, 'utf8').includes('getUserToken')).map((f) => `${dir}/${f}`);
+    expect(hits('src', /\.ts$/)).toEqual([]);
+    // The zip CrazyGames gets (npm run build:crazygames): checked whenever it has been built.
+    if (fs.existsSync('dist-crazygames')) expect(hits('dist-crazygames', /\.(js|mjs|html)$/)).toEqual([]);
   });
 });
 

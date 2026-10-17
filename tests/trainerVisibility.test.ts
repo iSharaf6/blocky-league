@@ -7,7 +7,7 @@ import { PITCH_Y } from '../src/render/stadium';
 import { DT } from '../src/sim/constants';
 import { EMPTY_PAD, Match } from '../src/sim/match';
 import { applyScenario } from '../src/sim/scenario';
-import { Lesson, Trainer, lessonCue } from '../src/ui/trainer';
+import { BAR_HOLD_MS, Lesson, Trainer, barSituation, controlsCue, lessonCue } from '../src/ui/trainer';
 
 // The cards' words come from the cue builders (the copy can change; what is checked is that the right card shows).
 const CROSS_CUE = lessonCue(BASICS[2].lesson[0], 'touch');
@@ -133,14 +133,14 @@ function cross(p: ReturnType<typeof setup>): void {
   writeFrame(p.m, p.frame, p.m.clock);
 }
 
-function expectInside(card: ElementDouble, viewport: Viewport): void {
-  const position = /^translate\((-?\d+(?:\.\d+)?)px,(-?\d+(?:\.\d+)?)px\)$/.exec(card.style.transform);
-  expect(position).not.toBeNull();
-  const x = Number(position![1]), y = Number(position![2]);
-  expect(x).toBeGreaterThanOrEqual(0);
-  expect(y).toBeGreaterThanOrEqual(0);
-  expect(x + card.offsetWidth).toBeLessThanOrEqual(viewport.width);
-  expect(y + card.offsetHeight).toBeLessThanOrEqual(viewport.height);
+/**
+ * The card is never placed from code: it is fixed at the bottom centre by coach.css (CrazyGames' review: the text
+ * over the player "moves so fast and changes frequently"). No inline position, no pointer at a player.
+ */
+function expectFixed(card: ElementDouble): void {
+  expect(card.style.transform).toBe('');
+  expect(card.classList.contains('docked')).toBe(false);
+  expect(card.classList.contains('below')).toBe(false);
 }
 
 describe('tutorial instructions for an offscreen receiver', () => {
@@ -164,63 +164,118 @@ describe('tutorial instructions for an offscreen receiver', () => {
       p.trainer.update(p.m, p.frame, camera, head, 'touch', controls);
       expect(p.root.hidden).toBe(false);
       expect(p.card.hidden).toBe(false);
-      expect(p.card.style.visibility).toBe('visible');
       expect(p.root.querySelector('.trainer-title').textContent).toBe(FINISH_CUE.title);
       expect(p.root.querySelector('.trainer-actions').textContent).toContain(FINISH_CUE.actions[0][1]);
-      expect(p.card.classList.contains('docked')).toBe(true);
-      expectInside(p.card, viewport);
+      expect(p.card.classList.contains('lesson')).toBe(true);
+      expectFixed(p.card);
     }
     expect(p.m.clock).toBe(clock);
     expect(p.lesson.hold(p.m, { ...controls, shoot: true })).toBe(false);
   });
+});
 
-  it('returns to the player anchor when the receiver comes back into view', () => {
-    const viewport = viewports[0];
-    const p = setup();
-    cross(p);
-    const offscreen = cameraFor(p.frame, p.m.active, viewport, viewport.width / 2, 40);
-    p.trainer.update(p.m, p.frame, offscreen, head, 'touch', controls);
-    expect(p.card.classList.contains('docked')).toBe(true);
-    const onscreen = cameraFor(p.frame, p.m.active, viewport, viewport.width / 2, viewport.height / 2);
-    p.trainer.update(p.m, p.frame, onscreen, head, 'touch', controls);
-    expect(p.root.hidden).toBe(false);
-    expect(p.card.classList.contains('docked')).toBe(false);
-    expect(p.root.querySelector('.trainer-title').textContent).toBe(FINISH_CUE.title);
-    expectInside(p.card, viewport);
-  });
-
-  it('continues hiding ordinary match guidance for an offscreen player', () => {
-    const viewport = viewports[0];
+describe('the controls bar: fixed at the bottom, steady, every key with its word (CrazyGames review)', () => {
+  /** The bar in a match (no lesson), keys on the keyboard, with the clock in the test's hands. */
+  function bar() {
     const p = setup();
     Trainer.lesson = null;
-    const onscreen = cameraFor(p.frame, p.m.active, viewport, viewport.width / 2, viewport.height / 2);
-    p.trainer.update(p.m, p.frame, onscreen, head, 'touch', controls);
-    expect(p.root.hidden).toBe(false);
-    const offscreen = cameraFor(p.frame, p.m.active, viewport, viewport.width / 2, 40);
-    p.trainer.update(p.m, p.frame, offscreen, head, 'touch', controls);
-    expect(p.root.hidden).toBe(true);
-    expect(p.trainer.waitingFor).toBeNull();
-  });
-
-  it('rides the player on device pixels and holds still through sub-pixel drift (no flicker between two pixels)', () => {
-    const viewport = viewports[0];
-    (window as unknown as { devicePixelRatio: number }).devicePixelRatio = 2;
-    const p = setup();
-    Trainer.lesson = null;
-    const at = (x: number) => {
-      p.trainer.update(p.m, p.frame, cameraFor(p.frame, p.m.active, viewport, x, viewport.height / 2), head, 'touch', controls);
-      return p.card.style.transform;
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const viewport = viewports[2];
+    const camera = cameraFor(p.frame, p.m.active, viewport, viewport.width / 2, viewport.height / 2);
+    const words = () => p.root.querySelector('.trainer-actions').textContent;
+    const tick = (ms = 1000 / 60, device: 'keyboard' | 'touch' = 'keyboard') => {
+      now += ms;
+      p.trainer.update(p.m, p.frame, camera, head, device, controls);
     };
-    const first = at(200);
-    const [, x0] = /^translate\((-?[\d.]+)px,/.exec(first)!.map(Number);
-    // Half a CSS px is one device px at 2x: every spot is on that grid.
-    expect((x0 * 2) % 1).toBe(0);
-    // A player drifting by less than a device pixel either way: the card does not move at all.
-    for (const dx of [0.1, 0.3, -0.2, 0.25, -0.3]) expect(at(200 + dx)).toBe(first);
-    // A real move: it follows, still on the grid.
-    const moved = at(203.3);
-    const [, x1] = /^translate\((-?[\d.]+)px,/.exec(moved)!.map(Number);
-    expect(x1).not.toBe(x0);
-    expect((x1 * 2) % 1).toBe(0);
+    const opponent = p.m.players.findIndex((pl) => pl.side !== p.m.cfg.humanSide);
+    const mate = p.m.players.findIndex((pl) => pl.side === p.m.cfg.humanSide && pl.idx !== p.m.active);
+    return { ...p, words, tick, opponent, mate, camera };
+  }
+  afterEach(() => vi.restoreAllMocks());
+
+  it('says what he can do with the ball, and without it, in words: PASS SHOOT THROUGH SKILL, SWITCH TACKLE PRESS', () => {
+    const p = bar();
+    p.m.ball.owner = p.m.active;
+    p.m.ball.held = false;
+    expect(barSituation(p.m)).toBe('ball');
+    const on = controlsCue(p.m, 'keyboard');
+    expect(on.actions.map(([, w]) => w)).toEqual(['PASS', 'SHOOT', 'THROUGH', 'SKILL']);
+    expect(on.actions[0][0]).toBe('SPACE');
+    for (const [k] of on.actions) expect(k).not.toBe('');
+    p.m.ball.owner = p.opponent;
+    expect(barSituation(p.m)).toBe('off');
+    expect(controlsCue(p.m, 'keyboard').actions.map(([, w]) => w)).toEqual(['SWITCH', 'TACKLE', 'PRESS']);
+    p.m.ball.owner = p.mate;
+    expect(barSituation(p.m)).toBe('mates');
+    expect(controlsCue(p.m, 'keyboard').actions.map(([, w]) => w)).toEqual(['SPRINT', 'SWITCH']);
+    // (Upper case, no separators in the words.)
+    for (const sit of [p.m.active, p.opponent, p.mate]) {
+      p.m.ball.owner = sit;
+      for (const [, w] of controlsCue(p.m, 'keyboard').actions) expect(w).toMatch(/^[A-Z ]+$/);
+    }
+  });
+
+  it('never placed over the player: shown wherever he is on screen, with no title, and no words over anyone', () => {
+    const p = bar();
+    p.m.ball.owner = p.m.active;
+    for (const viewport of viewports) {
+      window.innerWidth = viewport.width;
+      window.innerHeight = viewport.height;
+      for (const [x, y] of [[viewport.width / 2, viewport.height / 2], [viewport.width / 2, 40], [-40, viewport.height / 2]]) {
+        p.trainer.update(p.m, p.frame, cameraFor(p.frame, p.m.active, viewport, x, y), head, 'keyboard', controls);
+        expect(p.root.hidden).toBe(false);
+        expect(p.card.hidden).toBe(false);
+        expect(p.card.classList.contains('bar')).toBe(true);
+        expectFixed(p.card);
+        expect(p.words()).toContain('PASS');
+      }
+    }
+    // The pass receiver's tag (a key and his number over him) is gone: only the lane's line is left.
+    expect((p.trainer.root as unknown as ElementDouble).innerHTML).not.toContain('trainer-recipient');
+  });
+
+  it('changes only once a new situation has held 0.6 s: a ball won and lost again at once does not flicker it', () => {
+    const p = bar();
+    p.m.ball.owner = p.m.active;
+    p.tick();
+    expect(p.words()).toContain('SHOOT');
+    // Lost and won back inside the hold, again and again: the bar does not move.
+    for (let i = 0; i < 10; i++) {
+      p.m.ball.owner = p.opponent;
+      for (let f = 0; f < 20; f++) p.tick();
+      expect(p.words()).toContain('SHOOT');
+      p.m.ball.owner = p.m.active;
+      p.tick();
+      expect(p.words()).toContain('SHOOT');
+    }
+    // Lost for good: the bar holds through the first 0.6 s, then says what he can do without it.
+    p.m.ball.owner = p.opponent;
+    p.tick();
+    p.tick(BAR_HOLD_MS - 50);
+    expect(p.words()).toContain('SHOOT');
+    p.tick(60);
+    expect(p.words()).toContain('TACKLE');
+    expect(p.words()).not.toContain('SHOOT');
+    expect(BAR_HOLD_MS).toBeGreaterThanOrEqual(600);
+  });
+
+  it('back in play after a stoppage it shows the situation as it is then, at once', () => {
+    const p = bar();
+    p.m.ball.owner = p.m.active;
+    p.tick();
+    p.trainer.hide();
+    p.m.ball.owner = p.opponent;
+    p.tick();
+    expect(p.words()).toContain('TACKLE');
+  });
+
+  it('on touch the bar is off (the buttons wear their own words); a lesson still shows there', () => {
+    const p = bar();
+    p.m.ball.owner = p.m.active;
+    p.tick(16, 'touch');
+    expect(p.card.hidden).toBe(true);
+    p.tick(16, 'keyboard');
+    expect(p.card.hidden).toBe(false);
   });
 });

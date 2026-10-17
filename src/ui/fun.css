@@ -291,12 +291,12 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
-  max-width: 92vw;
+  max-width: calc(92 * var(--vw));
 }
 .bn-tags .gt {
   display: block;
   padding: 6px 10px 5px;
-  font: 700 clamp(14px, 1.8vw, 22px) / 1 var(--px);
+  font: 700 clamp(14px, calc(1.8 * var(--vw)), 22px) / 1 var(--px);
   font-style: normal;
   letter-spacing: 1px;
   color: var(--ink);
@@ -306,7 +306,7 @@
 }
 .bn-tags .gt.big {
   padding: 7px 12px 6px;
-  font-size: clamp(18px, 2.4vw, 30px);
+  font-size: clamp(18px, calc(2.4 * var(--vw)), 30px);
   background: var(--yellow);
   box-shadow: 0 5px 0 var(--yellow-d), 0 9px 0 rgba(0, 0, 0, 0.25);
 }

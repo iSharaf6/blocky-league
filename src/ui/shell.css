@@ -15,7 +15,7 @@
   gap: 8px;
   overflow: hidden;
   /* A fixed height, not a max: the body divides it, and only panes scroll. */
-  height: min(720px, calc(100dvh - 32px));
+  height: min(720px, calc(calc(100 * var(--dvh)) - 32px));
   max-height: none;
 }
 
@@ -148,7 +148,7 @@
 
 /* ----- short screens (landscape phones, portal frames): full-bleed, compact ----- */
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .shell .mc-wrap,
   .panel-wrap.shell {
     padding: 0;
@@ -161,12 +161,12 @@
   .panel.shell {
     width: 100%;
     max-width: none;
-    height: 100vh;
-    height: 100dvh;
+    height: calc(100 * var(--vh));
+    height: calc(100 * var(--dvh));
     border: 0;
     box-shadow: none;
     gap: 6px;
-    padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    padding: max(6px, var(--sa-top)) max(10px, var(--sa-right)) max(6px, var(--sa-bottom)) max(10px, var(--sa-left));
   }
 
   .shell .mc-top,
@@ -233,7 +233,7 @@
   padding: 7px 14px 6px;
 }
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .shell .mc-toast {
     font-size: 13px;
     padding: 6px 12px 5px;
@@ -257,3 +257,40 @@
 .drag-src { opacity: 0.35; }
 [data-drag].drop-ok { outline: 3px dashed var(--yellow); outline-offset: 2px; }
 [data-drag].drop-hover { outline: 4px solid var(--yellow); outline-offset: 2px; }
+
+/* ----- the fit box (src/ui/fitBox.ts, docs/UX.md section 10) -----
+   A frame outside the envelope (upright, or under 667 by 375) lays each menu screen out at a landscape design box and
+   scales it to fit, centred; the stadium shows around it. The screen is its own `app` container there, so every
+   `@container app` rule inside it sees the box, and its viewport units and notch insets are the box's. */
+#ui.fit > .screen {
+  container: app / size;
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  width: var(--fit-w);
+  height: var(--fit-h);
+  transform: translate(-50%, -50%) scale(var(--fit-s));
+  --vw: calc(var(--fit-w) / 100);
+  --vh: calc(var(--fit-h) / 100);
+  --dvh: calc(var(--fit-h) / 100);
+  --svh: calc(var(--fit-h) / 100);
+  --vmin: var(--fit-vmin);
+  --vmax: var(--fit-vmax);
+  /* The frame's notch, in box pixels, only where the box reaches the frame's edge (not upright: the box is mid frame). */
+  --sa-top: calc(env(safe-area-inset-top, 0px) * var(--fit-edge) / var(--fit-s));
+  --sa-right: calc(env(safe-area-inset-right, 0px) * var(--fit-edge) / var(--fit-s));
+  --sa-bottom: calc(env(safe-area-inset-bottom, 0px) * var(--fit-edge) / var(--fit-s));
+  --sa-left: calc(env(safe-area-inset-left, 0px) * var(--fit-edge) / var(--fit-s));
+}
+
+/* Rules on the screen element itself still see the window (an element cannot query itself): the hub's upright path
+   (one scrolling column) must not apply to a box that is always landscape. */
+#ui.fit > .screen.hub-screen {
+  overflow: hidden;
+  align-items: stretch;
+}
+
+/* Under a box narrower than the frame, the stadium is dimmed a touch so the box reads as the screen. */
+#ui.fit:has(> .screen) {
+  background: rgba(38, 38, 46, 0.28);
+}

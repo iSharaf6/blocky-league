@@ -33,6 +33,8 @@ import type { ScenarioOutcome } from '../sim/scenario';
 import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef, type ScenarioSpec } from '../sim/types';
 import { suggestSubs, type SubPlan } from '../meta/squad';
 import { bindDragSwap } from './dragSwap';
+import { installFitBox } from './fitBox';
+import { installDragScroll } from './dragScroll';
 import { developerAboutHtml } from './developerAbout';
 // (Type only: ui/comeback.ts draws the come-back cards and main.ts hands it over, so nothing of it loads with this file.)
 import type { ComebackUi } from './comeback';
@@ -467,6 +469,10 @@ export class Menus {
 
   constructor() {
     this.root = document.getElementById('ui')!;
+    // Every menu screen fully visible on every frame: upright or small frames lay it out at a design box, scaled.
+    installFitBox(this.root);
+    // Every strip or list that holds more than fits moves under a finger and a mouse drag.
+    installDragScroll(this.root);
   }
 
   private mount(html: string, cls = ''): HTMLDivElement {
@@ -1536,7 +1542,7 @@ export class Menus {
     m: Match, kits: [Kit, Kit], humanSide: number, reward: { coins: number; label: string; adBonus?: number }, canDouble: boolean,
     h: {
       double: () => Promise<boolean>; next: () => void; nextLabel?: string; rematch?: () => void;
-      /** Why no rewarded ad can be offered right now ('' = one can, or there is nothing to say): ADS BLOCKED. */
+      /** Why no rewarded ad can be offered right now ('' = one can, or there is nothing to say): ADBLOCKER DETECTED. */
       adNote?: () => string;
     },
     ratings?: { idx: number; name: string; side: number; rating: number; goals: number; assists: number }[],
@@ -2590,7 +2596,7 @@ export class Menus {
     amount: number, streak: number, canDouble: boolean,
     /**
      * `claim(true)` asks for the rewarded ad first and resolves false, with NOTHING claimed, when it did not play.
-     * `adNote`: why no ad can be offered right now ('' = one can, or there is nothing to say): ADS BLOCKED.
+     * `adNote`: why no ad can be offered right now ('' = one can, or there is nothing to say): ADBLOCKER DETECTED.
      */
     h: { claim: (double: boolean) => Promise<boolean>; back: () => void; adNote?: () => string },
     cal?: readonly { coins: number; gems: number; tokens: number }[],
@@ -2663,7 +2669,7 @@ export class Menus {
    * ads; NO THANKS takes the result. Short of gems it says so (and GET GEMS goes to the store, in the app).
    */
   replayOffer(
-    /** `adNote`: an ad would be offered here but none can be shown, and why (ADS BLOCKED): the offer shows switched off. */
+    /** `adNote`: an ad would be offered here but none can be shown, and why (ADBLOCKER DETECTED): the offer shows switched off. */
     o: { what: string; score: string; price: number; have: number; canAd: boolean; adNote?: string },
     h: { gems: () => void; ad?: () => Promise<boolean>; no: () => void; getGems?: () => void; adNote?: () => string },
   ): void {

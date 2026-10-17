@@ -9,7 +9,7 @@
   opacity: 0;
   transform: translate(-50%, -100%);
   pointer-events: none;
-  font: 700 clamp(15px, 1.5vw, 20px) / 1 var(--px);
+  font: 700 clamp(15px, calc(1.5 * var(--vw)), 20px) / 1 var(--px);
   letter-spacing: 1px;
   color: var(--cream);
   text-shadow:
@@ -18,14 +18,14 @@
 }
 .act-pop.on { opacity: 1; }
 .act-pop[data-cue='won'] {
-  font-size: clamp(20px, 2.2vw, 30px);
+  font-size: clamp(20px, calc(2.2 * var(--vw)), 30px);
   color: #6dff7e;
 }
 .act-pop[data-cue='behind'] { color: #ffd23e; }
 /* A special strike's name (KNUCKLEBALL, CURLER, AFTERTOUCH): as big as TACKLE!, in the colour of its ball trail
    (render/juice.ts TRAIL_LOOK: amber for the knuckleball, gold for a bent one). */
 .act-pop[data-cue='knuckle'],
-.act-pop[data-cue='curler'] { font-size: clamp(20px, 2.2vw, 30px); }
+.act-pop[data-cue='curler'] { font-size: clamp(20px, calc(2.2 * var(--vw)), 30px); }
 .act-pop[data-cue='knuckle'] { color: #ff9a3d; }
 .act-pop[data-cue='curler'],
 .act-pop[data-cue='aftertouch'] { color: #ffd84a; }
@@ -39,7 +39,7 @@
   74% { opacity: 1; transform: translate(-50%, -100%) translateY(-5px); }
   100% { opacity: 0; transform: translate(-50%, -100%) translateY(-14px); }
 }
-@media (max-height: 480px) {
+@container app (max-height: 480px) {
   .act-pop { font-size: 15px; }
   .act-pop[data-cue='won'],
   .act-pop[data-cue='knuckle'],

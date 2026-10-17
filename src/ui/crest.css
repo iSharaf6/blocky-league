@@ -11,7 +11,7 @@
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
   align-self: stretch;
   justify-self: stretch;
-  gap: clamp(6px, 2vw, 16px);
+  gap: clamp(6px, calc(2 * var(--vw)), 16px);
   min-width: 0;
   min-height: 0;
 }
@@ -163,13 +163,13 @@
 
 .mc-suggest[hidden] { display: none; }
 
-@media (max-width: 720px) and (orientation: landscape) {
+@container app (max-width: 720px) and (orientation: landscape) {
   .crx-pick { min-height: 50px; }
   .crx-pick .crest-svg { height: 38px; }
   .crx-tabs button,
   .crx-cols button { font-size: 12px; }
 }
 
-@media (orientation: portrait) and (max-width: 720px) {
+@container app (orientation: portrait) and (max-width: 720px) {
   .crx-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }

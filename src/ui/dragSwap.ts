@@ -10,6 +10,8 @@
  * the pitch) or a short hold starts the drag. Elsewhere any move past a few pixels starts it.
  */
 
+import { layoutScale } from './fitBox';
+
 export interface DragSwapOptions {
   /** The draggable items, which are also the drop targets (default `[data-drag]`). */
   item?: string;
@@ -45,6 +47,8 @@ interface Press {
   /** Where the press sat inside the item (the ghost keeps that grip). */
   gx: number;
   gy: number;
+  /** Screen pixels per layout pixel of the item (the fit box scales menu screens). */
+  k: number;
   over: HTMLElement | null;
 }
 
@@ -56,8 +60,10 @@ export function bindDragSwap(root: HTMLElement, o: DragSwapOptions): () => void 
   const ok = (from: string, to: string) => from !== to && (o.canDrop?.(from, to) ?? true);
   const items = () => Array.from(root.querySelectorAll<HTMLElement>(sel));
 
+  // The ghost is laid out at the item's own size and scaled by the item's on-screen scale `k` (1, or the fit box's:
+  // src/ui/fitBox.ts), from its top left corner, so the grip point stays under the finger.
   const place = (s: Press) => {
-    if (s.ghost) s.ghost.style.transform = `translate(${Math.round(s.x - s.gx)}px, ${Math.round(s.y - s.gy)}px) scale(1.08)`;
+    if (s.ghost) s.ghost.style.transform = `translate(${Math.round(s.x - s.gx * 1.08)}px, ${Math.round(s.y - s.gy * 1.08)}px) scale(${(1.08 * s.k).toFixed(4)})`;
   };
 
   const start = (s: Press) => {
@@ -67,6 +73,7 @@ export function bindDragSwap(root: HTMLElement, o: DragSwapOptions): () => void 
     const r = s.el.getBoundingClientRect();
     s.gx = s.x0 - r.left;
     s.gy = s.y0 - r.top;
+    s.k = layoutScale(s.el);
     const g = s.el.cloneNode(true) as HTMLElement;
     // The ghost lives on <body>: it takes the custom properties (kit colours, token size) its source inherited.
     const cs = getComputedStyle(s.el);
@@ -79,8 +86,8 @@ export function bindDragSwap(root: HTMLElement, o: DragSwapOptions): () => void 
     for (const a of ['data-drag', 'data-a', 'data-k', 'id', 'aria-label']) g.removeAttribute(a);
     g.setAttribute('aria-hidden', 'true');
     Object.assign(g.style, {
-      position: 'fixed', left: '0', top: '0', right: 'auto', bottom: 'auto', margin: '0', width: `${r.width}px`, height: `${r.height}px`,
-      pointerEvents: 'none', zIndex: '1000', transition: 'none', fontFamily: cs.fontFamily,
+      position: 'fixed', left: '0', top: '0', right: 'auto', bottom: 'auto', margin: '0', width: `${r.width / s.k}px`, height: `${r.height / s.k}px`,
+      pointerEvents: 'none', zIndex: '1000', transition: 'none', fontFamily: cs.fontFamily, transformOrigin: '0 0',
     });
     document.body.appendChild(g);
     s.ghost = g;
@@ -112,7 +119,7 @@ export function bindDragSwap(root: HTMLElement, o: DragSwapOptions): () => void 
       // Cancelled: the ghost flies home, then goes.
       const r = s.el.getBoundingClientRect();
       g.style.transition = 'transform 0.16s ease-out, opacity 0.16s';
-      g.style.transform = `translate(${Math.round(r.left)}px, ${Math.round(r.top)}px) scale(1)`;
+      g.style.transform = `translate(${Math.round(r.left)}px, ${Math.round(r.top)}px) scale(${s.k.toFixed(4)})`;
       g.style.opacity = '0.4';
       window.setTimeout(() => g.remove(), 170);
     } else g?.remove();
@@ -150,7 +157,7 @@ export function bindDragSwap(root: HTMLElement, o: DragSwapOptions): () => void 
     const touch = e.pointerType !== 'mouse';
     const s: Press = {
       id: idOf(el), el, pid: e.pointerId, touch, inList: !!el.closest('.pane-scroll'),
-      x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, hold: 0, dragging: false, ghost: null, gx: 0, gy: 0, over: null,
+      x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, hold: 0, dragging: false, ghost: null, gx: 0, gy: 0, k: 1, over: null,
     };
     if (touch) s.hold = window.setTimeout(() => st === s && start(s), HOLD_MS);
     st = s;

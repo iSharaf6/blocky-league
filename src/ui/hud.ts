@@ -614,7 +614,7 @@ export class Hud {
     const goals = this.goalRects();
     const solid = [
       '#ui > .touch:not(.hidden) .touch-btns', '#ui > .touch:not(.hidden) .touch-base', '.scorebug', '.sb-board.on', '.hud-pause', '.hud-cam', '.hud-toast.on',
-      '.hud-tip.on', '.hud-hint.on', '.hud-cm.on:not(.blocked)', '.hud-radar',
+      '.hud-tip.on', '.hud-hint.on', '.hud-cm.on:not(.blocked)', '.hud-radar', '.pitch-trainer .trainer-card',
     ]
       .map((sel) => this.rectOf(sel, false))
       .filter((q): q is Rect => !!q);
@@ -914,6 +914,9 @@ export class Hud {
     // The minimap counts even while faded out: it comes back as soon as play moves off the near touchline.
     const radar = this.rectOf('.hud-radar', false);
     if (radar && radar.t > H * 0.5) low = Math.min(low, radar.t - 8);
+    // The trainer's controls bar sits just above the minimap (ui/trainer.ts): the line goes above it, never on it.
+    const bar = this.rectOf('.pitch-trainer .trainer-card');
+    if (bar && bar.t > H * 0.5) low = Math.min(low, bar.t - 8);
     const hint = this.rectOf('.hud-hint.on.low');
     if (hint) low = Math.min(low, hint.t - 8);
     const chip = this.rectOf('.hud-chip');

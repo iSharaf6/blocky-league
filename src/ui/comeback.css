@@ -76,23 +76,23 @@
 .cb-pop li > b u { text-decoration: none; color: var(--cream); }
 
 /* A phone on its side and the short portal frame: the strip is a little lower, and the line under the hero with it. */
-@media (orientation: landscape) and (max-height: 450px) {
+@container app (orientation: landscape) and (max-height: 450px) {
   .hub-cb { height: 36px; }
   .hub-screen .hub.has-cb .hub-goal { min-height: 36px; }
   .cb-card { column-gap: 5px; padding: 0 6px 2px 6px; }
   .cb-ic { width: 20px; height: 20px; }
 }
 /* The strip's height comes out of the hero: on a phone the fixture gives up its OVR line (the captain's tag has it). */
-@media (orientation: landscape) and (max-height: 420px) {
+@container app (orientation: landscape) and (max-height: 420px) {
   .hub-screen .hub.has-cb .hh-side small { display: none; }
 }
-@media (orientation: landscape) and (max-height: 365px) {
+@container app (orientation: landscape) and (max-height: 365px) {
   .hub-cb { height: 32px; }
   .cb-card .cb-ic { display: none; }
   .cb-t { gap: 3px; }
 }
 /* The smallest phones (320 high): no room for a fifth row. The top bar's TOMORROW chip comes back instead. */
-@media (orientation: landscape) and (max-height: 340px) {
+@container app (orientation: landscape) and (max-height: 340px) {
   .hub.has-cb { grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "top" "body" "foot"; }
   .hub.has-cb.with-cap { grid-template-areas: "top top" "cap body" "cap foot"; }
   .hub-cb { display: none; }
@@ -100,14 +100,14 @@
 }
 /* Phones and the portal frames: four cards. The streak (it is in the TOMORROW list, on the gift sheet and at full
    time) gives its room to the others; five from an iPad up. */
-@media (max-width: 960px) {
+@container app (max-width: 960px) {
   .hub-cb .cb-st { display: none; }
 }
-@media (max-width: 700px) {
+@container app (max-width: 700px) {
   .hub-cb .cb-try { display: none; }
 }
 /* Upright windows (the web on a phone held upright): the hub is a column that scrolls; the strip wraps in twos. */
-@media (max-aspect-ratio: 1/1) {
+@container app (max-aspect-ratio: 1/1) {
   .hub.has-cb, .hub.has-cb.with-cap { grid-template-rows: auto; grid-template-areas: "top" "cb" "cap" "body" "foot"; }
   .hub-cb { height: auto; grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hub-cb .cb-st, .hub-cb .cb-try { display: grid; }
@@ -119,7 +119,7 @@
 
 /* ---------------------------------------------------------------- the gift sheet (Menus.gift) */
 
-.panel.narrow.gift-panel.cb-gift { width: min(580px, 94vw); }
+.panel.narrow.gift-panel.cb-gift { width: min(580px, calc(94 * var(--vw))); }
 .gift-panel.cb-gift h2 small { margin-left: 10px; padding: 3px 7px 2px; font: 400 0.6em / 1 var(--round); letter-spacing: 1px; vertical-align: middle; color: var(--ink); background: var(--yellow); }
 .gift-panel.cb-gift .gift-days li em.gd-x { display: flex; align-items: center; justify-content: center; gap: 3px; min-height: 14px; font: 400 11px / 1 var(--round); font-style: normal; color: #1470a8; white-space: nowrap; }
 .gift-panel.cb-gift .gift-days li em.gd-x .cb-it { width: 14px; height: 14px; }
@@ -133,32 +133,34 @@
 .cb-rows { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
 .cb-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; min-width: 0; padding: 5px 8px 5px 6px; background: #fff; border: 3px solid var(--cream-2); }
 .cb-row > span { display: grid; gap: 3px; min-width: 0; }
-.cb-row small { font: 400 10px / 1 var(--round); letter-spacing: 0.7px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cb-row b { display: flex; align-items: center; gap: 4px; min-width: 0; font: 400 14px / 1 var(--round); color: var(--ink); white-space: nowrap; overflow: hidden; }
-.cb-row b u { min-width: 0; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }
+/* (Nothing cut: in a narrow row the words go to a second line, WHILE AWAY under +128.) */
+.cb-row small { font: 400 10px / 1.1 var(--round); letter-spacing: 0.7px; color: var(--ink-2); }
+.cb-row b { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; min-width: 0; font: 400 14px / 1 var(--round); color: var(--ink); white-space: nowrap; }
+.cb-row b u { text-decoration: none; }
 .cb-row .cb-gem { color: #1470a8; }
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .panel.narrow.gift-panel.cb-gift { gap: 8px; }
   .gift-panel.cb-gift .gift-days li { gap: 1px; padding: 3px 2px; }
   .cb-row { padding: 4px 6px 4px 5px; }
   .rw-item { font-size: 15px; }
 }
-@media (max-width: 480px) {
+@container app (max-width: 480px) {
   .cb-rows { grid-auto-flow: row; }
 }
 
 /* ---------------------------------------------------------------- full time (Menus.fulltime) */
 
 .cb-ft-tm {
-  /* (The gift and the streak are numbers and take what they need; the free try's name gets the rest of the row.) */
-  flex: none; display: grid; grid-template-columns: auto auto auto minmax(0, 1fr); align-items: stretch; gap: 5px; min-width: 0; min-height: 38px;
+  /* (Every chip takes what it needs and none is cut: one that does not fit the row, the free try's name in a
+     narrow column, drops to a row of its own and spans it.) */
+  flex: none; display: flex; flex-wrap: wrap; align-items: stretch; gap: 5px; min-width: 0; min-height: 38px;
   padding: 4px 5px 4px 9px; color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25);
 }
-.cb-ft-tm > b { align-self: center; font: 400 12px / 1 var(--round); letter-spacing: 1px; color: var(--yellow); }
-.cb-chip { display: grid; gap: 3px; align-content: center; min-width: 0; padding: 3px 6px 2px; background: rgba(255, 255, 255, 0.1); }
-.cb-chip small { font: 400 10px / 1 var(--round); letter-spacing: 0.6px; color: #cfcab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cb-chip em { display: flex; align-items: center; gap: 4px; min-width: 0; font: 400 13px / 1 var(--round); font-style: normal; white-space: nowrap; overflow: hidden; }
-.cb-chip em u { min-width: 0; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }
+.cb-ft-tm > b { flex: none; align-self: center; font: 400 12px / 1 var(--round); letter-spacing: 1px; color: var(--yellow); }
+.cb-chip { flex: 1 0 auto; display: grid; gap: 3px; align-content: center; padding: 3px 6px 2px; background: rgba(255, 255, 255, 0.1); }
+.cb-chip small { font: 400 10px / 1 var(--round); letter-spacing: 0.6px; color: #cfcab8; white-space: nowrap; }
+.cb-chip em { display: flex; align-items: center; gap: 4px; font: 400 13px / 1 var(--round); font-style: normal; white-space: nowrap; }
+.cb-chip em u { text-decoration: none; }
 .cb-ft-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 4px 8px; font: 400 14px / 1.15 var(--round); letter-spacing: 0.4px; color: var(--ink); background: #fff; border: 2px solid var(--cream-2); }
 .cb-ft-line > span { min-width: 0; }
 .cb-ft-line small { display: flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--go-d); }
@@ -166,12 +168,11 @@
 .cb-ft-line .cb-gem { color: #1470a8; }
 .cb-ft-line.try { border-color: var(--yellow-d); background: #fff5c4; }
 .btn.cb-keep { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 6px 10px 5px; font-size: 14px; letter-spacing: 0.6px; white-space: nowrap; }
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .cb-ft-tm { min-height: 34px; padding: 3px 4px 3px 7px; }
   .cb-ft-tm > b { font-size: 11px; letter-spacing: 0.6px; }
 }
-@media (max-width: 700px) {
-  .cb-ft-tm { grid-template-columns: auto auto minmax(0, 1fr); }
+@container app (max-width: 700px) {
   .cb-ft-tm > b { display: none; }
 }
 

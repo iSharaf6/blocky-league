@@ -35,7 +35,7 @@ import { localDay } from '../core/day';
 import { gems } from '../meta/gems';
 import { adsLeft, useAd } from '../meta/loops';
 import { finishBuildCost, finishBuildNow, skipBuildMatchday } from '../meta/premium';
-import { ads } from '../platform/ads';
+import { ADBLOCKER_NOTE, ads } from '../platform/ads';
 import { iap } from '../platform/iap';
 import { confirmGems, gemPrice, gemsHtml } from './gemUi';
 import { openShop } from './shop';
@@ -807,7 +807,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
               ${!buildAd ? ''
                 : ads.rewardedAvailable && !buildAdBusy
                   ? `<button class="btn btn-yellow sd-up sd-ad" data-a="buildad" aria-label="Watch an ad to take one matchday off this build">${adIcon()}WATCH AD</button>`
-                  : `<button class="btn btn-yellow sd-up sd-ad" disabled>${adIcon()}${buildAdBusy ? 'ONE MOMENT' : ads.adBlocked ? 'ADS BLOCKED' : 'NO AD NOW'}</button>`}
+                  : `<button class="btn btn-yellow sd-up sd-ad" disabled>${adIcon()}${buildAdBusy ? 'ONE MOMENT' : ads.adBlocked ? `<span class="ad-blocked">${ADBLOCKER_NOTE}</span>` : 'NO AD NOW'}</button>`}
             </div>
             <small class="sd-opens">${buildAd && ads.rewardedAvailable ? `AD TAKES 1 MATCHDAY OFF${sep()}` : ''}OR IT OPENS IN ${v.left} ${v.left === 1 ? 'MATCHDAY' : 'MATCHDAYS'}</small>`
           : v.status === 'locked'

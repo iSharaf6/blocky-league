@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Ads, APP_AD_MOMENT_GAP_MS, PORTAL_AD_GAP_MS, PORTAL_HALF_GAP_MS, PORTAL_NO_ANSWER_MS, PORTAL_RETRY_MS, tokenUserId } from '../src/platform/ads';
+import { Ads, APP_AD_MOMENT_GAP_MS, PORTAL_AD_GAP_MS, PORTAL_HALF_GAP_MS, PORTAL_NO_ANSWER_MS, PORTAL_RETRY_MS, portalUidOf } from '../src/platform/ads';
 
 type CrazySDK = NonNullable<Window['CrazyGames']>['SDK'];
 type AdCallbacks = Parameters<CrazySDK['ad']['requestAd']>[1];
@@ -575,7 +575,7 @@ describe('ad blockers and the rewarded offers', () => {
     expect(sdk.ad.hasAdblock).toHaveBeenCalledTimes(1);
     expect(ads.adBlocked).toBe(true);
     expect(ads.rewardedAvailable).toBe(false);
-    expect(ads.rewardedNote).toBe('ADS BLOCKED');
+    expect(ads.rewardedNote).toBe('ADBLOCKER DETECTED');
     // (A screen already showing an offer redraws it.)
     expect(changed).toHaveBeenCalledTimes(1);
     expect(sdk.ad.requestAd).not.toHaveBeenCalled();
@@ -620,7 +620,7 @@ describe('ad blockers and the rewarded offers', () => {
     expect(ads.adBlocked).toBe(false);
     expect(await ads.rewarded()).toBe(false);
     expect(ads.adBlocked).toBe(true);
-    expect(ads.rewardedNote).toBe('ADS BLOCKED');
+    expect(ads.rewardedNote).toBe('ADBLOCKER DETECTED');
     expect(changed).not.toHaveBeenCalled();
   });
 
@@ -701,9 +701,9 @@ describe('ad blockers and the rewarded offers', () => {
 });
 
 describe('who is playing on CrazyGames (the save is kept per account)', () => {
-  /** A user token as CrazyGames issues it: a JWT whose payload carries the account's userId. */
-  const jwt = (payload: object): string => `h.${btoa(JSON.stringify(payload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}.s`;
   type UserModule = NonNullable<CrazySDK['user']>;
+  /** An SDK that would hand out a user token: the game must never ask for one (CrazyGames' review). */
+  const tokenSpy = () => vi.fn(async () => 'h.e30.s');
 
   function withUser(user: UserModule | undefined) {
     const { sdk } = crazy();
@@ -712,12 +712,30 @@ describe('who is playing on CrazyGames (the save is kept per account)', () => {
     return sdk;
   }
 
-  it('reads the account id out of the token, and nothing out of anything else', () => {
-    expect(tokenUserId(jwt({ userId: 'UOuZBKgjwpY9k4TSBB2NPugbsHD3', username: 'RustyCake.ZU9H' }))).toBe('UOuZBKgjwpY9k4TSBB2NPugbsHD3');
-    expect(tokenUserId(jwt({ userId: 4471 }))).toBe('4471');
-    // (base64url: no padding, and - _ where base64 has + /.)
-    expect(tokenUserId(jwt({ userId: 'a?b>c~d', pad: 'x' }))).toBe('a?b>c~d');
-    for (const bad of ['', 'not a token', 'a.b', 'a.!!!.c', jwt({ name: 'no id' }), jwt({ userId: { nested: true } }), null, undefined, 42]) expect(tokenUserId(bad)).toBe('');
+  it('the tag is the username for a signed-in player, \'\' for a guest, and nothing out of anything else', () => {
+    expect(portalUidOf({ username: 'RustyCake.ZU9H', profilePictureUrl: 'x' })).toBe('name:RustyCake.ZU9H');
+    expect(portalUidOf(null)).toBe('');
+    for (const bad of [undefined, {}, { username: '' }, { username: 42 }, 'bob', 42]) expect(portalUidOf(bad)).toBeNull();
+    // (Never longer than a stored tag may be: core/save.ts keeps 128 characters.)
+    expect(portalUidOf({ username: 'x'.repeat(500) })!.length).toBeLessThanOrEqual(128);
+  });
+
+  it('never asks for a user token, signed in or not, at boot or when a guest signs in', async () => {
+    let who: { username: string } | null = null;
+    let fire!: () => void;
+    const getUserToken = tokenSpy();
+    withUser({ getUser: async () => who, addAuthListener: (fn) => { fire = () => fn(who); }, getUserToken } as UserModule);
+    const ads = new Ads();
+    await ads.init();
+    who = { username: 'bob' };
+    fire();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ads.portalUser()).toBe('name:bob');
+    expect(getUserToken).not.toHaveBeenCalled();
+    // And the adapter's source has no call to it at all (the portal bundle is checked in tests/portalRules.test.ts).
+    const src = (globalThis as unknown as { process: { getBuiltinModule(id: 'node:fs'): { readFileSync(p: string, e: 'utf8'): string } } })
+      .process.getBuiltinModule('node:fs').readFileSync('src/platform/ads.ts', 'utf8');
+    expect(src).not.toContain('getUserToken');
   });
 
   it('an SDK without a User module: nobody can be named, and everything else is as it was', async () => {
@@ -730,16 +748,16 @@ describe('who is playing on CrazyGames (the save is kept per account)', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('a guest is \'\', a signed-in player is his account id', async () => {
-    withUser({ getUser: async () => null, getUserToken: async () => { throw new Error('no user'); } });
+  it('a guest is \'\', a signed-in player is his username', async () => {
+    withUser({ getUser: async () => null });
     const guest = new Ads();
     await guest.init();
     expect(guest.portalUser()).toBe('');
     vi.unstubAllGlobals();
-    withUser({ getUser: async () => ({ username: 'bob' }), getUserToken: async () => jwt({ userId: 'acct-b' }) });
+    withUser({ getUser: async () => ({ username: 'bob' }) });
     const bob = new Ads();
     await bob.init();
-    expect(bob.portalUser()).toBe('acct-b');
+    expect(bob.portalUser()).toBe('name:bob');
     expect(bob.portalStore()).not.toBeNull();
   });
 
@@ -750,7 +768,7 @@ describe('who is playing on CrazyGames (the save is kept per account)', () => {
       () => new Promise<null>(() => {}),
     ] as UserModule['getUser'][]) {
       vi.unstubAllGlobals();
-      const sdk = withUser({ getUser, getUserToken: async () => jwt({ userId: 'x' }) });
+      const sdk = withUser({ getUser });
       const ads = new Ads();
       let up = false;
       const boot = ads.init().then(() => { up = true; });
@@ -767,35 +785,21 @@ describe('who is playing on CrazyGames (the save is kept per account)', () => {
     }
   });
 
-  it('a token that cannot be had this once is "cannot say", never the username (he must not look like someone else)', async () => {
-    for (const getUserToken of [
-      async () => 'garbage',
-      async () => { throw new Error('token service down'); },
-      () => new Promise<string>(() => {}),
-    ]) {
+  it('a signed-in player with no username to go on is "cannot say", never a guest (he must not look like someone else)', async () => {
+    for (const who of [{}, { username: '' }, { username: 7 }]) {
       vi.unstubAllGlobals();
-      withUser({ getUser: async () => ({ username: 'bob' }), getUserToken });
+      withUser({ getUser: async () => who as { username?: string } });
       const ads = new Ads();
-      const boot = ads.init();
-      await vi.advanceTimersByTimeAsync(1500);
-      await boot;
+      await ads.init();
       expect(ads.portalUser()).toBeNull();
     }
-    // An SDK with no tokens at all: the username is all there is, and it is the same every visit.
-    vi.unstubAllGlobals();
-    withUser({ getUser: async () => ({ username: 'bob' }) });
-    const ads = new Ads();
-    await ads.init();
-    expect(ads.portalUser()).toBe('name:bob');
   });
 
   it('a guest who signs in mid-visit is heard once, with the account now playing', async () => {
-    let who: { username: string } | null = null;
-    let token = '';
+    let who: { username?: string } | null = null;
     let fire!: () => void;
     withUser({
       getUser: async () => who,
-      getUserToken: async () => token,
       addAuthListener: (fn) => { fire = () => fn(who); },
     });
     const ads = new Ads();
@@ -804,24 +808,23 @@ describe('who is playing on CrazyGames (the save is kept per account)', () => {
     await ads.init();
     expect(ads.portalUser()).toBe('');
     who = { username: 'bob' };
-    token = jwt({ userId: 'acct-b' });
     fire();
     await vi.advanceTimersByTimeAsync(0);
-    expect(heard).toEqual(['acct-b']);
-    expect(ads.portalUser()).toBe('acct-b');
-    // Told again with nothing changed, or with a token that cannot be read: nothing more is said.
+    expect(heard).toEqual(['name:bob']);
+    expect(ads.portalUser()).toBe('name:bob');
+    // Told again with nothing changed, or with no username to go on: nothing more is said.
     fire();
-    token = 'garbage';
+    who = { username: '' };
     fire();
     await vi.advanceTimersByTimeAsync(0);
-    expect(heard).toEqual(['acct-b']);
-    expect(ads.portalUser()).toBe('acct-b');
+    expect(heard).toEqual(['name:bob']);
+    expect(ads.portalUser()).toBe('name:bob');
   });
 
   it('a listener that throws, or a game that throws from onAuth, breaks nothing', async () => {
     let fire!: () => void;
     withUser({
-      getUser: async () => ({ username: 'bob' }), getUserToken: async () => jwt({ userId: 'acct-b' }),
+      getUser: async () => ({ username: 'bob' }),
       addAuthListener: (fn) => { fire = () => fn(null); },
     });
     const ads = new Ads();

@@ -92,8 +92,66 @@ export const PORTAL_RETRY_MS = 20_000;
  * holds the match (a pause, a menu over it). Not while the fly-in plays, a brief is read or a first match waits on
  * its kick-off: the sim does not step through any of those.
  */
-export function playIsLive(phase: string, stepped: boolean, held: boolean): boolean {
-  return stepped && !held && phase !== 'goal' && phase !== 'halftime' && phase !== 'fulltime';
+export function playIsLive(phase: string, stepped: boolean, held: boolean, scene = false): boolean {
+  return stepped && !held && !playIsHeld(phase, scene);
+}
+
+/** The words every rewarded offer shows while an ad blocker is on (CrazyGames' review asked for these). */
+export const ADBLOCKER_NOTE = 'ADBLOCKER DETECTED';
+
+/**
+ * Has the match itself taken the ball away from the player? A goal (the celebration, the replay and the walk back,
+ * until the kick-off: the sim's 'goal' phase), half time, full time, or a cut scene (game/matchSession.ts cutScene: a
+ * replay, an incident's decision and recap, the referee's close-up, a substitution's touchline shot, a tunnel scene).
+ * CrazyGames: "When the player goals, please call gameplayStop until the game resumes" (main.ts payPlay, playStep).
+ */
+export function playIsHeld(phase: string, scene: boolean): boolean {
+  return scene || phase === 'goal' || phase === 'halftime' || phase === 'fulltime';
+}
+
+/**
+ * Play must have been live this long (s), unbroken, before "gameplay started" goes out again: a kick-off that a
+ * substitution's touchline shot or the referee's close-up follows a frame or two later never sends a start and a stop
+ * back to back (CrazyGames' SDK also holds back a start that comes within a second of the last call).
+ */
+export const PLAY_SETTLE_S = 0.5;
+
+/**
+ * The portals' "gameplay started" for the match on screen (main.ts). `out`: a start went out and no stop since.
+ * `owed`: one is wanted as soon as play is live (a kick-off, a second half, a resume, the end of a stoppage).
+ * `liveS`: how long play has been live while owed (-1: not yet).
+ */
+export interface PlayState { out: boolean; owed: boolean; liveS: number }
+
+/**
+ * One frame of it: 'stop' the moment the match takes the ball away (playIsHeld) while a start is out, and the start is
+ * owed again; 'start' once it is owed and play has been live (playIsLive) for PLAY_SETTLE_S; else nothing. Strictly
+ * alternating: never two starts or two stops in a row. A pause or a menu (`held`) is not seen here: main.ts onPause
+ * takes the start back itself, and a resume gives it back.
+ */
+export function playStep(st: PlayState, f: { phase: string; scene: boolean; stepped: boolean; held: boolean; dt: number }): 'start' | 'stop' | null {
+  if (st.out) {
+    if (f.held || !playIsHeld(f.phase, f.scene)) return null;
+    st.out = false;
+    st.owed = true;
+    st.liveS = -1;
+    return 'stop';
+  }
+  if (!st.owed) return null;
+  if (f.held || playIsHeld(f.phase, f.scene)) {
+    st.liveS = -1;
+    return null;
+  }
+  // (Live from the first step the sim takes: the fly-in, a brief or the first match's hold do not step it.)
+  if (st.liveS < 0) {
+    if (!playIsLive(f.phase, f.stepped, false, false)) return null;
+    st.liveS = 0;
+  } else st.liveS += f.dt;
+  if (st.liveS < PLAY_SETTLE_S) return null;
+  st.out = true;
+  st.owed = false;
+  st.liveS = -1;
+  return 'start';
 }
 
 interface CrazyAdError {
@@ -119,10 +177,11 @@ interface CrazySDK {
   data?: PortalStore;
   /** The User module (all of it optional: an SDK without it behaves as one that cannot say who is playing). */
   user?: {
-    /** The signed-in player, or null for a guest. */
+    /**
+     * The signed-in player, or null for a guest. (The only User call the game makes: it keeps its progress in the Data
+     * Module and has no use for a user token, so it never asks for one. CrazyGames' review asked for exactly that.)
+     */
     getUser?(): Promise<CrazyUser | null>;
-    /** A JWT whose payload carries the account's `userId`. */
-    getUserToken?(): Promise<string>;
     /** Fires when a guest signs in (a sign-out reloads the page instead). */
     addAuthListener?(fn: (user: CrazyUser | null) => void): void;
   };
@@ -181,21 +240,15 @@ function settled(p: Promise<unknown>, ms: number): Promise<boolean> {
 }
 
 /**
- * The `userId` in a CrazyGames user token (a JWT: its second part is base64url JSON), '' when it cannot be read. Read
- * only to tell one account's save from another's in this browser (core/save.ts): nothing is trusted on it, and the
- * token itself is neither kept nor sent anywhere.
+ * Who CrazyGames' getUser() says is playing, as the save's tag (core/save.ts SaveData.portalUid): '' a guest (null),
+ * `name:` and the username for a signed-in player, null when it cannot be told (no username to go on). Only ever used
+ * to tell one account's save from another's in this browser: nothing is trusted on it, and it is sent nowhere.
+ * (core/save.ts portalTagCurrent knows this form: keep the two together.)
  */
-export function tokenUserId(token: unknown): string {
-  try {
-    if (typeof token !== 'string') return '';
-    const part = token.split('.')[1];
-    if (!part) return '';
-    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
-    const id = (JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4))) as { userId?: unknown }).userId;
-    return typeof id === 'string' || typeof id === 'number' ? String(id) : '';
-  } catch {
-    return '';
-  }
+export function portalUidOf(user: unknown): string | null {
+  if (user === null) return '';
+  const name = typeof user === 'object' && user ? (user as CrazyUser).username : undefined;
+  return typeof name === 'string' && name ? `name:${name.slice(0, 120)}` : null;
 }
 
 /** A portal SDK hiccup must never break the game. */
@@ -284,7 +337,7 @@ export class Ads {
     return d && typeof d.getItem === 'function' && typeof d.setItem === 'function' ? d : null;
   }
 
-  /** Who is playing on CrazyGames: '' a guest, else the account's id; null when it cannot say (or elsewhere). */
+  /** Who is playing on CrazyGames (portalUidOf): '' a guest, else `name:` and his username; null when it cannot say (or elsewhere). */
   private uid: string | null = null;
   private userAsked = false;
   /** A guest signed in mid-visit (CrazyGames): `uid` is the account now playing. main.ts settles the save again. */
@@ -298,8 +351,8 @@ export class Ads {
   /**
    * Ask CrazyGames who is playing. Never throws and never hangs: an SDK without a User module, one that throws, and
    * one that gives no answer in time are all "cannot say" (null), and the game behaves as it did before accounts
-   * were told apart. The account's id comes from its token; the username stands in only on an SDK that has no tokens
-   * at all (a token that merely failed this once must not make the same player look like someone else).
+   * were told apart. getUser() is all it asks: a guest, or a signed-in player and his username (portalUidOf). No user
+   * token is ever asked for (the save lives in the Data Module, which is already the account's own).
    */
   private async askUser(sdk: CrazySDK): Promise<string | null> {
     try {
@@ -307,9 +360,7 @@ export class Ads {
       if (!u || typeof u.getUser !== 'function') return null;
       const who = await withTimeout(Promise.resolve(u.getUser()), 1500, undefined);
       if (who === undefined) return null;
-      if (!who) return '';
-      if (typeof u.getUserToken !== 'function') return typeof who.username === 'string' && who.username ? `name:${who.username}` : null;
-      return tokenUserId(await withTimeout(Promise.resolve(u.getUserToken()), 1500, '')) || null;
+      return portalUidOf(who ?? null);
     } catch {
       return null;
     }
@@ -392,7 +443,7 @@ export class Ads {
       });
     });
     this.syncMute();
-    // An ad blocker: known from the start, so a rewarded offer says ADS BLOCKED instead of failing on a tap.
+    // An ad blocker: known from the start, so a rewarded offer says ADBLOCKER DETECTED instead of failing on a tap.
     // (Not waited for: the answer can be slow, and it must never hold the game's start.)
     safe(() => void sdk.ad.hasAdblock().then((on) => {
       if (on !== true || this.blocked) return;
@@ -547,17 +598,17 @@ export class Ads {
     return this.ok && this.adsAllowed && !this.blocked;
   }
 
-  /** An ad blocker is on (CrazyGames): a rewarded offer shows itself switched off, with ADS BLOCKED beside it. */
+  /** An ad blocker is on (CrazyGames): a rewarded offer shows itself switched off, with ADBLOCKER_NOTE beside it. */
   get adBlocked(): boolean {
     return this.blocked;
   }
 
   /**
-   * The words a rewarded offer shows in place of its reward while no ad can be offered ('' when one can): ADS BLOCKED
-   * with an ad blocker on, else NO AD RIGHT NOW. Inline on the offer itself, never a popup.
+   * The words a rewarded offer shows in place of its reward while no ad can be offered ('' when one can):
+   * ADBLOCKER_NOTE with an ad blocker on, else NO AD RIGHT NOW. Inline on the offer itself, never a popup.
    */
   get rewardedNote(): string {
-    return this.rewardedAvailable ? '' : this.blocked ? 'ADS BLOCKED' : 'NO AD RIGHT NOW';
+    return this.rewardedAvailable ? '' : this.blocked ? ADBLOCKER_NOTE : 'NO AD RIGHT NOW';
   }
 
   /** This build can show interstitial ads at all (so NO ADS is worth selling in it; see ui/shop.ts). */

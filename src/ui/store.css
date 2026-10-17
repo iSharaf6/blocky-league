@@ -60,7 +60,7 @@
 .sh-signature-pieces button { border: 2px solid var(--ink); background: #fff; color: var(--ink); font: 700 10px / 1.2 var(--px); padding: 6px; cursor: pointer; }
 .sh-signature-pieces button.on { background: var(--yellow); }
 .bd-item small { display: block; font-size: 9px; margin-top: 4px; }
-@media (max-height: 450px) {
+@container app (max-height: 450px) {
   .sh-signature-grid { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .sh-signature-tile { min-height: 50px; padding: 6px; }
   .sh-signature .sh-name { font-size: 20px; }
@@ -161,7 +161,7 @@
 
 /* Short screens keep readable controls; products scroll within their own pane. */
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .sh-earn { padding: 5px 8px 4px; font-size: 12px; }
   .sh-earn b { font-size: 10px; }
   .sh-passcard .btn.sh-pc-gems { font-size: 14px; }
@@ -184,13 +184,13 @@
   .sh-atmo { padding: 2px 6px 2px; gap: 1px; }
 }
 
-@media (max-width: 720px) {
+@container app (max-width: 720px) {
   .sh-atmo > small { display: none; }
   .sh-uses { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Tall narrow screens (a portrait window on the web): the store stacks and scrolls as the old one did. */
-@media (max-width: 600px) and (min-height: 561px) {
+@container app (max-width: 600px) and (min-height: 561px) {
   .sh-offers.wide { grid-template-columns: minmax(0, 1fr); }
 }
 

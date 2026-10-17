@@ -1991,6 +1991,18 @@ export class MatchSession {
       shoot: c.shoot || this.latch.shoot, through: c.through || this.latch.through });
   }
 
+  /**
+   * A stretch the player has nothing to play in, whatever the sim's phase says: the pre-match fly-in, a replay (a
+   * goal's or an incident's), an incident's decision and recap (offside, foul, a penalty awarded), the referee's
+   * close-up, or a staged shot (the line-up, a substitution's touchline shot, a tunnel scene, the man of the match).
+   * The touch buttons are off for the same (updateHud). The portals hear "gameplay stopped" through it (main.ts
+   * payPlay, platform/ads.ts playIsHeld): CrazyGames' rule is no "gameplay started" while the player cannot play.
+   */
+  get cutScene(): boolean {
+    return this.introLeft > 0 || !!this.replay || this.incidents().waiting(this.match) || !!this.subCut || !!this.interlude ||
+      (!!this.motm && !this.motmDone) || this.cam.mode === 'card' || this.cam.mode === 'scene';
+  }
+
   /** Recovery timers use live simulation time, so reading a cue never causes an unexplained retry. */
   get teachingHeld(): boolean {
     return !!this.moment?.spec.untimed && this.match.phase === 'play' && this.holdLesson();
@@ -4067,9 +4079,9 @@ export class MatchSession {
     }
     this.updatePassCharge(cinematic, dt);
     this.updateEdgeArrows(dt);
-    // (While a skill move's pop, or a special strike's name, rides over his man it has the space there: the card over
-    // him steps aside.)
-    if (this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast' || this.cam.behindActive || this.skillHud?.popping || this.actionPop?.striking) this.trainer?.hide();
+    // The trainer's controls bar is fixed at the bottom centre (ui/trainer.ts): it never steps aside for what pops
+    // over his man, so it does not blink with every skill move or strike; it is off only when play is.
+    if (this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast' || this.cam.behindActive) this.trainer?.hide();
     else this.trainer?.update(m, this.view.frame, this.world.camera, this.view.headTop, dev);
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).

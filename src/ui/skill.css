@@ -41,8 +41,8 @@
    are on the SKILL button itself.) */
 .sk-flair {
   position: absolute;
-  left: max(14px, env(safe-area-inset-left));
-  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 58px);
+  left: max(14px, var(--sa-left));
+  bottom: calc(max(14px, var(--sa-bottom)) + 58px);
   display: flex;
   align-items: center;
   gap: 5px;
@@ -83,7 +83,7 @@
 .tb-pips i { width: 9px; height: 9px; background: rgba(27, 34, 48, 0.4); }
 .tb-skill > span { transform: translateY(-5px); }
 .tb-skill.empty > span { opacity: 0.6; }
-@media (max-width: 720px), (max-height: 480px) {
+@container app (max-width: 720px) or (max-height: 480px) {
   .tb-pips { bottom: 5px; }
   .tb-pips i { width: 8px; height: 8px; }
   /* Phones and small portal frames: smaller again. */

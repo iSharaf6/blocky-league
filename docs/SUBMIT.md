@@ -6,13 +6,27 @@ Everything you upload is already made and checked. Your part: create the account
 
 ## 0. CrazyGames Full Launch update (14 October 2026)
 
+### Reply to the 16 October review (17 October 2026)
+
+CrazyGames sent the Full Launch build back on 16 October with five points. All five are fixed in the resubmitted v1.1.0 build. Paste this into the **Update Notes** field as it is:
+
+> Thank you for the review. All five points are fixed in this version.
+> 1. User token: the game no longer asks for a user token. The save uses getUser() only.
+> 2. Goals: gameplayStop is sent at every goal, celebration and cut scene, and gameplayStart only when play resumes.
+> 3. Controls text: nothing floats over the player now. The controls sit in a fixed bar at the bottom of the screen and change only when the situation settles.
+> 4. Menus: every screen was checked on phones, tablets and desktop sizes, upright and landscape. Nothing overlaps or is cut off.
+> 5. Adblock: rewarded buttons now say ADBLOCKER DETECTED.
+> Please set the mobile and tablet orientation to landscape only.
+
+### The 14 October update
+
 CrazyGames approved the game for Full Launch on 13 October with status **Needs changes**: follow the Full Launch requirements, implement ads, stand out more, and improve playtime and retention with more progression. Build **v1.1.0** answers that. What changed against each requirement is in [PUBLISHING.md](PUBLISHING.md) (section "Full Launch, 14 October"); the short version:
 
 | Requirement | In v1.1.0 |
 |---|---|
 | Land in gameplay at once | No title screen on the portal: a first visit starts the first drill by itself (0 clicks), a returning player lands on the club hub. "Gameplay start" is sent as soon as the drill is waiting for the player |
 | Ads only through the SDK | Interstitials at the two natural breaks, half time and before a kick-off (never before two matches have been played, never the first match of a visit, never on menus; the SDK spaces them 3 minutes apart); eight opt-in rewarded offers, each marked with a film icon and the word AD, locked while an ad runs, hidden or labelled when ads are blocked. The full list: [MONETIZATION.md](MONETIZATION.md) |
-| Works with an adblocker | Play is never blocked; rewarded offers show ADS BLOCKED instead of a dead button |
+| Works with an adblocker | Play is never blocked; rewarded offers show ADBLOCKER DETECTED instead of a dead button |
 | Progress saved to the account | The SDK Data module; a blank save on a new device can no longer replace the account's copy (the fuller save wins) |
 | No external links, logins or store promotion | Mail links, share and download buttons, backup files, "in the app" wording and account sign-in are all compiled out of the portal build; the build fails if any returns |
 | More progression and retention | Welcome back sheet, a first week of standout daily gifts, a forgiving play streak, a free item to try each day, a match of the day, club income while away, on top of the career, journeys, badges and challenges the live build never had |

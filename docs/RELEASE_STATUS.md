@@ -5,6 +5,8 @@
 blocky-league-crazygames-v1.1.0.zip` (16 files, 3.49 MB unpacked, 1.79 MB zipped; the only external host is
 `sdk.crazygames.com`). The owner submits it with **Submit new version**: [SUBMIT.md](SUBMIT.md) section 0.
 
+**17 October: the 16 October review answered** (no user token, gameplayStop at goals and cut scenes, a fixed controls bar at the bottom, every menu checked by `__uiAudit()` from 640x290 to 1920x1080 and upright, ADBLOCKER DETECTED); the zip is now 3.51 MB unpacked, 1.80 MB zipped, still only `sdk.crazygames.com`; the Update Notes text is in [SUBMIT.md](SUBMIT.md) section 0.
+
 CrazyGames approved Full Launch on 13 October with changes required (requirements, ads, stand out, more
 progression). What this build adds over the live one:
 

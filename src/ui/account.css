@@ -2,7 +2,7 @@
 
 .ac-panel {
   gap: 14px;
-  max-height: calc(100dvh - 36px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  max-height: calc(calc(100 * var(--dvh)) - 36px - var(--sa-top) - var(--sa-bottom));
   overflow-y: auto;
 }
 
@@ -113,7 +113,7 @@
 }
 
 .ac-who b {
-  font: 700 clamp(17px, 2vw, 22px) / 1.2 var(--px);
+  font: 700 clamp(17px, calc(2 * var(--vw)), 22px) / 1.2 var(--px);
   letter-spacing: 1px;
   color: var(--ink);
   overflow-wrap: anywhere;
@@ -193,7 +193,7 @@
   border: 4px solid var(--ink);
   background: #fff;
   box-shadow: 0 5px 0 var(--ink);
-  font: 400 clamp(26px, 4vw, 38px) / 1 var(--round);
+  font: 400 clamp(26px, calc(4 * var(--vw)), 38px) / 1 var(--round);
   letter-spacing: 6px;
   color: var(--ink);
   user-select: all;
@@ -209,7 +209,7 @@
 /* which save? */
 
 .ac-choice-panel {
-  width: min(640px, 94vw);
+  width: min(640px, calc(94 * var(--vw)));
 }
 
 .ac-choice {
@@ -254,17 +254,17 @@
   padding-right: 10px;
 }
 
-@media (min-width: 560px) {
+@container app (min-width: 560px) {
   .ac-choice {
     grid-template-columns: 1fr 1fr;
   }
 }
 
 /* Phones on their side (667 x 375): tighter rows, actions two abreast; the panel scrolls, BACK stays pinned. */
-@media (max-height: 480px) {
+@container app (max-height: 480px) {
   .ac-panel {
     gap: 10px;
-    width: min(520px, 94vw);
+    width: min(520px, calc(94 * var(--vw)));
   }
 
   .ac-panel .ac-actions {
@@ -290,15 +290,15 @@
 
 .cloud-toast {
   position: fixed;
-  top: max(18px, env(safe-area-inset-top));
+  top: max(18px, var(--sa-top));
   left: 50%;
   z-index: 40;
-  max-width: calc(100vw - 32px);
+  max-width: calc(calc(100 * var(--vw)) - 32px);
   padding: 11px 16px 9px;
   transform: translate(-50%, -24px) scale(0.92);
   opacity: 0;
   pointer-events: none;
-  font: 400 clamp(16px, 1.6vw, 19px) / 1.2 var(--round);
+  font: 400 clamp(16px, calc(1.6 * var(--vw)), 19px) / 1.2 var(--round);
   letter-spacing: 1px;
   text-align: center;
   color: var(--ink);
@@ -333,9 +333,9 @@
 
 /* Landscape phones and short frames (docs/UX.md: one screen, no scroll): the words on the left, the buttons on the
    right, the title and BACK across both. */
-@media (max-height: 560px) and (min-width: 600px) {
+@container app (max-height: 560px) and (min-width: 600px) {
   .panel.ac-panel {
-    width: min(760px, 96vw);
+    width: min(760px, calc(96 * var(--vw)));
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-auto-flow: row dense;
     align-items: center;
@@ -376,7 +376,7 @@
 .ac-referral-progress { display: grid; gap: 6px; min-width: 0; font: 400 14px / 1.3 var(--round); }
 .ac-referral-progress b { color: var(--blue-d); }
 .ac-referral-progress .btn { width: 100%; min-height: 44px; white-space: normal; }
-@media (max-height: 560px) and (min-width: 600px) {
+@container app (max-height: 560px) and (min-width: 600px) {
   .ac-panel > .ac-referral-reward { grid-column: 1 / -1; }
   .ac-panel > .ac-referral-steps { grid-column: 1; grid-row: span 2; align-self: start; }
   .ac-panel > .ac-referral-progress { grid-column: 2; }

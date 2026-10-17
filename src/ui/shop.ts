@@ -29,7 +29,7 @@ import {
   settlePack, shopItem, shopItems, shopOf, signCard, unequipItem,
   type Bundle, type PackCard, type PackKind, type Rarity, type ShopCat, type ShopItem,
 } from '../meta/shop';
-import { ads } from '../platform/ads';
+import { ADBLOCKER_NOTE, ads } from '../platform/ads';
 import { buzz } from '../platform/haptics';
 import {
   FIRST_BUY_MULT, PRODUCT_DOUBLER, PRODUCT_NOADS, PRODUCT_PRO, PRODUCT_STARTER, iap, proOffered, type IapGrant, type IapProduct,
@@ -61,6 +61,10 @@ import { faceHtml, hydrateFaces } from './preview';
 import { ShopStage, type StageClub, type StageShow, type StageWear } from './shopStage';
 import { sep } from './text';
 import { gemPackBadge } from './storeOffers';
+import { layoutScale } from './fitBox';
+
+/** A name with a word too long for a narrow tile's line (CHECKERBOARD): its tile sets it a size smaller. */
+const longWord = (name: string): boolean => name.split(/\s+/).some((w) => w.length > 10);
 import './shop.css';
 import './store.css';
 
@@ -244,10 +248,11 @@ function gemPile(tier: number): string {
 
 /**
  * The words on a free-ad card while no ad can be offered (platform/ads.ts rewardedNote): the button, switched off,
- * and the line beside it. An ad blocker is named; anything else is just no ad for now.
+ * and the line beside it. An ad blocker is named (ADBLOCKER DETECTED, in a span that may wrap to two lines on a narrow
+ * button: shop.css .ad-blocked); anything else is just no ad for now.
  */
 function adOffText(): { label: string; note: string } {
-  return { label: ads.adBlocked ? 'BLOCKED' : 'NO AD YET', note: ads.rewardedNote || 'NO AD RIGHT NOW' };
+  return { label: ads.adBlocked ? `<span class="ad-blocked">${ADBLOCKER_NOTE}</span>` : 'NO AD YET', note: ads.rewardedNote || 'NO AD RIGHT NOW' };
 }
 
 /** The pixel icon for a category (rail, set parts). */
@@ -641,7 +646,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       ${fresh ? '<i class="sh-new">NEW</i>' : dealOf(it) && s !== 'on' && s !== 'owned' ? `<i class="sh-new deal">${DEAL_OFF}% OFF</i>` : ''}
       ${tierHtml(it)}
       <span class="sh-art">${artOf(it)}</span>
-      <b>${esc(it.name.toUpperCase())}</b>
+      <b${longWord(it.name) ? ' class="lw"' : ''}>${esc(it.name.toUpperCase())}</b>
       ${it.cat === 'decor' ? `<small class="sh-perk">${decorBonusShort(it.id)}</small>` : ''}
       ${tag}
     </button>`;
@@ -669,11 +674,11 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     }
     const price = priceOf(it);
     const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s> ` : '';
-    if (s === 'buy') return `<div class="sh-btns"><button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY ${was}${coin(price)}</button></div>${line(lv, 'free')}`;
+    if (s === 'buy') return `<div class="sh-btns"><button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY <span class="sh-pr">${was}${coin(price)}</span></button></div>${line(lv, 'free')}`;
     // Short of coins: gems can cover the difference (a stated price, asked once), else the way to more coins.
     const need = topUpGems(price - save.coins);
     return `<div class="sh-btns">
-        <button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short">${was}${coin(price)}</button>
+        <button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short"><span class="sh-pr">${was}${coin(price)}</span></button>
         ${gems(save) >= need
           ? `<button class="btn btn-blue btn-lg sh-more" data-a="topup" aria-label="Cover the ${fmt(price - save.coins)} coins you are short with ${need} gems">ADD ${gemPrice(need)}</button>`
           : '<button class="btn btn-blue btn-lg sh-more" data-a="getcoins">GET COINS</button>'}
@@ -878,7 +883,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     }).join('');
     const action = done
       ? '<div class="sh-btns"><button class="btn btn-go btn-lg sh-act" data-a="wearset">WEAR THE WHOLE SET</button></div>'
-      : `<div class="sh-btns"><button class="btn ${save.coins >= price ? 'btn-yellow' : 'btn-white poor'} btn-lg sh-act" data-a="buyset">${missing.length < items.length ? 'COMPLETE IT' : 'BUY SET'} <s class="sh-was">${fmt(full)}</s>${coin(price)}</button>
+      : `<div class="sh-btns"><button class="btn ${save.coins >= price ? 'btn-yellow' : 'btn-white poor'} btn-lg sh-act" data-a="buyset">${missing.length < items.length ? 'COMPLETE IT' : 'BUY SET'} <span class="sh-pr"><s class="sh-was">${fmt(full)}</s>${coin(price)}</span></button>
           ${save.coins < price
             ? gems(save) >= topUpGems(price - save.coins)
               ? `<button class="btn btn-blue btn-lg sh-more" data-a="topupset" aria-label="Cover the ${fmt(price - save.coins)} coins you are short with ${topUpGems(price - save.coins)} gems">ADD ${gemPrice(topUpGems(price - save.coins))}</button>`
@@ -1244,10 +1249,12 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       if (rail && active) {
         const box = rail.getBoundingClientRect();
         const item = active.getBoundingClientRect();
-        if (item.top < box.top) rail.scrollTop += item.top - box.top;
-        else if (item.bottom > box.bottom) rail.scrollTop += item.bottom - box.bottom;
-        if (item.left < box.left) rail.scrollLeft += item.left - box.left;
-        else if (item.right > box.right) rail.scrollLeft += item.right - box.right;
+        // (Screen pixels to layout pixels: the fit box scales the screen, ui/fitBox.ts.)
+        const k = layoutScale(rail);
+        if (item.top < box.top) rail.scrollTop += (item.top - box.top) / k;
+        else if (item.bottom > box.bottom) rail.scrollTop += (item.bottom - box.bottom) / k;
+        if (item.left < box.left) rail.scrollLeft += (item.left - box.left) / k;
+        else if (item.right > box.right) rail.scrollLeft += (item.right - box.right) / k;
       }
     }
     drawnTab = tab;

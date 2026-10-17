@@ -28,7 +28,7 @@ import { GEM_PRICES, GEM_REWARDS, gems, rewardGems, spendGems } from './meta/gem
 import { CALENDAR, adsLeft, advanceWeekly, calendarNext, calendarToday, claimCalendar, claimSweep, useAd, weeklyFor, weeklyObjectives } from './meta/loops';
 import { payoutText, syncAchievementGems } from './meta/gemSources';
 import { syncSeasonGems, syncSignatureEntitlements } from './meta/pass';
-import { ads, breakDue, halfBreakDue, playIsLive } from './platform/ads';
+import { ADBLOCKER_NOTE, ads, breakDue, halfBreakDue, playIsHeld, playStep, type PlayState } from './platform/ads';
 import { adFree, coinDoubler, iap, PRODUCT_NOADS, PRODUCT_STARTER } from './platform/iap';
 import { PITCH_Y } from './render/stadium';
 import { World, type TimeOfDay } from './render/world';
@@ -715,7 +715,7 @@ function mainMenu(): void {
           return true;
         },
         // (An ad blocker: the 2X offer shows switched off and says so.)
-        adNote: () => (ads.adBlocked ? 'ADS BLOCKED' : ''),
+        adNote: () => (ads.adBlocked ? ADBLOCKER_NOTE : ''),
         back: () => {
           mainMenu();
           // The ad doubled it: say what it added. Else, the gift put something in the SHOP within reach: say so once.
@@ -844,12 +844,13 @@ const onlineHost: OnlineHost = {
     const blitz = opt.mode === 'blitz';
     s.hud?.setBlitz(blitz);
     s.touch?.setBlitz(blitz);
-    ads.gameplayStart();
+    // (The same rule as any match: started once a ball is playable, taken back at a goal. See payPlay.)
+    owePlay();
     window.addEventListener('keydown', pauseKey);
     return s;
   },
   end: () => {
-    ads.gameplayStop();
+    // (endMatch takes "gameplay started" back, if it is out.)
     endMatch();
   },
 };
@@ -1069,31 +1070,41 @@ function recordResult(r: MatchResult): void {
 }
 
 /**
- * The portals' "gameplay started" is owed for the match on screen: sent the moment a ball is actually playable, not
- * while the fly-in plays, a brief is read or the first match waits on its kick-off (the sim does not step through
- * any of those). A kick-off and a second half owe it; a pause, half time and full time take it back (gameplayStop).
+ * The portals' "gameplay started" for the match on screen (platform/ads.ts playStep): sent once a ball is actually
+ * playable, not while the fly-in plays, a brief is read or the first match waits on its kick-off (the sim does not
+ * step through any of those). A kick-off and a second half owe it; a goal (its celebration, its replay, until the
+ * kick-off is live again), a cut scene (an incident's recap, a substitution, the referee's close-up, a tunnel scene),
+ * half time and full time take it back the moment they begin, and owe it again; so do a pause and its resume.
+ * `out` and `owed` are never both true, and starts and stops strictly alternate.
  */
-let playOwed = false;
+const play: PlayState = { out: false, owed: false, liveS: -1 };
 /** The sim's phase and its time in it when the debt was taken, or last looked at: it moves only while the sim steps. */
 let playMark = '';
 const simMark = (s: MatchSession): string => `${s.match.phase}:${s.match.phaseT}`;
 function owePlay(): void {
-  playOwed = true;
+  play.owed = true;
+  play.liveS = -1;
   playMark = session ? simMark(session) : '';
 }
-/** Every frame: pay it once the sim is stepping in a phase the player has the ball to play in. */
-function payPlay(): void {
+/** Take "gameplay started" back now, if it is out (a pause, the half-time screen, the result, the end of a match). */
+function stopPlay(): void {
+  if (play.out) ads.gameplayStop();
+  play.out = play.owed = false;
+  play.liveS = -1;
+}
+/** Every frame: stop at a goal or a cut scene; start again once the sim is stepping in a phase the player can play in. */
+function payPlay(dt: number): void {
   const s = session;
-  if (!playOwed || !s) return;
+  if (!s || (!play.owed && !play.out)) return;
   const mark = simMark(s);
   // (A teaching drill holds the sim until the player's first press, and the phase clock stands still in open play:
   // the ball is at his feet waiting for him, which is as playable as it gets. Checked in the browser: without this
   // a first-time visitor's drill never sent "gameplay started" at all.)
   const stepped = mark !== playMark || s.teachingHeld;
   playMark = mark;
-  if (!playIsLive(s.match.phase, stepped, s.paused || menus.open)) return;
-  playOwed = false;
-  ads.gameplayStart();
+  const said = playStep(play, { phase: s.match.phase, scene: s.cutScene, stepped, held: s.paused || menus.open, dt });
+  if (said === 'stop') ads.gameplayStop();
+  else if (said === 'start') ads.gameplayStart();
 }
 
 /** Matches and moments finished this visit (an ad break is only ever between two of them). */
@@ -1310,15 +1321,18 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     handBack(req.onQuit ?? mainMenu);
   };
   s.onPause = () => {
-    // (Paused before play was live, in the fly-in say: the start is still owed when the match carries on.)
-    const owed = playOwed;
-    playOwed = false;
-    ads.gameplayStop();
+    // (Paused before play was live, in the fly-in, a replay or a cut scene say: the start is still owed when the match
+    // carries on, and the frame loop pays it once play is live. Paused in live play: it comes back with the resume.)
+    const owed = play.owed || !play.out;
+    stopPlay();
     const resumeMatch = (): void => {
       menus.close();
       s.resume();
-      if (owed) owePlay();
-      else ads.gameplayStart();
+      if (owed || playIsHeld(s.match.phase, s.cutScene)) owePlay();
+      else {
+        play.out = true;
+        ads.gameplayStart();
+      }
     };
     const pauseMenu = (): void =>
       menus.pause({
@@ -1345,8 +1359,8 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     pauseMenu();
   };
   s.onHalftime = () => {
-    playOwed = false;
-    ads.gameplayStop();
+    // (Taken back at the whistle already, by the frame loop: this is only ever the one stop, never a second.)
+    stopPlay();
     const secondHalf = (): void => {
       menus.close();
       s.continueSecondHalf();
@@ -1387,8 +1401,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
   let replayAsked = false;
   s.onFinish = (r) => {
     checkpointMatch(true);
-    playOwed = false;
-    ads.gameplayStop();
+    stopPlay();
     // A LOST DECIDER (a cup tie, a final, a title or promotion decider: req.decider): one chance to play it again,
     // BEFORE anything is recorded or paid. Gems (a shown price, one tap) or a rewarded ad once a day; NO THANKS takes
     // the result as it stands. The replay carries no `decider`, so no match is ever replayed twice.
@@ -1408,7 +1421,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
           what: req.decider ?? 'DECIDER', score: scoreHtml(mine, theirs), price: GEM_PRICES.replayMatch, have: gems(save),
           canAd: ads.rewardedAvailable && adsLeft(save, 'replay', localDay()) > 0,
           // (An ad blocker, with today's ad replay still unused: the offer shows switched off and says so.)
-          adNote: ads.adBlocked && adsLeft(save, 'replay', localDay()) > 0 ? 'ADS BLOCKED' : undefined,
+          adNote: ads.adBlocked && adsLeft(save, 'replay', localDay()) > 0 ? ADBLOCKER_NOTE : undefined,
         }, {
           gems: () => {
             if (spendGems(save, GEM_PRICES.replayMatch, 'replayMatch')) again();
@@ -1423,7 +1436,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
             }
             return ok;
           },
-          adNote: () => (ads.adBlocked ? 'ADS BLOCKED' : ''),
+          adNote: () => (ads.adBlocked ? ADBLOCKER_NOTE : ''),
           no: () => {
             menus.close();
             s.onFinish?.(r);
@@ -1624,7 +1637,7 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
         } finally { doubling = false; }
       },
       // (An ad blocker: the bonus offer shows switched off and says so. No offer where there is no bonus to add.)
-      adNote: () => (payout.adBonus > 0 && ads.adBlocked ? 'ADS BLOCKED' : ''),
+      adNote: () => (payout.adBonus > 0 && ads.adBlocked ? ADBLOCKER_NOTE : ''),
       next: () => {
         // (Nothing leaves this screen while its ad is asked for or plays: the buttons are off too, Menus.fulltime.)
         if (doubling) return;
@@ -1685,7 +1698,8 @@ function pauseKey(e: KeyboardEvent): void {
 
 function endMatch(): void {
   clearMatchRecovery();
-  playOwed = false;
+  // (No match, no gameplay: a start still out is taken back, once.)
+  stopPlay();
   window.removeEventListener('keydown', pauseKey);
   session?.dispose();
   session = null;
@@ -1833,7 +1847,7 @@ function frame(now: number): void {
   canvasRect = canvas.getBoundingClientRect();
   const shown = session ?? demo;
   shown?.update(dt);
-  payPlay();
+  payPlay(dt);
   basicsWatch(dt);
   syncControlsUi(session);
   recoveryT += dt;
@@ -2011,7 +2025,7 @@ if (import.meta.env.DEV) {
       for (let i = 0; i < n; i++) {
         (session ?? demo)?.update(dt);
         // (As the frame loop does: the portals' "gameplay started" is paid here, so a hidden pane can check it.)
-        payPlay();
+        payPlay(dt);
         basicsWatch(dt);
       }
       syncControlsUi(session);

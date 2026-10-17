@@ -54,7 +54,7 @@
 .ul .mc-actions .btn { min-height: 44px; }
 
 /* Tall screens (iPad, desktop): bigger cards, centred on the track instead of stretched. */
-@media (min-height: 561px) {
+@container app (min-height: 561px) {
   .ul-track { align-items: center; }
   .ul-card { width: 140px; min-height: 236px; gap: 8px; }
   .ul-ic { width: 78px; height: 78px; }
@@ -64,7 +64,7 @@
   .ul-card em { font-size: 14px; }
 }
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .ul-rail { padding: 13px 4px 10px; }
   .ul-card { width: 104px; gap: 4px; padding: 14px 4px 8px; }
   .ul-ic { width: 46px; height: 46px; }
@@ -75,7 +75,7 @@
 
 /* ---- DAILY GIFT and the WELCOME OFFER: one small card, the button always on screen */
 
-.panel.narrow.gift-panel { width: min(500px, 94vw); }
+.panel.narrow.gift-panel { width: min(500px, calc(94 * var(--vw))); }
 .gift-note { margin: 0; text-align: center; font: 400 14px var(--round); letter-spacing: 1px; color: var(--ink-2); }
 .gift-panel .btn-row .btn { display: inline-flex; align-items: center; gap: 6px; }
 
@@ -89,7 +89,7 @@
 .wo-price { margin: 0; text-align: center; font: 400 14px var(--round); letter-spacing: 1px; color: var(--ink-2); }
 .wo-price b { color: var(--ink); font-weight: 400; }
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .panel.narrow.gift-panel { gap: 10px; }
   .panel.gift-panel h2 { font-size: 20px; }
   .gift-panel .gift-days li { padding: 4px 2px; }

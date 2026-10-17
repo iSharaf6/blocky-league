@@ -281,10 +281,12 @@
   white-space: nowrap;
 }
 
+/* (Role, club and tag wrap to a second line in a narrow card rather than cutting FREE AGENT.) */
 .mk-did span {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 2px 6px;
   min-width: 0;
   font: 400 12px var(--round);
   letter-spacing: 0.5px;
@@ -294,8 +296,6 @@
   min-width: 0;
   font-style: normal;
   color: var(--ink-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -467,7 +467,8 @@
 
 .mk-haggle {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 46px;
+  /* (The last column holds "110%" in the pixel face: 4 characters at 13 px.) */
+  grid-template-columns: auto minmax(0, 1fr) 54px;
   align-items: center;
   gap: 8px;
   font: 400 12px var(--round);
@@ -764,13 +765,14 @@
 
 /* ----- tall screens (iPad, desktop): the same panes, a little roomier ----- */
 
-@media (min-height: 561px) {
+@container app (min-height: 561px) {
   .mk-row { min-height: 50px; }
   .mk-row .face { --fs: 38px; }
   .mk-row { grid-template-columns: 38px auto minmax(0, 1fr) auto auto minmax(56px, auto); }
   .mk-nm b { font-size: 16px; }
   .mk-nm small { font-size: 13px; }
   .mk-dh .face { --fs: 56px; }
+  .mk-big { gap: 4px; }
   .mk-big b { font-size: 34px; }
   .mk-detail { padding: 12px 12px 6px; gap: 10px; }
   .mk-dbody { gap: 10px; }
@@ -786,15 +788,17 @@
 
 /* ----- narrower phones (iPhone SE and the like): shorter header words, slimmer chips ----- */
 
-@media (max-width: 720px) {
+@container app (max-width: 720px) {
   .mk-screen .mc-title .mk-win i { display: none; }
+  /* The subtitle under the title, not beside it: beside it, WAGES was cut at 667 wide. */
+  .mk-screen.shell .mc-title { display: grid; justify-items: center; gap: 2px; }
   .mk-chips > button { padding-left: 8px; padding-right: 8px; }
   .mk-chips { gap: 5px; }
 }
 
 /* ----- narrow portrait windows (web): the list on top, the player under it ----- */
 
-@media (max-width: 560px) {
+@container app (max-width: 560px) {
   .mk-screen .mk-body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;

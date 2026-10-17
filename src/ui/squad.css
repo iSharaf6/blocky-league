@@ -58,10 +58,12 @@
   white-space: nowrap;
 }
 
-/* The one hint line (docs/UX.md section 6). */
+/* The one hint line (docs/UX.md section 6). It wraps to two lines beside the buttons on a small phone, never under them. */
 .sq-hint {
-  font: 400 13px var(--round);
+  display: inline-block;
+  font: 400 13px / 1.1 var(--round);
   letter-spacing: 0.5px;
+  white-space: normal;
   color: var(--ink-2);
 }
 
@@ -126,7 +128,12 @@
 
 .sq-body .tx-shirt { height: var(--sh); }
 .sq-body .tx-shirt b { font-size: clamp(14px, calc(var(--sh) * 0.5), 19px); margin-top: -4px; }
-.sq-body .tx-nm { font-size: 13px; }
+/* The whole surname on its tag (BONDARENKO was cut to the shirt's width), a step smaller on short screens so
+   neighbouring tags keep a gap. */
+.sq-body .tx-nm { font-size: 13px; max-width: none; overflow: visible; }
+@container app (max-height: 400px) {
+  .sq-body .tx-nm { font-size: 11px; letter-spacing: 0; }
+}
 .sq-body .tx-p { -webkit-touch-callout: none; }
 
 /* The player's own role on the name tag (blue at the back, red up front): an outfielder out of position shows. */
@@ -508,7 +515,7 @@
   overflow: hidden;
 }
 
-.shell .ck-id .mc-preview .shirt { --px: clamp(6px, 2.4vh, 12px) !important; }
+.shell .ck-id .mc-preview .shirt { --px: clamp(6px, calc(2.4 * var(--vh)), 12px) !important; }
 .shell .ck-id .mc-preview b { font-size: 18px; }
 .shell .ck-id .mc-preview span { font-size: 14px; padding: 3px 7px 2px; }
 
@@ -597,7 +604,7 @@
 }
 
 .sd-info .grow { flex: 1 1 auto; min-height: 4px; }
-.shell .sd-info .mc-stadname { font-size: clamp(16px, 2.2vw, 24px); }
+.shell .sd-info .mc-stadname { font-size: clamp(16px, calc(2.2 * var(--vw)), 24px); }
 .shell .sd-info .mc-stadlvl { margin-bottom: 2px; font-size: 12px; }
 .shell .sd-info .mc-kv { padding: 5px 0; font-size: 13px; }
 
@@ -626,7 +633,7 @@
 
 /* ===== short screens (landscape phones, portal frames) ===== */
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .tx.shell .mc-top .tx-resume { min-height: 40px; padding: 8px 12px 6px; font-size: 13px; }
   .shell .ck-id .mc-preview b { font-size: 16px; }
   .tr-id .face { --fs: 36px; }
@@ -634,7 +641,7 @@
 }
 
 /* Narrow landscape phones (667 x 375): a slimmer rail, chips in one column, the KIT swatches a touch smaller. */
-@media (max-width: 720px) and (orientation: landscape) {
+@container app (max-width: 720px) and (orientation: landscape) {
   .sq-rail { width: 58px; }
   .sq-rail button { font-size: 12px; }
   .sq-pitchpane { --pw: min(100cqh * 1.05, 52cqw - 64px); }
@@ -648,15 +655,15 @@
 }
 
 /* Portrait (the web game on a phone held upright): the pitch on top, the bench under it. */
-@media (orientation: portrait) and (max-width: 720px) {
+@container app (orientation: portrait) and (max-width: 720px) {
   .shell .mc-body.sq-body {
     container-type: normal;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
   .sq-pitchpane {
-    --pw: min(calc(100vw - 110px), 420px);
-    --ph: min(48dvh, calc(var(--pw) * 1.15));
+    --pw: min(calc(calc(100 * var(--vw)) - 110px), 420px);
+    --ph: min(calc(48 * var(--dvh)), calc(var(--pw) * 1.15));
     justify-content: center;
   }
   .shell .mc-body.split-l.tr-body,

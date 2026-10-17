@@ -98,6 +98,12 @@
 .bd-po-note { font: 400 11px / 1.2 var(--round); letter-spacing: 0.5px; color: #f1eaff; }
 .panel .btn.bd-po-buy { width: 100%; min-height: 50px; display: grid; justify-items: center; gap: 3px; padding: 8px 6px 7px; font-size: 18px; }
 .btn.bd-po-buy small { font-size: 11px; letter-spacing: 1px; }
+/* The card is a narrow column: every line and button wraps or shrinks inside it, never past its edge. */
+.bd-passoffer > * { max-width: 100%; min-width: 0; }
+.bd-po-facts li { flex-wrap: wrap; row-gap: 0; }
+.panel .bd-passoffer > .btn { width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.1; }
+.panel .bd-passoffer > .btn[data-a='passPreview'], .panel .bd-passoffer > .btn.bd-po-gembuy { min-height: 40px; padding: 7px 4px 6px; font-size: 12px; letter-spacing: 0.5px; }
+.bd-po-gembuy { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; }
 
 .bd-trackpane .pane-h { min-height: 32px; gap: 8px; }
 .bd-legend { display: inline-flex; align-items: center; gap: 6px; font: 400 13px var(--round); letter-spacing: 1px; color: var(--ink-2); white-space: nowrap; }
@@ -206,7 +212,7 @@
 
 /* ---- tall screens (iPad, desktop): a bigger track, centred, and a bigger pass card */
 
-@media (min-height: 561px) {
+@container app (min-height: 561px) {
   .bd-railgrid { grid-auto-columns: 96px; gap: 8px; align-content: center; grid-template-rows: 30px minmax(70px, 160px); }
   .bd-railgrid.with-pass { grid-template-rows: 30px minmax(70px, 160px) minmax(70px, 160px); }
   .bd-tn { font-size: 16px; }
@@ -228,7 +234,7 @@
 
 /* ---- short screens (landscape phones, portal frames) */
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .panel .btn.bd-all { min-height: 38px; padding: 7px 12px 5px; font-size: 14px; }
   .bd-season { gap: 8px; padding: 4px 8px; }
   .bd-swatch { width: 14px; height: 14px; }
@@ -259,7 +265,7 @@
 }
 
 /* Narrow: the theme name gives way to the bar, the pass card narrows. */
-@media (max-width: 720px) {
+@container app (max-width: 720px) {
   .bd-theme { max-width: 150px; font-size: 15px; }
   .mc-body.bd-sbody.with-offer { grid-template-columns: 136px minmax(0, 1fr); }
   .bd-po-note { display: none; }

@@ -1,5 +1,4 @@
 import { Vector3, type Camera } from 'three';
-import { clamp } from '../core/math';
 import { BALL_OFS, PF } from '../game/replay';
 import { CURLER_MIN_D, knuckleRange } from '../sim/actions';
 import { HALF_L } from '../sim/constants';
@@ -10,7 +9,6 @@ import type { MatchEvent, Side } from '../sim/types';
 import type { Device } from '../core/input';
 import type { LessonCue } from '../meta/moments';
 import { coachText, defendCue, fillCoach, keeperCue, keyCap, moveCap, moveCue, passCue, pressVerb, skillCue, type CoachCue, type CoachParts } from './coach';
-import { escHtml, sep } from './text';
 
 /** What a first-match teaching card waits for. */
 export type TeachStep = 'move' | 'pass';
@@ -22,29 +20,26 @@ export interface TeachControls {
   /** Read by the SPRINT lesson (LEARN THE BASICS); optional for older feeds. */
   sprint?: boolean;
 }
-/** Gap (px) between the trainer card and the player's head (or feet), room for its pointer tip. */
-const CARD_GAP = 26;
-/** When the card slides beside the player, this much of it (px) stays over him, so the tip still reaches. */
-const CARD_TIP_IN = 34;
 /** A teaching wait that nothing clears (no input source wired) lets go after this long, so the game can never soft-lock. */
 const TEACH_TIMEOUT_MS = 25_000;
 /**
- * The card, its tip and the pass tag sit on DEVICE pixels (crisp text) and hold still until where they should be
- * has moved by more than this many device pixels: whole CSS pixels made the card step and flicker between two
- * spots while the player under it moved smoothly (the owner's "glitching while playing").
+ * The controls bar switches to a new situation only once it has held this long (ms): play swings between "on the
+ * ball" and "without it" many times a second (a pass, a deflection, a tackle), and the card that changed with every
+ * swing over the player was what CrazyGames' review found unreadable.
  */
-const SNAP_HOLD = 0.75;
-/** Slots in Trainer.at: the card's x and y, its tip, the pass tag's x and y. */
-const AT_X = 0, AT_Y = 1, AT_TIP = 2, AT_TAG_X = 3, AT_TAG_Y = 4;
+export const BAR_HOLD_MS = 600;
 /** A trainer card is a coach card (ui/coach.ts: title, key caps with short imperatives, one optional line). */
 export type TrainerCue = CoachCue;
+/** A card as much as he still needs it (learnCue): `quiet` once he has seen it often, drawn a step fainter. */
+export type LearnedCue = TrainerCue & { quiet?: boolean };
 
 /**
  * The trainer gets quieter as he learns (the owner: "it takes a big chunk of the screen"). Each in-match card is
  * counted every time it comes up (persisted in this browser): the routine ones (on the ball, defending, off the ball)
- * show in full for their first LEARN_BRIEF appearances, then as the keys alone, and from LEARN_QUIET on not at all;
- * the moment-to-moment ones (BEAT HIM, a loose ball, a set piece) go to the keys alone and stay. Switching PITCH
- * TRAINER back on in Settings starts it over (Trainer.resetLearned).
+ * show in full for their first LEARN_BRIEF appearances, then a step fainter (`quiet`), and from LEARN_QUIET on not at
+ * all; the others (the keeper's ball, the shot hints) go fainter and stay. Every key keeps its action word throughout:
+ * keys alone ("SPACE K L") were what CrazyGames' review could not read. Switching PITCH TRAINER back on in Settings
+ * starts it over (Trainer.resetLearned).
  */
 const LEARN_KEY = 'blocky-league-trainer-seen';
 const LEARN_BRIEF = 20;
@@ -64,7 +59,7 @@ function learnedCounts(): Record<string, number> {
 }
 
 /** A card came up once more: counted, and as much of it as he still needs (null: he has it, show nothing). */
-export function learnCue(cue: TrainerCue, fresh: boolean): TrainerCue | null {
+export function learnCue(cue: TrainerCue, fresh: boolean): LearnedCue | null {
   const seen = learnedCounts();
   const n = seen[cue.title] ?? 0;
   if (fresh) {
@@ -77,9 +72,40 @@ export function learnCue(cue: TrainerCue, fresh: boolean): TrainerCue | null {
   }
   const routine = ROUTINE.has(cue.title);
   if (routine && n >= LEARN_QUIET) return null;
-  if (n >= LEARN_BRIEF) return { title: cue.title, actions: cue.actions.map(([k]) => [k, ''] as [string, string]) };
-  // (No detail line over the play: the lessons keep theirs.)
-  return { title: cue.title, actions: cue.actions };
+  // (No detail line in play: the lessons keep theirs.)
+  return n >= LEARN_BRIEF ? { title: cue.title, actions: cue.actions, quiet: true } : { title: cue.title, actions: cue.actions };
+}
+
+/**
+ * What the controls bar is about (it changes only with this, and only once a change has held BAR_HOLD_MS): his man
+ * on the ball (or a pass on its way to him), his keeper holding it, a team-mate on it (or a pass of ours in flight),
+ * or without it (theirs, or loose off their touch).
+ */
+export type BarSituation = 'ball' | 'keeper' | 'mates' | 'off';
+
+export function barSituation(m: Match): BarSituation {
+  const hs = m.cfg.humanSide;
+  const own = m.ball.owner;
+  if (own >= 0 && own === m.active) return m.ball.held ? 'keeper' : 'ball';
+  if (own < 0 && m.passTarget >= 0 && m.passTarget === m.active) return 'ball';
+  const touch = own >= 0 ? own : m.ball.lastTouch;
+  return touch >= 0 && m.players[touch]?.side === hs ? 'mates' : 'off';
+}
+
+/**
+ * The controls bar for this situation: the player's own keys (or pad buttons), each with its action word, in the
+ * order the keys sit. With the ball: PASS, SHOOT, THROUGH, SKILL. Without it: SWITCH, TACKLE, PRESS. A team-mate on
+ * it: SPRINT, SWITCH. The keeper's: WALK, THROW, KICK LONG. The title is the card's name for learnCue's count only
+ * (the same names the cards over the player had, so what he has learned carries over); the bar does not show it.
+ */
+export function controlsCue(m: Match, device: Device): TrainerCue {
+  const sit = barSituation(m);
+  const a = (k: 'pass' | 'shoot' | 'through' | 'sprint' | 'skill') => keyCap(k, device, 'attack');
+  const d = (k: 'pass' | 'shoot' | 'through') => keyCap(k, device, 'defend');
+  if (sit === 'keeper') return { title: "KEEPER'S BALL", actions: [[moveCap(device), 'WALK'], [a('pass'), 'THROW'], [a('through'), 'KICK LONG']] };
+  if (sit === 'ball') return { title: 'ON THE BALL', actions: [[a('pass'), 'PASS'], [a('shoot'), 'SHOOT'], [a('through'), 'THROUGH'], [a('skill'), 'SKILL']] };
+  if (sit === 'mates') return { title: 'MAKE A RUN', actions: [[a('sprint'), 'SPRINT'], [a('pass'), 'SWITCH']] };
+  return { title: 'WIN IT BACK', actions: [[d('pass'), 'SWITCH'], [d('shoot'), 'TACKLE'], [d('through'), 'PRESS']] };
 }
 
 /**
@@ -289,7 +315,13 @@ export class Lesson {
 }
 
 /**
- * Small pitch-anchored control card and passing lane. No menus, animations, or per-frame DOM rebuilds.
+ * The controls bar and the passing lane. The bar is fixed at the bottom centre of the screen, just above the minimap
+ * (coach.css .pitch-trainer .trainer-card): CrazyGames' review found a card riding on the player unreadable ("it
+ * moves so fast and changes frequently") and asked for the controls at the bottom. It shows the keys for what he can
+ * do now, each with its word (controlsCue), and changes only when the situation has held BAR_HOLD_MS. No text floats
+ * over any player (the lane is a line, nothing more). On touch the on-screen buttons wear their own words, so the bar
+ * stays off there (lessons and the first match's teaching cards still show, in the same place). No menus, animations,
+ * or per-frame DOM rebuilds.
  *
  * First match (MatchConfig.firstMatch, trainer on): the first two cards are teaching steps, MOVE then PASS, that
  * wait for the action. The session reads `waitingFor` and holds the sim while it is set (still drawing, still
@@ -311,7 +343,6 @@ export class Trainer {
   waitingFor: TeachStep | null = null;
   private card: HTMLElement;
   private parts: CoachParts;
-  private recipient: HTMLElement;
   private line: SVGLineElement;
   private shadow: SVGLineElement;
   private guide: SVGSVGElement;
@@ -319,28 +350,21 @@ export class Trainer {
   private lastCue = '';
   /** The title of the last in-match card (a new title is one more appearance: learnCue). */
   private lastTitle = '';
-  private target = -1;
   private stageInit = false;
   private fed: TeachControls | null = null;
   private waitSince = 0;
   private startPos: [number, number] | null = null;
-  /** Where the card, its tip and the tag are drawn now (CSS px on the device-pixel grid; NaN: not yet). */
-  private at = new Float64Array(5).fill(NaN);
-
-  /** Slot `i` moved to `v` (CSS px), on the device-pixel grid with SNAP_HOLD's hold; returns the CSS px to draw. */
-  private snap(i: number, v: number): number {
-    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-    const cur = this.at[i];
-    if (!(Math.abs(v - cur) * dpr <= SNAP_HOLD)) this.at[i] = Math.round(v * dpr) / dpr;
-    return Math.round(this.at[i] * 100) / 100;
-  }
+  /** The controls bar: the cue it shows ('' key: nothing yet), and a different one waiting out BAR_HOLD_MS. */
+  private barKey = '';
+  private barCue: TrainerCue | null = null;
+  private barNext = '';
+  private barNextSince = 0;
 
   constructor() {
     this.root.className = 'pitch-trainer';
     this.root.hidden = true;
     this.root.innerHTML = `<svg class="trainer-guide" aria-hidden="true"><line class="trainer-line-shadow"/><line class="trainer-line"/></svg>
-      <div class="trainer-recipient" aria-hidden="true"></div>
-      <div class="trainer-card coach" role="group" aria-label="On-pitch trainer">
+      <div class="trainer-card coach bar" role="group" aria-label="Controls">
         <div class="trainer-title coach-title"></div><div class="trainer-actions coach-actions"></div><div class="trainer-detail coach-detail"></div>
       </div>`;
     this.card = this.root.querySelector('.trainer-card')!;
@@ -349,7 +373,6 @@ export class Trainer {
       actions: this.root.querySelector('.trainer-actions')!,
       detail: this.root.querySelector('.trainer-detail')!,
     };
-    this.recipient = this.root.querySelector('.trainer-recipient')!;
     this.line = this.root.querySelector('.trainer-line')!;
     this.shadow = this.root.querySelector('.trainer-line-shadow')!;
     this.guide = this.root.querySelector('svg')!;
@@ -359,6 +382,43 @@ export class Trainer {
   hide(): void {
     this.root.hidden = true;
     this.waitingFor = null;
+    // (Back in play, the bar shows the situation as it is then, at once: nothing stale waits out a hold.)
+    this.barKey = this.barNext = '';
+    this.barCue = null;
+  }
+
+  /**
+   * The bar's cue this frame: the situation's controls (controlsCue), switched to a new one only once it has held
+   * BAR_HOLD_MS, then as much of it as he still needs (learnCue: fainter, then gone). null: nothing to show (touch,
+   * where the buttons say it; or learned).
+   */
+  private bar(m: Match, device: Device): LearnedCue | null {
+    if (device === 'touch') {
+      this.barKey = this.barNext = '';
+      this.barCue = null;
+      return null;
+    }
+    const want = controlsCue(m, device);
+    const key = JSON.stringify(want);
+    const now = performance.now();
+    if (!this.barKey) {
+      this.barKey = key;
+      this.barCue = want;
+      this.barNext = '';
+    } else if (key === this.barKey) {
+      this.barNext = '';
+    } else if (key !== this.barNext) {
+      this.barNext = key;
+      this.barNextSince = now;
+    } else if (now - this.barNextSince >= BAR_HOLD_MS) {
+      this.barKey = key;
+      this.barCue = want;
+      this.barNext = '';
+    }
+    const cue = this.barCue!;
+    const fresh = cue.title !== this.lastTitle;
+    this.lastTitle = cue.title;
+    return learnCue(cue, fresh);
   }
 
   /** The session may hand over this frame's controls (instead of, or as well as, Trainer.input). */
@@ -433,96 +493,51 @@ export class Trainer {
     return this.stage !== 'play' && this.teach(m, frame, device, controls);
   }
 
-  update(m: Match, frame: Float32Array, camera: Camera, head: number, device: Device, controls?: TeachControls | null): void {
+  /** `_head` (the head height the card once rode at) is kept so the session's call stays as it was. */
+  update(m: Match, frame: Float32Array, camera: Camera, _head: number, device: Device, controls?: TeachControls | null): void {
     if (!this.stageInit) {
       this.stageInit = true;
       if (m.cfg.firstMatch && m.trainer && !Trainer.taught && !Trainer.lesson) this.stage = 'move';
     }
     if (!m.trainer || m.phase !== 'play' || m.active < 0 || m.players[m.active].sentOff) { this.hide(); return; }
+    this.root.hidden = false;
+    const lesson = Trainer.lesson;
+    const teaching = !lesson && this.teach(m, frame, device, controls);
+    // A basics prompt, or the first match's MOVE / PASS step (teach() has drawn that one): the lesson look, in the
+    // bar's place. Otherwise the controls bar (in a drill, between its prompts too).
+    const lc = lesson ? lesson.show(m, controls ?? this.fed ?? Trainer.input?.read() ?? null) : null;
+    const taught = !!lc || teaching;
+    const cue: LearnedCue | null = lc ? lessonCue(lc, device) : teaching ? null : this.bar(m, device);
+    if (!teaching) this.card.classList.toggle('lesson', !!lc);
+    this.card.classList.toggle('bar', !taught);
+    this.card.classList.toggle('quiet', !taught && !!cue?.quiet);
+    this.card.hidden = !taught && !cue;
+    if (cue) {
+      // (The bar shows no title, only the keys and their words; a lesson keeps its title.)
+      const shown: TrainerCue = taught ? cue : { title: '', actions: cue.actions };
+      const key = JSON.stringify(shown);
+      if (key !== this.lastCue) {
+        this.lastCue = key;
+        fillCoach(this.parts, shown);
+      }
+    }
+    // The passing lane: a line from the ball to the man a pass would go to (no words over him).
+    const idx = m.passCharge >= 0 ? m.passAim : m.passPreview;
+    const valid = m.ball.owner === m.active && m.shootCharge < 0.06 && m.throughCharge < 0.08 &&
+      idx >= 0 && idx !== m.active && !m.players[idx].sentOff && m.players[idx].side === m.cfg.humanSide;
+    if (!valid) { this.guide.style.display = 'none'; return; }
     const w = window.innerWidth, h = window.innerHeight;
     const project = (x: number, y: number, z: number) => {
       this.v.set(x, y + PITCH_Y, z).project(camera);
       return { x: (this.v.x + 1) * w / 2, y: (1 - this.v.y) * h / 2, visible: this.v.z > -1 && this.v.z < 1 };
     };
-    const a = m.active * PF;
-    const at = project(frame[a], head + frame[a + 2], frame[a + 1]);
-    const lesson = Trainer.lesson;
-    const docked = !at.visible || at.x < 0 || at.x > w || at.y < 65 || at.y > h - 25;
-    // A teaching hold can switch control to a runner near the screen edge. Keep its instruction visible:
-    // hiding it would freeze the ball while the player has no cue telling them how to continue.
-    if (docked && !lesson) { this.hide(); return; }
-    this.root.hidden = false;
-    const goal = project(m.attackDir(m.players[m.active].side) * HALF_L, 0, 0);
-    const direction = Math.abs(goal.x - at.x) > 70 ? (goal.x > at.x ? ' →' : ' ←') : ' ↑';
-    const teaching = !lesson && this.teach(m, frame, device, controls);
-    let cue: TrainerCue | null = null;
-    if (lesson) {
-      // In flight, after a miss, or once the taught action is done, keep useful recovery guidance visible.
-      const lc = lesson.show(m, controls ?? this.fed ?? Trainer.input?.read() ?? null);
-      cue = lc ? lessonCue(lc, device) : trainerCue(m, device);
-      this.card.classList.toggle('lesson', !!lc);
-      this.card.hidden = false;
-    } else {
-      const full = teaching ? null : trainerCue(m, device);
-      const fresh = !!full && full.title !== this.lastTitle;
-      if (full) this.lastTitle = full.title;
-      cue = full ? learnCue(full, fresh) : null;
-      // (A card he has learned: nothing over him; the pass recipient's tag below still shows.)
-      this.card.hidden = !!full && !cue;
-    }
-    const key = cue ? JSON.stringify(cue) + direction : this.lastCue;
-    if (cue && key !== this.lastCue) {
-      this.lastCue = key;
-      // On the ball, the title points the way he attacks.
-      fillCoach(this.parts, cue, m.ball.owner === m.active && !lesson ? direction : '');
-    }
-    // The card rides on the controlled player (the owner: "keep the trainer on top of the player controlled"),
-    // never off in a corner. Above his head, its tip pointing down at him; if the ball is where the card
-    // would be, it slides to his side away from the ball (still touching him); near the top of the screen it
-    // hangs under his feet instead. Never over the score, or the bottom touch controls.
-    const cw = this.card.offsetWidth, ch = this.card.offsetHeight;
-    const feet = project(frame[a], 0, frame[a + 1]);
-    let x = docked ? (w - cw) / 2 : at.x - cw / 2;
-    let y = docked ? 70 : at.y - ch - CARD_GAP;
-    let below = false;
-    if (!docked && y < 70) {
-      y = feet.y + CARD_GAP;
-      below = true;
-    }
-    const ball = project(frame[BALL_OFS], 0.14, frame[BALL_OFS + 2]);
-    if (!docked && ball.visible && ball.x > x - 24 && ball.x < x + cw + 24 && ball.y > y - 24 && ball.y < y + ch + 24) {
-      x = ball.x > at.x ? at.x - cw + CARD_TIP_IN : at.x - CARD_TIP_IN;
-    }
-    x = clamp(x, 10, w - cw - 10);
-    y = clamp(y, 70, h - ch - 90);
-    const sx = this.snap(AT_X, x), sy = this.snap(AT_Y, y);
-    // The tip sits over the player, wherever the card had to slide.
-    this.card.style.setProperty('--tip', `${this.snap(AT_TIP, clamp(at.x - sx, 12, cw - 12))}px`);
-    this.card.classList.toggle('below', below);
-    this.card.classList.toggle('docked', docked);
-    this.card.style.visibility = 'visible';
-    this.card.style.transform = `translate(${sx}px,${sy}px)`;
-    const idx = m.passCharge >= 0 ? m.passAim : m.passPreview;
-    const valid = m.ball.owner === m.active && m.shootCharge < 0.06 && m.throughCharge < 0.08 &&
-      idx >= 0 && idx !== m.active && !m.players[idx].sentOff && m.players[idx].side === m.cfg.humanSide;
-    this.guide.style.display = valid ? '' : 'none';
-    this.recipient.hidden = !valid;
-    if (!valid) { this.target = -1; return; }
     const to = project(frame[idx * PF], 0.14, frame[idx * PF + 1]);
-    const tag = project(frame[idx * PF], head + frame[idx * PF + 2] + 0.55, frame[idx * PF + 1]);
     const from = project(frame[BALL_OFS], 0.14, frame[BALL_OFS + 2]);
-    if (!to.visible || !from.visible) { this.guide.style.display = 'none'; this.recipient.hidden = true; return; }
+    if (!to.visible || !from.visible) { this.guide.style.display = 'none'; return; }
+    this.guide.style.display = '';
     for (const line of [this.line, this.shadow]) {
       line.setAttribute('x1', from.x.toFixed(1)); line.setAttribute('y1', from.y.toFixed(1));
       line.setAttribute('x2', to.x.toFixed(1)); line.setAttribute('y2', to.y.toFixed(1));
-    }
-    this.recipient.hidden = !tag.visible || tag.x < 38 || tag.x > w - 38 || tag.y < 80 || tag.y > h - 85 ||
-      (tag.x > x - 30 && tag.x < x + cw + 30 && tag.y > y - 15 && tag.y < at.y - 10);
-    this.recipient.style.transform = `translate(${this.snap(AT_TAG_X, tag.x)}px,${this.snap(AT_TAG_Y, tag.y - 12)}px) translate(-50%,-100%)`;
-    if (this.target !== idx || this.recipient.dataset.device !== device) {
-      this.target = idx;
-      this.recipient.dataset.device = device;
-      this.recipient.innerHTML = `${escHtml(keyCap('pass', device))}${sep()}${escHtml(String(m.players[idx].def.number))}`;
     }
   }
 }

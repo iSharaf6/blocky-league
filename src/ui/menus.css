@@ -17,6 +17,10 @@
 .hub-screen .hub-progress .hub-lv {
   flex: 0 1 180px; min-width: 44px; max-width: 180px; height: 44px; min-height: 44px;
 }
+/* (A wide hub: room for the level's whole title beside TODAY'S GIFT; at 1920 wide RISING STAR was cut.) */
+@container hub (min-width: 1000px) {
+  .hub-screen .hub-progress { flex-basis: 340px; max-width: 340px; }
+}
 .hub-screen .hub-lv .hl-n { min-width: 34px; padding: 4px 6px; font-size: calc(18px * var(--ts)); }
 .hub-screen .hub-lv .hl-n small { font-size: calc(9px * var(--ts)); }
 .hub-screen .hub-lv .hl-txt { flex: 1 1 0; padding: 5px 7px; }
@@ -55,7 +59,7 @@
 .hub-screen .hub-daily .hd-next { display: block; font: 400 calc(9px * var(--ts)) / 1.1 var(--round); color: var(--cream-2); }
 
 /* This baseline also works on iOS 15, before container-query support. */
-@media (max-width: 1200px), (max-height: 520px) {
+@container app (max-width: 1200px) or (max-height: 520px) {
   .hub-screen .hub-top { gap: 6px; }
   .hub-screen .hub-progress { flex-basis: 206px; max-width: 206px; gap: 6px; }
   .hub-screen .hub-progress .hub-lv { flex-basis: 140px; max-width: 140px; }
@@ -114,7 +118,7 @@
     .hub-screen .hub-acts .coins.hub-coins { max-width: 108px; font-size: calc(14px * var(--ts)); }
   }
 }
-@media (orientation: landscape) {
+@container app (orientation: landscape) {
   @container hub (max-width: 680px) {
     .hub-screen .hub-progress { flex-basis: 110px; max-width: 110px; }
     .hub-screen .hub-progress .hub-lv { position: relative; flex: none; width: 44px; max-width: 44px; }
@@ -141,7 +145,7 @@
   }
 }
 /* Short phones get deliberate fixture sizes. Flex shrink must never cut through a matchday or objective. */
-@media (orientation: landscape) and (max-height: 450px) {
+@container app (orientation: landscape) and (max-height: 450px) {
   .hub-screen .hub-hero { padding: 4px 8px 6px; gap: 2px; }
   .hub-screen .hh-head { gap: 4px; }
   .hub-screen .hh-title { font-size: calc(18px * var(--ts)); letter-spacing: 0.5px; }
@@ -158,7 +162,7 @@
   .hub-screen .hh-play { min-height: 44px; height: 44px; padding: 5px 8px; font-size: calc(20px * var(--ts)); }
   .hub-screen .hub-goal { min-height: 44px; }
 }
-@media (orientation: landscape) and (max-height: 365px) {
+@container app (orientation: landscape) and (max-height: 365px) {
   .hub-screen .hh-side .crest-svg { width: 20px; }
   .hub-screen .hh-side b { font-size: calc(14px * var(--ts)); }
   .hub-screen .hh-vs .picon { width: 14px; margin-bottom: 1px; }
@@ -169,11 +173,11 @@
   .hub-screen .hh-big { font-size: calc(14px * var(--ts)); }
   .hub-screen .hub-hero.create .hh-sub { display: none; }
 }
-@media (orientation: landscape) and (max-height: 380px) {
+@container app (orientation: landscape) and (max-height: 380px) {
   .hub-screen .hub-tile.t-season .ht-ic { display: none; }
 }
 /* Portrait web keeps its established scrolling stack; only landscape has the one-row contract. */
-@media (max-aspect-ratio: 1/1) {
+@container app (max-aspect-ratio: 1/1) {
   .hub-screen .hub-top, .hub-screen .hub-acts { flex-wrap: wrap; }
   .hub-screen .hub-acts { flex-basis: 100%; justify-content: flex-start; }
   .hub-screen .hub-foot.with-invite { grid-template-columns: 1fr 1fr; }
@@ -205,7 +209,7 @@
 .panel.mc.shell .mc-tabs.seg { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
 .panel.mc.shell .mc-tabs.seg button { min-height: 38px; padding: 5px 4px 4px; font-size: 14px; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .panel.mc.shell .mc-hint1 { font-size: 13px; }
   .panel.mc.shell .mc-actions { min-height: 40px; }
   .panel.mc.shell .mc-actions .btn-lg { min-height: 44px; padding: 9px 22px 8px; font-size: 18px; letter-spacing: 1.5px; }
@@ -214,15 +218,15 @@
 
 /* Tall screens (an iPad, a desktop window): each screen is a centred card of its own width (short screens are
    full-bleed: shell.css). */
-@media (min-height: 561px) {
+@container app (min-height: 561px) {
   .qm-screen .panel.qm.shell { width: min(940px, 100%); }
-  .settings .panel.set-panel.shell { width: min(880px, 100%); height: min(560px, calc(100dvh - 32px)); }
+  .settings .panel.set-panel.shell { width: min(880px, 100%); height: min(560px, calc(calc(100 * var(--dvh)) - 32px)); }
   .panel.set-panel.shell .toggles button,
   .panel.set-panel.shell .set-sw,
   .panel.set-panel.shell .set-row { min-height: 50px; font-size: 16px; }
   .panel.set-panel.shell .set-seg button { min-height: 38px; font-size: 14px; }
   .panel.set-panel.shell .set-grid { gap: 10px 14px; }
-  .howto-screen .panel.howto-panel.shell { width: min(920px, 100%); height: min(620px, calc(100dvh - 32px)); }
+  .howto-screen .panel.howto-panel.shell { width: min(920px, 100%); height: min(620px, calc(calc(100 * var(--dvh)) - 32px)); }
   .ht-row { min-height: 42px; font-size: 17px; column-gap: 14px; }
   .ht-row > b { font-size: 16px; }
   .ht-row .ht-cap kbd { font-size: 15px; }
@@ -245,7 +249,7 @@
   /* (The old card layout placed .vs-row by grid lines: style.css "Quick match: teams left, options right".) */
   grid-row: auto; grid-column: auto; align-self: stretch;
 }
-.panel.qm.shell .qm-teams .vs { align-self: center; font-size: clamp(18px, 2.6vw, 30px); }
+.panel.qm.shell .qm-teams .vs { align-self: center; font-size: clamp(18px, calc(2.6 * var(--vw)), 30px); }
 .panel.qm.shell .team-pick {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) minmax(0, 1.2fr) 36px;
@@ -264,7 +268,7 @@
 .panel.qm.shell .tp-label { font-size: 12px; letter-spacing: 1.5px; padding: 3px 7px 2px; }
 .panel.qm.shell .tp-name {
   display: flex; align-items: center; gap: 6px; max-width: 100%;
-  font: 400 clamp(14px, 1.9vw, 21px) / 1.1 var(--round); white-space: normal;
+  font: 400 clamp(14px, calc(1.9 * var(--vw)), 21px) / 1.1 var(--round); white-space: normal;
 }
 .panel.qm.shell .tp-name > span { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .panel.qm.shell .tp-name .crest-svg { flex: none; width: 20px; height: auto; margin: 0; }
@@ -302,7 +306,7 @@
 .panel.qm.shell .qm-go { min-width: 200px; }
 
 /* Narrow landscape phones (667 wide): every value still reads in full (NORMAL, RANDOM). */
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .panel.qm.shell .qm-opts { column-gap: 10px; }
   .panel.qm.shell .qm-row { grid-template-columns: 5.3em minmax(0, 1fr); gap: 6px; }
   .panel.qm.shell .qm-row > label { font-size: 11px; letter-spacing: 0; }
@@ -311,7 +315,7 @@
 }
 
 /* Tall screens (an iPad, a desktop window): the clubs get the room. */
-@media (min-height: 561px) {
+@container app (min-height: 561px) {
   /* The card stands up: the kit big in the middle between the arrows, the club under it. */
   .panel.qm.shell .team-pick { grid-template-columns: 44px minmax(0, 1fr) 44px; grid-template-rows: minmax(0, 1fr) auto; padding: 10px; }
   .panel.qm.shell .team-pick .arrow { grid-row: 1; width: 44px; }
@@ -391,14 +395,14 @@
 
 .panel.set-panel.shell .toggles button b small.lock { font-size: 12px; }
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .panel.set-panel.shell .toggles button,
   .panel.set-panel.shell .set-sw,
   .panel.set-panel.shell .set-row { min-height: 40px; font-size: 14px; }
   .panel.mc.shell .mc-top .set-noads { min-height: 36px; font-size: 13px; }
 }
 /* Narrow landscape phones (667 wide): the level rows' names keep their words (GROUND PASS, THROUGH BALL). */
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .panel.set-panel.shell .set-row { padding-left: 10px; font-size: 13px; letter-spacing: 0.3px; gap: 6px; }
   .panel.set-panel.shell .set-seg button { padding: 3px 5px 2px; font-size: 12px; letter-spacing: 0; }
   .panel.set-panel.shell .toggles button > b { max-width: 68%; }
@@ -443,25 +447,25 @@
 .ht-tb.through.dsw { --c: var(--yellow); --cd: var(--yellow-d); color: var(--ink); text-shadow: none; }
 .ht-split .ht-pad { margin: 0; }
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .ht-row { min-height: 28px; font-size: 14px; }
   .ht-row > b { font-size: 13px; }
   .ht-split .ht-pad { height: 140px; }
 }
 /* Too narrow for the pad beside the rows (667 wide): the rows alone, their dots in the buttons' colours. */
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .ht-split { grid-template-columns: minmax(0, 1fr); }
   .ht-split .ht-pad { display: none; }
 }
-@media (max-width: 600px) {
+@container app (max-width: 600px) {
   .ht-cols { grid-template-columns: minmax(0, 1fr); }
   .ht-list.two { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---------------------------------------------------------------- EVENTS: the quick modes as big tiles, one screen */
 
-@media (min-height: 561px) {
-  .events-screen .panel.ev-panel.shell { height: min(560px, calc(100dvh - 32px)); }
+@container app (min-height: 561px) {
+  .events-screen .panel.ev-panel.shell { height: min(560px, calc(calc(100 * var(--dvh)) - 32px)); }
 }
 .panel.ev-panel.shell .ev-grid { gap: 12px; grid-template-rows: none; grid-auto-rows: minmax(0, 1fr); align-content: stretch; }
 .panel.ev-panel.shell .ev-grid.n4,
@@ -469,8 +473,8 @@
 .panel.ev-panel.shell .ev-grid.n3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .panel.ev-panel.shell .ev-grid.n1 { grid-template-columns: minmax(0, 1fr); }
 .panel.ev-panel.shell .ev-card { min-height: 0; padding: 12px 16px; column-gap: 14px; row-gap: 6px; align-content: center; }
-.panel.ev-panel.shell .ev-card .ev-ic .picon { width: clamp(36px, 8vmin, 64px); height: auto; }
-.panel.ev-panel.shell .ev-card b { font-size: clamp(19px, 2.8vw, 30px); }
+.panel.ev-panel.shell .ev-card .ev-ic .picon { width: clamp(36px, calc(8 * var(--vmin)), 64px); height: auto; }
+.panel.ev-panel.shell .ev-card b { font-size: clamp(19px, calc(2.8 * var(--vw)), 30px); }
 .panel.ev-panel.shell .ev-card span { font-size: 15px; }
 .panel.ev-panel.shell .ev-card small { justify-self: start; padding: 4px 7px 3px; font-size: 12px; background: rgba(0, 0, 0, 0.22); }
 .panel.ev-panel.shell .ev-grid.n3 .ev-card { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; justify-items: start; }
@@ -482,10 +486,10 @@
 /* The score: crests, short names, the big score, the scorers wrapping under each side. */
 .panel.mc.shell .final { gap: 10px; align-items: center; }
 .panel.mc.shell .f-team { gap: 3px; min-width: 0; }
-.panel.mc.shell .f-team .crest-svg { width: clamp(26px, 6.5vmin, 52px); height: auto; }
-.panel.mc.shell .f-team b { font-size: clamp(16px, 2.2vw, 22px); }
+.panel.mc.shell .f-team .crest-svg { width: clamp(26px, calc(6.5 * var(--vmin)), 52px); height: auto; }
+.panel.mc.shell .f-team b { font-size: clamp(16px, calc(2.2 * var(--vw)), 22px); }
 .panel.mc.shell .f-team ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 8px; max-height: 2.5em; overflow: hidden; font-size: 13px; line-height: 1.25; }
-.panel.mc.shell .f-score { padding-top: 0; font-size: clamp(36px, 9vmin, 68px); }
+.panel.mc.shell .f-score { padding-top: 0; font-size: clamp(36px, calc(9 * var(--vmin)), 68px); }
 
 .panel.mc.shell .st-row { grid-template-columns: 30px minmax(0, 1fr) 112px minmax(0, 1fr) 30px; gap: 6px; font-size: 14px; }
 /* The verdict is the header's title: a size up, in its colour (YOU WIN! green, YOU LOSE red). */
@@ -529,15 +533,15 @@
 .panel.ht-panel.shell .hf-ask[hidden],
 .panel.ht-panel.shell .ht-body[hidden],
 .panel.ht-panel.shell .hf-actions[hidden] { display: none; }
-.panel.ht-panel.shell .hf-ask .fine.big { max-width: 30em; font-size: clamp(16px, 2.2vw, 20px); line-height: 1.3; }
+.panel.ht-panel.shell .hf-ask .fine.big { max-width: 30em; font-size: clamp(16px, calc(2.2 * var(--vw)), 20px); line-height: 1.3; }
 .panel.ht-panel.shell .hf-ask-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; }
 .panel.ht-panel.shell .hf-ask-row .btn { min-height: 44px; }
 .panel.ht-panel.shell .hf-ask-row .btn-lg { min-width: 220px; }
 /* A toast while half time is up (the half-time show's coins) goes under the header (docs/UX.md 7): never over
    TACTICS & SUBS and SECOND HALF, where the menus' toast usually sits. */
-#ui:has(> .screen.ht) > .menu-toast { top: calc(max(6px, env(safe-area-inset-top)) + 50px); bottom: auto; }
+#ui:has(> .screen.ht) > .menu-toast { top: calc(max(6px, var(--sa-top)) + 50px); bottom: auto; }
 
-@media (max-width: 720px) {
+@container app (max-width: 720px) {
   .panel.ht-panel.shell .hf-actions { gap: 6px; }
   .panel.ht-panel.shell .hf-quick { gap: 5px; }
   .panel.ht-panel.shell .hf-quick { gap: 4px; }
@@ -547,7 +551,7 @@
   .hs-n { font-size: 17px; }
 }
 
-@media (max-height: 380px) {
+@container app (max-height: 380px) {
   .hs-card { gap: 4px; padding: 6px 10px 8px; }
   .hs-bar { height: 16px; }
 }
@@ -581,9 +585,10 @@
   flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px;
   padding: 5px 6px 5px 12px; color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25);
 }
-.panel.ft-panel.shell .ft-earn .reward { min-width: 0; justify-content: flex-start; gap: 8px; font-size: 28px; color: var(--yellow); }
+/* (The label goes under the coins and wraps there: beside the AD button it had room for a word or two, cut.) */
+.panel.ft-panel.shell .ft-earn .reward { min-width: 0; flex-wrap: wrap; justify-content: flex-start; gap: 0 8px; font-size: 28px; color: var(--yellow); }
 .panel.ft-panel.shell .ft-earn .reward i { width: 24px; height: 24px; flex: none; }
-.panel.ft-panel.shell .ft-earn .reward em { min-width: 0; font-size: 13px; letter-spacing: 0.5px; color: #cfcab8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel.ft-panel.shell .ft-earn .reward em { flex: 1 0 100%; min-width: 0; font-size: 13px; line-height: 1.1; letter-spacing: 0.5px; color: #cfcab8; overflow-wrap: break-word; }
 .panel.ft-panel.shell .ft-earn .ft-dbl { flex: none; min-height: 40px; padding: 7px 12px 6px; font-size: 15px; letter-spacing: 1px; }
 .panel.mc.shell .ft-gain .ft-prog { flex: none; grid-template-columns: auto minmax(0, 1fr); justify-items: stretch; align-items: center; column-gap: 14px; padding: 8px 12px; }
 .panel.mc.shell .ft-gain .ft-stars { font-size: 30px; gap: 2px; }
@@ -598,13 +603,13 @@
 /* The moment's result: stars, the time left and the XP bar in the middle; RETRY and NEXT pinned. */
 .panel.mo-panel.shell .mo-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; align-content: safe center; justify-items: center; gap: 10px; }
 .panel.mo-panel.shell .mo-body .ft-prog { width: min(520px, 100%); }
-.panel.mo-panel.shell .mo-body .ft-stars { font-size: clamp(34px, 9vmin, 56px); }
+.panel.mo-panel.shell .mo-body .ft-stars { font-size: clamp(34px, calc(9 * var(--vmin)), 56px); }
 .panel.mo-panel.shell .mo-left { margin: 0; }
-@media (min-height: 561px) {
-  .ft.moment .panel.mo-panel.shell { height: min(520px, calc(100dvh - 32px)); }
+@container app (min-height: 561px) {
+  .ft.moment .panel.mo-panel.shell { height: min(520px, calc(calc(100 * var(--dvh)) - 32px)); }
 }
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .panel.ft-panel.shell .ft-earn { min-height: 48px; }
   .panel.ft-panel.shell .ft-earn .reward { font-size: 24px; }
   .panel.mc.shell .ft-gain .ft-stars { font-size: 26px; }
@@ -612,21 +617,22 @@
   .panel.mc.shell .ft-gain .ft-xp-bar { height: 12px; }
   .panel.mc.shell .ft-gain .ft-next { margin-top: 2px; }
 }
-/* The XP block's lines shrink to their column (the level title ends in dots, the next unlock wraps). */
+/* The XP block's lines shrink to their column (the level title and the next unlock wrap; nothing is cut). */
 .panel.mc.shell .ft-xp { grid-template-columns: minmax(0, 1fr); }
+.panel .ft-xp-h .ft-title { white-space: normal; overflow: visible; overflow-wrap: break-word; line-height: 1.1; }
 .panel.mc.shell .ft-next { min-width: 0; }
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .panel.mc.shell .ft-gain .ft-prog { grid-template-columns: minmax(0, 1fr); row-gap: 4px; padding: 6px 10px 8px; }
   .panel.mc.shell .ft-gain .ft-stars { justify-self: center; }
 }
-@media (max-width: 700px) {
+@container app (max-width: 700px) {
   .panel.ft-panel.shell .ft-earn .reward em { display: none; }
 }
 
 /* ---------------------------------------------------------------- BACKUP (the web): the save, and what to do with it */
 
-@media (min-height: 561px) {
-  .backup .panel.bk-panel.shell { height: min(460px, calc(100dvh - 32px)); }
+@container app (min-height: 561px) {
+  .backup .panel.bk-panel.shell { height: min(460px, calc(calc(100 * var(--dvh)) - 32px)); }
 }
 .panel.bk-panel.shell .bk-body { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: center; align-items: start; gap: 14px; }
 .panel.bk-panel.shell .bk-body .pane { gap: 10px; justify-content: center; }
@@ -639,7 +645,7 @@
 
 /* ---------------------------------------------------------------- small cards that stay cards (they fit as they are) */
 
-@media (max-height: 450px) {
+@container app (max-height: 450px) {
   .basics-screen .panel.basics-done,
   .unlocked-screen .panel.unlocked-panel { gap: 8px; }
 }
@@ -651,7 +657,7 @@
 .online-panel .net-step { display: grid; gap: 8px; min-width: 0; }
 .online-panel .net-step[hidden] { display: none; }
 .online-panel .net-cols .btn-row { gap: 10px; }
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .panel.online-panel { gap: 8px; }
   .online-panel .net-cols .net-sec { gap: 8px; padding-top: 8px; }
   .online-panel .btn { min-height: 44px; padding-top: 11px; padding-bottom: 9px; }
@@ -660,7 +666,7 @@
   .online-panel .fine.big { font-size: 15px; }
   .online-panel .net-room { font-size: 44px; padding: 6px 10px 2px 18px; }
 }
-@media (max-width: 600px) {
+@container app (max-width: 600px) {
   .online-panel .net-cols { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -677,14 +683,14 @@
 .net-lobby-panel .team-pick .arrow { width: 32px; height: 40px; }
 .net-lobby-panel .tp-name { font-size: 15px; line-height: 1.1; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; }
 .net-lobby-panel .tp-name .crest-svg { margin: 0; }
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .panel.net-lobby-panel { width: min(900px, 100%); }
   .net-lobby-panel .net-line { font-size: 13px; }
   .net-lobby-panel .net-rules { gap: 4px; }
   .net-lobby-panel .net-rules .seg button { min-height: 34px; }
   .net-lobby-panel .net-rules .net-status { font-size: 14px; line-height: 1.2; }
 }
-@media (max-width: 600px) {
+@container app (max-width: 600px) {
   .net-lobby-panel .net-lobby-body { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -692,7 +698,7 @@
 :root.ts-large .panel.qm.shell .qm-seg { grid-auto-columns: minmax(0, 1fr); }
 
 /* The hub (menus.ts main()) with LARGE text on the smallest phones: the tile titles keep their letters (TRANSFERS). */
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   :root.ts-large .hub-tile .ht-t { font-size: 16px; letter-spacing: 0.5px; }
 }
 

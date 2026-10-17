@@ -122,14 +122,14 @@
 
 .ss-row.sel { background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
 
+/* (A long name takes a second line in its row rather than being cut: E. BONDARENKO at 800 wide.) */
 .ss-nm {
   display: flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 
 .ss-hurt {
@@ -245,34 +245,36 @@
 .ss-tr .sh { display: none; }
 .ss-tr i { font-style: normal; }
 
-@media (max-width: 720px) {
+@container app (max-width: 720px) {
   .ss-tr .lg { display: none; }
   .ss-tr .sh { display: inline; }
-  .ss-head, .ss-row { grid-template-columns: 28px minmax(0, 1fr) 32px 32px 32px 34px; gap: 3px; }
+  /* (No AVG column in the list on a small phone, so the names fit: the picked player's RATING is beside it.) */
+  .ss-head, .ss-row { grid-template-columns: 28px minmax(0, 1fr) 32px 32px 32px; gap: 3px; }
+  .ss-row .avg, .ss-head > :nth-child(6) { display: none; }
   .ss-lead { padding: 4px 5px; }
   .ss-lead b { font-size: 13px; }
   .ss-lead small { font-size: 9px; letter-spacing: 0; }
   .ss-lead small svg { display: none; }
   .ss-lead em { font-size: 10px; }
   .ss-seg { min-width: 130px; }
-  .ss-th, .ss-tr { grid-template-columns: minmax(0, 1fr) 36px 36px; }
+  .ss-th, .ss-tr { grid-template-columns: minmax(0, 1fr) 40px 40px; }
   .ss-th span { font-size: 10px; }
   .ss-grid { gap: 6px; }
   .ss-tr span { font-size: 11px; }
 }
 
-@media (max-height: 380px) {
+@container app (max-height: 380px) {
   .ss-detail { gap: 5px; padding: 6px 8px; }
   .ss-tr { min-height: 20px; }
   .ss-lead { min-height: 46px; }
 }
 
-@media (min-height: 561px) {
+@container app (min-height: 561px) {
   .ss-tr { min-height: 26px; }
   .ss-row { min-height: 42px; }
 }
 
 /* SQUAD tab: a picked player's STATS button needs the room on a narrow phone, so the swap hint steps aside. */
-@media (max-width: 720px) {
+@container app (max-width: 720px) {
   .sq-benchpane .pane-h .sq-hint.sel { display: none; }
 }

@@ -57,7 +57,7 @@ export interface GemConfirm {
   free?: string;
   /**
    * The same thing for a rewarded ad instead: its own button under the others, with the film icon and the word AD.
-   * `off`: no ad can be shown now (ADS BLOCKED, NO AD RIGHT NOW): the button is there, switched off, saying so.
+   * `off`: no ad can be shown now (ADBLOCKER DETECTED, NO AD RIGHT NOW): the button is there, switched off, saying so.
    */
   ad?: { label: string; onAd: () => void; off?: string };
 }

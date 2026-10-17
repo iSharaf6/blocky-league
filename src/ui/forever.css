@@ -360,14 +360,14 @@
 .fv-mcoins i { width: 14px; height: 14px; background: #ffb400; box-shadow: inset 0 0 0 3px #f59e00; }
 .panel .fv-mgo, .fv-mgo { min-width: 160px; min-height: 46px; }
 
-@media (max-height: 380px) {
+@container app (max-height: 380px) {
   .fv-strip { min-height: 36px; }
   .fv-obj small { font-size: 9px; }
   .fv-mt { font-size: 22px; }
   .fv-mic { width: 60px; height: 60px; margin-top: -42px; }
 }
 
-@media (min-height: 561px) {
+@container app (min-height: 561px) {
   .fv-strip { min-height: 52px; }
   .fv-obj b { font-size: 14px; }
   .fv-obj small { font-size: 12px; }
@@ -491,7 +491,7 @@
 .hub-hero.road.cup.comp { background: linear-gradient(160deg, #3b3fd6 0%, #2a2db0 35%, #161a6e 100%); }
 .hub-hero.road.cup.comp .hh-meta { color: var(--ink); background: #7fe0ff; }
 
-@media (min-height: 700px) and (min-width: 1000px) {
+@container app (min-height: 700px) and (min-width: 1000px) {
   .hh-pip { font-size: calc(13px * var(--ts, 1)); padding: 5px 8px 4px 5px; }
   .hub-goal { min-height: calc(50px * var(--ts, 1)); }
   .hub-goal span { font-size: calc(16px * var(--ts, 1)); }
@@ -505,7 +505,7 @@
 .shell .sd-parts .sd-up.btn { min-height: 44px; padding: 9px 10px 7px; }
 
 /* Narrow phones: the line itself says it; the NEXT GOAL tag steps aside for it. */
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .hub-goal b { display: none; }
   .hub-goal { gap: 6px; padding: 0 8px; }
 }

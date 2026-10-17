@@ -68,7 +68,7 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 .gem-card .btn { min-height: 46px; }
 .gem-card .btn-lg { font-size: 18px; padding: 12px 18px 10px; }
 
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .gems { font-size: 14px; padding: 7px 8px 6px 7px; }
   .gem-card { gap: 8px; padding: 12px 14px 12px; }
   .gem-card h3 { font-size: 18px; }
@@ -107,7 +107,7 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 .rp-panel .btn-row { flex-wrap: wrap; justify-content: center; }
 
 /* A phone on its side (852 wide): the gems take the room the gift's word had, so the level's title still reads. */
-@media (max-width: 900px) {
+@container app (max-width: 900px) {
   /* (TOMORROW over its prize, two short lines: it takes no more room than the gift button it replaces.) */
   .hub-tomorrow { display: inline-grid; grid-template-columns: auto auto; column-gap: 5px; row-gap: 3px; align-content: center; justify-items: center; padding: 0 7px; font-size: calc(13px * var(--ts, 1)); }
   .hub-tomorrow small { grid-column: 1 / -1; font-size: calc(9px * var(--ts, 1)); letter-spacing: 0.6px; }
@@ -122,7 +122,7 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 .bd-tile .bd-gem { display: inline-flex; align-items: center; gap: 2px; font: 400 12px / 1 var(--round); text-decoration: none; color: #1470a8; }
 .bd-po-facts b.bd-po-gems { color: #7fe0ff; }
 .panel .btn.bd-po-gembuy { width: 100%; min-height: 36px; padding: 6px 6px 5px; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 2px; }
-@media (max-height: 560px) {
+@container app (max-height: 560px) {
   .bd-passoffer .bd-po-note { display: none; }
   .bd-passoffer .bd-po-ic { display: none; }
 }
@@ -132,4 +132,6 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 .sd-now { display: flex; gap: 6px; }
 .sd-now .btn.sd-up { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
 .sd-now .btn.sd-ad { font-size: 13px; }
+/* ADBLOCKER DETECTED on the build offer: a step smaller, and two lines rather than overflow its half of the row. */
+.sd-now .btn.sd-ad .ad-blocked { white-space: normal; text-align: center; line-height: 1.05; font-size: 0.86em; }
 .sd-opens { display: block; text-align: center; font: 400 12px / 1.2 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }

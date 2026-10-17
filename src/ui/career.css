@@ -450,7 +450,7 @@
 
 /* ----- short phones (iPhone SE): a little tighter ----- */
 
-@media (max-height: 380px) {
+@container app (max-height: 380px) {
   .cr-next .mc-side small { display: none; }
   .cr-next .mc-side .shirt { --px: 3px !important; }
   .cr-next .mc-play { min-height: 46px; padding-top: 10px; padding-bottom: 8px; }
@@ -462,14 +462,14 @@
 
 /* ----- portal frames (900x506): room for bigger shirts ----- */
 
-@media (min-height: 470px) and (max-height: 560px) {
+@container app (min-height: 470px) and (max-height: 560px) {
   .cr-next .mc-side .shirt { --px: 5px !important; }
   .cr-next .mc-side b { font-size: 19px; }
 }
 
 /* ----- tall screens (iPad, desktop): the same panes, roomier; the small screens size to their content ----- */
 
-@media (min-height: 561px) {
+@container app (min-height: 561px) {
   .cr-next .mc-side .shirt { --px: 6px !important; }
   .cr-next .mc-side b { font-size: 20px; }
   .cr-next .mc-side small { font-size: 15px; }
@@ -489,7 +489,7 @@
   .mc-road-screen.shell .panel.mc {
     width: min(820px, 100%);
     height: auto;
-    max-height: calc(100dvh - 32px);
+    max-height: calc(calc(100 * var(--dvh)) - 32px);
   }
   .cup-trophy-screen .cup-big .picon { width: 150px; height: 150px; }
   .cup-trophy-screen .panel .cup-champ-title { font-size: 48px; }
@@ -497,7 +497,7 @@
 
 /* ----- narrow portrait windows (web): one column ----- */
 
-@media (max-width: 560px) {
+@container app (max-width: 560px) {
   .mc-career-screen .cr-body,
   .mc-summary-screen .cr-body,
   .cup-trophy-screen .mc-body.cup-liftbody,
