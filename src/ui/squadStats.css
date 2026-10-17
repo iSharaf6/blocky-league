@@ -274,6 +274,13 @@
   .ss-row { min-height: 42px; }
 }
 
+/* LARGE text: the short labels (CLEAN, MOTM, PENS) at every size, a word that still needs it takes a second line,
+   and the picked player's numbers scroll rather than run off the bottom of the pane. */
+:root.ts-large .ss-tr .lg { display: none; }
+:root.ts-large .ss-tr .sh { display: inline; }
+:root.ts-large .ss-tr span { white-space: normal; text-overflow: clip; }
+:root.ts-large .ss-detail { overflow-y: auto; }
+
 /* SQUAD tab: a picked player's STATS button needs the room on a narrow phone, so the swap hint steps aside. */
 @container app (max-width: 720px) {
   .sq-benchpane .pane-h .sq-hint.sel { display: none; }

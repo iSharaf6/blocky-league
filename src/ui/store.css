@@ -55,6 +55,8 @@
 .sh-signature-tile:focus-visible, .sh-signature-pieces button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
 .sh-signature .sh-detail { display: grid; grid-template-rows: minmax(90px, 1fr) minmax(0, 1.25fr); min-height: 0; }
 .sh-signature .sh-info { overflow-y: auto; min-height: 0; padding-right: 6px; }
+/* (LARGE text: OPEN THIS JOURNEY and BUY AND EQUIP take a second line rather than running past the button.) */
+.sh-signature .sh-actrow .btn { white-space: normal; line-height: 1.25; }
 .sh-signature .sh-info > small { font: 700 max(10px, var(--fs-floor, 0px)) / 1.5 var(--px); }
 .sh-signature-pieces { display: flex; flex-wrap: wrap; gap: 4px; }
 .sh-signature-pieces button { border: 2px solid var(--ink); background: #fff; color: var(--ink); font: 700 max(10px, var(--fs-floor, 0px)) / 1.2 var(--px); padding: 6px; cursor: pointer; }

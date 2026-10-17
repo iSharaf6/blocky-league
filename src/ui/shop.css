@@ -426,6 +426,10 @@
 .sh-short { margin: 0; font: 400 14px / 1.2 var(--round); color: var(--red-d); text-align: center; letter-spacing: 0.4px; }
 .sh-short.free { color: var(--go-d); }
 .sh-short.pass { color: #b81f6c; }
+/* LARGE text: a themed set's six parts, its button and SAVE line need the room, so its blurb steps aside and the
+   stage takes what is left (COMPLETE IT was pushed off the pane at 1080 by 607). */
+:root.ts-large .sh-setdetail .sh-blurb { display: none; }
+:root.ts-large .sh-setdetail .sh-stage { min-height: 0; }
 
 /* The purchase moment: pixel bits bursting out of the stage. */
 .sh-burst { position: absolute; left: 50%; top: 55%; width: 0; height: 0; pointer-events: none; }

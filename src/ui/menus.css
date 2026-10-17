@@ -709,6 +709,14 @@
 
 /* LARGE text (Settings > TEXT SIZE zooms the panel's contents): the option chips shrink their words, never the row. */
 :root.ts-large .panel.qm.shell .qm-seg { grid-auto-columns: minmax(0, 1fr); }
+@container app (max-height: 560px) {
+  :root.ts-large .panel.qm.shell .qm-seg button { font-size: 12px; }
+}
+/* The hub with LARGE text: the coin count, the NEXT GOAL line and the WELCOME BACK strip (MATCH OF THE DAY DONE) stay
+   at MEDIUM so their words are never cut short, and ROAD TO GLORY drops its division tag beside the title. */
+:root.ts-large :is(.hub-cb, .hub-goal, .hub-screen .hub-acts .hub-coins) { --ts: 1; }
+:root.ts-large .hub-screen .hub-hero.road:not(.cup) .hh-meta { display: none; }
+:root.ts-large .hub-screen .hub-hero.road:not(.cup) .hh-head { justify-content: center; }
 
 /* The hub (menus.ts main()) with LARGE text on the smallest phones: the tile titles keep their letters (TRANSFERS). */
 @container app (max-width: 760px) {

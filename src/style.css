@@ -6775,6 +6775,11 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
    HUD's words (font sizes: the HUD places some boxes itself, so they are never zoomed). The touch controls, the
    pitch and the camera never read it. */
 :root:is(.ts-small, .ts-large) .panel > :not(.btn-row:last-child) { zoom: var(--ts); }
+/* A phone on its side (a frame or fit box up to 830 by 400): the SHOP, TRANSFERS, MY CLUB and QUICK MATCH panels are
+   full at MEDIUM already, so LARGE leaves their contents at MEDIUM there (anything bigger cuts their detail columns). */
+@container app (max-width: 830px) and (max-height: 400px) {
+  :root.ts-large :is(.sh-screen, .mk-screen, .mc-club-screen, .qm-screen) .panel > :not(.btn-row:last-child) { zoom: 1; }
+}
 :root:is(.ts-small, .ts-large) .menu-toast { font-size: calc(15px * var(--ts)); }
 :root:is(.ts-small, .ts-large) .scorebug { font-size: calc(clamp(16px, calc(1.8 * var(--vw)), 22px) * var(--ts)); }
 :root:is(.ts-small, .ts-large) .hud-toast { font-size: calc(clamp(16px, calc(1.6 * var(--vw)), 20px) * var(--ts)); }

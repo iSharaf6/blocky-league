@@ -42,7 +42,7 @@
 .cb-t small { font: 400 max(calc(10px * var(--ts, 1)), var(--fs-floor, 0px)) / 1 var(--round); letter-spacing: 0.7px; color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cb-t b { display: flex; align-items: center; gap: 4px; min-width: 0; font: 400 calc(13px * var(--ts, 1)) / 1 var(--round); letter-spacing: 0.4px; white-space: nowrap; overflow: hidden; }
 .cb-t b > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.cb-t b > u { flex: none; padding: 2px 4px 1px; font-size: 0.72em; letter-spacing: 0.6px; text-decoration: none; color: var(--ink); background: var(--yellow); }
+.cb-t b > u { flex: none; padding: 2px 4px 1px; font-size: max(0.72em, var(--fs-floor, 0px)); letter-spacing: 0.6px; text-decoration: none; color: var(--ink); background: var(--yellow); }
 .cb-t b > .cb-dim { font-size: 0.82em; letter-spacing: 0.5px; color: #cfcab8; }
 .cb-card.ready { color: var(--ink); background: var(--yellow); box-shadow: 0 4px 0 var(--yellow-d); animation: hub-throb 1.6s ease-in-out infinite; }
 .cb-card.ready .cb-t small { color: #8a2a1e; }
