@@ -1716,7 +1716,17 @@ function menuMusic(): void {
 }
 
 // Tabbed away, or the portal's frame lost focus (a click outside the game): the match pauses itself.
+/**
+ * The player has pressed, clicked or touched something in this visit. Until then nothing auto-pauses: a first visit
+ * lands in a drill that waits for him, and a portal page that takes focus away while it loads (CrazyGames' QA saw
+ * PAUSED over the first drill) must not hide it behind a pause menu.
+ */
+let touchedGame = false;
+for (const kind of ['pointerdown', 'keydown', 'touchstart'] as const) {
+  window.addEventListener(kind, () => { touchedGame = true; }, { capture: true, once: true, passive: true });
+}
 const autoPause = (): void => {
+  if (!touchedGame) return;
   // A full-screen half-time ad can blur the webview before its menu is mounted. The match is already at a
   // break: do not replace it with a hidden pause that survives the SECOND HALF action.
   if (session && !session.paused && !menus.open && session.match.phase !== 'halftime' && session.match.phase !== 'fulltime') session.requestPause();
