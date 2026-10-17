@@ -229,6 +229,8 @@
 /* ----- toasts on shell screens: slim, just under the header (over the tabs), never over a pane's buttons ----- */
 
 .shell .mc-toast {
+  /* (One line up to its max-width: left at 50% alone let it wrap at half the screen, two lines over the body.) */
+  width: max-content;
   font-size: 15px;
   padding: 7px 14px 6px;
 }
@@ -238,6 +240,20 @@
     font-size: 13px;
     padding: 6px 12px 5px;
   }
+}
+
+/* Every toast's one spot (fitBox.ts placeToast): in the header, in the title's place, sized to its text, one line or
+   two. The title steps aside while it is up (toast-under), so nothing is drawn over anything. */
+.mc-toast.placed,
+.mc-toast.placed.on {
+  transform: none;
+  padding: 5px 12px 4px;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.toast-under {
+  visibility: hidden !important;
 }
 
 /* ----- drag and drop (src/ui/dragSwap.ts): any screen with `data-drag` items ----- */

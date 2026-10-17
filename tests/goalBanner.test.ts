@@ -18,6 +18,7 @@ describe('scored-goal corner announcement', () => {
     const hud = Object.assign(Object.create(Hud.prototype), {
       banner, bugRect: () => ({ l: left, t: top, r: left + 200, b: top + 46 }),
       topRight: () => ({ l: w - right - 40, t: top, r: w - right, b: top + 40 }), cmLine: null,
+      toast: { classList: { remove: vi.fn() } },
     }) as Hud;
     hud.show('GOAL!', "Long Scorer Name 64'", 'goal against', 3.2);
     expect(banner.className).toContain('score-flash');

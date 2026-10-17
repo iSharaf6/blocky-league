@@ -176,6 +176,17 @@
 @container app (orientation: landscape) and (max-height: 380px) {
   .hub-screen .hub-tile.t-season .ht-ic { display: none; }
 }
+/* JOURNEYS on a phone, and with LARGE text on a short frame: the icon gives its room to the words (JOURNEYS ran into
+   its TIER line), and the claim count stands in the line REWARDS TO CLAIM had, under the bar, not over the title. */
+@container app (orientation: landscape) and (max-height: 380px) {
+  .hub-screen .hub-tile.t-season > .hub-badge { position: static; order: 9; align-self: flex-start; }
+  .hub-screen .hub-tile.t-season:has(> .hub-badge) .ht-s { display: none; }
+}
+@container app (orientation: landscape) and (max-height: 460px) {
+  :root.ts-large .hub-screen .hub-tile.t-season .ht-ic { display: none; }
+  :root.ts-large .hub-screen .hub-tile.t-season > .hub-badge { position: static; order: 9; align-self: flex-start; }
+  :root.ts-large .hub-screen .hub-tile.t-season:has(> .hub-badge) .ht-s { display: none; }
+}
 /* Portrait web keeps its established scrolling stack; only landscape has the one-row contract. */
 @container app (max-aspect-ratio: 1/1) {
   .hub-screen .hub-top, .hub-screen .hub-acts { flex-wrap: wrap; }
@@ -500,7 +511,8 @@
 .panel.mc.shell .f-team ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 8px; max-height: 2.5em; overflow: hidden; font-size: 13px; line-height: 1.25; }
 .panel.mc.shell .f-score { padding-top: 0; font-size: clamp(36px, calc(9 * var(--vmin)), 68px); }
 
-.panel.mc.shell .st-row { grid-template-columns: 30px minmax(0, 1fr) 112px minmax(0, 1fr) 30px; gap: 6px; font-size: 14px; }
+/* (The numbers' columns grow for a three-digit 100%, which ran out of a 30 px column.) */
+.panel.mc.shell .st-row { grid-template-columns: minmax(30px, max-content) minmax(0, 1fr) 112px minmax(0, 1fr) minmax(30px, max-content); gap: 6px; font-size: 14px; }
 /* The verdict is the header's title: a size up, in its colour (YOU WIN! green, YOU LOSE red). */
 .panel.mc.shell .mc-title h2 .verdict { font-size: 1.3em; }
 .panel.mc.shell .st-row span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
@@ -549,6 +561,18 @@
 /* A toast while half time is up (the half-time show's coins) goes under the header (docs/UX.md 7): never over
    TACTICS & SUBS and SECOND HALF, where the menus' toast usually sits. */
 #ui:has(> .screen.ht) > .menu-toast { top: calc(max(6px, var(--sa-top)) + 50px); bottom: auto; }
+/* One line up to its max-width (left at 50% alone wrapped a long toast at half the screen: two lines, twice the cover). */
+#ui > .menu-toast { width: max-content; }
+/* In its spot (fitBox.ts placeToast: a header's title strip, the hub's top bar, the free top band of a match), sized to
+   its text, one line or two. */
+#ui > .menu-toast.placed { bottom: auto; transform: none; padding: 5px 12px 4px; line-height: 1.15; text-wrap: balance; animation: toast-fade 0.18s ease-out; }
+@keyframes toast-fade { from { opacity: 0; } }
+/* The level line at full time: when LV, the title and the XP count don't fit one line (LARGE text, a phone), the count
+   takes a second line instead of the title being squeezed out of sight. */
+.panel .ft-xp-h { flex-wrap: wrap; row-gap: 2px; }
+.panel .ft-xp-h .ft-title { flex: 1 0 auto; }
+/* LEVEL UP at full time and after a moment (playProgress): the toast in the level's yellow. */
+#ui > .menu-toast.level { color: var(--ink); background: var(--yellow); border-top-color: var(--yellow-d); box-shadow: 0 4px 0 var(--yellow-d); }
 
 @container app (max-width: 720px) {
   .panel.ht-panel.shell .hf-actions { gap: 6px; }
@@ -712,9 +736,9 @@
 @container app (max-height: 560px) {
   :root.ts-large .panel.qm.shell .qm-seg button { font-size: 12px; }
 }
-/* The hub with LARGE text: the coin count, the NEXT GOAL line and the WELCOME BACK strip (MATCH OF THE DAY DONE) stay
+/* The hub with LARGE text: the coin count, the level's title, the NEXT GOAL line and the WELCOME BACK strip (MATCH OF THE DAY DONE) stay
    at MEDIUM so their words are never cut short, and ROAD TO GLORY drops its division tag beside the title. */
-:root.ts-large :is(.hub-cb, .hub-goal, .hub-screen .hub-acts .hub-coins) { --ts: 1; }
+:root.ts-large :is(.hub-cb, .hub-goal, .hub-screen .hub-acts .hub-coins, .hub-screen .hub-lv .hl-txt) { --ts: 1; }
 :root.ts-large .hub-screen .hub-hero.road:not(.cup) .hh-meta { display: none; }
 :root.ts-large .hub-screen .hub-hero.road:not(.cup) .hh-head { justify-content: center; }
 

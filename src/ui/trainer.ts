@@ -359,6 +359,8 @@ export class Trainer {
   private barCue: TrainerCue | null = null;
   private barNext = '';
   private barNextSince = 0;
+  /** Frames since the bar last looked whether the play is under it. */
+  private underTick = 0;
 
   constructor() {
     this.root.className = 'pitch-trainer';
@@ -520,6 +522,24 @@ export class Trainer {
         this.lastCue = key;
         fillCoach(this.parts, shown);
       }
+    }
+    // The bar nearly see-through while the ball or his man is under it (looked at every third frame, about 20 times a
+    // second as the minimap is): it sits at the bottom centre, where a broadcast shot often has the play.
+    if (++this.underTick >= 3) {
+      this.underTick = 0;
+      let under = false;
+      if (!taught && !this.card.hidden) {
+        const r = this.card.getBoundingClientRect();
+        const w = window.innerWidth, h = window.innerHeight, pad = 14;
+        const hit = (x: number, y: number, z: number): boolean => {
+          this.v.set(x, y + PITCH_Y, z).project(camera);
+          const px = (this.v.x + 1) * w / 2, py = (1 - this.v.y) * h / 2;
+          return this.v.z > -1 && this.v.z < 1 && px > r.left - pad && px < r.right + pad && py > r.top - pad && py < r.bottom + pad;
+        };
+        const a = m.active * PF;
+        under = hit(frame[BALL_OFS], frame[BALL_OFS + 1], frame[BALL_OFS + 2]) || hit(frame[a], 0.2, frame[a + 1]) || hit(frame[a], 0.9, frame[a + 1]) || hit(frame[a], 1.6, frame[a + 1]);
+      }
+      if (under !== this.card.classList.contains('under')) this.card.classList.toggle('under', under);
     }
     // The passing lane: a line from the ball to the man a pass would go to (no words over him).
     const idx = m.passCharge >= 0 ? m.passAim : m.passPreview;

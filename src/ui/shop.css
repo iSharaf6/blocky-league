@@ -931,7 +931,9 @@
 
 /* The reveal on landscape phones: card and verdict side by side. */
 @container app (max-height: 480px) {
-  .sh-card { width: min(190px, calc(40 * var(--vw))); height: min(250px, calc(62 * var(--vh))); }
+  /* (The face's last stat bar ran past the card's foot: a little taller, its rows a little closer.) */
+  .sh-card { width: min(190px, calc(40 * var(--vw))); height: min(262px, calc(66 * var(--vh))); }
+  .sh-front { gap: 5px; padding: 10px 12px 9px; }
   .sh-reveal { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 18px; }
   .sh-rays { top: 50%; left: 25%; }
 }

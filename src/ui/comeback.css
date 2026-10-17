@@ -103,6 +103,11 @@
 @container app (max-width: 960px) {
   .hub-cb .cb-st { display: none; }
 }
+/* MATCH OF THE DAY done, on a strip of four or five cards: its caption already says DONE, so the moment's name keeps
+   the line whole and the TOMORROW tag (which cut it) steps aside. */
+@container app (max-width: 1280px) {
+  .hub-cb .cb-motd.done .cb-t b > u { display: none; }
+}
 @container app (max-width: 700px) {
   .hub-cb .cb-try { display: none; }
 }

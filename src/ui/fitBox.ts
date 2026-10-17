@@ -81,6 +81,143 @@ export function layoutScale(el: HTMLElement): number {
   return s > 0.05 && Number.isFinite(s) ? s : 1;
 }
 
+// ------------------------------------------------------------------ toasts (docs/UX.md 7)
+
+/** Where a toast stands, in client pixels, and the element it stands in for (hidden while it is up). */
+interface ToastSlot { l: number; t: number; w: number; h: number; under: HTMLElement | null }
+
+// (Not opacity: a screen still fading in is there all the same. A title a toast stands in for still counts.)
+const isShown = (el: Element | null | undefined): el is HTMLElement =>
+  !!el && el.getClientRects().length > 0
+  && (el.classList.contains('toast-under') || ((el as HTMLElement).checkVisibility?.({ visibilityProperty: true }) ?? true));
+
+/**
+ * One spot for every toast, top centre, never over a button, a tile or a result line:
+ * 1. a screen's header (MENU, the title, the wallet): the toast takes the title's place for its moment;
+ * 2. a card's own title (PLAY IT AGAIN?, the gift): the same;
+ * 3. the hub: its top bar, between the level and the wallet;
+ * 4. anything else (a match: the score bug, the minimap, the top buttons): the widest free stretch of the top band.
+ */
+/**
+ * Client rects of `els` as they will stand once their entrance animations end: a panel pops in (moved and scaled), and
+ * a toast placed at that moment must not land where the header is in mid flight. (Rects, not offsets: LARGE text
+ * zooms the panel's contents.)
+ */
+function settledRects(els: HTMLElement[], scr: HTMLElement): DOMRect[] {
+  const anims = new Set<Animation>();
+  for (const el of els) {
+    for (let n: HTMLElement | null = el; n; n = n === scr ? null : n.parentElement) for (const a of n.getAnimations()) anims.add(a);
+  }
+  const held: [Animation, CSSNumberish | null][] = [];
+  for (const a of anims) {
+    const end = a.effect?.getComputedTiming().endTime;
+    if (typeof end !== 'number' || !Number.isFinite(end)) continue;
+    held.push([a, a.currentTime]);
+    a.currentTime = end;
+  }
+  const out = els.map((e) => e.getBoundingClientRect());
+  for (const [a, t] of held) a.currentTime = t;
+  return out;
+}
+
+function toastSlot(ui: HTMLElement, toast: HTMLElement): ToastSlot {
+  const screens = [...ui.querySelectorAll<HTMLElement>(':scope > .screen')].filter(isShown);
+  const scr = screens[screens.length - 1];
+  const title = scr?.querySelector<HTMLElement>('.mc-top > .mc-title');
+  if (scr && isShown(title)) {
+    const [r, bar] = settledRects([title, title.parentElement!], scr);
+    return { l: r.left, t: bar.top, w: r.width, h: bar.height, under: title };
+  }
+  const h2 = scr?.querySelector<HTMLElement>('.panel > h2');
+  if (scr && isShown(h2)) {
+    const [r] = settledRects([h2], scr);
+    return { l: r.left, t: r.top - 3, w: r.width, h: r.height + 6, under: h2 };
+  }
+  const hubTop = scr?.querySelector<HTMLElement>('.hub-top');
+  const prog = hubTop?.querySelector<HTMLElement>('.hub-progress');
+  const acts = hubTop?.querySelector<HTMLElement>('.hub-acts');
+  if (scr && hubTop && isShown(prog) && isShown(acts)) {
+    // (From what each side shows: the level's box is wider than its chip when TOMORROW steps aside for the strip.)
+    const left = [...prog.children].filter(isShown);
+    const right = [...acts.children].filter(isShown);
+    const [r, ...q] = settledRects([hubTop, ...left, ...right], scr);
+    const l = Math.max(r.left, ...q.slice(0, left.length).map((x) => x.right)) + 8;
+    const rt = Math.min(r.right, ...q.slice(left.length).map((x) => x.left)) - 8;
+    if (rt - l >= 120) return { l, t: r.top, w: rt - l, h: r.height, under: null };
+  }
+  // A match (or anything else): the first band from the top with a free stretch wide enough, so a toast fired as a
+  // match starts sits beside the score bug and the commentary, or under them, never over them or a banner.
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const leaves: DOMRect[] = [];
+  for (const el of ui.querySelectorAll<HTMLElement>('*')) {
+    // (Here opacity counts: a HUD widget faded out is not in the way.)
+    if (el === toast || toast.contains(el) || !isShown(el) || !(el.checkVisibility?.({ opacityProperty: true }) ?? true)) continue;
+    if ((el.childElementCount && !/^(BUTTON|CANVAS|svg|IMG)$/.test(el.tagName)) || el.parentElement?.closest('svg')) continue;
+    const r = el.getBoundingClientRect();
+    // (A layer over the whole frame, the pitch's edge arrows say, draws nothing of its own there.)
+    if (r.width < 1 || r.top > H * 0.6 || (r.width > W * 0.6 && r.height > H * 0.5)) continue;
+    leaves.push(r);
+  }
+  const bandH = 44;
+  for (let top = 6; top + bandH < H * 0.6; ) {
+    const busy = leaves.filter((r) => r.bottom > top && r.top < top + bandH).map((r) => [r.left, r.right] as [number, number]);
+    busy.sort((p, q) => p[0] - q[0]);
+    let best = { l: 8, w: 0 };
+    let x = 8;
+    for (const [l, r] of [...busy, [W - 8, W] as [number, number]]) {
+      if (l - x > best.w) best = { l: x, w: l - x };
+      x = Math.max(x, r);
+    }
+    if (best.w >= 160) return { l: best.l + 4, t: top, w: best.w - 8, h: bandH, under: null };
+    const low = Math.max(0, ...leaves.filter((r) => r.bottom > top && r.top < top + bandH).map((r) => r.bottom));
+    top = Math.max(top + 12, low + 6);
+  }
+  return { l: 8, t: 6, w: W - 16, h: bandH, under: null };
+}
+
+/**
+ * Put `toast` (already in the page, its text set) in its spot, sized to its text: one line, two at most, a step smaller
+ * if it must, never under 9 px on screen. Returns the element it stands in for: the caller hides it (`toast-under`)
+ * while the toast is up and shows it again after.
+ */
+export function placeToast(toast: HTMLElement, ui: HTMLElement): HTMLElement | null {
+  const slot = toastSlot(ui, toast);
+  // (A meta screen's toast sits inside its screen, which the fit box may scale: its own pixels are the screen's.)
+  const host = getComputedStyle(toast).position === 'fixed' ? null : (toast.offsetParent as HTMLElement | null);
+  const s = host ? layoutScale(host) : 1;
+  const o = host ? host.getBoundingClientRect() : { left: 0, top: 0 };
+  const w = slot.w / s;
+  const h = slot.h / s;
+  toast.classList.add('placed');
+  const st = toast.style;
+  st.left = '0px';
+  st.top = '0px';
+  st.bottom = 'auto';
+  st.width = 'max-content';
+  st.maxWidth = `${Math.max(80, Math.floor(w))}px`;
+  st.fontSize = '';
+  const base = parseFloat(getComputedStyle(toast).fontSize) || 15;
+  const fit = (): boolean => {
+    for (let px = base; px >= 9 / s; px -= 0.5) {
+      st.fontSize = `${px}px`;
+      if (toast.offsetHeight <= h + 0.5) return true;
+    }
+    return false;
+  };
+  // (Still too tall at the smallest type: the same words, closer together.)
+  st.padding = '';
+  st.lineHeight = '';
+  if (!fit()) {
+    st.padding = '2px 8px 1px';
+    st.lineHeight = '1.05';
+    fit();
+  }
+  st.left = `${Math.round((slot.l - o.left) / s + (w - toast.offsetWidth) / 2)}px`;
+  st.top = `${Math.round((slot.t - o.top) / s + Math.max(0, (h - toast.offsetHeight) / 2))}px`;
+  return slot.under;
+}
+
 let current: Fit = { on: false, w: 0, h: 0, scale: 1, upright: false };
 
 /** The fit now in use (for code that maps pointer pixels to layout pixels). */

@@ -41,6 +41,7 @@ import { confirmGems, gemPrice, gemsHtml } from './gemUi';
 import { openShop } from './shop';
 import { openMarket } from './market';
 import { sep } from './text';
+import { placeToast } from './fitBox';
 import { cssHex } from '../render/palette';
 import { FORMATIONS, FORMATION_IDS } from '../sim/formations';
 import { overall, type FormationId, type Kit, type KitPattern, type PlayerDef, type PlayerStats } from '../sim/types';
@@ -129,6 +130,8 @@ export function mountMeta(app: AppContext, cls: string): MetaScreen {
   let clicks: Handlers = {};
   let inputs: InputHandlers = {};
   let toastTimer = 0;
+  /** The header title the toast stands in for, hidden while it is up. */
+  let toastUnder: HTMLElement | null = null;
   panel.addEventListener('pointerdown', (e) => {
     if ((e.target as Element).closest('button:not(:disabled)')) sfx.click();
   });
@@ -175,22 +178,18 @@ export function mountMeta(app: AppContext, cls: string): MetaScreen {
     },
     toast(msg, kind = 'info') {
       toastEl.textContent = msg;
-      // Just under the panel's title bar (never over the title, back button or coins), or the panel's top
-      // edge once that bar has scrolled away.
-      // Layout offsets, not client rects: the panel may still be mid entrance animation.
-      const y = (el: HTMLElement) => {
-        let v = 0;
-        for (let n: HTMLElement | null = el; n && n !== root; n = n.offsetParent as HTMLElement | null) v += n.offsetTop;
-        return v;
-      };
-      const pTop = y(panel);
-      const bar = panel.querySelector<HTMLElement>('.mc-top');
-      const barBottom = bar ? y(bar) + bar.offsetHeight - panel.scrollTop : pTop;
-      // App-shell screens: a slim toast right under the header, over the tabs (never over a pane's buttons).
-      toastEl.style.top = `${Math.round(Math.max(pTop + 8, barBottom + (root.classList.contains('shell') ? 4 : 14)))}px`;
+      toastUnder?.classList.remove('toast-under');
       toastEl.className = `mc-toast on ${kind}`;
+      // In the header, in the title's place for its moment (fitBox.ts placeToast): never over the back button, the
+      // wallet, a tab or a result.
+      toastUnder = root.parentElement ? placeToast(toastEl, root.parentElement) : null;
+      toastUnder?.classList.add('toast-under');
       window.clearTimeout(toastTimer);
-      toastTimer = window.setTimeout(() => toastEl.classList.remove('on'), 2600);
+      toastTimer = window.setTimeout(() => {
+        toastEl.classList.remove('on');
+        toastUnder?.classList.remove('toast-under');
+        toastUnder = null;
+      }, 2600);
     },
   };
 }

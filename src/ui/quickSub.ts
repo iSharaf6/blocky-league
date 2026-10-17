@@ -16,6 +16,8 @@ const QS_KEY = 'KeyB';
 const QS_PAD = 8;
 /** A second tap this soon after the card changed state is the same tap twice: it never undoes the change. */
 const TAP_GUARD_MS = 400;
+/** The narrowest (px) the card may go to sit in a landscape phone's top row (see place). */
+const QS_TOP_MIN_W = 212;
 
 /** Pads, where the browser lets us read them (some embedded frames refuse). */
 function pads(): readonly (Gamepad | null)[] {
@@ -53,6 +55,10 @@ export class QuickSubCard {
   private changedAt = 0;
   /** Seconds to the next re-measure of where the card sits (see place). */
   private placeT = 0;
+  /** The card's own width (px), before place() narrows it for the top row. */
+  private natW = 0;
+  private placedW = 0;
+  private placedH = 0;
   private readonly offKey: () => void;
 
   constructor(readonly qs: QuickSubs, private readonly input: Input) {
@@ -122,9 +128,16 @@ export class QuickSubCard {
       this.placeT = 0;
     }
     if (cardOn || boardOn) {
+      // (The window resized or the phone turned: placed again at once.)
+      if (typeof window !== 'undefined' && (window.innerWidth !== this.placedW || window.innerHeight !== this.placedH)) {
+        this.placedW = window.innerWidth;
+        this.placedH = window.innerHeight;
+        this.placeT = 0;
+      }
       this.placeT -= dt;
       if (this.placeT <= 0) {
-        this.placeT = 0.5;
+        // (Up in the top row the live goal card unfolding beside it must move it at once.)
+        this.placeT = this.root.classList.contains('top') ? 0.2 : 0.5;
         this.place();
       }
     }
@@ -164,14 +177,48 @@ export class QuickSubCard {
 
   /**
    * Under the pause button, and below the score bug wherever the two would meet (portrait phones: the bug and its
-   * booking chips reach across under the pause button). Re-measured twice a second while up (a booking grows it).
+   * booking chips reach across under the pause button); in the top row beside them on a landscape phone when it
+   * fits. Re-measured twice a second while up (a booking grows it, the added-time board takes room).
    */
   private place(): void {
     const hud = this.root.parentElement;
     if (!hud || typeof window === 'undefined') return;
     const sb = hud.querySelector('.scorebug')?.getBoundingClientRect();
     const pause = hud.querySelector('.hud-pause')?.getBoundingClientRect();
-    const me = this.root.getBoundingClientRect();
+    const st = this.root.style;
+    let me = this.root.getBoundingClientRect();
+    if (!st.width) this.natW = me.width;
+    // A phone on its side: in the top row, between the score bug (and its added-time board) and the camera / pause
+    // buttons, when it fits there (a little narrower if need be). Under the pause button it reaches far down into
+    // the middle of the screen, where the play is.
+    const W = window.innerWidth;
+    const cam = hud.querySelector('.hud-cam')?.getBoundingClientRect();
+    const board = hud.querySelector('.sb-board.on')?.getBoundingClientRect();
+    const btnL = Math.min(pause?.height ? pause.left : W, cam?.height ? cam.left : W);
+    // (Its live goal card and grade can reach past the bug's own box: every drawn part of it counts.)
+    let bugR = board?.height ? board.right : 0;
+    for (const el of hud.querySelectorAll('.scorebug, .scorebug *')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) bugR = Math.max(bugR, r.right);
+    }
+    const room = btnL - 8 - (bugR + 8);
+    if (window.innerHeight <= 480 && W > window.innerHeight && pause?.height && sb?.height && room >= Math.min(this.natW, QS_TOP_MIN_W)) {
+      const w = room < this.natW ? `${Math.floor(room)}px` : '';
+      // (Level with the score bug's top: the card then ends above the middle of the screen, see .hud-qsub.top.)
+      const top = `${Math.round(Math.min(pause.top, sb.top))}px`;
+      const right = `${Math.round(W - btnL + 8)}px`;
+      if (st.width !== w) st.width = w;
+      if (st.top !== top) st.top = top;
+      if (st.right !== right) st.right = right;
+      this.root.classList.add('top');
+      this.root.classList.toggle('narrow', !!w);
+      return;
+    }
+    this.root.classList.remove('top', 'narrow');
+    if (st.width || st.right) {
+      st.width = st.right = '';
+      me = this.root.getBoundingClientRect();
+    }
     let top = pause && pause.height ? pause.bottom + 8 : 0;
     if (sb && sb.height && sb.right + 8 > me.left) top = Math.max(top, sb.bottom + 8);
     const px = top > 0 ? `${Math.round(top)}px` : '';

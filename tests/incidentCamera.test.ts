@@ -138,8 +138,10 @@ describe('incident replay badge', () => {
       toggle: (v: string, on: boolean) => { if (on) values.add(v); else values.delete(v); },
     });
     const hud = Object.assign(Object.create(Hud.prototype), {
-      replay: { classList: classes(replayClasses), querySelector: (q: string) => (q === 'b' ? badge : caption) },
-      root: { classList: classes(rootClasses) }, hideLine: vi.fn(),
+      replay: { classList: classes(replayClasses), querySelector: (q: string) => (q === 'b' ? badge : caption),
+        style: { top: '' }, getBoundingClientRect: () => ({ top: 0 }) },
+      // (No score bug laid out: the replay badge keeps its CSS place.)
+      root: { classList: classes(rootClasses), querySelector: () => ({ getBoundingClientRect: () => ({ width: 0, height: 0 }) }) }, hideLine: vi.fn(),
       banner: { classList: { remove: vi.fn() } }, bannerTimer: 2,
     }) as Hud;
     hud.setReplay(true, 'RED CARD REPLAY', 'FOUL BY 5 CINDER');

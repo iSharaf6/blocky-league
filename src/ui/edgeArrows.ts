@@ -38,6 +38,18 @@ const BADGE = 18;
 
 /** An arrow moves only once it is this much (device px) off where it was drawn. */
 const STEP_HOLD = 0.75;
+/**
+ * What an arrow paints around its anchor (px): the chevron's reach (1.25x lit), the number badge's half width and
+ * height (1.15x lit), centred BADGE px inwards. A HUD box is kept CLEAR px clear of all of it.
+ */
+const ARROW_R = 14;
+const ARROW_R_LIT = 17;
+const NUM_HW = 12;
+const NUM_HH = 11;
+const NUM_LIT = 1.15;
+const CLEAR = 6;
+/** Opacity an arrow regains per frame once a HUD box, or a stronger arrow, leaves it a clear spot again. */
+const VIS_STEP = 0.2;
 
 interface Slot {
   el: HTMLDivElement;
@@ -49,6 +61,23 @@ interface Slot {
   /** Where it was last drawn (CSS px). */
   x: number;
   y: number;
+  /** 0..1: eased out while it has no spot clear of the HUD boxes and the stronger arrows. */
+  vis: number;
+}
+
+/** The box an arrow anchored at (x, y), pointing along (ux, uy), paints (the chevron and its number badge). */
+function footprint(x: number, y: number, ux: number, uy: number, lit: boolean): EdgeRect {
+  const r = lit ? ARROW_R_LIT : ARROW_R;
+  const hw = lit ? NUM_HW * NUM_LIT : NUM_HW;
+  const hh = lit ? NUM_HH * NUM_LIT : NUM_HH;
+  const bx = x - Math.round(ux * BADGE);
+  const by = y - Math.round(uy * BADGE);
+  return { l: Math.min(x - r, bx - hw), t: Math.min(y - r, by - hh), r: Math.max(x + r, bx + hw), b: Math.max(y + r, by + hh) };
+}
+
+/** Do two boxes overlap, with `pad` px of clearance kept between them? */
+function meets(a: EdgeRect, b: EdgeRect, pad: number): boolean {
+  return a.l < b.r + pad && a.r > b.l - pad && a.t < b.b + pad && a.b > b.t - pad;
 }
 
 export class EdgeArrows {
@@ -77,14 +106,15 @@ export class EdgeArrows {
   /**
    * Lay out and draw this frame's arrows: `mates` all of them (on screen or not), `fade` the overall opacity
    * (eased by the session), `box` the band the arrows stay inside (clear of the score bug and the bottom HUD),
-   * `avoid` screen boxes an arrow slides out of along its edge (the minimap, the touch buttons).
+   * `avoid` screen boxes an arrow slides out of along its edge (the minimap, the touch buttons and stick, the ticker);
+   * one with no clear spot left fades out.
    */
   update(mates: EdgeMate[], fade: number, box: EdgeRect, avoid: EdgeRect[]): void {
     const W = window.innerWidth;
     const H = window.innerHeight;
     const cx = W / 2;
     const cy = H / 2;
-    type P = { m: EdgeMate; x: number; y: number; ux: number; uy: number; vert: boolean };
+    type P = { m: EdgeMate; x: number; y: number; ux: number; uy: number; vert: boolean; lit: boolean; free: boolean };
     const placed: P[] = [];
     for (const m of mates) {
       if (m.x > ON_SCREEN && m.x < W - ON_SCREEN && m.y > ON_SCREEN && m.y < H - ON_SCREEN) continue;
@@ -98,17 +128,37 @@ export class EdgeArrows {
       const tx = ux > 0 ? (box.r - cx) / ux : ux < 0 ? (box.l - cx) / ux : Infinity;
       const ty = uy > 0 ? (box.b - cy) / uy : uy < 0 ? (box.t - cy) / uy : Infinity;
       const t = Math.max(0, Math.min(tx, ty));
-      placed.push({ m, x: cx + ux * t, y: cy + uy * t, ux, uy, vert: tx <= ty });
+      placed.push({ m, x: cx + ux * t, y: cy + uy * t, ux, uy, vert: tx <= ty, lit: m.pass > 0.5, free: true });
     }
-    // Slide out of the HUD boxes along the edge (up past the minimap / buttons, or sideways along the bottom).
-    for (const p of placed) {
-      for (const a of avoid) {
-        const pad = 16;
-        if (p.x < a.l - pad || p.x > a.r + pad || p.y < a.t - pad || p.y > a.b + pad) continue;
-        if (p.vert) p.y = a.t - pad > box.t ? a.t - pad : a.b + pad;
-        else p.x = Math.abs(p.x - (a.l - pad)) < Math.abs(p.x - (a.r + pad)) ? a.l - pad : a.r + pad;
+    // Slide out of the HUD boxes along the edge (past the minimap, the stick, the buttons, the ticker), the whole
+    // chevron and its number kept CLEAR of them: whichever way is nearer and still inside the band.
+    const slide = (p: P): void => {
+      for (let it = 0; it < 3; it++) {
+        let moved = false;
+        for (const a of avoid) {
+          const f = footprint(p.x, p.y, p.ux, p.uy, p.lit);
+          if (!meets(f, a, CLEAR)) continue;
+          if (p.vert) {
+            const up = a.t - CLEAR - (f.b - p.y);
+            const down = a.b + CLEAR + (p.y - f.t);
+            const okUp = up >= box.t;
+            const okDown = down <= box.b;
+            if (!okUp && !okDown) continue;
+            p.y = okUp && (!okDown || p.y - up <= down - p.y) ? up : down;
+          } else {
+            const left = a.l - CLEAR - (f.r - p.x);
+            const right = a.r + CLEAR + (p.x - f.l);
+            const okL = left >= box.l;
+            const okR = right <= box.r;
+            if (!okL && !okR) continue;
+            p.x = okL && (!okR || p.x - left <= right - p.x) ? left : right;
+          }
+          moved = true;
+        }
+        if (!moved) break;
       }
-    }
+    };
+    for (const p of placed) slide(p);
     // Two team-mates in much the same direction: spread along the edge, never stacked on one spot.
     for (let pass = 0; pass < 3; pass++) {
       for (let i = 0; i < placed.length; i++) {
@@ -135,6 +185,17 @@ export class EdgeArrows {
         p.y = Math.min(box.b, Math.max(box.t, p.y));
       }
     }
+    // The spread and the band may have pushed one back into a box. Whatever still has no clear spot (boxed in
+    // between two HUD boxes, or on top of a stronger arrow round a corner) fades out until it has one.
+    const rank = (p: P) => Math.max(p.m.alpha, p.m.through * 1.5, p.m.pass * 2);
+    placed.sort((a, b) => rank(b) - rank(a));
+    const kept: EdgeRect[] = [];
+    for (const p of placed) {
+      slide(p);
+      const f = footprint(p.x, p.y, p.ux, p.uy, p.lit);
+      p.free = !avoid.some((a) => meets(f, a, 0)) && !kept.some((k) => meets(f, k, -2));
+      if (p.free) kept.push(f);
+    }
     const live = new Set<number>();
     for (const p of placed) {
       const m = p.m;
@@ -156,7 +217,9 @@ export class EdgeArrows {
       if (Math.abs(p.y - s.y) * dpr > STEP_HOLD) s.y = Math.round(p.y * dpr) / dpr;
       const x = s.x;
       const y = s.y;
-      const op = Math.round(Math.min(1, Math.max(m.alpha, m.pass, m.through) * fade) * 20) / 20;
+      // (Out at once, never drawn over what it lost its spot to; back in eased.)
+      s.vis = p.free ? Math.min(1, s.vis + VIS_STEP) : 0;
+      const op = Math.round(Math.min(1, Math.max(m.alpha, m.pass, m.through) * fade) * s.vis * 20) / 20;
       const deg = Math.round((Math.atan2(p.uy, p.ux) * 180) / Math.PI);
       const key = `${x},${y},${op},${deg}`;
       if (key !== s.key) {
@@ -179,7 +242,7 @@ export class EdgeArrows {
     el.className = 'ea';
     el.innerHTML = '<svg class="ea-arrow" viewBox="-12 -12 24 24"><path d="M-6 -9 L10 0 L-6 9 L-2 0 Z"/></svg><b class="ea-num"></b>';
     this.root.appendChild(el);
-    s = { el, arrow: el.querySelector('svg')!, num: el.querySelector('b')!, n: -1, key: '', cls: 'ea', x: -1e4, y: -1e4 };
+    s = { el, arrow: el.querySelector('svg')!, num: el.querySelector('b')!, n: -1, key: '', cls: 'ea', x: -1e4, y: -1e4, vis: 1 };
     this.slots.set(idx, s);
     return s;
   }

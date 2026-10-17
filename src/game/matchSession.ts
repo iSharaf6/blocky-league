@@ -333,7 +333,8 @@ const PHASE_NUDGE = 0.03;
  * Off-screen team-mate arrows (ui/edgeArrows): on with our ball (or a loose one near us: within EDGE_LOOSE m of
  * one of ours and nearer to us than to them) in open play on the broadcast shot, easing in / out over
  * EDGE_FADE_S. Each fades with his distance from the ball: solid to EDGE_NEAR m, down to EDGE_MIN_ALPHA by
- * EDGE_FAR m. They stay inside a band clear of the score bug (EDGE_TOP px) and the bottom HUD (EDGE_BOTTOM px).
+ * EDGE_FAR m. They stay inside a band clear of the score bug (EDGE_TOP px) and the bottom HUD (EDGE_BOTTOM px), and
+ * along the top and the bottom out of the middle 60% of the screen (EDGE_REACH).
  */
 const EDGE_LOOSE = 9;
 const EDGE_FADE_S = 0.15;
@@ -343,6 +344,8 @@ const EDGE_MIN_ALPHA = 0.4;
 const EDGE_SIDE = 22;
 const EDGE_TOP = 72;
 const EDGE_BOTTOM = 82;
+/** How far (px) an arrow and its number reach inwards from where it is anchored (ui/edgeArrows.ts footprint). */
+const EDGE_REACH = 30;
 
 /** Which labels the touch buttons wear right now (attack / defend / set piece): hints name the button on screen. */
 type HintCtx = CoachCtx;
@@ -542,6 +545,7 @@ export class MatchSession {
   private edgeFade = 0;
   private edgeAvoid: EdgeRect[] = [];
   private edgeAvoidT = 0;
+  private edgeAvoidSig = '';
   /** The notch / home-indicator insets the arrows also keep inside (re-read with edgeAvoid). */
   private edgeInset: Insets = { l: 0, t: 0, r: 0, b: 0 };
   private edgeMates: EdgeMate[] = [];
@@ -4304,13 +4308,27 @@ export class MatchSession {
     const W = window.innerWidth;
     const H = window.innerHeight;
     this.edgeAvoidT -= dt;
+    // At once, too, when the window is resized, the touch controls come back after a dead ball, the ticker, the event
+    // flag or the sub card comes, goes or moves, or the live goal card grows or folds the score bug (class and style
+    // reads: no layout).
+    const hr = this.hud?.root;
+    const cm = hr?.querySelector<HTMLElement>('.hud-cm.on');
+    const sig = `${window.innerWidth}x${window.innerHeight}|${this.touch?.isVisible ? 1 : 0}|${cm ? `${cm.style.left},${cm.style.top}` : ''}|${hr?.querySelector('.hud-toast.on') ? 1 : 0}|${hr?.querySelector('.hud-qsub.on') ? 1 : 0}|${hr?.querySelector('.sk-flair.on') ? 1 : 0}|${hr?.querySelector('.hud-banner.on.plate') ? 1 : 0}|${hr?.querySelector('.pitch-trainer:not([hidden]) .trainer-card:not([hidden])')?.textContent?.length ?? -1}|${hr?.querySelector('.sb-fun .bty')?.className ?? ''}`;
+    if (sig !== this.edgeAvoidSig) {
+      this.edgeAvoidSig = sig;
+      this.edgeAvoidT = 0;
+    }
     if (this.edgeAvoidT <= 0) {
-      // The minimap, (touch) the action buttons, the quick-sub card and the score bug: re-measured twice a second.
+      // The minimap, (touch) the action buttons and the stick, the quick-sub card and the score bug: re-measured twice a second.
       this.edgeAvoidT = RADAR_RECT_S;
       this.edgeAvoid = [];
       safeAreaInsets(this.edgeInset);
       const boxes = [this.hud?.root.querySelector('.hud-radar'), this.touch?.isVisible ? this.touch.root.querySelector('.touch-btns') : null,
+        this.touch?.isVisible ? this.touch.root.querySelector('.touch-base') : null,
         this.hud?.root.querySelector('.hud-qsub.on'), this.hud?.root.querySelector('.hud-pause'), this.hud?.root.querySelector('.hud-cam'),
+        // (The commentary ticker, the event flag, the SKILL pips chip, a plate and the trainer's bar, while they are up.)
+        this.hud?.root.querySelector('.hud-cm.on'), this.hud?.root.querySelector('.hud-toast.on'), this.hud?.root.querySelector('.sk-flair.on'),
+        this.hud?.root.querySelector('.hud-banner.on.plate'), this.hud?.root.querySelector('.pitch-trainer:not([hidden]) .trainer-card:not([hidden])'),
         // (The score bug grows with the HYPE bars and a live goal under it: game/funPresent.ts.)
         this.hud?.root.querySelector('.scorebug')];
       for (const el of boxes) {
@@ -4362,9 +4380,11 @@ export class MatchSession {
     const box = this.edgeBox;
     const ins = this.edgeInset;
     box.l = EDGE_SIDE + ins.l;
-    box.t = Math.min(EDGE_TOP, H * 0.2) + ins.t;
+    // An arrow along the top or the bottom (its number inside it) stays out of the middle 60% of the screen, where
+    // the play is: on a landscape phone that puts it up beside the score bug, or down beside the minimap.
+    box.t = Math.min(EDGE_TOP, H * 0.2 - EDGE_REACH) + ins.t;
     box.r = W - EDGE_SIDE - ins.r;
-    box.b = H - Math.min(EDGE_BOTTOM, H * 0.22) - ins.b;
+    box.b = Math.min(H - EDGE_SIDE, Math.max(H - Math.min(EDGE_BOTTOM, H * 0.22), H * 0.8 + EDGE_REACH)) - ins.b;
     ea.update(out, this.edgeFade, box, this.edgeAvoid);
   }
 

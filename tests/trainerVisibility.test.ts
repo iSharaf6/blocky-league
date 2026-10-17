@@ -48,6 +48,9 @@ class ElementDouble {
   append(...nodes: ElementDouble[]): void { this.children.push(...nodes); }
   replaceChildren(...nodes: ElementDouble[]): void { this.children = nodes; this.ownText = ''; }
   setAttribute(_name: string, _value: string): void {}
+  getBoundingClientRect(): { left: number; top: number; right: number; bottom: number; width: number; height: number } {
+    return { left: 0, top: 0, right: this.offsetWidth, bottom: this.offsetHeight, width: this.offsetWidth, height: this.offsetHeight };
+  }
 }
 
 const controls = { sx: 0, sy: 0, pass: false, shoot: false, through: false, sprint: false };

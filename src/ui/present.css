@@ -69,6 +69,11 @@
 @container app (max-width: 720px) or (max-height: 480px) {
   .pz-chant { top: calc(max(12px, var(--sa-top)) + 46px); font-size: 11px; max-width: calc(44 * var(--vw)); }
 }
+/* A phone on its side: right under the camera and pause buttons (38 px), so the line ends above the middle of the
+   screen (the top 20%: 75 px at 667 by 375). */
+@container app (max-height: 480px) and (orientation: landscape) {
+  .pz-chant { top: calc(max(12px, var(--sa-top)) + 40px); padding: 4px 8px 3px 6px; }
+}
 
 /* A staged shot (the line-up, a change, the man of the match) is a clean frame with its own caption: no banner
    across it, and the score bug steps out (the fourth official's board goes up where it sits). Pause stays. */

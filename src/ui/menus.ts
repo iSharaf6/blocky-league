@@ -33,7 +33,7 @@ import type { ScenarioOutcome } from '../sim/scenario';
 import { overall, type FormationId, type Kit, type MatchMode, type PlayerDef, type ScenarioSpec } from '../sim/types';
 import { suggestSubs, type SubPlan } from '../meta/squad';
 import { bindDragSwap } from './dragSwap';
-import { installFitBox } from './fitBox';
+import { installFitBox, placeToast } from './fitBox';
 import { installDragScroll } from './dragScroll';
 import { developerAboutHtml } from './developerAbout';
 // (Type only: ui/comeback.ts draws the come-back cards and main.ts hands it over, so nothing of it loads with this file.)
@@ -1736,16 +1736,56 @@ export class Menus {
     });
   }
 
-  /** A small message over the menu (a locked tile: what opens it). Plain text; gone after a couple of seconds. */
-  toast(text: string): void {
+  /**
+   * A small message (a locked tile: what opens it). Plain text; gone after a couple of seconds. Top centre in the
+   * header's title strip, the hub's top bar or the free top band (fitBox.ts placeToast): never over a button or a result.
+   */
+  toast(text: string, kind: '' | 'level' = ''): void {
     this.root.querySelector('.menu-toast')?.remove();
+    this.toastUnder?.classList.remove('toast-under');
     const t = document.createElement('div');
-    t.className = 'menu-toast';
+    t.className = kind ? `menu-toast ${kind}` : 'menu-toast';
     t.setAttribute('role', 'status');
     t.textContent = text;
     this.root.appendChild(t);
-    setTimeout(() => t.remove(), 2600);
+    // Placed again while it is up: a new screen moves it to that screen's spot, and a match starting under it ends it,
+    // so it never lingers over what came after.
+    let under: HTMLElement | null = null;
+    let again: ReturnType<typeof setInterval> | undefined;
+    let watch: MutationObserver | null = null;
+    const place = (): void => {
+      // (Replaced by a newer toast, or a match is under way with no menu over it: the toast goes, so it never sits on
+      // the score bug, the commentary or a banner, and what it hid comes back.)
+      if (t.isConnected && !this.root.querySelector(':scope > .screen') && this.root.querySelector(':scope > .hud')) t.remove();
+      if (!t.isConnected) {
+        clearInterval(again);
+        watch?.disconnect();
+        under?.classList.remove('toast-under');
+        return;
+      }
+      const u = placeToast(t, this.root);
+      if (u === under) return;
+      under?.classList.remove('toast-under');
+      under = u;
+      under?.classList.add('toast-under');
+      this.toastUnder = under;
+    };
+    place();
+    again = setInterval(place, 150);
+    // (At once when a screen or the match's HUD comes or goes, not a beat later.)
+    watch = typeof MutationObserver !== 'undefined' ? new MutationObserver(place) : null;
+    watch?.observe(this.root, { childList: true });
+    setTimeout(() => {
+      watch?.disconnect();
+      clearInterval(again);
+      t.remove();
+      under?.classList.remove('toast-under');
+      if (this.toastUnder === under) this.toastUnder = null;
+    }, 2600);
   }
+
+  /** What the toast up now stands in for (a header's title), hidden until it goes. */
+  private toastUnder: HTMLElement | null = null;
 
   /**
    * LEARN THE BASICS done: the three ticks and FIRST MATCH (straight to the kick-off) or MENU. A natural stop,
@@ -1830,10 +1870,8 @@ export class Menus {
           level = lv.level;
           lvEl.textContent = `LV ${lv.level}`;
           titleEl.textContent = levelTitle(lv.level).toUpperCase();
-          up.innerHTML = `<b>LEVEL UP!</b><span>LV ${lv.level}${sep()}${levelTitle(lv.level).toUpperCase()}</span>`;
-          up.classList.remove('on');
-          void up.offsetWidth;
-          up.classList.add('on');
+          // LEVEL UP in the toast's spot (the header, in the title's place), never over the XP line it celebrates.
+          this.toast(`LEVEL UP! LV ${lv.level} ${levelTitle(lv.level).toUpperCase()}`, 'level');
           sfx.coin();
           buzz('success');
         }

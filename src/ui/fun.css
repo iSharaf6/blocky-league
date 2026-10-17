@@ -210,6 +210,31 @@
 .bty.done .bty-ico { background: var(--cream); }
 .bty.done .bty-bar { display: none; }
 .bty.fail { opacity: 0.55; filter: grayscale(1); transform: translateY(-3px); transition: opacity 0.4s, transform 0.4s; }
+/* The live goal reads in full for 2.5 s, then folds to its icon, its count and its draining bar, so nothing wide stays
+   up over the pitch (on a phone the middle of the screen starts 75 px down, level with this row). DONE and a miss show
+   in full again for their moment. */
+.bty-rw { overflow: hidden; }
+.bty.on:not(.done):not(.fail) :is(.bty-t, .bty-rw) { animation: bty-fold 0.2s ease-in 2.5s forwards; }
+@keyframes bty-fold {
+  to { max-width: 0; margin-left: -6px; padding-left: 0; padding-right: 0; opacity: 0; }
+}
+
+/* A phone on its side: the score bug keeps above the middle of the screen (the top 20%, 75 px at 667 by 375) with its
+   booking chips, HYPE bars and SHOWTIME grade all up. The grade moves up beside the away chips, under the clock, and
+   the rows under the score get thinner. */
+@container app (max-height: 480px) and (orientation: landscape) {
+  .hud .scorebug { top: max(4px, var(--sa-top)); }
+  .hud .sb-cards { padding-top: 2px; }
+  .hud .sb-card { padding: 2px 4px; font-size: 12px; flex-wrap: nowrap; }
+  /* (One line: the name wrapping under its card made the row 43 px tall and pushed the bug into the middle.) */
+  .hud .sb-card em { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  .hud .sb-hype { padding-top: 1px; }
+  .hud .hy { height: 8px; }
+  .hud .hy > i { inset: 1px; }
+  .hud .sb-grade { grid-row: 2; padding-top: 2px; }
+  .hud .sb-grade .g { width: 18px; height: 16px; font-size: 12px; }
+  .hud .sb-grade .bank { padding: 2px 5px 2px 3px; font-size: 11px; }
+}
 
 @keyframes bty-in {
   from { transform: translateX(-30px) scale(0.7); opacity: 0; }

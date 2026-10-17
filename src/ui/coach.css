@@ -175,6 +175,8 @@
 .pitch-trainer .trainer-card.bar .coach-actions { flex-wrap: nowrap; gap: 4px 14px; font: 400 14px / 1.15 var(--round); letter-spacing: 0.5px; }
 .pitch-trainer .trainer-card.bar kbd { padding: 3px 5px 2px; font-size: 11px; box-shadow: 0 2px 0 var(--coach-cap-edge); }
 .pitch-trainer .trainer-card.bar.quiet { opacity: 0.72; }
+/* The ball or his man under the bar (Trainer.update): nearly see-through, as the minimap goes. */
+.pitch-trainer .trainer-card.bar.under { filter: opacity(0.25); }
 @container app (min-width: 1600px) and (min-height: 900px) {
   .pitch-trainer .trainer-card.bar { padding: 6px 16px 7px; }
   .pitch-trainer .trainer-card.bar .coach-actions { gap: 4px 18px; font-size: 17px; }

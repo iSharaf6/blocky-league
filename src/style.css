@@ -1766,6 +1766,27 @@ kbd {
   opacity: 0.18;
 }
 
+/* The same for the commentary ticker and the event flag while they are up: the play comes first. (A filter, so
+   it multiplies with whatever opacity the replay, a close-up or the booking plate gives them.) */
+.hud-cm.under,
+.hud-toast.under {
+  filter: opacity(0.2);
+}
+
+/* The quick-sub card stays tappable, just see-through. */
+.hud-qsub.under {
+  filter: opacity(0.3);
+}
+
+/* A power-up plate over the play (Hud.fadeRadar). */
+.hud-banner.plate.under {
+  filter: opacity(0.25);
+}
+
+.scorebug.under {
+  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.3)) opacity(0.3);
+}
+
 @container app (max-height: 419.98px) {
   .hud-radar { width: 104px; }
 }
@@ -1973,8 +1994,9 @@ kbd {
   color: #fff;
   text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
   touch-action: none;
-  /* Solid-ish chunky buttons (a little of the pitch shows through), white rim, darker "3D" base. */
-  background: color-mix(in srgb, var(--c) 86%, transparent);
+  /* Chunky see-through buttons (the fill draws at about 0.43 at rest: the play shows through), white rim, darker
+     "3D" base. */
+  background: color-mix(in srgb, var(--c) 66%, transparent);
   border: 3px solid #fff;
   box-shadow: 0 5px 0 color-mix(in srgb, var(--cd) 90%, transparent), 0 8px 0 rgba(0, 0, 0, 0.16);
   /* ~65% at rest so the players under the cluster show through; solid while pressed. */
@@ -5978,12 +6000,13 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
   white-space: nowrap;
 }
 
-/* Never over a replay, a card close-up or the booking plate (the session hides it too: belt and braces). */
+/* Never over a replay, a card close-up or a plate (booking, power up, goal: a landscape phone's top row is where
+   both go; the session hides it too: belt and braces). */
 .hud.replaying .hud-qsub .qs-card,
 .hud.replaying .hud-qsub .qs-board,
 .hud.cinematic .hud-qsub .qs-card,
 .hud.cinematic .hud-qsub .qs-board,
-.hud:has(.hud-banner.on.card) .hud-qsub .qs-card {
+.hud:has(.hud-banner.on.plate) .hud-qsub .qs-card {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -6023,6 +6046,18 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
     grid-template-columns: minmax(0, 1fr) 92px;
   }
   .qs-head { grid-column: 1 / -1; }
+  /* In the top row (QuickSubCard.place): the names keep their room, the button gives it up, and the rows sit tighter
+     so the card ends above the middle 60% of the screen (69 px from the score bug's top: y 73 at 667 by 375). */
+  .hud-qsub.top .qs-card { grid-template-columns: minmax(0, 1fr) 78px; }
+  .hud-qsub.top .qs-head, .hud-qsub.top.queued .qs-head { min-height: 20px; }
+  .hud-qsub.top .qs-x { height: 20px; }
+  .hud-qsub.top .qs-row { padding-top: 3px; }
+  .hud-qsub.top .qs-row.qs-on { padding-bottom: 5px; }
+  .hud-qsub.top .qs-go { margin: 4px 6px 6px 0; }
+  /* Narrowed to fit there (LARGE text widens the score bug): the names keep the room, the role and the legs bar give it. */
+  .hud-qsub.narrow .qs-role { display: none; }
+  .hud-qsub.narrow .qs-stam { width: 22px; }
+  .hud-qsub.narrow .qs-row { gap: 5px; padding-left: 6px; }
   .qs-head, .hud-qsub.queued .qs-head { min-height: 24px; }
   .qs-x { height: 24px; }
   .qs-row { grid-column: 1; padding: 5px 4px 0 8px; }
@@ -6090,6 +6125,17 @@ button.record-chip:focus-visible { outline: 4px solid var(--yellow); outline-off
 }
 @container app (max-width: 720px) or (max-height: 480px) {
   .tb-skill { right: 90px; bottom: 92px; width: 66px; height: 66px; font-size: 15px; }
+}
+/* A phone on its side: the buttons tuck into the corner and the idle stick into its own, so neither reaches the middle
+   60% of the screen where the play is (at 667 by 375 that starts 133 px in from each side and ends 75 px from the
+   foot). Every button stays a thumb's size (52 px and up); see-through as everywhere (.tb above). */
+@container app (max-height: 480px) and (orientation: landscape) {
+  .touch-btns { right: max(10px, var(--sa-right)); bottom: max(8px, var(--sa-bottom)); width: 146px; height: 146px; }
+  .tb-pass { right: 0; bottom: 0; width: 76px; height: 76px; font-size: 16px; }
+  .tb-shoot { right: 82px; bottom: 0; width: 64px; height: 64px; font-size: 15px; }
+  .tb-through { right: 2px; bottom: 84px; width: 62px; height: 62px; font-size: 12px; }
+  :is(.tb-skill, .tb-keeper) { right: 70px; bottom: 80px; width: 52px; height: 52px; font-size: 12px; }
+  .touch:not(.fixed) .touch-base { width: 112px; height: 112px; margin: -56px 0 0 -56px; left: calc(max(18px, var(--sa-left)) + 56px); }
 }
 
 /* HOW TO PLAY: the SKILL button's dot, and the button in the drawn cluster (beside SPRINT there). */

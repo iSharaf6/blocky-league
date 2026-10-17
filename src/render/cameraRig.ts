@@ -76,6 +76,8 @@ const DEG = Math.PI / 180;
 const NEAR_PITCH_MAX = 40;
 /** Near stand, front-row heads (z, height; with a hop and a flag), the first thing the broadcast frame would clip at the bottom. */
 const NEAR_STAND_Z = HALF_W + 5.9;
+/** Furthest out (|z|, m) an incident replay's lens may stand: in front of the boards, never in the seats behind them. */
+const INCIDENT_Z_MAX = HALF_W + 2.6;
 const NEAR_STAND_Y = 2.7;
 /**
  * Card close-up: preferred angle (degrees) of the lens off the referee->offender line (past 90: on the
@@ -1063,6 +1065,15 @@ export class CameraRig {
             px = lens.x; py = lens.y; pz = lens.z;
             fov = lens.fov;
             rate = 7;
+          }
+          // Never inside a stand: the wide fit (a flagged runner far up the pitch) or a picked lens can reach back
+          // past the touchline into the seats, and the stand then fills the frame. In front of the boards, as the
+          // touchline shot is, rising instead to keep the same distance from what it looks at.
+          if (Math.abs(pz) > INCIDENT_Z_MAX) {
+            const d2 = (px - tx) ** 2 + (py - ty) ** 2 + (pz - tz) ** 2;
+            const nz = Math.sign(pz) * INCIDENT_Z_MAX;
+            pz = nz;
+            py = Math.max(py, ty + Math.sqrt(Math.max(0, d2 - (px - tx) ** 2 - (nz - tz) ** 2)));
           }
         } else if (this.replayShot === 'goal') {
           // Low three-quarter angle from beside the six-yard box, across the goal mouth from where the ball

@@ -105,6 +105,12 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 /* PLAY IT AGAIN? (Menus.replayOffer). */
 .rp-panel .gem-cost { margin: 4px 0; }
 .rp-panel .btn-row { flex-wrap: wrap; justify-content: center; }
+/* NO THANKS and the replay side by side, the ad (or why there is none) under them: two rows, not three, so the pinned
+   row never covers the line about the replay above it. */
+.rp-panel .btn-row > .btn-yellow { order: 1; }
+@container app (max-height: 400px) {
+  .rp-panel .gem-cost { margin: 0; }
+}
 
 /* A phone on its side (852 wide): the gems take the room the gift's word had, so the level's title still reads. */
 @container app (max-width: 900px) {

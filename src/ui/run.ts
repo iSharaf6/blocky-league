@@ -503,7 +503,7 @@ function ensureCss(): void {
   s.id = 'rn-css';
   s.textContent = `
 .rn-screen.shell .panel.mc { gap: 8px; }
-.rn-screen.shell .panel.mc > .rn-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: auto; align-content: safe center; gap: 10px; }
+.rn-screen.shell .panel.mc > .rn-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: auto; align-content: safe center; gap: 10px; overflow-y: auto; }
 .rn-screen .mc-actions .rn-hint { flex: 1 1 auto; }
 .rn-screen .mc-actions.rn-ask .mc-hint1 { flex: 1 1 auto; color: var(--ink); }
 .rn-ladder { list-style: none; margin: 0; padding: 10px 6px 6px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; background: #fff; border: 3px solid var(--ink); box-shadow: 0 5px 0 var(--cream-2); position: relative; }
@@ -531,7 +531,7 @@ function ensureCss(): void {
 .rn-cols { display: grid; gap: 12px; }
 .rn-col { display: grid; gap: 12px; align-content: start; min-width: 0; }
 .panel.mc .rn-col .mc-h { margin: 0 0 -4px; }
-@media (min-width: 600px) { .rn-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+@container app (min-width: 600px) { .rn-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
 .rn-card { background: #fff; border: 3px solid var(--ink); box-shadow: 0 5px 0 var(--cream-2); padding: 12px; }
 .rn-intro { display: grid; gap: 6px; }
 .rn-intro p { margin: 0; font: 400 16px/1.3 var(--round); color: var(--ink-2); }
@@ -539,7 +539,7 @@ function ensureCss(): void {
 .rn-stats { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .rn-stats span { display: grid; gap: 2px; justify-items: center; text-align: center; padding: 8px 6px; background: var(--cream); border: 3px solid var(--cream-2); min-width: 0; }
 .rn-stats b { font: 700 15px var(--px); letter-spacing: 0.5px; color: var(--ink); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rn-stats small { max-width: 100%; font: 400 12px var(--round); letter-spacing: 1px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rn-stats small { max-width: 100%; font: 400 12px var(--round); letter-spacing: 1px; color: var(--ink-2); }
 .rn-mile { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; padding: 10px 12px; background: #fff7d6; border: 3px solid var(--yellow-d); box-shadow: 0 5px 0 rgba(199, 151, 15, 0.35); }
 .rn-mile div { display: grid; gap: 3px; min-width: 0; }
 .rn-mile b { font: 700 14px var(--px); letter-spacing: 0.5px; color: var(--ink); }
@@ -552,7 +552,7 @@ function ensureCss(): void {
 .rn-setup { display: grid; gap: 10px; }
 .rn-you { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; }
 .rn-you div { display: grid; gap: 2px; min-width: 0; }
-.rn-you b { font: 700 16px var(--px); letter-spacing: 0.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rn-you b { font: 700 16px var(--px); letter-spacing: 0.5px; overflow-wrap: anywhere; }
 .rn-you small { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font: 400 13px var(--round); letter-spacing: 1px; color: var(--ink-2); }
 .rn-diffs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .rn-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
@@ -604,7 +604,7 @@ function ensureCss(): void {
 .rn-screen .mc-actions .btn { min-width: 0; }
 .rn-screen .mc-actions .rn-go { flex: 0 1 auto; min-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .rn-screen .mc-actions .rn-ab { flex: 0 0 auto; }
-@media (max-width: 520px) {
+@container app (max-width: 520px) {
   .rn-offer, .rn-offer.n2 { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .rn-perk { grid-template-columns: 60px minmax(0, 1fr); justify-items: start; text-align: left; align-items: center; column-gap: 12px; row-gap: 2px; padding: 10px 12px; }
   .rn-pic { grid-row: 1 / span 3; width: 60px; height: 60px; }
@@ -619,7 +619,7 @@ function ensureCss(): void {
   .rn-diff { font-size: 11px; letter-spacing: 0; }
   .rn-screen .mc-actions .rn-go { min-width: 0; }
 }
-@media (max-height: 460px) {
+@container app (max-height: 460px) {
   .rn-screen.shell .panel.mc > .rn-body { gap: 8px; }
   .rn-cols, .rn-col { gap: 8px; }
   .rn-ladder { padding: 6px 6px 3px; }
@@ -650,8 +650,30 @@ function ensureCss(): void {
   .rn-intro p { font-size: 15px; }
 }
 /* Narrow landscape phones (667 wide): the difficulty names keep their letters. */
-@media (max-width: 760px) {
+@container app (max-width: 760px) {
   .rn-diff { font-size: 11px; letter-spacing: 0; }
+}
+/* RUN OVER: what it paid beside the milestone, the run's perks in one row under both. */
+.rn-cols:has(> .rn-col > .rn-take) { grid-auto-flow: row dense; }
+.rn-col:has(> .rn-take) { display: contents; }
+.rn-col:has(> .rn-take) > .rn-perks { grid-column: 1 / -1; justify-content: center; }
+@container app (max-height: 460px) {
+  .rn-over { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; column-gap: 12px; row-gap: 2px; }
+  .rn-over > .picon { width: 28px; height: 28px; }
+  .rn-take .rn-rw em { font-size: 13px; }
+  .rn-stats small { font-size: 11px; letter-spacing: 0.5px; }
+  .rn-last { gap: 4px; font-size: 13px; }
+  .rn-pchip { padding: 2px 7px 1px 2px; }
+  .rn-pchip i { width: 20px; height: 20px; }
+}
+/* A phone on its side (a frame or fit box up to 830 by 400): the run's cards are full at MEDIUM already, so LARGE
+   leaves them at MEDIUM there, as it does the shop's and the market's (style.css, text size). */
+@container app (max-width: 830px) and (max-height: 400px) {
+  :root.ts-large .rn-screen .panel > :not(.btn-row:last-child) { zoom: 1; }
+}
+/* LARGE elsewhere (zoomed): the four difficulty chips keep their names whole (NORMAL ran out of its chip). */
+@container app (min-width: 831px) or (min-height: 401px) {
+  :root.ts-large .rn-diff { font-size: 11px; letter-spacing: 0; padding-left: 1px; padding-right: 1px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .rn-reveal .rn-rung, .rn-perk, .rn-rung.now .rn-crest::after, .rn-new { animation: none; }

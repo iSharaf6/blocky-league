@@ -42,7 +42,9 @@ function rig() {
   const replayClasses = classList();
   const replayBadge = { textContent: 'REPLAY' };
   const hud = Object.assign(Object.create(Hud.prototype), {
-    replay: { classList: replayClasses, querySelector: () => replayBadge }, root: { classList: classList() }, cm: { classList: classList() },
+    replay: { classList: replayClasses, querySelector: () => replayBadge, style: { top: '' }, getBoundingClientRect: () => ({ top: 0 }) },
+    // (No score bug laid out: the replay badge keeps its CSS place.)
+    root: { classList: classList(), querySelector: () => ({ getBoundingClientRect: () => ({ width: 0, height: 0 }) }) }, cm: { classList: classList() },
     cmLine: null, cmPending: null, show: vi.fn(), setScore: vi.fn(), commentary: vi.fn(),
   }) as Hud;
   const frame = new Float32Array(FRAME_LEN);
