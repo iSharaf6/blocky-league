@@ -183,6 +183,10 @@
 /* ----- the bench pane: chips in a grid, the only thing that scrolls ----- */
 
 .sq-benchpane { min-width: 0; }
+/* (ROTATE and TEAM TALK beside AUTO PICK on a 667 wide phone: the buttons take a second line, never off the pane.) */
+/* (Its padding: a pulsing ROTATE or AUTO PICK grows 3px past its box, and the body clips at the top edge.) */
+.sq-benchpane > .pane-h { flex-wrap: wrap; row-gap: 4px; padding: 3px 4px 0 0; }
+.sq-benchpane > .pane-h > .grow:not(:empty) { min-width: min(100%, 120px); }
 
 .sq-list { padding: 2px 4px 6px 2px; }
 
@@ -412,7 +416,9 @@
   background: #fff;
   border: 3px solid var(--ink);
   box-shadow: 0 4px 0 var(--cream-2);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tr-id {
@@ -484,7 +490,9 @@
 
 .tr-btn.btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--d); }
 
+/* (Its own line always: with TRAIN / GROW open on a 375 tall box the card scrolls instead of squeezing it to nothing.) */
 .tr-wage {
+  flex: none;
   margin: auto 0 0;
   font: 400 12px / 1.2 var(--round);
   letter-spacing: 0.3px;
@@ -503,7 +511,8 @@
 }
 
 .ck-id { justify-content: center; gap: 8px; }
-.ck-ed { justify-content: center; gap: 8px; }
+/* (LARGE text: the editor outgrows its half and scrolls from its top, KIT / CREST first, rather than losing both ends.) */
+.ck-ed { justify-content: safe center; gap: 8px; overflow-y: auto; overscroll-behavior: contain; }
 
 .shell .ck-id .mc-preview {
   position: static;

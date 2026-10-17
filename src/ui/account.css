@@ -367,7 +367,7 @@
   color: var(--ink); background: var(--yellow); border: 3px solid var(--ink);
 }
 .ac-referral-reward b { font: 400 22px / 1.15 var(--round); }
-.ac-referral-reward span { font: 700 10px / 1.4 var(--px); }
+.ac-referral-reward span { font: 700 max(10px, var(--fs-floor, 0px)) / 1.4 var(--px); }
 .ac-referral-steps { min-width: 0; font: 400 15px / 1.4 var(--round); }
 .ac-referral-steps b { font-size: 16px; }
 .ac-referral-steps ol { padding-left: 22px; margin: 8px 0; }

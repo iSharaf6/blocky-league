@@ -42,6 +42,22 @@ export interface Fit {
   upright: boolean;
 }
 
+/** The smallest a label may draw on screen: 8px in a box shrunk under 0.8 (a 640 by 290 frame), 9px otherwise. */
+export const FLOOR_SMALL = 8;
+export const FLOOR = 9;
+/** The floor never asks more than this of a layout (an upright phone's 0.58 would need 14px labels). */
+export const FLOOR_MAX = 10.6;
+
+/**
+ * The layout size the smallest labels need inside a box at `scale` to draw at the floor on screen (0: none needed).
+ * Written as `--fit-floor`; the small labels' rules take `max(their size, var(--fs-floor, 0px))` (shell.css).
+ */
+export function fitFloor(scale: number): number {
+  if (!(scale > 0) || scale >= 1) return 0;
+  const need = (scale < 0.8 ? FLOOR_SMALL : FLOOR) / scale;
+  return Math.min(FLOOR_MAX, Math.ceil(need * 10 - 1e-6) / 10);
+}
+
 /** The fit for a frame of `fw` by `fh` CSS pixels (pure). */
 export function fitFor(fw: number, fh: number): Fit {
   if (!(fw > 0 && fh > 0)) return { on: false, w: Math.max(0, fw), h: Math.max(0, fh), scale: 1, upright: false };
@@ -94,6 +110,8 @@ export function installFitBox(ui: HTMLElement): () => void {
     set('--fit-vmin', f.on ? `${Math.min(f.w, f.h) / 100}px` : null);
     set('--fit-vmax', f.on ? `${Math.max(f.w, f.h) / 100}px` : null);
     set('--fit-edge', f.on ? (f.upright ? '0' : '1') : null);
+    const floor = f.on ? fitFloor(f.scale) : 0;
+    set('--fit-floor', floor ? `${floor}px` : null);
   };
   const later = () => {
     if (!raf) raf = requestAnimationFrame(apply);
@@ -116,7 +134,7 @@ export function installFitBox(ui: HTMLElement): () => void {
 
 /** One problem the audit found: what, where (a short selector path and its text), and by how many pixels. */
 export interface AuditIssue {
-  kind: 'spill' | 'clipped' | 'offscreen' | 'overlap' | 'text-overlap';
+  kind: 'spill' | 'clipped' | 'offscreen' | 'overlap' | 'text-overlap' | 'small';
   el: string;
   px: number;
   with?: string;
@@ -159,12 +177,16 @@ function visibleRect(el: Element, stop: Element, r0?: DOMRect): { r: DOMRect; sc
  * - clipped: text cut by a box that does not scroll (it can never be read whole);
  * - offscreen: an interactive element outside the frame, or cut by a box that does not scroll;
  * - overlap: two interactive elements, both on top at their centres, whose rects overlap;
- * - text-overlap: two pieces of text drawn over each other (tags colliding).
+ * - text-overlap: two pieces of text drawn over each other (tags colliding);
+ * - small: text drawn under the floor on screen (FLOOR_SMALL in a box shrunk under 0.8, else FLOOR; MEDIUM text size).
  */
 export function uiAudit(root: ParentNode = document): AuditIssue[] {
   const out: AuditIssue[] = [];
   const vw = window.innerWidth;
   const vh = window.innerHeight;
+  // (Only where the floor holds: not under SMALL text, nor in a box shrunk past what FLOOR_MAX can lift, upright phones.)
+  const floor = document.documentElement.classList.contains('ts-small') || (current.on && current.scale < FLOOR_SMALL / FLOOR_MAX) ? 0
+    : current.on && current.scale < 0.8 ? FLOOR_SMALL : FLOOR;
   for (const scr of root.querySelectorAll<HTMLElement>('#ui > .screen')) {
     const texts: { node: Text; r: DOMRect; box: Element }[] = [];
     const walk = document.createTreeWalker(scr, NodeFilter.SHOW_TEXT);
@@ -179,6 +201,11 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
       range.selectNodeContents(n);
       const rects = [...range.getClientRects()].filter((q) => q.width > 0.5 && q.height > 0.5);
       if (!rects.length) continue;
+      // (The box's scale times the text size's zoom on the way up: a small badge's offsetWidth rounds too coarsely.)
+      let zoom = 1;
+      for (let e: Element | null = n.parentElement; e && e !== scr.parentElement; e = e.parentElement) zoom *= parseFloat(getComputedStyle(e).zoom) || 1;
+      const drawn = parseFloat(cs.fontSize) * zoom * (current.on ? current.scale : 1);
+      if (floor && drawn < floor - 0.05) out.push({ kind: 'small', el: label(box), px: Math.round(drawn * 10) / 10 });
       for (const r of rects) {
         const br = box.getBoundingClientRect();
         const spill = Math.max(br.left - r.left, r.right - br.right);

@@ -22,7 +22,7 @@
   .hub-screen .hub-progress { flex-basis: 340px; max-width: 340px; }
 }
 .hub-screen .hub-lv .hl-n { min-width: 34px; padding: 4px 6px; font-size: calc(18px * var(--ts)); }
-.hub-screen .hub-lv .hl-n small { font-size: calc(9px * var(--ts)); }
+.hub-screen .hub-lv .hl-n small { font-size: max(calc(9px * var(--ts)), var(--fs-floor, 0px)); }
 .hub-screen .hub-lv .hl-txt { flex: 1 1 0; padding: 5px 7px; }
 .hub-screen .hub-lv .hl-txt > b { font-size: calc(12px * var(--ts)); }
 .hub-screen .hub-lv .hl-bar { width: 100%; min-width: 0; }
@@ -43,7 +43,7 @@
   max-width: 160px; min-height: 44px; height: 44px; padding: 5px 9px;
 }
 .hub-screen .hub-acct b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font: inherit; white-space: nowrap; }
-.hub-screen .hub-acct small { font: 400 calc(10px * var(--ts)) / 1.1 var(--round); color: var(--ink-2); letter-spacing: 0.5px; }
+.hub-screen .hub-acct small { font: 400 max(calc(10px * var(--ts)), var(--fs-floor, 0px)) / 1.1 var(--round); color: var(--ink-2); letter-spacing: 0.5px; }
 .hub-screen .hub-acts :is(.hub-ico, .hub-coins, .hub-gems, .hub-noads) { min-height: 44px; height: 44px; }
 .hub-screen .hub-acts .hub-ico { min-width: 44px; width: 44px; }
 .hub-screen .hub-acts .coins.hub-coins { max-width: 170px; }
@@ -56,7 +56,7 @@
 .hub-screen .hh-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .hub-screen .hh-meta { flex: 0 1 auto; }
 .hub-screen .hub-daily.done { grid-template-columns: auto minmax(0, 1fr); }
-.hub-screen .hub-daily .hd-next { display: block; font: 400 calc(9px * var(--ts)) / 1.1 var(--round); color: var(--cream-2); }
+.hub-screen .hub-daily .hd-next { display: block; font: 400 max(calc(9px * var(--ts)), var(--fs-floor, 0px)) / 1.1 var(--round); color: var(--cream-2); }
 
 /* This baseline also works on iOS 15, before container-query support. */
 @container app (max-width: 1200px) or (max-height: 520px) {
@@ -68,11 +68,11 @@
   .hub-screen .hub-progress .hub-tomorrow { width: 60px; padding: 0 3px; display: grid; justify-items: center; align-content: center; gap: 2px; font-size: calc(13px * var(--ts)); }
   /* (9px: the smallest a portal's visual check reads. TOMORROW measures 50.7px at it, inside the chip's 54; at 10px
      it is 56.3 and would not fit.) */
-  .hub-screen .hub-progress .hub-tomorrow small { font-family: var(--round); font-size: calc(9px * var(--ts)); letter-spacing: 0; }
+  .hub-screen .hub-progress .hub-tomorrow small { font-family: var(--round); font-size: max(calc(9px * var(--ts)), var(--fs-floor, 0px)); letter-spacing: 0; }
   .hub-screen .hub-progress :is(.hg-w, .hg-gem, .hub-tomorrow i, .hl-next) { display: none; }
   .hub-screen .hub-acts { gap: 5px; }
   .hub-screen .hub-acts .hub-acct { width: 76px; padding: 4px; font-size: calc(12px * var(--ts)); }
-  .hub-screen .hub-acct small { font-size: calc(8px * var(--ts)); letter-spacing: 0; }
+  .hub-screen .hub-acct small { font-size: max(calc(8px * var(--ts)), var(--fs-floor, 0px)); letter-spacing: 0; }
   .hub-screen .hub-acts .hub-noads { width: 76px; padding: 3px 4px; display: grid; justify-items: center; align-content: center; gap: 2px; font-size: calc(11px * var(--ts)); letter-spacing: 0.3px; }
   .hub-screen .hub-noads :is(.picon, .hn-full), .hub-screen .ha-full, .hub-screen .hf-full { display: none; }
   .hub-screen .hub-noads .hn-p { display: block; width: 100%; padding: 2px 0; font-size: calc(11px * var(--ts)); line-height: 1; letter-spacing: 0; white-space: nowrap; }
@@ -149,15 +149,15 @@
   .hub-screen .hub-hero { padding: 4px 8px 6px; gap: 2px; }
   .hub-screen .hh-head { gap: 4px; }
   .hub-screen .hh-title { font-size: calc(18px * var(--ts)); letter-spacing: 0.5px; }
-  .hub-screen .hh-meta { max-width: 42%; padding: 3px 4px; font-size: calc(9px * var(--ts)); letter-spacing: 0.2px; }
+  .hub-screen .hh-meta { max-width: 42%; padding: 3px 4px; font-size: max(calc(9px * var(--ts)), var(--fs-floor, 0px)); letter-spacing: 0.2px; }
   .hub-screen .hh-fix { gap: 8px; }
   .hub-screen .hh-side { gap: 1px; }
   .hub-screen .hh-side .crest-svg { width: calc(24px * var(--ts)); }
   .hub-screen .hh-side b { font-size: calc(16px * var(--ts)); letter-spacing: 0.5px; }
-  .hub-screen .hh-side small { font-size: calc(10px * var(--ts)); letter-spacing: 0.5px; }
-  .hub-screen .hh-sub { font-size: calc(10px * var(--ts)); letter-spacing: 0.3px; }
+  .hub-screen .hh-side small { font-size: max(calc(10px * var(--ts)), var(--fs-floor, 0px)); letter-spacing: 0.5px; }
+  .hub-screen .hh-sub { font-size: max(calc(10px * var(--ts)), var(--fs-floor, 0px)); letter-spacing: 0.3px; }
   .hub-screen .hh-obj { gap: 3px; }
-  .hub-screen .hh-pip { padding: 2px 3px; gap: 3px; font-size: calc(9px * var(--ts)); letter-spacing: 0; }
+  .hub-screen .hh-pip { padding: 2px 3px; gap: 3px; font-size: max(calc(9px * var(--ts)), var(--fs-floor, 0px)); letter-spacing: 0; }
   .hub-screen .hh-pip u { width: 10px; height: 10px; }
   .hub-screen .hh-play { min-height: 44px; height: 44px; padding: 5px 8px; font-size: calc(20px * var(--ts)); }
   .hub-screen .hub-goal { min-height: 44px; }
@@ -395,6 +395,13 @@
 
 .panel.set-panel.shell .toggles button b small.lock { font-size: 12px; }
 
+/* LARGE text on the narrowest frames: a name too long for its half of the row takes a second line instead of being cut
+   (GROUND PASS, THROUGH BALL), and a long value (CLASSIC with its locked AEROPLANE) wraps under itself, the name whole. */
+.panel.set-panel.shell .set-row > span,
+.panel.set-panel.shell .set-sw > span { white-space: normal; text-overflow: clip; line-height: 1.05; }
+.panel.set-panel.shell .toggles button > span { flex: none; max-width: 52%; white-space: normal; text-overflow: clip; line-height: 1.05; }
+.panel.set-panel.shell .toggles button > b { flex: 0 1 auto; white-space: normal; text-overflow: clip; text-align: right; line-height: 1.05; }
+
 @container app (max-height: 560px) {
   .panel.set-panel.shell .toggles button,
   .panel.set-panel.shell .set-sw,
@@ -417,6 +424,8 @@
 
 .ht-split { display: grid; grid-template-columns: minmax(260px, 0.4fr) minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; }
 .panel.howto-panel.shell .mc-title .ht-sub { font-style: normal; }
+/* (The hint beside the title, CHANGE BUTTONS IN SETTINGS, takes two lines rather than an ellipsis: LARGE at 667 wide.) */
+.panel.howto-panel.shell .mc-title > span { white-space: normal; text-overflow: clip; line-height: 1.05; }
 .ht-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; align-items: start; min-width: 0; }
 .ht-cols > div { display: grid; gap: 4px; min-width: 0; }
 .ht-h { margin: 0; font: 400 13px / 1.1 var(--round); letter-spacing: 1px; color: var(--ink-2); }
@@ -589,7 +598,11 @@
 .panel.ft-panel.shell .ft-earn .reward { min-width: 0; flex-wrap: wrap; justify-content: flex-start; gap: 0 8px; font-size: 28px; color: var(--yellow); }
 .panel.ft-panel.shell .ft-earn .reward i { width: 24px; height: 24px; flex: none; }
 .panel.ft-panel.shell .ft-earn .reward em { flex: 1 0 100%; min-width: 0; font-size: 13px; line-height: 1.1; letter-spacing: 0.5px; color: #cfcab8; overflow-wrap: break-word; }
-.panel.ft-panel.shell .ft-earn .ft-dbl { flex: none; min-height: 40px; padding: 7px 12px 6px; font-size: 15px; letter-spacing: 1px; }
+/* (ADBLOCKER DETECTED is wider than AD +340 COINS: the button's words take two lines, the coins stay whole beside it.) */
+.panel.ft-panel.shell .ft-earn .reward { min-width: min-content; }
+.panel.ft-panel.shell .ft-earn .ft-dbl { flex: 0 1 auto; min-width: 0; min-height: 40px; padding: 7px 12px 6px; font-size: 15px; letter-spacing: 1px; white-space: normal; line-height: 1.05; }
+/* (The column scrolls when its fixed parts outgrow a 375 tall box: TOMORROW and FREE TRY are never cut off.) */
+.panel.mc.shell .pane.ft-gain { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .panel.mc.shell .ft-gain .ft-prog { flex: none; grid-template-columns: auto minmax(0, 1fr); justify-items: stretch; align-items: center; column-gap: 14px; padding: 8px 12px; }
 .panel.mc.shell .ft-gain .ft-stars { font-size: 30px; gap: 2px; }
 .panel.ft-panel.shell .ft-extra { display: grid; gap: 6px; align-content: start; padding: 0 4px 4px 0; }

@@ -40,7 +40,7 @@
   align-items: center;
   gap: 4px;
   max-width: 100%;
-  font: 400 10px/1 var(--px);
+  font: 400 max(10px, var(--fs-floor, 0px))/1 var(--px);
   letter-spacing: 0.5px;
   color: var(--ink-2);
   white-space: nowrap;
@@ -89,7 +89,7 @@
 }
 
 .ss-head b {
-  font: 400 10px/1 var(--px);
+  font: 400 max(10px, var(--fs-floor, 0px))/1 var(--px);
   letter-spacing: 0.5px;
   text-align: right;
   color: var(--ink-2);
@@ -137,7 +137,7 @@
   padding: 2px 4px 1px;
   background: var(--red);
   color: #fff;
-  font: 400 10px/1 var(--round);
+  font: 400 max(10px, var(--fs-floor, 0px))/1 var(--round);
   font-style: normal;
   letter-spacing: 0.5px;
 }
@@ -148,7 +148,7 @@
   white-space: nowrap;
 }
 
-.ss-row b i { margin-left: 2px; font: 400 9px/1 var(--px); font-style: normal; color: var(--ink-2); }
+.ss-row b i { margin-left: 2px; font: 400 max(9px, var(--fs-floor, 0px))/1 var(--px); font-style: normal; color: var(--ink-2); }
 .ss-row b.avg { color: var(--blue-d); }
 
 /* The picked player. */
@@ -193,9 +193,9 @@
   color: var(--yellow);
 }
 
-.ss-ovr small { font: 400 10px/1.1 var(--round); letter-spacing: 1px; color: var(--cream); }
+.ss-ovr small { font: 400 max(10px, var(--fs-floor, 0px))/1.1 var(--round); letter-spacing: 1px; color: var(--cream); }
 .ss-ovr b { font: 700 22px/1.05 var(--px); }
-.ss-ovr i { font: 400 10px/1.2 var(--round); font-style: normal; color: var(--cream); white-space: nowrap; }
+.ss-ovr i { font: 400 max(10px, var(--fs-floor, 0px))/1.2 var(--round); font-style: normal; color: var(--cream); white-space: nowrap; }
 
 /* Season and career, in two blocks (keepers get their own numbers in the second). */
 .ss-grid {
@@ -253,12 +253,12 @@
   .ss-row .avg, .ss-head > :nth-child(6) { display: none; }
   .ss-lead { padding: 4px 5px; }
   .ss-lead b { font-size: 13px; }
-  .ss-lead small { font-size: 9px; letter-spacing: 0; }
+  .ss-lead small { font-size: max(9px, var(--fs-floor, 0px)); letter-spacing: 0; }
   .ss-lead small svg { display: none; }
-  .ss-lead em { font-size: 10px; }
+  .ss-lead em { font-size: max(10px, var(--fs-floor, 0px)); }
   .ss-seg { min-width: 130px; }
   .ss-th, .ss-tr { grid-template-columns: minmax(0, 1fr) 40px 40px; }
-  .ss-th span { font-size: 10px; }
+  .ss-th span { font-size: max(10px, var(--fs-floor, 0px)); }
   .ss-grid { gap: 6px; }
   .ss-tr span { font-size: 11px; }
 }

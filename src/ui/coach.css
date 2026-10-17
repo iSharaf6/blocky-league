@@ -63,10 +63,10 @@
 }
 @container app (max-width: 600px) or (max-height: 500px) {
   .coach { padding: 5px 8px 6px; }
-  .coach-title { margin-bottom: 5px; font-size: 9px; }
+  .coach-title { margin-bottom: 5px; font-size: max(9px, var(--fs-floor, 0px)); }
   .coach-actions { gap: 4px 8px; font-size: 12px; }
-  .coach kbd { padding: 2px 4px 2px; font-size: 9px; }
-  .coach-detail { margin-top: 5px; font-size: 10px; }
+  .coach kbd { padding: 2px 4px 2px; font-size: max(9px, var(--fs-floor, 0px)); }
+  .coach-detail { margin-top: 5px; font-size: max(10px, var(--fs-floor, 0px)); }
   .coach.lesson { padding: 7px 10px 8px; }
   .coach.lesson .coach-title { margin-bottom: 5px; font-size: 12px; }
   .coach.lesson .coach-actions { font-size: 15px; }
@@ -144,15 +144,15 @@
    line goes (the lessons keep theirs: they teach). */
 @container app (max-width: 600px) or (max-height: 600px) {
   .coach { padding: 4px 7px 5px; }
-  .coach-title { margin-bottom: 4px; font-size: 9px; }
+  .coach-title { margin-bottom: 4px; font-size: max(9px, var(--fs-floor, 0px)); }
   .coach-actions { gap: 3px 7px; font-size: 11px; }
-  .coach kbd { padding: 2px 4px 1px; font-size: 9px; box-shadow: 0 1px 0 var(--coach-cap-edge); }
+  .coach kbd { padding: 2px 4px 1px; font-size: max(9px, var(--fs-floor, 0px)); box-shadow: 0 1px 0 var(--coach-cap-edge); }
   .pitch-trainer .trainer-card:not(.lesson) .coach-detail { display: none; }
   .coach.lesson { padding: 6px 9px 7px; }
   .coach.lesson .coach-title { margin-bottom: 4px; font-size: 11px; }
   .coach.lesson .coach-actions { font-size: 13px; }
   .coach.lesson kbd { padding: 3px 5px 2px; font-size: 11px; }
-  .coach.lesson .coach-detail { font-size: 10px; }
+  .coach.lesson .coach-detail { font-size: max(10px, var(--fs-floor, 0px)); }
   .hud .hud-hint.coach,
   .hud .hud-tip.coach { padding: 4px 8px 5px; gap: 4px 8px; font-size: 11px; }
 }
@@ -183,5 +183,5 @@
 @container app (max-width: 600px) or (max-height: 600px) {
   .pitch-trainer .trainer-card.bar { padding: 4px 10px 5px; }
   .pitch-trainer .trainer-card.bar .coach-actions { gap: 3px 11px; font-size: 12px; }
-  .pitch-trainer .trainer-card.bar kbd { padding: 2px 4px 1px; font-size: 10px; box-shadow: 0 1px 0 var(--coach-cap-edge); }
+  .pitch-trainer .trainer-card.bar kbd { padding: 2px 4px 1px; font-size: max(10px, var(--fs-floor, 0px)); box-shadow: 0 1px 0 var(--coach-cap-edge); }
 }

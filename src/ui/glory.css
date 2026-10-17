@@ -21,7 +21,7 @@
 }
 
 .gl-badge .picon { display: block; }
-.gl-badge u { font: 400 10px/1 var(--round); text-decoration: none; }
+.gl-badge u { font: 400 max(10px, var(--fs-floor, 0px))/1 var(--round); text-decoration: none; }
 .gl-badge.inj { background: var(--red); }
 .gl-badge.hi { background: var(--go); }
 .gl-badge.lo { background: #8a5cf6; }
@@ -37,7 +37,7 @@
 .shell .pane-h .btn.gl-help { --c: var(--cream); --d: #b9b5aa; display: inline-flex; align-items: center; gap: 4px; }
 .shell .pane-h .btn.gl-help.go { --c: #e8f9ec; }
 .shell .pane-h .btn.gl-help:disabled { opacity: 0.55; }
-.gl-help small { font: 400 10px/1 var(--round); color: var(--ink-2); }
+.gl-help small { font: 400 max(10px, var(--fs-floor, 0px))/1 var(--round); color: var(--ink-2); }
 
 /* ----- the event card ----- */
 
@@ -167,14 +167,14 @@ button.gl-soon { appearance: none; width: 100%; margin: 0; cursor: pointer; colo
 .gl-soon:active { transform: translateY(2px); }
 .gl-soon.now { background: #fff8d6; }
 .gl-soon .gl-tltext { font-size: 12px; letter-spacing: 0.3px; }
-.gl-now { padding: 2px 5px 1px; color: #fff; background: var(--red); font: 400 10px/1 var(--round); letter-spacing: 0.5px; }
+.gl-now { padding: 2px 5px 1px; color: #fff; background: var(--red); font: 400 max(10px, var(--fs-floor, 0px))/1 var(--round); letter-spacing: 0.5px; }
 
 /* ----- the hub: SIM beside PLAY, the match length chip, the rival's fire ----- */
 
 .gl-playrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: stretch; }
 .gl-playrow.solo { grid-template-columns: minmax(0, 1fr); }
 .panel .btn.gl-sim, .btn.gl-sim { --c: var(--cream); --d: #b9b5aa; --t: var(--ink); min-width: 64px; min-height: 52px; padding: 6px 8px 5px; display: grid; align-content: center; justify-items: center; gap: 2px; font: 400 15px/1 var(--round); }
-.gl-sim small { font: 400 9px/1 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
+.gl-sim small { font: 400 max(9px, var(--fs-floor, 0px))/1 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
 
 .cr-next .mc-chip.gl-len {
   appearance: none;
@@ -247,7 +247,7 @@ button.gl-soon { appearance: none; width: 100%; margin: 0; cursor: pointer; colo
 
 .gl-report { flex: 1 1 auto; min-height: 0; }
 .gl-finds { display: grid; gap: 4px; }
-.gl-from { margin: 0; font: 400 10px/1.1 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
+.gl-from { margin: 0; font: 400 max(10px, var(--fs-floor, 0px))/1.1 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
 .gl-find { min-height: 38px; padding: 2px 5px; }
 .panel .btn.gl-sign { display: inline-flex; align-items: center; gap: 4px; }
 .gl-sign .sd-cost { margin-left: 0; }
@@ -257,7 +257,7 @@ button.gl-soon { appearance: none; width: 100%; margin: 0; cursor: pointer; colo
 
 .gl-net, .gl-need { flex: none; display: flex; align-items: center; gap: 6px; margin: 0; padding: 5px 7px; border: 2px dashed var(--ink); background: #eef5ff; font: 400 12px/1.15 var(--round); }
 .gl-net span { flex: 1 1 auto; min-width: 0; display: grid; }
-.gl-net small { font: 400 10px/1.15 var(--round); color: var(--ink-2); }
+.gl-net small { font: 400 max(10px, var(--fs-floor, 0px))/1.15 var(--round); color: var(--ink-2); }
 .gl-need { background: #fff8d6; border-style: solid; font-size: 11px; }
 .panel .gl-net .btn { display: inline-flex; align-items: center; gap: 4px; }
 
@@ -274,12 +274,13 @@ button.gl-soon { appearance: none; width: 100%; margin: 0; cursor: pointer; colo
 .tr-detail .gl-seg { flex: none; }
 .tr-detail .gl-seg button { min-height: 26px; font-size: 11px; }
 
-.gl-grow { flex: 1 1 auto; min-height: 0; display: grid; align-content: start; gap: 4px; overflow: hidden; }
+/* (Scrolls when it outgrows the card, LARGE text: the injury line and HEAL NOW stay reachable, never cut off.) */
+.gl-grow { flex: 1 1 auto; min-height: 0; display: grid; align-content: start; gap: 4px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .gl-chartrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
 .gl-chart { width: 100%; height: 44px; border: 2px solid var(--ink); background: #fff; }
 .gl-nums { display: grid; gap: 3px; align-content: center; }
 .gl-nums span { display: grid; justify-items: center; min-width: 58px; padding: 1px 6px 0; border: 2px solid var(--ink); background: #fff; }
-.gl-nums small { font: 400 9px/1.1 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
+.gl-nums small { font: 400 max(9px, var(--fs-floor, 0px))/1.1 var(--round); letter-spacing: 0.5px; color: var(--ink-2); }
 .gl-nums b { font: 400 14px/1 var(--round); }
 .gl-nums .pot { background: #f1eaff; }
 .gl-nums .pot b { color: #5b36b8; }
@@ -305,13 +306,14 @@ button.gl-soon { appearance: none; width: 100%; margin: 0; cursor: pointer; colo
   cursor: pointer;
 }
 
-.gl-focus b { max-width: 100%; font: 400 11px/1 var(--round); letter-spacing: 0.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gl-focus small { font: 400 9px/1 var(--round); letter-spacing: 0.3px; color: var(--ink-2); }
+/* (A long focus, SHOT STOPPING on a 667 wide card, takes two lines rather than an ellipsis.) */
+.gl-focus b { max-width: 100%; font: 400 11px/1 var(--round); letter-spacing: 0.3px; text-align: center; overflow-wrap: anywhere; }
+.gl-focus small { font: 400 max(9px, var(--fs-floor, 0px))/1 var(--round); letter-spacing: 0.3px; color: var(--ink-2); }
 .gl-focus.on { background: var(--go); color: #fff; }
 .gl-focus.on small { color: #eaffef; }
 .gl-focus:disabled { opacity: 0.5; cursor: default; }
 .panel .btn.gl-all { min-height: 36px; white-space: normal; max-width: 86px; line-height: 1.05; }
-.gl-lock { display: flex; align-items: center; gap: 5px; margin: 0; font: 400 10px var(--round); letter-spacing: 0.3px; color: #8f8c85; }
+.gl-lock { display: flex; align-items: center; gap: 5px; margin: 0; font: 400 max(10px, var(--fs-floor, 0px)) var(--round); letter-spacing: 0.3px; color: #8f8c85; }
 
 /* His mentor and his morale, side by side (one column when he has no mentor line). */
 .gl-lines { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
@@ -321,19 +323,19 @@ button.gl-soon { appearance: none; width: 100%; margin: 0; cursor: pointer; colo
 
 .gl-line { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 2px 6px; border: 2px solid var(--ink); background: #fff; font: 400 12px/1.1 var(--round); }
 .gl-line > span { flex: 1 1 auto; min-width: 0; display: grid; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gl-line small { font: 400 10px/1.1 var(--round); letter-spacing: 0.3px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.gl-line small { font: 400 max(10px, var(--fs-floor, 0px))/1.1 var(--round); letter-spacing: 0.3px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
 .gl-line.dim { color: #8f8c85; background: var(--cream-2); }
 .panel .btn.gl-heal { display: inline-flex; align-items: center; gap: 4px; }
 
 .gl-meta { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; min-height: 16px; overflow: hidden; white-space: nowrap; font: 400 11px var(--round); letter-spacing: 0.3px; color: var(--ink-2); }
 .gl-meta > span { margin-right: auto; }
-.gl-trait { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px 1px; color: #fff; background: var(--ink); font: 400 10px/1 var(--round); letter-spacing: 0.5px; }
+.gl-trait { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px 1px; color: #fff; background: var(--ink); font: 400 max(10px, var(--fs-floor, 0px))/1 var(--round); letter-spacing: 0.5px; }
 
 @container app (max-height: 380px) {
   .gl-grow { gap: 3px; }
   .gl-chart { height: 30px; }
   .gl-nums b { font-size: 11px; }
-  .gl-nums small { font-size: 9px; }
+  .gl-nums small { font-size: max(9px, var(--fs-floor, 0px)); }
   .gl-line { min-height: 26px; }
   .gl-focus { min-height: 30px; padding: 3px 3px 2px; }
   .panel .btn.gl-all { min-height: 30px; }
@@ -347,6 +349,6 @@ button.gl-soon { appearance: none; width: 100%; margin: 0; cursor: pointer; colo
 /* A narrow phone (667 wide): the five regions stay on one row, so the scout's report keeps its room. */
 @container app (max-width: 720px) {
   .gl-regions { gap: 3px; }
-  .gl-region { min-height: 28px; padding: 4px 5px 3px; font-size: 10px; letter-spacing: 0; }
+  .gl-region { min-height: 28px; padding: 4px 5px 3px; font-size: max(10px, var(--fs-floor, 0px)); letter-spacing: 0; }
   .gl-who b { font-size: 15px; }
 }

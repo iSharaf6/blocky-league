@@ -253,6 +253,9 @@
   -webkit-user-drag: none;
 }
 
+/* LARGE text: a header's subtitle (the club's name and its OVR chip) takes a second line instead of an ellipsis. */
+:root.ts-large .shell .mc-title > span { white-space: normal; text-overflow: clip; line-height: 1.1; }
+
 /* The item being dragged stays behind, faded; valid targets glow; the one under the finger lights up. */
 .drag-src { opacity: 0.35; }
 [data-drag].drop-ok { outline: 3px dashed var(--yellow); outline-offset: 2px; }
@@ -281,6 +284,9 @@
   --sa-right: calc(env(safe-area-inset-right, 0px) * var(--fit-edge) / var(--fit-s));
   --sa-bottom: calc(env(safe-area-inset-bottom, 0px) * var(--fit-edge) / var(--fit-s));
   --sa-left: calc(env(safe-area-inset-left, 0px) * var(--fit-edge) / var(--fit-s));
+  /* The smallest labels' floor in box pixels (fitFloor: 8px on screen under 0.8, 9px above). Labels under 11px take
+     `max(their size, var(--fs-floor, 0px))`; outside the box, and in the HUD, the variable is unset and they keep theirs. */
+  --fs-floor: var(--fit-floor, 0px);
 }
 
 /* Rules on the screen element itself still see the window (an element cannot query itself): the hub's upright path

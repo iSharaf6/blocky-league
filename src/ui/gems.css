@@ -55,7 +55,7 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 .gem-card .gem-text { margin: 0; font: 400 15px / 1.25 var(--round); letter-spacing: 0.4px; color: var(--ink-2); }
 .gem-cost { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .gem-cost > span { display: grid; gap: 4px; justify-items: center; padding: 8px 6px 7px; background: #fff; border: 3px solid var(--ink); }
-.gem-cost small { font: 700 10px / 1 var(--px); letter-spacing: 1px; color: var(--ink-2); }
+.gem-cost small { font: 700 max(10px, var(--fs-floor, 0px)) / 1 var(--px); letter-spacing: 1px; color: var(--ink-2); }
 .gem-cost b { display: inline-flex; align-items: center; gap: 6px; font: 400 24px / 1 var(--round); color: #1a86c2; }
 .gem-cost b.short { color: var(--red-d); }
 .gem-card .gem-short { margin: 0; font: 700 12px / 1.2 var(--px); letter-spacing: 0.8px; color: var(--red-d); }
@@ -90,15 +90,15 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
   background: rgba(38, 38, 46, 0.72);
   white-space: nowrap;
 }
-.hub-tomorrow small { font: 700 calc(9px * var(--ts, 1)) / 1 var(--px); letter-spacing: 0.8px; color: #cfcab8; }
+.hub-tomorrow small { font: 700 max(calc(9px * var(--ts, 1)), var(--fs-floor, 0px)) / 1 var(--px); letter-spacing: 0.8px; color: #cfcab8; }
 .hub-tomorrow b { font-weight: 400; color: var(--yellow); }
 .hub-tomorrow i { display: inline-flex; align-items: center; gap: 3px; font-style: normal; color: #7fe0ff; }
-.hub-dl li.dc-h { display: block; margin-top: 4px; padding-top: 6px; border-top: 2px solid rgba(255, 255, 255, 0.18); font: 700 calc(10px * var(--ts, 1)) / 1 var(--px); letter-spacing: 1px; color: var(--yellow); }
+.hub-dl li.dc-h { display: block; margin-top: 4px; padding-top: 6px; border-top: 2px solid rgba(255, 255, 255, 0.18); font: 700 max(calc(10px * var(--ts, 1)), var(--fs-floor, 0px)) / 1 var(--px); letter-spacing: 1px; color: var(--yellow); }
 .hub-dl .dc-gems { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; text-decoration: none; color: #7fe0ff; }
 
 /* The login calendar (Menus.gift): gems and the Scout Token on their days. */
-.gift-days li em { display: flex; align-items: center; justify-content: center; gap: 3px; font: 700 10px / 1.2 var(--px); font-style: normal; letter-spacing: 0.3px; color: #1470a8; white-space: nowrap; }
-.gift-days li em.gd-tok { color: var(--go-d); font-size: 9px; }
+.gift-days li em { display: flex; align-items: center; justify-content: center; gap: 3px; font: 700 max(10px, var(--fs-floor, 0px)) / 1.2 var(--px); font-style: normal; letter-spacing: 0.3px; color: #1470a8; white-space: nowrap; }
+.gift-days li em.gd-tok { color: var(--go-d); font-size: max(9px, var(--fs-floor, 0px)); }
 .reward .rw-gem { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; color: #1470a8; }
 .reward .rw-tok { margin-left: 10px; font-size: 0.6em; color: var(--go-d); }
 
@@ -110,7 +110,7 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 @container app (max-width: 900px) {
   /* (TOMORROW over its prize, two short lines: it takes no more room than the gift button it replaces.) */
   .hub-tomorrow { display: inline-grid; grid-template-columns: auto auto; column-gap: 5px; row-gap: 3px; align-content: center; justify-items: center; padding: 0 7px; font-size: calc(13px * var(--ts, 1)); }
-  .hub-tomorrow small { grid-column: 1 / -1; font-size: calc(9px * var(--ts, 1)); letter-spacing: 0.6px; }
+  .hub-tomorrow small { grid-column: 1 / -1; font-size: max(calc(9px * var(--ts, 1)), var(--fs-floor, 0px)); letter-spacing: 0.6px; }
   .hub-tomorrow b:only-of-type:last-child { grid-column: 1 / -1; }
   .hub-acts .hg-w { display: none; }
   .hub-acts .gems.hub-gems { padding: 0 6px 0 5px; gap: 4px; font-size: calc(15px * var(--ts, 1)); }

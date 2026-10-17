@@ -57,9 +57,9 @@
   color: var(--yellow);
 }
 
-.pc-ovr small { font: 400 10px/1.1 var(--round); letter-spacing: 1px; color: var(--cream); }
+.pc-ovr small { font: 400 max(10px, var(--fs-floor, 0px))/1.1 var(--round); letter-spacing: 1px; color: var(--cream); }
 .pc-ovr b { font: 700 22px/1.05 var(--px); }
-.pc-ovr i { font: 400 10px/1.2 var(--round); font-style: normal; letter-spacing: 0.5px; color: var(--cream); white-space: nowrap; }
+.pc-ovr i { font: 400 max(10px, var(--fs-floor, 0px))/1.2 var(--round); font-style: normal; letter-spacing: 0.5px; color: var(--cream); white-space: nowrap; }
 
 /* Key stats: the number over a bar. */
 .pc-bars {
@@ -85,7 +85,7 @@
 
 .pc-cap {
   margin: 1px 0 -2px;
-  font: 400 10px/1 var(--px);
+  font: 400 max(10px, var(--fs-floor, 0px))/1 var(--px);
   letter-spacing: 1px;
   color: var(--ink-2);
 }
@@ -111,7 +111,7 @@
 
 .pc-cell small {
   max-width: 100%;
-  font: 400 10px/1.1 var(--round);
+  font: 400 max(10px, var(--fs-floor, 0px))/1.1 var(--round);
   letter-spacing: 1px;
   color: var(--ink-2);
   white-space: nowrap;

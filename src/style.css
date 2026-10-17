@@ -2323,7 +2323,7 @@ kbd {
 
 .gift-panel .gift-days .gd-tok {
   max-width: 100%;
-  font: 400 10px / 1.25 var(--round);
+  font: 400 max(10px, var(--fs-floor, 0px)) / 1.25 var(--round);
   font-style: normal;
   text-align: center;
   white-space: normal;
@@ -6480,7 +6480,7 @@ div.hub-lv { cursor: default; }
   flex: none; display: grid; place-items: center; align-content: center; gap: 1px; min-width: calc(46px * var(--ts)); padding: 4px 8px 3px;
   font: 400 calc(21px * var(--ts)) / 1 var(--round); color: var(--ink); background: var(--yellow); box-shadow: inset 0 -4px 0 var(--yellow-d);
 }
-.hub-lv .hl-n small { font: 400 calc(10px * var(--ts)) / 1 var(--round); letter-spacing: 1px; }
+.hub-lv .hl-n small { font: 400 max(calc(10px * var(--ts)), var(--fs-floor, 0px)) / 1 var(--round); letter-spacing: 1px; }
 .hub-lv .hl-txt { display: grid; gap: 4px; align-content: center; min-width: 0; padding: 5px 12px 6px 10px; }
 .hub-lv .hl-txt > b { font: 400 calc(15px * var(--ts)) / 1.05 var(--round); letter-spacing: 0.5px; color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hub-lv .hl-fire { margin-left: 6px; color: #ff9a3a; }
@@ -6609,6 +6609,8 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 .hub-tile.t-shop { --c: #ff7a2f; --d: #c4520f; --t: #fff; }
 .hub-tile.t-season { --c: #6a35d6; --d: #3a1f78; --t: #fff; background: linear-gradient(150deg, #9a6cff 0%, #6a35d6 45%, #4a22a8 100%); }
 .hub-tile.t-transfers .ht-t, .hub-tile.t-shop .ht-t, .hub-tile.t-season .ht-t { text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
+/* (A tile with a badge: its title gives up its tracking so JOURNEYS clears the badge on a 667 wide phone.) */
+.hub-tile:has(> .hub-badge) .ht-t { letter-spacing: 0; }
 .hub-badge {
   position: absolute; top: 5px; right: 5px; min-width: calc(22px * var(--ts)); padding: 4px 5px 3px;
   font: 400 calc(13px * var(--ts)) / 1 var(--round); font-style: normal; text-align: center;

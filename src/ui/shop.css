@@ -115,7 +115,7 @@
 /* Slot chips over a slot category's tiles (players, stadium): the worn slots are underlined green. */
 .chips.sh-slots { padding: 2px 2px 4px; }
 .chips.sh-slots > button { position: relative; min-height: 34px; padding: 4px 10px 3px; font-size: 13px; }
-.chips.sh-slots .sh-dot { top: -9px; right: -6px; padding: 2px 3px 1px; font-size: 9px; animation: none; }
+.chips.sh-slots .sh-dot { top: -9px; right: -6px; padding: 2px 3px 1px; font-size: max(9px, var(--fs-floor, 0px)); animation: none; }
 .chips.sh-slots { padding-top: 9px; padding-right: 8px; }
 .chips.sh-slots > button.worn:not(.on) { box-shadow: inset 0 -4px 0 var(--go); }
 
@@ -147,7 +147,7 @@
 .sh-seg button + button { border-left: 0; }
 
 /* FEATURED: the week's set (wide), the four looks, the sets (wide rows). */
-.sh-weeknote { font: 700 10px / 1 var(--px); letter-spacing: 1px; color: var(--ink-2); white-space: nowrap; }
+.sh-weeknote { font: 700 max(10px, var(--fs-floor, 0px)) / 1 var(--px); letter-spacing: 1px; color: var(--ink-2); white-space: nowrap; }
 .sh-sect { grid-column: 1 / -1; margin: 4px 0 -4px; font: 700 11px / 1 var(--px); letter-spacing: 1.5px; color: var(--blue-d); }
 .sh-set {
   position: relative;
@@ -177,7 +177,7 @@
 .sh-settxt { display: grid; gap: 4px; min-width: 0; }
 .sh-settxt b { font: 400 17px / 1.05 var(--round); letter-spacing: 0.6px; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.32); overflow-wrap: anywhere; }
 .sh-set.hero .sh-settxt b { font-size: 21px; }
-.sh-settxt small { font: 700 10px / 1.2 var(--px); letter-spacing: 0.5px; color: var(--sa); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4); }
+.sh-settxt small { font: 700 max(10px, var(--fs-floor, 0px)) / 1.2 var(--px); letter-spacing: 0.5px; color: var(--sa); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4); }
 .sh-new.feat { left: auto; right: -8px; color: var(--ink); background: var(--yellow); box-shadow: 0 3px 0 var(--yellow-d); }
 .sh-new.prog { left: 64px; background: #ff3c9e; box-shadow: 0 3px 0 #b81f6c; }
 /* A small phone (667 wide, or upright): the set card's price goes under its name, so the name has the width. */
@@ -227,7 +227,7 @@
   top: -9px;
   right: -4px;
   padding: 3px 4px 2px;
-  font: 700 10px / 1 var(--px);
+  font: 700 max(10px, var(--fs-floor, 0px)) / 1 var(--px);
   font-style: normal;
   letter-spacing: 0.5px;
   color: #fff;
@@ -278,7 +278,7 @@
   .sh-listh .sh-count { display: none; }
   /* Two lines: TODAY'S DEAL over the badge and the price. */
   .sh-listh .sh-dealchip { display: inline-grid; grid-template-columns: auto auto; justify-items: start; align-items: center; column-gap: 6px; row-gap: 2px; padding: 2px 8px; }
-  .sh-listh .sh-dealchip > b { grid-column: 1 / -1; font-size: 9px; line-height: 1; }
+  .sh-listh .sh-dealchip > b { grid-column: 1 / -1; font-size: max(9px, var(--fs-floor, 0px)); line-height: 1; }
 }
 @container shlisth (max-width: 250px) {
   .sh-listh .sh-dealchip > b { display: none; }
@@ -370,7 +370,7 @@
   right: -8px;
   z-index: 1;
   padding: 4px 5px 3px;
-  font: 700 10px / 1 var(--px);
+  font: 700 max(10px, var(--fs-floor, 0px)) / 1 var(--px);
   font-style: normal;
   letter-spacing: 0.5px;
   color: #fff;
@@ -650,7 +650,7 @@
 .sh-iap:disabled:not(.wait) { opacity: 0.6; }
 .sh-iap.tagged { border-color: var(--blue); box-shadow: 0 4px 0 var(--blue-d); background: #eef5ff; }
 .sh-iap > b { font: 400 22px / 1 var(--round); letter-spacing: 0.6px; }
-.sh-iap > small { font: 700 10px / 1.2 var(--px); letter-spacing: 0.5px; color: var(--go-d); text-align: center; }
+.sh-iap > small { font: 700 max(10px, var(--fs-floor, 0px)) / 1.2 var(--px); letter-spacing: 0.5px; color: var(--go-d); text-align: center; }
 .sh-iap .sh-tag { margin-top: 3px; }
 .sh-pile { display: grid; place-items: center; width: 100%; height: 48px; background: linear-gradient(#c8ecfc, #8fd0f2); }
 .sh-pile .sh-px { width: auto; height: 80%; }
@@ -661,7 +661,7 @@
   transform: translateX(-50%);
   z-index: 1;
   padding: 4px 6px 3px;
-  font: 700 10px / 1 var(--px);
+  font: 700 max(10px, var(--fs-floor, 0px)) / 1 var(--px);
   font-style: normal;
   letter-spacing: 0.5px;
   white-space: nowrap;
@@ -828,14 +828,14 @@
   .sh-rl { font-size: 12px; }
   .sh-ri { width: 22px; height: 22px; }
   .chips.sh-slots > button { min-height: 32px; padding: 3px 8px 2px; font-size: 12px; }
-  .sh-chip, .sh-seg button { min-height: 32px; padding: 3px 8px 2px; font-size: 10px; }
+  .sh-chip, .sh-seg button { min-height: 32px; padding: 3px 8px 2px; font-size: max(10px, var(--fs-floor, 0px)); }
   .sh-set { grid-template-columns: 70px minmax(0, 1fr) auto; gap: 6px; padding: 5px 6px 5px 5px; }
   .sh-set .sh-art { width: 70px; }
   .sh-set.hero { grid-template-columns: 104px minmax(0, 1fr) auto; }
   .sh-set.hero .sh-art { width: 104px; }
   .sh-settxt b { font-size: 15px; }
   .sh-set.hero .sh-settxt b { font-size: 18px; }
-  .sh-settxt small { font-size: 9px; }
+  .sh-settxt small { font-size: max(9px, var(--fs-floor, 0px)); }
   .sh-parts { gap: 3px; }
   .sh-part { min-height: 26px; font-size: 11px; }
   .sh-weeknote { display: none; }
@@ -851,7 +851,7 @@
   .sh-detail { gap: 6px; }
   .sh-stage { min-height: 0; }
   .sh-info { gap: 6px; }
-  .sh-kind { font-size: 10px; }
+  .sh-kind { font-size: max(10px, var(--fs-floor, 0px)); }
   .panel.mc .sh-name { font-size: 20px; }
   .sh-blurb { display: none; }
   .sh-btns { gap: 8px; }
@@ -897,7 +897,7 @@
 /* Narrow screens: the tiles shrink so the stage keeps its half. */
 @container app (max-width: 720px) {
   .sh-grid { grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); }
-  .sh-dealchip > b { font-size: 10px; }
+  .sh-dealchip > b { font-size: max(10px, var(--fs-floor, 0px)); }
   .sh-count { display: none; }
   .sh-screen .sh-content.sh-money { grid-template-columns: minmax(0, 0.8fr) minmax(0, 2.2fr); }
   .shell .mc-tabs.sh-tabs button.sh-money { font-size: 11px; letter-spacing: 0; }

@@ -5,11 +5,11 @@
 .bd-journeys { display: flex; gap: 6px; min-width: 0; overflow-x: auto; padding: 2px 2px 5px; touch-action: pan-x; }
 .bd-journeys button { flex: 0 0 auto; display: grid; gap: 3px; min-height: 42px; padding: 6px 10px; color: var(--ink); background: var(--cream); border: 2px solid var(--ink); border-top: 4px solid var(--journey); cursor: pointer; font: 400 12px var(--round); }
 .bd-journeys button.on { color: #fff; background: #3a1f78; }
-.bd-journeys small { font-size: 10px; }
+.bd-journeys small { font-size: max(10px, var(--fs-floor, 0px)); }
 .bd-screen .bd-passoffer { overflow-y: auto; justify-content: flex-start; }
 .bd-screen .bd-passoffer > * { flex-shrink: 0; }
 .bd-screen .bd-head { flex-wrap: wrap; }
-.bd-screen .bd-earned-look { color: var(--ink-2); font: 400 10px/1.3 var(--round); }
+.bd-screen .bd-earned-look { color: var(--ink-2); font: 400 max(10px, var(--fs-floor, 0px))/1.3 var(--round); }
 .bd-title.prestige { border-color: var(--prestige); box-shadow: 0 3px 0 var(--prestige); }
 .bd-title.prestige b::before { content: '★ '; color: var(--prestige); }
 
@@ -167,7 +167,7 @@
 .bd-tile.ptile.ready { background: var(--yellow); }
 .bd-tile.ptile.got { background: #e6f6e9; border-color: var(--go-d); }
 .bd-railgrid:not(.pass-on) .bd-tile.ptile { background: #ddd2f5; }
-.bd-tile em { font: 400 10px var(--round); font-style: normal; letter-spacing: 0.5px; color: #fff; background: var(--ink); padding: 2px 4px 1px; }
+.bd-tile em { font: 400 max(10px, var(--fs-floor, 0px)) var(--round); font-style: normal; letter-spacing: 0.5px; color: #fff; background: var(--ink); padding: 2px 4px 1px; }
 .bd-tile:active { transform: translateY(3px); box-shadow: 0 0 0 var(--cream-2); }
 .bd-tile:focus-visible, .bd-title:focus-visible, .bd-chip:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .bd-star { position: absolute; top: 3px; right: 3px; line-height: 0; }
@@ -186,12 +186,15 @@
 .bd-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
 .bd-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 400 16px var(--round); letter-spacing: 1px; white-space: nowrap; }
 .bd-pips { flex: none; display: inline-flex; gap: 2px; }
-.bd-pips i { display: grid; place-items: center; min-width: 18px; height: 17px; padding: 0 1px; font: 400 9px var(--round); font-style: normal; color: #b9b5aa; background: var(--cream); border: 2px solid var(--cream-2); }
+.bd-pips i { display: grid; place-items: center; min-width: 18px; height: 17px; padding: 0 1px; font: 400 max(9px, var(--fs-floor, 0px)) var(--round); font-style: normal; color: #b9b5aa; background: var(--cream); border: 2px solid var(--cream-2); }
 .bd-pips i.on { color: #fff; background: var(--c); border-color: var(--ink); }
 .bd-foot { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 30px; }
 .bd-next { flex: 1 1 auto; min-width: 0; margin: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; font: 400 12px var(--round); letter-spacing: 0.5px; color: var(--ink-2); white-space: nowrap; }
-.bd-next span { font-size: 10px; letter-spacing: 1px; color: #fff; background: var(--ink-2); padding: 2px 5px 1px; }
+.bd-next span { font-size: max(10px, var(--fs-floor, 0px)); letter-spacing: 1px; color: #fff; background: var(--ink-2); padding: 2px 5px 1px; }
 .bd-next em { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-style: normal; color: var(--ink); background: var(--cream); border: 2px solid var(--cream-2); padding: 1px 5px 0; }
+/* (The badge's name takes two lines when the card is tight, SAFE HANDS at 1080 wide, rather than an ellipsis.) */
+.bd-next { flex-wrap: wrap; row-gap: 2px; }
+.bd-next em:last-child { white-space: normal; text-overflow: clip; line-height: 1.05; }
 .bd-next.done span { background: var(--go-d); }
 /* (A tier waiting to be claimed: its CLAIM button takes the room, the next prize shows only its title.) */
 .bd-track.ready .bd-next em:first-of-type { display: none; }

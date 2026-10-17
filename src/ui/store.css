@@ -26,9 +26,9 @@
 }
 .sh-storemain .sh-iap { min-width: 0; min-height: 144px; padding: 8px; align-content: start; gap: 6px; }
 .sh-storemain .sh-iap > b { font-size: 22px; }
-.sh-storemain .sh-iap > small { font-size: 10px; }
+.sh-storemain .sh-iap > small { font-size: max(10px, var(--fs-floor, 0px)); }
 .sh-storemain .sh-iap .sh-tag { align-self: end; max-width: 100%; font-size: 13px; white-space: normal; overflow-wrap: anywhere; }
-.sh-storemain .sh-ribbon { position: static; transform: none; max-width: 100%; justify-self: stretch; font-size: 9px; line-height: 1.2; letter-spacing: 0; white-space: normal; text-align: center; }
+.sh-storemain .sh-ribbon { position: static; transform: none; max-width: 100%; justify-self: stretch; font-size: max(9px, var(--fs-floor, 0px)); line-height: 1.2; letter-spacing: 0; white-space: normal; text-align: center; }
 .sh-storemain .sh-pile { height: 48px; }
 .sh-storemain .sh-passcard {
   grid-area: auto; min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
@@ -40,7 +40,7 @@
 .sh-storemain .sh-passcard .sh-pc-name { font-size: 24px; }
 .sh-storemain .sh-passcard .sh-pc-facts { max-width: 320px; }
 .sh-storemain .sh-passcard .sh-pc-facts li { flex-wrap: wrap; }
-.sh-storemain .sh-passcard .sh-pc-theme { font-size: 10px; }
+.sh-storemain .sh-passcard .sh-pc-theme { font-size: max(10px, var(--fs-floor, 0px)); }
 .sh-storemain .sh-passcard .sh-pc-note { font-size: 12px; }
 .sh-storemain .sh-passcard .btn.sh-pc-gems { min-height: 44px; }
 .bd-passoffer { justify-content: flex-start; overflow-y: auto; }
@@ -50,16 +50,16 @@
 .sh-signature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-content: start; padding: 8px; }
 .sh-signature-tile { min-width: 0; min-height: 66px; display: grid; align-content: center; gap: 5px; padding: 9px; text-align: left; color: #fff; background: var(--ink); border: 3px solid var(--signature); cursor: pointer; }
 .sh-signature-tile b { font: 400 15px / 1.15 var(--round); }
-.sh-signature-tile small { font: 700 9px / 1.2 var(--px); color: var(--signature); }
+.sh-signature-tile small { font: 700 max(9px, var(--fs-floor, 0px)) / 1.2 var(--px); color: var(--signature); }
 .sh-signature-tile.sel { box-shadow: 0 0 0 2px var(--yellow); }
 .sh-signature-tile:focus-visible, .sh-signature-pieces button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
 .sh-signature .sh-detail { display: grid; grid-template-rows: minmax(90px, 1fr) minmax(0, 1.25fr); min-height: 0; }
 .sh-signature .sh-info { overflow-y: auto; min-height: 0; padding-right: 6px; }
-.sh-signature .sh-info > small { font: 700 10px / 1.5 var(--px); }
+.sh-signature .sh-info > small { font: 700 max(10px, var(--fs-floor, 0px)) / 1.5 var(--px); }
 .sh-signature-pieces { display: flex; flex-wrap: wrap; gap: 4px; }
-.sh-signature-pieces button { border: 2px solid var(--ink); background: #fff; color: var(--ink); font: 700 10px / 1.2 var(--px); padding: 6px; cursor: pointer; }
+.sh-signature-pieces button { border: 2px solid var(--ink); background: #fff; color: var(--ink); font: 700 max(10px, var(--fs-floor, 0px)) / 1.2 var(--px); padding: 6px; cursor: pointer; }
 .sh-signature-pieces button.on { background: var(--yellow); }
-.bd-item small { display: block; font-size: 9px; margin-top: 4px; }
+.bd-item small { display: block; font-size: max(9px, var(--fs-floor, 0px)); margin-top: 4px; }
 @container app (max-height: 450px) {
   .sh-signature-grid { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .sh-signature-tile { min-height: 50px; padding: 6px; }
@@ -128,12 +128,12 @@
 /* (Its own row over the tiles: the pane's header keeps the count and today's deal.) */
 .sh-atmo { display: grid; gap: 2px; min-width: 0; padding: 3px 7px 3px; white-space: nowrap; background: #eafbe9; border: 2px solid var(--go-d); }
 .sh-atmotop { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.sh-atmotop > b { font: 700 10px var(--px); letter-spacing: 1px; color: var(--go-d); }
+.sh-atmotop > b { font: 700 max(10px, var(--fs-floor, 0px)) var(--px); letter-spacing: 1px; color: var(--go-d); }
 .sh-atmotop > em { font: 400 17px / 1 var(--round); font-style: normal; color: var(--ink); }
 .sh-atmobar { flex: 1 1 auto; min-width: 30px; height: 8px; background: #fff; border: 2px solid var(--ink); }
 .sh-atmobar u { display: block; height: 100%; background: var(--go); text-decoration: none; }
 .sh-atmo > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 400 13px var(--round); letter-spacing: 0.4px; color: var(--ink-2); }
-.sh-tile > small.sh-perk { font: 700 9px / 1.1 var(--px); letter-spacing: 0.4px; color: var(--go-d); text-align: center; white-space: nowrap; }
+.sh-tile > small.sh-perk { font: 700 max(9px, var(--fs-floor, 0px)) / 1.1 var(--px); letter-spacing: 0.4px; color: var(--go-d); text-align: center; white-space: nowrap; }
 .sh-bonus { margin: 0; display: flex; flex-wrap: wrap; gap: 5px; }
 .sh-bonus i { padding: 4px 7px 3px; font: 700 11px / 1.1 var(--px); font-style: normal; letter-spacing: 0.6px; color: #fff; background: var(--go-d); white-space: nowrap; }
 
@@ -147,7 +147,7 @@
   gap: 4px;
   min-height: 36px;
   padding: 4px 8px 3px;
-  font: 700 10px var(--px);
+  font: 700 max(10px, var(--fs-floor, 0px)) var(--px);
   letter-spacing: 0.6px;
   color: var(--ink);
   background: #fff;
@@ -163,7 +163,7 @@
 
 @container app (max-height: 560px) {
   .sh-earn { padding: 5px 8px 4px; font-size: 12px; }
-  .sh-earn b { font-size: 10px; }
+  .sh-earn b { font-size: max(10px, var(--fs-floor, 0px)); }
   .sh-passcard .btn.sh-pc-gems { font-size: 14px; }
   .sh-offers.wide { gap: 8px; }
   .sh-offers.wide .sh-offer { min-height: 54px; }
@@ -174,12 +174,12 @@
   .sh-net .sh-offtxt small { font-size: 12px; }
   .sh-net .sh-offtxt small.sh-netnote { font-size: 11px; }
   .sh-uses li { padding: 6px 4px 5px; }
-  .sh-uses b { font-size: 10px; }
+  .sh-uses b { font-size: max(10px, var(--fs-floor, 0px)); }
   .sh-uses em { font-size: 15px; }
   .sh-uses small { font-size: 11px; }
   .sh-atmotop > em { font-size: 15px; }
   .sh-atmo > small { font-size: 12px; }
-  .sh-bonus i { font-size: 10px; padding: 3px 5px 2px; }
+  .sh-bonus i { font-size: max(10px, var(--fs-floor, 0px)); padding: 3px 5px 2px; }
   .sh-dealnew { min-height: 32px; padding: 3px 6px 2px; }
   .sh-atmo { padding: 2px 6px 2px; gap: 1px; }
 }

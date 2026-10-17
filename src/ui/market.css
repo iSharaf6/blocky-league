@@ -232,7 +232,7 @@
 .mk-tag {
   display: inline-block;
   padding: 2px 4px 1px;
-  font: 400 10px/1 var(--round);
+  font: 400 max(10px, var(--fs-floor, 0px))/1 var(--round);
   font-style: normal;
   letter-spacing: 0.6px;
   vertical-align: 1px;
@@ -415,7 +415,7 @@
 }
 
 .mk-fact small {
-  font: 400 10px var(--round);
+  font: 400 max(10px, var(--fs-floor, 0px)) var(--round);
   letter-spacing: 1px;
   color: var(--ink-2);
 }

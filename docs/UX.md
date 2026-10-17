@@ -119,9 +119,16 @@ under Safari's bars and the portal's banner, and upright) and iPads held upright
 - Code that turns client rects into scroll offsets or sizes divides by `layoutScale(el)`.
 - Every strip or list that holds more than fits scrolls by finger and by mouse drag (src/ui/dragScroll.ts); a mouse
   wheel moves a sideways strip sideways.
+- The smallest labels never draw under 8px on screen in a box shrunk under 0.8 (640x290) or 9px otherwise (700x320 and
+  above): fitFloor writes `--fit-floor`, the fitted screen hands it on as `--fs-floor`, and every label under 11px
+  takes `font-size: max(its size, var(--fs-floor, 0px))`. A new label under 11px follows the same pattern. (An upright
+  phone's 0.58 is past what the floor lifts: its labels stay small.)
+- A line that can be too long for its box (LARGE text at 667 wide, a long name) wraps onto a second line or its box
+  scrolls; an ellipsis that hides words is a cut.
 - Check a change with `__uiAudit()` in the console (dev builds): text that spills or is cut, buttons off the frame or
-  cut, interactive elements or text drawn over each other. It should return `[]` on every screen at 640x290, 700x320,
-  667x375, 852x393, 800x450, 1080x607, 1180x760, 1920x1080, 820x1100, 930x1250 and 390x700.
+  cut, interactive elements or text drawn over each other, and labels drawn under the floor (`small`). It should return
+  `[]` on every screen at 640x290, 700x320, 667x375, 852x393, 800x450, 1080x607, 1180x760, 1920x1080, 820x1100,
+  930x1250 and 390x700.
 - For CrazyGames: the game is landscape first; on phones ask for landscape only (upright works, scaled small).
 
 ## Checklist for every screen
