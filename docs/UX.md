@@ -119,6 +119,13 @@ under Safari's bars and the portal's banner, and upright) and iPads held upright
 - Code that turns client rects into scroll offsets or sizes divides by `layoutScale(el)`.
 - Every strip or list that holds more than fits scrolls by finger and by mouse drag (src/ui/dragScroll.ts); a mouse
   wheel moves a sideways strip sideways.
+- Every pane that scrolls shows a scrollbar that is always visible, on every platform (src/ui/scrollbars.ts,
+  installed with dragScroll): a track and a thumb 5px thick on screen, ink on light panels and yellow on dark ones,
+  never faded. iOS Safari and macOS hide their own bars until a scroll moves, so CrazyGames' second Full Launch review
+  (October 2026) read a cut row of tiles as a broken screen. The pane keeps a gutter for it (padding on the bar's
+  side, more where a NEW tag hangs past the tiles), so it never covers a word, a button or a tile. Drag the thumb, or
+  tap the track to page. A pane that fits has no bar. Fit first: a bar is for a list that is genuinely long, never an
+  excuse for a card or a button row that should fit.
 - The smallest labels never draw under 8px on screen in a box shrunk under 0.8 (640x290) or 9px otherwise (700x320 and
   above): fitFloor writes `--fit-floor`, the fitted screen hands it on as `--fs-floor`, and every label under 11px
   takes `font-size: max(its size, var(--fs-floor, 0px))`. A new label under 11px follows the same pattern. (An upright
@@ -126,9 +133,20 @@ under Safari's bars and the portal's banner, and upright) and iPads held upright
 - A line that can be too long for its box (LARGE text at 667 wide, a long name) wraps onto a second line or its box
   scrolls; an ellipsis that hides words is a cut.
 - Check a change with `__uiAudit()` in the console (dev builds): text that spills or is cut, buttons off the frame or
-  cut, interactive elements or text drawn over each other, and labels drawn under the floor (`small`). It should return
-  `[]` on every screen at 640x290, 700x320, 667x375, 852x393, 800x450, 1080x607, 1180x760, 1920x1080, 820x1100,
-  930x1250 and 390x700.
+  cut, interactive elements or text drawn over each other, labels drawn under the floor (`small`), a pane that runs
+  past its box without a visible bar (`nobar`, saying why), and a bar over the pane's words or buttons (`bar-over`).
+  It should return `[]` on every screen, in MEDIUM and LARGE text, at 640x290, 700x320, 667x375, 852x393, 800x450,
+  1080x607, 1180x760, 1920x1080, 820x1100, 930x1250 and 390x700, and at the real iPhone frames inside CrazyGames in
+  Safari (its toolbar, the "open in the app" banner and the portal's left rail take the rest): 745x290, 785x282,
+  700x280 and 844x300. All four are laid out at 900x375, scale 0.75 to 0.8. Emulate touch at the phone sizes, and
+  check the iPhone frames in WebKit (Playwright's) as well as Chrome. (In WebKit, LARGE text's CSS zoom can put the
+  audit's hit tests off by the zoom: a `nobar ... under` there is checked on a screenshot before it is believed.)
+- Under LARGE text at a box up to 400 tall (every short phone frame, and 852x393), the shop, transfers, MY CLUB,
+  quick match, journeys and the season screens keep their MEDIUM size (shell.css), as they already did up to 830 by
+  400 (style.css).
+- The fit matrix lives outside the repo: a Playwright script that walks every screen (and a match: pause, its sub
+  screens, half time, full time) at every size above in MEDIUM and LARGE, touch at the phone sizes, and writes one
+  JSON of `__uiAudit()` results with a screenshot of each failure. Run it against a dev server without HMR.
 - For CrazyGames: the game is landscape first; on phones ask for landscape only (upright works, scaled small).
 
 ## Checklist for every screen

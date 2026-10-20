@@ -1,0 +1,65 @@
+/* Always-visible scrollbars (src/ui/scrollbars.ts, docs/UX.md section 10). The bar fills the pane's gutter (its
+   hit area); the track and the thumb (5 px on screen: --sb-t) are drawn inside it. Ink on light panels, yellow on
+   dark ones. Never faded. */
+
+.sb {
+  position: absolute !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  /* (Its zoom is its pane's, set inline: both then measure in the same px.) */
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow-anchor: none;
+}
+
+/* Placed and sized at once, never eased there (scrollbars.ts reads a bar's place back as it sets it). */
+.sb,
+.sb > i {
+  transition: none !important;
+}
+
+.sb::before,
+.sb > i {
+  content: '';
+  position: absolute;
+  display: block;
+  border-radius: 3px;
+}
+
+/* The track. */
+.sb::before {
+  background: rgba(38, 38, 46, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(38, 38, 46, 0.12);
+}
+
+.sb-x::before { left: 3px; right: 3px; bottom: 2px; height: var(--sb-t, 5px); }
+.sb-y::before { top: 3px; bottom: 3px; right: 2px; width: var(--sb-t, 5px); }
+
+/* The thumb (its length and place are set from the pane's scroll). */
+.sb > i {
+  background: var(--ink);
+  box-shadow: 0 0 0 1px rgba(251, 251, 244, 0.9);
+  will-change: transform;
+}
+
+.sb-x > i { left: 3px; bottom: 2px; height: var(--sb-t, 5px); width: 24px; }
+.sb-y > i { top: 3px; right: 2px; width: var(--sb-t, 5px); height: 24px; }
+
+.sb.dark::before { background: rgba(251, 251, 244, 0.32); box-shadow: inset 0 0 0 1px rgba(251, 251, 244, 0.2); }
+.sb.dark > i { background: var(--yellow); box-shadow: 0 0 0 1px var(--ink); }
+
+.sb.held > i,
+.sb:hover > i { background: var(--blue-d); }
+.sb.dark.held > i,
+.sb.dark:hover > i { background: #fff; }
+
+/* A pane with a drawn bar: the browser's own (thin on desktops, overlay on phones) is hidden. */
+.sb-on { scrollbar-width: none !important; }
+.sb-on::-webkit-scrollbar { display: none; width: 0; height: 0; }

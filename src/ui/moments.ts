@@ -161,7 +161,7 @@ function ensureCss(): void {
   s.textContent = `
 .mo-screen .mo-body { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
 .mo-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; align-content: start; padding: 3px 6px 8px 3px; }
-.mo-card { display: grid; grid-template-columns: 38px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px; row-gap: 4px; align-items: center; min-width: 0; min-height: 60px; padding: 6px 8px; text-align: left; font: inherit; color: var(--ink); background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2); cursor: pointer; transition: transform 0.06s; }
+.mo-card { display: grid; grid-template-columns: 38px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px; row-gap: 7px; align-items: center; min-width: 0; min-height: 60px; padding: 6px 8px; text-align: left; font: inherit; color: var(--ink); background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2); cursor: pointer; transition: transform 0.06s; }
 .mo-card:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--cream-2); }
 .mo-card:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .mo-card.sel { border-color: var(--blue-d); background: #eaf2ff; box-shadow: 0 4px 0 var(--blue-d), inset 0 0 0 2px var(--blue); transform: translateY(-2px); }

@@ -1394,8 +1394,28 @@ kbd {
   box-sizing: border-box;
 }
 
+/* SECOND HALF (Hud.show kind 'tag'): the scorer's plate's place and size, hung off the score bug (the HUD sets left,
+   top and width), so the kick-off taker and the ball in the middle of the lens are never behind it. */
+.hud-banner.tag {
+  inset: auto;
+  display: grid;
+  justify-items: start;
+  justify-content: start;
+  max-width: min(240px, calc(calc(100 * var(--vw)) - 24px));
+  pointer-events: none;
+}
+.hud-banner.tag .bn-title { justify-content: start; font-size: clamp(22px, calc(3.2 * var(--vw)), 30px); }
+.hud-banner.tag .bn-title i {
+  /* (A short drop: hung under the score bug, the letters never start above the frame's top edge.) */
+  animation: tag-letter 0.4s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  text-shadow: 0 3px 0 var(--ink), 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 -2px 0 var(--ink);
+}
+
 @keyframes letter {
   from { transform: translateY(-120px) scale(0.4); opacity: 0; }
+}
+@keyframes tag-letter {
+  from { transform: translateY(-12px) scale(0.6); opacity: 0; }
 }
 
 @keyframes wobble {
@@ -1594,10 +1614,14 @@ kbd {
 .hud-cm[data-tone='goal'] .cm-tag { background: var(--go); color: #fff; }
 .hud-cm[data-tone='big'] .cm-tag { background: var(--cream); }
 
+/* A band narrower than the line (a phone's gap between the thumbstick and the buttons): two balanced lines, every
+   word kept (Hud.placeTicker measures it so), never an ellipsis. The tag stays on one line beside it. */
+.cm-tag { white-space: nowrap; }
 .cm-text {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: break-word;
+  text-wrap: balance;
   padding: 8px 12px 7px;
   font: 400 clamp(15px, calc(1.35 * var(--vw)), 18px) / 1.15 var(--round);
   letter-spacing: 0.3px;
@@ -1785,6 +1809,18 @@ kbd {
 
 .scorebug.under {
   filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.3)) opacity(0.3);
+}
+
+/* The chant's caption and the touch controls (Hud.fadeControls: a held button keeps its look), and the skill tell
+   when nowhere beside the defender is clear of our man (SkillHud): the play shows through them. */
+.pz-chant.under,
+#ui > .touch .tb.under,
+#ui > .touch .touch-base.under,
+.skill-hud .sk-tell.under,
+.skill-hud .sk-pop.under,
+.hud-timing.under,
+.hud-chip.under {
+  filter: opacity(0.3);
 }
 
 @container app (max-height: 419.98px) {
@@ -6827,20 +6863,28 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
   :root.ts-large :is(.sh-screen, .mk-screen, .mc-club-screen, .qm-screen) .panel > :not(.btn-row:last-child) { zoom: 1; }
 }
 :root:is(.ts-small, .ts-large) .menu-toast { font-size: calc(15px * var(--ts)); }
-:root:is(.ts-small, .ts-large) .scorebug { font-size: calc(clamp(16px, calc(1.8 * var(--vw)), 22px) * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-toast { font-size: calc(clamp(16px, calc(1.6 * var(--vw)), 20px) * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-hint { font-size: calc(clamp(16px, calc(1.5 * var(--vw)), 17px) * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-tip { font-size: calc(clamp(14px, calc(1.6 * var(--vw)), 18px) * var(--ts)); }
-:root:is(.ts-small, .ts-large) .cm-tag { font-size: calc(16px * var(--ts)); }
-:root:is(.ts-small, .ts-large) .cm-text { font-size: calc(clamp(15px, calc(1.35 * var(--vw)), 18px) * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-chip { font-size: calc(16px * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-replay b { font-size: calc(22px * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-replay span { font-size: calc(16px * var(--ts)); }
-:root:is(.ts-small, .ts-large) .hud-timing em { font-size: calc(16px * var(--ts)); }
-@container app (max-height: 450px) {
+/* The HUD's words scale only on frames 330 px tall and up. A phone on its side in a portal's frame (745 by 290, 785 by
+   282 in Safari with its bars) has no room for a bigger HUD over the play: there the match HUD keeps its MEDIUM size
+   in every text size, as the menus keep theirs on small frames, and its own --ts (the kick-off prompt, the chant) is 1. */
+@container app (min-height: 330px) {
+  :root:is(.ts-small, .ts-large) .scorebug { font-size: calc(clamp(16px, calc(1.8 * var(--vw)), 22px) * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .hud-toast { font-size: calc(clamp(16px, calc(1.6 * var(--vw)), 20px) * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .hud-hint { font-size: calc(clamp(16px, calc(1.5 * var(--vw)), 17px) * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .hud-tip { font-size: calc(clamp(14px, calc(1.6 * var(--vw)), 18px) * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .cm-tag { font-size: calc(16px * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .cm-text { font-size: calc(clamp(15px, calc(1.35 * var(--vw)), 18px) * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .hud-chip { font-size: calc(16px * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .hud-replay b { font-size: calc(22px * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .hud-replay span { font-size: calc(16px * var(--ts)); }
+  :root:is(.ts-small, .ts-large) .hud-timing em { font-size: calc(16px * var(--ts)); }
+}
+@container app (min-height: 330px) and (max-height: 450px) {
   :root:is(.ts-small, .ts-large) .scorebug { font-size: calc(16px * var(--ts)); }
   :root:is(.ts-small, .ts-large) .hud-tip { font-size: calc(14px * var(--ts)); }
   :root:is(.ts-small, .ts-large) .cm-text { font-size: calc(14px * var(--ts)); }
+}
+@container app (max-height: 329.98px) {
+  #ui > .hud { --ts: 1; }
 }
 /* (Before your club exists the hero has room: its shirt is the big picture.) */
 .hub-hero.create .hh-art .picon, .hub-hero.now .hh-art .picon { width: calc(clamp(40px, calc(13 * var(--vmin)), 110px) * var(--ts)); }

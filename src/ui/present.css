@@ -15,7 +15,9 @@
 /* ---------------------------------------------------------------- the chant caption
    Under the camera and pause buttons, top right: the score bug, the HYPE bars and the live goal are all top left, the
    ticker runs along the top band between them, and the minimap and the touch controls own the bottom. It steps left
-   of the quick-sub card while that is up. */
+   of the quick-sub card while that is up. Every word of the chant shows: a long one ("THIS IS OUR HOME! LA LA LA!
+   (CLAP CLAP)") takes a second line, balanced, rather than an ellipsis (CrazyGames' review found "CROWD: OH U..." cut
+   at the frame's edge), and the box never leaves the frame or its safe area. */
 .pz-chant {
   top: calc(max(12px, var(--sa-top)) + 54px);
   right: max(12px, var(--sa-right));
@@ -27,9 +29,9 @@
   background: rgba(38, 38, 46, 0.78);
   border-right: 4px solid var(--yellow);
   color: var(--cream);
-  font: 700 12px / 1.1 var(--px);
+  font: 700 calc(12px * var(--ts, 1)) / 1.15 var(--px);
   letter-spacing: 0.5px;
-  white-space: nowrap;
+  white-space: normal;
   opacity: 0;
   transform: translateX(8px);
   transition: opacity 0.25s, transform 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
@@ -54,8 +56,8 @@
 
 .pz-chant-t {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: break-word;
+  text-wrap: balance;
 }
 
 .hud:has(.hud-qsub.on) .pz-chant { right: calc(max(12px, var(--sa-right)) + 274px); }
@@ -67,7 +69,7 @@
 }
 
 @container app (max-width: 720px) or (max-height: 480px) {
-  .pz-chant { top: calc(max(12px, var(--sa-top)) + 46px); font-size: 11px; max-width: calc(44 * var(--vw)); }
+  .pz-chant { top: calc(max(12px, var(--sa-top)) + 46px); font-size: calc(11px * var(--ts, 1)); max-width: calc(44 * var(--vw)); }
 }
 /* A phone on its side: right under the camera and pause buttons (38 px), so the line ends above the middle of the
    screen (the top 20%: 75 px at 667 by 375). */
@@ -217,12 +219,13 @@
   letter-spacing: 1.5px;
 }
 
+/* (A long title, BACK FOR THE SECOND HALF, takes a second line, balanced, rather than losing its end.) */
 .pz-title {
-  font: 700 clamp(18px, calc(3 * var(--vw)), 30px) / 1 var(--px);
+  font: 700 clamp(18px, calc(3 * var(--vw)), 30px) / 1.05 var(--px);
   letter-spacing: 1px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  text-wrap: balance;
+  overflow-wrap: break-word;
 }
 
 .pz-line {

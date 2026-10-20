@@ -17,6 +17,7 @@
  * Pointer input needs nothing: hit testing follows the transform. Code that turns screen pixels into layout pixels
  * (a pane's scrollTop from client rects, the drag ghost's size) divides by `layoutScale(el)`.
  */
+import { SCROLL_SLACK, scrollbarOf } from './scrollbars';
 
 /** The envelope the menus are designed for: smaller or upright frames use the fit box. */
 export const FIT_MIN_W = 667;
@@ -271,7 +272,7 @@ export function installFitBox(ui: HTMLElement): () => void {
 
 /** One problem the audit found: what, where (a short selector path and its text), and by how many pixels. */
 export interface AuditIssue {
-  kind: 'spill' | 'clipped' | 'offscreen' | 'overlap' | 'text-overlap' | 'small';
+  kind: 'spill' | 'clipped' | 'offscreen' | 'overlap' | 'text-overlap' | 'small' | 'nobar' | 'bar-over';
   el: string;
   px: number;
   with?: string;
@@ -291,15 +292,47 @@ const isScroller = (cs: CSSStyleDeclaration) => /(auto|scroll)/.test(cs.overflow
  * The part of `el` not clipped by its overflow-hidden or scrolling ancestors up to `stop` (null: none of it shows).
  * `scrolled` tells whether a scrolling ancestor did any of the clipping (a list scrolled past it: fine).
  */
+/**
+ * Safari's CSS zoom (LARGE text zooms a panel's contents): its client rects of zoomed content come back in unzoomed px,
+ * while hit testing uses the screen's. Found once by a probe; the audit then scales each rect by the element's own
+ * zoom, so a WebKit audit measures what is drawn (Chromium's rects are already on screen).
+ */
+let legacyZoom: boolean | null = null;
+function zoomedRects(): boolean {
+  if (legacyZoom !== null) return legacyZoom;
+  const outer = document.createElement('div');
+  outer.style.cssText = 'position:fixed;left:0;top:0;width:40px;height:40px;zoom:2;visibility:hidden;pointer-events:none';
+  const inner = document.createElement('div');
+  inner.style.cssText = 'position:absolute;left:10px;top:0;width:10px;height:10px';
+  outer.append(inner);
+  document.body.append(outer);
+  legacyZoom = inner.getBoundingClientRect().left < 15;
+  outer.remove();
+  return legacyZoom;
+}
+
+function zoomOf(el: Element | null): number {
+  let z = 1;
+  for (let e = el; e; e = e.parentElement) z *= parseFloat(getComputedStyle(e).zoom) || 1;
+  return z;
+}
+
+/** `el`'s rect where it is drawn (see zoomedRects). */
+function crect(el: Element, r: DOMRect = el.getBoundingClientRect()): DOMRect {
+  if (!zoomedRects()) return r;
+  const z = zoomOf(el);
+  return z === 1 ? r : new DOMRect(r.left * z, r.top * z, r.width * z, r.height * z);
+}
+
 function visibleRect(el: Element, stop: Element, r0?: DOMRect): { r: DOMRect; scrolled: boolean } | null {
-  const r = r0 ?? el.getBoundingClientRect();
+  const r = r0 ?? crect(el);
   if (r.width < 1 || r.height < 1) return null;
   let l = r.left, t = r.top, rt = r.right, b = r.bottom;
   let scrolled = false;
   for (let p = el.parentElement; p && p !== stop.parentElement; p = p.parentElement) {
     const cs = getComputedStyle(p);
     if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
-    const pr = p.getBoundingClientRect();
+    const pr = crect(p);
     const nl = Math.max(l, pr.left), nt = Math.max(t, pr.top), nr = Math.min(rt, pr.right), nb = Math.min(b, pr.bottom);
     if ((nl > l + 1 || nt > t + 1 || nr < rt - 1 || nb < b - 1) && isScroller(cs)) scrolled = true;
     l = nl; t = nt; rt = nr; b = nb;
@@ -319,13 +352,18 @@ function visibleRect(el: Element, stop: Element, r0?: DOMRect): { r: DOMRect; sc
  */
 export function uiAudit(root: ParentNode = document): AuditIssue[] {
   const out: AuditIssue[] = [];
+  // (The scrollbars as they stand once the last re-render has been looked at: ui/scrollbars.ts.)
+  (document.getElementById('ui') as (HTMLElement & { sbFlush?: () => void }) | null)?.sbFlush?.();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   // (Only where the floor holds: not under SMALL text, nor in a box shrunk past what FLOOR_MAX can lift, upright phones.)
+  // (Never more than fitFloor can give: at 0.8 to 0.85, 844x300 say, FLOOR_MAX holds the labels at 8.5 px on screen.)
   const floor = document.documentElement.classList.contains('ts-small') || (current.on && current.scale < FLOOR_SMALL / FLOOR_MAX) ? 0
-    : current.on && current.scale < 0.8 ? FLOOR_SMALL : FLOOR;
+    : current.on && current.scale < 0.8 ? FLOOR_SMALL : current.on && current.scale < 1 ? Math.min(FLOOR, FLOOR_MAX * current.scale) : FLOOR;
   for (const scr of root.querySelectorAll<HTMLElement>('#ui > .screen')) {
     const texts: { node: Text; r: DOMRect; box: Element }[] = [];
+    // (Every visible piece of text, on top or not: a scrollbar must not sit over any of it.)
+    const seen: { r: DOMRect; box: Element }[] = [];
     const walk = document.createTreeWalker(scr, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) {
       if (!n.data.trim()) continue;
@@ -336,7 +374,7 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
       if (cs.visibility === 'hidden' || Number(cs.opacity) === 0) continue;
       const range = document.createRange();
       range.selectNodeContents(n);
-      const rects = [...range.getClientRects()].filter((q) => q.width > 0.5 && q.height > 0.5);
+      const rects = [...range.getClientRects()].map((q) => crect(n.parentElement!, q)).filter((q) => q.width > 0.5 && q.height > 0.5);
       if (!rects.length) continue;
       // (The box's scale times the text size's zoom on the way up: a small badge's offsetWidth rounds too coarsely.)
       let zoom = 1;
@@ -344,7 +382,7 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
       const drawn = parseFloat(cs.fontSize) * zoom * (current.on ? current.scale : 1);
       if (floor && drawn < floor - 0.05) out.push({ kind: 'small', el: label(box), px: Math.round(drawn * 10) / 10 });
       for (const r of rects) {
-        const br = box.getBoundingClientRect();
+        const br = crect(box);
         const spill = Math.max(br.left - r.left, r.right - br.right);
         if (spill > 1.5) out.push({ kind: 'spill', el: label(box), px: Math.round(spill) });
         const vis = visibleRect(box, scr, r);
@@ -357,6 +395,7 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
         const hit = vis ? document.elementFromPoint(vis.r.left + vis.r.width / 2, vis.r.top + vis.r.height / 2) : null;
         const onTop = !hit || hit === n.parentElement || n.parentElement!.contains(hit) || hit.contains(n.parentElement);
         if (vis && vis.r.width > 1 && vis.r.height > 1 && onTop) texts.push({ node: n, r: vis.r, box });
+        if (vis && vis.r.width > 1 && vis.r.height > 1) seen.push({ r: vis.r, box });
       }
     }
     for (let i = 0; i < texts.length; i++) {
@@ -373,7 +412,7 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
       .filter((x): x is { el: HTMLElement; v: { r: DOMRect; scrolled: boolean } } => x.v !== null && x.v.r.width > 1);
     for (const { el, v } of items) {
       const r = v.r;
-      const full = el.getBoundingClientRect();
+      const full = crect(el);
       if (r.left < -1 || r.top < -1 || r.right > vw + 1 || r.bottom > vh + 1) out.push({ kind: 'offscreen', el: label(el), px: Math.round(Math.max(-r.left, -r.top, r.right - vw, r.bottom - vh)) });
       else if (!v.scrolled && (full.width - r.width > 2 || full.height - r.height > 2)) out.push({ kind: 'offscreen', el: label(el), px: Math.round(Math.max(full.width - r.width, full.height - r.height)) });
     }
@@ -388,6 +427,44 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
         const w = Math.min(a.v.r.right, b.v.r.right) - Math.max(a.v.r.left, b.v.r.left);
         const h = Math.min(a.v.r.bottom, b.v.r.bottom) - Math.max(a.v.r.top, b.v.r.top);
         if (w > 2 && h > 2) out.push({ kind: 'overlap', el: label(a.el), with: label(b.el), px: Math.round(Math.min(w, h)) });
+      }
+    }
+    // Scroll panes (ui/scrollbars.ts): one whose content runs past its box shows its bar, on screen and on top
+    // (nobar), and the bar covers none of the pane's words or buttons (bar-over).
+    for (const el of [scr, ...scr.querySelectorAll<HTMLElement>('*')]) {
+      if (!(el instanceof HTMLElement) || el.classList.contains('sb')) continue;
+      const cs = getComputedStyle(el);
+      const over = {
+        x: /(auto|scroll)/.test(cs.overflowX) ? el.scrollWidth - el.clientWidth : 0,
+        y: /(auto|scroll)/.test(cs.overflowY) ? el.scrollHeight - el.clientHeight : 0,
+      };
+      if (over.x <= SCROLL_SLACK && over.y <= SCROLL_SLACK) continue;
+      const v = el === scr ? { r: crect(el) } : visibleRect(el, scr);
+      if (!v || v.r.width < 4 || v.r.height < 4) continue;
+      // (A pane under a sheet: the sheet is what shows, and it is audited itself.)
+      const hit = document.elementFromPoint(v.r.left + v.r.width / 2, v.r.top + v.r.height / 2);
+      if (hit && !el.contains(hit) && !hit.closest('.sb')) continue;
+      for (const axis of ['x', 'y'] as const) {
+        if (over[axis] <= SCROLL_SLACK) continue;
+        const bar = scrollbarOf(el, axis);
+        const br = bar?.isConnected ? crect(bar) : null;
+        const th = bar?.querySelector('i');
+        const tr = th ? crect(th) : undefined;
+        // (Why not, said in `with`: none drawn, drawn hidden, off the frame, or under something else.)
+        let why = !bar || !br || !tr ? 'none' : tr.width <= 1 || tr.height <= 1 || !(bar.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) ?? true) ? 'hidden' : '';
+        if (!why && tr) {
+          const cx = tr.left + tr.width / 2;
+          const cy = tr.top + tr.height / 2;
+          const at = cx >= 0 && cy >= 0 && cx <= vw && cy <= vh ? document.elementFromPoint(cx, cy) : null;
+          why = !at ? 'off the frame' : bar!.contains(at) ? '' : `under ${label(at)}`;
+        }
+        if (why || !br) {
+          out.push({ kind: 'nobar', el: `${label(el)} (${axis})`, with: why, px: Math.round(over[axis]) });
+          continue;
+        }
+        const under = (r: DOMRect) => Math.min(r.right, br.right) - Math.max(r.left, br.left) > 1 && Math.min(r.bottom, br.bottom) - Math.max(r.top, br.top) > 1;
+        for (const t of seen) if (el.contains(t.box) && under(t.r)) out.push({ kind: 'bar-over', el: `${label(el)} (${axis})`, with: label(t.box), px: 0 });
+        for (const it of items) if (el.contains(it.el) && under(it.v.r)) out.push({ kind: 'bar-over', el: `${label(el)} (${axis})`, with: label(it.el), px: 0 });
       }
     }
   }

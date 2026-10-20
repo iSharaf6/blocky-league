@@ -140,6 +140,8 @@ export class FunHud {
     this.setGrade(c.grade, c.up);
     // (A big haul flashes "+N"; a drift of the pace with no new points says nothing.)
     if (c.points < 30 || this.reduce) return;
+    // (One at a time: a second haul in quick succession replaces the first rather than stacking on it.)
+    this.gradeCell.querySelectorAll('.sty-pop').forEach((el) => el.remove());
     const p = document.createElement('span');
     p.className = 'sty-pop';
     p.textContent = `+${c.points}`;

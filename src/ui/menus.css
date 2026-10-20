@@ -500,6 +500,29 @@
 .panel.ev-panel.shell .ev-grid.n3 .ev-card { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; justify-items: start; }
 .panel.ev-panel.shell .ev-grid.n3 .ev-card .ev-ic { grid-row: auto; }
 
+/* ---------------------------------------------------------------- over a match: one dark scrim
+
+   CrazyGames' review of the pause menu: "Could you also make the whole screen dark at this part?" Whenever a menu
+   screen is up over a match (#ui holds the match HUD; the menu's demo match has none): the pause menu and its QUIT
+   or FORFEIT question, CONTROLS and SETTINGS opened from it, TACTICS & SUBS, half time, the replay offer and full
+   time. The scrim is #ui's own layer, not the screen's, so it reaches every edge of the frame: the fit box's
+   letterbox (fitBox.ts lays a screen out in a box narrower than a 745 by 290 frame), the notch's strips, and the
+   HUD's own layers (the trainer bar and the skill pops sit at z 4). The screen sits on it; the panels' own light dim
+   and the fit box's tint step aside so the dark is one even shade, edge to edge. It also takes the taps that land
+   off the screen box, so nothing reaches the pitch under a menu. */
+#ui:has(> .hud):has(> .screen)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: rgba(12, 12, 16, 0.68);
+  pointer-events: auto;
+  animation: fade 0.2s ease-out;
+}
+#ui:has(> .hud) > .screen { z-index: 6; }
+#ui:has(> .hud) > .screen .panel-wrap.dim { background: transparent; }
+#ui.fit:has(> .hud):has(> .screen) { background: transparent; }
+
 /* ---------------------------------------------------------------- half time and full time */
 
 
@@ -534,7 +557,8 @@
   flex: 1 1 auto; min-height: 0; display: grid; align-content: space-evenly; gap: 6px; padding: 8px 12px 10px;
   background: #fff; border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--cream-2);
 }
-.hs-row { display: grid; grid-template-columns: 58px minmax(0, 1fr) 58px; grid-template-areas: 'k k k' 'a bar b'; align-items: center; row-gap: 3px; column-gap: 8px; }
+/* (The numbers' columns grow to 100%, a whole half of possession, never past their edge.) */
+.hs-row { display: grid; grid-template-columns: minmax(58px, max-content) minmax(0, 1fr) minmax(58px, max-content); grid-template-areas: 'k k k' 'a bar b'; align-items: center; row-gap: 3px; column-gap: 8px; }
 .hs-k { grid-area: k; text-align: center; font: 400 11px / 1 var(--px); letter-spacing: 1px; color: var(--ink-2); }
 .hs-n { font: 700 20px / 1 var(--px); color: var(--ink-2); }
 .hs-n.a { grid-area: a; text-align: left; }
@@ -550,6 +574,9 @@
 .panel.ht-panel.shell .hf-quick { display: flex; align-items: center; gap: 8px; margin-right: auto; min-width: 0; }
 .panel.ht-panel.shell .hf-quick .btn { min-height: 44px; padding: 9px 12px 7px; font-size: 13px; letter-spacing: 1px; white-space: nowrap; }
 .panel.ht-panel.shell .hf-actions .btn-lg { flex: none; min-width: 240px; min-height: 54px; font-size: 22px; letter-spacing: 2px; }
+/* LARGE text leaves a panel's pinned button row as it is (style.css "text size"): this is half time's, though the
+   question QUIT asks follows it. Zoomed, the four ran under SECOND HALF. */
+:root.ts-large .panel.ht-panel.shell > .hf-actions { zoom: 1; }
 .panel.ht-panel.shell .hf-ask { flex: 1 1 auto; min-height: 0; display: grid; align-content: center; justify-items: center; gap: 18px; }
 .panel.ht-panel.shell .hf-ask[hidden],
 .panel.ht-panel.shell .ht-body[hidden],
@@ -580,7 +607,7 @@
   .panel.ht-panel.shell .hf-quick { gap: 4px; }
   .panel.ht-panel.shell .hf-quick .btn { padding: 9px 7px 7px; font-size: 12px; letter-spacing: 0; }
   .panel.ht-panel.shell .hf-actions .btn-lg { min-width: 0; padding-left: 12px; padding-right: 12px; font-size: 17px; letter-spacing: 1px; }
-  .hs-row { grid-template-columns: 46px minmax(0, 1fr) 46px; }
+  .hs-row { grid-template-columns: minmax(46px, max-content) minmax(0, 1fr) minmax(46px, max-content); }
   .hs-n { font-size: 17px; }
 }
 

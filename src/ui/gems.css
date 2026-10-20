@@ -136,7 +136,8 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
 /* ---- MY CLUB > STADIUM, a part going up (src/ui/club.ts): FINISH NOW for gems, one matchday off for an ad */
 
 .sd-now { display: flex; gap: 6px; }
-.sd-now .btn.sd-up { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
+/* (FINISH NOW and its price: a second line in half a narrow row, 667x375 say, never past the button's edge.) */
+.sd-now .btn.sd-up { flex: 1 1 0; min-width: 0; display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px 4px; white-space: normal; line-height: 1.05; text-align: center; }
 .sd-now .btn.sd-ad { font-size: 13px; }
 /* ADBLOCKER DETECTED on the build offer: a step smaller, and two lines rather than overflow its half of the row. */
 .sd-now .btn.sd-ad .ad-blocked { white-space: normal; text-align: center; line-height: 1.05; font-size: 0.86em; }

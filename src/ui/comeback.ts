@@ -318,7 +318,7 @@ export function comebackUi(app: AppContext, host: ComebackHost): ComebackUi {
     if (t.used && owns(save, t.item.cat, t.item.id)) return '';
     return t.used
       ? card('cb-try', 'cb-try', itemArt(t.item), `YOU TRIED IT, KEEP ${n(keepPrice(save, t.item, day))}`, `<span>${name}</span>`, `You tried ${itemName(t.item)}. Keep it for ${keepPrice(save, t.item, day)} coins`)
-      : card('cb-try', 'cb-try', itemArt(t.item), 'TRY TODAY, FREE NEXT MATCH', `<span>${name}</span>`, `Try today: ${itemName(t.item)}, free in your next match`);
+      : card('cb-try', 'cb-try', itemArt(t.item), 'TRY TODAY<span class="cb-more">, FREE NEXT MATCH</span>', `<span>${name}</span>`, `Try today: ${itemName(t.item)}, free in your next match`);
   }
 
   function motdCard(day: string): string {

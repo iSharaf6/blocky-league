@@ -46,7 +46,8 @@ function rig(): Rig {
 }
 
 /** Everything a player can read in a piece of markup: tags and their attributes out. */
-const words = (html: string): string => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+// (An inline span before a comma, "TRY TODAY<span>, FREE..", reads with no space in the page.)
+const words = (html: string): string => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').replace(/ ,/g, ',').trim();
 
 beforeEach(() => {
   vi.useFakeTimers();

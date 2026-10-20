@@ -165,6 +165,9 @@
   min-width: 0;
 }
 .sb-fun:not(:has(.on)) { display: none; }
+/* A centred banner up (a verdict, a foul's call, HALF TIME): the live goal and its pill step out of sight while it reads
+   (its place kept, so nothing under the score bug jumps), never under the banner's words. */
+.hud:has(.hud-banner.on:not(.plate)) .scorebug .sb-fun { visibility: hidden; }
 
 .bty {
   display: none;
@@ -180,6 +183,8 @@
   overflow: hidden;
 }
 .bty.on { display: flex; animation: bty-in 0.38s cubic-bezier(0.2, 1.6, 0.4, 1); }
+/* (Its pops grow from its left end, which sits on the score bug's: never past the frame's edge.) */
+.bty { transform-origin: left center; }
 .bty-ico {
   flex: none;
   width: 22px;
@@ -189,7 +194,9 @@
   background: var(--yellow);
 }
 .bty-ico .picon { width: 16px; height: 16px; }
-.bty-t { min-width: 0; padding-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* (Every word while it reads in full: a narrow frame's card, 745 by 290 in a portal, puts "3 PASSES + SHOT" on two
+   lines instead of cutting it. The fold below still clips it away.) */
+.bty-t { min-width: 0; max-height: 2.3em; padding-top: 1px; line-height: 1.1; white-space: normal; overflow: hidden; }
 .bty-have { flex: none; padding-top: 1px; font-style: normal; color: var(--blue-d); }
 .bty-rw {
   flex: none;
@@ -237,7 +244,7 @@
 }
 
 @keyframes bty-in {
-  from { transform: translateX(-30px) scale(0.7); opacity: 0; }
+  from { transform: translateY(-8px) scale(0.7); opacity: 0; }
 }
 
 @keyframes bty-tick {

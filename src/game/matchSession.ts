@@ -1169,7 +1169,7 @@ export class MatchSession {
     } else if (scene.kind === 'return') {
       this.resetView();
       this.view.setMarkerVisible(this.match.cfg.humanSide >= 0);
-      this.hud?.show('SECOND HALF', '', 'small', 1.2);
+      this.hud?.show('SECOND HALF', '', 'tag', 1.2);
     } else {
       this.anyPress = false;
       this.flow(0); // The next story/award follows; one skip never consumes both scenes or repeats a result.
@@ -1553,7 +1553,7 @@ export class MatchSession {
     this.match.continueSecondHalf();
     this.resetView();
     this.halftimeFired = false;
-    if (!this.startMatchInterlude('return')) this.hud?.show('SECOND HALF', '', 'small', 1.6);
+    if (!this.startMatchInterlude('return')) this.hud?.show('SECOND HALF', '', 'tag', 1.6);
   }
 
   /** The pad for the next sim step: the controls as they are now, plus any press latched since the last step. */
@@ -2138,7 +2138,7 @@ export class MatchSession {
         this.resetView();
       } else if (was === 'halftime') {
         this.resetView();
-        this.hud?.show('SECOND HALF', '', 'small', 1.6);
+        this.hud?.show('SECOND HALF', '', 'tag', 1.6);
       }
       if (m.phase === 'halftime') {
         const [h, a] = m.teams;
@@ -4005,16 +4005,30 @@ export class MatchSession {
     );
     hud.update(dt, this.view.frame);
     // The over-the-shoulder set-piece camera needs the whole lower screen for the taker: no radar / chip.
-    hud.setLive(
-      !this.replay && !this.interlude && this.cam.mode !== 'scene' && this.cam.mode !== 'celebrate' && !this.cam.behindActive &&
+    const live = !this.replay && !this.interlude && this.cam.mode !== 'scene' && this.cam.mode !== 'celebrate' && !this.cam.behindActive &&
       m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0 && !this.holdFirst &&
-      !(this.moment !== null && this.moment.briefT > 0),
-    );
+      !(this.moment !== null && this.moment.briefT > 0);
+    hud.setLive(live);
     if (this.so && m.shootout) this.so.update(m.shootout);
     const hs = m.cfg.humanSide;
-    if (hs < 0) return;
+    if (hs < 0) {
+      hud.setKickoff(null);
+      return;
+    }
     const dev = this.input.lastDevice;
     const r = m.restart;
+    // Our kick-off, waiting on the player (the first, the second half's, after a goal): the prompt in the middle
+    // (Hud.setKickoff), PRESS SPACE TO KICK OFF in his own binding, until the ball is played (the taker has his
+    // order the frame the press reaches the sim). Never over the fly-in, a replay, a close-up or the pause menu, nor
+    // the first match's THIS IS YOU hold (a press there lets go of the hold, it is not the kick-off).
+    const kickTaker = m.phase === 'kickoff' && r && r.kind === 'kickoff' && r.side === hs ? m.players[r.taker] : null;
+    const kickWait = !!kickTaker && !kickTaker.order && live && !this.paused && this.cam.mode !== 'card' && !this.cineHud;
+    hud.setKickoff(kickWait && kickTaker ? {
+      verb: dev === 'touch' ? 'TAP' : 'PRESS',
+      key: keyCap('pass', dev, 'setpiece'),
+      taker: kickTaker.idx,
+      top: this.view.headTop + 1.9,
+    } : null);
     const so = m.phase === 'shootout' ? m.shootout : null;
     const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
     const incoming = m.ball.owner < 0 && m.passTarget >= 0 && m.players[m.passTarget].side === hs && m.kickSide === hs;
@@ -4034,7 +4048,10 @@ export class MatchSession {
     } else if (m.phase === 'restart' && r && r.side === hs && r.kind === 'penalty') {
       hint = penaltyCue(dev);
     } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs) {
-      hint = restartCue(r.kind, dev, m.zoneAim ? 'zone' : m.penAim ? 'goal' : undefined);
+      // Our kick-off is the prompt's (it comes up the moment the picture is live): no second KICK OFF card beside it,
+      // over the fly-in or flashing up as he strikes it. Only the first match's THIS IS YOU hold keeps the card (its
+      // presence is what keeps the touch controls up there: style.css).
+      hint = r.kind === 'kickoff' && !this.holdFirst ? null : restartCue(r.kind, dev, m.zoneAim ? 'zone' : m.penAim ? 'goal' : undefined);
     } else if (m.ball.held && mine && !m.trainer) {
       // (With the trainer on, its card over the keeper says this already.)
       hint = keeperCue(dev);
@@ -4096,10 +4113,13 @@ export class MatchSession {
       // lit while a tell is open over his man; its pips are his FLAIR.
       const onBall = m.phase === 'play' && !m.ball.held && m.ball.owner >= 0 && m.ball.owner === m.active;
       const coming = m.phase === 'play' && incoming && m.passTarget === m.active;
-      this.touch.setSkill(sw ? 'cue' : onBall || coming ? 'on' : 'off', skillFlair(m, hs as Side));
+      const skillState = sw ? 'cue' : onBall || coming ? 'on' : 'off';
+      this.touch.setSkill(skillState, skillFlair(m, hs as Side));
       // KEEPER: while defending with the ball near enough our goal for him to come for it (sim/keeper.ts keeperRush).
+      // (It shares SKILL's corner of the cluster: a tell still open on his man as the ball runs loose has the corner,
+      // never the two buttons drawn one over the other.)
       const gx = -m.attackDir(hs as Side) * HALF_L;
-      this.touch.setKeeper(ctx === 'defend' && m.phase === 'play' && !m.ball.held && Math.hypot(m.ball.pos.x - gx, m.ball.pos.z) < RUSH_RANGE);
+      this.touch.setKeeper(skillState === 'off' && ctx === 'defend' && m.phase === 'play' && !m.ball.held && Math.hypot(m.ball.pos.x - gx, m.ball.pos.z) < RUSH_RANGE);
       // TACKLE lit while their carrier's ball is in his man's reach: a tap now goes in at once (sim/dribble.ts).
       const man = m.active >= 0 ? m.players[m.active] : null;
       const theirs = m.ball.owner >= 0 && m.players[m.ball.owner].side !== hs;
@@ -4113,7 +4133,7 @@ export class MatchSession {
     // (With the trainer's card up, the card names the button and the tell keeps off it.)
     const card = sw && m.trainer && this.trainer && !this.trainer.root.hidden ? this.trainer.root.querySelector('.trainer-card')?.getBoundingClientRect() : null;
     const avoid = card && card.width > 0 ? { l: card.left, t: card.top, r: card.right, b: card.bottom } : null;
-    this.skillHud?.update(this.view.frame, this.world.camera, this.view.headTop, sw, teach && !avoid ? actionKey('skill', dev) : null, skillOff, dt, avoid);
+    this.skillHud?.update(this.view.frame, this.world.camera, this.view.headTop, sw, teach && !avoid ? actionKey('skill', dev) : null, skillOff, dt, avoid, m.active);
     // Pause via keyboard / gamepad.
     const c = this.input.gamepadPause();
     if (c && !this.padPauseHeld && !this.paused) this.requestPause();

@@ -1,6 +1,6 @@
 import { Vector3, type Camera } from 'three';
 import { clamp } from '../core/math';
-import { PF } from '../game/replay';
+import { BALL_OFS, PF } from '../game/replay';
 import { PITCH_Y } from '../render/stadium';
 import { SKILL_NAMES, type ChainKind } from '../sim/skills';
 import type { SkillGrade, SkillMoveKind } from '../sim/types';
@@ -20,6 +20,9 @@ const TOP_CLEAR = 64;
 
 /** A screen rectangle (px) the tell keeps off: the trainer's card over the dribbler. */
 export type SkillAvoid = { l: number; t: number; r: number; b: number };
+
+/** Do two boxes touch (within `pad` px)? */
+const meets = (r: SkillAvoid, q: SkillAvoid, pad: number): boolean => !(r.r + pad < q.l || r.l - pad > q.r || r.b + pad < q.t || r.t - pad > q.b);
 
 /** What the session hands over each frame: the open tell (sim/skills.ts skillWindow), or null. */
 export interface SkillTellView {
@@ -118,6 +121,27 @@ export class SkillHud {
     return this.popT > 0;
   }
 
+  /** What hangs off the top edge of the HUD (the score bug with its live goal and chips, the event flag, the pause and
+   * camera buttons, the chant, the quick-sub card): the tell and the pop never sit on it. */
+  private topRects(): SkillAvoid[] {
+    return [...(this.root.parentElement ?? document).querySelectorAll<HTMLElement>(
+      '.scorebug, .sb-board.on, .sb-fun .bty.on, .sb-fun .fun-pill.on, .hud-toast.on, .hud-pause, .hud-cam, .pz-chant.on, .hud-qsub.on')]
+      .map((el) => el.getBoundingClientRect()).filter((q) => q.width > 0 && q.height > 0 && q.top < window.innerHeight * 0.45)
+      .map((q): SkillAvoid => ({ l: q.left, t: q.top, r: q.right, b: q.bottom }));
+  }
+
+  /** What sits at the foot of the screen (the minimap, the player chip, the touch buttons and the thumbstick), and the
+   * HUD's own words that may be up over the play (the set-piece hint, the PERFECT word, the kick-off prompt). */
+  private lowRects(): SkillAvoid[] {
+    return [...document.querySelectorAll<HTMLElement>('#ui > .hud .hud-radar, #ui > .hud .hud-chip, #ui > .touch:not(.hidden) .tb, #ui > .touch:not(.hidden) .touch-base, #ui > .hud .hud-hint.on, #ui > .hud .hud-timing.on, #ui > .hud .hud-kick.on')]
+      .filter((el) => getComputedStyle(el).visibility !== 'hidden')
+      .map((el) => el.getBoundingClientRect()).filter((q) => q.width > 0 && q.height > 0)
+      .map((q): SkillAvoid => ({ l: q.left, t: q.top, r: q.right, b: q.bottom }));
+  }
+
+  /** Where the tell sits this frame (null: not up): the pop keeps off it. */
+  private tellBox: SkillAvoid | null = null;
+
   /** Everything off at once (a replay, a pause, a cut away from live play). */
   clear(): void {
     this.tell.classList.remove('on');
@@ -133,7 +157,7 @@ export class SkillHud {
    * `avoid`: a card on screen the tell mustn't sit on (it goes beside the defender, or under him, instead).
    */
   update(frame: Float32Array, camera: Camera, head: number, tell: SkillTellView | null, teachKey: string | null, hidden: boolean, dt: number,
-    avoid: SkillAvoid | null = null): void {
+    avoid: SkillAvoid | null = null, man = -1): void {
     this.root.hidden = hidden;
     if (hidden) return;
     const w = window.innerWidth;
@@ -169,11 +193,27 @@ export class SkillHud {
           const cy = clamp(y, TOP_CLEAR + th, h - 30);
           return { l: cx - tw / 2, t: cy - th, r: cx + tw / 2, b: cy };
         };
-        const clear = (r: SkillAvoid) => !avoid || r.r + 6 < avoid.l || r.l - 6 > avoid.r || r.b + 6 < avoid.t || r.t - 6 > avoid.b;
+        const clear = (r: SkillAvoid) => !avoid || !meets(r, avoid, 6);
+        // Never on what hangs off the top edge (the score bug with its live goal and chips, the event flag, the pause
+        // and camera buttons, the chant), and never over our man or the ball beside the defender.
+        const tops = this.topRects();
+        const keep: { x: number; y: number }[] = [];
+        const look = (x: number, y: number, z: number) => {
+          this.v.set(x, y + PITCH_Y, z).project(camera);
+          if (this.v.z > -1 && this.v.z < 1) keep.push({ x: ((this.v.x + 1) / 2) * w, y: ((1 - this.v.y) / 2) * h });
+        };
+        look(frame[BALL_OFS], frame[BALL_OFS + 1], frame[BALL_OFS + 2]);
+        if (man >= 0 && man < 22) for (const y of [0.2, 0.9, 1.6]) look(frame[man * PF], y + frame[man * PF + 2], frame[man * PF + 1]);
+        const onPlay = (r: SkillAvoid) => keep.some((q) => q.x >= r.l - 4 && q.x <= r.r + 4 && q.y >= r.t - 4 && q.y <= r.b + 4);
+        const lows = this.lowRects();
+        const free = (r: SkillAvoid) => clear(r) && !onPlay(r) && !tops.some((q) => meets(r, q, 4)) && !lows.some((q) => meets(r, q, 4));
         const side = avoid && (avoid.l + avoid.r) / 2 > p.x ? -1 : 1;
         const f = feet(tell.by);
-        const opts = [box(p.x, p.y), box(p.x + side * (tw + 20), p.y + th * 0.6), box(f.x, f.y + th + 8)];
-        const pick = opts.find(clear) ?? opts[0];
+        const opts = [box(p.x, p.y), box(p.x + side * (tw + 20), p.y + th * 0.6), box(p.x - side * (tw + 20), p.y + th * 0.6), box(f.x, f.y + th + 8)];
+        const pick = opts.find(free) ?? opts.find((r) => !onPlay(r) && !tops.some((q) => meets(r, q, 4))) ?? opts.find((r) => !onPlay(r)) ?? opts[0];
+        // (Nowhere clear: it stays, nearly see-through, rather than hide the play.)
+        this.tell.classList.toggle('under', onPlay(pick));
+        this.tellBox = pick;
         this.tell.style.transform = `translate(${Math.round(pick.l)}px,${Math.round(pick.t)}px)`;
         this.fill.style.transform = `scaleX(${clamp(tell.left, 0, 1).toFixed(3)})`;
         // The timing ring: a zone under his feet, the ring closing in on it as the window runs out (red for its last third).
@@ -187,14 +227,48 @@ export class SkillHud {
       this.tell.classList.remove('on');
       this.zone.classList.remove('on');
     }
-    // The pop rides over the dribbler as it rises and fades.
+    if (!this.tell.classList.contains('on')) this.tellBox = null;
+    // The pop rides over the dribbler as it rises and fades: under whatever hangs off the top edge, and under his
+    // boots instead when the top would push it down onto him (or the ball). Nowhere clear: nearly see-through.
     if (this.popT > 0) {
       this.popT -= dt;
       if (this.popT <= 0) this.pop.classList.remove('on');
       else if (this.popPlayer >= 0 && this.popPlayer < 22) {
         const p = at(this.popPlayer, POP_UP);
-        this.pop.style.left = `${Math.round(clamp(p.x, 90, w - 90))}px`;
-        this.pop.style.top = `${Math.round(clamp(p.y, TOP_CLEAR + this.pop.offsetHeight, h - 120))}px`;
+        const pw = this.pop.offsetWidth || 120;
+        const ph = this.pop.offsetHeight || 40;
+        // (Kept its own half width plus its swell from the frame's edges.)
+        const cx = clamp(p.x, pw * 0.6 + 8, w - pw * 0.6 - 8);
+        // (Its `top` is its bottom edge: the CSS lifts it by its own height.)
+        let floor = TOP_CLEAR;
+        // (20 px under it: the pop rises 16 px and swells as it plays.)
+        for (const q of this.topRects()) if (q.r > cx - pw / 2 - 12 && q.l < cx + pw / 2 + 12) floor = Math.max(floor, q.b + 20);
+        const keep: { x: number; y: number }[] = [];
+        const o = this.popPlayer * PF;
+        for (const y of [0.2, 0.9, 1.6]) {
+          this.v.set(frame[o], y + frame[o + 2] + PITCH_Y, frame[o + 1]).project(camera);
+          if (this.v.z > -1 && this.v.z < 1) keep.push({ x: ((this.v.x + 1) / 2) * w, y: ((1 - this.v.y) / 2) * h });
+        }
+        this.v.set(frame[BALL_OFS], frame[BALL_OFS + 1] + PITCH_Y, frame[BALL_OFS + 2]).project(camera);
+        if (this.v.z > -1 && this.v.z < 1) keep.push({ x: ((this.v.x + 1) / 2) * w, y: ((1 - this.v.y) / 2) * h });
+        // (12 px round it: the pop rises 16 px and swells a touch as it plays.)
+        const covers = (bottom: number) => keep.some((q) => q.x >= cx - pw / 2 - 12 && q.x <= cx + pw / 2 + 12 && q.y >= bottom - ph - 18 && q.y <= bottom + 12);
+        // Under his boots only where nothing sits at the foot of the screen (the minimap, the chip, the touch controls).
+        const lows = this.lowRects();
+        // (Its box as it plays: 18 px of rise above, the swell round it.)
+        const boxAt = (bottom: number): SkillAvoid => ({ l: cx - pw / 2 - 8, t: bottom - ph - 18, r: cx + pw / 2 + 8, b: bottom + 4 });
+        const tellAt = this.tellBox;
+        const clean = (bottom: number) => !covers(bottom) && !lows.some((q) => meets(boxAt(bottom), q, 0)) && !(tellAt && meets(boxAt(bottom), tellAt, 4));
+        const f = feet(this.popPlayer);
+        const pick = [clamp(p.y, floor + ph, h - 120), clamp(f.y + ph + 10, floor + ph, h - 6)].find(clean);
+        if (pick === undefined) {
+          // Nowhere clear of him, the ball, the controls and the tell: the flourish gives way (the tell and the play come first).
+          this.popT = 0;
+          this.pop.classList.remove('on', 'under');
+        } else {
+          this.pop.style.left = `${Math.round(cx)}px`;
+          this.pop.style.top = `${Math.round(pick)}px`;
+        }
       }
     }
     if (this.ringT > 0) {

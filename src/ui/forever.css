@@ -49,12 +49,12 @@
   background: #3a3a46;
 }
 
+/* (A board target and its progress, SIGN 39+ DF and IN THE MARKET: a second line in a narrow chip, never an
+   ellipsis that hides the words.) */
 .fv-obj b,
 .fv-obj small {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .fv-obj b { font: 400 12px/1.05 var(--round); letter-spacing: 0.3px; }
@@ -224,7 +224,7 @@
 .fv-form { display: flex; align-items: center; gap: 3px; font: 400 11px var(--round); letter-spacing: 0.5px; }
 .fv-form > span { margin-right: 4px; }
 .fv-form .mc-wdl { width: 22px; height: 20px; font-size: 12px; line-height: 20px; }
-.fv-form small { color: var(--ink-2); }
+.fv-form small { color: var(--ink-2); font-size: max(10px, var(--fs-floor, 0px)); }
 
 .fv-lv { display: flex; align-items: center; gap: 8px; }
 
@@ -441,9 +441,9 @@
   letter-spacing: 0.4px;
   color: #fff;
   background: rgba(0, 0, 0, 0.3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* (A board target too long for its third of the row, 5 CLEAN SHEETS under LARGE text: two lines, not an ellipsis.) */
+  overflow-wrap: anywhere;
+  line-height: 1.05;
 }
 
 .hh-pip u {

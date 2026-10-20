@@ -272,6 +272,16 @@
 /* LARGE text: a header's subtitle (the club's name and its OVR chip) takes a second line instead of an ellipsis. */
 :root.ts-large .shell .mc-title > span { white-space: normal; text-overflow: clip; line-height: 1.1; }
 
+/* A phone on its side: every short frame is laid out at a box 375 tall, up to 900 wide (fitBox.ts: 745x290, 785x282
+   and 844x300 on iPhones in CrazyGames all come out 900x375), and an iPhone without the portal's bars is 852x393.
+   There, as at 830 by 400 and under (style.css "text size"), the dense screens keep their MEDIUM size under LARGE:
+   one step bigger cuts their columns, the season header, the journeys' reward rows, the UNLOCKS panel, half time's
+   row of buttons (SECOND HALF over QUIT) and full time's right column. */
+@container app (max-height: 400px) {
+  :root.ts-large :is(.sh-screen, .mk-screen, .mc-club-screen, .qm-screen, .bd-screen, .mc-career-screen, .mc-summary-screen, .cup-trophy-screen, .screen.ht, .screen.ft) .panel > :not(.btn-row:last-child),
+  :root.ts-large .panel.ul > :not(.btn-row:last-child) { zoom: 1; }
+}
+
 /* The item being dragged stays behind, faded; valid targets glow; the one under the finger lights up. */
 .drag-src { opacity: 0.35; }
 [data-drag].drop-ok { outline: 3px dashed var(--yellow); outline-offset: 2px; }

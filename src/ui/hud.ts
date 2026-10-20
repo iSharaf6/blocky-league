@@ -39,8 +39,9 @@ const BIG_LINE_S = 4;
 const LINE_MIN_S = 1.5;
 /** Queued lines go stale: commentary must never lag behind play. */
 const PENDING_MAX_S = 2.5;
-/** How often (s) the event flag re-measures the score bug it hangs off while it is up. */
-const TOAST_PLACE_S = 0.25;
+/** How often (s) the event flag re-measures the score bug it hangs off while it is up (every frame: the bug grows
+ * under it the moment a live goal or FINAL MINUTES comes up). */
+const TOAST_PLACE_S = 0;
 
 /** Timed finishing verdicts (the sim's 'timing' event), and how long one stays up (matches the CSS animation). */
 export type TimingGrade = 'perfect' | 'good' | 'early' | 'late';
@@ -77,6 +78,10 @@ export class Hud {
   /** Canvas backing size is re-derived from its CSS box (x devicePixelRatio) whenever that changes. */
   private radarDirty = true;
   private radarObs: ResizeObserver | null = null;
+  /** The score bug's size: a plate or the event flag hung off it moves with it before the frame is drawn. */
+  private bugObs: ResizeObserver | null = null;
+  /** The corner picture coming up or going: a centred banner clears it before the frame is drawn. */
+  private sideObs: MutationObserver | null = null;
   /** The window size the HUD was last laid out for: a change (resized, the phone turned) means relayout(). */
   private seenW = 0;
   private seenH = 0;
@@ -142,6 +147,11 @@ export class Hud {
   /** A hint the player has already acted on (hidden until the session wants a different one). */
   private hintDone = '';
   private btnDown = false;
+  /** The kick-off prompt (setKickoff): its box, the verb and key cap in it, and whose kick-off it frames. */
+  private kick: HTMLDivElement;
+  private kickVerb: HTMLElement;
+  private kickKey: HTMLElement;
+  private kickAt: { taker: number; top: number } | null = null;
   /** Nowhere clear for the ticker (a set piece where every free band would cover the goal): hidden meanwhile. */
   private cmBlocked = false;
   /** The banner up now is a booking (compact plate in the top band / under the score bug). */
@@ -149,6 +159,12 @@ export class Hud {
   /** The banner up now is a power-up call ("TURBO!"): the same plate, kept off the goal mouth. */
   private bannerPower = false;
   private bannerGoal = false;
+  /** The banner up now is a tag (kind 'tag': SECOND HALF), hung off the score bug where the scorer's plate goes. */
+  private bannerTag = false;
+  /** A plate hung off the score bug: the scorer's, or a tag. */
+  private get bannerHung(): boolean {
+    return this.bannerGoal || this.bannerTag;
+  }
   private bannerPlaceT = 0;
   /** Blitz: the power-up slot under the score bug. */
   private power: HTMLDivElement;
@@ -199,6 +215,7 @@ export class Hud {
       <div class="hud-toast"></div>
       <div class="hud-timing" aria-live="polite"></div>
       <div class="hud-hint"></div>
+      <div class="hud-kick" role="status" aria-live="polite"><span class="kk-verb">PRESS</span><kbd class="kk-key">SPACE</kbd><span class="kk-to">TO KICK OFF</span></div>
       <div class="hud-tip"></div>
       <div class="hud-cm" role="status" aria-live="polite"><b class="cm-tag"></b><span class="cm-text"></span></div>
       <div class="hud-chip"><span class="chip-num"></span><span class="chip-name"></span><div class="chip-stam"><div></div></div></div>
@@ -212,6 +229,9 @@ export class Hud {
     this.tip = this.root.querySelector('.hud-tip')!;
     this.hintParts = coachParts(this.hint);
     this.tipParts = coachParts(this.tip);
+    this.kick = this.root.querySelector('.hud-kick')!;
+    this.kickVerb = this.root.querySelector('.kk-verb')!;
+    this.kickKey = this.root.querySelector('.kk-key')!;
     this.chip = this.root.querySelector('.hud-chip')!;
     this.chipName = this.root.querySelector('.chip-name')!;
     this.chipNum = this.root.querySelector('.chip-num')!;
@@ -238,6 +258,21 @@ export class Hud {
     if (typeof ResizeObserver !== 'undefined') {
       this.radarObs = new ResizeObserver(() => (this.radarDirty = true));
       this.radarObs.observe(this.radar);
+      if (this.scoreBug) {
+        this.bugObs = new ResizeObserver(() => {
+          this.fitBookingNames();
+          if (this.bannerHung && this.bannerTimer > 0) this.placeBanner();
+          if (this.toastTimer > 0) this.placeToast();
+          if (this.cmLine && this.cmTextOn) this.placeTicker();
+          if (this.bannerTimer > 0) this.clearBanner();
+          // (Grown under the play this frame, after its look round: it gives way before the frame is drawn.)
+          const off = this.root.classList.contains('dead') || this.root.classList.contains('replaying');
+          if (!off && this.lastFrame && this.scoreBug) {
+            this.fadeUnder(this.scoreBug, this.lastFrame, [...this.scoreBug.querySelectorAll<HTMLElement>('.sb-board.on, .bty.on, .fun-pill.on, .sb-hype, .sb-grade')]);
+          }
+        });
+        this.bugObs.observe(this.scoreBug);
+      }
     }
     const pause = this.root.querySelector('.hud-pause')!;
     // A second finger does not synthesize click while the first is still holding the stick.
@@ -299,6 +334,28 @@ export class Hud {
     el.classList.add('pop');
   }
 
+  /**
+   * A booked player's name under the score bug in full or not at all: a narrow column (a phone on its side, the style
+   * grade beside the away chips) takes it a size down (10 px, then 9), then his initial ("L."), never an ellipsis.
+   */
+  private fitBookingNames(): void {
+    for (const em of this.root.querySelectorAll<HTMLElement>('.sb-card em')) {
+      const full = em.dataset.name ?? em.textContent ?? '';
+      em.dataset.name = full;
+      em.textContent = full;
+      em.style.fontSize = '';
+      em.style.letterSpacing = '';
+      const fits = () => em.scrollWidth <= em.clientWidth + 0.5;
+      if (fits()) continue;
+      for (const px of [10, 9]) {
+        em.style.fontSize = `${px}px`;
+        em.style.letterSpacing = '0';
+        if (fits()) break;
+      }
+      if (!fits()) em.textContent = `${full.charAt(0)}.`;
+    }
+  }
+
   /** The score bug with the added-time board when it is up (it hangs off the bug's right edge). */
   private bugRect(): Rect | null {
     const sb = this.rectOf('.scorebug', false);
@@ -349,7 +406,9 @@ export class Hud {
     this.bannerPower = /(^|\s)power(\s|$)/.test(kind);
     // Scenario verdicts also use the goal colour. Only a scored goal gets the corner score flash.
     this.bannerGoal = /^GOAL!/.test(title) && /(^|\s)goal(\s|$)/.test(kind);
-    this.banner.className = `hud-banner on ${kind}${this.bannerGoal ? ' score-flash' : ''}${this.bannerCard || this.bannerPower || this.bannerGoal ? ' plate' : ''}`;
+    // A tag ("SECOND HALF"): the scorer's plate's place, hung off the score bug, never across the kick-off taker.
+    this.bannerTag = /(^|\s)tag(\s|$)/.test(kind);
+    this.banner.className = `hud-banner on ${kind}${this.bannerGoal ? ' score-flash' : ''}${this.bannerCard || this.bannerPower || this.bannerHung ? ' plate' : ''}`;
     // Letters fly in one by one, grouped by word so a long title can wrap between words; past 12 characters the
     // letters also shrink (--bn-k), so "MOMENT COMPLETE" fits where "GOAL!" was measured (see .bn-title i).
     let n = 0;
@@ -359,18 +418,23 @@ export class Hud {
     this.bannerTimer = seconds;
     const st = this.banner.style;
     st.left = st.top = st.width = '';
+    // A centred banner (HALF TIME, FULL TIME) on a short frame: its title reaches up into the score bug and the pause
+    // buttons, so its centring box starts lower, just enough to clear them.
+    this.bannerShift = 0;
+    this.clearBanner();
     if (this.bannerCard) {
       // The card says it all: the FOUL! flag goes, and no set-piece hint pops up over the close-up.
       this.toast.classList.remove('on');
       this.toastTimer = 0;
       this.suppressHints(seconds);
-    } else if (this.bannerGoal) {
+    } else if (this.bannerHung) {
       // So does the goal plate, which hangs off the score bug just where the flag does.
       this.toast.classList.remove('on');
       this.toastTimer = 0;
     }
-    if (this.bannerCard || this.bannerPower || this.bannerGoal) {
-      this.bannerPlaceT = 0.25;
+    if (this.bannerCard || this.bannerPower || this.bannerHung) {
+      // (A plate hung off the score bug follows it from the next frame: the bug grows under it at a goal.)
+      this.bannerPlaceT = this.bannerHung ? 0 : 0.25;
       this.placeBanner();
     }
     // The ticker moves off any banner now, not at its next look round.
@@ -388,6 +452,26 @@ export class Hud {
       this.powerActive = null;
     }
     this.drawPower();
+  }
+
+  /** How far (px of `top`) a centred banner's box was moved down to clear the top cluster. */
+  private bannerShift = 0;
+
+  /**
+   * A centred banner (HALF TIME, the line-up's title card) on a short frame: its title reaches up into the score bug,
+   * the pause buttons or the corner picture, so its centring box starts lower, just enough to clear them. Looked at
+   * again while it is up (the coin toss's picture comes up after the title card).
+   */
+  private clearBanner(): void {
+    if (this.bannerCard || this.bannerPower || this.bannerHung || /(^|\s)(foul|goal)(\s|$)/.test(this.banner.className)) return;
+    const t = this.banner.querySelector?.('.bn-title')?.getBoundingClientRect();
+    if (!t || !(t.height > 0)) return;
+    const base = t.top - this.bannerShift / 2;
+    const need = this.hintTopY(t.left, t.right) - base;
+    const shift = need > 0 ? Math.round(2 * need) : 0;
+    if (shift === this.bannerShift) return;
+    this.bannerShift = shift;
+    this.banner.style.top = shift ? `${shift}px` : '';
   }
 
   /** The device in hand: the slot's key hint reads E (keyboard), Y (gamepad) or POWER (the touch button). */
@@ -479,7 +563,7 @@ export class Hud {
    * keeps off the goal mouth in shot (a corner, a shot on the way).
    */
   private placeBanner(): void {
-    if (!this.bannerCard && !this.bannerPower && !this.bannerGoal) return;
+    if (!this.bannerCard && !this.bannerPower && !this.bannerHung) return;
     const b = this.banner;
     const st = b.style;
     const W = window.innerWidth;
@@ -488,13 +572,23 @@ export class Hud {
     const sb = this.bugRect();
     if (!sb) return;
     const pause = this.topRight();
-    if (this.bannerGoal) {
+    if (this.bannerHung) {
       // A narrow plate attached to the score bug leaves the celebration's centre and skip control clear.
       // The bug already includes the device's safe-area insets, even on a notched landscape phone.
       st.left = `${Math.round(sb.l)}px`;
       const cornerWidth = W > H ? Math.min(240, W * 0.32) : 240;
       st.width = `${Math.round(Math.min(cornerWidth, W - sb.l - Math.max(g, W - (pause?.r ?? W))))}px`;
       st.top = `${Math.round(sb.b + 8)}px`;
+      // SECOND HALF on a phone on its side: hung under a tall bug it would reach down onto the resting thumbstick (the
+      // touch controls are up for the kick-off); the clock already says which half it is, so the tag gives way.
+      if (this.bannerTag) {
+        const stick = this.rectOf('#ui > .touch:not(.hidden) .touch-base', false);
+        const ph = b.offsetHeight;
+        if (stick && ph > 0 && stick.l < sb.l + b.offsetWidth + 6 && stick.r > sb.l - 6 && stick.t < sb.b + 8 + ph + 6) {
+          this.bannerTimer = 0;
+          b.classList.remove('on');
+        }
+      }
       return;
     }
     type Cand = { l: number; w: number; t: number };
@@ -538,7 +632,7 @@ export class Hud {
 
   /** The booking / power-up plate's box while it is up (the ticker keeps clear of it). */
   private cardBannerRect(): Rect | null {
-    return (this.bannerCard || this.bannerPower || this.bannerGoal) && this.bannerTimer > 0 ? this.rectOf('.hud-banner.plate', false) : null;
+    return (this.bannerCard || this.bannerPower || this.bannerHung) && this.bannerTimer > 0 ? this.rectOf('.hud-banner.plate', false) : null;
   }
 
   /**
@@ -569,14 +663,22 @@ export class Hud {
     if (pw) top = Math.max(top, pw.b);
     // The goal plate hangs off the score bug just here: the flag goes under it. (A power-up plate keeps clear of the
     // flag itself, and a booking plate takes the flag away.)
-    const plate = this.bannerTimer > 0 && this.bannerGoal ? this.rectOf('.hud-banner.on.plate', false) : null;
+    const plate = this.bannerTimer > 0 && this.bannerHung ? this.rectOf('.hud-banner.on.plate', false) : null;
     if (plate && plate.t < window.innerHeight * 0.4 && plate.l < sb.r) top = Math.max(top, plate.b);
     top += 8;
     const w = this.toast.offsetWidth;
     const h = this.toast.offsetHeight;
     const radar = this.rectOf('.hud-radar', false);
     if (radar && radar.t < window.innerHeight * 0.4 && radar.l < sb.l + w && radar.b > top && radar.t < top + h) top = radar.b + 8;
-    this.toast.style.left = `${Math.round(sb.l)}px`;
+    // A phone on its side with a tall bug (bookings, a live goal): under it the flag would reach down onto the resting
+    // thumbstick, so it hangs beside the bug instead, level with its top row (the ticker's band starts after it).
+    let left = sb.l;
+    const stick = this.rectOf('#ui > .touch:not(.hidden) .touch-base', false);
+    if (stick && stick.l < sb.l + w + 6 && stick.r > sb.l - 6 && stick.t < top + h + 6) {
+      left = sb.r + 8;
+      top = (this.rectOf('.scorebug .sb-clock', false) ?? sb).t;
+    }
+    this.toast.style.left = `${Math.round(left)}px`;
     this.toast.style.top = `${Math.round(top)}px`;
   }
 
@@ -608,9 +710,12 @@ export class Hud {
     const w = el.offsetWidth || 160;
     const h = el.offsetHeight || 40;
     const g = W < 480 ? 8 : 12;
+    // (Its pop swells it about a third: that much margin from the frame's edges.)
+    const mx = g + w * 0.18;
+    const my = g + h * 0.18;
     const box = (cx: number, t: number): Rect => {
-      const l = Math.max(g, Math.min(W - g - w, cx - w / 2));
-      const tt = Math.max(g, Math.min(H - g - h, t));
+      const l = Math.max(mx, Math.min(W - mx - w, cx - w / 2));
+      const tt = Math.max(my, Math.min(H - my - h, t));
       return { l, t: tt, r: l + w, b: tt + h };
     };
     const opts: Rect[] = [];
@@ -631,17 +736,50 @@ export class Hud {
     }
     const topY = this.hintTopY(W / 2 - w / 2, W / 2 + w / 2);
     opts.push(box(W / 2, topY));
+    // Beside him, either side, level with his body (a phone on its side has little room over his head).
+    if (f && P && this.timingPlayer >= 0 && this.timingPlayer < 22) {
+      const o = this.timingPlayer * PF;
+      let mid: { x: number; y: number } | null = null;
+      try {
+        mid = P(f[o], 0.9 + (f[o + 2] || 0), f[o + 1]);
+      } catch {
+        mid = null;
+      }
+      if (mid && mid.x > 0 && mid.x < W && mid.y > 0 && mid.y < H) {
+        opts.push(box(mid.x + w / 2 + 26, mid.y - h / 2), box(mid.x - w / 2 - 26, mid.y - h / 2));
+      }
+    }
     const goals = this.goalRects();
     const solid = [
       '#ui > .touch:not(.hidden) .touch-btns', '#ui > .touch:not(.hidden) .touch-base', '.scorebug', '.sb-board.on', '.hud-pause', '.hud-cam', '.hud-toast.on',
-      '.hud-tip.on', '.hud-hint.on', '.hud-cm.on:not(.blocked)', '.hud-radar', '.pitch-trainer .trainer-card',
+      '.hud-tip.on', '.hud-hint.on', '.hud-kick.on', '.hud-cm.on:not(.blocked)', '.hud-radar', '.pitch-trainer .trainer-card', '.pz-chant.on', '.skill-hud .sk-tell.on', '.hud-replay',
     ]
       .map((sel) => this.rectOf(sel, false))
       .filter((q): q is Rect => !!q);
+    // (Never over the shooter himself: his boots, body and head.)
+    const body: { x: number; y: number }[] = [];
+    if (f && P && this.timingPlayer >= 0 && this.timingPlayer < 22) {
+      const o = this.timingPlayer * PF;
+      for (const y of [0.2, 0.9, 1.6]) {
+        try {
+          const q = P(f[o], y + (f[o + 2] || 0), f[o + 1]);
+          if (q) body.push(q);
+        } catch {
+          /* behind the lens */
+        }
+      }
+    }
     const cost = (r: Rect) =>
-      goals.reduce((c, gr) => c + overlapArea(r, gr, 10) * 4, 0) + solid.reduce((c, q) => c + overlapArea(r, q, 4), 0);
-    let pick = opts.find((r) => cost(r) === 0);
-    if (!pick) pick = [...opts].sort((a, b) => cost(a) - cost(b))[0];
+      goals.reduce((c, gr) => c + overlapArea(r, gr, 10) * 4, 0) + solid.reduce((c, q) => c + overlapArea(r, q, 4), 0) +
+      body.filter((q) => q.x >= r.l - 6 && q.x <= r.r + 6 && q.y >= r.t - 6 && q.y <= r.b + 6).length * 1e6;
+    const pick = opts.find((r) => cost(r) === 0);
+    // Nowhere clear of the HUD, the goal mouth and the shooter: the word gives way this time (never on top of
+    // anything; the strike itself still says how it went).
+    if (!pick) {
+      this.timingT = 0;
+      el.classList.remove('on');
+      return;
+    }
     el.style.left = `${Math.round(pick.l)}px`;
     el.style.top = `${Math.round(pick.t)}px`;
   }
@@ -699,6 +837,105 @@ export class Hud {
   suppressHints(seconds: number): void {
     this.hintHold = Math.max(this.hintHold, seconds);
     this.setHint(this.hintAsked, this.hintBound);
+  }
+
+  /**
+   * The kick-off prompt (CrazyGames' review: "At the beginning of the match, you can show that players need to press
+   * Space"): while the match waits for OUR kick-off (the first, the second half's, after a goal), one big line in the
+   * middle of the picture, "PRESS SPACE TO KICK OFF", with the player's own binding (`key`, from the session: the bound
+   * key, the pad button, or the touch button's label, with "TAP" for `verb` on touch). It sits right above the taker's
+   * name tag, or right under his feet when the top cluster leaves no room there: never over him or the ball. null:
+   * gone at once (the ball is played, or the picture is not the live one). The session calls it every frame.
+   */
+  setKickoff(p: { verb: string; key: string; taker: number; top: number } | null): void {
+    if (!p) {
+      this.kickAt = null;
+      if (this.kick.classList.contains('on')) {
+        this.kick.classList.remove('on');
+        // The ticker may have the band back now.
+        if (this.cmLine) this.placeTicker();
+      }
+      return;
+    }
+    if (this.kickVerb.textContent !== p.verb) this.kickVerb.textContent = p.verb;
+    if (this.kickKey.textContent !== p.key) this.kickKey.textContent = p.key;
+    this.kickAt = { taker: p.taker, top: p.top };
+    const fresh = !this.kick.classList.contains('on');
+    // (Placed before it shows, so it never flashes over the taker first; then every frame, as the camera settles.)
+    this.placeKick();
+    if (fresh) {
+      this.kick.classList.add('on');
+      if (this.cmLine) this.placeTicker();
+    }
+  }
+
+  /** The kick-off prompt's words while it is up ('' when none): tests and the dev hooks. */
+  get kickoffShown(): string {
+    return this.kick.classList.contains('on') ? `${this.kickVerb.textContent} ${this.kickKey.textContent} TO KICK OFF` : '';
+  }
+
+  /**
+   * Where the kick-off prompt goes: centred across the screen, its bottom just above the taker's name tag (or the ball,
+   * whichever is higher on screen); when that would run into what hangs off the top edge (the score bug, the pause
+   * and camera buttons, the event flag, the chant), its top just under the taker's feet and the ball instead, above
+   * the minimap and the controls. Neither fitting (a tiny frame): the one that runs over the least.
+   */
+  private placeKick(): void {
+    const at = this.kickAt;
+    const el = this.kick;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const l = (W - w) / 2;
+    const r = l + w;
+    const across = (q: Rect | null): q is Rect => !!q && q.r > l - 4 && q.l < r + 4;
+    let top = 6;
+    for (const sel of ['.scorebug', '.sb-board.on', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause', '.hud-cam', '.hud-qsub.on', '.pz-chant.on', '.hud-banner.on.plate', '.side-cam.on']) {
+      const q = this.rectOf(sel, sel === '.side-cam.on');
+      if (across(q) && q.t < H * 0.45) top = Math.max(top, q.b + 6);
+    }
+    let bottom = H - 6;
+    const lowSels = ['.hud-chip', '#ui > .touch:not(.hidden) .touch-btns', '#ui > .touch:not(.hidden) .touch-base', '.hud-hint.on'];
+    if (!this.radarHidden && !this.root.classList.contains('dead')) lowSels.push('.hud-radar');
+    for (const sel of lowSels) {
+      const q = this.rectOf(sel, false);
+      if (across(q) && q.b > H * 0.55) bottom = Math.min(bottom, q.t - 6);
+    }
+    // The taker's name tag top, his feet and the ball, on screen.
+    const f = this.lastFrame;
+    const P = this.project;
+    let hi = H * 0.42;
+    let lo = H * 0.58;
+    if (f && P && at && at.taker >= 0 && at.taker < 22) {
+      const o = at.taker * PF;
+      let tag: { x: number; y: number } | null = null;
+      let feet: { x: number; y: number } | null = null;
+      let ball: { x: number; y: number } | null = null;
+      try {
+        tag = P(f[o], at.top + (f[o + 2] || 0), f[o + 1]);
+        feet = P(f[o], 0, f[o + 1]);
+        ball = P(f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2]);
+      } catch {
+        tag = feet = ball = null;
+      }
+      const ys = [tag, feet, ball].filter((q): q is { x: number; y: number } => !!q).map((q) => q.y);
+      if (ys.length) {
+        hi = Math.min(...ys);
+        lo = Math.max(...ys);
+      }
+    }
+    const gap = H < 420 ? 6 : 12;
+    const above = hi - gap - h;
+    const below = lo + gap;
+    let t: number;
+    if (above >= top) t = above;
+    else if (below + h <= bottom) t = below;
+    // (Never onto the HUD itself: held at the edge of the clear band, over the top of the name tag or the boots.)
+    else t = top - above <= below + h - bottom ? top : bottom - h;
+    t = Math.round(Math.max(0, Math.min(H - h, t)));
+    const px = `${t}px`;
+    if (el.style.top !== px) el.style.top = px;
   }
 
   /** Where the camera puts world points on screen; enables keep-clear placement of the ticker and hints. */
@@ -909,11 +1146,18 @@ export class Hud {
     const sb = this.bugRect();
     const pause = this.topRight();
     if (!sb) return;
+    // Its one-line size first (the whole frame's width, measured from the left edge: the words wrap, so where it
+    // sits now would narrow it): a band narrower than the line takes it on two lines (boxOf), never an ellipsis.
+    const was = { left: this.cm.style.left, max: this.cm.style.maxWidth };
+    this.cm.style.left = '0px';
+    this.cm.style.maxWidth = `${Math.round(W - g * 2)}px`;
     const h = this.cm.offsetHeight || 34;
     const card = this.cardBannerRect();
     const bands: { k: string; l: number; r: number; t: number }[] = [];
-    // 1) Top band between the score bug and the pause button (unless the booking plate is up there).
-    const bl = sb.r + g;
+    // 1) Top band between the score bug and the pause button (unless the booking plate is up there); after the event
+    // flag when it hangs beside the bug (placeToast).
+    const flag = this.toastTimer > 0 ? this.rectOf('.hud-toast.on', false) : null;
+    const bl = (flag && flag.t < sb.b && flag.l >= sb.r - 2 ? flag.r : sb.r) + g;
     let br = (pause ? pause.l : W) - g;
     // The quick-sub card up in that top row (a landscape phone, ui/quickSub.ts): the band ends at it.
     const qsRow = this.rectOf('.hud-qsub.on', false);
@@ -974,15 +1218,39 @@ export class Hud {
     }
     // Where the line would actually sit in each band: its natural width, centred (up top: after the score
     // bug), or pushed to either end of the band when that keeps it off the goal and the ball.
-    this.cm.style.maxWidth = `${Math.round(W - g * 2)}px`;
-    const natural = this.cm.offsetWidth;
+    // (Unrounded: a box held to a width rounded down by a fraction of a pixel wraps its last word.)
+    const natural = this.cm.getBoundingClientRect().width || this.cm.offsetWidth;
+    // Its height at a band's width (two lines where the band is narrower than the line), measured once per width.
+    const tall = new Map<number, number>();
+    const heightAt = (w: number): number => {
+      if (w >= natural) return h;
+      const k = Math.ceil(w);
+      let v = tall.get(k);
+      if (v === undefined) {
+        this.cm.style.maxWidth = `${k}px`;
+        v = this.cm.offsetHeight || h;
+        tall.set(k, v);
+      }
+      return v;
+    };
     const goals = this.celebrating() ? [] : this.goalRects();
     const ball = this.ballOnScreen();
     // The touch controls: never under the caption, whichever band it is in. Nor a big centred banner (HALF TIME,
     // the title card, a verdict) while it is up: the line takes another band, or waits.
     const big = this.bannerTimer > 0 && this.banner.classList.contains('on') && !this.banner.classList.contains('plate')
       ? ['.bn-title', '.bn-sub', '.bn-tags'].map((sel) => this.rectOf(`.hud-banner.on ${sel}`, false)) : [];
-    const solid = [btns, stick, ...big].filter((q): q is Rect => !!q);
+    // (Nor the kick-off prompt, the one thing to read while it is up, nor the chant's caption under the pause button.)
+    const kick = this.kick.classList.contains('on') ? this.rectOf('.hud-kick.on', false) : null;
+    const chant = this.rectOf('.pz-chant.on', false);
+    // Each touch button by its own box too: the landscape phone's top button (CROSS) sits above the buttons' block.
+    const each = [...this.root.ownerDocument.querySelectorAll<HTMLElement>('#ui > .touch:not(.hidden) .tb')]
+      .map((el) => el.getBoundingClientRect()).filter((q) => q.width > 0 && q.height > 0)
+      .map((q): Rect => ({ l: q.left, t: q.top, r: q.right, b: q.bottom }));
+    // (And the booking, power-up or GOAL plate wherever it hangs: on a short frame the goal plate's tags reach the
+    // lower third.)
+    // (The minimap's place too, faded or not: on a short frame the band under the top cluster reaches down to it.)
+    const map = radar && radar.t > H * 0.5 ? radar : null;
+    const solid = [btns, stick, kick, chant, card, map, ...each, ...big].filter((q): q is Rect => !!q);
     // `pad` px round the goal mouth: a little margin, as the broadcast camera pans the goal across the screen
     // between two placements.
     const covers = (r: Rect, pad = 6) => goals.some((gr) => overlapArea(r, gr, pad) > 0) || solid.some((q) => overlapArea(r, q, 4) > 0);
@@ -992,7 +1260,10 @@ export class Hud {
       const got = boxes.get(b.k);
       if (got) return got;
       const w = Math.min(natural, b.r - b.l);
-      const at = (left: number): Rect => ({ l: left, r: left + w, t: b.t, b: b.t + h });
+      // Two lines grow down from a top band, and up from a bottom one (its foot stays where the one line's was).
+      const hb = heightAt(w);
+      const t = b.k === 'top' || b.k === 'under' ? b.t : b.t + h - hb;
+      const at = (left: number): Rect => ({ l: left, r: left + w, t, b: t + hb });
       const opts = b.k === 'top' || b.k === 'footL' ? [at(b.l), at(b.r - w)]
         : b.k === 'footR' ? [at(b.r - w), at(b.l)]
           : [at(b.l + (b.r - b.l - w) / 2), at(b.l), at(b.r - w)];
@@ -1028,7 +1299,11 @@ export class Hud {
     // first clear of the ball, else the farthest from it.
     let pick = pref.find((b) => clear(b) > 80 && !onGoal(b)) ?? pref.find((b) => clear(b) > 80);
     if (!pick) pick = [...pref].sort((a, b) => clear(b) - clear(a))[0];
-    if (!pick) return;
+    if (!pick) {
+      this.cm.style.left = was.left;
+      this.cm.style.maxWidth = was.max;
+      return;
+    }
     // A dead ball with the only band left sitting on the taker: better no caption than one over him.
     if (setPiece && clear(pick) < 50) {
       this.setTickerBlocked(true);
@@ -1037,15 +1312,15 @@ export class Hud {
     // Stay put unless the ball (or the goal) really is in the way (no jitter between two bands).
     const cur = pref.find((b) => b.k === this.cmSlot);
     if (cur && cur !== pick && clear(cur) > 40 && (!onGoal(cur) || onGoal(pick))) pick = cur;
-    const width = pick.r - pick.l;
-    this.cm.style.maxWidth = `${Math.round(width)}px`;
     const box = boxOf(pick);
+    // (The box's own width: the line wraps exactly where it was measured to; a whole line gets its pixel back.)
+    this.cm.style.maxWidth = `${box.r - box.l >= natural ? Math.ceil(natural) + 1 : Math.ceil(box.r - box.l)}px`;
     this.cm.style.left = `${Math.round(box.l)}px`;
-    this.cm.style.top = `${Math.round(pick.t)}px`;
+    this.cm.style.top = `${Math.round(box.t)}px`;
     this.cm.dataset.slot = pick.k;
     this.cmSlot = pick.k;
     this.cmX = Math.round(box.l);
-    this.cmBox = { l: Math.round(box.l), t: Math.round(pick.t), r: Math.round(box.l) + (box.r - box.l), b: Math.round(pick.t) + h };
+    this.cmBox = { l: Math.round(box.l), t: Math.round(box.t), r: Math.round(box.l) + (box.r - box.l), b: Math.round(box.b) };
     this.setTickerBlocked(false);
   }
 
@@ -1056,6 +1331,14 @@ export class Hud {
   private celebrating(): boolean {
     const ph = this.m?.phase;
     return (ph === 'goal' && this.root.classList.contains('dead')) || ph === 'halftime' || ph === 'fulltime';
+  }
+
+  /** The ticker sits in the top band beside the score bug, and the bug (with its board) now reaches under it. */
+  private bugGrewUnderTicker(): boolean {
+    const box = this.cmBox;
+    if (!box || this.cmBlocked || this.cmSlot !== 'top') return false;
+    const sb = this.bugRect();
+    return !!sb && overlapArea(box, sb, 2) > 0;
   }
 
   /** The goal mouth has panned under the placed ticker (or within a few px of it): time to move. */
@@ -1074,6 +1357,8 @@ export class Hud {
       if (q && q.t < H * 0.4 && q.r > l && q.l < r) y = Math.max(y, q.b);
     };
     for (const sel of ['.scorebug', '.sb-board.on', '.so-track', '.hud-toast.on', '.hud-power.on', '.hud-pause', '.hud-cam', '.hud-qsub.on']) take(this.rectOf(sel, false));
+    // (The corner picture, when it shows: a side show under the pause button.)
+    take(this.rectOf('.side-cam.on'));
     // The minimap only while it shows (it is off for set pieces).
     if (!this.radarHidden && !this.root.classList.contains('dead')) take(this.rectOf('.hud-radar'));
     // Landscape: a little lower than the top row, which belongs to the ticker and the event flag.
@@ -1081,11 +1366,13 @@ export class Hud {
   }
 
   /**
-   * Set-piece hint. Slots, in order of preference: top centre (under the top cluster), the top corners
-   * (narrower, when the screen is wide enough), the bottom band (clear of the player chip, the resting
-   * thumbstick, the touch buttons and the minimap; full width above the controls on portrait phones) and its
-   * two halves. It takes the one that covers least of what matters: the goal mouth being aimed at first, then
-   * the taker (the ball) and, with him up in the far part of the lens (a far-side corner), his delivery.
+   * Set-piece hint: always in the bottom band, as every control the game shows is (CrazyGames' review asked for the
+   * controls at the bottom; the opening kick-off's hint up top centre over the stands was what they flagged again).
+   * Slots, in order of preference: the bottom centre (where the trainer's controls bar sits in play: just above the
+   * minimap, clear of the player chip and the touch controls), then the bottom band's two halves and the whole band
+   * (full width above the controls on portrait phones). It takes the one that covers least of what matters: the goal
+   * mouth being aimed at first, then the taker (the ball): a throw-in on the near touchline under the centre slot moves
+   * it to a side. (Our kick-off has its own prompt in the middle instead: setKickoff.)
    */
   private placeHint(force = false): void {
     const H = window.innerHeight;
@@ -1100,33 +1387,11 @@ export class Hud {
     };
     type Slot = { k: string; low: boolean; r: Rect; maxW: number; bottom: number };
     const slots: Slot[] = [];
-    const topSlot = (k: string, maxW: number, align: 'c' | 'l' | 'r') => {
-      const a = size(maxW);
-      const l = align === 'c' ? (W - a.w) / 2 : align === 'l' ? g : W - g - a.w;
-      const t = this.hintTopY(l, l + a.w);
-      slots.push({ k, low: false, r: { l, r: l + a.w, t, b: t + a.h }, maxW, bottom: 0 });
-    };
     const goals = this.goalRects();
-    topSlot('top', W - g * 2, 'c');
-    const half = W / 2 - g * 1.5;
-    if (half >= 280) {
-      topSlot('topL', half, 'l');
-      topSlot('topR', half, 'r');
-    }
-    // Narrower corner slots that fit beside a goal mouth up in the top half of the lens. (140 px: a landscape
-    // phone's penalty lens leaves ~145 px either side, and the stands there beat the low band over the ball.)
-    for (const gr of goals) {
-      if (gr.t > H * 0.5) continue;
-      const left = gr.l - 8 - g * 2;
-      const right = W - gr.r - 8 - g * 2;
-      if (left >= 140 && left < half) topSlot('topLg', left, 'l');
-      if (right >= 140 && right < half) topSlot('topRg', right, 'r');
-    }
     let ll = g;
     let lr = W - g;
     let bottom = 14;
     const chip = this.rectOf('.hud-chip');
-    if (chip && chip.t > H * 0.5) bottom = Math.max(bottom, H - chip.t + 8);
     const stick = this.rectOf('#ui > .touch:not(.hidden) .touch-base');
     if (stick && stick.t > H * 0.4 && stick.l < W / 2) ll = Math.max(ll, stick.r + 10);
     const btns = this.rectOf('#ui > .touch:not(.hidden) .touch-btns');
@@ -1138,21 +1403,24 @@ export class Hud {
       if (stick) bottom = Math.max(bottom, H - stick.t + 8);
       if (btns) bottom = Math.max(bottom, H - btns.t + 8);
     }
-    // The minimap only while it shows (by class: it may still be fading out as the set piece begins).
-    const radar = this.radarHidden || this.root.classList.contains('dead') ? null : this.rectOf('.hud-radar', false);
-    const lowSlot = (k: string, l: number, maxW: number, right: boolean) => {
+    // The minimap's place, whether it shows now or not (it fades back in for play, or as the HUD comes live under a
+    // hint placed while it was off): the hint stays above it, as the trainer's bar does. (A shootout drops it: null.)
+    const radar = this.rectOf('.hud-radar', false);
+    // Each slot sits above whatever is under it: the minimap (bottom centre on a landscape screen), the player chip.
+    const lowSlot = (k: string, l: number, maxW: number, align: 'l' | 'c' | 'r') => {
       const a = size(maxW);
-      const x = right ? l + maxW - a.w : l;
+      const x = align === 'r' ? l + maxW - a.w : align === 'c' ? Math.max(ll, Math.min(lr - a.w, (W - a.w) / 2)) : l;
       let bt = bottom;
-      if (radar && radar.t > H * 0.5 && radar.l < x + a.w && radar.r > x) bt = Math.max(bt, H - radar.t + 8);
+      for (const q of [radar, chip]) if (q && q.t > H * 0.5 && q.l < x + a.w && q.r > x) bt = Math.max(bt, H - q.t + 8);
       slots.push({ k, low: true, r: { l: x, r: x + a.w, t: H - bt - a.h, b: H - bt }, maxW, bottom: bt });
     };
-    lowSlot('low', ll, lr - ll, false);
+    lowSlot('lowC', ll, lr - ll, 'c');
     const lowHalf = (lr - ll) / 2 - g / 2;
     if (lowHalf >= 280) {
-      lowSlot('lowL', ll, lowHalf, false);
-      lowSlot('lowR', lr - lowHalf, lowHalf, true);
+      lowSlot('lowL', ll, lowHalf, 'l');
+      lowSlot('lowR', lr - lowHalf, lowHalf, 'r');
     }
+    lowSlot('low', ll, lr - ll, 'l');
     const ball = this.ballOnScreen();
     // Controls a tall corner slot could run into (the landscape phone's button column starts high).
     const solid = [btns, stick, chip].filter((q): q is Rect => !!q);
@@ -1163,15 +1431,13 @@ export class Hud {
       if (ball) {
         const d = distTo(ball, s.r);
         if (d < 90) c += (90 - d) * 60;
-        // Taker up in the far part of the lens: his delivery comes down through the top band.
-        if (!s.low && ball.y < H * 0.4 && Math.abs(ball.x - (s.r.l + s.r.r) / 2) < W * 0.35) c += 2500;
       }
       return c;
     };
     let pick: Slot;
     if (!this.project) {
-      // No projector: portrait set pieces go above the buttons (the goal is up top), else top centre.
-      pick = H > W && this.setPiece() ? slots.find((s) => s.k === 'low')! : slots[0];
+      // No projector: the bottom centre.
+      pick = slots[0];
     } else {
       const costs = slots.map((s, i) => cost(s, i));
       let best = 0;
@@ -1312,6 +1578,7 @@ export class Hud {
     el.innerHTML = y || r
       ? `<span class="sb-card" role="img" title="${esc(label)}" aria-label="${esc(label)}">${chips('yellow')}${chips('red')}${lastName ? `<em>${esc(lastName)}</em>` : ''}</span>`
       : '';
+    this.fitBookingNames();
     // The booking row grows the score bug: the event flag and the booking plate under it move down with it.
     if (this.toast.classList.contains('on')) this.placeToast();
     if (this.bannerCard && this.bannerTimer > 0) this.placeBanner();
@@ -1372,9 +1639,34 @@ export class Hud {
     this.stamina.style.background = stamina > 0.5 ? '#3aff9e' : stamina > 0.3 ? '#ffd23a' : '#ff4a3a';
   }
 
+  /**
+   * The chant's caption and the touch controls (each button and the thumbstick's resting base) as well: see-through
+   * while the ball or our man is drawn under them, so a phone on its side never hides the play under its own thumbs'
+   * buttons. A button held down keeps its look. (`off`: the HUD is dead or replaying; nothing stays faded.)
+   */
+  private fadeControls(f: Float32Array | null, off = false): void {
+    const els = [this.root.querySelector<HTMLElement>('.pz-chant'),
+      ...document.querySelectorAll<HTMLElement>('#ui > .touch:not(.hidden) .tb, #ui > .touch:not(.hidden) .touch-base')];
+    for (const el of els) {
+      if (!el) continue;
+      if (off || !f || el.classList.contains('down') || (el.classList.contains('pz-chant') && !el.classList.contains('on'))) {
+        if (el.classList.contains('under')) el.classList.remove('under');
+      } else this.fadeUnder(el, f);
+    }
+  }
+
   update(dt: number, frame: Float32Array): void {
     this.justYellow[0] = this.justYellow[1] = null;
     this.lastFrame = frame;
+    if (!this.sideObs && typeof MutationObserver !== 'undefined') {
+      const sc = this.root.querySelector?.('.side-cam');
+      if (sc) {
+        this.sideObs = new MutationObserver(() => {
+          if (this.bannerTimer > 0) this.clearBanner();
+        });
+        this.sideObs.observe(sc, { attributes: true, attributeFilter: ['class'] });
+      }
+    }
     // (Looked at every frame rather than on 'resize': that event can come late, or not at all, in a hidden tab.)
     if (typeof window !== 'undefined' && (window.innerWidth !== this.seenW || window.innerHeight !== this.seenH)) {
       const first = this.seenW === 0;
@@ -1401,9 +1693,10 @@ export class Hud {
         this.cmPlaceT -= dt;
         // Full re-place every 0.3 s; in between, a cheap look every frame whether the camera has panned the
         // goal mouth up to the line, which moves it at once (at most 20 times a second).
-        if (this.cmPlaceT <= 0 || (this.cmPlaceT <= 0.25 && this.tickerNearGoal())) {
+        // (Or at once when the score bug it sits beside has grown under it: the style grade, the added-time board.)
+        if (this.cmPlaceT <= 0 || (this.cmPlaceT <= 0.25 && this.tickerNearGoal()) || this.bugGrewUnderTicker()) {
           // (Quicker while the goal plate is up: its tags pop in one by one and it grows under the line.)
-          this.cmPlaceT = this.bannerGoal && this.bannerTimer > 0 ? 0.1 : 0.3;
+          this.cmPlaceT = this.bannerHung && this.bannerTimer > 0 ? 0 : 0.3;
           this.placeTicker();
         }
       }
@@ -1428,15 +1721,16 @@ export class Hud {
     }
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
+      if (this.bannerTimer > 0) this.clearBanner();
       if (this.bannerTimer <= 0) this.banner.classList.remove('on');
-      else if (this.bannerGoal || (this.bannerPower && this.project)) {
+      else if (this.bannerHung || (this.bannerPower && this.project)) {
         // The camera pans: keep the power-up plate off the goal mouth (checked a few times a second).
         this.bannerPlaceT -= dt;
         if (this.bannerPlaceT <= 0) {
-          this.bannerPlaceT = 0.25;
+          this.bannerPlaceT = this.bannerHung ? 0 : 0.25;
           const r = this.banner.getBoundingClientRect();
           const box = { l: r.left, t: r.top, r: r.right, b: r.bottom };
-          if (this.bannerGoal || this.goalRects().some((gr) => overlapArea(box, gr, 6) > 0)) this.placeBanner();
+          if (this.bannerHung || this.goalRects().some((gr) => overlapArea(box, gr, 6) > 0)) this.placeBanner();
         }
       }
     }
@@ -1471,14 +1765,21 @@ export class Hud {
       }
     }
     this.radarT -= dt;
-    const hidden = this.radarHidden || this.root.classList.contains('dead') || this.root.classList.contains('replaying');
-    if (this.radarT <= 0 && !hidden) {
-      this.radarT = 1 / 20;
-      this.drawRadar(frame);
+    // (The fades over the play run whenever the HUD is live, the minimap switched off for a set piece or not.)
+    const off = this.root.classList.contains('dead') || this.root.classList.contains('replaying');
+    const hidden = this.radarHidden || off;
+    if (!off) {
+      // (The minimap redraws 20 times a second; what fades over the play looks every frame, so a fast run up the far
+      // touchline is never under the score bug for a frame or two before it gives way.)
+      if (this.radarT <= 0) {
+        this.radarT = 1 / 20;
+        if (!hidden) this.drawRadar(frame);
+      }
       this.fadeRadar(frame);
-    } else if (hidden) {
+    } else {
       // No look round while the HUD is dead or replaying: nothing stays faded for a play it can no longer see.
       for (const el of [this.cm, this.toast, this.scoreBug, this.banner, this.root.querySelector('.hud-qsub')]) if (el?.classList.contains('under')) el.classList.remove('under');
+      this.fadeControls(null, true);
     }
   }
 
@@ -1489,7 +1790,9 @@ export class Hud {
   private fadeRadar(f: Float32Array): void {
     this.fadeUnder(this.radar, f);
     // The score bug too: the ball up by the far touchline can pass under it on a phone.
-    if (this.scoreBug) this.fadeUnder(this.scoreBug, f);
+    if (this.scoreBug) this.fadeUnder(this.scoreBug, f, [...this.scoreBug.querySelectorAll<HTMLElement>('.sb-board.on, .bty.on, .fun-pill.on, .sb-hype, .sb-grade')]);
+    // The player chip (bottom left) as well.
+    this.fadeUnder(this.chip, f);
     // The commentary ticker, the event flag and the quick-sub card too, while they are up.
     const qs = this.root.querySelector<HTMLElement>('.hud-qsub');
     for (const el of [this.cm, this.toast, qs]) {
@@ -1498,16 +1801,22 @@ export class Hud {
       else if (el.classList.contains('under')) el.classList.remove('under');
     }
     // And a power-up plate in open play (with LARGE text it reaches down under the top cluster).
-    if (this.bannerPower && this.bannerTimer > 0) this.fadeUnder(this.banner, f);
+    // (And the plates hung off the score bug, the scorer's and SECOND HALF, when play comes up under them.)
+    if ((this.bannerPower || this.bannerHung) && this.bannerTimer > 0) this.fadeUnder(this.banner, f);
     else if (this.banner.classList.contains('under')) this.banner.classList.remove('under');
+    // The PERFECT / GOOD word follows the shooter's run: see-through if he (or the ball) comes under it.
+    if (this.timingT > 0) this.fadeUnder(this.timingEl, f);
+    else if (this.timingEl.classList.contains('under')) this.timingEl.classList.remove('under');
+    this.fadeControls(f);
   }
 
   /** `el` nearly see-through ('under') while the ball, our man or his locked pass target is under it on screen. */
-  private fadeUnder(el: HTMLElement, f: Float32Array): void {
+  private fadeUnder(el: HTMLElement, f: Float32Array, parts: HTMLElement[] = []): void {
     const P = this.project;
     let under = false;
     if (P) {
-      const r = el.getBoundingClientRect();
+      // (Its own box and what hangs off it: the added-time board, a live goal grown past the bug's edge.)
+      const rs = [el, ...parts].map((x) => x.getBoundingClientRect()).filter((q) => q.width > 0 && q.height > 0);
       const pad = 14;
       const hit = (x: number, y: number, z: number) => {
         let p: { x: number; y: number } | null = null;
@@ -1516,11 +1825,11 @@ export class Hud {
         } catch {
           p = null;
         }
-        return !!p && p.x > r.left - pad && p.x < r.right + pad && p.y > r.top - pad && p.y < r.bottom + pad;
+        return !!p && rs.some((r) => p!.x > r.left - pad && p!.x < r.right + pad && p!.y > r.top - pad && p!.y < r.bottom + pad);
       };
       const player = (i: number) => i >= 0 && i < 22 && (hit(f[i * PF], 0.2, f[i * PF + 1]) || hit(f[i * PF], 0.9, f[i * PF + 1]) || hit(f[i * PF], 1.6, f[i * PF + 1]));
       const aim = this.m?.passAim ?? -1;
-      under = hit(f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2]) || player(f[BALL_OFS + 8]) || player(typeof aim === 'number' ? aim : -1);
+      under = hit(f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2]) || player(f[BALL_OFS + 8]) || player(this.m?.active ?? -1) || player(typeof aim === 'number' ? aim : -1);
     }
     if (under !== el.classList.contains('under')) el.classList.toggle('under', under);
   }
@@ -1613,6 +1922,8 @@ export class Hud {
 
   dispose(): void {
     this.radarObs?.disconnect();
+    this.bugObs?.disconnect();
+    this.sideObs?.disconnect();
     this.root.remove();
   }
 
@@ -1622,7 +1933,7 @@ export class Hud {
    * order: the ticker keeps clear of the others). The rest follow the frame by CSS or are placed every frame.
    */
   private relayout(): void {
-    if (this.bannerTimer > 0 && (this.bannerCard || this.bannerPower || this.bannerGoal)) this.placeBanner();
+    if (this.bannerTimer > 0 && (this.bannerCard || this.bannerPower || this.bannerHung)) this.placeBanner();
     if (this.toast.classList.contains('on')) this.placeToast();
     if (this.hint.classList.contains('on')) this.placeHint(true);
     if (this.timingT > 0) this.placeTiming();

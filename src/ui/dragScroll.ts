@@ -8,8 +8,12 @@
  * ends it is swallowed, so a drag never also taps the chip or tile under it. A press that never moves is a tap.
  * Items that drag themselves (`[data-drag]`, ui/dragSwap.ts), form fields and range sliders are left alone. A mouse
  * wheel over a strip that only scrolls sideways moves it sideways.
+ *
+ * Every pane that scrolls also shows a bar that is always visible (ui/scrollbars.ts), installed here with it, so a
+ * pane that can be dragged always says so, iOS included.
  */
 import { layoutScale } from './fitBox';
+import { installScrollbars } from './scrollbars';
 
 /** Pixels a press may wander before it counts as a scroll. */
 const SLOP = 6;
@@ -95,7 +99,9 @@ export function installDragScroll(ui: HTMLElement): () => void {
   window.addEventListener('pointercancel', end);
   ui.addEventListener('click', click, true);
   ui.addEventListener('wheel', wheel, { passive: false });
+  const bars = installScrollbars(ui);
   return () => {
+    bars();
     ui.removeEventListener('pointerdown', down, true);
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', end);

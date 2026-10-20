@@ -309,13 +309,14 @@
 }
 
 .mk-big small {
-  font: 400 11px var(--round);
+  font: 400 11px/1 var(--round);
   letter-spacing: 1px;
   color: var(--cream);
 }
 
+/* (The pixel font's glyphs stand taller than 1em: a line as tall as they are, so the number never touches OVR.) */
 .mk-big b {
-  font: 700 24px/1 var(--px);
+  font: 700 24px/1.25 var(--px);
 }
 
 .mk-dbody {
@@ -443,9 +444,12 @@
 }
 
 .mk-scout b {
-  font: 400 12px/1.2 var(--round);
+  font: 400 12px/1.05 var(--round);
   letter-spacing: 0.5px;
   color: var(--blue-d);
+  /* (SCOUT and its price: two lines in a narrow cell, LARGE text at 800x450, never an ellipsis.) */
+  white-space: normal;
+  text-overflow: clip;
 }
 
 .mk-stars {

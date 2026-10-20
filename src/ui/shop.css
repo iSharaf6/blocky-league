@@ -765,6 +765,9 @@
   box-shadow: 0 0 0 4px var(--ink), 0 10px 0 4px rgba(0, 0, 0, 0.45);
 }
 .sh-modal.flipped .sh-back { transform: rotateY(-180deg); animation: none; }
+/* (Safari flattens the back face for its glow filter, so its backface stays drawn: TAP TO SKIP, under the card, read
+   mirrored after the flip. It goes with the flip.) */
+.sh-modal.flipped .sh-back b { visibility: hidden; }
 .sh-modal.flipped .sh-front { transform: rotateY(0deg); }
 .sh-rtag { font: 700 18px / 1 var(--px); letter-spacing: 3px; color: var(--ink); margin-top: -2px; }
 .sh-modal.r-legend .sh-rtag, .sh-modal.r-epic .sh-rtag, .sh-modal.r-rare .sh-rtag { color: #fff; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }

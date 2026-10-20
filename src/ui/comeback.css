@@ -74,6 +74,9 @@
 .cb-pop li > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cb-pop li > b { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; color: var(--yellow); white-space: nowrap; }
 .cb-pop li > b u { text-decoration: none; color: var(--cream); }
+/* While the list is open it hangs over the hero's top: the hero's title steps aside, as under a toast, so no word of
+   the list sits over a word of the title (a wide hub, LARGE text). */
+.hub-screen:has(.cb-pop:not([hidden])) .hh-head { visibility: hidden; }
 
 /* A phone on its side and the short portal frame: the strip is a little lower, and the line under the hero with it. */
 @container app (orientation: landscape) and (max-height: 450px) {
@@ -102,6 +105,8 @@
    time) gives its room to the others; five from an iPad up. */
 @container app (max-width: 960px) {
   .hub-cb .cb-st { display: none; }
+  /* (A card a quarter of the strip: TRY TODAY over the look's name; the sheet a tap opens says the rest.) */
+  .hub-cb .cb-try .cb-more { display: none; }
 }
 /* MATCH OF THE DAY done, on a strip of four or five cards: its caption already says DONE, so the moment's name keeps
    the line whole and the TOMORROW tag (which cut it) steps aside. */

@@ -27,6 +27,18 @@
   top: calc(max(12px, var(--sa-top)) + 52px + clamp(180px, calc(23 * var(--vw)), 320px) * 0.5625 + 12px);
 }
 
+/* The touch controls on screen: the corner picture never sits on a button. It ends above the buttons' column (whose
+   top button is at most 154 px above the foot on a phone on its side: 234 px leaves the gap), and on a frame too short
+   for a picture 180 px wide (under 335 px tall: a portal's frame in Safari with its bars) it is held back altogether
+   (the side stage draws nothing in a hidden box) and the chant keeps its own place. */
+#ui:has(> .touch:not(.hidden)) .hud > .side-cam:not(.full) {
+  --side-w: min(clamp(180px, calc(23 * var(--vw)), 320px), calc((100 * var(--vh) - 234px) * 16 / 9));
+}
+@container app (max-height: 334.98px) {
+  #ui:has(> .touch:not(.hidden)) .hud > .side-cam:not(.full) { visibility: hidden; }
+  #ui:has(> .touch:not(.hidden)) .hud:has(> .side-cam.on:not(.full)) .pz-chant { top: calc(max(12px, var(--sa-top)) + 40px); }
+}
+
 .side-cam .sc-plate {
   position: absolute;
   left: 0;

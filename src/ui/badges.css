@@ -235,6 +235,20 @@
   .panel .btn.bd-po-buy { min-height: 64px; font-size: 22px; }
 }
 
+/* A laptop or a tablet held wide (561 to 760 tall: 1080x607, 1180x760): the tall layout's pass card without its icon
+   and its note, so PREVIEW COLLECTION and GET IT show without a scroll. Under LARGE text the screen keeps its MEDIUM
+   size there (the tall tiles are already bigger): one step up and the two reward rows run under the track's bar. */
+@container app (min-height: 561px) and (max-height: 760px) {
+  :root.ts-large .bd-screen .panel > :not(.btn-row:last-child) { zoom: 1; }
+  .bd-po-ic, .bd-po-note { display: none; }
+  .bd-passoffer { gap: 5px; padding: 8px 10px 10px; }
+  .bd-po-name { font-size: 21px; }
+  .bd-po-facts { gap: 3px; }
+  .bd-po-facts li { font-size: 12px; padding: 1px 6px 0; }
+  .bd-po-facts b { font-size: 17px; }
+  .panel .bd-passoffer > .btn[data-a='passPreview'], .panel .bd-passoffer > .btn.bd-po-gembuy { min-height: 36px; padding: 6px 4px 5px; }
+}
+
 /* ---- short screens (landscape phones, portal frames) */
 
 @container app (max-height: 560px) {
@@ -265,6 +279,19 @@
   .panel .btn.bd-claim { min-height: 34px; }
   .bd-title { min-height: 46px; padding: 5px 8px; }
   .bd-title b { font-size: 15px; }
+}
+
+/* A phone on its side under Safari's bars and a portal's banner (the 900 by 375 fit box, 852 by 393): the journey
+   strip a line tighter and the pass card compact, so GET IT and both reward rows (FREE and PASS) show whole, with
+   room under the strips for their scrollbars (ui/scrollbars.ts). */
+@container app (max-height: 400px) {
+  .bd-journeys button { min-height: 0; gap: 1px; padding: 4px 10px 3px; }
+  .bd-railgrid { grid-template-rows: 20px minmax(46px, 1fr); }
+  .bd-railgrid.with-pass { grid-template-rows: 20px minmax(42px, 1fr) minmax(42px, 1fr); }
+  .bd-passoffer { gap: 3px; padding: 5px 6px 6px; }
+  .bd-po-facts { gap: 2px; }
+  .bd-po-facts li { padding: 0 4px; }
+  .panel .bd-passoffer > .btn[data-a='passPreview'], .panel .bd-passoffer > .btn.bd-po-gembuy { min-height: 36px; padding: 5px 4px 4px; }
 }
 
 /* Narrow: the theme name gives way to the bar, the pass card narrows. */
