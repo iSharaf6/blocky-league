@@ -6,6 +6,16 @@ Everything you upload is already made and checked. Your part: create the account
 
 ## 0. CrazyGames Full Launch update (14 October 2026)
 
+### Reply to the 20 October review (21 October 2026)
+
+CrazyGames sent it back on 20 October with three points: UI not fully visible on iOS and scrollbars hidden there, the pause screen not dark, and no sign to press Space at kick-off. All three are fixed in the rebuilt v1.1.0 zip. Paste this into **Update Notes**:
+
+> Thank you for the review. All three points are fixed in this version.
+> 1. iOS: every screen was checked in Safari's engine at the game frame an iPhone gets inside crazygames.com (about 745x290 with the Safari bar, the app banner and the side rail), in normal and large text. Every list that scrolls now shows its own scrollbar at all times, which can be dragged or tapped, and on Journeys both reward rows show in full.
+> 2. Pause: the whole screen goes dark behind the pause menu and behind every other menu opened during a match.
+> 3. Kick-off: every kick-off the player takes shows PRESS SPACE TO KICK OFF in the middle of the screen (TAP PASS TO KICK OFF on touch), and it goes as soon as the ball is played.
+> Please set the mobile and tablet orientation to landscape only.
+
 ### Reply to the 16 October review (17 October 2026)
 
 CrazyGames sent the Full Launch build back on 16 October with five points. All five are fixed in the resubmitted v1.1.0 build. Paste this into the **Update Notes** field as it is:
