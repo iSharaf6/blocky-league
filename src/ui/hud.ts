@@ -188,6 +188,12 @@ export class Hud {
   retitle: ((b: { title: string; sub: string; kind: string; seconds: number }) => { title: string; sub: string; kind: string; seconds: number } | null) | null = null;
   /** Shown in the clock cell instead of a moment's countdown (LEARN THE BASICS: "1/3"); null = the countdown. */
   countdownLabel: string | null = null;
+  /**
+   * LEARN THE BASICS (main.ts sets it): the fades over the play (fadeUnder) give way for every man of ours on the pitch
+   * (a drill has two or three), not only his man and the pass target: the runner waiting under the score bug, the
+   * winger under a control, are never hidden. Matches leave it off.
+   */
+  fadeTeam = false;
   /** Colour-blind aid on the minimap: the other side's dots are round, yours square (shape, not only colour). */
   private colorblind = false;
 
@@ -958,6 +964,11 @@ export class Hud {
   setColorblind(on: boolean): void {
     this.colorblind = on;
     this.root.classList.toggle('cb', on);
+  }
+
+  /** The match the fades read (fadeTeam: its men) before its first event has come through commentary(). */
+  setMatch(m: Match): void {
+    this.m = m;
   }
 
   /** Event hook (named for the ticker it feeds): the session forwards every match event here (before its own handling). */
@@ -1830,6 +1841,8 @@ export class Hud {
       const player = (i: number) => i >= 0 && i < 22 && (hit(f[i * PF], 0.2, f[i * PF + 1]) || hit(f[i * PF], 0.9, f[i * PF + 1]) || hit(f[i * PF], 1.6, f[i * PF + 1]));
       const aim = this.m?.passAim ?? -1;
       under = hit(f[BALL_OFS], f[BALL_OFS + 1], f[BALL_OFS + 2]) || player(f[BALL_OFS + 8]) || player(this.m?.active ?? -1) || player(typeof aim === 'number' ? aim : -1);
+      const m = this.m;
+      if (!under && this.fadeTeam && m) under = m.players.some((p) => p.side === m.cfg.humanSide && !p.sentOff && player(p.idx));
     }
     if (under !== el.classList.contains('under')) el.classList.toggle('under', under);
   }

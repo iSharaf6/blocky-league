@@ -242,6 +242,8 @@ const SHOOTOUT_HOLD_S = 3.4;
  */
 const MOMENT_BRIEF_S = 2.2;
 const MOMENT_END_S = 2.4;
+/** A LEARN THE BASICS miss holds its AGAIN! banner this much longer (s): its line says why. */
+const DRILL_MISS_EXTRA_S = 0.6;
 const MOMENT_COUNT_S = 5;
 /** Hit-stop at the top of the backflip (frames). */
 const HIT_STOP_APEX = 2;
@@ -691,6 +693,9 @@ export class MatchSession {
     if (opt.scenario && !this.demo) {
       applyScenario(this.match, opt.scenario);
       this.moment = { spec: opt.scenario, briefT: opt.scenario.untimed ? 0 : MOMENT_BRIEF_S, outcome: null, endT: -1, count: -1 };
+      // LEARN THE BASICS: a button still down from the last attempt (the one that failed it) is no press in this one,
+      // so every retry starts the same, on its first prompt (holdLesson and buildPad eat it until it is let go).
+      if (opt.scenario.untimed) this.eatButtons = true;
     }
     const teams = this.match.teams;
     const level = Math.max(0, Math.min(5, Math.round(opt.stadiumLevel ?? 5)));
@@ -1572,7 +1577,7 @@ export class MatchSession {
       }
       this.eatButtons = false;
     }
-    const pad: Pad = {
+    let pad: Pad = {
       mx: w.x, mz: w.z, sprint: c.sprint, pass: c.pass || l.pass, shoot: c.shoot || l.shoot, through: c.through || l.through,
       // AUTO SPRINT (touch): the thumbstick pushed all the way sprints (sim/dribble.ts autoRun).
       autoSprint: this.autoSprint(),
@@ -1584,6 +1589,9 @@ export class MatchSession {
       skill: c.skill || l.skill,
     };
     this.clearLatch();
+    // LEARN THE BASICS: the drill's own buttons (ui/trainer.ts Lesson.filterPad: no SWITCH before the cross is away).
+    const lesson = this.moment?.spec.untimed ? Trainer.lesson : null;
+    if (lesson) pad = lesson.filterPad(pad, this.match);
     return pad;
   }
 
@@ -1732,7 +1740,9 @@ export class MatchSession {
       // (A PERFECT skill move's slow-motion beat: against the AI only, never in an online match's lockstep.)
       const slow = !drv && this.slowT > 0 ? this.slowRate : 1;
       if (this.slowT > 0) this.slowT -= dt;
-      this.acc += drv ? dt * drv.pace() : dt * slow;
+      // (LEARN THE BASICS: the cross slowed on its way to the runner, slower as it reaches him: Lesson.pace.)
+      const drill = !drv && this.moment?.spec.untimed ? Trainer.lesson?.pace(m) ?? 1 : 1;
+      this.acc += drv ? dt * drv.pace() : dt * Math.min(slow, drill);
       let steps = 0;
       let waited = false;
       while (this.acc >= DT && steps < 6) {
@@ -2210,14 +2220,15 @@ export class MatchSession {
     const mo = this.moment!;
     const m = this.match;
     if (mo.endT >= 0) return;
-    mo.endT = MOMENT_END_S;
     const o = mo.outcome ?? { won: false, stars: 0, secondsLeft: 0 };
+    // (A LEARN THE BASICS miss: a beat longer, for its line saying why to be read before the retry.)
+    mo.endT = MOMENT_END_S + (mo.spec.untimed && !o.won ? DRILL_MISS_EXTRA_S : 0);
     // The final whistle now (the sim's own end-of-match events follow), unless the goal that settled it is
     // still being celebrated: then the party plays on under the card and the whistle goes with the result.
     if (m.phase !== 'goal') finishScenario(m);
     // (Short titles: the banner's letters are huge; "MOMENT COMPLETE" ran off both edges.)
     const stars = o.won ? '★'.repeat(o.stars) + '☆'.repeat(Math.max(0, 3 - o.stars)) : '';
-    this.hud?.show(o.won ? 'COMPLETE!' : 'FAILED', o.won ? `MOMENT ${stars}` : 'Try again', o.won ? 'goal' : 'small goal against', MOMENT_END_S + 0.4);
+    this.hud?.show(o.won ? 'COMPLETE!' : 'FAILED', o.won ? `MOMENT ${stars}` : 'Try again', o.won ? 'goal' : 'small goal against', mo.endT + 0.4);
     if (o.won) {
       sfx.cheer(1.4);
       this.goalHypeT = Math.max(this.goalHypeT, 3);
@@ -3687,6 +3698,8 @@ export class MatchSession {
 
   /** `announced`: a foul's own free kick / penalty, already named with its reason at the whistle (announceFoul). */
   private showRestart(kind: RestartKind, announced = false): void {
+    // (A LEARN THE BASICS drill ends at a dead ball: AGAIN! and why, never a GOAL KICK chip for a restart nobody takes.)
+    if (this.moment?.spec.untimed) return;
     if (kind !== 'kickoff') this.hud?.toastMsg(RESTART_LABEL[kind], 1.2);
     if (kind === 'penalty' && !announced) this.hud?.show('PENALTY!', '', 'small', 1.8);
   }
@@ -4047,7 +4060,7 @@ export class MatchSession {
       else if (soAim) hint = diveCue(dev);
     } else if (m.phase === 'restart' && r && r.side === hs && r.kind === 'penalty') {
       hint = penaltyCue(dev);
-    } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs) {
+    } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs && !this.moment?.spec.untimed) {
       // Our kick-off is the prompt's (it comes up the moment the picture is live): no second KICK OFF card beside it,
       // over the fly-in or flashing up as he strikes it. Only the first match's THIS IS YOU hold keeps the card (its
       // presence is what keeps the touch controls up there: style.css).

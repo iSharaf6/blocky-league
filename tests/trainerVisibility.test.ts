@@ -10,8 +10,9 @@ import { applyScenario } from '../src/sim/scenario';
 import { BAR_HOLD_MS, Lesson, Trainer, barSituation, controlsCue, lessonCue } from '../src/ui/trainer';
 
 // The cards' words come from the cue builders (the copy can change; what is checked is that the right card shows).
-const CROSS_CUE = lessonCue(BASICS[2].lesson[0], 'touch');
-const FINISH_CUE = lessonCue(BASICS[2].lesson[1], 'touch');
+// The CROSS drill is two named steps: STEP 1 OF 2: CROSS, then STEP 2 OF 2: FINISH.
+const CROSS_CUE = lessonCue(BASICS[2].lesson[0], 'touch', { n: 1, of: 2, name: 'CROSS' });
+const FINISH_CUE = lessonCue(BASICS[2].lesson[1], 'touch', { n: 2, of: 2, name: 'FINISH' });
 
 /** Only the DOM operations the trainer uses; projection and match state remain real. */
 class ElementDouble {
@@ -132,7 +133,8 @@ function cross(p: ReturnType<typeof setup>): void {
   expect(p.m.ball.owner).toBe(-1);
   expect(p.m.passTarget).toBe(p.m.active);
   expect(p.lesson.current?.when).toBe('incoming');
-  expect(p.lesson.hold(p.m, controls)).toBe(true);
+  // (A ball in the air is never frozen: CrazyGames' review read the held cross as a stuck game. It flies on, slowed.)
+  expect(p.lesson.hold(p.m, controls)).toBe(false);
   writeFrame(p.m, p.frame, p.m.clock);
 }
 
@@ -160,19 +162,20 @@ describe('tutorial instructions for an offscreen receiver', () => {
     const x = viewport.edge === 'left' ? -40 : viewport.edge === 'right' ? viewport.width + 40 : viewport.width / 2;
     const y = viewport.edge === 'above' ? 40 : viewport.edge === 'below' ? viewport.height - 10 : viewport.height / 2;
     const camera = cameraFor(p.frame, p.m.active, viewport, x, y, viewport.edge === 'clipped');
-    const clock = p.m.clock;
-    // While the actual incoming lesson pauses the flight, its next action must replace the stale CROSS card.
+    // While the cross is on its way, its next action replaces the stale CROSS card, and the callout names the runner.
     for (let i = 0; i < 30; i++) {
-      expect(p.lesson.hold(p.m, controls)).toBe(true);
+      expect(p.lesson.hold(p.m, controls)).toBe(false);
       p.trainer.update(p.m, p.frame, camera, head, 'touch', controls);
       expect(p.root.hidden).toBe(false);
       expect(p.card.hidden).toBe(false);
       expect(p.root.querySelector('.trainer-title').textContent).toBe(FINISH_CUE.title);
       expect(p.root.querySelector('.trainer-actions').textContent).toContain(FINISH_CUE.actions[0][1]);
       expect(p.card.classList.contains('lesson')).toBe(true);
+      expect(p.card.classList.contains('bar')).toBe(false);
       expectFixed(p.card);
+      expect(p.root.querySelector('.drill-call').hidden).toBe(false);
     }
-    expect(p.m.clock).toBe(clock);
+    expect(p.lesson.finishCall(p.m)?.runner).toBe(p.m.active);
     expect(p.lesson.hold(p.m, { ...controls, shoot: true })).toBe(false);
   });
 });

@@ -8,7 +8,7 @@ import type { AppContext, MatchKind, MatchRequest } from './app';
 import { sfx } from './audio/sfx';
 import { localDay } from './core/day';
 import { ddaAssist, ddaRecord, suggestEasy, type Outcome } from './core/dda';
-import { Input, holdsPage, isKey, setBindings, setDeviceSource } from './core/input';
+import { Input, currentDevice, holdsPage, isKey, setBindings, setDeviceSource } from './core/input';
 import { adHold, adWait } from './ui/adHold';
 import {
   BASICS_STEPS, LOCKED_FEATURES, basicsDone, completeBasics, featureOpen, heroOf, noteGoals, straightToBasics, type LockedFeature,
@@ -49,7 +49,7 @@ import type { Projector } from './ui/hud';
 import { openMoments } from './ui/moments';
 import type { OnlineHost } from './ui/online';
 import { SEP_MARK, installSepGuard, scoreHtml, sep } from './ui/text';
-import { Lesson, Trainer } from './ui/trainer';
+import { Lesson, lessonFailText, Trainer } from './ui/trainer';
 import { TouchControls } from './ui/touch';
 import { saveClip, shareClip } from './ui/clips';
 import { openRun } from './ui/run';
@@ -1266,10 +1266,16 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     // No clock to beat and no fail state: the step number where the countdown was, no 5-4-3-2-1, and the
     // moment's verdicts in the drill's own words.
     hud.countdownLabel = `${step}/${BASICS_STEPS}`;
+    // (Every man of ours in the drill shows through the score bug, the minimap and the controls: Hud.fadeTeam.)
+    hud.fadeTeam = true;
+    hud.setMatch(session.match);
+    // A miss says why (CrazyGames' review: "One more go" never said what went wrong), in the device's own keys; the
+    // banner stays up a little longer to be read.
+    const drill = Trainer.lesson;
     hud.retitle = (b) => {
       if (/^\d+$/.test(b.title)) return null;
-      if (b.title === 'FAILED') return { ...b, title: 'AGAIN!', sub: 'One more go' };
-      if (b.title === 'COMPLETE!') return { ...b, title: 'NICE!', sub: step < BASICS_STEPS ? `Step ${step} of ${BASICS_STEPS} done` : 'Basics done' };
+      if (b.title === 'FAILED') return { ...b, title: 'AGAIN!', sub: lessonFailText(drill?.failReason() ?? 'again', currentDevice(), 'default') };
+      if (b.title === 'COMPLETE!') return { ...b, title: 'NICE!', sub: step < BASICS_STEPS ? `STEP ${step} OF ${BASICS_STEPS} DONE` : 'BASICS DONE' };
       return b;
     };
   }
@@ -1790,6 +1796,8 @@ const BASICS_LOST_S = 2.5;
  * so the whistle or the catch reads.
  */
 const BASICS_DEAD_S = 0.9;
+/** A ball out of play: the whistle's beat (s), inside the sim's 0.6 s before it sets the restart up. */
+const BASICS_OUT_S = 0.45;
 let basicsLostT = 0;
 let basicsDeadT = 0;
 
@@ -1801,13 +1809,25 @@ function basicsWatch(dt: number): void {
     return;
   }
   const m = s.match;
+  // A wrong step that settles it (a shot before the cross, the cross taken down): AGAIN! and why, at once.
+  const lesson = Trainer.lesson;
+  lesson?.watch(m);
+  if (lesson?.verdict && m.phase !== 'fulltime' && m.phase !== 'goal') {
+    basicsLostT = basicsDeadT = 0;
+    finishScenario(m);
+    return;
+  }
   const own = m.ball.owner;
   const theirs = m.phase === 'play' && own >= 0 && m.players[own].side !== m.cfg.humanSide && !m.players[own].isKeeper;
   const caught = m.phase === 'play' && own >= 0 && m.players[own].side !== m.cfg.humanSide && m.players[own].isKeeper && m.ball.held;
   const dead = m.phase === 'out' || m.phase === 'restart';
   basicsLostT = theirs ? basicsLostT + dt : 0;
   basicsDeadT = dead || caught ? basicsDeadT + dt : 0;
-  if (basicsLostT > BASICS_LOST_S || basicsDeadT > BASICS_DEAD_S) {
+  // (A ball out ends it inside the sim's own beat (Match OUT_BEAT), never into the restart: a drill has nobody to take
+  // it, and the sim would bring a sent-off keeper back on for a goal kick and hand control to another man.)
+  const out = dead && (m.phase === 'restart' || basicsDeadT > BASICS_OUT_S);
+  if (basicsLostT > BASICS_LOST_S || basicsDeadT > BASICS_DEAD_S || out) {
+    lesson?.ended(basicsLostT > BASICS_LOST_S ? 'lost' : caught ? 'caught' : 'dead');
     basicsLostT = basicsDeadT = 0;
     // The session sees the whistle and ends the drill unsettled: AGAIN!, then main.ts restarts the step.
     finishScenario(m);
@@ -2051,6 +2071,12 @@ if (import.meta.env.DEV) {
     },
     key(code: string, down: boolean) {
       window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code }));
+    },
+    /** LEARN THE BASICS: start drill `step` (0 PASS, 1 SHOOT, 2 CROSS) now. */
+    basics(step: number) {
+      menus.close();
+      if (session) endMatch();
+      startBasics(step);
     },
     /**
      * Set pieces: give yourself one now (in open play): 'freekick' (in range: the reticle on the goal), 'wide' (a wide

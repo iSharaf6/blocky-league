@@ -6,6 +6,17 @@ Everything you upload is already made and checked. Your part: create the account
 
 ## 0. CrazyGames Full Launch update (14 October 2026)
 
+### Reply to the 21 October review (22 October 2026)
+
+CrazyGames found the last part of the tutorial confusing (their recording: drill 3, the cross, where the player dribbled out, got AGAIN with no reason, then was moved to the striker without being told). Paste this into **Update Notes**:
+
+> Thank you for the recording. The last tutorial drill is rebuilt around it.
+> 1. It is now two named steps, STEP 1 OF 2: CROSS and STEP 2 OF 2: FINISH. The player keeps the winger until the cross is made, and the cross prompt stays on screen the whole time.
+> 2. When the cross goes, play slows and NOW FINISH WITH ZAJAC appears with an arrow over the striker, then PRESS K NOW (TAP SHOOT NOW on touch) as the ball arrives. The prompt stays until the shot.
+> 3. Every retry now says what went wrong, for example THE BALL WENT OUT. CROSS BEFORE THE BYLINE, CROSS FIRST. HOLD L, THEN LET GO, or PRESS K AS THE BALL ARRIVES, and starts from the same place.
+> 4. No GOAL KICK or SWITCH prompts appear inside the tutorial, and nothing the player must look at sits under a button or the HUD on phones.
+> Please set the mobile and tablet orientation to landscape only.
+
 ### Reply to the 20 October review (21 October 2026)
 
 CrazyGames sent it back on 20 October with three points: UI not fully visible on iOS and scrollbars hidden there, the pause screen not dark, and no sign to press Space at kick-off. All three are fixed in the rebuilt v1.1.0 zip. Paste this into **Update Notes**:

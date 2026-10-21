@@ -1,7 +1,7 @@
 import { Vector3, type Camera } from 'three';
 import { BALL_OFS, PF } from '../game/replay';
 import { CURLER_MIN_D, knuckleRange } from '../sim/actions';
-import { HALF_L } from '../sim/constants';
+import { DT, HALF_L } from '../sim/constants';
 import { PITCH_Y } from '../render/stadium';
 import type { Match } from '../sim/match';
 import { skillWindow } from '../sim/skills';
@@ -213,11 +213,91 @@ export function trainerCue(m: Match, device: Device): TrainerCue {
 /** A basics prompt's title (the action), over its key cap and line. */
 const LESSON_TITLE: Record<LessonCue['key'], string> = { pass: 'PASS', shoot: 'SHOOT', through: 'CROSS', sprint: 'SPRINT', move: 'MOVE' };
 
-/** A LEARN THE BASICS prompt as a card: its title, the cap (the binding, or the button on screen), its line. */
-export function lessonCue(lc: LessonCue, device: Device): TrainerCue {
+/** Where a drill of named steps is (Lesson.progress): step `n` of `of`, called `name`. */
+export interface LessonProgress {
+  n: number;
+  of: number;
+  name: string;
+}
+
+/**
+ * A LEARN THE BASICS prompt as a card: its title (the action, or STEP 1 OF 2: CROSS in a drill of named steps), the
+ * cap (the binding, or the button on screen), its line.
+ */
+export function lessonCue(lc: LessonCue, device: Device, progress: LessonProgress | null = null): TrainerCue {
+  const title = progress ? `STEP ${progress.n} OF ${progress.of}: ${progress.name}` : LESSON_TITLE[lc.key];
   // (SPRINT on touch is the stick: there is no button to name.)
-  if (lc.key === 'sprint' && device === 'touch') return { title: LESSON_TITLE.sprint, actions: [[moveCap(device), 'Push the stick to chase the ball']] };
-  return { title: LESSON_TITLE[lc.key], actions: [[lc.key === 'move' ? moveCap(device) : keyCap(lc.key, device), coachText(lc.text, device)]] };
+  if (lc.key === 'sprint' && device === 'touch') return { title, actions: [[moveCap(device), 'Push the stick to chase the ball']] };
+  return { title, actions: [[lc.key === 'move' ? moveCap(device) : keyCap(lc.key, device), coachText(lc.text, device)]] };
+}
+
+/**
+ * Why a LEARN THE BASICS attempt failed: the AGAIN! banner's line (lessonFailText). CrazyGames' review of the CROSS
+ * drill: "AGAIN!" with "One more go" never said what went wrong.
+ */
+export type DrillFail =
+  | 'crossOut' | 'crossFirst' | 'crossLetGo' | 'crossMissed' | 'finishLate' | 'shotMissed'
+  | 'passOut' | 'passShot' | 'passMissed' | 'passKeeper' | 'shootOut' | 'shootMissed' | 'ownGoal' | 'again';
+/** How main.ts's watch saw an attempt end: the ball dead (out of play), in their keeper's hands, theirs too long. */
+export type DrillEnd = 'dead' | 'caught' | 'lost';
+
+/** The reasons, in the drills' words. {pass} / {shoot} / {through}: the key; {PRESS}: PRESS, or TAP on touch. */
+const FAIL_TEXT: Record<DrillFail, string> = {
+  crossOut: 'THE BALL WENT OUT. CROSS BEFORE THE BYLINE',
+  crossFirst: 'CROSS FIRST. HOLD {through}, THEN LET GO',
+  crossLetGo: 'LET GO OF {through} TO CROSS, THEN {PRESS} {shoot}',
+  crossMissed: 'THE CROSS MISSED YOUR RUNNER',
+  finishLate: '{PRESS} {shoot} AS THE BALL ARRIVES',
+  shotMissed: 'SHOT MISSED. TRY AGAIN',
+  passOut: 'THE BALL WENT OUT. {PRESS} {pass} TO PASS',
+  passShot: 'NO SHOOTING HERE. {PRESS} {pass} TO PASS',
+  passMissed: 'THE PASS MISSED HIM. AIM AT YOUR TEAMMATE',
+  passKeeper: 'THE KEEPER TOOK IT. {PRESS} {pass} TO PASS',
+  shootOut: 'THE BALL WENT OUT. HOLD {shoot}, THEN LET GO',
+  shootMissed: 'SHOT MISSED. AIM BETWEEN THE POSTS',
+  ownGoal: 'THAT WAS YOUR OWN GOAL. ATTACK THE OTHER ONE',
+  again: 'ONE MORE GO',
+};
+
+/** The default names (core/input.ts DEFAULT_HINT_TOKENS): what Hud.show's remapKeys turns into the bindings in force. */
+const DEFAULT_CAPS: Record<'keyboard' | 'gamepad', Record<'pass' | 'shoot' | 'through', string>> = {
+  keyboard: { pass: 'SPACE', shoot: 'K', through: 'L' },
+  gamepad: { pass: 'A', shoot: 'B', through: 'X' },
+};
+
+/**
+ * A failed attempt's reason in words, with the device's keys: the bound key or pad button (`caps` 'bound'), or the
+ * default names for a line that goes through Hud.show (`caps` 'default': it re-writes those for the bindings in
+ * force, so a bound name written there could be swapped twice). Touch names its buttons and says TAP.
+ */
+export function lessonFailText(why: DrillFail, device: Device, caps: 'bound' | 'default' = 'bound'): string {
+  const cap = (a: 'pass' | 'shoot' | 'through') => (caps === 'default' && device !== 'touch' ? DEFAULT_CAPS[device][a] : keyCap(a, device));
+  return FAIL_TEXT[why]
+    .replace(/\{PRESS\}/g, pressVerb(device).toUpperCase())
+    .replace(/\{(pass|shoot|through)\}/g, (_, a: 'pass' | 'shoot' | 'through') => cap(a));
+}
+
+/** A quick THROUGH tap in the CROSS step is held this long (s) for the sim, so it is a cross (THROUGH_LOB_HOLD is 0.3). */
+const CROSS_HOLD_S = 0.36;
+/** The finish: PRESS K NOW comes up once the ball is this close to the runner in time (s) or distance (m)... */
+const NOW_LEAD_S = 0.5;
+const NOW_D = 2.5;
+/** ... and goes (the pace back to normal) this long (s of play) later if he never struck it. */
+const NOW_MAX_S = 1;
+/** A finish not in this long (s of play) after it was struck has missed (Lesson.watch). */
+const FINISH_MISS_S = 2.2;
+/** The game's pace while the cross is in the air (the callout's time to be read), and as it reaches the runner. */
+const FLIGHT_PACE = 0.6;
+const NOW_PACE = 0.35;
+
+/**
+ * The runner's name as the callout says it: his surname in capitals, plain letters ("J. Zając" → ZAJAC: the pixel face
+ * has no accented capitals, and a fallback glyph in the middle of the word reads as a glitch).
+ */
+export function calloutName(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return (parts[parts.length - 1] ?? name).normalize('NFD').replace(/\p{M}/gu, '').replace(/ł/g, 'l').replace(/Ł/g, 'L')
+    .replace(/ø/g, 'o').replace(/Ø/g, 'O').replace(/[^\p{L}'’]/gu, '').toUpperCase();
 }
 
 /** The first match's teaching cards (the same look and words as the basics prompts). */
@@ -240,6 +320,24 @@ export class Lesson {
   private released = false;
   private receiver = -1;
   private receiveKick = -1;
+  /** The index of the cue last shown: it stays up for the rest of its step (sticky), never the controls bar mid-step. */
+  private seen = -1;
+  /** The cross (kickId) and the man it is for: the FINISH step's runner. */
+  private crossKick = -1;
+  private runner = -1;
+  /** THROUGH held (s of play) in the CROSS step: a quick tap is held to a cross (filterPad). */
+  private crossHold = 0;
+  /** SHOOT pressed during the FINISH step (filterPad). */
+  private pressedShoot = false;
+  /** The FINISH step's PRESS K NOW: the clock it came up at (-1: not yet). */
+  private nowAt = -1;
+  private shotTaken = false;
+  /** The CROSS drill's finish: the clock it was struck at (-1: not yet), for watch's miss. */
+  private finishAt = -1;
+  private passed = false;
+  /** This attempt is lost now (a shot before the cross, the cross taken down): main.ts ends it. */
+  private failNow: DrillFail | null = null;
+  private endCause: DrillEnd | null = null;
   constructor(readonly cues: readonly LessonCue[]) {}
 
   /** The cue waiting to be learned (null: all done). */
@@ -256,29 +354,171 @@ export class Lesson {
     this.released = false;
   }
 
-  /** Every match event (main.ts): our kicks clear PASS / SHOOT / CROSS cues. */
+  /** Every match event (main.ts): our kicks clear PASS / SHOOT / CROSS cues, and a wrong one ends the attempt. */
   event(e: MatchEvent, m: Match): void {
-    if (e.type === 'control' && e.player === this.receiver && m.kickId === this.receiveKick && m.players[e.player]?.side === m.cfg.humanSide) {
-      this.done('pass');
-      this.receiver = -1;
+    const hs = m.cfg.humanSide;
+    // (Dribbled the length of the pitch into his own net: the judge fails it; this says why.)
+    if (e.type === 'goal' && e.side !== hs) this.failNow ??= 'ownGoal';
+    if (e.type === 'control' && m.players[e.player]?.side === hs) {
+      // (The finish struck and the ball back at one of ours' feet: it never went in.)
+      if (this.finishAt >= 0) this.failNow ??= 'shotMissed';
+      if (e.player === this.receiver && m.kickId === this.receiveKick) {
+        this.done('pass');
+        this.receiver = -1;
+      } else if (this.current?.done === 'shot' && this.current.when === 'incoming' && this.crossKick >= 0 && m.kickId === this.crossKick) {
+        // The cross taken down instead of struck as it came: the FINISH step is a first-time strike.
+        this.failNow ??= e.player === this.runner ? 'finishLate' : 'crossMissed';
+      }
     }
     if (e.type !== 'kick') return;
-    const hs = m.cfg.humanSide;
     const by = m.players[e.player ?? m.ball.lastTouch];
     if (!by || by.side !== hs) return;
-    if (e.kind === 'shot' || e.kind === 'header') this.done('shot');
-    else if (e.kind === 'lob') this.done('cross');
-    else if (e.kind === 'pass' && this.current?.done === 'pass') {
+    const cue = this.current;
+    if (e.kind === 'shot' || e.kind === 'header') {
+      // A strike before the step that comes first: the attempt ends now (no goal celebrated that doesn't count).
+      if (cue?.done === 'cross') this.failNow ??= e.style === 'chip' || m.ctl[hs]?.prev.through ? 'crossLetGo' : 'crossFirst';
+      else if (cue?.done === 'pass') this.failNow ??= 'passShot';
+      else {
+        this.shotTaken = true;
+        if (cue?.done === 'shot' && cue.when === 'incoming') this.finishAt = m.clock;
+      }
+      this.done('shot');
+    } else if (e.kind === 'lob') {
+      if (cue?.done === 'cross') {
+        this.crossKick = m.kickId;
+        this.runner = m.passTarget;
+      }
+      this.done('cross');
+    } else if (e.kind === 'pass' && cue?.done === 'pass') {
       this.receiver = m.passTarget;
       this.receiveKick = m.kickId;
+      this.passed = true;
     }
   }
 
-  /** Give a beginner time to read each cue. The same fresh action then starts live play. */
+  /**
+   * Give a beginner time to read the drill's first prompt: the picture holds until he acts, and that same fresh action
+   * starts live play (a button the prompt ignores doesn't). Never on a ball in the air: the FINISH step's cross flies
+   * on, slowed as it comes (pace), where a frozen picture read as a stuck game in CrazyGames' review.
+   */
   hold(m: Match, c: TeachControls & { shoot?: boolean; through?: boolean }): boolean {
-    if (this.released || !this.current || !this.show(m, c)) return false;
-    if (c.pass || c.shoot || c.through || c.sprint || Math.hypot(c.sx, c.sy) > 0.3) this.released = true;
+    const cue = this.current;
+    if (this.released || !cue || cue.when === 'incoming' || !this.show(m, c)) return false;
+    const ig = cue.ignore ?? [];
+    const on = (b: 'pass' | 'shoot' | 'through') => !!c[b] && !ig.includes(b);
+    if (on('pass') || on('shoot') || on('through') || c.sprint || Math.hypot(c.sx, c.sy) > 0.3) this.released = true;
     return !this.released;
+  }
+
+  /**
+   * The drill's buttons for the next sim step (game/matchSession.ts buildPad): those the prompt ignores dropped (in the
+   * CROSS step SWITCH does nothing: control stays with the crosser until the cross is away), and in the CROSS step a
+   * quick THROUGH tap held until it is a cross, not a through ball.
+   */
+  filterPad<P extends { pass: boolean; shoot: boolean; through: boolean }>(pad: P, m: Match): P {
+    const cue = this.current;
+    if (!cue || m.phase !== 'play') {
+      this.crossHold = 0;
+      return pad;
+    }
+    const out = { ...pad };
+    for (const b of cue.ignore ?? []) out[b] = false;
+    if (cue.done === 'cross') {
+      const mine = m.active >= 0 && m.ball.owner === m.active;
+      if (mine && out.through) this.crossHold += DT;
+      else if (mine && this.crossHold > 0 && this.crossHold < CROSS_HOLD_S) {
+        out.through = true;
+        this.crossHold += DT;
+      } else this.crossHold = 0;
+    }
+    if (cue.done === 'shot' && cue.when === 'incoming' && out.shoot) this.pressedShoot = true;
+    return out;
+  }
+
+  /** Where a drill of named steps is (STEP 1 OF 2: CROSS); null for a one-step drill, or once every step is done. */
+  progress(): LessonProgress | null {
+    const names: string[] = [];
+    for (const c of this.cues) if (c.step && !names.includes(c.step)) names.push(c.step);
+    const name = this.current?.step;
+    if (!name || names.length < 2) return null;
+    return { n: names.indexOf(name) + 1, of: names.length, name };
+  }
+
+  /**
+   * What the drill's card shows this frame (`live`: show()'s cue): the prompt while its moment holds, and still for the
+   * rest of its step once it has been up (the controls bar never stands in mid-step: CrazyGames' review saw SPRINT and
+   * SWITCH where CROSS and SHOOT belonged); the PASS step's "let it reach him" while the pass is on its way. Null:
+   * nothing (between steps, or the attempt is over).
+   */
+  card(live: LessonCue | null, device: Device): TrainerCue | null {
+    const cue = this.current;
+    if (!cue || this.failNow) return null;
+    if (live) this.seen = this.i;
+    if (cue.done === 'pass' && this.receiver >= 0) return { title: LESSON_TITLE.pass, actions: [['', 'Let the ball reach him']] };
+    if (!live && this.seen !== this.i) return null;
+    return lessonCue(cue, device, this.progress());
+  }
+
+  /**
+   * The FINISH step's moment (the cross on its way to the runner): 'switch' while it flies (NOW FINISH WITH ZAJAC,
+   * the arrow on him), 'now' as it reaches him (PRESS K NOW, slower still). Null outside it, or once he has struck it.
+   */
+  finishCall(m: Match): { phase: 'switch' | 'now'; runner: number } | null {
+    const cue = this.current;
+    if (!cue || cue.done !== 'shot' || cue.when !== 'incoming' || this.crossKick < 0 || this.failNow || m.phase !== 'play') return null;
+    if (m.kickId !== this.crossKick) return null;
+    const r = m.players[this.runner] ?? (m.active >= 0 ? m.players[m.active] : undefined);
+    if (!r) return null;
+    if (this.nowAt < 0) {
+      const b = m.ball;
+      const d = Math.hypot(b.pos.x - r.pos.x, b.pos.z - r.pos.z);
+      const v = Math.max(1, Math.hypot(b.vel.x - r.vel.x, b.vel.z - r.vel.z));
+      if (d < NOW_D || d / v < NOW_LEAD_S) this.nowAt = m.clock;
+    }
+    if (this.nowAt < 0) return { phase: 'switch', runner: r.idx };
+    return m.clock - this.nowAt <= NOW_MAX_S ? { phase: 'now', runner: r.idx } : null;
+  }
+
+  /** The drill's pace (the session's step rate): slowed while the cross flies to the runner, slower as it arrives. */
+  pace(m: Match): number {
+    const f = this.finishCall(m);
+    return !f ? 1 : f.phase === 'now' ? NOW_PACE : FLIGHT_PACE;
+  }
+
+  /**
+   * Every frame of a drill (main.ts basicsWatch): the CROSS drill's finish that has not gone in FINISH_MISS_S after it
+   * was struck (off the post and still in play, say) is a miss: the attempt ends (SHOT MISSED), never a drill left
+   * running with nothing to say.
+   */
+  watch(m: Match): void {
+    if (this.finishAt >= 0 && m.phase === 'play' && m.clock - this.finishAt > FINISH_MISS_S) this.failNow ??= 'shotMissed';
+  }
+
+  /** The attempt is lost now, whatever the ball does next: main.ts ends it at once (null: play on). */
+  get verdict(): DrillFail | null {
+    return this.failNow;
+  }
+
+  /** main.ts's watch ended the attempt (the ball dead, their keeper's hands, their ball): kept for failReason. */
+  ended(cause: DrillEnd): void {
+    this.endCause ??= cause;
+  }
+
+  /** Why this attempt failed, from what happened in it (the AGAIN! banner's line: lessonFailText). */
+  failReason(): DrillFail {
+    if (this.failNow) return this.failNow;
+    const first = this.cues[0]?.done;
+    if (first === 'cross') {
+      if (this.crossKick < 0) return 'crossOut';
+      if (!this.shotTaken) return this.pressedShoot ? 'finishLate' : 'crossMissed';
+      return 'shotMissed';
+    }
+    if (first === 'pass') {
+      if (!this.passed) return this.endCause === 'caught' ? 'passKeeper' : 'passOut';
+      return 'passMissed';
+    }
+    if (first === 'shot') return this.shotTaken ? 'shootMissed' : 'shootOut';
+    return 'again';
   }
 
   /** The cue to show now, if its time and moment have come (called by the trainer each frame). */
@@ -361,6 +601,13 @@ export class Trainer {
   private barNextSince = 0;
   /** Frames since the bar last looked whether the play is under it. */
   private underTick = 0;
+  /** LEARN THE BASICS' finish callout (NOW FINISH WITH ZAJAC, PRESS K NOW) and the arrow over the runner. */
+  private call: HTMLElement;
+  private callA: HTMLElement;
+  private callKey: HTMLElement;
+  private callB: HTMLElement;
+  private arrow: HTMLElement;
+  private callKeyText = '';
 
   constructor() {
     this.root.className = 'pitch-trainer';
@@ -368,7 +615,9 @@ export class Trainer {
     this.root.innerHTML = `<svg class="trainer-guide" aria-hidden="true"><line class="trainer-line-shadow"/><line class="trainer-line"/></svg>
       <div class="trainer-card coach bar" role="group" aria-label="Controls">
         <div class="trainer-title coach-title"></div><div class="trainer-actions coach-actions"></div><div class="trainer-detail coach-detail"></div>
-      </div>`;
+      </div>
+      <div class="drill-arrow" aria-hidden="true" hidden></div>
+      <div class="drill-call" role="status" aria-live="polite" hidden><span class="dc-a"></span><kbd class="dc-key" hidden></kbd><span class="dc-b"></span></div>`;
     this.card = this.root.querySelector('.trainer-card')!;
     this.parts = {
       title: this.root.querySelector('.trainer-title')!,
@@ -378,12 +627,18 @@ export class Trainer {
     this.line = this.root.querySelector('.trainer-line')!;
     this.shadow = this.root.querySelector('.trainer-line-shadow')!;
     this.guide = this.root.querySelector('svg')!;
+    this.call = this.root.querySelector('.drill-call')!;
+    this.callA = this.root.querySelector('.dc-a')!;
+    this.callKey = this.root.querySelector('.dc-key')!;
+    this.callB = this.root.querySelector('.dc-b')!;
+    this.arrow = this.root.querySelector('.drill-arrow')!;
   }
 
   /** Hidden (intro, pause, replay, cinematic): nothing is waiting, so the session never holds the sim on a card nobody sees. */
   hide(): void {
     this.root.hidden = true;
     this.waitingFor = null;
+    this.call.hidden = this.arrow.hidden = true;
     // (Back in play, the bar shows the situation as it is then, at once: nothing stale waits out a hold.)
     this.barKey = this.barNext = '';
     this.barCue = null;
@@ -495,6 +750,66 @@ export class Trainer {
     return this.stage !== 'play' && this.teach(m, frame, device, controls);
   }
 
+  /**
+   * LEARN THE BASICS' finish (Lesson.finishCall): as the cross goes, NOW FINISH WITH ZAJAC big across the picture and an
+   * arrow bobbing over him (control has just moved to him); as it reaches him, PRESS K NOW (TAP SHOOT on touch, the
+   * pad's button on a pad). Placed in a band clear of the score bug, the card, the ball and the runner.
+   */
+  private drillCall(lesson: Lesson | null, m: Match, frame: Float32Array, camera: Camera, head: number, device: Device): void {
+    const f = lesson?.finishCall(m) ?? null;
+    if (!f) {
+      if (!this.call.hidden) this.call.hidden = true;
+      if (!this.arrow.hidden) this.arrow.hidden = true;
+      return;
+    }
+    const now = f.phase === 'now';
+    const runner = m.players[f.runner];
+    const a = now ? pressVerb(device).toUpperCase() : 'NOW FINISH WITH';
+    const k = now ? keyCap('shoot', device) : '';
+    const b = now ? 'NOW' : calloutName(runner?.def.name ?? '');
+    if (this.callA.textContent !== a) this.callA.textContent = a;
+    if (this.callKeyText !== k) {
+      this.callKeyText = k;
+      this.callKey.textContent = k;
+      this.callKey.hidden = !k;
+    }
+    if (this.callB.textContent !== b) this.callB.textContent = b;
+    this.call.classList.toggle('now', now);
+    this.call.hidden = false;
+    const w = window.innerWidth, h = window.innerHeight;
+    const o = f.runner * PF;
+    const project = (x: number, y: number, z: number) => {
+      this.v.set(x, y + PITCH_Y, z).project(camera);
+      return { x: (this.v.x + 1) * w / 2, y: (1 - this.v.y) * h / 2, ok: this.v.z > -1 && this.v.z < 1 };
+    };
+    const lift = frame[o + 2] || 0;
+    const top = project(frame[o], head + 0.45 + lift, frame[o + 1]);
+    this.arrow.hidden = !top.ok;
+    if (top.ok) {
+      this.arrow.style.left = `${top.x.toFixed(1)}px`;
+      this.arrow.style.top = `${top.y.toFixed(1)}px`;
+    }
+    // A band for the words: under the top cluster, else over the card; the one the ball and the runner are not in.
+    const r = this.call.getBoundingClientRect();
+    const ch = r.height || 40;
+    const cw = r.width || 300;
+    const pts = [
+      project(frame[BALL_OFS], frame[BALL_OFS + 1], frame[BALL_OFS + 2]),
+      project(frame[o], 0.1 + lift, frame[o + 1]), top,
+    ].filter((p) => p.ok);
+    const hud = this.root.parentElement;
+    let topBand = 0.12 * h;
+    for (const sel of ['.scorebug', '.hud-pause', '.hud-cam']) {
+      const q = hud?.querySelector(sel)?.getBoundingClientRect();
+      if (q && q.height > 0 && q.left < w / 2 + cw / 2 && q.right > w / 2 - cw / 2) topBand = Math.max(topBand, q.bottom + 10);
+    }
+    const card = this.card.hidden ? null : this.card.getBoundingClientRect();
+    const lowBand = (card && card.height > 0 ? card.top : h * 0.8) - ch - 12;
+    const hits = (y: number) => pts.filter((p) => p.x > w / 2 - cw / 2 - 16 && p.x < w / 2 + cw / 2 + 16 && p.y > y - 16 && p.y < y + ch + 16).length;
+    const y = hits(topBand) <= hits(lowBand) ? topBand : lowBand;
+    this.call.style.top = `${Math.round(Math.max(4, y))}px`;
+  }
+
   /** `_head` (the head height the card once rode at) is kept so the session's call stays as it was. */
   update(m: Match, frame: Float32Array, camera: Camera, _head: number, device: Device, controls?: TeachControls | null): void {
     if (!this.stageInit) {
@@ -507,10 +822,12 @@ export class Trainer {
     const teaching = !lesson && this.teach(m, frame, device, controls);
     // A basics prompt, or the first match's MOVE / PASS step (teach() has drawn that one): the lesson look, in the
     // bar's place. Otherwise the controls bar (in a drill, between its prompts too).
-    const lc = lesson ? lesson.show(m, controls ?? this.fed ?? Trainer.input?.read() ?? null) : null;
+    // (In a drill the drill's own card, or nothing: never the controls bar, which named SPRINT and SWITCH mid-step.)
+    const lc = lesson ? lesson.card(lesson.show(m, controls ?? this.fed ?? Trainer.input?.read() ?? null), device) : null;
     const taught = !!lc || teaching;
-    const cue: LearnedCue | null = lc ? lessonCue(lc, device) : teaching ? null : this.bar(m, device);
+    const cue: LearnedCue | null = lc ? lc : teaching || lesson ? null : this.bar(m, device);
     if (!teaching) this.card.classList.toggle('lesson', !!lc);
+    this.drillCall(lesson, m, frame, camera, _head, device);
     this.card.classList.toggle('bar', !taught);
     this.card.classList.toggle('quiet', !taught && !!cue?.quiet);
     this.card.hidden = !taught && !cue;
@@ -524,11 +841,12 @@ export class Trainer {
       }
     }
     // The bar nearly see-through while the ball or his man is under it (looked at every third frame, about 20 times a
-    // second as the minimap is): it sits at the bottom centre, where a broadcast shot often has the play.
+    // second as the minimap is): it sits at the bottom centre, where a broadcast shot often has the play. In a drill the
+    // prompt too, for every man of ours on the pitch (two or three): the winger is never hidden under it.
     if (++this.underTick >= 3) {
       this.underTick = 0;
       let under = false;
-      if (!taught && !this.card.hidden) {
+      if ((!taught || lesson) && !this.card.hidden) {
         const r = this.card.getBoundingClientRect();
         const w = window.innerWidth, h = window.innerHeight, pad = 14;
         const hit = (x: number, y: number, z: number): boolean => {
@@ -536,8 +854,9 @@ export class Trainer {
           const px = (this.v.x + 1) * w / 2, py = (1 - this.v.y) * h / 2;
           return this.v.z > -1 && this.v.z < 1 && px > r.left - pad && px < r.right + pad && py > r.top - pad && py < r.bottom + pad;
         };
-        const a = m.active * PF;
-        under = hit(frame[BALL_OFS], frame[BALL_OFS + 1], frame[BALL_OFS + 2]) || hit(frame[a], 0.2, frame[a + 1]) || hit(frame[a], 0.9, frame[a + 1]) || hit(frame[a], 1.6, frame[a + 1]);
+        const man = (i: number) => hit(frame[i * PF], 0.2, frame[i * PF + 1]) || hit(frame[i * PF], 0.9, frame[i * PF + 1]) || hit(frame[i * PF], 1.6, frame[i * PF + 1]);
+        under = hit(frame[BALL_OFS], frame[BALL_OFS + 1], frame[BALL_OFS + 2]) || man(m.active) ||
+          (!!lesson && m.players.some((p) => p.side === m.cfg.humanSide && !p.sentOff && man(p.idx)));
       }
       if (under !== this.card.classList.contains('under')) this.card.classList.toggle('under', under);
     }

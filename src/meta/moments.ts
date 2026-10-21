@@ -364,6 +364,16 @@ export interface LessonCue {
   /** onBall: our man has it at his feet; offBall: nobody of ours has it; incoming: a ball is on its way to our man. */
   when: 'onBall' | 'offBall' | 'incoming' | 'any';
   done: 'pass' | 'shot' | 'cross' | 'sprint' | 'move';
+  /**
+   * A drill of more than one step names each one (CROSS, then FINISH): the prompt's title reads STEP 1 OF 2: CROSS.
+   * Left out, the title is the action (PASS, SHOOT).
+   */
+  step?: string;
+  /**
+   * Buttons that do nothing while this prompt is the one to learn (ui/trainer.ts Lesson.filterPad): a SWITCH or a pass
+   * that would hand the ball, and the control, to another man before the step is done; a THROUGH the drill can't judge.
+   */
+  ignore?: readonly ('pass' | 'shoot' | 'through')[];
 }
 
 /** A LEARN THE BASICS step: a tiny staged situation (a Football Moment spec that isn't in the MOMENTS list). */
@@ -394,7 +404,7 @@ export const BASICS: readonly BasicsStep[] = [
     brief: 'Pass to your free teammate and let the ball reach him.',
     icon: 'swap',
     lesson: [
-      { key: 'pass', text: 'Pass to the ringed teammate', after: 0, when: 'onBall', done: 'pass' },
+      { key: 'pass', text: 'Pass to the ringed teammate', after: 0, when: 'onBall', done: 'pass', ignore: ['through'] },
     ],
     spec: {
       id: 'basics-pass',
@@ -408,8 +418,10 @@ export const BASICS: readonly BasicsStep[] = [
       humanSide: HS,
       difficulty: 0,
       players: [
-        // Learn the transfer in midfield, out of the goalkeeper's collection range.
-        at(HS, 9, -8, -6), at(HS, 10, 7, 6), AI_KEEPER,
+        // Learn the transfer in midfield, out of the goalkeeper's collection range. The teammate stands up and ahead
+        // of the passer, so on a phone on its side he is in the open picture, never behind the touch buttons, the
+        // minimap or the prompt (measured at 667 by 375, 745 by 290, 785 by 282, 852 by 393).
+        at(HS, 9, -8, -6), at(HS, 10, 4, -10), AI_KEEPER,
       ],
       sentOff: [...allBut(HS, [0, 9, 10]), ...allBut(AI, [0])],
       owner: { side: HS, slot: 9 },
@@ -423,8 +435,8 @@ export const BASICS: readonly BasicsStep[] = [
     brief: 'An open goal from twelve metres. Hold SHOOT, aim at a corner, let go.',
     icon: 'ball',
     lesson: [
-      { key: 'shoot', text: 'Hold, aim at a corner, let go', after: 0, when: 'onBall', done: 'shot' },
-      { key: 'sprint', text: 'Hold to chase the ball', after: 1.2, when: 'offBall', done: 'sprint' },
+      { key: 'shoot', text: 'Hold, aim at a corner, let go', after: 0, when: 'onBall', done: 'shot', ignore: ['pass', 'through'] },
+      { key: 'sprint', text: 'Hold to chase the ball', after: 1.2, when: 'offBall', done: 'sprint', ignore: ['pass', 'through'] },
     ],
     spec: {
       id: 'basics-shoot',
@@ -449,9 +461,12 @@ export const BASICS: readonly BasicsStep[] = [
     title: 'CROSS',
     brief: 'Cross into the open goalmouth, then finish with your runner.',
     icon: 'cross',
+    // Two men, two steps: the winger crosses (control stays with him, SWITCH and PASS do nothing until the cross is
+    // away), then control is the runner's and he finishes it first time (ui/trainer.ts Lesson: the callouts, the
+    // slow motion as it arrives, why an attempt failed).
     lesson: [
-      { key: 'through', text: 'Hold, then let go to cross', after: 0, when: 'onBall', done: 'cross' },
-      { key: 'shoot', text: '{Tap} as the cross arrives', after: 0, when: 'incoming', done: 'shot' },
+      { key: 'through', text: 'Hold, then let go to cross', after: 0, when: 'onBall', done: 'cross', step: 'CROSS', ignore: ['pass'] },
+      { key: 'shoot', text: '{Tap} as the cross arrives', after: 0, when: 'incoming', done: 'shot', step: 'FINISH', ignore: ['pass', 'through'] },
     ],
     spec: {
       id: 'basics-cross',
