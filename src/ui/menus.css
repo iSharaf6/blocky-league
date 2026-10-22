@@ -246,6 +246,10 @@
   .events-screen .panel.ev-panel.shell { width: min(880px, 100%); }
   .ht .panel.ht-panel.shell,
   .ft .panel.ft-panel.shell { width: min(940px, 100%); }
+  /* Half time holds less than full time: its card is as tall as what it shows (up to the shell's height), so no blank
+     block sits under the ratings on a tall window (CrazyGames' QA at 1920x945, 22 October). The numbers' card
+     stretches to the match pane's height beside it. */
+  .ht .panel.ht-panel.shell { height: auto; max-height: min(720px, calc(calc(100 * var(--dvh)) - 32px)); }
   .ft.moment .panel.mo-panel.shell { width: min(720px, 100%); }
   .backup .panel.bk-panel.shell { width: min(760px, 100%); }
 }
@@ -471,6 +475,8 @@
   .ht-row { min-height: 28px; font-size: 14px; }
   .ht-row > b { font-size: 13px; }
   .ht-split .ht-pad { height: 140px; }
+  /* (In the shorter pad the cluster a step smaller, so THROUGH's bubble is whole: it was cut at the top on a phone.) */
+  .ht-split .ht-pad .ht-cluster { transform: scale(0.9); transform-origin: 100% 100%; }
 }
 /* Too narrow for the pad beside the rows (667 wide): the rows alone, their dots in the buttons' colours. */
 @container app (max-width: 760px) {
@@ -532,6 +538,8 @@
 .panel.mc.shell .f-team .crest-svg { width: clamp(26px, calc(6.5 * var(--vmin)), 52px); height: auto; }
 .panel.mc.shell .f-team b { font-size: clamp(16px, calc(2.2 * var(--vw)), 22px); }
 .panel.mc.shell .f-team ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 8px; max-height: 2.5em; overflow: hidden; font-size: 13px; line-height: 1.25; }
+/* A side's scorers past its two lines: +N MORE in their place (Menus.fitScorers), never a silent cut. */
+.panel.mc.shell .f-team ul .f-more { color: var(--blue-d); letter-spacing: 0.5px; white-space: nowrap; }
 .panel.mc.shell .f-score { padding-top: 0; font-size: clamp(36px, calc(9 * var(--vmin)), 68px); }
 
 /* (The numbers' columns grow for a three-digit 100%, which ran out of a 30 px column.) */
@@ -657,6 +665,9 @@
 .panel.mc.shell .ft-gain .ft-prog { flex: none; grid-template-columns: auto minmax(0, 1fr); justify-items: stretch; align-items: center; column-gap: 14px; padding: 8px 12px; }
 .panel.mc.shell .ft-gain .ft-stars { font-size: 30px; gap: 2px; }
 .panel.ft-panel.shell .ft-extra { display: grid; gap: 6px; align-content: start; padding: 0 4px 4px 0; }
+/* The extras are part of that column, not a list of their own: as a pane in it they were squeezed to a 27 px strip
+   showing half a row on a phone (CrazyGames' QA at 745x290, 22 October). Whole, the column above scrolls, with its bar. */
+.panel.ft-panel.shell .ft-gain > .ft-extra { flex: none; min-height: auto; overflow: visible; }
 .panel.ft-panel.shell .ft-extra .ft-streak { justify-self: start; }
 .panel.ft-panel.shell .ft-extra .ft-daily li,
 .panel.ft-panel.shell .ft-extra .ft-shop { font-size: 14px; }
@@ -778,3 +789,26 @@
 .panel.qm.shell .qm-seg[data-o="wx"] { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .panel.qm.shell .qm-seg[data-o="wx"] button { font-size: 11px; }
 .panel.qm.shell .qm-weather-note { grid-column: 1 / -1; color: var(--ink-2); font: 400 11px / 1.15 var(--round); }
+
+/* ---------------------------------------------------------------- a sheet's close
+
+   The daily gift's X, top right (Menus.gift): back to the menu with nothing claimed; the GIFT chip there keeps today's
+   gift. A solid ink square with a cream cross, 40 px (the smallest tap target the game uses on a phone). */
+.panel.gift-panel { position: relative; }
+/* (The title keeps clear of it: the same room both sides, so it stays centred and never runs under the X.) */
+.panel.gift-panel:has(> .sheet-x) > h2 { padding: 0 26px; font-size: clamp(22px, calc(3 * var(--vw)), 34px); }
+.panel .sheet-x {
+  appearance: none; border: 0; margin: 0; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  position: absolute; top: 8px; right: 8px; z-index: 4; width: 40px; height: 40px;
+  background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25);
+  transition: transform 0.06s, box-shadow 0.06s;
+}
+.panel .sheet-x::before,
+.panel .sheet-x::after {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 22px; height: 4px; background: var(--cream);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.panel .sheet-x::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.panel .sheet-x:hover { filter: brightness(1.25); }
+.panel .sheet-x:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25); }
+.panel .sheet-x:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2px; }

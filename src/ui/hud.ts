@@ -6,6 +6,7 @@ import { crestSvg } from './crest';
 import { cssHex } from '../render/palette';
 import { Commentator, POWER_INFO, pitchNames, surname, type CommentaryLine } from './commentary';
 import { actionKey, currentDevice, remapKeys } from '../core/input';
+import { plainName } from '../core/displayName';
 import { coachParts, cueKey, cueOfText, fillCoach, type CoachCue, type CoachParts } from './coach';
 import { pixelIcon } from './pixelIcons';
 import { escHtml, scoreHtml, sepsOfText } from './text';
@@ -46,6 +47,8 @@ const TOAST_PLACE_S = 0;
 /** Timed finishing verdicts (the sim's 'timing' event), and how long one stays up (matches the CSS animation). */
 export type TimingGrade = 'perfect' | 'good' | 'early' | 'late';
 const TIMING_S = 0.8;
+/** The kick-off prompt's pointer to the taker (THIS IS YOU), px tall: coach.css .hud-kick .kk-ptr. */
+const KICK_PTR = 14;
 
 export interface HudTeam {
   short: string;
@@ -151,6 +154,9 @@ export class Hud {
   private kick: HTMLDivElement;
   private kickVerb: HTMLElement;
   private kickKey: HTMLElement;
+  /** Its THIS IS YOU line (the first match: one step with the prompt) and the pointer down (or up) to the taker. */
+  private kickYou: HTMLElement;
+  private kickPtr: HTMLElement;
   private kickAt: { taker: number; top: number } | null = null;
   /** Nowhere clear for the ticker (a set piece where every free band would cover the goal): hidden meanwhile. */
   private cmBlocked = false;
@@ -211,7 +217,7 @@ export class Hud {
         <div class="sb-cards h"></div>
         <div class="sb-cards a"></div>
       </div>
-      <button class="hud-pause" aria-label="Pause">II</button>
+      <button class="hud-pause" aria-label="Pause" tabindex="-1">II</button>
       <button class="hud-cam" aria-label="Camera" tabindex="-1">${pixelIcon('camera', '#fbfbf4', 3)}</button>
       <div class="hud-power" role="status" aria-live="polite" hidden>
         <span class="pw-slot"><i class="pw-ico"></i><svg class="pw-ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="pw-ring-bg" cx="20" cy="20" r="17"/><circle class="pw-ring-fg" cx="20" cy="20" r="17"/></svg></span>
@@ -221,7 +227,7 @@ export class Hud {
       <div class="hud-toast"></div>
       <div class="hud-timing" aria-live="polite"></div>
       <div class="hud-hint"></div>
-      <div class="hud-kick" role="status" aria-live="polite"><span class="kk-verb">PRESS</span><kbd class="kk-key">SPACE</kbd><span class="kk-to">TO KICK OFF</span></div>
+      <div class="hud-kick" role="status" aria-live="polite"><b class="kk-you" hidden></b><span class="kk-line"><span class="kk-verb">PRESS</span><kbd class="kk-key">SPACE</kbd><span class="kk-to">TO KICK OFF</span></span><i class="kk-ptr" aria-hidden="true"></i></div>
       <div class="hud-tip"></div>
       <div class="hud-cm" role="status" aria-live="polite"><b class="cm-tag"></b><span class="cm-text"></span></div>
       <div class="hud-chip"><span class="chip-num"></span><span class="chip-name"></span><div class="chip-stam"><div></div></div></div>
@@ -238,6 +244,8 @@ export class Hud {
     this.kick = this.root.querySelector('.hud-kick')!;
     this.kickVerb = this.root.querySelector('.kk-verb')!;
     this.kickKey = this.root.querySelector('.kk-key')!;
+    this.kickYou = this.root.querySelector('.kk-you')!;
+    this.kickPtr = this.root.querySelector('.kk-ptr')!;
     this.chip = this.root.querySelector('.hud-chip')!;
     this.chipName = this.root.querySelector('.chip-name')!;
     this.chipNum = this.root.querySelector('.chip-num')!;
@@ -287,7 +295,22 @@ export class Hud {
       e.preventDefault();
       this.onPause?.();
     });
-    pause.addEventListener('click', () => this.onPause?.());
+    // (Like the camera: no focus kept after a click, and none by TAB in play, so the next ENTER or SPACE is the game's.
+    // ESC or P pauses from the keyboard. CrazyGames' QA: TAB then ENTER opened the pause.)
+    pause.addEventListener('click', () => {
+      this.onPause?.();
+      (pause as HTMLElement).blur();
+    });
+    // A HUD button that has focus anyway (a click held, a screen reader) is never pressed by the match's own keys:
+    // SPACE passes and ENTER is a game key, so neither may click it in play.
+    const guard = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || !this.root.contains(t) || !t.closest('button') || (e.key !== ' ' && e.key !== 'Enter' && e.code !== 'Space')) return;
+      e.preventDefault();
+      if (e.type === 'keyup') t.blur();
+    };
+    this.root.addEventListener('keydown', guard, true);
+    this.root.addEventListener('keyup', guard, true);
     const cam = this.root.querySelector<HTMLButtonElement>('.hud-cam')!;
     // (As pause: a second finger while the first holds the stick; the click that follows a touch is swallowed.)
     let camTouch = 0;
@@ -437,6 +460,10 @@ export class Hud {
       // So does the goal plate, which hangs off the score bug just where the flag does.
       this.toast.classList.remove('on');
       this.toastTimer = 0;
+    } else if (!this.bannerPower && this.flagMeetsBanner()) {
+      // A centred banner reaching the flag (AGAIN! on a phone, the flag OFF THE WOODWORK! over its A: CrazyGames' QA
+      // of drill 2 at 745x290): the banner says what matters now, so the flag goes at once, no fade over the letters.
+      this.dropFlag();
     }
     if (this.bannerCard || this.bannerPower || this.bannerHung) {
       // (A plate hung off the score bug follows it from the next frame: the bug grows under it at a goal.)
@@ -651,11 +678,38 @@ export class Hud {
     this.placeToast();
     this.toast.classList.remove('on');
     void this.toast.offsetWidth;
+    // (A centred banner up where the flag would hang, AGAIN! say: the flag would sit over its letters. It waits out.)
+    if (this.flagMeetsBanner()) {
+      this.toastTimer = 0;
+      return;
+    }
     this.toast.classList.add('on');
     this.toastTimer = seconds;
     this.toastPlaceT = TOAST_PLACE_S;
     // The ticker moves off it now, not at its next look round.
     if (this.cmLine) this.placeTicker();
+  }
+
+  /** A centred banner (not a plate) is up and its words meet the flag's box where it hangs (6 px apart at least). */
+  private flagMeetsBanner(): boolean {
+    if (this.bannerTimer <= 0 || this.bannerCard || this.bannerPower || this.bannerHung || !this.banner.classList?.contains('on')) return false;
+    if (typeof this.toast.getBoundingClientRect !== 'function' || typeof this.banner.querySelectorAll !== 'function') return false;
+    const f = this.toast.getBoundingClientRect();
+    if (!(f.width > 0 && f.height > 0)) return false;
+    const flag: Rect = { l: f.left, t: f.top, r: f.right, b: f.bottom };
+    return [...this.banner.querySelectorAll<HTMLElement>('.bn-title, .bn-sub')].some((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && overlapArea(flag, { l: r.left, t: r.top, r: r.right, b: r.bottom }, 6) > 0;
+    });
+  }
+
+  /** The flag off now, without its fade (it would show over the banner for that moment). */
+  private dropFlag(): void {
+    this.toast.style.transition = 'none';
+    this.toast.classList.remove('on');
+    void this.toast.offsetWidth;
+    this.toast.style.transition = '';
+    this.toastTimer = 0;
   }
 
   /** Under the score bug (and its booking chips / the shootout tracker); below the portrait minimap if they'd meet. */
@@ -852,8 +906,11 @@ export class Hud {
    * key, the pad button, or the touch button's label, with "TAP" for `verb` on touch). It sits right above the taker's
    * name tag, or right under his feet when the top cluster leaves no room there: never over him or the ball. null:
    * gone at once (the ball is played, or the picture is not the live one). The session calls it every frame.
+   * `you` (the first match's first kick-off, CrazyGames' QA, 22 October): a line over it, THIS IS YOU, and a gold
+   * pointer from the card to the taker's own gold arrow and name tag, so the man is never in doubt and the one press
+   * that kicks off is the only step (never a THIS IS YOU card over him to dismiss first).
    */
-  setKickoff(p: { verb: string; key: string; taker: number; top: number } | null): void {
+  setKickoff(p: { verb: string; key: string; taker: number; top: number; you?: string | null } | null): void {
     if (!p) {
       this.kickAt = null;
       if (this.kick.classList.contains('on')) {
@@ -865,6 +922,12 @@ export class Hud {
     }
     if (this.kickVerb.textContent !== p.verb) this.kickVerb.textContent = p.verb;
     if (this.kickKey.textContent !== p.key) this.kickKey.textContent = p.key;
+    const you = p.you ?? '';
+    if (this.kickYou.textContent !== you) this.kickYou.textContent = you;
+    if (this.kickYou.hidden !== !you) {
+      this.kickYou.hidden = !you;
+      this.kick.classList.toggle('you', !!you);
+    }
     this.kickAt = { taker: p.taker, top: p.top };
     const fresh = !this.kick.classList.contains('on');
     // (Placed before it shows, so it never flashes over the taker first; then every frame, as the camera settles.)
@@ -878,6 +941,11 @@ export class Hud {
   /** The kick-off prompt's words while it is up ('' when none): tests and the dev hooks. */
   get kickoffShown(): string {
     return this.kick.classList.contains('on') ? `${this.kickVerb.textContent} ${this.kickKey.textContent} TO KICK OFF` : '';
+  }
+
+  /** Its THIS IS YOU line while up ('' when none): tests and the dev hooks. */
+  get kickoffYou(): string {
+    return this.kick.classList.contains('on') && !this.kickYou.hidden ? this.kickYou.textContent ?? '' : '';
   }
 
   /**
@@ -913,6 +981,7 @@ export class Hud {
     const P = this.project;
     let hi = H * 0.42;
     let lo = H * 0.58;
+    let tagX = W / 2;
     if (f && P && at && at.taker >= 0 && at.taker < 22) {
       const o = at.taker * PF;
       let tag: { x: number; y: number } | null = null;
@@ -930,8 +999,11 @@ export class Hud {
         hi = Math.min(...ys);
         lo = Math.max(...ys);
       }
+      if (tag) tagX = tag.x;
     }
-    const gap = H < 420 ? 6 : 12;
+    // (With THIS IS YOU the gap holds the pointer: KICK_PTR px, its tip just off his name tag or his boots.)
+    const you = el.classList.contains('you');
+    const gap = (H < 420 ? 6 : 12) + (you ? KICK_PTR : 0);
     const above = hi - gap - h;
     const below = lo + gap;
     let t: number;
@@ -942,6 +1014,13 @@ export class Hud {
     t = Math.round(Math.max(0, Math.min(H - h, t)));
     const px = `${t}px`;
     if (el.style.top !== px) el.style.top = px;
+    if (you) {
+      // The pointer: from the card's edge nearest him, over his name tag (or under his boots), along to where he is.
+      const up = t > hi;
+      if (el.classList.contains('ptr-up') !== up) el.classList.toggle('ptr-up', up);
+      const x = `${Math.round(Math.max(16, Math.min(w - 16, tagX - l)))}px`;
+      if (this.kickPtr.style.left !== x) this.kickPtr.style.left = x;
+    }
   }
 
   /** Where the camera puts world points on screen; enables keep-clear placement of the ticker and hints. */
@@ -1587,7 +1666,7 @@ export class Hud {
       r ? `${r} red card${r > 1 ? 's' : ''}${who('red') ? `: ${who('red')}` : ''}` : '',
     ].filter(Boolean).join('; ');
     el.innerHTML = y || r
-      ? `<span class="sb-card" role="img" title="${esc(label)}" aria-label="${esc(label)}">${chips('yellow')}${chips('red')}${lastName ? `<em>${esc(lastName)}</em>` : ''}</span>`
+      ? `<span class="sb-card" role="img" title="${esc(plainName(label))}" aria-label="${esc(label)}">${chips('yellow')}${chips('red')}${lastName ? `<em>${esc(lastName)}</em>` : ''}</span>`
       : '';
     this.fitBookingNames();
     // The booking row grows the score bug: the event flag and the booking plate under it move down with it.
@@ -1641,7 +1720,8 @@ export class Hud {
   }
 
   setPlayer(num: number, name: string, stamina: number): void {
-    const up = name.toUpperCase();
+    // (Plain letters, as on every other surface (core/displayName.ts): J. ZAJAC, never J. ZAJĄC beside a ZAJAC tag.)
+    const up = plainName(name).toUpperCase();
     if (this.chipNum.textContent !== String(num) || this.chipName.textContent !== up) {
       this.chipNum.textContent = String(num);
       this.chipName.textContent = up;

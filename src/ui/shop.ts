@@ -62,6 +62,7 @@ import { ShopStage, type StageClub, type StageShow, type StageWear } from './sho
 import { sep } from './text';
 import { gemPackBadge } from './storeOffers';
 import { layoutScale } from './fitBox';
+import { plainName } from '../core/displayName';
 
 /** A name with a word too long for a narrow tile's line (CHECKERBOARD): its tile sets it a size smaller. */
 const longWord = (name: string): boolean => name.split(/\s+/).some((w) => w.length > 10);
@@ -248,11 +249,12 @@ function gemPile(tier: number): string {
 
 /**
  * The words on a free-ad card while no ad can be offered (platform/ads.ts rewardedNote): the button, switched off,
- * and the line beside it. An ad blocker is named (ADBLOCKER DETECTED, in a span that may wrap to two lines on a narrow
- * button: shop.css .ad-blocked); anything else is just no ad for now.
+ * and the line beside it. An ad blocker is named once, on the button (ADBLOCKER DETECTED, in a span that may wrap to
+ * two lines on a narrow button, drawn readable: shop.css .ad-blocked), and the line says what the offer is; it said
+ * ADBLOCKER DETECTED twice, the button's pale (CrazyGames' QA, 22 October). Anything else is just no ad for now.
  */
 function adOffText(): { label: string; note: string } {
-  return { label: ads.adBlocked ? `<span class="ad-blocked">${ADBLOCKER_NOTE}</span>` : 'NO AD YET', note: ads.rewardedNote || 'NO AD RIGHT NOW' };
+  return { label: ads.adBlocked ? `<span class="ad-blocked">${ADBLOCKER_NOTE}</span>` : 'NO AD YET', note: ads.adBlocked ? 'FREE WITH AN AD' : ads.rewardedNote || 'NO AD RIGHT NOW' };
 }
 
 /** The pixel icon for a category (rail, set parts). */
@@ -673,12 +675,12 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         ${line(current ? 'EARNED ON THIS JOURNEY OR BOUGHT AS A COLLECTION' : 'PERMANENT GEM COLLECTION. EARNED GEMS WORK TOO', 'pass')}`;
     }
     const price = priceOf(it);
-    const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s> ` : '';
-    if (s === 'buy') return `<div class="sh-btns"><button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY <span class="sh-pr">${was}${coin(price)}</span></button></div>${line(lv, 'free')}`;
+    const was = price < it.price ? `<s class="sh-was">${fmt(it.price)}</s>` : '';
+    if (s === 'buy') return `<div class="sh-btns"><button class="btn btn-yellow btn-lg sh-act" data-a="buy">BUY <span class="sh-pr">${was}<span class="sh-now">${coin(price)}</span></span></button></div>${line(lv, 'free')}`;
     // Short of coins: gems can cover the difference (a stated price, asked once), else the way to more coins.
     const need = topUpGems(price - save.coins);
     return `<div class="sh-btns">
-        <button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short"><span class="sh-pr">${was}${coin(price)}</span></button>
+        <button class="btn btn-white btn-lg sh-act poor" data-a="buy" aria-describedby="sh-short"><span class="sh-pr">${was}<span class="sh-now">${coin(price)}</span></span></button>
         ${gems(save) >= need
           ? `<button class="btn btn-blue btn-lg sh-more" data-a="topup" aria-label="Cover the ${fmt(price - save.coins)} coins you are short with ${need} gems">ADD ${gemPrice(need)}</button>`
           : '<button class="btn btn-blue btn-lg sh-more" data-a="getcoins">GET COINS</button>'}
@@ -883,7 +885,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
     }).join('');
     const action = done
       ? '<div class="sh-btns"><button class="btn btn-go btn-lg sh-act" data-a="wearset">WEAR THE WHOLE SET</button></div>'
-      : `<div class="sh-btns"><button class="btn ${save.coins >= price ? 'btn-yellow' : 'btn-white poor'} btn-lg sh-act" data-a="buyset">${missing.length < items.length ? 'COMPLETE IT' : 'BUY SET'} <span class="sh-pr"><s class="sh-was">${fmt(full)}</s>${coin(price)}</span></button>
+      : `<div class="sh-btns"><button class="btn ${save.coins >= price ? 'btn-yellow' : 'btn-white poor'} btn-lg sh-act" data-a="buyset">${missing.length < items.length ? 'COMPLETE IT' : 'BUY SET'} <span class="sh-pr"><s class="sh-was">${fmt(full)}</s><span class="sh-now">${coin(price)}</span></span></button>
           ${save.coins < price
             ? gems(save) >= topUpGems(price - save.coins)
               ? `<button class="btn btn-blue btn-lg sh-more" data-a="topupset" aria-label="Cover the ${fmt(price - save.coins)} coins you are short with ${topUpGems(price - save.coins)} gems">ADD ${gemPrice(topUpGems(price - save.coins))}</button>`
@@ -1003,7 +1005,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
           <div class="sh-face sh-front">
             <span class="sh-rtag">${RARITY_NAME[card.rarity]}</span>
             <div class="sh-cardtop">${faceHtml(p, club.kit, 'xl')}<div class="sh-ovr"><b>${card.ovr}</b><small>OVR</small></div></div>
-            <b class="sh-pname">${esc(p.name.toUpperCase())}</b>
+            <b class="sh-pname">${esc(plainName(p.name).toUpperCase())}</b>
             <span class="sh-pmeta">${roleBadge(p.role)}<em>AGE ${p.age ?? '?'}</em></span>
             <div class="mc-bars sh-bars">${bars}</div>
           </div>
@@ -1097,7 +1099,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
       closeSheet();
       draw();
       const lifted = r.ovrTo > r.ovrFrom ? `: CLUB OVR ${r.ovrFrom} TO ${r.ovrTo}` : '';
-      say(r.starter ? `${p.name.toUpperCase()} STARTS${lifted}${let_go}` : `${p.name.toUpperCase()} JOINS THE BENCH${let_go}`, 'good');
+      say(r.starter ? `${plainName(p.name).toUpperCase()} STARTS${lifted}${let_go}` : `${plainName(p.name).toUpperCase()} JOINS THE BENCH${let_go}`, 'good');
     };
     sheet.addEventListener('click', (e) => {
       const el = (e.target as Element).closest<HTMLElement>('[data-a]');
@@ -1121,7 +1123,7 @@ function shopScreen(app: AppContext, tab0: ShopTab, back: () => void, backLabel:
         sfx.coin();
         closeSheet();
         draw();
-        say(`SOLD ${p.name.toUpperCase()} +${fmt(v)}`, 'info');
+        say(`SOLD ${plainName(p.name).toUpperCase()} +${fmt(v)}`, 'info');
       }
     });
     // The build-up: the card shakes harder and glows in the rarity's colour, ticking faster, then turns.
@@ -1828,9 +1830,10 @@ function grantText(g: IapGrant): string {
   return things.length ? things.join(', ') : 'THANK YOU';
 }
 
+/** A player's surname as the pixel faces show it: plain letters (core/displayName.ts), so ZAJAC everywhere. */
 function lastName(name: string): string {
   const parts = name.split(' ');
-  return parts[parts.length - 1] ?? name;
+  return plainName(parts[parts.length - 1] ?? name);
 }
 
 /** The top bar's coin count running from `from` to `to` (a purchase: down; a sale: up). */

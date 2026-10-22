@@ -7,6 +7,7 @@ import {
   CELEBRATION_NAMES, celebrationUnlocked, type CelebrationId, exportSave, importSave, unlockLadder, xpAt } from '../core/save';
 import { APP_VERSION, CONTACT_EMAIL, STUDIO, STUDIO_BLUE, creditHtml, lynxSvg } from './brand';
 import { SCORE_SEP_HTML, escHtml, scoreHtml, sep, seps, sepText } from './text';
+import { plainName } from '../core/displayName';
 import { NO_AD_TEXT, adIcon, pixelIcon } from './pixelIcons';
 import { gemArt } from './gemUi';
 import './menus.css';
@@ -228,9 +229,10 @@ function lum(hex: number): number {
   return (0.299 * ((hex >> 16) & 255) + 0.587 * ((hex >> 8) & 255) + 0.114 * (hex & 255)) / 255;
 }
 
+/** A player's surname as the pixel faces show it: plain letters (core/displayName.ts), so ZAJAC everywhere. */
 function lastName(name: string): string {
   const parts = name.trim().split(/\s+/);
-  return parts[parts.length - 1] ?? name;
+  return plainName(parts[parts.length - 1] ?? name);
 }
 
 /**
@@ -273,6 +275,14 @@ export function pitchLayout(slots: Slot[]): [number, number, number][] {
     });
   });
   return out;
+}
+
+/**
+ * A touch device: a coarse pointer, or the touch controls in hand now. Touch words (TAP) and touch-only settings
+ * (THUMBSTICK) show there; a mouse reads CLICK and never sees a thumbstick setting (CrazyGames' QA, 22 October).
+ */
+function touchFirst(): boolean {
+  return defaultDevice() === 'touch' || currentDevice() === 'touch';
 }
 
 /** Touch screens get the touch controls first (a coarse pointer, i.e. a phone or tablet). */
@@ -483,7 +493,49 @@ export class Menus {
     this.root.appendChild(d);
     this.screen = d;
     d.querySelectorAll('button').forEach((b) => b.addEventListener('pointerdown', () => sfx.click()));
+    this.fitScorers(d);
     return d;
+  }
+
+  /**
+   * Half time's and full time's scorers (scoreHeader): a side's list keeps to its two lines, and when it holds more
+   * than they fit, the last scorers make way for one +N MORE (N goals), so a 0:5 never shows two scorers and stops
+   * (CrazyGames' QA, 22 October). Measured again whenever the list's width changes (a resize, the fit box).
+   */
+  private fitScorers(d: HTMLElement): void {
+    const lists = [...d.querySelectorAll<HTMLUListElement>('.final .f-team ul')].filter((ul) => ul.children.length);
+    if (!lists.length) return;
+    const fit = (ul: HTMLUListElement) => {
+      const items = [...ul.querySelectorAll<HTMLLIElement>('li[data-n]')];
+      ul.querySelector('.f-more')?.remove();
+      items.forEach((li) => (li.hidden = false));
+      const over = () => ul.scrollHeight > ul.clientHeight + 1;
+      if (!over()) return;
+      const more = document.createElement('li');
+      more.className = 'f-more';
+      ul.appendChild(more);
+      let hid = 0;
+      for (let i = items.length - 1; i > 0; i--) {
+        items[i].hidden = true;
+        hid += Number(items[i].dataset.n) || 1;
+        more.textContent = `+${hid} MORE`;
+        if (!over()) break;
+      }
+      if (!hid) more.remove();
+      ul.title = items.map((li) => li.textContent ?? '').join(', ');
+    };
+    lists.forEach(fit);
+    if (typeof ResizeObserver === 'undefined') return;
+    // (Only a new width refits: the list's own height follows what it shows.)
+    const wide = new Map<Element, number>();
+    const ro = new ResizeObserver((es) => es.forEach((e) => {
+      const w = Math.round(e.contentRect.width);
+      if (wide.get(e.target) === w) return;
+      wide.set(e.target, w);
+      fit(e.target as HTMLUListElement);
+    }));
+    lists.forEach((ul) => ro.observe(ul));
+    this.cleanups.push(() => ro.disconnect());
   }
 
   close(): void {
@@ -1142,8 +1194,19 @@ export class Menus {
   }
 
   private scoreHeader(m: Match, kits: [Kit, Kit]): string {
-    const scorers = (side: 0 | 1) =>
-      m.goals.filter((g) => g.side === side).map((g) => `<li>${g.name}${g.own ? ' (OG)' : ''} ${g.minute}'</li>`).join('');
+    // One line a scorer, every minute on it (I. Lindqvist 9' 24' 51'): a 0:5 fits. What still doesn't fit the two lines
+    // ends in +N MORE (fitScorers), never cut without a word.
+    const scorers = (side: 0 | 1) => {
+      const by = new Map<string, { name: string; mins: number[] }>();
+      for (const g of m.goals) {
+        if (g.side !== side) continue;
+        const name = `${plainName(g.name)}${g.own ? ' (OG)' : ''}`;
+        const e = by.get(name) ?? { name, mins: [] };
+        e.mins.push(g.minute);
+        by.set(name, e);
+      }
+      return [...by.values()].map((e) => `<li data-n="${e.mins.length}">${escHtml(e.name)} ${e.mins.map((n) => `${n}'`).join(' ')}</li>`).join('');
+    };
     return `<div class="final">
       <div class="f-team">${crestSvg(m.teams[0].name, m.teams[0].short, m.teams[0].kit, 4)}<b style="border-bottom:5px solid ${cssHex(kits[0].shirt)}">${m.teams[0].short}</b><ul>${scorers(0)}</ul></div>
       <div class="f-score">${scoreHtml(m.score[0], m.score[1])}</div>
@@ -1310,7 +1373,7 @@ export class Menus {
         left <= 0 ? '<b class="sq-hint">NO SUBS LEFT</b>'
           : picked?.k === 'x' ? `<b class="sq-hint sel">${escHtml(lastName(team[picked.i].def.name).toUpperCase())} OFF: PICK A SUB</b>`
             : picked?.k === 'b' ? `<b class="sq-hint sel">${escHtml(lastName(list[picked.i]?.name ?? '').toUpperCase())} ON: PICK WHO GOES OFF</b>`
-              : Menus.subbedOnce ? '' : '<b class="sq-hint">TAP OR DRAG TO SUB</b>';
+              : Menus.subbedOnce ? '' : `<b class="sq-hint">${touchFirst() ? 'TAP' : 'CLICK'} OR DRAG TO SUB</b>`;
     };
 
     const drawForms = () => {
@@ -1429,7 +1492,7 @@ export class Menus {
     });
   }
 
-  /** The tactics hint ("TAP OR DRAG TO SUB") shows until the first sub of the session. */
+  /** The tactics hint ("CLICK OR DRAG TO SUB", TAP on touch) shows until the first sub of the session. */
   private static subbedOnce = false;
 
   /**
@@ -1455,7 +1518,7 @@ export class Menus {
       ? [m.teams[best.side === 1 ? 1 : 0].short, best.goals ? `${best.goals} ${best.goals > 1 ? 'GOALS' : 'GOAL'}` : '', best.assists ? `${best.assists} ${best.assists > 1 ? 'ASSISTS' : 'ASSIST'}` : ''].filter(Boolean).join(sep())
       : '';
     const bestHtml = best && def && bestKit
-      ? `<div class="ft-motm ht-best" style="--k:${cssHex(bestKit.shirt)}">${faceHtml(def, bestKit)}<span>BEST PLAYER</span><b>${escHtml(best.name)}<small>${bestLine}</small></b><em>${best.rating.toFixed(1)}</em></div>`
+      ? `<div class="ft-motm ht-best" style="--k:${cssHex(bestKit.shirt)}">${faceHtml(def, bestKit)}<span>BEST PLAYER</span><b>${escHtml(plainName(best.name))}<small>${bestLine}</small></b><em>${best.rating.toFixed(1)}</em></div>`
       : '';
     // Then two more of yours (as full time lists them), if the best player is not yours or there are more.
     const hs = m.cfg.humanSide;
@@ -1466,7 +1529,7 @@ export class Menus {
     };
     const next = hs === 0 || hs === 1 ? (more.ratings ?? []).filter((r) => r.side === hs && r !== best).slice(0, 2) : [];
     const nextHtml = next.length
-      ? `<ul class="ratings">${next.map((r) => `<li>${face(r, 'sm')}<span>${escHtml(r.name)}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>`
+      ? `<ul class="ratings">${next.map((r) => `<li>${face(r, 'sm')}<span>${escHtml(plainName(r.name))}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>`
       : '';
     const d = this.mount(`
       <div class="panel-wrap dim shell">
@@ -1553,7 +1616,8 @@ export class Menus {
     // No ad can be offered and there is a reason to give (an ad blocker): the offer shows switched off, saying so.
     const adOff = !canDouble && !extra.noAds ? h.adNote?.() ?? '' : '';
     const motm = ratings?.[0];
-    const mine = ratings?.filter((r) => r.side === humanSide).slice(0, 3) ?? [];
+    // (Yours under him, man of the match not listed twice.)
+    const mine = ratings?.filter((r) => r.side === humanSide && r !== motm).slice(0, 3) ?? [];
     // Head shots: the player as he looked on the pitch, in the kit his side wore.
     const face = (r: { idx: number; side: number }, cls = '') => {
       const def = m.players[r.idx]?.def;
@@ -1563,8 +1627,8 @@ export class Menus {
     const plural = (n: number, w: string) => `${n} ${w}${n > 1 ? 's' : ''}`;
     const motmLine = motm ? [motm.goals ? plural(motm.goals, 'goal') : '', motm.assists ? plural(motm.assists, 'assist') : ''].filter(Boolean).join(sep()) : '';
     const motmHtml = motm
-      ? `<div class="ft-motm" style="--k:${cssHex(kits[motm.side].shirt)}">${face(motm)}<span>MAN OF THE MATCH</span><b>${motm.name}${motmLine ? `<small>${motmLine}</small>` : ''}</b><em>${motm.rating.toFixed(1)}</em></div>
-        ${mine.length ? `<ul class="ratings">${mine.map((r) => `<li>${face(r, 'sm')}<span>${r.name}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>` : ''}`
+      ? `<div class="ft-motm" style="--k:${cssHex(kits[motm.side].shirt)}">${face(motm)}<span>MAN OF THE MATCH</span><b>${escHtml(plainName(motm.name))}${motmLine ? `<small>${motmLine}</small>` : ''}</b><em>${motm.rating.toFixed(1)}</em></div>
+        ${mine.length ? `<ul class="ratings">${mine.map((r) => `<li>${face(r, 'sm')}<span>${escHtml(plainName(r.name))}</span><b class="${r.rating >= 7.5 ? 'hi' : r.rating < 6 ? 'lo' : ''}">${r.rating.toFixed(1)}</b></li>`).join('')}</ul>` : ''}`
       : '';
     const my = m.score[humanSide];
     const their = m.score[humanSide === 0 ? 1 : 0];
@@ -1687,10 +1751,10 @@ export class Menus {
     this.comeback?.wire(d);
   }
 
-  /** Full time's SHOWTIME line: the grade letter, the points, the coins it added, NEW BEST or the best to beat. */
+  /** Full time's SHOWTIME line: the grade letter, the points, the coins it added, NEW BEST or the best grade to beat. */
   private showtimeRow(st: NonNullable<FtExtras['showtime']>): string {
     const g = /^[SABC]$/.test(st.grade) ? st.grade : 'C';
-    const best = st.newBest ? '<small class="nb">NEW BEST</small>' : st.best ? `<small>BEST ${escHtml(st.best)}</small>` : '';
+    const best = st.newBest ? '<small class="nb">NEW BEST</small>' : st.best ? `<small>BEST GRADE ${escHtml(st.best)}</small>` : '';
     return `<div class="ft-show" data-g="${g}" aria-label="Showtime grade ${g}, ${st.score} points">
         <b class="ft-grade">${g}</b><span>SHOWTIME <em>${Math.round(st.score).toLocaleString('en-US')}</em></span>
         ${st.bonus > 0 ? `<strong>+${Math.round(st.bonus * 100)}% COINS</strong>` : ''}${best}
@@ -2060,7 +2124,7 @@ export class Menus {
             </div>
             <div class="set-pane set-grid ctl-grid" data-pane="controls" role="tabpanel">
               ${rows.map(ctlRow).join('')}
-              <div class="set-row" data-c="stick"><span id="ctl-stick">THUMBSTICK</span><div class="seg set-seg" role="radiogroup" aria-labelledby="ctl-stick"><button data-stick="floating" role="radio">FLOATING</button><button data-stick="fixed" role="radio">FIXED</button></div></div>
+              ${touchFirst() ? '<div class="set-row" data-c="stick"><span id="ctl-stick">THUMBSTICK</span><div class="seg set-seg" role="radiogroup" aria-labelledby="ctl-stick"><button data-stick="floating" role="radio">FLOATING</button><button data-stick="fixed" role="radio">FIXED</button></div></div>' : ''}
             </div>
             <div class="set-pane kb-pane" data-pane="keys" role="tabpanel">
               <div class="pane"><div class="pane-h"><b>KEYBOARD</b><span class="grow"></span><button class="btn btn-white kb-reset" data-reset="keys">RESET</button></div><div class="pane-scroll kb-grid">${KEY_ACTIONS.map(keyRow).join('')}</div></div>
@@ -2656,6 +2720,7 @@ export class Menus {
     const d = this.mount(`
       <div class="panel-wrap dim">
         <div class="panel narrow gift-panel ${cb ? 'cb-gift' : ''}">
+          <button class="sheet-x" data-a="later" aria-label="Close. Today's gift stays on the menu to claim later"></button>
           <h2>${cb?.title ?? 'DAILY GIFT'}</h2>
           <ul class="gift-days">${days}</ul>
           <div class="reward"><i></i><span>+${amount}</span>${todayExtra}<em>DAY ${streak} OF 7</em></div>
@@ -2699,6 +2764,14 @@ export class Menus {
     };
     $(d, '[data-a=claim]').addEventListener('click', () => void go(false));
     d.querySelector('[data-a=double]')?.addEventListener('click', () => void go(true));
+    // The close (and ESC): back to the menu with nothing claimed. Today's gift waits there (the GIFT chip), whole.
+    const later = () => {
+      if (!busy) h.back();
+    };
+    $(d, '[data-a=later]').addEventListener('click', later);
+    this.listenKey((e) => {
+      if (e.code === 'Escape') later();
+    });
   }
 
   /**

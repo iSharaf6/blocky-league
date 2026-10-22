@@ -87,10 +87,11 @@ button.gems:focus-visible { outline: 4px solid var(--yellow); outline-offset: 2p
   font: 400 calc(14px * var(--ts, 1)) / 1 var(--round);
   letter-spacing: 0.5px;
   color: var(--cream);
-  background: rgba(38, 38, 46, 0.72);
+  /* (Solid, as every chip over the stadium.) */
+  background: var(--ink);
   white-space: nowrap;
 }
-.hub-tomorrow small { font: 700 max(calc(9px * var(--ts, 1)), var(--fs-floor, 0px)) / 1 var(--px); letter-spacing: 0.8px; color: #cfcab8; }
+.hub-tomorrow small { font: 700 max(calc(10px * var(--ts, 1)), var(--fs-floor, 0px)) / 1 var(--px); letter-spacing: 0.8px; color: #e4dfcf; }
 .hub-tomorrow b { font-weight: 400; color: var(--yellow); }
 .hub-tomorrow i { display: inline-flex; align-items: center; gap: 3px; font-style: normal; color: #7fe0ff; }
 .hub-dl li.dc-h { display: block; margin-top: 4px; padding-top: 6px; border-top: 2px solid rgba(255, 255, 255, 0.18); font: 700 max(calc(10px * var(--ts, 1)), var(--fs-floor, 0px)) / 1 var(--px); letter-spacing: 1px; color: var(--yellow); }

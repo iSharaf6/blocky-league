@@ -26,6 +26,7 @@ import { adsLeft, useAd } from '../meta/loops';
 import { buyNetwork, healFree, healNow } from '../meta/premium';
 import { ads } from '../platform/ads';
 import { localDay } from '../core/day';
+import { plainName } from '../core/displayName';
 import { NO_AD_TEXT } from './pixelIcons';
 import {
   REGIONS, REGION_IDS, STAFF, STAFF_MAX_LEVEL, canHire, canSignFind, hireStaff, hiredLevel, isScout, releaseStaff, reportOf, scoutEvery, setScout,
@@ -45,7 +46,12 @@ const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"
 const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ESC[c]);
 const fmt = (n: number): string => Math.round(n).toLocaleString('en-US');
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-const lastName = (name: string) => name.split(' ').pop() ?? name;
+const lastName = (name: string) => plainName(name.split(' ').pop() ?? name);
+/**
+ * A line the career wrote about players (an event card, its answers, the timeline, COMING UP): in plain letters, as
+ * every surface spells a name (core/displayName.ts). The stored line is untouched.
+ */
+const story = (s: string): string => esc(plainName(s));
 const grow = (p: PlayerDef) => p as GrowPlayer;
 const coinChip = (n: number) => `<span class="sd-cost"><i></i>${fmt(n)}</span>`;
 
@@ -83,7 +89,7 @@ function choiceHtml(c: EventChoice, i: number, coins: number, gemsHave: number):
   const open = choiceOpen(c, coins, c.gems ? Infinity : gemsHave);
   const cost = c.gems ? gemPrice(c.gems) : c.coins ? coinChip(c.coins) : '';
   return `<button class="btn gl-choice ${c.gems ? 'gem' : c.tone} ${open ? '' : 'poor'}" data-c="${i}" ${open ? '' : 'disabled'} aria-label="${esc(c.label)}. ${esc(c.hint)}${c.coins ? `. Costs ${fmt(c.coins)} coins` : ''}${c.gems ? `. Costs ${c.gems} gems` : ''}">
-      <b>${esc(c.label)}</b><small>${esc(c.hint)}</small>${cost ? `<em class="gl-cost">${cost}</em>` : ''}
+      <b>${story(c.label)}</b><small>${story(c.hint)}</small>${cost ? `<em class="gl-cost">${cost}</em>` : ''}
     </button>`;
 }
 
@@ -111,7 +117,7 @@ export function playEvents(app: AppContext, root: HTMLElement, st: CareerState, 
     const who = face ? peopleOf(c)[0] : undefined;
     const faceEl = who && kit ? `<span class="gl-face">${faceHtml(who, kit, 'md')}</span>` : '';
     const light = LIGHT_KINDS.includes(c.kind);
-    return `<header class="gl-top"><span class="gl-ic">${pixelIcon(c.icon, light ? '#26262e' : '#fff', 3)}</span><b class="gl-title">${esc(c.title)}</b>${faceEl}</header>`;
+    return `<header class="gl-top"><span class="gl-ic">${pixelIcon(c.icon, light ? '#26262e' : '#fff', 3)}</span><b class="gl-title">${story(c.title)}</b>${faceEl}</header>`;
   };
   /** A bid's offer: the sell answer says how much (and the card puts it beside his value). */
   const offerOf = (c: EventCard): number | undefined => {
@@ -129,7 +135,7 @@ export function playEvents(app: AppContext, root: HTMLElement, st: CareerState, 
     const who = people.length
       ? `<div class="gl-who n${people.length}">${people.map((p, i) => playerCardHtml(st, p, kit!, { slim: people.length > 1, offer: i === 0 ? offer : undefined })).join('')}</div>`
       : '';
-    const answers = `<p class="gl-text">${esc(c.text)}</p>
+    const answers = `<p class="gl-text">${story(c.text)}</p>
         <div class="gl-choices n${c.choices.length}">${c.choices.map((ch, i) => choiceHtml(ch, i, coins, have)).join('')}</div>`;
     wrap.innerHTML = `<div class="gl-card k-${c.kind} ${people.length ? 'has-who' : ''}" style="--mc:${EVENT_COLOR[c.kind]}">
         ${head(c, !people.length)}
@@ -145,8 +151,8 @@ export function playEvents(app: AppContext, root: HTMLElement, st: CareerState, 
     const more = st.events.queue.length;
     wrap.innerHTML = `<div class="gl-card gl-done k-${c.kind} t-${ch.tone}" style="--mc:${EVENT_COLOR[c.kind]}">
         ${head(c)}
-        <p class="gl-text gl-say">${esc(ch.say)}</p>
-        <p class="gl-hint">${esc(ch.hint)}</p>
+        <p class="gl-text gl-say">${story(ch.say)}</p>
+        <p class="gl-hint">${story(ch.hint)}</p>
         <button class="btn btn-go gl-ok" data-ok="1">${more ? 'NEXT' : 'OK'}</button>
       </div>`;
     hydrateFaces(wrap);
@@ -184,7 +190,7 @@ export function playEvents(app: AppContext, root: HTMLElement, st: CareerState, 
     };
     if (ch.gems) {
       confirmGems(root, {
-        title: `${ch.label}?`, text: ch.hint, price: ch.gems, have: gems(app.save), yes: 'YES',
+        title: `${plainName(ch.label)}?`, text: plainName(ch.hint), price: ch.gems, have: gems(app.save), yes: 'YES',
         onYes: () => go((n, why) => spendGems(app.save, n, why)),
         free: 'OR REST HIM: HE IS BACK BY HIMSELF',
       });
@@ -240,7 +246,7 @@ export function playEvents(app: AppContext, root: HTMLElement, st: CareerState, 
 const TONE_COLOR = { good: '#238a3b', bad: '#a62b22', info: '#1c4fa3' } as const;
 
 function timelineRow(e: TimelineEntry): string {
-  return `<div class="fv-row gl-tl t-${e.tone}">${pixelIcon(e.icon, TONE_COLOR[e.tone], 1.6)}<span class="gl-tltext">${esc(e.text)}</span><small>S${e.s}${sep()}MD${e.md}</small></div>`;
+  return `<div class="fv-row gl-tl t-${e.tone}">${pixelIcon(e.icon, TONE_COLOR[e.tone], 1.6)}<span class="gl-tltext">${story(e.text)}</span><small>S${e.s}${sep()}MD${e.md}</small></div>`;
 }
 
 /** THE STORY SO FAR: the club's timeline, the latest few lines (`all`: every line kept). */
@@ -259,7 +265,7 @@ export function headlinesHtml(lines: readonly TimelineEntry[]): string {
 
 function soonRow(x: Soon): string {
   const when = x.in === 0 ? '<b class="gl-now">NOW</b>' : `<small>${x.in} MD</small>`;
-  return `<button class="fv-row gl-soon ${x.in === 0 ? 'now' : ''}" data-a="soon" data-v="${x.go}">${pixelIcon(x.icon, '#26262e', 1.6)}<span class="gl-tltext">${esc(x.text)}</span>${when}</button>`;
+  return `<button class="fv-row gl-soon ${x.in === 0 ? 'now' : ''}" data-a="soon" data-v="${x.go}">${pixelIcon(x.icon, '#26262e', 1.6)}<span class="gl-tltext">${story(x.text)}</span>${when}</button>`;
 }
 
 /** COMING UP: what is in progress at the club, the nearest first (a tap goes there). */
@@ -509,7 +515,7 @@ function reportHtml(st: CareerState, coins: number, slot: ScoutSlot): string {
       const trait = traitsOf(f.player)[0];
       return `<div class="fv-row gl-find">
           <span class="mc-role r-${f.player.role}">${f.player.role}</span>
-          <span class="fv-t">${esc(f.player.name)}<small>${tag}${trait ? `${sep()}${TRAIT_INFO[trait].name}` : ''}</small><small class="pc-keys">${keyStatsLine(f.player)}${sep()}WAGE ${fmt(wageOf(f.player))}</small></span>
+          <span class="fv-t">${esc(plainName(f.player.name))}<small>${tag}${trait ? `${sep()}${TRAIT_INFO[trait].name}` : ''}</small><small class="pc-keys">${keyStatsLine(f.player)}${sep()}WAGE ${fmt(wageOf(f.player))}</small></span>
           <b class="mc-ovr">${overall(f.player)}</b>
           <button class="btn btn-go fv-mini gl-sign ${why}" data-a="sign" data-i="${i}" aria-label="Sign ${esc(f.player.name)} for ${fmt(f.fee)} coins">SIGN ${coinChip(f.fee)}</button>
         </div>`;
@@ -531,7 +537,7 @@ function staffDetail(app: AppContext, st: CareerState, ui: StaffUi): string {
     const u = nextUnlock(st);
     return `<div class="gl-locked">${pixelIcon('lock', '#8f8c85', 4)}<b>SCOUTS</b><p>THEY OPEN AFTER ${plural(u?.unlock.id === 'scouts' ? u.left : Math.max(1, 5 - st.events.played), 'MORE MATCH', 'MORE MATCHES')}</p></div>`;
   }
-  const headName = m ? esc(m.name.toUpperCase()) : 'NOBODY YET';
+  const headName = m ? esc(plainName(m.name).toUpperCase()) : 'NOBODY YET';
   const knows = m && isScout(role) && m.region ? `${sep()}KNOWS ${REGIONS[m.region].name}` : '';
   const head = `<div class="gl-head">${pixelIcon(def.icon, '#26262e', 3)}<div class="gl-who"><b>${lv ? staffTitle(role, lv) : def.name}</b><small>${headName}${knows}</small></div>${pips(lv)}</div>`;
   const check = canHire(st, coins, role);
@@ -626,7 +632,7 @@ export function staffHandlers(
       buzz('success');
       saved();
       const m = st.staff.hired[ui.sel];
-      toast(was ? `${staffTitle(ui.sel, r.level)}: LEVEL ${r.level}` : `${(m?.name ?? 'HE').toUpperCase()} JOINS THE STAFF`, 'good');
+      toast(was ? `${staffTitle(ui.sel, r.level)}: LEVEL ${r.level}` : `${plainName(m?.name ?? 'HE').toUpperCase()} JOINS THE STAFF`, 'good');
     },
     release: () => {
       if (!ui.confirm) {
@@ -647,7 +653,7 @@ export function staffHandlers(
       sfx.coin();
       buzz('success');
       saved();
-      toast(`${r.player.name.toUpperCase()} JOINS THE SQUAD`, 'good');
+      toast(`${plainName(r.player.name).toUpperCase()} JOINS THE SQUAD`, 'good');
     },
     network: () => {
       const up = SCOUT_NETWORKS[st.staff.network];

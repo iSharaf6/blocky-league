@@ -276,7 +276,7 @@ describe('the PASS and SHOOT drills say why too', () => {
     expect(lessonFailText(out.lesson.failReason(), 'keyboard')).toBe('THE BALL WENT OUT. PRESS SPACE TO PASS');
     const caught = practice(0, 0, 1);
     caught.lesson.ended('caught');
-    expect(lessonFailText(caught.lesson.failReason(), 'touch')).toBe('THE KEEPER TOOK IT. TAP PASS TO PASS');
+    expect(lessonFailText(caught.lesson.failReason(), 'touch')).toBe('THE KEEPER TOOK IT. TAP THE PASS BUTTON');
     const lost = practice(0, 0, 1);
     for (let i = 0; i < 30 && lost.m.kickId === 0; i++) lost.tick({ ...EMPTY_PAD, pass: i < 5 });
     lost.lesson.ended('dead');

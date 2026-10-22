@@ -1,3 +1,4 @@
+import { plainName } from '../core/displayName';
 import { HALF_L } from '../sim/constants';
 import type { Match, Phase, Restart } from '../sim/match';
 import type { MatchEvent, Side } from '../sim/types';
@@ -69,7 +70,7 @@ type PendingPenalty = {
 
 function nameOf(m: Match, idx: number): string {
   const d = m.players[idx]?.def;
-  return d ? `${d.number} ${d.name.toUpperCase()}` : '';
+  return d ? `${d.number} ${plainName(d.name).toUpperCase()}` : '';
 }
 
 /**

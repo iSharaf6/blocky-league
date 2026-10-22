@@ -126,6 +126,11 @@
 .sh-ctl.tr { top: 6px; right: 6px; }
 .sh-ctl.bl { bottom: 6px; left: 6px; }
 .sh-ctl.br { bottom: 6px; right: 6px; }
+/* Both bottom corners in use (TRY IT ON and a set's chip): half the stage each, the set's words on two lines if they
+   must. Each could take the full width, and at 667 wide the set's chip lay over TRY IT ON (`__uiAudit()` cover). */
+.sh-ctl.bl:not(:empty):has(~ .sh-ctl.br:not(:empty)),
+.sh-ctl.bl:not(:empty) ~ .sh-ctl.br:not(:empty) { max-width: calc(50% - 9px); }
+.sh-ctl.bl:not(:empty) ~ .sh-ctl.br .sh-chip.set { white-space: normal; text-align: right; line-height: 1.1; }
 .sh-chip, .sh-seg button {
   appearance: none;
   min-height: 34px;
@@ -418,11 +423,16 @@
 /* (A narrow pane: the label and the price take a line each, never past the button's edge.) */
 .sh-btns .btn { flex: 1 1 0; min-width: 0; display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px; row-gap: 3px; padding-left: 10px; padding-right: 10px; white-space: normal; line-height: 1; }
 .sh-btns .btn > * { white-space: nowrap; }
-.sh-pr { display: inline-flex; align-items: center; }
+/* The price: the struck full price and the price now. When the two don't fit the button's width on one line (BUY SET's
+   7,850 4,700 at 1920 by 945 ran past both edges), the struck one takes a line of its own above; neither is ever cut. */
+.sh-pr { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px 8px; max-width: 100%; }
+.sh-btns .btn > .sh-pr { white-space: normal; }
+.sh-pr > * { white-space: nowrap; }
+.sh-now { display: inline-flex; align-items: center; gap: 4px; }
 .btn.sh-act .sh-coin { width: 16px; height: 16px; }
 .btn.sh-act.poor { filter: grayscale(0.7); opacity: 0.8; }
 .btn.sh-act.nope { animation: tile-nope 0.32s ease-in-out; }
-.sh-was { opacity: 0.6; font-size: 0.85em; margin-right: 6px; }
+.sh-was { opacity: 0.6; font-size: 0.75em; letter-spacing: 1px; }
 .sh-short { margin: 0; font: 400 14px / 1.2 var(--round); color: var(--red-d); text-align: center; letter-spacing: 0.4px; }
 .sh-short.free { color: var(--go-d); }
 .sh-short.pass { color: #b81f6c; }
@@ -622,6 +632,8 @@
 .sh-watch .sh-play { flex: none; }
 /* ADBLOCKER DETECTED on a switched-off offer: a step smaller, and two lines on a narrow button rather than overflow. */
 .sh-watch .ad-blocked { white-space: normal; text-align: center; line-height: 1.05; font-size: 0.86em; }
+/* (Switched off by a blocker, the button says so in full ink on cream, not at the faded 60% of a disabled button.) */
+.sh-offer .btn.sh-watch:disabled:has(.ad-blocked) { opacity: 1; --c: var(--cream); --d: #b9b5aa; --t: var(--ink); text-shadow: none; }
 /* On a portal the free coins are the whole tab: one big card. */
 .sh-offer.free.big { width: min(560px, 100%); gap: 14px; padding: 14px 16px; box-shadow: 0 4px 0 #ecd889; }
 .sh-offer.free.big .sh-offart { width: 84px; height: 64px; }
@@ -769,6 +781,12 @@
    mirrored after the flip. It goes with the flip.) */
 .sh-modal.flipped .sh-back b { visibility: hidden; }
 .sh-modal.flipped .sh-front { transform: rotateY(0deg); }
+/* Safari under the fit box's scale draws a turned-away face all the same: before the flip the player's card showed
+   through the back, mirrored (CrazyGames' frames at 745x290, 22 October). So a face is also hidden while it is turned
+   away, switching near the half turn (the ease-out passes it at about 80 ms). */
+.sh-front { visibility: hidden; }
+.sh-modal.flipped .sh-front { visibility: visible; transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.3, 1), visibility 0s linear 80ms; }
+.sh-modal.flipped .sh-back { visibility: hidden; transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.3, 1), visibility 0s linear 80ms; }
 .sh-rtag { font: 700 18px / 1 var(--px); letter-spacing: 3px; color: var(--ink); margin-top: -2px; }
 .sh-modal.r-legend .sh-rtag, .sh-modal.r-epic .sh-rtag, .sh-modal.r-rare .sh-rtag { color: #fff; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
 .sh-modal.r-legend .sh-rtag { color: var(--ink); text-shadow: none; }

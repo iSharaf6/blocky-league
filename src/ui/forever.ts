@@ -27,6 +27,7 @@ import { cssHex } from '../render/palette';
 import { overall, type Side } from '../sim/types';
 import { esc, fmt } from './club';
 import { pixelIcon } from './pixelIcons';
+import { plainName } from '../core/displayName';
 import { scoreHtml, sep } from './text';
 import './forever.css';
 
@@ -83,7 +84,7 @@ function academySection(st: CareerState): string {
   const rows = ps
     .map((p, i) => `<div class="fv-row fv-prospect">
         <span class="mc-role r-${p.role}">${p.role}</span>
-        <span class="fv-t">${esc(p.name)}<small>AGE ${playerAge(p)}${sep()}UP TO ${prospectCeiling(p)}</small><small class="pc-keys">${keyStatsLine(p)}${sep()}WAGE ${fmt(wageOf(p))}</small></span>
+        <span class="fv-t">${esc(plainName(p.name))}<small>AGE ${playerAge(p)}${sep()}UP TO ${prospectCeiling(p)}</small><small class="pc-keys">${keyStatsLine(p)}${sep()}WAGE ${fmt(wageOf(p))}</small></span>
         ${stars(playerPotential(p))}
         <b class="mc-ovr">${overall(p)}</b>
         <button class="btn btn-go fv-mini" data-a="promote" data-i="${i}" ${full ? 'disabled' : ''} aria-label="Promote ${esc(p.name)}">PROMOTE</button>
@@ -99,7 +100,7 @@ function moodSection(st: CareerState): string {
   // The eleven's own morale (meta/morale.ts: each player has his, the badge on his chip says when it is high or low).
   const m = teamMood(st);
   const c = chemistry(club, st.season?.number ?? 1);
-  const last = (n: string) => (n.split(' ').pop() ?? n).toUpperCase();
+  const last = (n: string) => plainName(n.split(' ').pop() ?? n).toUpperCase();
   const pairs = partnerships(club).slice(0, 3).map((p) => `${esc(last(p.a.name))} + ${esc(last(p.b.name))}`);
   const partners = pairs.length ? `<div class="fv-form"><span>PARTNERSHIPS</span><small>${pairs.join(sep())}</small></div>` : '';
   const cap = captainOf(club) as LifePlayer | undefined;
@@ -107,7 +108,7 @@ function moodSection(st: CareerState): string {
   return section('THE SQUAD', `<div class="fv-mood">
       <div class="fv-m m${m}" title="The eleven's morale: ${squadMorale(club)} of 100">${pixelIcon(m === 2 ? 'happy' : m === 0 ? 'sad' : 'okay', 'currentColor', 2)}<span>MORALE</span><b>${MORALE_NAMES[m]}</b></div>
       <div class="fv-m m${c}">${pixelIcon('duo', 'currentColor', 2)}<span>CHEMISTRY</span><b>${CHEMISTRY_NAMES[c]}</b></div>
-      <div class="fv-m cap">${pixelIcon('shield', 'currentColor', 2)}<span>CAPTAIN</span><b>${cap ? esc(cap.name.toUpperCase()) : '?'}</b></div>
+      <div class="fv-m cap">${pixelIcon('shield', 'currentColor', 2)}<span>CAPTAIN</span><b>${cap ? esc(plainName(cap.name).toUpperCase()) : '?'}</b></div>
     </div><div class="fv-form"><span>FORM</span>${form}</div>${partners}`);
 }
 
@@ -119,7 +120,7 @@ function legacySection(st: CareerState): string {
   const treble = st.season?.division === 1 || lg.trebles > 0
     ? `<div class="fv-row fv-treble">${pixelIcon('crown', '#ffd23a', 2)}<span class="fv-t">THE TREBLE<small>LEAGUE, BLOCKY CUP AND CONTINENTAL CUP IN ONE SEASON</small></span><b>${lg.trebles ? `${lg.trebles}X` : 'NOT YET'}</b></div>`
     : '';
-  const log = lg.log.slice(0, 4).map((e) => `<div class="fv-row fv-log"><span class="fv-t">${esc(e.text)}</span><b>+${fmt(e.points)}</b></div>`).join('');
+  const log = lg.log.slice(0, 4).map((e) => `<div class="fv-row fv-log"><span class="fv-t">${esc(plainName(e.text))}</span><b>+${fmt(e.points)}</b></div>`).join('');
   return section('CLUB LEGACY', `<div class="fv-lv"><b class="fv-lvn"><small>LV</small>${lv.level}</b><span class="fv-lvbar"><i class="fv-bar"><u style="width:${Math.round((lv.into / lv.need) * 100)}%"></u></i><small>${fmt(lg.points)} POINTS${sep()}${fmt(lv.next - lg.points)} TO LEVEL ${lv.level + 1}</small></span></div>
     ${perk ? `<p class="fv-next">LEVEL ${perk.level}: ${esc(perk.text)}</p>` : ''}
     ${got ? `<div class="fv-perks">${got}</div>` : ''}${treble}${log}`);
@@ -136,10 +137,10 @@ function recordsSection(st: CareerState): string {
   const r = st.legacy.records;
   const row = (label: string, value: string) => `<div class="fv-row fv-rec"><span>${label}</span><b class="fv-t">${value}</b></div>`;
   const rows = [
-    r.topScorer ? row('TOP SCORER', `${esc(r.topScorer.name.toUpperCase())}${sep()}${r.topScorer.goals} GOALS`) : '',
-    r.mostApps ? row('MOST GAMES', `${esc(r.mostApps.name.toUpperCase())}${sep()}${r.mostApps.apps}`) : '',
+    r.topScorer ? row('TOP SCORER', `${esc(plainName(r.topScorer.name).toUpperCase())}${sep()}${r.topScorer.goals} GOALS`) : '',
+    r.mostApps ? row('MOST GAMES', `${esc(plainName(r.mostApps.name).toUpperCase())}${sep()}${r.mostApps.apps}`) : '',
     r.biggestWin ? row('BIGGEST WIN', `${r.biggestWin.my}:${r.biggestWin.their} V ${esc(r.biggestWin.vs.toUpperCase())}`) : '',
-    r.recordSigning ? row('RECORD SIGNING', `${esc(r.recordSigning.name.toUpperCase())}${sep()}${fmt(r.recordSigning.paid)}`) : '',
+    r.recordSigning ? row('RECORD SIGNING', `${esc(plainName(r.recordSigning.name).toUpperCase())}${sep()}${fmt(r.recordSigning.paid)}`) : '',
   ].join('');
   return section('CLUB RECORDS', rows || '<p class="fv-empty">PLAY TO WRITE THE RECORD BOOK</p>');
 }
@@ -147,7 +148,7 @@ function recordsSection(st: CareerState): string {
 function hallSection(st: CareerState, confirm: boolean): string {
   const lg = st.legacy;
   const legends = lg.legends
-    .map((l) => `<div class="fv-row fv-legend"><span class="mc-role r-${l.role}">${l.role}</span><span class="fv-t">${esc(l.name.toUpperCase())}<small>${esc(l.club.toUpperCase())}${sep()}${esc(l.why)}</small></span>${pixelIcon('star', '#ffd23a', 1.6)}</div>`)
+    .map((l) => `<div class="fv-row fv-legend"><span class="mc-role r-${l.role}">${l.role}</span><span class="fv-t">${esc(plainName(l.name).toUpperCase())}<small>${esc(l.club.toUpperCase())}${sep()}${esc(l.why)}</small></span>${pixelIcon('star', '#ffd23a', 1.6)}</div>`)
     .join('');
   const past = lg.past
     .map((p) => `<div class="fv-row fv-past">${kitDot(p.kit)}<span class="fv-t">${esc(p.name.toUpperCase())}<small>${p.seasons} SEASONS${sep()}${p.titles} TITLES${sep()}${p.cups + p.continental + p.world} CUPS</small></span></div>`)
@@ -261,12 +262,12 @@ export function recapHtml(st: CareerState): string {
   const scorer = seasonTopScorer(st);
   const hl = [
     `<div class="fv-row fv-rec"><span>RECORD</span><b class="fv-t">${w}W ${d}D ${l}L${sep()}${cs} CLEAN SHEETS</b></div>`,
-    scorer ? `<div class="fv-row fv-rec"><span>TOP SCORER</span><b class="fv-t">${esc(scorer.name.toUpperCase())}${sep()}${scorer.goals} GOALS</b></div>` : '',
+    scorer ? `<div class="fv-row fv-rec"><span>TOP SCORER</span><b class="fv-t">${esc(plainName(scorer.name).toUpperCase())}${sep()}${scorer.goals} GOALS</b></div>` : '',
     best ? `<div class="fv-row fv-rec"><span>BIGGEST WIN</span><b class="fv-t">${best.my}:${best.their}</b></div>` : '',
     sum.legacy ? `<div class="fv-row fv-rec"><span>LEGACY</span><b class="fv-t">+${fmt(sum.legacy)} POINTS${sep()}LEVEL ${legacyLevel(st.legacy.points).level}</b></div>` : '',
   ].join('');
   const bye = (sum.retiring ?? [])
-    .map((f) => `<div class="fv-row fv-legend"><span class="mc-role r-${f.role}">${f.role}</span><span class="fv-t">${esc(f.name.toUpperCase())}<small>AGE ${f.age}${sep()}${f.apps} GAMES${sep()}${f.goals} GOALS</small></span>${f.legend ? '<b class="fv-ok">LEGEND</b>' : ''}</div>`)
+    .map((f) => `<div class="fv-row fv-legend"><span class="mc-role r-${f.role}">${f.role}</span><span class="fv-t">${esc(plainName(f.name).toUpperCase())}<small>AGE ${f.age}${sep()}${f.apps} GAMES${sep()}${f.goals} GOALS</small></span>${f.legend ? '<b class="fv-ok">LEGEND</b>' : ''}</div>`)
     .join('');
   const treble = sum.treble ? `<div class="fv-treblebig">${pixelIcon('crown', '#ffd23a', 3)}<b>THE TREBLE!</b></div>` : '';
   // The season's headlines: what the event cards and the club's story left behind (meta/events.ts).
@@ -299,7 +300,7 @@ export function playMoments(root: HTMLElement, st: CareerState, onEach: () => vo
     wrap.innerHTML = `<div class="fv-moment k-${m.kind}" style="--mc:${color}">
         <div class="fv-mic">${pixelIcon(m.icon, m.kind === 'trophy' ? '#26262e' : '#fff', 5)}</div>
         <b class="fv-mt">${esc(m.title)}</b>
-        <p class="fv-mx">${esc(m.text)}</p>
+        <p class="fv-mx">${esc(plainName(m.text))}</p>
         ${m.coins ? `<span class="fv-mcoins"><i></i>+${fmt(m.coins)}</span>` : ''}
         <button class="btn btn-go fv-mgo" data-a="moment">${st.story.moments.length ? 'NEXT' : 'GREAT!'}</button>
       </div>`;

@@ -239,6 +239,10 @@
   background: var(--cream);
 }
 
+/* Under the fit box (a phone's frame scaled to fit) the header rides with the rows instead: Safari placed the pinned
+   header a row low under the box's scale, over the leader's row (`__uiAudit()` cover, 22 October). */
+#ui.fit .cr-scroll .mc-table th { position: static; }
+
 .cr-scroll .mc-table td { padding: 5px 3px 4px; }
 .cr-scroll .mc-table td.club { font-size: 14px; }
 .cr-scroll .mc-table td.pos { width: 28px; }
@@ -460,10 +464,14 @@
 
 /* ----- short phones (iPhone SE): a little tighter ----- */
 
-@container app (max-height: 380px) {
+@container app (max-height: 400px) {
+  /* (852x393 too: there the derby's line under PLAY ran into THIS SEASON's strip, under it. `__uiAudit()` cover.) */
   .cr-next .mc-side small { display: none; }
   .cr-next .mc-side .shirt { --px: 3px !important; }
   .cr-next .mc-play { min-height: 46px; padding-top: 10px; padding-bottom: 8px; }
+}
+
+@container app (max-height: 380px) {
   .panel .cr-quick .btn { min-height: 44px; }
   .cup-trophy-screen .cup-big .picon { width: 90px; height: 90px; }
   .cup-trophy-screen .panel .cup-champ-title { font-size: 30px; }

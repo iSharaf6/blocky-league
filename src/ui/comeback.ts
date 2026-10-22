@@ -429,7 +429,11 @@ export function comebackUi(app: AppContext, host: ComebackHost): ComebackUi {
     on('cb-tm', () => {
       if (!pop) return;
       pop.hidden = !pop.hidden;
-      root.querySelectorAll('[data-a=cb-tm]').forEach((b) => b.setAttribute('aria-expanded', String(!pop.hidden)));
+      // (aria-controls names the list it opens: a screen reader follows it, and the fit audit knows it for an opened list.)
+      root.querySelectorAll('[data-a=cb-tm]').forEach((b) => {
+        b.setAttribute('aria-expanded', String(!pop.hidden));
+        b.setAttribute('aria-controls', pop.id);
+      });
     });
     on('cb-inc', collect);
     on('cb-motd', playMotd);

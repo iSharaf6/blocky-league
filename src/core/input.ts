@@ -454,9 +454,11 @@ export class Input {
       const dx = e.deltaX || (e.shiftKey ? e.deltaY : 0);
       if (!wheelScrolls(e.target, dx, e.shiftKey && !e.deltaX ? 0 : e.deltaY)) e.preventDefault();
     }, { passive: false });
-    // No browser menu over the pitch (a right click in play is a slip, and the menu would hold the match's input).
+    // No browser menu anywhere in the game: over the pitch (a right click in play is a slip, and the menu would hold the
+    // match's input) and over every menu, button and panel (CrazyGames' QA, 22 October: a right click on a menu button
+    // opened the browser's menu). A text field keeps its own (paste a club name or a save code).
     window.addEventListener('contextmenu', (e) => {
-      if ((e.target as HTMLElement | null)?.tagName === 'CANVAS') e.preventDefault();
+      if (!editable(e.target)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(normCode(e.code)));
     window.addEventListener('blur', () => this.reset());

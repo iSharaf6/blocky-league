@@ -1274,8 +1274,9 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     const drill = Trainer.lesson;
     hud.retitle = (b) => {
       if (/^\d+$/.test(b.title)) return null;
-      if (b.title === 'FAILED') return { ...b, title: 'AGAIN!', sub: lessonFailText(drill?.failReason() ?? 'again', currentDevice(), 'default') };
-      if (b.title === 'COMPLETE!') return { ...b, title: 'NICE!', sub: step < BASICS_STEPS ? `STEP ${step} OF ${BASICS_STEPS} DONE` : 'BASICS DONE' };
+      // (`drill`: solid from the first frame, never faded in: style.css .hud-banner.drill.)
+      if (b.title === 'FAILED') return { ...b, title: 'AGAIN!', sub: lessonFailText(drill?.failReason() ?? 'again', currentDevice(), 'default'), kind: `${b.kind} drill` };
+      if (b.title === 'COMPLETE!') return { ...b, title: 'NICE!', sub: step < BASICS_STEPS ? `STEP ${step} OF ${BASICS_STEPS} DONE` : 'BASICS DONE', kind: `${b.kind} drill` };
       return b;
     };
   }
@@ -1574,7 +1575,8 @@ async function startMatch(req: MatchRequest, recovered?: PendingMatch): Promise<
     const skillLine = rewardedSkillGoals ? [{ text: rewardedSkillGoals > 1 ? `${rewardedSkillGoals} SKILL GOALS` : 'SKILL GOAL', coins: skillCoins }] : [];
     // LIVE GOALS: their coins, like the challenges' (never doubled).
     const liveCoins = fun?.coins ?? 0;
-    const liveLine = fun && fun.done ? [{ text: fun.done > 1 ? `${fun.done} LIVE GOALS` : 'LIVE GOAL', coins: liveCoins }] : [];
+    // (Named as the challenges they are: "2 LIVE GOALS" after a 0:5 read as two goals scored. CrazyGames' QA, 22 October.)
+    const liveLine = fun && fun.done ? [{ text: fun.done > 1 ? `${fun.done} LIVE CHALLENGES DONE` : 'LIVE CHALLENGE DONE', coins: liveCoins }] : [];
     const show = fun && fun.style > 0 ? recordShowtime(save, showtimeMode(req.kind, blitz), fun.grade, fun.style) : null;
     let earned = reward.coins + bonus + skillCoins + liveCoins + weeklyCoins + showCoins;
     void gemsEarned;

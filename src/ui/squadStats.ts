@@ -18,6 +18,7 @@ import { ceilOf } from '../meta/growth';
 import { escHtml, keyBarsHtml, numText, seasonOf } from './playerCard';
 import { faceHtml } from './preview';
 import { pixelIcon } from './pixelIcons';
+import { plainName } from '../core/displayName';
 import { revealInPane } from './panes';
 import './squadStats.css';
 
@@ -43,7 +44,7 @@ const LEADER_INFO: Record<LeaderKind, { icon: string; caption: string; aria: str
   rating: { icon: 'star', aria: 'Best average rating', caption: 'RATING', text: (n) => `AVG ${(n / 10).toFixed(1)}` },
 };
 
-const lastName = (name: string) => name.split(' ').pop() ?? name;
+const lastName = (name: string) => plainName(name.split(' ').pop() ?? name);
 
 function leaderChip(l: Leader, sel: string): string {
   const info = LEADER_INFO[l.kind];
@@ -60,7 +61,7 @@ function rowHtml(st: CareerState, p: PlayerDef, ui: StatsUi): string {
   return `<button class="ss-row r-${p.role} ${p.id === ui.id ? 'sel' : ''}" data-a="spick" data-id="${escHtml(p.id)}" aria-pressed="${p.id === ui.id}"
       aria-label="${escHtml(p.name)}, ${p.role}, ${l.apps} appearances, ${l.goals} goals, ${l.assists} assists${l.rated ? `, average rating ${ratingText(l)}` : ''}">
       <em class="sq-role">${p.role}</em>
-      <span class="ss-nm">${escHtml(p.name)}${isInjured(p) ? '<i class="ss-hurt">OUT</i>' : ''}</span>
+      <span class="ss-nm">${escHtml(plainName(p.name))}${isInjured(p) ? '<i class="ss-hurt">OUT</i>' : ''}</span>
       <b>${l.apps}</b><b>${keeper ? `${l.clean}<i>CS</i>` : l.goals}</b><b>${keeper ? `${l.saves}<i>SV</i>` : l.assists}</b><b class="avg">${ratingText(l)}</b>
     </button>`;
 }
@@ -98,7 +99,7 @@ function detailHtml(st: CareerState, club: ClubState, p: PlayerDef): string {
   const idx = club.squad.indexOf(p);
   return `<div class="ss-id">
       <span class="ss-face">${faceHtml(p, club.kit, 'md')}</span>
-      <div class="ss-who"><b>${escHtml(p.name)}</b><span><span class="mc-role r-${p.role}">${p.role}</span><em>AGE ${playerAge(p)}</em><em>${idx < 0 ? '' : idx < 11 ? 'STARTER' : 'BENCH'}</em></span></div>
+      <div class="ss-who"><b>${escHtml(plainName(p.name))}</b><span><span class="mc-role r-${p.role}">${p.role}</span><em>AGE ${playerAge(p)}</em><em>${idx < 0 ? '' : idx < 11 ? 'STARTER' : 'BENCH'}</em></span></div>
       <div class="ss-ovr"><small>OVR</small><b>${ovr}</b>${pot > ovr ? `<i>POT ${pot}</i>` : ''}</div>
     </div>
     ${keyBarsHtml(p)}

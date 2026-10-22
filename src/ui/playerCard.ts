@@ -16,6 +16,7 @@ import { moodOf, moraleOf } from '../meta/morale';
 import { ratingText, seasonLine, type StatLine } from '../meta/stats';
 import { overall, type Kit, type PlayerDef } from '../sim/types';
 import { faceHtml } from './preview';
+import { plainName } from '../core/displayName';
 import './playerCard.css';
 
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -94,7 +95,7 @@ export function playerCardHtml(st: CareerState, p: PlayerDef, kit: Kit, o: CardO
   return `<section class="pc ${o.slim ? 'slim' : ''}" aria-label="${escHtml(label)}">
       <header class="pc-head">
         <span class="pc-face">${faceHtml(p, kit, 'md')}</span>
-        <div class="pc-id"><b>${escHtml(p.name)}</b><span><span class="mc-role r-${p.role}">${p.role}</span><em>AGE ${playerAge(p)}</em>${inj > 0 ? `<em class="hurt">OUT ${inj}</em>` : place ? `<em>${place}</em>` : ''}</span></div>
+        <div class="pc-id"><b>${escHtml(plainName(p.name))}</b><span><span class="mc-role r-${p.role}">${p.role}</span><em>AGE ${playerAge(p)}</em>${inj > 0 ? `<em class="hurt">OUT ${inj}</em>` : place ? `<em>${place}</em>` : ''}</span></div>
         <div class="pc-ovr"><small>OVR</small><b>${ovr}</b>${pot > ovr ? `<i>POT ${pot}</i>` : ''}</div>
       </header>
       ${keyBarsHtml(p)}

@@ -8,7 +8,8 @@
  * Where a card sits is its owner's business (the trainer's bar below; the HUD slots in style.css).
  */
 :root {
-  --coach-bg: rgba(38, 38, 46, 0.94);
+  /* Solid: a guide is never see-through (CrazyGames' review, 22 October: "the guide is a bit transparent"). */
+  --coach-bg: rgb(38, 38, 46);
   --coach-gold: #ffd23a;
   --coach-cap: #fbfbf4;
   --coach-cap-edge: #adaeaa;
@@ -75,9 +76,11 @@
 
 /* ---------------------------------------------------------------- the controls bar (ui/trainer.ts) */
 
-/* Fixed at the bottom centre, just above the minimap (its size and offset are style.css .hud-radar's, followed
-   here), never on a player and never moving: CrazyGames' review asked for the controls at the bottom of the screen.
-   The player chip and the SKILL pips are bottom left, clear of it; on touch the bar is off (the buttons say it). */
+/* At the bottom, just above the minimap (its size and offset are style.css .hud-radar's, followed here): CrazyGames'
+   review asked for the controls at the bottom of the screen. Home is the centre; when his man or the ball would be
+   under it, the trainer slides it along the bottom to the side away from them (--slide, trainer.ts CardSlide), clear
+   of the touch controls and the player chip. Always solid: it moves, it never fades over the play (CrazyGames' review,
+   22 October). On touch the bar is off (the buttons say it). */
 .pitch-trainer { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
 .pitch-trainer[hidden], .pitch-trainer [hidden] { display: none !important; }
 .trainer-guide { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
@@ -87,12 +90,15 @@
   position: absolute;
   left: 50%;
   bottom: calc(max(12px, var(--sa-bottom)) + clamp(110px, calc(12 * var(--vw)), 180px) * 0.625 + 8px);
-  transform: translateX(-50%);
+  transform: translateX(calc(-50% + var(--slide, 0px)));
   max-width: calc(calc(100 * var(--vw)) - 24px);
+  /* Solid from its first frame as well: it steps up into place (coach-in) but never fades in from see-through. Measured
+     in live play at 1920 by 945 (CrazyGames' QA, 22 October): the fade in from opacity 0 each time the bar came back
+     (after a replay, a set piece's close-up) was the only time it was ever below 1. */
+  opacity: 1;
   animation: coach-in 0.18s ease-out;
-  transition: opacity 0.25s ease-out;
+  transition: none;
 }
-@starting-style { .trainer-card { opacity: 0; } }
 /* Short landscape frames: the minimap sits 6px off the edge, and under 420px tall it is 104px wide. */
 @container app (max-height: 480px) and (orientation: landscape) {
   .trainer-card { bottom: calc(max(6px, var(--sa-bottom)) + clamp(110px, calc(12 * var(--vw)), 180px) * 0.625 + 6px); }
@@ -148,8 +154,9 @@
   top: 34%;
   left: 50%;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.45em;
+  gap: 0.35em;
   width: max-content;
   max-width: calc(calc(100 * var(--vw)) - max(12px, var(--sa-left)) - max(12px, var(--sa-right)));
   padding: 0.5em 0.8em 0.42em;
@@ -174,13 +181,43 @@
   background: var(--coach-cap);
   box-shadow: 0 3px 0 var(--coach-cap-edge);
 }
+.hud .hud-kick .kk-line { display: flex; align-items: center; gap: 0.45em; }
+/* Solid from its first frame (CrazyGames: "the guide is a bit transparent"): no fade in, never see-through. */
 .hud .hud-kick.on {
   opacity: 1;
-  transition: opacity 0.18s ease-out;
+  transition: none;
   animation: kick-pulse 1.3s ease-in-out infinite;
 }
 @keyframes kick-pulse { 50% { transform: translateX(-50%) scale(1.05); } }
 @media (prefers-reduced-motion: reduce) { .hud .hud-kick.on { animation: none; } }
+/* The first match's first kick-off (Hud.setKickoff `you`): THIS IS YOU over the prompt, in gold, and a gold pointer from
+   the card to the taker's own gold arrow and name tag (down from above him; up from under his boots: .ptr-up). One
+   step: the press that kicks off is the only thing to do. Short frames (a phone on its side) keep it one row. */
+.hud .hud-kick .kk-you { color: var(--coach-gold); }
+.hud .hud-kick .kk-you[hidden] { display: none; }
+.hud .hud-kick .kk-ptr { display: none; }
+.hud .hud-kick.you .kk-ptr {
+  display: block;
+  position: absolute;
+  top: 100%;
+  width: 0;
+  height: 0;
+  border-left: 11px solid transparent;
+  border-right: 11px solid transparent;
+  border-top: 14px solid var(--coach-gold);
+  transform: translateX(-50%);
+}
+.hud .hud-kick.you.ptr-up .kk-ptr {
+  top: auto;
+  bottom: 100%;
+  border-top: 0;
+  border-bottom: 14px solid var(--coach-gold);
+}
+/* (Its gold top edge would sit on the pointer's side: under him, the edge goes to the bottom.) */
+.hud .hud-kick.you.ptr-up { border-top: 0; border-bottom: 4px solid var(--coach-gold); }
+@container app (max-height: 420px) {
+  .hud .hud-kick.you { flex-direction: row; gap: 0.6em; }
+}
 /* A big centred banner (a verdict, GO!), a replay, a close-up or a menu has the picture: the prompt waits. */
 .hud:has(.hud-banner.on:not(.plate)) .hud-kick.on,
 .hud.replaying .hud-kick.on,
@@ -218,17 +255,14 @@
 }
 
 /* The bar in a match: one row, every key with its word, nothing under 10px at any size (800 by 450 included). It
-   goes a step fainter as he learns, and away once he has it (trainer.ts learnCue). */
+   goes a step quieter as he learns (its words a softer cream, the card still solid), and away once he has it
+   (trainer.ts learnCue). */
 .pitch-trainer .trainer-card.bar { padding: 5px 12px 6px; }
 .pitch-trainer .trainer-card.bar .coach-title,
 .pitch-trainer .trainer-card.bar .coach-detail { display: none; }
 .pitch-trainer .trainer-card.bar .coach-actions { flex-wrap: nowrap; gap: 4px 14px; font: 400 14px / 1.15 var(--round); letter-spacing: 0.5px; }
 .pitch-trainer .trainer-card.bar kbd { padding: 3px 5px 2px; font-size: 11px; box-shadow: 0 2px 0 var(--coach-cap-edge); }
-.pitch-trainer .trainer-card.bar.quiet { opacity: 0.72; }
-/* The ball or his man under the bar (Trainer.update): nearly see-through, as the minimap goes. A drill's prompt over one
-   of its men goes see-through too, a step less, so its words still read. */
-.pitch-trainer .trainer-card.bar.under { filter: opacity(0.25); }
-.pitch-trainer .trainer-card.lesson.under { filter: opacity(0.45); }
+.pitch-trainer .trainer-card.bar.quiet { color: #c9cfc6; }
 @container app (min-width: 1600px) and (min-height: 900px) {
   .pitch-trainer .trainer-card.bar { padding: 6px 16px 7px; }
   .pitch-trainer .trainer-card.bar .coach-actions { gap: 4px 18px; font-size: 17px; }
@@ -243,9 +277,10 @@
 /* ---------------------------------------------------------------- LEARN THE BASICS: the finish (ui/trainer.ts drillCall)
 
    CrazyGames' review of the CROSS drill: nothing said control had moved to the runner, nor when to strike. As the cross
-   goes: NOW FINISH WITH ZAJAC, big across the picture, the runner's name in gold, and a gold arrow bobbing over him. As
-   it reaches him (the game slowed): PRESS [K] NOW (TAP [SHOOT] on touch), pulsing. The trainer sets `top` to a band
-   clear of the score bug, the card, the ball and the runner. The kick-off prompt's look (.hud-kick). */
+   goes: NOW FINISH WITH ZAJAC, big across the picture, the runner's name in gold (his marker, arrow and name tag move
+   to him: one arrow over him, never a second one bobbing out of step with it). As it reaches him (the game slowed):
+   PRESS [K] NOW (TAP [SHOOT] on touch), pulsing. The trainer sets `top` to a band clear of the score bug, the card,
+   the ball and the runner. The kick-off prompt's look (.hud-kick), solid. */
 .pitch-trainer .drill-call {
   position: absolute;
   top: 18%;
@@ -279,18 +314,6 @@
 /* The strike: a size up and pulsing, the cap gold. */
 .pitch-trainer .drill-call.now { font-size: calc(clamp(18px, min(calc(2.8 * var(--vw)), calc(6 * var(--vh))), 40px) * var(--ts, 1)); animation: kick-pulse 0.6s ease-in-out infinite; }
 .pitch-trainer .drill-call.now kbd { background: var(--coach-gold); box-shadow: 0 3px 0 #b8901a; }
-.pitch-trainer .drill-arrow {
-  position: absolute;
-  width: 0;
-  height: 0;
-  border-left: 9px solid transparent;
-  border-right: 9px solid transparent;
-  border-top: 13px solid var(--coach-gold);
-  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.45));
-  transform: translate(-50%, -100%);
-  animation: drill-arrow-bob 0.7s ease-in-out infinite;
-}
-@keyframes drill-arrow-bob { 50% { transform: translate(-50%, calc(-100% - 5px)); } }
 @media (prefers-reduced-motion: reduce) {
-  .pitch-trainer .drill-call.now, .pitch-trainer .drill-arrow { animation: none; }
+  .pitch-trainer .drill-call.now { animation: none; }
 }

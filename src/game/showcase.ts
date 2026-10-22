@@ -17,6 +17,7 @@
 import type { SceneShot } from '../render/cameraRig';
 import { HALF_L, HALF_W } from '../sim/constants';
 import type { Side } from '../sim/types';
+import { plainName } from '../core/displayName';
 import { PF, STATE_CODE } from './replay';
 import { SCENE_STYLE } from './scenePoses';
 
@@ -172,6 +173,37 @@ export const SUB_MEET = 0.5;
 const SUB_ARM_FROM = 0.38;
 const SUB_ARM_TO = 0.66;
 const LINE_Z = HALF_W + 0.15;
+/**
+ * The nearest the lens comes to any of the three, in standing heights: the head of a man that close is still well
+ * inside the top of the frame (CrazyGames' QA, 22 October: the change opened on the back of the man coming off, a
+ * stride from the lens, his head cut off). Further than his own height times this, nothing is changed.
+ */
+export const SUB_LENS_MIN = 3.2;
+
+/**
+ * Back the lens off along its own line of sight (the framing kept, everyone a little smaller) until it is at least
+ * `min` (m) from each of `men`: never inside a man, never a head cut off. Continuous in where they stand, so a man
+ * walking up to the lens eases it back rather than jolting it.
+ */
+export function keepLensClear(s: SceneShot, men: readonly { x: number; z: number }[], min: number): SceneShot {
+  const vx = s.tx - s.px, vz = s.tz - s.pz;
+  const l = Math.hypot(vx, vz) || 1;
+  const ux = vx / l, uz = vz / l;
+  for (let it = 0; it < 6; it++) {
+    let need = 0;
+    for (const m of men) need = Math.max(need, min - Math.hypot(m.x - s.px, m.z - s.pz));
+    if (need <= 1e-4) break;
+    s.px -= ux * need;
+    s.pz -= uz * need;
+  }
+  return s;
+}
+
+/** The furthest of a change's three from its lens (m): the session clears the match's men out to past it. */
+export function subLensReach(st: SubStage): number {
+  const s = st.shot;
+  return Math.max(...[st.off, st.on, st.official].map((m) => Math.hypot(m.x - s.px, m.z - s.pz)));
+}
 
 /**
  * A change at `k` (0..1): the man coming off jogs out to the line, the two meet palms (their right hands, so they
@@ -223,12 +255,14 @@ export function subStage(k: number, side: Side, out: SubStage, tall = TALL): Sub
   s.ty = tall * 0.5;
   s.tz = LINE_Z + 0.2;
   s.fov = 32;
+  // (The man coming off starts out a stride from where the lens stands, the new man ends running at it.)
+  keepLensClear(s, [off, on, out.official], SUB_LENS_MIN * tall);
   return out;
 }
 
 /** The caption under a change: "OFF 9 CINDER, ON 14 TUFFET" (the HUD draws the two halves red and green). */
 export function subCaption(off: { number: number; name: string }, on: { number: number; name: string }): { off: string; on: string; text: string } {
-  const sur = (n: string): string => (n.trim().split(/\s+/).pop() ?? n).toUpperCase();
+  const sur = (n: string): string => plainName(n.trim().split(/\s+/).pop() ?? n).toUpperCase();
   const a = `OFF ${off.number} ${sur(off.name)}`;
   const b = `ON ${on.number} ${sur(on.name)}`;
   return { off: a, on: b, text: `${a}, ${b}` };

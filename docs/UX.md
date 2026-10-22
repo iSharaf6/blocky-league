@@ -135,6 +135,23 @@ under Safari's bars and the portal's banner, and upright) and iPads held upright
 - Check a change with `__uiAudit()` in the console (dev builds): text that spills or is cut, buttons off the frame or
   cut, interactive elements or text drawn over each other, labels drawn under the floor (`small`), a pane that runs
   past its box without a visible bar (`nobar`, saying why), and a bar over the pane's words or buttons (`bar-over`).
+  Three more since CrazyGames' QA of 22 October, when a panel's pinned button row was drawn over its last lines in
+  Safari with blank panel under it and the audit said nothing (the words under the row were simply not on top):
+  - `cover`: anything drawn over another element's words or tile where neither holds the other: a pinned or absolute
+    row over flow content, a sticky header or footer over a list's items, a badge over a label, a picture run down
+    over its caption. Tested along each line's middle (20%, 50%, 80% across) and at each control's centre with
+    `elementFromPoint`; `with` names the layer that puts it there (the outermost positioned element between the two).
+    Not a cover: parent and child, a scrollbar (that is `bar-over`), another screen or a sheet as big as half the
+    screen over the one under it, a list the player opened (a control with `aria-expanded="true"` names it in
+    `aria-controls`), something that draws nothing there, and words past their own box's clip (a clamped line).
+  - `empty`: a blank stretch inside a panel over a quarter of its height, in a box of the panel at least that tall,
+    while something in the same column is cut (a pane that scrolls, words clipped or covered): room left unused where
+    it was needed. A list scrolling beside a detail card that ends early is not that.
+  - `cramped`: a pane that scrolls down in under 40px on screen (full time's extras were a 27px strip of half rows).
+  So no panel pins its button row any more (style.css `.panel > .btn-row`): the row comes after the content, every
+  panel fits with it, and one that ever runs long scrolls whole with its bar. Safari also misplaces `position: sticky`
+  under the fit box's scale, so a sticky header is unpinned there (`#ui.fit`), and a 3D card hides each face while it
+  is turned away (`visibility`), since Safari draws a turned-away face there too.
   It should return `[]` on every screen, in MEDIUM and LARGE text, at 640x290, 700x320, 667x375, 852x393, 800x450,
   1080x607, 1180x760, 1920x1080, 820x1100, 930x1250 and 390x700, and at the real iPhone frames inside CrazyGames in
   Safari (its toolbar, the "open in the app" banner and the portal's left rail take the rest): 745x290, 785x282,

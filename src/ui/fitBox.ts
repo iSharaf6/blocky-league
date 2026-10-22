@@ -272,7 +272,7 @@ export function installFitBox(ui: HTMLElement): () => void {
 
 /** One problem the audit found: what, where (a short selector path and its text), and by how many pixels. */
 export interface AuditIssue {
-  kind: 'spill' | 'clipped' | 'offscreen' | 'overlap' | 'text-overlap' | 'small' | 'nobar' | 'bar-over';
+  kind: 'spill' | 'clipped' | 'offscreen' | 'overlap' | 'text-overlap' | 'small' | 'nobar' | 'bar-over' | 'cover' | 'empty' | 'cramped';
   el: string;
   px: number;
   with?: string;
@@ -342,6 +342,66 @@ function visibleRect(el: Element, stop: Element, r0?: DOMRect): { r: DOMRect; sc
 }
 
 /**
+ * The longest stretch of [top, bottom] that none of `spans` (each [top, bottom], clipped to the range) covers: the
+ * blank in a box from what draws in it (`empty`). Pure.
+ */
+export function largestGap(top: number, bottom: number, spans: readonly (readonly [number, number])[]): number {
+  const ys = spans
+    .filter(([t, b]) => b > top && t < bottom)
+    .map(([t, b]) => [Math.max(t, top), Math.min(b, bottom)] as const)
+    .sort((a, b) => a[0] - b[0]);
+  let y = top;
+  let gap = 0;
+  for (const [t, b] of ys) {
+    gap = Math.max(gap, t - y);
+    y = Math.max(y, b);
+  }
+  return Math.max(gap, bottom - y);
+}
+
+/** `el` draws something of its own where it stands: a picture or a control, a background, or words of its own. */
+export function paints(el: Element): boolean {
+  if (/^(img|canvas|svg|video|button|input|select|textarea)$/i.test(el.tagName)) return true;
+  const cs = getComputedStyle(el);
+  if (cs.backgroundImage !== 'none') return true;
+  const m = /rgba?\(([^)]+)\)/.exec(cs.backgroundColor);
+  const parts = m ? m[1].split(/[ ,/]+/).filter(Boolean).map(Number) : [];
+  if (parts.length >= 3 && (parts.length < 4 || parts[3] > 0.1)) return true;
+  if (['Top', 'Bottom'].some((s) => parseFloat(cs.getPropertyValue(`border-${s.toLowerCase()}-width`)) > 0 && cs.getPropertyValue(`border-${s.toLowerCase()}-style`) !== 'none')) return true;
+  return [...el.childNodes].some((c) => c.nodeType === Node.TEXT_NODE && !!c.textContent?.trim());
+}
+
+/** `el` is in a list the player opened over the screen (a control with aria-expanded true names it in aria-controls). */
+function inOpened(el: Element): boolean {
+  for (let e: Element | null = el; e; e = e.parentElement) {
+    if (e.id && document.querySelector(`[aria-expanded="true"][aria-controls~="${CSS.escape(e.id)}"]`)) return true;
+  }
+  return false;
+}
+
+/**
+ * What is drawn over `box` at the point (x, y), if anything: the element hit there, and the layer that puts it there
+ * (the outermost positioned element between it and the nearest ancestor they share; their shared child if none is).
+ * Parent and child never cover each other, nor does a scrollbar (`bar-over`'s job), another screen (a sheet over this
+ * one), or something that draws nothing there (a see-through wrapper, an element faded out).
+ */
+export function coverAt(box: Element, scr: HTMLElement, x: number, y: number): { hit: Element; layer: Element } | null {
+  if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return null;
+  const hit = document.elementFromPoint(x, y);
+  if (!hit || hit === box || box.contains(hit) || hit.contains(box) || !scr.contains(hit) || hit.closest('.sb')) return null;
+  if (!(hit.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) ?? true) || !paints(hit)) return null;
+  let common: Element | null = hit.parentElement;
+  while (common && !common.contains(box)) common = common.parentElement;
+  let layer: Element = hit;
+  let positioned: Element | null = null;
+  for (let e: Element | null = hit; e && e !== common; e = e.parentElement) {
+    layer = e;
+    if (/^(absolute|fixed|sticky)$/.test(getComputedStyle(e).position)) positioned = e;
+  }
+  return { hit, layer: positioned ?? layer };
+}
+
+/**
  * Dev only (`__uiAudit()` in the console): every open menu screen's fit problems, in screen pixels.
  * - spill: a line of text wider than its own box (it runs out of a chip or a button);
  * - clipped: text cut by a box that does not scroll (it can never be read whole);
@@ -349,6 +409,12 @@ function visibleRect(el: Element, stop: Element, r0?: DOMRect): { r: DOMRect; sc
  * - overlap: two interactive elements, both on top at their centres, whose rects overlap;
  * - text-overlap: two pieces of text drawn over each other (tags colliding);
  * - small: text drawn under the floor on screen (FLOOR_SMALL in a box shrunk under 0.8, else FLOOR; MEDIUM text size).
+ * - cover: something drawn over another element's words or tile where neither holds the other (a pinned button row over
+ *   the content it should follow, a sticky footer over a list's items, a badge over a label). A sheet over the screen
+ *   under it (a layer as big as half the screen) is not a cover;
+ * - empty: a blank stretch inside a panel over a quarter of its height while something in it is cut (a pane that
+ *   scrolls, a word clipped or covered): room left unused where it was needed;
+ * - cramped: a pane that scrolls down in under 40px on screen (a strip showing half a row).
  */
 export function uiAudit(root: ParentNode = document): AuditIssue[] {
   const out: AuditIssue[] = [];
@@ -364,6 +430,8 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
     const texts: { node: Text; r: DOMRect; box: Element }[] = [];
     // (Every visible piece of text, on top or not: a scrollbar must not sit over any of it.)
     const seen: { r: DOMRect; box: Element }[] = [];
+    // (What is cut on this screen: clipped words, covered words and tiles, panes that scroll. `empty` asks.)
+    const cutEls: Element[] = [];
     const walk = document.createTreeWalker(scr, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode() as Text | null; n; n = walk.nextNode() as Text | null) {
       if (!n.data.trim()) continue;
@@ -388,7 +456,10 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
         const vis = visibleRect(box, scr, r);
         if (vis && !vis.scrolled) {
           const cut = Math.max(vis.r.left - r.left, r.right - vis.r.right, vis.r.top - r.top - r.height / 2, r.bottom - vis.r.bottom - r.height / 2);
-          if (cut > 1.5) out.push({ kind: 'clipped', el: label(box), px: Math.round(cut) });
+          if (cut > 1.5) {
+            out.push({ kind: 'clipped', el: label(box), px: Math.round(cut) });
+            cutEls.push(box);
+          }
         }
         // (Only text drawn on top counts for text-overlap: a sheet's words over the dimmed screen under it are not a
         // collision. No hit at all, off the frame or no hit testing, still counts.)
@@ -403,6 +474,8 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
         const a = texts[i], b = texts[j];
         if (a.node === b.node) continue;
         const w = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+        // (A list the player opened over the screen, TOMORROW's say, is meant to lie over what is under it.)
+        if (w > 2 && inOpened(a.box) !== inOpened(b.box)) continue;
         const h = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
         if (w > 2 && h > Math.min(a.r.height, b.r.height) * 0.3) out.push({ kind: 'text-overlap', el: label(a.box), with: label(b.box), px: Math.round(Math.min(w, h)) });
       }
@@ -466,6 +539,72 @@ export function uiAudit(root: ParentNode = document): AuditIssue[] {
         for (const t of seen) if (el.contains(t.box) && under(t.r)) out.push({ kind: 'bar-over', el: `${label(el)} (${axis})`, with: label(t.box), px: 0 });
         for (const it of items) if (el.contains(it.el) && under(it.v.r)) out.push({ kind: 'bar-over', el: `${label(el)} (${axis})`, with: label(it.el), px: 0 });
       }
+      cutEls.push(el);
+      // (A list that scrolls down in a strip under 40px on screen shows half a row at a time.)
+      if (over.y > SCROLL_SLACK && v.r.height < 40) out.push({ kind: 'cramped', el: label(el), px: Math.round(v.r.height) });
+    }
+    // Something drawn over a word or a tile it is not part of (cover): tested along each line's middle and at each
+    // tile's centre, as a player's eye would land on it.
+    const sr = crect(scr);
+    const big = sr.width * sr.height * 0.5;
+    const coverSeen = new Set<string>();
+    const cover = (box: Element, r0: DOMRect, pts: [number, number][]) => {
+      // (Words past their own box's clip, a line-clamped third line say, are not drawn at all: not covered either.)
+      let r = r0;
+      const own = getComputedStyle(box);
+      if (own.overflowX !== 'visible' || own.overflowY !== 'visible') {
+        const br = crect(box);
+        const l = Math.max(r.left, br.left), t = Math.max(r.top, br.top), rt = Math.min(r.right, br.right), b = Math.min(r.bottom, br.bottom);
+        if (rt - l < 1 || b - t < 1) return;
+        r = new DOMRect(l, t, rt - l, b - t);
+      }
+      for (const [fx, fy] of pts) {
+        const c = coverAt(box, scr, r.left + r.width * fx, r.top + r.height * fy);
+        if (!c) continue;
+        const lr = crect(c.layer);
+        if (lr.width * lr.height >= big || inOpened(c.hit)) continue;
+        const key = `${label(box)}|${label(c.layer)}`;
+        if (!coverSeen.has(key)) {
+          coverSeen.add(key);
+          const w = Math.min(r.right, lr.right) - Math.max(r.left, lr.left);
+          const h = Math.min(r.bottom, lr.bottom) - Math.max(r.top, lr.top);
+          out.push({ kind: 'cover', el: label(box), with: label(c.layer), px: Math.round(Math.max(0, Math.min(w, h))) });
+          cutEls.push(box);
+        }
+        return;
+      }
+    };
+    for (const t of seen) cover(t.box, t.r, [[0.2, 0.5], [0.5, 0.5], [0.8, 0.5]]);
+    for (const it of items) cover(it.el, it.v.r, [[0.5, 0.5]]);
+    // A blank stretch in a panel (empty): from top to bottom, the longest run of a box's height where none of what is
+    // in it draws (words, controls, pictures, backgrounds, borders), in any box of the panel at least that tall.
+    for (const panel of scr.querySelectorAll<HTMLElement>('.panel')) {
+      const pv = visibleRect(panel, scr);
+      // (A panel still fading in from nothing draws nothing yet: not blank.)
+      if (!pv || pv.r.height < 80 || !(panel.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) ?? true)) continue;
+      const cuts = cutEls.filter((e) => panel.contains(e) || e === panel).map((e) => crect(e));
+      if (!cuts.length) continue;
+      const need = pv.r.height * 0.25;
+      const drawn: { el: Element; r: DOMRect }[] = [];
+      for (const d of panel.querySelectorAll<HTMLElement>('*')) {
+        if (d.classList.contains('sb') || (d.parentElement?.closest('svg') ?? null) !== null || !paints(d)) continue;
+        if (!(d.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) ?? true)) continue;
+        const dv = visibleRect(d, scr);
+        if (dv && dv.r.width > 1 && dv.r.height > 1) drawn.push({ el: d, r: dv.r });
+      }
+      let worst: { el: Element; gap: number } | null = null;
+      for (const c of [panel, ...panel.querySelectorAll<HTMLElement>('*')]) {
+        if (c.classList.contains('sb') || !c.childElementCount || c.closest('svg') || paints(c) && c !== panel) continue;
+        const cv = c === panel ? pv : visibleRect(c, scr);
+        if (!cv || cv.r.height < need) continue;
+        const cr = cv.r;
+        // (Only where the cut thing could have used the room: in the same column. A list scrolling beside a detail card
+        // that ends early is not room left unused.)
+        if (!cuts.some((k) => Math.min(k.right, cr.right) - Math.max(k.left, cr.left) > 0.5 * Math.min(k.width, cr.width))) continue;
+        const gap = largestGap(cr.top, cr.bottom, drawn.filter((d) => d.el !== c && c.contains(d.el)).map((d) => [d.r.top, d.r.bottom]));
+        if (gap >= need && (!worst || gap > worst.gap)) worst = { el: c, gap };
+      }
+      if (worst) out.push({ kind: 'empty', el: label(worst.el), with: `${Math.round(worst.gap)} of ${Math.round(pv.r.height)}px blank`, px: Math.round(worst.gap) });
     }
   }
   return out;

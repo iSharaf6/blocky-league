@@ -8,6 +8,7 @@
  */
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
+import { plainName } from '../core/displayName';
 import { BOTTOM_DIVISION, KEY_STATS, PRICE_KNEE, ROLES, SQUAD_MAX, STAT_SHORT, newSeason, refreshMarket, sellPlayer, sellValue, type CareerState, type ClubState } from '../meta/career';
 import { canAfford, forYouSort, transferBudget, upgradeOf, type TransferBudget } from '../meta/forYou';
 import {
@@ -107,7 +108,7 @@ export function marketNewsHtml(items: readonly NewsItem[], fresh: ReadonlySet<Ne
     const date = `${n.season > 0 ? `SEASON ${n.season}` : 'CLUB NEWS'} / ${n.week > 0 ? `AFTER MATCHDAY ${n.week}` : 'PRE SEASON'}`;
     return `<li class="mk-newsitem ${n.kind}${n.own ? ' own' : ''}">
       <div class="mk-newsmeta"><b>${category}</b><span>${date}</span>${fresh.has(n) ? tag('new', 'NEW') : ''}</div>
-      <p>${esc(n.text)}</p>
+      <p>${esc(plainName(n.text))}</p>
     </li>`;
   }).join('');
 }
@@ -208,7 +209,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
     return `<button class="mk-row${on ? ' sel' : ''}" data-a="sel" data-id="${esc(l.id)}" aria-pressed="${on}" aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}, asking ${fmt(l.asking)}">
       ${faceHtml(p, rivalKit(l), 'sm')}
       ${roleBadge(p.role)}
-      <span class="mk-nm"><b>${esc(p.name)}${star}</b><small>${esc(from)}${dot}${l.age}Y${t}</small></span>
+      <span class="mk-nm"><b>${esc(plainName(p.name))}${star}</b><small>${esc(from)}${dot}${l.age}Y${t}</small></span>
       ${gain > 0 ? `<i class="mk-gain">+${gain}</i>` : '<i></i>'}
       ${ovrBadge(overall(p))}
       <b class="mk-price${canAfford(l, budget) ? '' : ' poor'}">${fmt(l.asking)}</b>
@@ -222,7 +223,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
     return `<button class="mk-row${on ? ' sel' : ''}" data-a="sel" data-id="${esc(p.id)}" aria-pressed="${on}" aria-label="${esc(p.name)}, ${p.role}, overall ${overall(p)}, value ${fmt(playerValue(p))}">
       ${faceHtml(p, club.kit, 'sm')}
       ${roleBadge(p.role)}
-      <span class="mk-nm"><b>${esc(p.name)}</b><small>${i < 11 ? 'STARTER' : 'BENCH'}${dot}${playerAge(p)}Y${t}</small></span>
+      <span class="mk-nm"><b>${esc(plainName(p.name))}</b><small>${i < 11 ? 'STARTER' : 'BENCH'}${dot}${playerAge(p)}Y${t}</small></span>
       <i></i>
       ${ovrBadge(overall(p))}
       <b class="mk-price">${fmt(playerValue(p))}</b>
@@ -241,7 +242,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
     const from = l.club ? esc(townOf(l.clubName).toUpperCase()) : 'FREE AGENT';
     const young = l.age <= YOUNG_AGE;
     const cmp = up.starter
-      ? `<p class="mk-cmp ${up.gain > 0 ? 'up' : up.gain < 0 ? 'down' : ''}"><b>${up.gain > 0 ? '+' : up.gain < 0 ? '&minus;' : ''}${Math.abs(up.gain)} OVR</b><span>VS ${esc(up.starter.name)} ${overall(up.starter)}</span></p>`
+      ? `<p class="mk-cmp ${up.gain > 0 ? 'up' : up.gain < 0 ? 'down' : ''}"><b>${up.gain > 0 ? '+' : up.gain < 0 ? '&minus;' : ''}${Math.abs(up.gain)} OVR</b><span>VS ${esc(plainName(up.starter.name))} ${overall(up.starter)}</span></p>`
       : `<p class="mk-cmp up"><b>NEW ${p.role}</b><span>NOBODY STARTS THERE</span></p>`;
     const starBtn = `<button class="btn btn-white mk-ic${onList ? ' on' : ''}" data-a="star" data-id="${id}" aria-pressed="${onList}" aria-label="${
       onList ? 'Take off your shortlist' : 'Add to your shortlist'
@@ -271,7 +272,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
         <p class="mk-hint" data-hint>${hintFor(l, cur)}</p>`;
       act = `${starBtn}<button class="btn btn-go mk-go${coins() < amt ? ' poor' : ''}" data-a="go" data-id="${id}"><span data-verb>${verb}</span> <span data-amt>${fmt(amt)}</span></button>`;
     }
-    return `<div class="mk-dh">${faceHtml(p, rivalKit(l), 'md')}<div class="mk-did"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<em>${from}</em>${
+    return `<div class="mk-dh">${faceHtml(p, rivalKit(l), 'md')}<div class="mk-did"><b>${esc(plainName(p.name))}</b><span>${roleBadge(p.role)}<em>${from}</em>${
       l.youth ? tag('youth', 'YOUTH') : l.hot ? tag('hot', 'HOT') : ''
     }</span></div>${bigOvr(overall(p))}</div>
       <div class="mk-dbody pane-scroll" data-scroll-key="mk-d-${id}">
@@ -322,7 +323,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
               ? `WORTH WHAT YOU PAID AT THE MOST: ${fmt(m.fee)}`
               : 'NOT BOUGHT FOR A FEE: CLUBS PAY HIS BASE VALUE'
             : `A LISTED PLAYER PLAYS ${MORALE_DIP} DOWN`;
-    return `<div class="mk-dh">${faceHtml(p, club.kit, 'md')}<div class="mk-did"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<em>${starter ? 'STARTER' : 'BENCH'}${dot}${contractOf(p)} YR LEFT</em>${sale ? tag('bid', 'LISTED') : ''}</span></div>${bigOvr(overall(p))}</div>
+    return `<div class="mk-dh">${faceHtml(p, club.kit, 'md')}<div class="mk-did"><b>${esc(plainName(p.name))}</b><span>${roleBadge(p.role)}<em>${starter ? 'STARTER' : 'BENCH'}${dot}${contractOf(p)} YR LEFT</em>${sale ? tag('bid', 'LISTED') : ''}</span></div>${bigOvr(overall(p))}</div>
       <div class="mk-dbody pane-scroll" data-scroll-key="mk-d-${id}">
         ${keyStats(p)}
         <div class="mk-facts">${fact('AGE', age)}${fact('WAGE', fmt(wageOf(p)))}${fact('VALUE', fmt(playerValue(p)))}${fact('POT', age > YOUNG_AGE ? 'PEAKED' : stars(playerPotential(p)), age > YOUNG_AGE)}</div>
@@ -379,7 +380,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
   const confirmOffer = (l: Listing, amount: number, instant: boolean) => {
     const verb = instant ? 'SIGN' : 'OFFER';
     openSheet(
-      `<div class="mk-dh">${faceHtml(l.player, rivalKit(l), 'md')}<div class="mk-did"><b>${esc(l.player.name)}</b><span>${roleBadge(l.player.role)}<em>${
+      `<div class="mk-dh">${faceHtml(l.player, rivalKit(l), 'md')}<div class="mk-did"><b>${esc(plainName(l.player.name))}</b><span>${roleBadge(l.player.role)}<em>${
         l.club ? esc(townOf(l.clubName).toUpperCase()) : 'FREE AGENT'
       }</em></span></div>${bigOvr(overall(l.player))}</div>
       <p class="mk-cfq"><b>${verb} ${fmt(amount)}?</b><span>LEAVES ${fmt(Math.max(0, coins() - amount))} COINS</span></p>
@@ -427,7 +428,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
       return;
     }
     sfx.coin();
-    if (r.instant && r.player) done(`SIGNED ${r.player.name.toUpperCase()} #${r.player.number}`);
+    if (r.instant && r.player) done(`SIGNED ${plainName(r.player.name).toUpperCase()} #${r.player.number}`);
     else done(`OFFER SENT ${fmt(amount)}`, 'info');
   };
 
@@ -491,7 +492,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
         return;
       }
       sfx.coin();
-      done(`SIGNED ${r.player.name.toUpperCase()} #${r.player.number}`);
+      done(`SIGNED ${plainName(r.player.name).toUpperCase()} #${r.player.number}`);
     },
     scout: (el) => {
       const r = scoutListing(st, app.save, el.dataset.id ?? '');
@@ -533,7 +534,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
         return;
       }
       sfx.coin();
-      done(`SOLD ${r.player.name.toUpperCase()} +${fmt(r.delta)}`);
+      done(`SOLD ${plainName(r.player.name).toUpperCase()} +${fmt(r.delta)}`);
     },
     refuse: (el) => {
       const r = rejectOffer(st, el.dataset.id ?? '', el.dataset.o ?? '');
@@ -559,7 +560,7 @@ function marketScreen(app: AppContext, st: CareerState, club: ClubState, back: (
         return;
       }
       sfx.coin();
-      done(`SOLD ${p ? p.name.toUpperCase() : 'PLAYER'} +${fmt(r.delta)}`);
+      done(`SOLD ${p ? plainName(p.name).toUpperCase() : 'PLAYER'} +${fmt(r.delta)}`);
     },
     findplayers: () => {
       memo.tab = 'buy';

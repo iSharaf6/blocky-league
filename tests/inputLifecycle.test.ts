@@ -499,7 +499,7 @@ describe('the page the game sits in never scrolls (a portal frames the game)', (
     return box({ tag: 'CANVAS', parent });
   }
 
-  it('no browser menu over the pitch; elsewhere it is left alone', () => {
+  it('no browser menu anywhere in the game (the pitch, a menu button); a text field keeps its own', () => {
     new Input();
     const menu = (target: object): Event => {
       const e = new Event('contextmenu', { cancelable: true });
@@ -509,6 +509,10 @@ describe('the page the game sits in never scrolls (a portal frames the game)', (
     };
     expect(menu(box({ tag: 'CANVAS' })).defaultPrevented).toBe(true);
     expect(menu(box({ tag: 'INPUT' })).defaultPrevented).toBe(false);
-    expect(menu(box({ tag: 'DIV' })).defaultPrevented).toBe(false);
+    expect(menu(box({ tag: 'TEXTAREA' })).defaultPrevented).toBe(false);
+    // A menu's button, and the words inside it (CrazyGames' QA, 22 October: a right click there opened the browser's menu).
+    expect(menu(box({ tag: 'BUTTON' })).defaultPrevented).toBe(true);
+    expect(menu(box({ tag: 'SPAN', parent: box({ tag: 'BUTTON' }) })).defaultPrevented).toBe(true);
+    expect(menu(box({ tag: 'DIV' })).defaultPrevented).toBe(true);
   });
 });

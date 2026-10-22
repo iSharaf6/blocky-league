@@ -33,24 +33,27 @@
   appearance: none; border: 0; margin: 0; font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
   position: relative; overflow: hidden; min-width: 0; height: 100%;
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 6px; padding: 0 8px 2px 7px; text-align: left;
-  color: var(--cream); background: rgba(38, 38, 46, 0.88); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  /* Solid, like the level chip and the coins beside it: the stadium never shows through a card (CrazyGames' QA,
+     22 October: see-through chips with small grey words). */
+  color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
   transition: transform 0.06s, box-shadow 0.06s;
 }
 .cb-card:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3); }
 .cb-t { display: grid; gap: 3px; min-width: 0; }
-/* (CrazyGames' Full QA reads every screen at 800 x 450 and device pixel ratio 1: the captions are 10 px, not 9.) */
-.cb-t small { font: 400 max(calc(10px * var(--ts, 1)), var(--fs-floor, 0px)) / 1 var(--round); letter-spacing: 0.7px; color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* (CrazyGames' Full QA reads every screen at 800 x 450 and device pixel ratio 1: the captions are 11 px, not 9 or 10.) */
+.cb-t small { font: 400 max(calc(11px * var(--ts, 1)), var(--fs-floor, 0px)) / 1 var(--round); letter-spacing: 0.6px; color: var(--yellow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cb-t b { display: flex; align-items: center; gap: 4px; min-width: 0; font: 400 calc(13px * var(--ts, 1)) / 1 var(--round); letter-spacing: 0.4px; white-space: nowrap; overflow: hidden; }
 .cb-t b > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cb-t b > u { flex: none; padding: 2px 4px 1px; font-size: max(0.72em, var(--fs-floor, 0px)); letter-spacing: 0.6px; text-decoration: none; color: var(--ink); background: var(--yellow); }
-.cb-t b > .cb-dim { font-size: 0.82em; letter-spacing: 0.5px; color: #cfcab8; }
+.cb-t b > .cb-dim { font-size: 0.88em; letter-spacing: 0.5px; color: #e4dfcf; }
 .cb-card.ready { color: var(--ink); background: var(--yellow); box-shadow: 0 4px 0 var(--yellow-d); animation: hub-throb 1.6s ease-in-out infinite; }
 .cb-card.ready .cb-t small { color: #8a2a1e; }
 .cb-card.ready .cb-t b > u { color: var(--cream); background: var(--ink); }
 .cb-card.ready .cb-gem { color: #0f5e8f; }
 .cb-card.ready .cb-tk { color: var(--go-d); }
-.cb-card.done { color: #cfcab8; background: rgba(38, 38, 46, 0.6); }
-.cb-card.done .cb-t small { color: #cfcab8; }
+/* Done: a lighter solid slate, still opaque, the words still light on dark. */
+.cb-card.done { color: #ece7d8; background: var(--ink-2); }
+.cb-card.done .cb-t small { color: #e4dfcf; }
 .cb-card.done .cb-t b > u { color: var(--cream); background: var(--go-d); }
 .cb-card.ready .cb-t b > .cb-dim { color: var(--ink-2); }
 /* A reward beside a card's name (MATCH OF THE DAY): coins over gems, at the caption's size. */
@@ -65,7 +68,7 @@
 /* TOMORROW, the whole list (a tap on the card). Over the hub, never part of its height. */
 .cb-pop {
   position: absolute; z-index: 7; top: calc(100% + 6px); left: 0; width: min(400px, 100%); margin: 0; padding: 8px 10px 9px; list-style: none;
-  display: grid; gap: 5px; color: var(--cream); background: rgba(38, 38, 46, 0.97); border-top: 3px solid var(--yellow); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3);
+  display: grid; gap: 5px; color: var(--cream); background: var(--ink); border-top: 3px solid var(--yellow); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3);
 }
 .cb-pop[hidden] { display: none; }
 .cb-pop li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; font: 400 calc(13px * var(--ts, 1)) / 1.15 var(--round); letter-spacing: 0.4px; }

@@ -326,3 +326,11 @@
 #ui.fit:has(> .screen) {
   background: rgba(38, 38, 46, 0.28);
 }
+
+/* A dim layer (`.panel-wrap.dim`, the online screen's) lives inside the box, so on its own it stopped at the box's
+   edge: at 745 by 290 (an iPhone in CrazyGames) YOU'RE READY had a lighter strip 25 px wide down each side. The
+   screen casts the same dim past its edge (an outer shadow is never drawn under the box itself), so the dim is one
+   even shade from edge to edge of the frame. Over a match the scrim is #ui's own (menus.css) and this steps aside. */
+#ui.fit:not(:has(> .hud)) > .screen:is(:has(> .panel-wrap.dim), .online.dim) {
+  box-shadow: 0 0 0 200vmax rgba(38, 38, 46, 0.45);
+}

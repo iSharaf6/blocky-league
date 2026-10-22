@@ -7,6 +7,7 @@
  */
 import type { AppContext } from '../app';
 import { sfx } from '../audio/sfx';
+import { plainName } from '../core/displayName';
 import { ads } from '../platform/ads';
 import {
   BOTTOM_DIVISION, CLUBS_PER_DIVISION, DIVISION_NAMES, MATCHDAYS, STADIUM_MAX, STADIUM_NAMES, TOP_DIVISION, YOU,
@@ -494,7 +495,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
           if (!p || !releaseProspect(st, Number(el.dataset.i))) return;
           app.persist();
           draw();
-          scr.toast(`${p.name.toUpperCase()} RELEASED`, 'info');
+          scr.toast(`${plainName(p.name).toUpperCase()} RELEASED`, 'info');
         },
         legend: () => {
           if (!confirmLegend) {
@@ -526,7 +527,7 @@ function careerHub(app: AppContext, st: CareerState, tab0: HubTab, flash?: Flash
     sfx.coin();
     buzz('success');
     draw();
-    scr.toast(`${p.name.toUpperCase()} JOINS THE SQUAD`, 'good');
+    scr.toast(`${plainName(p.name).toUpperCase()} JOINS THE SQUAD`, 'good');
   };
   // Gems the career has earned since the last visit (objectives met, legacy levels, cups: meta/gemSources.ts): paid
   // once each, into the wallet beside the coins.

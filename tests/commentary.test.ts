@@ -55,7 +55,8 @@ describe('commentary', () => {
       const { m, lines } = commentate(seed);
       expect(m.phase).toBe('fulltime');
       const types = new Set(lines.map((l) => l.type));
-      expect(types.has('kickoffReady')).toBe(true);
+      // (The kick-off line comes with the kick-off itself, not as the teams line up: firstKickoff.test.ts.)
+      expect(lines.some((l) => l.tag === "1'" && l.priority === 4)).toBe(true);
       expect(types.has('halftime')).toBe(true);
       expect(types.has('fulltime')).toBe(true);
       for (const l of lines) {

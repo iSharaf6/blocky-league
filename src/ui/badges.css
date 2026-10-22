@@ -170,9 +170,13 @@
 .bd-tile em { font: 400 max(10px, var(--fs-floor, 0px)) var(--round); font-style: normal; letter-spacing: 0.5px; color: #fff; background: var(--ink); padding: 2px 4px 1px; }
 .bd-tile:active { transform: translateY(3px); box-shadow: 0 0 0 var(--cream-2); }
 .bd-tile:focus-visible, .bd-title:focus-visible, .bd-chip:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
-.bd-star { position: absolute; top: 3px; right: 3px; line-height: 0; }
+/* (On the tile's corner, a badge, not inside it: inside, it sat over a tight word, CEREMONY or 150. `__uiAudit()` cover.) */
+.bd-star { position: absolute; top: -7px; right: -5px; z-index: 1; line-height: 0; }
 .bd-coins { display: inline-flex; align-items: center; gap: 3px; font: 400 14px var(--round); line-height: 1; }
 .bd-item { font-size: 11px; letter-spacing: 0.5px; color: #3a1f78; }
+/* (A look with coins too: the coins go under its name. Side by side, +60 COINS ran out of the tile, under the next one.) */
+.bd-coins.bd-item:has(small) { flex-direction: column; gap: 1px; text-align: center; }
+.bd-coins.bd-item small { font-size: max(9px, var(--fs-floor, 0px)); line-height: 1; white-space: nowrap; }
 @keyframes bd-bob { 50% { transform: translateY(-2px); } }
 
 /* ---- BADGES: cards in a grid, scrolling in their pane */

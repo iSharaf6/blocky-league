@@ -5,6 +5,7 @@ import {
   type SidePicture,
 } from '../game/sideShow';
 import type { Kit, PlayerDef } from '../sim/types';
+import { plainName } from '../core/displayName';
 import { SideFrame } from '../ui/sideFrame';
 import { Footballer, VU, ballSkinOf, buildBallGeometry, charMaterial, type FootballerRig } from './characters';
 import { BoxBuilder } from './voxel';
@@ -430,7 +431,7 @@ export class SideStage implements SidePicture {
       g.font = font(18);
       g.lineWidth = 4;
       g.strokeStyle = '#1c1c22';
-      const name = s.scorer.toUpperCase().slice(0, 14);
+      const name = plainName(s.scorer).toUpperCase().slice(0, 14);
       g.strokeText(name, 128, 128);
       g.fillStyle = '#fbfbf4';
       g.fillText(name, 128, 128);

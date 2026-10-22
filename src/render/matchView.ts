@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { plainName } from '../core/displayName';
 import { lerp, wrapAngle } from '../core/math';
 import { BALL_OFS, FRAME_LEN, PF, SENT_OFF_CODE } from '../game/replay';
 import { BALL_R } from '../sim/constants';
@@ -74,6 +75,10 @@ const CARD_SCALE = 0.35;
 const PASS_TEAL = 0x2fe6d2;
 /** The landing ring's inner colour while his man is locked onto the ball in the air (the HUD's gold). */
 const LANDING_LOCKED = 0xffd23e;
+/** How fast (1/s) the landing ring glides to a new spot or size: most of the way in a tenth of a second, never a jump. */
+const LANDING_EASE = 16;
+/** A new spot further than this (m) from the ring is a new ball: the ring is there at once. */
+const LANDING_NEW_M = 2.5;
 const PASS_LIGHT = 0x9ff7ee;
 const PASS_WHITE = 0xfbfbf4;
 /** The pass arrow: starts this far (m) out from the passer, stops this far short of the recipient, at most this long. */
@@ -469,7 +474,7 @@ export class MatchView {
     this.nameTag.scale.set(2.76, 0.52, 1);
     this.nameTag.renderOrder = 10;
     this.marker.add(this.nameTag);
-    for (let s = 0; s < 2; s++) for (const p of teams[s].players) this.names.push(p.name.split('. ').pop()!.toUpperCase());
+    for (let s = 0; s < 2; s++) for (const p of teams[s].players) this.names.push(plainName(p.name.split('. ').pop()!).toUpperCase());
     this.group.add(this.marker);
     this.marker.visible = humanSide >= 0;
 
@@ -1139,7 +1144,7 @@ export class MatchView {
     old.dispose();
     this.players[i] = f;
     this.group.add(f.group);
-    this.names[i] = def.name.split('. ').pop()!.toUpperCase();
+    this.names[i] = plainName(def.name.split('. ').pop()!).toUpperCase();
     if (this.nameFor === i) this.nameFor = -1;
   }
 
@@ -1506,9 +1511,12 @@ export class MatchView {
     const f = this.frame;
     const rate = dt / PREVIEW_FADE_S;
     const k = this.charK;
+    // (The man he controls wears his marker, the one ring under him: a pass that has just made him the active man takes
+    // its preview ring off him at once, never fading out under the marker as a second ring.)
+    const active = this.marker.visible ? f[BALL_OFS + 8] : -1;
     for (const i of this.pipIdx) {
       const o = i * PF;
-      const gone = f[o + 4] === SENT_OFF_CODE;
+      const gone = f[o + 4] === SENT_OFF_CODE || i === active;
       // Pass: the calm ring at his feet.
       const wp = snap || gone ? 0 : clamp01(this.previewW[i] + clamp01(i === pass ? 1 : 0) * rate * 2 - rate);
       this.previewW[i] = wp;
@@ -1579,14 +1587,28 @@ export class MatchView {
       edge.renderOrder = 8;
       fill.renderOrder = 8;
       g.add(edge, fill);
+      // (Made hidden, so its first showing starts on its spot below.)
+      g.visible = false;
       this.group.add(g);
       this.landingRing = g;
     }
+    // One ring that moves, never one that jumps: up fresh it starts on its spot; then it glides to a new one (the aerial
+    // lock taking over the spot, a deflection) and eases between its two sizes, so a handover never reads as a flicker.
+    const dt = Math.max(0, Math.min(0.1, pulse - this.landingClock));
+    this.landingClock = pulse;
+    // (A spot metres away is a new ball, a deflection: the ring is there at once, never swept across the grass.)
+    const hidden = !this.landingRing.visible;
+    const fresh = hidden || Math.hypot(x - this.landingAt.x, z - this.landingAt.z) > LANDING_NEW_M;
     this.landingRing.visible = true;
-    this.landingRing.position.set(x, 0.03, z);
+    const ease = 1 - Math.exp(-dt * LANDING_EASE);
+    const e = fresh ? 1 : ease;
+    this.landingAt.x += (x - this.landingAt.x) * e;
+    this.landingAt.z += (z - this.landingAt.z) * e;
+    this.landingSize += ((locked ? 1.25 : 1) - this.landingSize) * (hidden ? 1 : ease);
+    this.landingRing.position.set(this.landingAt.x, 0.03, this.landingAt.z);
     // (`locked`: his man is locked onto this ball in the air, the sim's aerial lock: the spot he meets it at, its inner
-    // ring gold, bigger and beating faster.)
-    const k = locked ? 1.25 + 0.16 * Math.sin(pulse * 16) : 1 + 0.1 * Math.sin(pulse * 9);
+    // ring gold, bigger and beating a little faster.)
+    const k = this.landingSize * (1 + (locked ? 0.12 : 0.1) * Math.sin(pulse * (locked ? 12 : 9)));
     this.landingRing.scale.set(k, 1, k);
     const fill = this.landingRing.children[1] as THREE.Mesh | undefined;
     const fm = fill?.material as THREE.MeshBasicMaterial | undefined;
@@ -1598,6 +1620,10 @@ export class MatchView {
   }
 
   private landingLocked = false;
+  /** Where the landing ring is drawn (it glides to its spot), its size before the beat, and the clock it last moved at. */
+  private landingAt = { x: 0, z: 0 };
+  private landingSize = 1;
+  private landingClock = 0;
 
   private makePreviewRing(): THREE.Group {
     const mat = (color: number) =>

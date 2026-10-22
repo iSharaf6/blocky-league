@@ -335,7 +335,7 @@ body {
   font: 400 15px var(--round);
   letter-spacing: 1px;
   color: var(--cream);
-  background: rgba(38, 38, 46, 0.78);
+  background: var(--ink);
   padding: 9px 12px 8px;
   box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
 }
@@ -425,32 +425,10 @@ body {
   width: 100%;
 }
 
-/* The closing button row of a panel stays pinned to its bottom edge while the rest scrolls,
-   so the primary action is on screen at every size. The row carries the panel's bottom padding itself
-   (no negative bottom margin: that left ~14 px of phantom overflow, i.e. a scrollbar on panels that fit). */
-.panel:has(> .btn-row:last-child:not(.no-stick)) {
-  padding-bottom: 0;
-}
-
-.panel > .btn-row:last-child:not(.no-stick) {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
-  margin: 0 calc(-1 * var(--pp));
-  padding: 12px var(--pp) var(--pp);
-  background: var(--cream);
-}
-
-.panel > .btn-row:last-child:not(.no-stick)::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  height: 16px;
-  background: linear-gradient(rgba(251, 251, 244, 0), var(--cream));
-  pointer-events: none;
-}
+/* The closing button row of a panel comes after its content, in the flow: never pinned over it. (It was sticky to the
+   panel's bottom edge; under the fit box's scale Safari drew it 30 px too high, over the last lines, with blank panel
+   under it: CrazyGames' QA, 22 October.) Every panel fits the frame with its row (the phone rules below compact them;
+   `__uiAudit()`'s `cover` and `empty` check it), and one that ever runs long scrolls whole, with its visible bar. */
 
 @keyframes pop {
   from { transform: scale(0.86) translateY(20px); opacity: 0; }
@@ -964,12 +942,13 @@ body {
   white-space: nowrap;
 }
 
+/* (THROUGH, the top bubble, reaches 134 px up the cluster: 6 px off the bottom keeps it whole in the pad.) */
 .ht-cluster {
   position: absolute;
   right: 12px;
-  bottom: 12px;
+  bottom: 6px;
   width: 146px;
-  height: 128px;
+  height: 134px;
 }
 
 .ht-tb {
@@ -1790,36 +1769,32 @@ kbd {
   opacity: 0.18;
 }
 
-/* The same for the commentary ticker and the event flag while they are up: the play comes first. (A filter, so
-   it multiplies with whatever opacity the replay, a close-up or the booking plate gives them.) */
+/* Words over the play (the commentary ticker, the event flag, the score bug, the quick-sub card, a power-up plate,
+   the chant's caption, the skill tell, PERFECT / GOOD, the player chip) only ever dim a step while the ball or our
+   man is under them: never below 0.75, so none of them reads as see-through UI (CrazyGames' review, 22 October: "the
+   guide is a bit transparent"). The ticker moves to a band off the ball first (Hud.placeTicker); the score bug and
+   the flag stay up at the top edge, out of most of the play.
+   (A filter, so it multiplies with whatever opacity the replay, a close-up or the booking plate gives them.) */
 .hud-cm.under,
-.hud-toast.under {
-  filter: opacity(0.2);
-}
-
-/* The quick-sub card stays tappable, just see-through. */
-.hud-qsub.under {
-  filter: opacity(0.3);
-}
-
-/* A power-up plate over the play (Hud.fadeRadar). */
-.hud-banner.plate.under {
-  filter: opacity(0.25);
-}
-
-.scorebug.under {
-  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.3)) opacity(0.3);
-}
-
-/* The chant's caption and the touch controls (Hud.fadeControls: a held button keeps its look), and the skill tell
-   when nowhere beside the defender is clear of our man (SkillHud): the play shows through them. */
+.hud-toast.under,
+.hud-qsub.under,
+.hud-banner.plate.under,
 .pz-chant.under,
-#ui > .touch .tb.under,
-#ui > .touch .touch-base.under,
 .skill-hud .sk-tell.under,
 .skill-hud .sk-pop.under,
 .hud-timing.under,
 .hud-chip.under {
+  filter: opacity(0.75);
+}
+
+.scorebug.under {
+  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.3)) opacity(0.75);
+}
+
+/* The touch controls are buttons, not words (Hud.fadeControls: a held button keeps its look): a phone on its side
+   shows the play through its own thumbs' buttons, as the minimap does. */
+#ui > .touch .tb.under,
+#ui > .touch .touch-base.under {
   filter: opacity(0.3);
 }
 
@@ -1948,6 +1923,19 @@ kbd {
 
 /* Intro skipped: the title card goes at once rather than fading over the kick-off. */
 .hud-banner.skip { transition: opacity 0.1s; }
+
+/* LEARN THE BASICS' verdicts (AGAIN! and why, NICE!: main.ts retitle): solid from their first frame. They come and go
+   in 0.16 s, the letters drop in without fading, and the line saying why is there at once, never faded in late
+   (CrazyGames' review, 22 October: "the guide is a bit transparent"). */
+.hud-banner.drill { transition: opacity 0.16s; }
+.hud-banner.on.drill .bn-title i { animation: drill-letter 0.45s cubic-bezier(0.2, 1.8, 0.4, 1) both; }
+.hud-banner.on.goal.drill .bn-title i { animation: drill-letter 0.45s cubic-bezier(0.2, 1.8, 0.4, 1) both, wobble 0.9s ease-in-out 0.6s infinite; }
+.hud-banner.drill .bn-sub { animation: drill-drop 0.3s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+@keyframes drill-letter { from { transform: translateY(-40px) scale(0.6); } }
+@keyframes drill-drop { from { transform: translateY(-20px) scale(0.92); } }
+@media (prefers-reduced-motion: reduce) {
+  .hud-banner.on.drill .bn-title i, .hud-banner.drill .bn-sub { animation: none; }
+}
 
 /* ---------------------------------------------------------------- touch */
 
@@ -4287,13 +4275,12 @@ button.mc-pl:active {
 }
 
 /* Short screens (760 px tall and under, e.g. 1280 x 720): panel spacing drops by a quarter so the common
-   screens fit without scrolling; anything longer scrolls under the sticky button row (its fade shows there
-   is more). The phone rules below (450 px and under) tighten further. */
+   screens fit without scrolling, their button row after the content. The phone rules below (450 px and under)
+   tighten further. */
 @container app (max-height: 760px) {
   .panel { --pp: clamp(14px, calc(2.25 * var(--vw)), 22px); gap: 13px; }
   .panel h2 { font-size: clamp(22px, calc(2.6 * var(--vw)), 32px); }
   .panel h3 { margin-bottom: 4px; }
-  .panel > .btn-row:last-child:not(.no-stick) { padding-top: 9px; }
   .meta .panel.mc { --pp: clamp(10px, calc(1.65 * var(--vw)), 18px); gap: 10px; }
   .panel.mc .mc-h { margin: 2px 0 -5px; }
   /* New club / kit editor: a little flatter, so the whole form and CREATE CLUB fit a 720 px screen. */
@@ -4318,7 +4305,6 @@ button.mc-pl:active {
   .panel-wrap { padding: max(8px, var(--sa-top)) max(8px, var(--sa-right)) max(8px, var(--sa-bottom)) max(8px, var(--sa-left)); }
   .panel { --pp: 14px; gap: 10px; max-height: calc(calc(100 * var(--vh)) - 16px); max-height: calc(calc(100 * var(--dvh)) - max(8px, var(--sa-top)) - max(8px, var(--sa-bottom))); }
   .panel h2 { font-size: 22px; }
-  .panel > .btn-row:last-child:not(.no-stick) { padding-top: 8px; }
   .btn-lg { padding: 15px 24px 13px; }
 
   /* Title. */
@@ -4558,7 +4544,9 @@ button.mc-pl:active {
   display: grid;
   /* Number on the left, rating badge over the top-right corner. */
   place-items: center start;
-  padding-left: 5px;
+  /* (3 px, the badge 14 px out and the digits a touch closer: a two digit number, 10 say, read 1C with the badge over
+     its second digit on a phone's TACTICS. `__uiAudit()` cover, 22 October.) */
+  padding-left: 3px;
   width: calc(var(--tw) - 12px);
   height: 34px;
   background: var(--shirt);
@@ -4574,6 +4562,7 @@ button.mc-pl:active {
 
 .tx-shirt b {
   font: 400 16px / 1 var(--round);
+  letter-spacing: -0.5px;
   color: var(--dot-t);
   margin-top: -6px;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
@@ -4585,7 +4574,7 @@ button.mc-pl:active {
 .tx-ovr {
   position: absolute;
   top: -6px;
-  right: -12px;
+  right: -14px;
   min-width: 24px;
   padding: 2px 3px 1px;
   background: var(--ink);
@@ -4593,6 +4582,13 @@ button.mc-pl:active {
   font: 400 14px / 1 var(--round);
   font-style: normal;
   text-align: center;
+}
+
+/* (LARGE text on a short frame zooms the pitch's narrow shirts: the number a step smaller and the badge 2 px further
+   out, so a two digit number stays whole beside it, 10 not 1C, at 667x375.) */
+@container app (max-height: 400px) {
+  :root.ts-large .panel.tx .tx-shirt b { font-size: 13px; letter-spacing: -1px; }
+  :root.ts-large .panel.tx .tx-ovr { right: -16px; }
 }
 
 /* Stamina: a bar across the shirt's hem. */
@@ -4782,15 +4778,7 @@ button.mc-pl:active {
   .tx-side { grid-area: side; }
   .tx-benchbox { flex: 1 1 0; }
   .tx-bench { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-  .panel.tx > .btn-row:last-child:not(.no-stick) {
-    grid-area: foot;
-    position: static;
-    margin: 0;
-    padding: 0;
-    background: none;
-  }
-  .panel.tx > .btn-row:last-child:not(.no-stick)::before { display: none; }
-  .panel.tx:has(> .btn-row:last-child:not(.no-stick)) { padding-bottom: var(--pp); }
+  .panel.tx > .btn-row:last-child { grid-area: foot; }
 }
 
 @container app (orientation: landscape) and (min-width: 600px) and (min-height: 600px) {
@@ -5178,7 +5166,8 @@ button.mc-pl:active {
   .panel.qm .opt-row { gap: 2px; }
   .panel.qm .opt-row label { line-height: 1; }
   .panel.qm .seg button { padding: 4px 2px 3px; }
-  .panel.qm > .btn-row:last-child { padding-top: 6px; padding-bottom: 6px; }
+  .panel.qm { padding-bottom: 6px; }
+  .panel.qm > .btn-row:last-child { padding-top: 6px; }
   /* Daily strip: two columns so no challenge text is cut; the tiles above give up a few px for it. */
   .daily-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tile { gap: 4px; padding: 6px 8px 5px; }
@@ -6727,19 +6716,19 @@ button.hub-lv:active, .hub-ico:active { transform: translateY(3px); box-shadow: 
 .hub-daily {
   appearance: none; border: 0; margin: 0; font: inherit; cursor: pointer;
   display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(36px, 20%) auto; align-items: center; gap: 10px;
-  min-width: 0; padding: 0 12px; text-align: left; color: var(--cream); background: rgba(38, 38, 46, 0.88); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+  min-width: 0; padding: 0 12px; text-align: left; color: var(--cream); background: var(--ink); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
 }
 .hub-daily.fresh { box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3), inset 0 0 0 3px var(--yellow); }
 .hub-daily .hd-h { display: grid; justify-items: start; gap: 2px; }
 .hub-daily .hd-h b { font: 400 calc(13px * var(--ts)) / 1 var(--round); letter-spacing: 1px; color: var(--yellow); }
-.hub-daily .hd-h em { font: 400 calc(12px * var(--ts)) / 1 var(--round); font-style: normal; opacity: 0.85; }
+.hub-daily .hd-h em { font: 400 calc(12px * var(--ts)) / 1 var(--round); font-style: normal; color: #e4dfcf; }
 .hub-daily .hd-text { min-width: 0; font: 400 calc(13px * var(--ts)) / 1.15 var(--round); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hub-daily .hd-bar { display: block; height: 8px; background: rgba(255, 255, 255, 0.18); }
 .hub-daily .hd-bar i { display: block; height: 100%; background: var(--go); }
 .hub-daily .hd-coins { font: 400 calc(13px * var(--ts)) / 1 var(--round); font-style: normal; color: var(--yellow); }
 .hub-dl {
   position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 5; width: min(440px, calc(92 * var(--vw))); margin: 0; padding: 10px 12px; list-style: none;
-  display: grid; gap: 7px; color: var(--cream); background: rgba(38, 38, 46, 0.96); border-top: 3px solid var(--yellow); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3);
+  display: grid; gap: 7px; color: var(--cream); background: var(--ink); border-top: 3px solid var(--yellow); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3);
 }
 .hub-dl[hidden] { display: none; }
 .hub-dl li { display: grid; grid-template-columns: minmax(0, 1fr) 64px auto auto; align-items: center; gap: 8px; font: 400 calc(13px * var(--ts)) / 1.2 var(--round); }

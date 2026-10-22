@@ -8,6 +8,7 @@ import type { Match } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { MatchEvent, PowerUpKind, ShotStyle, Side, TeamDef } from '../sim/types';
 import type { IconName } from './pixelIcons';
+import { plainName } from '../core/displayName';
 
 /** Blitz power-ups as the commentator, the HUD slot and the banners name them. `icon` is a pixel icon name (ui/pixelIcons.ts). */
 export const POWER_INFO: Record<PowerUpKind, { name: string; banner: string; icon: IconName; color: string }> = {
@@ -243,9 +244,14 @@ function lastWord(name: string): string {
 /**
  * What the commentator calls a player: the surname of an "I. Chunk" style name. Pass the names of everyone
  * on the pitch (`onPitch`): when two of them share that surname it falls back to initial + surname
- * ("L. Santos") for both, so a line never leaves you guessing which Santos it means.
+ * ("L. Santos") for both, so a line never leaves you guessing which Santos it means. In plain letters (core/displayName):
+ * the same spelling as the HUD's chip, the overhead tag and the cards.
  */
 export function surname(name: string, onPitch?: readonly string[]): string {
+  return plainName(callName(name, onPitch));
+}
+
+function callName(name: string, onPitch?: readonly string[]): string {
   const s = lastWord(name);
   if (!onPitch || !onPitch.length) return s;
   let same = 0;
@@ -321,6 +327,11 @@ export class Commentator {
   /** Match second of the last save line (a near miss right after it would contradict it). */
   private saveAt = -99;
   private kicked = [false, false];
+  /**
+   * The half's kick-off line, held until the ball is actually kicked: "And we're under way!" never sits on the ticker
+   * while PRESS SPACE / TAP PASS TO KICK OFF is still waiting (CrazyGames' QA, 22 October). Nothing is said meanwhile.
+   */
+  private kickoffDue: { text: string; tag: string; at: number } | null = null;
   /** Everyone in the match right now (refreshed per event): shared surnames get an initial. */
   private pitch: string[] = [];
   /** The last chip / finesse attempt: who struck it and when (match seconds). */
@@ -365,7 +376,7 @@ export class Commentator {
     const pb = m.players[b]?.def.name ?? '';
     const sa = this.sn(pa);
     const sb = this.sn(pb);
-    return sa === sb && pa !== pb ? [pa, pb] : [sa, sb];
+    return sa === sb && pa !== pb ? [plainName(pa), plainName(pb)] : [sa, sb];
   }
 
   private base(m: Match): Vars {
@@ -409,17 +420,23 @@ export class Commentator {
       text, priority, side, tone, tag: t,
     });
     const shooter = (): string => (m.shooter >= 0 ? this.name(m, m.shooter) : 'the striker');
+    // The ball is in play: the held kick-off line goes now, with the first event of play (the kick-off pass itself).
+    const due = this.kickoffDue;
+    // (Only then: a ticker that was off or behind a replay at the kick-off never says it minutes later.)
+    if (due && m.phase !== 'kickoff') {
+      this.kickoffDue = null;
+      if (m.phase === 'play' && m.clock - due.at < 3) return L(due.text, 4, -1, 'info', due.tag);
+    }
     switch (e.type) {
       case 'kickoffReady': {
         if (m.clock > 0.5) return null; // restarts after a goal speak for themselves
         const kv = { ...v, kt: clubCall(m.teams[e.side]) };
         if (m.half === 1 && !this.kicked[0]) {
           this.kicked[0] = true;
-          return L(this.pick('kickoff', kv), 4, -1, 'info', "1'");
-        }
-        if (m.half === 2 && !this.kicked[1]) {
+          this.kickoffDue = { text: this.pick('kickoff', kv), tag: "1'", at: m.clock };
+        } else if (m.half === 2 && !this.kicked[1]) {
           this.kicked[1] = true;
-          return L(this.pick('secondHalf', kv), 4, -1, 'info', "46'");
+          this.kickoffDue = { text: this.pick('secondHalf', kv), tag: "46'", at: m.clock };
         }
         return null;
       }

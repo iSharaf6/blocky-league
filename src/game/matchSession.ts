@@ -1,6 +1,6 @@
 import { sfx } from '../audio/sfx';
 import { matchAudio } from '../audio/director';
-import { freeKey, freePadButton, moveKeys, type Input } from '../core/input';
+import { freeKey, freePadButton, type Input } from '../core/input';
 import { CAM_ZOOMS, CELEBRATION_IDS, type CamZoom, type CelebrationId } from '../core/save';
 import { clamp, damp, smoothstep } from '../core/math';
 import { crestFor, crestPixels } from '../core/crest';
@@ -41,7 +41,9 @@ import { Weather, type WeatherKind } from '../render/weather';
 import { wetWeather } from '../sim/weather';
 import type { DecorStyle } from '../meta/style';
 import type { TimeOfDay, World } from '../render/world';
-import { BALL_R, DT, GOAL_DEPTH, HALF_L, HALF_W, PEN_SPOT } from '../sim/constants';
+import { DT, GOAL_DEPTH, HALF_L, HALF_W, PEN_SPOT } from '../sim/constants';
+import { landingSpot } from './landing';
+import { plainName } from '../core/displayName';
 import { EMPTY_PAD, Match, SHOOT_BAR, type MatchConfig, type Pad } from '../sim/match';
 import { goalsOf } from '../sim/shootout';
 import type { Kit, MatchEvent, PlayerDef, PowerUpKind, RestartKind, ScenarioSpec, Side } from '../sim/types';
@@ -70,7 +72,7 @@ import { contrastAwayKit } from './kitContrast';
 import { QuickSubs, quickSubsAllowed } from './quickSub';
 import {
   LINEUP_INTRO_FROM, LINEUP_S, MOTM_S, SUB_MAX_SHOWN, SUB_S, applyLineup, applyMotm, applyMotmMates, lineupOrder, lineupShot, motmShot, motmSpot, newSubStage, subBeatS,
-  subStage,
+  subLensReach, subStage,
 } from './showcase';
 import { SideShow, type SideFacts } from './sideShow';
 import { INTERLUDE_SECONDS, MatchInterlude, applyInterlude, interludeOrder, interludeShot, type MatchInterludeKind } from './matchInterludes';
@@ -391,25 +393,6 @@ const RESTART_LABEL: Record<RestartKind, string> = {
   kickoff: 'KICK OFF', throwin: 'THROW IN', corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!',
 };
 
-/** A plain name for a colour (the first-match card names the ring under the player's man). */
-function colourName(hex: number): string {
-  const r = ((hex >> 16) & 255) / 255, g = ((hex >> 8) & 255) / 255, b = (hex & 255) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const d = max - min;
-  if (max > 0.85 && d < 0.18) return 'WHITE';
-  if (max < 0.25) return 'BLACK';
-  if (d < 0.12) return 'GREY';
-  let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  h = ((h * 60) + 360) % 360;
-  if (h < 18 || h >= 340) return 'RED';
-  if (h < 42) return 'ORANGE';
-  if (h < 68) return 'YELLOW';
-  if (h < 165) return 'GREEN';
-  if (h < 200) return 'TEAL';
-  if (h < 260) return 'BLUE';
-  if (h < 300) return 'PURPLE';
-  return 'PINK';
-}
 
 export class MatchSession {
   readonly match: Match;
@@ -474,13 +457,13 @@ export class MatchSession {
   private readonly tally = new MatchTally();
   private lastPasser: [number, number] = [-1, -1];
   /**
-   * The player's very first match (SessionOptions.firstMatch): after the fly-in the sim holds on the kick-off
-   * framing, with a "this is you" card up, until he first moves the stick or presses a button. The sim
-   * itself makes his kick-off wait for a button; the session never presses it for him (a button that was
-   * still down from skipping the intro or releasing the hold is swallowed until it is let go).
+   * The player's very first match (SessionOptions.firstMatch): his first kick-off's prompt says THIS IS YOU too, with a
+   * pointer to his man (Hud.setKickoff `you`), until the ball is played. One step (CrazyGames' QA, 22 October): no
+   * THIS IS YOU card over the man to dismiss before a second PRESS SPACE TO KICK OFF. The sim itself makes his first
+   * kick-off wait for his button (MatchConfig.firstMatch); the session never presses it for him (a button still down
+   * from skipping the intro is swallowed until it is let go).
    */
-  private holdFirst = false;
-  private firstCardUp = false;
+  private firstYou = false;
   private eatButtons = false;
   /**
    * A Football Moment in progress (SessionOptions.scenario): the sim clock it started on, the brief's hold,
@@ -769,7 +752,7 @@ export class MatchSession {
       this.decor.setTimeOfDay(opt.timeOfDay ?? 'day');
       this.decor.kickoffIn(lineup ? LINEUP_S + 0.15 : intro ? 0.15 : 0.8);
     }
-    this.holdFirst = !this.demo && !!opt.firstMatch && !this.moment && (opt.humanSide === 0 || opt.humanSide === 1);
+    this.firstYou = !this.demo && !!opt.firstMatch && !this.moment && (opt.humanSide === 0 || opt.humanSide === 1);
     if (!this.demo) {
       this.hud = new Hud(
         [hudTeam(teams[0], opt.kits[0].shirt, opt.kits[0].shirt2), hudTeam(teams[1], opt.kits[1].shirt, opt.kits[1].shirt2)],
@@ -988,6 +971,8 @@ export class MatchSession {
     subStage(0, b.side, this.subSt, this.view.headTop);
     this.subScene.update(this.subSt, this.time, 0);
     Object.assign(this.sceneShot, this.subSt.shot);
+    // (The lens backs off a man too close to it (showcase.ts keepLensClear): the match's men are cleared out past all three.)
+    this.sceneClear = Math.max(SUB_CLEAR, subLensReach(this.subSt) + 0.6);
     this.present?.showSub(
       { number: b.off.number, name: surname(b.off.name) }, { number: b.on.number, name: surname(b.on.name) }, sc.i + 1, sc.list.length,
     );
@@ -1027,6 +1012,7 @@ export class MatchSession {
     }
     this.subScene.update(this.subSt, this.time, dt);
     Object.assign(this.sceneShot, this.subSt.shot);
+    this.sceneClear = Math.max(SUB_CLEAR, subLensReach(this.subSt) + 0.6);
     this.view.apply(this.prev, this.cur, 1, this.time, dt);
   }
 
@@ -1083,7 +1069,7 @@ export class MatchSession {
     f.incident = (!!this.replay && !goalReplay) || this.incidents().waiting(m);
     // (A set piece's own view from behind the taker counts: nothing sits over the goal he is aiming at.)
     f.busy = this.lineupLeft > 0 || !!this.subCut || !!this.interlude || (!!this.motm && !this.motmDone) || this.cardT > 0 || this.cam.mode === 'card' ||
-      !!this.holdFirst || !!this.so || this.cam.behindActive;
+      !!this.so || this.cam.behindActive;
     f.intro = this.introLeft > 0;
     f.interlude = this.interlude?.kind ?? '';
     f.goalSkipped = this.replayDone;
@@ -1455,7 +1441,7 @@ export class MatchSession {
     this.wearing = this.match.players.map(p => p.def);
     for (const p of this.match.players) this.view.replacePlayer(p.idx, p.def, this.opt.kits[p.side]);
     this.lineupLeft = this.introLeft = 0;
-    this.holdFirst = false;
+    this.firstYou = false;
     this.view.frameHook = null;
     this.view.celeb.end();
     this.sceneKeep = [];
@@ -1717,8 +1703,6 @@ export class MatchSession {
         this.eatButtons = true;
       }
       this.view.apply(this.prev, this.cur, 1, this.time, dt);
-    } else if (this.holdFirst) {
-      this.firstMatchHold(dt);
     } else if (this.interlude) {
       this.stepMatchInterlude(dt);
     } else if (this.motm && !this.motmDone) {
@@ -2165,38 +2149,6 @@ export class MatchSession {
         fun: this.fun?.summary(),
       });
     }
-  }
-
-  /**
-   * The first match's hold on the kick-off framing (see holdFirst): the picture is live (rings, crowd, the
-   * camera), the sim waits, a card names the player's man; the first stick movement or button lets it go.
-   */
-  private firstMatchHold(dt: number): void {
-    const m = this.match;
-    if (!this.hud || m.phase !== 'kickoff') {
-      this.holdFirst = false;
-      return;
-    }
-    if (!this.firstCardUp) {
-      // (An 'intro' card: hideIntro() takes it down the moment the hold is released.)
-      this.firstCardUp = true;
-      const you = colourName(this.view.teamColor.fill);
-      const dev = this.input.lastDevice;
-      const move = dev === 'gamepad' ? 'the left stick' : dev === 'touch' ? 'the stick' : moveKeys('keyboard').replace(' / ', ' or ');
-      // (A short title: the banner's letters are huge; "YOU ARE THE BLUE RING" ran off both edges.)
-      this.hud.show('THIS IS YOU', `The ${you} ring. Move with ${move} to start`, 'small intro', 30);
-    }
-    const c = this.input.read();
-    const btn = c.pass || c.shoot || c.through;
-    const moved = Math.hypot(c.sx, c.sy) > 0.3;
-    if (moved || (btn && !this.eatButtons) || this.latch.pass || this.latch.shoot || this.latch.through) {
-      this.holdFirst = false;
-      this.hud.hideIntro();
-      // A button that released the hold is not the kick-off (the sim makes it wait for its own press).
-      this.eatButtons = this.eatButtons || btn;
-      this.clearLatch();
-    } else if (!btn) this.eatButtons = false;
-    this.view.apply(this.prev, this.cur, 1, this.time, dt);
   }
 
   /** Each live step of a moment: the referee's verdict, or the sim ending the half under it (time up, unjudged). */
@@ -3017,7 +2969,8 @@ export class MatchSession {
           const s = m.teams[side];
           const scorer = m.players[e.scorer];
           const g = m.goals[m.goals.length - 1];
-          const who = e.own ? `${scorer.def.name} (OG)` : scorer.def.name;
+          // (Plain letters, as the chip, the tag and the commentary spell him: core/displayName.ts.)
+          const who = e.own ? `${plainName(scorer.def.name)} (OG)` : plainName(scorer.def.name);
           this.hud?.show(golden ? 'GOAL! ×2' : 'GOAL!', `${who} ${g.minute}'`, side === m.cfg.humanSide || m.cfg.humanSide < 0 ? 'goal' : 'goal against', 3.2);
           this.hud?.setScore(m.score[0], m.score[1]);
           this.stadium.setScore(m.score[0], m.score[1], `${m.minute()}'`);
@@ -3299,7 +3252,7 @@ export class MatchSession {
           this.foulBy = { x: by.pos.x, z: by.pos.z };
           // What happened and who did it, in one line under the decision.
           this.foulNote = { side: on.side, penalty: e.penalty, at: this.time, shown: false,
-            reason: `${slide ? 'TRIPPED' : 'CLIPPED'} BY ${by.def.number} ${by.def.name.toUpperCase()}` };
+            reason: `${slide ? 'TRIPPED' : 'CLIPPED'} BY ${by.def.number} ${plainName(by.def.name).toUpperCase()}` };
           if (m.phase !== 'play') this.announceFoul();
           else {
             // Held for advantage: play goes on, with only the flag until the referee decides.
@@ -3329,7 +3282,7 @@ export class MatchSession {
           const how = m.shootout?.last?.how ?? (e.scored ? 'goal' : 'saved');
           const ours = m.cfg.humanSide < 0 || e.side === m.cfg.humanSide;
           const title = e.scored ? 'SCORED!' : how === 'saved' ? 'SAVED!' : how === 'post' ? 'POST!' : how === 'over' ? 'OVER!' : 'WIDE!';
-          this.hud?.show(title, m.players[e.taker].def.name, e.scored ? (ours ? 'small goal' : 'small goal against') : 'small', 1.2);
+          this.hud?.show(title, plainName(m.players[e.taker].def.name), e.scored ? (ours ? 'small goal' : 'small goal against') : 'small', 1.2);
           if (e.scored) {
             sfx.cheer(0.9);
             this.goalHypeT = 2;
@@ -3727,7 +3680,7 @@ export class MatchSession {
     const p = this.match.players[shot.player];
     const red = shot.color === 'red';
     const close = shot.close && p.def.id === shot.playerId;
-    this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', shot.second ? `${shot.name}, second yellow` : shot.name,
+    this.hud?.show(red ? 'RED CARD' : 'YELLOW CARD', shot.second ? `${plainName(shot.name)}, second yellow` : plainName(shot.name),
       red ? 'small card red' : 'small card', red ? 2.2 : 1.8);
     this.view.showCard(shot.color, shot.x, shot.z, close ? CARD_CAM_S : red ? 2.2 : 1.8, close);
     if (close) this.startCardShot(shot.player, shot.x, shot.z, shot.color === 'yellow');
@@ -4019,7 +3972,7 @@ export class MatchSession {
     hud.update(dt, this.view.frame);
     // The over-the-shoulder set-piece camera needs the whole lower screen for the taker: no radar / chip.
     const live = !this.replay && !this.interlude && this.cam.mode !== 'scene' && this.cam.mode !== 'celebrate' && !this.cam.behindActive &&
-      m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0 && !this.holdFirst &&
+      m.phase !== 'halftime' && m.phase !== 'fulltime' && this.introLeft <= 0 &&
       !(this.moment !== null && this.moment.briefT > 0);
     hud.setLive(live);
     if (this.so && m.shootout) this.so.update(m.shootout);
@@ -4032,15 +3985,17 @@ export class MatchSession {
     const r = m.restart;
     // Our kick-off, waiting on the player (the first, the second half's, after a goal): the prompt in the middle
     // (Hud.setKickoff), PRESS SPACE TO KICK OFF in his own binding, until the ball is played (the taker has his
-    // order the frame the press reaches the sim). Never over the fly-in, a replay, a close-up or the pause menu, nor
-    // the first match's THIS IS YOU hold (a press there lets go of the hold, it is not the kick-off).
+    // order the frame the press reaches the sim). Never over the fly-in, a replay, a close-up or the pause menu.
+    // The first match's first kick-off says THIS IS YOU on it too, pointing at him: one step, one press.
     const kickTaker = m.phase === 'kickoff' && r && r.kind === 'kickoff' && r.side === hs ? m.players[r.taker] : null;
     const kickWait = !!kickTaker && !kickTaker.order && live && !this.paused && this.cam.mode !== 'card' && !this.cineHud;
+    if (this.firstYou && (m.phase !== 'kickoff' || !!kickTaker?.order)) this.firstYou = false;
     hud.setKickoff(kickWait && kickTaker ? {
       verb: dev === 'touch' ? 'TAP' : 'PRESS',
       key: keyCap('pass', dev, 'setpiece'),
       taker: kickTaker.idx,
       top: this.view.headTop + 1.9,
+      you: this.firstYou ? 'THIS IS YOU' : null,
     } : null);
     const so = m.phase === 'shootout' ? m.shootout : null;
     const mine = m.ball.owner >= 0 && m.players[m.ball.owner].side === hs;
@@ -4062,9 +4017,8 @@ export class MatchSession {
       hint = penaltyCue(dev);
     } else if ((m.phase === 'kickoff' || m.phase === 'restart') && r && r.side === hs && !this.moment?.spec.untimed) {
       // Our kick-off is the prompt's (it comes up the moment the picture is live): no second KICK OFF card beside it,
-      // over the fly-in or flashing up as he strikes it. Only the first match's THIS IS YOU hold keeps the card (its
-      // presence is what keeps the touch controls up there: style.css).
-      hint = r.kind === 'kickoff' && !this.holdFirst ? null : restartCue(r.kind, dev, m.zoneAim ? 'zone' : m.penAim ? 'goal' : undefined);
+      // over the fly-in or flashing up as he strikes it.
+      hint = r.kind === 'kickoff' ? null : restartCue(r.kind, dev, m.zoneAim ? 'zone' : m.penAim ? 'goal' : undefined);
     } else if (m.ball.held && mine && !m.trainer) {
       // (With the trainer on, its card over the keeper says this already.)
       hint = keeperCue(dev);
@@ -4116,7 +4070,7 @@ export class MatchSession {
     // The trainer's controls bar is fixed at the bottom centre (ui/trainer.ts): it never steps aside for what pops
     // over his man, so it does not blink with every skill move or strike; it is off only when play is.
     if (this.paused || cinematic || this.introLeft > 0 || this.cam.mode !== 'broadcast' || this.cam.behindActive) this.trainer?.hide();
-    else this.trainer?.update(m, this.view.frame, this.world.camera, this.view.headTop, dev);
+    else this.trainer?.update(m, this.view.frame, this.world.camera, this.view.headTop, dev, undefined, dt);
     if (this.touch) {
       // Off for the intro, goal celebrations, replays and half / full time (CSS hides them too).
       // Off for the referee close-up too (the buttons would sit on the booked player).
@@ -4168,7 +4122,7 @@ export class MatchSession {
     const m = this.match;
     const cam = this.cam;
     const ph = m.phase;
-    const live = !this.paused && !this.driver && !this.replay && !this.incidents().waiting(m) && !this.interlude && this.introLeft <= 0 && !this.holdFirst;
+    const live = !this.paused && !this.driver && !this.replay && !this.incidents().waiting(m) && !this.interlude && this.introLeft <= 0;
     const shown = live && cam.mode === 'broadcast' && !cam.behindActive && !this.cineHud &&
       (ph === 'play' || ph === 'out' || ph === 'restart' || ph === 'kickoff');
     const ready = live && this.cardT <= 0 && cam.mode !== 'card' && !this.foulPresentation.waiting;
@@ -4272,21 +4226,17 @@ export class MatchSession {
     const hs = m.cfg.humanSide;
     const air = hs >= 0 && m.phase === 'play' && b.owner < 0 && !b.held ? m.ctl[hs as Side].air : null;
     if (!off && air && air.on && b.pos.y > 0.6) {
-      this.view.setLanding(true, air.x, air.z, this.time, true);
+      // (Lit on the ball's own landing spot: the lock's meeting point is re-worked as he runs and swung between two
+      // spots every few frames, the ring with it.)
+      const at = landingSpot(b.pos, b.vel, b.spin) ?? air;
+      this.view.setLanding(true, at.x, at.z, this.time, true);
       return;
     }
     const ours = m.cfg.humanSide >= 0 && b.lastTouchSide === m.cfg.humanSide;
     const flying = !b.held && b.owner < 0 && b.pos.y > 1.2 && m.kickKind !== 'shot' && m.kickKind !== 'header';
-    let down: { x: number; z: number } | null = null;
-    if (!off && ours && flying) {
-      const path = m.ballPath;
-      for (let i = 0; i < path.length; i++) {
-        if (path[i].y <= BALL_R + 0.05) {
-          down = path[i];
-          break;
-        }
-      }
-    }
+    // (Its first touch on the grass, from the flight itself (game/landing.ts): never the 0.1 s samples of the AI's path,
+    // whose bounce between two samples sent the ring metres on and back as the cross flew in.)
+    const down = !off && ours && flying ? landingSpot(b.pos, b.vel, b.spin) : null;
     if (!down) this.view.setLanding(false);
     else this.view.setLanding(true, down.x, down.z, this.time);
   }

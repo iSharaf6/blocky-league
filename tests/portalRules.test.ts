@@ -374,7 +374,8 @@ describe('a rewarded offer reads the same everywhere', () => {
     expect(shop).toContain('`WATCH AN AD${sep()}${left} LEFT TODAY`');
     expect(shop).toContain('<span>NEW (AD)</span>');
     expect(shop).toContain("const adOk = ads.rewardedAvailable && adsLeft(save, 'deal', localDay()) > 0;");
-    expect(shop).toContain("{ label: ads.adBlocked ? `<span class=\"ad-blocked\">${ADBLOCKER_NOTE}</span>` : 'NO AD YET', note: ads.rewardedNote || 'NO AD RIGHT NOW' }");
+    // (Named once, on the button; the line beside it says what the offer is.)
+    expect(shop).toContain("{ label: ads.adBlocked ? `<span class=\"ad-blocked\">${ADBLOCKER_NOTE}</span>` : 'NO AD YET', note: ads.adBlocked ? 'FREE WITH AN AD' : ads.rewardedNote || 'NO AD RIGHT NOW' }");
     expect(shop.match(/NO_AD_TEXT/g)!.length).toBeGreaterThanOrEqual(5);
     // A stadium build's matchday (ui/club.ts).
     expect(club).toContain('${adIcon()}WATCH AD</button>');

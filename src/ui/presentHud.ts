@@ -1,5 +1,6 @@
 import { pixelIcon } from './pixelIcons';
 import { escHtml } from './text';
+import { plainName } from '../core/displayName';
 import './present.css';
 
 /**
@@ -82,8 +83,8 @@ export class PresentHud {
   /** A change on the touchline: who goes off, who comes on, and which change of how many this stoppage. */
   showSub(off: { number: number; name: string }, on: { number: number; name: string }, i: number, n: number): void {
     this.subTag.textContent = n > 1 ? `SUBSTITUTION ${i} OF ${n}` : 'SUBSTITUTION';
-    this.subOff.innerHTML = `<b>OFF</b><i>${off.number}</i><span>${escHtml(off.name.toUpperCase())}</span>`;
-    this.subOn.innerHTML = `<b>ON</b><i>${on.number}</i><span>${escHtml(on.name.toUpperCase())}</span>`;
+    this.subOff.innerHTML = `<b>OFF</b><i>${off.number}</i><span>${escHtml(plainName(off.name).toUpperCase())}</span>`;
+    this.subOn.innerHTML = `<b>ON</b><i>${on.number}</i><span>${escHtml(plainName(on.name).toUpperCase())}</span>`;
     this.sub.setAttribute('aria-label', `Substitution: off ${off.number} ${off.name}, on ${on.number} ${on.name}`);
     this.sub.classList.remove('on');
     void this.sub.offsetWidth;

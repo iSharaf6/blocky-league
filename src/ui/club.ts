@@ -1,4 +1,5 @@
 import { isPairAllowed } from '../core/names';
+import { plainName } from '../core/displayName';
 /**
  * My Club screens (club creation, squad, training, kit, stadium) plus the small screen kit shared with the
  * career UI. Screens mount into the menus root alongside (never on top of) Menus' own screens.
@@ -500,9 +501,10 @@ export function openClub(app: AppContext, opts: ClubOpts = {}): void {
 
 const TABS: [ClubTab, string][] = [['squad', 'SQUAD'], ['stats', 'STATS'], ['train', 'TRAIN'], ['staff', 'STAFF'], ['market', 'MARKET'], ['kit', 'KIT'], ['stadium', 'STADIUM']];
 
+/** A player's surname as the pixel faces show it: plain letters (core/displayName.ts), so ZAJAC everywhere. */
 function lastName(name: string): string {
   const parts = name.split(' ');
-  return parts[parts.length - 1] ?? name;
+  return plainName(parts[parts.length - 1] ?? name);
 }
 
 /**
@@ -657,7 +659,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
     const slots = FORMATIONS[club.formation];
     const where = trainIdx < 11 ? slots[trainIdx]?.label ?? '' : trainIdx < 11 + BENCH_SIZE ? 'BENCH' : 'RESERVE';
     const row = (q: PlayerDef, i: number) => `<button class="tr-row ${roleCls(q)} ${i === trainIdx ? 'sel' : ''}" data-a="tpick" data-i="${i}" aria-pressed="${i === trainIdx}">
-        <em class="sq-role">${q.role}</em><i class="sq-num">${q.number}</i><span class="sq-nm">${esc(q.name)}</span>${best?.index === i && !growing ? '<i class="tr-tip">BEST</i>' : ''}${moodBadge(q)}<b class="sq-ovr">${overall(q)}</b></button>`;
+        <em class="sq-role">${q.role}</em><i class="sq-num">${q.number}</i><span class="sq-nm">${esc(plainName(q.name))}</span>${best?.index === i && !growing ? '<i class="tr-tip">BEST</i>' : ''}${moodBadge(q)}<b class="sq-ovr">${overall(q)}</b></button>`;
     const stats = order
       .map((k) => {
         const v = p.stats[k];
@@ -682,7 +684,7 @@ function clubHub(app: AppContext, st: CareerState, club: ClubState, tab0: ClubTa
         <div class="pane tr-detail">
           <div class="tr-id">
             ${faceHtml(p, club.kit, 'md')}
-            <div class="tr-who"><b>${esc(p.name)}</b><span>${roleBadge(p.role)}<i>#${p.number}</i><i>${where}</i></span></div>
+            <div class="tr-who"><b>${esc(plainName(p.name))}</b><span>${roleBadge(p.role)}<i>#${p.number}</i><i>${where}</i></span></div>
             ${growing ? '' : `<div class="tr-cost ${poor ? 'poor' : ''}"><small>+${TRAIN_STEP} COSTS</small><span class="coins mc-coins"><i></i><span>${fmt(cost)}</span></span></div>`}
             ${ovrBadge(overall(p))}
           </div>
