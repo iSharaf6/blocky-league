@@ -6,6 +6,16 @@ Everything you upload is already made and checked. Your part: create the account
 
 ## 0. CrazyGames Full Launch update (14 October 2026)
 
+### Reply to the 22 October review (23 October 2026)
+
+CrazyGames flagged the tutorial guide as see-through and the circle indicator glitching when the cross reaches the runner. Both are fixed, and a full reviewer-style QA sweep fixed everything else it found. Paste this into **Update Notes**:
+
+> Thank you for the review. Both points are fixed, and we ran a full QA pass of the first session in Chrome at 1920x945 and at the iPhone frame size before sending this.
+> 1. The guide is now fully solid at all times. It slides along the bottom of the screen to stay clear of the player and the ball instead of fading.
+> 2. The circle indicator was the cross's landing marker jumping between two points when the bounce fell between samples. It now follows the ball's exact flight and moves smoothly, with one marker on the receiving player.
+> 3. Also from our QA pass: the first match opens with a single THIS IS YOU and PRESS SPACE TO KICK OFF prompt beside the player, every tutorial attempt now always ends with a reason, the hub panels are solid, and no popup's buttons cover its content on small screens.
+> Please set the mobile and tablet orientation to landscape only.
+
 ### Reply to the 21 October review (22 October 2026)
 
 CrazyGames found the last part of the tutorial confusing (their recording: drill 3, the cross, where the player dribbled out, got AGAIN with no reason, then was moved to the striker without being told). Paste this into **Update Notes**:
